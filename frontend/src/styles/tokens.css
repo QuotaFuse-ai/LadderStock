@@ -1,0 +1,208 @@
+/**
+ * 本文件由 frontend/scripts/gen-tokens.mjs 从 docs/tasks/TASK-UI-REDESIGN/tokens.json
+ * 自动生成，请勿手改。改令牌 → 改 tokens.json → 重新生成。
+ *
+ * 这是全仓唯一允许出现颜色字面量（hex / rgba）的地方：
+ * 其余样式一律用 var(--ldst-*) 或 Tailwind 语义类（bg-surface / text-text-muted …）。
+ * 图表需要的 hex 在 src/charts/cssVar.ts 里统一从这些变量转换，不在业务代码里写字面量。
+ *
+ * 主题机制：默认（:root）= dark；<html data-ldst-theme="light"> 覆盖为浅色。
+ * 主题选择（system / light / dark）存在 localStorage['ldst.theme']，
+ * system 由 JS 解析后落到 data-ldst-theme，避免 CSS 里再写一份 prefers-color-scheme 分支。
+ */
+
+:root {
+  color-scheme: dark;
+  --ldst-bg: #0e1116; /** 页面底色（最底层） */
+  --ldst-surface: #151a21; /** 卡片 / 表格 / 侧栏容器 */
+  --ldst-surface-2: #1b2230; /** 卡内分区 / 表头 / 次级容器 */
+  --ldst-surface-3: #202836; /** 悬停 / 选中行底色 */
+  --ldst-sunken: #0a0d11; /** 输入框 / 代码块 / 表格内嵌区 */
+  --ldst-border: #2a3342; /** 装饰性分隔线、卡片描边（不承担识别交互件的职责） */
+  --ldst-border-strong: #5d6c82; /** 输入框 / 勾选框 / 分段控件的边界，≥3:1（WCAG 1.4.11） */
+  --ldst-text: #e8ecf2; /** 正文与标题 */
+  --ldst-text-secondary: #b4becb; /** 次级文字：表头、字段名、说明 */
+  --ldst-text-muted: #8a96a6; /** 辅助文字：时间戳、单位、占位符、轴标签 */
+  --ldst-text-inverse: #0e1116; /** 浅色块上的反白文字 */
+  --ldst-accent: #4c8dff; /** 链接、图标强调、焦点环、图表主线 */
+  --ldst-accent-hover: #6ba1ff; /** 链接 / 文本按钮悬停 */
+  --ldst-accent-solid: #2f6fe0; /** 主操作按钮填充；与 accent-contrast 组合 ≥4.5:1（深色主题 accent 本身只有 3.2:1，故作填充色时降一档） */
+  --ldst-accent-solid-hover: #245ec7; /** 主操作按钮悬停/按下（向下压暗，保证白字仍 ≥4.5:1） */
+  --ldst-accent-soft: rgba(76, 141, 255, 0.10); /** 选中项底色、图表区间带、信息块底色 */
+  --ldst-accent-contrast: #ffffff; /** accent-solid 上的文字/图标 */
+  --ldst-up: #ff5c5c; /** 上涨（A 股口径：红涨）。只用于数字与涨跌箭头，不用于状态 */
+  --ldst-up-soft: rgba(255, 92, 92, 0.12); /** 涨幅胶囊底、涨停行左侧条 */
+  --ldst-down: #2fbf71; /** 下跌（A 股口径：绿跌）。只用于数字与涨跌箭头 */
+  --ldst-down-soft: rgba(47, 191, 113, 0.12); /** 跌幅胶囊底 */
+  --ldst-flat: #9aa4b2; /** 平盘 / 未知 / 不可用 */
+  --ldst-flat-soft: rgba(154, 164, 178, 0.12); /** 中性胶囊底 */
+  --ldst-ok: #3fb6a8; /** 系统状态：正常 / 数据完整 / 运行中。不用于涨跌 */
+  --ldst-ok-soft: rgba(63, 182, 168, 0.14); /** 正常状态底色 */
+  --ldst-warn: #f0b429; /** 系统状态：降级 / 缓存 / 需注意 */
+  --ldst-warn-soft: rgba(240, 180, 41, 0.14); /** 警告提示条 / 降级徽标底 */
+  --ldst-danger: #ff7a45; /** 系统状态：失败 / 部分缺失 / 破坏性操作 */
+  --ldst-danger-soft: rgba(255, 122, 69, 0.14); /** 错误提示条 / 错误块底 */
+  --ldst-info: #4c8dff; /** 系统状态：提示（与 accent 同值，语义分开） */
+  --ldst-info-soft: rgba(76, 141, 255, 0.10); /** 信息提示条底 */
+  --ldst-scrim: rgba(4, 6, 9, 0.68); /** 抽屉 / 确认框遮罩 */
+  --ldst-skeleton: #1d2530; /** 骨架屏底色 */
+  --ldst-skeleton-shine: #26303d; /** 骨架屏扫光高光 */
+  --ldst-focus: #6ba1ff; /** 焦点环外圈（内圈取当前底色，见 focus.ring） */
+  --ldst-chart-grid: #26303c; /** 网格线（1px，水平只画主刻度） */
+  --ldst-chart-axis: #8a96a6; /** 轴标签文字（12px） */
+  --ldst-chart-band: rgba(76, 141, 255, 0.12); /** 情绪温度正常区间带填充，无描边 */
+  --ldst-chart-line: #4c8dff; /** 情绪温度折线（1.5px） */
+  --ldst-chart-bar-up: #ff5c5c; /** 连板高度柱（涨停家数，红） */
+  --ldst-chart-bar-down: #2fbf71; /** 跌停/断板柱（绿） */
+  --ldst-chart-series-2: #a78bfa; /** 第二序列（晋级率对照线），仅在同一图出现两序列时使用 */
+  --ldst-chart-threshold: #f0b429; /** 阈值虚线、昨日参考线 */
+  --ldst-chart-empty: #2a3342; /** 空数据时的占位轴（只画轴与网格，不画序列） */
+  --ldst-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.40); /** 卡片唯一的阴影档位。卡片之间不叠加阴影，靠 1px border 分界 */
+  --ldst-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.45); /** 下拉浮层、Tooltip、Toast（浮在内容之上，不受卡片 1 档限制） */
+  --ldst-shadow-dialog: 0 24px 48px rgba(0, 0, 0, 0.55); /** 抽屉、确认框 */
+  --ldst-focus-ring: 0 0 0 2px var(--ldst-bg), 0 0 0 4px #6ba1ff; /** 所有可聚焦元素 :focus-visible 的标准焦点环：2px 底色内圈 + 2px 强调色外圈，任何底色上都可见 */
+  --ldst-focus-offset: 2px;
+  --ldst-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --ldst-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --ldst-font-size-caption: 12px; /** 表头、时间戳、徽标、轴标签、辅助说明（全站最小字号，不再小） */
+  --ldst-leading-caption: 1.5;
+  --ldst-font-size-body: 14px; /** 正文、表格单元格、按钮、输入框（默认字号） */
+  --ldst-leading-body: 1.5;
+  --ldst-font-size-subtitle: 16px; /** 卡片标题、区块标题、抽屉标题 */
+  --ldst-leading-subtitle: 1.4;
+  --ldst-font-size-section: 20px; /** 页内二级标题、分栏标题 */
+  --ldst-leading-section: 1.4;
+  --ldst-font-size-page: 28px; /** 页面标题（每屏唯一一个 h1） */
+  --ldst-leading-page: 1.4;
+  --ldst-font-size-hero: 36px; /** 首页主指标数值、空态大图标旁的数字；每屏最多 1 处 */
+  --ldst-leading-hero: 1.4;
+  --ldst-weight-regular: 400;
+  --ldst-weight-medium: 500;
+  --ldst-weight-semibold: 600;
+  --ldst-leading-tight: 1.4;
+  --ldst-leading-body: 1.5;
+  --ldst-leading-relaxed: 1.6;
+  --ldst-num-font: var(--ldst-font-mono);
+  --ldst-space-0: 0;
+  --ldst-space-1: 4px; /** 图标与文字、胶囊内距 */
+  --ldst-space-2: 8px; /** 同行控件间距、卡片内最小间距 */
+  --ldst-space-3: 12px; /** 表格单元格左右内距、卡片内距 */
+  --ldst-space-4: 16px; /** 卡片内距、区块间距 */
+  --ldst-space-5: 24px; /** 页面内边距、区块之间 */
+  --ldst-space-6: 32px; /** 页面上下留白、图表区高度分隔 */
+  --ldst-space-7: 48px; /** 空态上下留白、页脚分隔 */
+  --ldst-radius: 8px; /** 统一圆角：卡片、按钮、输入框、下拉、弹层、标签页、抽屉、Toast、图表容器。全站只此一档 */
+  --ldst-radius-xs: 4px; /** 仅用于 8px 容器内部的嵌套元素：行内胶囊、进度条、迷你图容器、表格内徽标 */
+  --ldst-radius-pill: 999px; /** 状态点、计数气泡、分段控件的外壳 */
+  --ldst-sidebar-w: 232px; /** 一级导航固定宽度，不随滚动 */
+  --ldst-topbar-h: 56px; /** 页面标题栏高度（含标题 / 状态摘要 / 主操作） */
+  --ldst-content-max: 1080px; /** 阅读型内容最大宽，超出居中 */
+  --ldst-table-max: 1296px; /** 表格与图表可放宽的上限；1280 视口下等于可用宽度 */
+  --ldst-row-h: 38px; /** 表格/列表行高（36px 紧凑 / 40px 舒适两档，默认 38）。1080p 下 ≥12 行可见 */
+  --ldst-row-h-compact: 36px;
+  --ldst-row-h-comfortable: 40px;
+  --ldst-control-h: 32px; /** 默认控件高度（按钮 md / 输入框 / 下拉） */
+  --ldst-control-h-lg: 40px; /** 主操作按钮 lg / 搜索框 */
+  --ldst-icon-btn: 32px; /** 图标按钮边长，点击区不小于 32×32 */
+  --ldst-z-sticky: 10;
+  --ldst-z-banner: 20;
+  --ldst-z-overlay: 40;
+  --ldst-z-dialog: 50;
+  --ldst-z-toast: 60;
+  --ldst-bp-base: 1280px; /** 设计基准宽度（1280 起设计） */
+  --ldst-bp-min: 1024px; /** 1024–1279 为保底宽度：单栏、指标三列，允许内容下移但不横向溢出 */
+  --ldst-sidebar-w: 232px; /** 一级导航固定宽度，不随滚动 */
+  --ldst-topbar-h: 56px; /** 页面标题栏高度（含标题 / 状态摘要 / 主操作） */
+  --ldst-content-max: 1080px; /** 阅读型内容最大宽，超出居中 */
+  --ldst-table-max: 1296px; /** 表格与图表可放宽的上限；1280 视口下等于可用宽度 */
+  --ldst-row-h: 38px; /** 表格/列表行高（36px 紧凑 / 40px 舒适两档，默认 38）。1080p 下 ≥12 行可见 */
+  --ldst-row-h-compact: 36px;
+  --ldst-row-h-comfortable: 40px;
+  --ldst-control-h: 32px; /** 默认控件高度（按钮 md / 输入框 / 下拉） */
+  --ldst-control-h-lg: 40px; /** 主操作按钮 lg / 搜索框 */
+  --ldst-icon-btn: 32px; /** 图标按钮边长，点击区不小于 32×32 */
+  --ldst-z-sticky: 10;
+  --ldst-z-banner: 20;
+  --ldst-z-overlay: 40;
+  --ldst-z-dialog: 50;
+  --ldst-z-toast: 60;
+  --ldst-bp-base: 1280px; /** 设计基准宽度（1280 起设计） */
+  --ldst-bp-min: 1024px; /** 1024–1279 为保底宽度：单栏、指标三列，允许内容下移但不横向溢出 */
+  --ldst-duration-fast: 120ms; /** hover / focus / 开关切换 */
+  --ldst-duration-base: 180ms; /** 抽屉滑入、Toast 进出 */
+  --ldst-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+:root[data-ldst-theme='light'] {
+  color-scheme: light;
+  --ldst-bg: #f5f7fa; /** 页面底色（最底层） */
+  --ldst-surface: #ffffff; /** 卡片 / 表格 / 侧栏容器 */
+  --ldst-surface-2: #f0f3f7; /** 卡内分区 / 表头 / 次级容器 */
+  --ldst-surface-3: #edf1f7; /** 悬停 / 选中行底色 */
+  --ldst-sunken: #e9eef4; /** 输入框 / 代码块 / 表格内嵌区 */
+  --ldst-border: #d8dee7; /** 装饰性分隔线、卡片描边（不承担识别交互件的职责） */
+  --ldst-border-strong: #8791a0; /** 输入框 / 勾选框 / 分段控件的边界，≥3:1（WCAG 1.4.11） */
+  --ldst-text: #141a22; /** 正文与标题 */
+  --ldst-text-secondary: #46505e; /** 次级文字：表头、字段名、说明 */
+  --ldst-text-muted: #5f6b7a; /** 辅助文字：时间戳、单位、占位符、轴标签 */
+  --ldst-text-inverse: #ffffff; /** 浅色块上的反白文字 */
+  --ldst-accent: #1a5fd0; /** 链接、图标强调、焦点环、图表主线 */
+  --ldst-accent-hover: #1348a8; /** 链接 / 文本按钮悬停 */
+  --ldst-accent-solid: #1a5fd0; /** 主操作按钮填充；与 accent-contrast 组合 ≥4.5:1（深色主题 accent 本身只有 3.2:1，故作填充色时降一档） */
+  --ldst-accent-solid-hover: #1348a8; /** 主操作按钮悬停/按下（向下压暗，保证白字仍 ≥4.5:1） */
+  --ldst-accent-soft: rgba(26, 95, 208, 0.08); /** 选中项底色、图表区间带、信息块底色 */
+  --ldst-accent-contrast: #ffffff; /** accent-solid 上的文字/图标 */
+  --ldst-up: #c42b1c; /** 上涨（A 股口径：红涨）。只用于数字与涨跌箭头，不用于状态 */
+  --ldst-up-soft: rgba(196, 43, 28, 0.10); /** 涨幅胶囊底、涨停行左侧条 */
+  --ldst-down: #0b7a41; /** 下跌（A 股口径：绿跌）。只用于数字与涨跌箭头 */
+  --ldst-down-soft: rgba(11, 122, 65, 0.10); /** 跌幅胶囊底 */
+  --ldst-flat: #5f6b7a; /** 平盘 / 未知 / 不可用 */
+  --ldst-flat-soft: rgba(95, 107, 122, 0.10); /** 中性胶囊底 */
+  --ldst-ok: #0f7a6e; /** 系统状态：正常 / 数据完整 / 运行中。不用于涨跌 */
+  --ldst-ok-soft: rgba(15, 122, 110, 0.10); /** 正常状态底色 */
+  --ldst-warn: #8a5a00; /** 系统状态：降级 / 缓存 / 需注意 */
+  --ldst-warn-soft: rgba(138, 90, 0, 0.12); /** 警告提示条 / 降级徽标底 */
+  --ldst-danger: #b23b12; /** 系统状态：失败 / 部分缺失 / 破坏性操作 */
+  --ldst-danger-soft: rgba(178, 59, 18, 0.10); /** 错误提示条 / 错误块底 */
+  --ldst-info: #1a5fd0; /** 系统状态：提示（与 accent 同值，语义分开） */
+  --ldst-info-soft: rgba(26, 95, 208, 0.08); /** 信息提示条底 */
+  --ldst-scrim: rgba(16, 24, 40, 0.40); /** 抽屉 / 确认框遮罩 */
+  --ldst-skeleton: #e7ecf3; /** 骨架屏底色 */
+  --ldst-skeleton-shine: #f2f5f9; /** 骨架屏扫光高光 */
+  --ldst-focus: #1a5fd0; /** 焦点环外圈（内圈取当前底色，见 focus.ring） */
+  --ldst-chart-grid: #e3e8ef; /** 网格线（1px，水平只画主刻度） */
+  --ldst-chart-axis: #5f6b7a; /** 轴标签文字（12px） */
+  --ldst-chart-band: rgba(26, 95, 208, 0.10); /** 情绪温度正常区间带填充，无描边 */
+  --ldst-chart-line: #1a5fd0; /** 情绪温度折线（1.5px） */
+  --ldst-chart-bar-up: #c42b1c; /** 连板高度柱（涨停家数，红） */
+  --ldst-chart-bar-down: #0b7a41; /** 跌停/断板柱（绿） */
+  --ldst-chart-series-2: #6d3fd4; /** 第二序列（晋级率对照线），仅在同一图出现两序列时使用 */
+  --ldst-chart-threshold: #8a5a00; /** 阈值虚线、昨日参考线 */
+  --ldst-chart-empty: #d8dee7; /** 空数据时的占位轴（只画轴与网格，不画序列） */
+  --ldst-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.08); /** 卡片唯一的阴影档位。卡片之间不叠加阴影，靠 1px border 分界 */
+  --ldst-shadow-overlay: 0 8px 24px rgba(16, 24, 40, 0.12); /** 下拉浮层、Tooltip、Toast（浮在内容之上，不受卡片 1 档限制） */
+  --ldst-shadow-dialog: 0 24px 48px rgba(16, 24, 40, 0.18); /** 抽屉、确认框 */
+  --ldst-focus-ring: 0 0 0 2px var(--ldst-surface), 0 0 0 4px #1a5fd0; /** 所有可聚焦元素 :focus-visible 的标准焦点环：2px 底色内圈 + 2px 强调色外圈，任何底色上都可见 */
+  --ldst-focus-offset: 2px;
+}
+
+/* 表格密度（localStorage['ldst.density']）：只改行高，不动其它令牌 */
+:root[data-ldst-density='compact'] { --ldst-row-h: 36px; }
+:root[data-ldst-density='comfortable'] { --ldst-row-h: 40px; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ldst-duration-fast: 0ms;
+    --ldst-duration-base: 0ms;
+  }
+}
+
+/* ---- v1.0 名称别名（DESIGN-SPEC §2.13）：新代码一律用上面的 v2 名称 ---- */
+:root {
+  --ldst-surface-raised: var(--ldst-surface-2);
+  --ldst-surface-sunken: var(--ldst-sunken);
+  --ldst-surface-hover: var(--ldst-surface-3);
+  --ldst-drag: var(--ldst-accent);
+  --ldst-font-size-display: var(--ldst-font-size-hero);
+}
+

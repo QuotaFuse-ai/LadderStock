@@ -1,0 +1,40 @@
+{
+  "name": "S01 标准多梯队（含断层）",
+  "description": "5 板/3 板/1 板各 1 只；昨日涨停 4 只晋级 3 只；炸板 2 只。",
+  "datasets": {
+    "limit_pool": [
+      {"code": "A", "name": "甲", "consecutive_boards": 5},
+      {"code": "B", "name": "乙", "consecutive_boards": 3},
+      {"code": "C", "name": "丙", "consecutive_boards": 1}
+    ],
+    "broken_board": [{"code": "X"}, {"code": "Y"}],
+    "yesterday_limit_up": [{"code": "A"}, {"code": "B"}, {"code": "C"}, {"code": "D"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 71.4,
+      "promotion_rate": 75.0,
+      "seal_rate": 60.0,
+      "limit_up_count": 3,
+      "broken_count": 2,
+      "yesterday_limit_up_count": 4,
+      "promoted_count": 3,
+      "max_board": 5,
+      "gap": true,
+      "gap_levels": [2, 4],
+      "missing": []
+    },
+    "ladder": {
+      "available": true,
+      "height": 5,
+      "count": 3,
+      "levels": [5, 3, 1],
+      "stocks": {"5": ["A"], "3": ["B"], "1": ["C"]},
+      "gap": true,
+      "gap_levels": [2, 4],
+      "unknown_board": 0,
+      "leaders": ["A"]
+    }
+  }
+}

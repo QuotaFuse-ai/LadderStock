@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sync.yaml",
+  "description": "数据集增量同步：只引用 sources.yaml 的 source id，主备必须同 peer（文档 §6.2 + §9）。",
+  "type": "object",
+  "required": ["sync"],
+  "additionalProperties": false,
+  "properties": {
+    "sync": {
+      "type": "object",
+      "required": ["datasets"],
+      "additionalProperties": false,
+      "properties": {
+        "datasets": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["primary", "watermark_field", "mode"],
+            "additionalProperties": false,
+            "properties": {
+              "primary": { "type": "string" },
+              "fallback": { "type": "array", "items": { "type": "string" }, "default": [] },
+              "optional": { "type": "boolean", "default": false },
+              "watermark_field": { "type": "string" },
+              "mode": { "enum": ["append", "replace"] }
+            }
+          }
+        },
+        "cold_hot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "intraday_cache_ttl_sec": { "type": "number", "minimum": 0 },
+            "history_backend": { "enum": ["duckdb", "parquet"] }
+          }
+        }
+      }
+    }
+  }
+}

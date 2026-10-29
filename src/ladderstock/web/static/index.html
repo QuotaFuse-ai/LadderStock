@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LadderStock 本地看板 · 前端未构建</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font: 16px/1.7 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: #0f1115; color: #e6e8eb;
+    }
+    main { max-width: 560px; padding: 32px 24px; }
+    h1 { font-size: 20px; margin: 0 0 12px; }
+    p { margin: 8px 0; color: #b9bfc8; }
+    code {
+      padding: 2px 6px; border-radius: 4px;
+      background: #1c2027; color: #7ee0b5; font-family: ui-monospace, Consolas, monospace;
+    }
+    .badge {
+      display: inline-block; margin-bottom: 16px; padding: 2px 10px; border-radius: 999px;
+      background: #2a2113; color: #f0b429; font-size: 12px;
+    }
+    ul { color: #b9bfc8; padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="badge">本地工作台</span>
+    <h1>LadderStock 看板前端尚未构建</h1>
+    <p>本机 API 已就绪（<code>/api/health</code>、<code>/api/review</code>、<code>/api/sentiment</code>、<code>/api/ladder</code>），但 <code>frontend/dist</code> 不存在。</p>
+    <ul>
+      <li><code>cd frontend</code></li>
+      <li><code>npm install</code></li>
+      <li><code>npm run build</code></li>
+    </ul>
+    <p>然后重启 <code>ldst run</code> 即可打开看板。全部数据只在本机，服务仅监听回环地址。</p>
+  </main>
+</body>
+</html>

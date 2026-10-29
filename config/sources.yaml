@@ -1,0 +1,246 @@
+# 数据源与主备顺序（文档 §6.1 + DEC-006 四层边界）
+#
+# 硬约束：本文件只描述「向哪个生态 peer 的哪个工具取数」，不描述行情供应商。
+# - 每个 source 必须有 via（tickhub / wire / senate）与 tool（该 peer 的工具名）。
+# - 不允许出现采集库、行情站点域名或第三方数据商；越界由
+#   src/ladderstock/core/boundary.py 与 tests/contract/test_ecosystem_boundary.py 拦截。
+# - 备源只能是**同一个 peer 的另一个工具**；peer 整体不可用时降级为缓存回放，
+#   绝不启用自建采集（文档第九节禁区）。
+
+peers:
+  tickhub:
+    product: TickHub-CN
+    package: tickhub-cn
+    cli: th-cn
+    mcp_name: tickhub-cn
+    url_env: LDST_TICKHUB_MCP_URL
+    default_url: http://127.0.0.1:8000/mcp
+    timeout_sec: 10
+  # TickHub-US：8001 被 WSL 转发服务占用、admin 8787 与 CN 撞车，
+  # 故 MCP 走 8002、admin 走 8789（DEC-013 / DEC-014 §3）。
+  tickhub_us:
+    product: TickHub-US
+    package: tickhub-us
+    cli: th-us
+    mcp_name: tickhub-us
+    url_env: LDST_TICKHUB_US_MCP_URL
+    default_url: http://127.0.0.1:8002/mcp
+    timeout_sec: 10
+  wire:
+    product: QuotaFuse Wire
+    package: quotafuse-wire
+    cli: qfw
+    mcp_name: qf-wire
+    url_env: LDST_WIRE_MCP_URL
+    default_url: http://127.0.0.1:8791/mcp
+    timeout_sec: 15
+  senate:
+    product: StockSenate
+    package: stocksenate
+    cli: ssenate
+    mcp_name: stock-senate
+    url_env: LDST_SENATE_MCP_URL
+    default_url: http://127.0.0.1:8765/mcp
+    timeout_sec: 20
+
+sources:
+  # ---------------- 行情与短线数据：TickHub-CN ----------------
+  - id: tickhub_kline
+    dataset: daily_k
+    via: tickhub
+    tool: tencent_kline
+    primary: true
+    fallback: [tickhub_tdx_package]
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_tdx_package
+    dataset: daily_k
+    via: tickhub
+    tool: tdx_daily_package
+    primary: false
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.8
+
+  - id: tickhub_limit_pool
+    dataset: limit_pool
+    via: tickhub
+    tool: limit_up_pool
+    primary: true
+    fallback: [tickhub_ths_limit_pool]
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_ths_limit_pool
+    dataset: limit_pool
+    via: tickhub
+    tool: ths_limit_up_pool
+    primary: false
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 0.9
+
+  - id: tickhub_broken_board
+    dataset: broken_board
+    via: tickhub
+    tool: broken_board_pool
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_yesterday_limit
+    dataset: yesterday_limit_up
+    via: tickhub
+    tool: yesterday_limit_up_pool
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_sentiment
+    dataset: sentiment
+    via: tickhub
+    tool: market_sentiment
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_dragon_tiger
+    dataset: dragon_tiger
+    via: tickhub
+    tool: dragon_tiger
+    primary: true
+    fallback: [tickhub_dragon_tiger_backup]
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 90
+    weight: 1.0
+
+  - id: tickhub_dragon_tiger_backup
+    dataset: dragon_tiger
+    via: tickhub
+    tool: dragon_tiger_backup
+    primary: false
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 180
+    weight: 0.7
+
+  - id: tickhub_seats
+    dataset: dragon_tiger_seats
+    via: tickhub
+    tool: dragon_tiger_seats
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 90
+    weight: 1.0
+
+  - id: tickhub_industry
+    dataset: industry_board
+    via: tickhub
+    tool: industry_boards
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_concept
+    dataset: concept_board
+    via: tickhub
+    tool: concept_boards
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_fund_flow
+    dataset: fund_flow
+    via: tickhub
+    tool: stock_fund_flow
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_hot_rank
+    dataset: hot_rank
+    via: tickhub
+    tool: ths_hot_rank
+    primary: true
+    fallback: [tickhub_hot_rank_em]
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_hot_rank_em
+    dataset: hot_rank
+    via: tickhub
+    tool: eastmoney_hot_rank
+    primary: false
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 0.8
+
+  # ---------------- 题材叙事：QuotaFuse Wire（可选） ----------------
+  - id: wire_digest
+    dataset: theme_news
+    via: wire
+    tool: wire_get_digest
+    primary: true
+    fallback: [wire_timeline]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: wire_timeline
+    dataset: theme_news
+    via: wire
+    tool: wire_get_timeline
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  # ---------------- 合议结果：StockSenate（只读，可选） ----------------
+  - id: senate_reports
+    dataset: council_memo
+    via: senate
+    tool: report_query
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0

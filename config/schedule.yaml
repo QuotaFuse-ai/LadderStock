@@ -1,0 +1,20 @@
+# 定时任务表：只调度本机任务（DEC-006）——不新增采集、不直连行情站点、不写凭据。
+# 时间均为 scheduler.timezone 下的本地时间（HH:MM）。本文件由
+# config/schema/schedule.schema.json 校验，`ldst config validate` 会一并检查。
+scheduler:
+  timezone: Asia/Shanghai
+  misfire_grace_seconds: 300
+
+jobs:
+  - id: premarket_reminder
+    name: 09:05 盘前提醒
+    kind: notify
+    trigger: "09:05"
+    enabled: true
+    channel: console
+    message: 盘前提醒：核对今日盯盘阈值、昨日晋级率与自选池，09:25 前把下单计划定下来
+  - id: close_reconcile
+    name: 15:05 收盘对账
+    kind: reconcile
+    trigger: "15:05"
+    enabled: true

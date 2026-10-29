@@ -1,0 +1,39 @@
+{
+  "name": "S07 缺昨日涨停池（温度按可用权重重归一）",
+  "description": "晋级率不可用 → 只剩封板率(0.35) 与高度(0.20)，温度 = (0.35×66.7 + 0.20×50.0)/(0.35+0.20)。",
+  "datasets": {
+    "limit_pool": [
+      {"code": "A", "consecutive_boards": 3},
+      {"code": "B", "consecutive_boards": 1}
+    ],
+    "broken_board": [{"code": "X"}],
+    "yesterday_limit_up": []
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 60.6,
+      "promotion_rate": null,
+      "seal_rate": 66.7,
+      "limit_up_count": 2,
+      "broken_count": 1,
+      "yesterday_limit_up_count": 0,
+      "promoted_count": 0,
+      "max_board": 3,
+      "gap": true,
+      "gap_levels": [2],
+      "missing": ["yesterday_limit_up"]
+    },
+    "ladder": {
+      "available": true,
+      "height": 3,
+      "count": 2,
+      "levels": [3, 1],
+      "stocks": {"3": ["A"], "1": ["B"]},
+      "gap": true,
+      "gap_levels": [2],
+      "unknown_board": 0,
+      "leaders": ["A"]
+    }
+  }
+}

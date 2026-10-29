@@ -1,0 +1,41 @@
+{
+  "name": "S10 龙头候选截断（同高度 4 只）",
+  "description": "5 板 4 只：龙头候选按代码序取前 3；梯队只到 5 板 → 断层 1/2/3/4 板全缺。",
+  "datasets": {
+    "limit_pool": [
+      {"code": "A", "consecutive_boards": 5},
+      {"code": "B", "consecutive_boards": 5},
+      {"code": "C", "consecutive_boards": 5},
+      {"code": "D", "consecutive_boards": 5}
+    ],
+    "broken_board": [{"code": "E"}],
+    "yesterday_limit_up": [{"code": "A"}, {"code": "B"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 89.7,
+      "promotion_rate": 100.0,
+      "seal_rate": 80.0,
+      "limit_up_count": 4,
+      "broken_count": 1,
+      "yesterday_limit_up_count": 2,
+      "promoted_count": 2,
+      "max_board": 5,
+      "gap": true,
+      "gap_levels": [1, 2, 3, 4],
+      "missing": []
+    },
+    "ladder": {
+      "available": true,
+      "height": 5,
+      "count": 4,
+      "levels": [5],
+      "stocks": {"5": ["A", "B", "C", "D"]},
+      "gap": true,
+      "gap_levels": [1, 2, 3, 4],
+      "unknown_board": 0,
+      "leaders": ["A", "B", "C"]
+    }
+  }
+}

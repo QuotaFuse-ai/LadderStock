@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="天梯股复盘台 · 本地看板（仅回环访问）" />
+    <title>天梯股复盘台 · LadderStock</title>
+    <script>
+      /*
+       * 主题首帧脚本（§7.5）：必须在样式表之前跑，否则深色用户会看到一帧白底。
+       * 只做三件事，不引任何颜色字面量：
+       *   1. 读 localStorage['ldst.theme']（system | light | dark）
+       *   2. system → 解析 prefers-color-scheme，落到 data-ldst-theme
+       *   3. 同步 color-scheme，让浏览器画布在 CSS 到达前就是正确底色
+       */
+      ;(function () {
+        var root = document.documentElement
+        var choice = 'system'
+        try {
+          var saved = window.localStorage.getItem('ldst.theme')
+          if (saved === 'light' || saved === 'dark' || saved === 'system') choice = saved
+        } catch (error) {
+          /* 隐私模式禁用 localStorage：退回 system */
+        }
+        var resolved =
+          choice === 'system'
+            ? window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark'
+            : choice
+        root.setAttribute('data-ldst-theme', resolved)
+        root.setAttribute('data-ldst-scheme', choice)
+        root.style.colorScheme = resolved
+        try {
+          var density = window.localStorage.getItem('ldst.density')
+          if (density === 'compact' || density === 'comfortable' || density === 'default') {
+            root.setAttribute('data-ldst-density', density)
+          }
+        } catch (error) {
+          /* 同上 */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <p
+        style="
+          margin: 0;
+          padding: 24px;
+          font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+            'Microsoft YaHei', sans-serif;
+        "
+      >
+        正在恢复本机状态…
+      </p>
+    </div>
+    <noscript>本看板需要启用 JavaScript。</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

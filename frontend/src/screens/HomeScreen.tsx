@@ -1,0 +1,523 @@
+import { useMemo } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { RefreshCw } from 'lucide-react'
+
+import {
+  api,
+  describeApiError,
+  isApiError,
+  type LadderEnvelope,
+  type LadderStock,
+  type SentimentResult,
+} from '../api'
+import { useAsync } from '../lib/useAsync'
+import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import {
+  MISSING,
+  formatBoards,
+  formatChangePct,
+  formatInt,
+  formatRatePct,
+  formatTime,
+  localDateIso,
+} from '../lib/format'
+import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  DataTable,
+  EmptyState,
+  ErrorBlock,
+  MetricCard,
+  SectionCard,
+  SignedNumber,
+  StatusDot,
+  type Column,
+} from '../components/ui'
+import { useReviewDraft } from '../../stores/reviewDraft'
+import { useValidationDraft } from '../../stores/validationDraft'
+
+/**
+ * 首页（P-01 / DESIGN-SPEC §4.2）。
+ *
+ * 3 秒内回答「今天值不值得动手」：5 个指标卡 + 情绪温度条 + 待办 + 连板 Top 10。
+ * 数据聚合 `/api/sentiment` `/api/ladder` `/api/watch/snapshot` `/api/validation`；
+ * 任何一路缺失都显示 `—` + 原因，**不补 0、不编造**。
+ * 五态演示统一走 `?state=empty|loading|error|partial|offline`（§8）。
+ */
+
+type Envelope = LadderEnvelope<unknown>
+
+/** 溯源徽标只需要这三个字段，四路 payload 类型不同也能放在同一数组里。 */
+type EnvelopeMeta = Pick<Envelope, 'source_status' | 'source_detail' | 'fetched_at'>
+
+const FRESHNESS_LABEL: Record<Envelope['freshness'], string> = {
+  realtime: '实时',
+  cached: '缓存',
+  archive: '归档',
+}
+
+const SOURCE_LABEL: Record<Envelope['source_status'], string> = {
+  ok: '完整',
+  degraded: '降级',
+  partial: '部分',
+}
+
+/** 指标卡右上的溯源徽标：freshness + source_status，hover 出 detail 与 data_as_of（§4.2 L2）。 */
+function SourceBadge({ envelope }: { envelope: Envelope | null }) {
+  if (!envelope) return null
+  const tone = envelope.source_status === 'ok' ? 'ok' : envelope.source_status === 'partial' ? 'warn' : 'danger'
+  const title = [
+    `来源：${envelope.source_detail}`,
+    `数据时间：${envelope.data_as_of ?? '未知'}`,
+    `取数：${formatTime(envelope.fetched_at)}`,
+  ].join('\n')
+  return (
+    <Badge tone={tone} title={title}>
+      {FRESHNESS_LABEL[envelope.freshness]}·{SOURCE_LABEL[envelope.source_status]}
+    </Badge>
+  )
+}
+
+/** 五段区间带的透明度分层（同一 `chart.band` 单色，不换色相 —— §6 CH-01）。 */
+const BAND_STEPS = [
+  { label: '冰点', opacity: 0.6 },
+  { label: '低迷', opacity: 0.75 },
+  { label: '中性', opacity: 1 },
+  { label: '活跃', opacity: 0.75 },
+  { label: '过热', opacity: 0.6 },
+]
+
+/** 顶部 8px 情绪温度条：五段单色透明度分层 + 当前位置指针（§4.2 L0）。 */
+function TemperatureBar({ value, label }: { value: number | null; label: string }) {
+  const pct = value === null ? null : Math.min(100, Math.max(0, value))
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div
+        role="img"
+        aria-label={value === null ? `情绪温度缺失（${label}）` : `情绪温度 ${value}，0 到 100，50 为中性`}
+        className="relative h-2 w-full overflow-hidden rounded-pill border border-border bg-surface-2"
+      >
+        <div className="flex h-full w-full" aria-hidden="true">
+          {BAND_STEPS.map((band) => (
+            <span key={band.label} className="h-full flex-1 bg-chart-band" style={{ opacity: band.opacity }} />
+          ))}
+        </div>
+        {pct !== null && (
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-0 w-[2px] -translate-x-1/2 rounded-pill bg-text"
+            style={{ left: `${pct}%` }}
+          />
+        )}
+      </div>
+      <div className="flex items-center justify-between text-caption text-text-muted">
+        <span>0 冰点</span>
+        <span>50 中性</span>
+        <span>100 过热</span>
+      </div>
+    </div>
+  )
+}
+
+/** HHMMSS 字符串 / 时间戳 → `09:30:00`；拿不到就 `—`（不猜）。 */
+function formatSeal(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return MISSING
+  const text = String(value)
+  if (/^\d{6}$/.test(text)) return `${text.slice(0, 2)}:${text.slice(2, 4)}:${text.slice(4, 6)}`
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(text)) return text
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return formatTime(text)
+  return MISSING
+}
+
+interface LadderRow {
+  code: string
+  name: string
+  boards: number
+  firstSeal: string | number | null
+}
+
+const LADDER_COLUMNS: Array<Column<LadderRow>> = [
+  {
+    key: 'code',
+    header: '代码',
+    width: '92px',
+    render: (row) => <span className="ldst-num text-text-secondary">{row.code || MISSING}</span>,
+  },
+  { key: 'name', header: '名称', render: (row) => <span className="truncate font-medium">{row.name || MISSING}</span> },
+  {
+    key: 'boards',
+    header: '连板',
+    align: 'right',
+    width: '88px',
+    sort: (a, b) => a.boards - b.boards,
+    render: (row) => <span className="ldst-num font-semibold text-up">{formatBoards(row.boards)}</span>,
+  },
+  {
+    key: 'seal',
+    header: '首封',
+    align: 'right',
+    width: '96px',
+    render: (row) => <span className="ldst-num text-text-secondary">{formatSeal(row.firstSeal)}</span>,
+  },
+]
+
+interface Todo {
+  tone: 'warn' | 'danger' | 'accent'
+  tag: string
+  title: string
+  to: string
+  action: string
+}
+
+export default function HomeScreen() {
+  const forced = useForcedState()
+  const [params] = useSearchParams()
+  const tradeDate = params.get('date') || localDateIso()
+
+  const sentiment = useAsync((signal) => api.sentiment(tradeDate, signal), [tradeDate])
+  const ladder = useAsync((signal) => api.ladder(tradeDate, signal), [tradeDate])
+  const watch = useAsync((signal) => api.watchSnapshot(signal), [tradeDate])
+  const validation = useAsync((signal) => api.validation(tradeDate, signal), [tradeDate])
+
+  const requests = [sentiment, ladder, watch, validation]
+  const reloadAll = () => requests.forEach((request) => request.reload())
+
+  const sent: SentimentResult | null = sentiment.data?.payload.sentiment ?? null
+  const ladderPayload = ladder.data?.payload.ladder ?? null
+  const watchRows = watch.data?.payload.rows ?? []
+  const conditions = validation.data?.payload.conditions ?? []
+  const reconcile = validation.data?.payload.reconcile ?? null
+
+  const draftConditions = useValidationDraft((state) => state.conditions)
+  const reviewSections = useReviewDraft((state) => state.sections)
+  const reviewChars = useMemo(
+    () => Object.values(reviewSections).reduce((total, text) => total + text.trim().length, 0),
+    [reviewSections],
+  )
+
+  const isEmpty = !sent?.available && !ladderPayload?.available && watchRows.length === 0 && conditions.length === 0
+  const derived = useMemo<PageState>(() => {
+    const statuses = requests.map((request) => request.status)
+    if (statuses.every((status) => status === 'loading')) return 'loading'
+    const errors = requests.map((request) => request.error).filter(Boolean)
+    if (errors.length === statuses.length) {
+      return errors.every((error) => isApiError(error) && error.kind === 'not-connected') ? 'offline' : 'error'
+    }
+    if (errors.length > 0) return 'partial'
+    if (statuses.every((status) => status === 'ready')) return isEmpty ? 'empty' : 'normal'
+    return 'loading'
+  }, [sentiment.status, ladder.status, watch.status, validation.status, isEmpty]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const state = resolveState(forced, derived)
+  const usable = state === 'normal' || state === 'partial'
+  const busy = requests.some((request) => request.status === 'loading')
+
+  // 五态下数据一律按「不可用」处理，保证骨架之外的强制态不依赖后端
+  const viewSent = usable ? sent : null
+  const viewLadder = usable ? ladderPayload : null
+  const viewWatch = usable ? watchRows : []
+  const viewConditions = usable ? conditions : []
+
+  const temperature = viewSent?.temperature ?? null
+  const maxBoard = viewSent?.max_board ?? viewLadder?.height ?? null
+  const offline = state === 'offline'
+
+  const ladderRows = useMemo<LadderRow[]>(() => {
+    if (!viewLadder?.ladder) return []
+    return viewLadder.ladder
+      .flatMap((level) => level.stocks.map((stock: LadderStock) => ({
+        code: stock.code,
+        name: stock.name,
+        boards: level.boards,
+        firstSeal: stock.first_seal_time,
+      })))
+      .sort((a, b) => b.boards - a.boards)
+      .slice(0, 10)
+  }, [viewLadder])
+
+  const confirmedCount = useMemo(() => {
+    const codes = new Set(viewConditions.map((condition) => condition.code).filter(Boolean))
+    return draftConditions.filter((condition) => condition.confirmed && (codes.size === 0 || codes.has(condition.code))).length
+  }, [draftConditions, viewConditions])
+
+  const movers = useMemo(
+    () =>
+      [...viewWatch]
+        .filter((row) => row.change_pct !== null)
+        .sort((a, b) => Math.abs(b.change_pct ?? 0) - Math.abs(a.change_pct ?? 0))
+        .slice(0, 3),
+    [viewWatch],
+  )
+
+  // 四路 envelope 的 payload 类型各不相同，只取溯源需要的公共三条字段
+  const envelopes = useMemo<EnvelopeMeta[]>(() => {
+    const list = [sentiment.data, ladder.data, watch.data, validation.data]
+    return list.flatMap((item) =>
+      item
+        ? [{ source_status: item.source_status, source_detail: item.source_detail, fetched_at: item.fetched_at }]
+        : [],
+    )
+  }, [sentiment.data, ladder.data, watch.data, validation.data])
+  const degraded = envelopes.filter((envelope) => envelope.source_status !== 'ok')
+  const latestFetch = envelopes
+    .map((envelope) => envelope.fetched_at)
+    .sort()
+    .pop()
+
+  const summary =
+    state === 'offline'
+      ? '本地服务未连接'
+      : state === 'error'
+        ? '取数失败'
+        : `${degraded.length > 0 ? '部分数据降级' : '数据完整'} · 更新于 ${formatTime(latestFetch ?? null)}`
+
+  const todos = useMemo<Todo[]>(() => {
+    const list: Todo[] = []
+    if (usable && viewConditions.length > 0 && !reconcile) {
+      list.push({
+        tone: 'warn',
+        tag: '待对账',
+        title: `${viewConditions.length} 条验证条件等待收盘对账`,
+        to: '/validate',
+        action: '去验证',
+      })
+    }
+    if (usable && reviewChars === 0) {
+      list.push({
+        tone: 'accent',
+        tag: '待写',
+        title: '今日复盘草稿还是空的',
+        to: '/review',
+        action: '去复盘',
+      })
+    }
+    if (usable && degraded.length > 0) {
+      list.push({
+        tone: 'danger',
+        tag: '数据降级',
+        title: degraded[0].source_detail || '部分数据源降级，指标可能不完整',
+        to: '/settings',
+        action: '看数据源',
+      })
+    }
+    return list.slice(0, 3)
+  }, [usable, viewConditions.length, reconcile, reviewChars, degraded])
+
+  const failedLabels = useMemo(() => {
+    const labels: string[] = []
+    if (sentiment.status === 'error') labels.push('情绪温度')
+    if (ladder.status === 'error') labels.push('连板天梯')
+    if (watch.status === 'error') labels.push('盯盘快照')
+    if (validation.status === 'error') labels.push('验证条件')
+    return labels
+  }, [sentiment.status, ladder.status, watch.status, validation.status])
+
+  const header = (
+    <PageHeader
+      title="首页"
+      subtitle={summary}
+      badge={<DemoStateBadge state={forced} />}
+      actions={
+        <Button
+          variant="primary"
+          loading={busy && state !== 'loading'}
+          disabled={state === 'loading'}
+          onClick={reloadAll}
+          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+        >
+          刷新全部
+        </Button>
+      }
+    />
+  )
+
+  if (state === 'loading') {
+    return (
+      <div className="flex flex-col gap-5">
+        {header}
+        <ScreenSkeleton metrics={5} rows={8} />
+      </div>
+    )
+  }
+
+  if (state === 'error') {
+    const firstError = requests.map((request) => request.error).find(Boolean)
+    const info = describeApiError(firstError)
+    return (
+      <div className="flex flex-col gap-5">
+        {header}
+        <ErrorBlock {...info} onRetry={reloadAll} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      {header}
+
+      {state === 'offline' && <OfflineBanner onRetry={reloadAll} />}
+      {state === 'partial' && (
+        <ErrorBlock
+          variant="banner"
+          title="部分数据源不可用"
+          detail={`${failedLabels.join('、')} 取数失败；其余指标照常展示，缺失处以 — 标注。`}
+          onRetry={reloadAll}
+          retryLabel="重试该段"
+        />
+      )}
+
+      <TemperatureBar
+        value={temperature}
+        label={offline ? '本地服务未连接' : viewSent?.reason ?? '该交易日无情绪数据'}
+      />
+
+      <div className="grid grid-cols-2 gap-4 rail:grid-cols-3 desk:grid-cols-5">
+        <MetricCard
+          label="情绪温度"
+          badge={<SourceBadge envelope={sentiment.data} />}
+          value={formatInt(temperature)}
+          note={
+            temperature !== null
+              ? `50 为中性 · 涨停 ${formatInt(viewSent?.limit_up_count)} 家`
+              : viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无情绪数据')
+          }
+        />
+        <MetricCard
+          label="最高连板"
+          badge={<SourceBadge envelope={sentiment.data ?? ladder.data} />}
+          value={formatBoards(maxBoard)}
+          note={
+            maxBoard !== null
+              ? `断层 ${formatInt(viewLadder?.gap_levels.length ?? viewSent?.gap_levels.length)} 档`
+              : viewLadder?.reason ?? viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无连板数据')
+          }
+        />
+        <MetricCard
+          label="主线题材"
+          value={MISSING}
+          note="本地无板块/题材数据（先运行 ldst sync）"
+        />
+        <MetricCard
+          label="盯盘异动"
+          badge={<SourceBadge envelope={watch.data} />}
+          value={viewWatch.length > 0 ? `${formatInt(viewWatch.length)} 条` : MISSING}
+          note={
+            viewWatch.length > 0
+              ? `快照 ${formatTime(watch.data?.fetched_at)}`
+              : offline
+                ? '本地服务未连接'
+                : '本机没有可用快照'
+          }
+        />
+        <MetricCard
+          label="待验证"
+          badge={<SourceBadge envelope={validation.data} />}
+          value={viewConditions.length > 0 ? `${formatInt(viewConditions.length)} 项` : MISSING}
+          note={
+            viewConditions.length > 0
+              ? `${formatInt(confirmedCount)} 项已确认`
+              : offline
+                ? '本地服务未连接'
+                : '还没有验证条件'
+          }
+        />
+      </div>
+
+      {todos.length > 0 && (
+        <Card>
+          <CardHeader title="待办" subtitle={`${todos.length} 条需要处理`} />
+          <ul>
+            {todos.map((todo) => (
+              <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
+                <Link
+                  to={todo.to}
+                  className="flex min-h-control items-center gap-3 px-4 py-2 transition-colors duration-fast hover:bg-surface-3"
+                >
+                  <StatusDot tone={todo.tone}>{todo.tag}</StatusDot>
+                  <span className="min-w-0 flex-1 truncate text-body text-text">{todo.title}</span>
+                  <span className="shrink-0 text-caption text-text-secondary">{todo.action} →</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <div className="grid gap-4 desk:grid-cols-12">
+        <SectionCard
+          className="desk:col-span-8"
+          title="今日连板梯队 Top 10"
+          subtitle={
+            viewLadder?.available
+              ? `${tradeDate} · 高度 ${formatBoards(viewLadder.height)} · 共 ${formatInt(viewLadder.count)} 只`
+              : `交易日 ${tradeDate}`
+          }
+          bodyClassName="p-0"
+        >
+          <DataTable<LadderRow>
+            columns={LADDER_COLUMNS}
+            rows={ladderRows}
+            rowKey={(row) => `${row.code}-${row.boards}`}
+            caption={`连板梯队（${tradeDate}），按板数降序取前 10`}
+            maxHeight="420px"
+            empty={
+              <EmptyState
+                compact
+                title="还没有连板数据"
+                description={
+                  viewLadder?.reason ??
+                  (offline ? '本地服务未连接，先运行 ldst run。' : '该交易日没有涨停池数据，先运行 ldst sync 再回来。')
+                }
+              />
+            }
+          />
+        </SectionCard>
+
+        <div className="flex flex-col gap-4 desk:col-span-4">
+          <SectionCard title="题材强度 Top 5" subtitle="本地无题材数据集" bodyClassName="p-4">
+            <EmptyState
+              compact
+              title="还没有题材数据"
+              description="情绪温度与连板天梯可用；题材轮动需要先接入板块/概念行情（ldst sync）。"
+            />
+          </SectionCard>
+
+          <SectionCard
+            title="最近异动"
+            subtitle={viewWatch.length > 0 ? '按涨跌幅绝对值取前 3' : '快照不可用'}
+            bodyClassName="p-4"
+          >
+            {movers.length === 0 ? (
+              <EmptyState compact title="还没有异动信号" description="盯盘快照为空或已过期，去盯盘页取数。" />
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {movers.map((row) => {
+                  const change = formatChangePct(row.change_pct)
+                  return (
+                    <li key={row.code} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-body text-text">
+                        <span className="ldst-num mr-1.5 text-caption text-text-muted">{row.code}</span>
+                        {row.name}
+                      </span>
+                      <SignedNumber text={change.text} tone={change.tone} arrow={change.arrow} className="text-body" />
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+            <p className="mt-3 border-t border-border pt-2 text-caption text-text-muted">
+              口径：快照涨跌幅绝对值排序；仅供扫读，不构成建议。
+            </p>
+          </SectionCard>
+        </div>
+      </div>
+
+      <p className="text-caption text-text-muted">
+        指标口径：情绪温度 0–100（50 中性）；晋级率 {formatRatePct(viewSent?.promotion_rate).text}；一线源见各卡右上徽标。
+      </p>
+    </div>
+  )
+}

@@ -1,0 +1,39 @@
+{
+  "name": "S05 空数据（三个池全缺）",
+  "description": "缓存里没有当日任何记录：必须报不可用（available=false），不得用 0 冒充读数；`missing` 按三池固定顺序给全（D-05）。",
+  "datasets": {
+    "limit_pool": [],
+    "broken_board": [],
+    "yesterday_limit_up": []
+  },
+  "expected": {
+    "sentiment": {
+      "available": false,
+      "temperature": null,
+      "promotion_rate": null,
+      "seal_rate": null,
+      "limit_up_count": 0,
+      "broken_count": 0,
+      "yesterday_limit_up_count": 0,
+      "promoted_count": 0,
+      "max_board": null,
+      "gap": false,
+      "gap_levels": [],
+      "missing": ["limit_pool", "yesterday_limit_up", "broken_board"],
+      "unknown": {"limit_pool": 0, "broken_board": 0},
+      "reason_contains": "ldst sync"
+    },
+    "ladder": {
+      "available": false,
+      "height": null,
+      "count": 0,
+      "levels": [],
+      "stocks": {},
+      "gap": false,
+      "gap_levels": [],
+      "unknown_board": 0,
+      "leaders": [],
+      "reason_contains": "同步"
+    }
+  }
+}

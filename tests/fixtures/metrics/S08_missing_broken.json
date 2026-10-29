@@ -1,0 +1,39 @@
+{
+  "name": "S08 缺炸板池（封板率按涨停数计）",
+  "description": "炸板池缺失时封板率 = 涨停/(涨停+0) = 100%，并在 missing 里如实标注，不静默。",
+  "datasets": {
+    "limit_pool": [
+      {"code": "A", "consecutive_boards": 2},
+      {"code": "B", "consecutive_boards": 1}
+    ],
+    "broken_board": [],
+    "yesterday_limit_up": [{"code": "A"}, {"code": "C"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 64.2,
+      "promotion_rate": 50.0,
+      "seal_rate": 100.0,
+      "limit_up_count": 2,
+      "broken_count": 0,
+      "yesterday_limit_up_count": 2,
+      "promoted_count": 1,
+      "max_board": 2,
+      "gap": false,
+      "gap_levels": [],
+      "missing": ["broken_board"]
+    },
+    "ladder": {
+      "available": true,
+      "height": 2,
+      "count": 2,
+      "levels": [2, 1],
+      "stocks": {"2": ["A"], "1": ["B"]},
+      "gap": false,
+      "gap_levels": [],
+      "unknown_board": 0,
+      "leaders": ["A"]
+    }
+  }
+}

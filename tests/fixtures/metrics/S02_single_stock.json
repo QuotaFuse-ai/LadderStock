@@ -1,0 +1,36 @@
+{
+  "name": "S02 单票单板",
+  "description": "全池只有 1 只首板股，昨日涨停也是它，无炸板记录。",
+  "datasets": {
+    "limit_pool": [{"code": "A", "name": "甲", "boards": 1}],
+    "broken_board": [],
+    "yesterday_limit_up": [{"code": "A"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 83.3,
+      "promotion_rate": 100.0,
+      "seal_rate": 100.0,
+      "limit_up_count": 1,
+      "broken_count": 0,
+      "yesterday_limit_up_count": 1,
+      "promoted_count": 1,
+      "max_board": 1,
+      "gap": false,
+      "gap_levels": [],
+      "missing": ["broken_board"]
+    },
+    "ladder": {
+      "available": true,
+      "height": 1,
+      "count": 1,
+      "levels": [1],
+      "stocks": {"1": ["A"]},
+      "gap": false,
+      "gap_levels": [],
+      "unknown_board": 0,
+      "leaders": ["A"]
+    }
+  }
+}

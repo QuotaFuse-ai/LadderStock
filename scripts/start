@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# 旧版启动脚本（兼容入口）：委托 `ldst run`，不再维护第二套启动逻辑。
+#
+# 过渡期用法：`scripts/start [--port 5960]` == `ldst run [--port 5960]`
+# 旧配置/旧数据目录请先跑一次 `ldst config migrate`：
+#   只读迁移（旧文件不改不删），迁移前自动备份，失败会回退到旧启动路径并提示。
+set -eu
+
+echo "ldst: 旧版启动方式已委托 ldst run（迁移：ldst config migrate）" >&2
+
+if command -v ldst >/dev/null 2>&1; then
+    exec ldst run "$@"
+fi
+
+# 未安装 console_scripts 时退回模块入口（与 ldst 同一个 app）
+exec python -m ladderstock run "$@"

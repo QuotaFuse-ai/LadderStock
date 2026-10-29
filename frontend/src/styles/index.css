@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * 全局基础层。颜色一律走 var(--ldst-*)，本文件不出现任何颜色字面量。
+ * 顺序：main.tsx 先 import tokens.css（变量），再 import 本文件（工具类）。
+ */
+
+@layer base {
+  html {
+    /* 主题切换不闪白：底色取 bg 令牌，且 index.html 内联脚本已在首帧前写好 data-ldst-theme */
+    background-color: var(--ldst-bg);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--ldst-bg);
+    color: var(--ldst-text);
+    font-family: var(--ldst-font-sans);
+    font-size: var(--ldst-font-size-body);
+    line-height: var(--ldst-leading-body);
+    font-weight: var(--ldst-weight-regular);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 焦点环：2px 底色内圈 + 2px 强调色外圈，任何底色上都可见（§9）。
+     :where() 零特异性，组件可以按需覆盖。 */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: none;
+    box-shadow: var(--ldst-focus-ring);
+    border-radius: var(--ldst-radius);
+  }
+
+  ::selection {
+    background-color: var(--ldst-accent-soft);
+    color: var(--ldst-text);
+  }
+
+  /* 等宽数字：所有数值列 / 指标 / 时间戳（§7.1 硬规则 1） */
+  .ldst-num {
+    font-family: var(--ldst-num-font);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+    letter-spacing: 0;
+  }
+
+  /* 滚动条：贴合主题，不喧宾夺主 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ldst-border-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--ldst-border);
+    border-radius: var(--ldst-radius-pill);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--ldst-border-strong);
+  }
+
+  /* 骨架扫光（C-18）：1.2s 循环；reduced-motion 下退化为静态底色 */
+  .ldst-skeleton {
+    background-color: var(--ldst-skeleton);
+    background-image: linear-gradient(
+      90deg,
+      var(--ldst-skeleton) 0%,
+      var(--ldst-skeleton-shine) 50%,
+      var(--ldst-skeleton) 100%
+    );
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+    animation: ldst-shine var(--ldst-duration-base) linear infinite;
+    animation-duration: 1200ms;
+    border-radius: var(--ldst-radius-xs);
+  }
+
+  @keyframes ldst-shine {
+    from {
+      background-position: 150% 0;
+    }
+    to {
+      background-position: -50% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ldst-skeleton {
+      animation: none;
+      background-image: none;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+
+  /* 运行中状态点的呼吸动效（C-12） */
+  @keyframes ldst-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .ldst-pulse {
+    animation: ldst-pulse 1600ms ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ldst-pulse {
+      animation: none;
+    }
+  }
+}

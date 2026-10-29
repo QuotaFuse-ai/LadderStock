@@ -1,0 +1,36 @@
+{
+  "name": "S04 晋级率 0（昨日涨停今日全炸）",
+  "description": "今日仅 1 只 2 板；炸板 3 只且正好是昨日全部涨停股 → 晋级率 0%、封板率 25%。",
+  "datasets": {
+    "limit_pool": [{"code": "A", "consecutive_boards": 2}],
+    "broken_board": [{"code": "X"}, {"code": "Y"}, {"code": "Z"}],
+    "yesterday_limit_up": [{"code": "X"}, {"code": "Y"}, {"code": "Z"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 15.4,
+      "promotion_rate": 0.0,
+      "seal_rate": 25.0,
+      "limit_up_count": 1,
+      "broken_count": 3,
+      "yesterday_limit_up_count": 3,
+      "promoted_count": 0,
+      "max_board": 2,
+      "gap": true,
+      "gap_levels": [1],
+      "missing": []
+    },
+    "ladder": {
+      "available": true,
+      "height": 2,
+      "count": 1,
+      "levels": [2],
+      "stocks": {"2": ["A"]},
+      "gap": true,
+      "gap_levels": [1],
+      "unknown_board": 0,
+      "leaders": ["A"]
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ai.yaml",
+  "type": "object",
+  "required": ["ai"],
+  "additionalProperties": false,
+  "properties": {
+    "ai": {
+      "type": "object",
+      "required": ["default_model", "fallback_chain", "sections"],
+      "additionalProperties": false,
+      "properties": {
+        "default_model": { "type": "string", "minLength": 1 },
+        "base_url_env": { "type": "string" },
+        "api_key_env": { "type": "string" },
+        "fallback_chain": { "type": "array", "items": { "type": "string" } },
+        "structured_output": { "enum": ["prefer", "require", "off"] },
+        "on_all_failed": { "enum": ["degrade_to_text", "fail"] },
+        "sections": {
+          "type": "object",
+          "required": ["sentiment", "capital", "theme", "dragon_tiger", "leader"],
+          "additionalProperties": {
+            "type": "object",
+            "required": ["prompt_file", "output_schema"],
+            "additionalProperties": false,
+            "properties": {
+              "prompt_file": { "type": "string" },
+              "output_schema": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "S09 字段容忍 + 重复代码 + 未知连板数",
+  "description": "consecutive_boards / \"3板\" / 连板数 / boards 四种命名都能解析；A 重复两行、D 有代码但无连板数。情绪按去重代码计数(4 只，含 D)；天梯按 code 去重后统计(3 行，不含 D)——D-04 修复后的口径，见 METRICS.md §3.4。",
+  "datasets": {
+    "limit_pool": [
+      {"code": "A", "consecutive_boards": 3},
+      {"code": "A", "limit_up_days": "3板"},
+      {"code": "B", "连板数": "2"},
+      {"code": "C", "boards": 1},
+      {"code": "D"}
+    ],
+    "broken_board": [{"code": "E"}, {"code": "F"}],
+    "yesterday_limit_up": [{"code": "A"}, {"code": "Z"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 55.8,
+      "promotion_rate": 50.0,
+      "seal_rate": 66.7,
+      "limit_up_count": 4,
+      "broken_count": 2,
+      "yesterday_limit_up_count": 2,
+      "promoted_count": 1,
+      "max_board": 3,
+      "gap": false,
+      "gap_levels": [],
+      "unknown": {"limit_pool": 0, "broken_board": 0},
+      "missing": []
+    },
+    "ladder": {
+      "available": true,
+      "height": 3,
+      "count": 3,
+      "levels": [3, 2, 1],
+      "stocks": {"3": ["A"], "2": ["B"], "1": ["C"]},
+      "gap": false,
+      "gap_levels": [],
+      "unknown_board": 1,
+      "leaders": ["A"]
+    }
+  }
+}

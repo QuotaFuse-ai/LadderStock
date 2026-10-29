@@ -1,0 +1,78 @@
+{
+  "title": "2026-10-27 收盘复盘",
+  "date": "2026-10-27",
+  "generated_at": "2026-10-27 15:42",
+  "freshness": "fresh",
+  "source_status": "ok",
+  "source_detail": "TickHub-CN（limit_up_pool / market_sentiment）、QuotaFuse Wire（wire_get_digest）",
+  "ai": {
+    "model": "deepseek-chat",
+    "degraded": false
+  },
+  "headline": [
+    "情绪温度 62，较昨日回升 8 点，处于「中性偏暖」区间",
+    "晋级率 41.2%，二连板晋级明显改善",
+    "梯队高度 5 板，中位断层仍在 3 板"
+  ],
+  "sections": [
+    {
+      "title": "情绪温度与晋级率",
+      "narrative": [
+        "今日情绪温度 62，较昨日回升 8 点，涨停家数 68 家、跌停 5 家，赚钱效应回到中性偏暖区间。",
+        "晋级率 41.2%，较昨日 28.6% 明显改善，昨日涨停今日平均溢价 2.4%。"
+      ],
+      "metrics": {
+        "temperature": 62,
+        "promotion_rate": "41.2%",
+        "limit_up_count": 68,
+        "limit_down_count": 5
+      },
+      "notes": [
+        "情绪温度由程序计算，AI 只做叙述（DEC-006 闸门 5）"
+      ]
+    },
+    {
+      "title": "连板天梯与梯队断层",
+      "narrative": "最高板为 5 板，4 板仅 1 家、3 板 2 家，2 板与 3 板之间出现断层，接力风险偏高。",
+      "metrics": {
+        "max_board": 5,
+        "gap_level": 3,
+        "ladder_shape": "5-4-3-2-1 收缩型"
+      },
+      "notes": []
+    },
+    {
+      "title": "题材与消息面",
+      "narrative": [
+        "算力租赁方向延续强势，两只核心票封板质量良好；机器人方向高开低走，尾盘炸板 2 家。"
+      ],
+      "metrics": {},
+      "notes": [
+        "题材叙事来自 QuotaFuse Wire 摘要，可选消费；Wire 不可用时本段只留纯指标叙述"
+      ]
+    }
+  ],
+  "ai_failures": [
+    {
+      "section": "明日风险提示",
+      "kind": "truncated",
+      "action": "提高 max_tokens 或缩小单段输入后重试；长文分段生成，避免一次性截断",
+      "retryable": false
+    },
+    {
+      "section": "资金流向解读",
+      "kind": "quota",
+      "action": "额度或频率受限：换 fallback 模型或稍后重试（检查账户额度与并发上限）",
+      "retryable": true
+    }
+  ],
+  "validation": {
+    "date": "2026-10-28",
+    "conditions": [
+      "情绪温度不低于 55 则视为分歧转一致，可继续参与高标",
+      "最高板断板后观察 3 板以下是否补涨，断层收敛则降低风险等级",
+      "算力租赁两只核心票不出现连续两日炸板"
+    ]
+  },
+  "footer": "本报告指标由 LadderStock 程序计算，AI 仅生成叙述文字；数据来自 TickHub-CN / QuotaFuse Wire。"
+}

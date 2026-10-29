@@ -1,0 +1,25 @@
+# AI 编排（文档 §6.3）
+# 密钥不落配置文件：api_key 从环境变量读取（如 LDST_LLM_API_KEY）。
+ai:
+  default_model: user-model
+  base_url_env: LDST_LLM_BASE_URL
+  api_key_env: LDST_LLM_API_KEY
+  fallback_chain: [model-a, model-b]
+  structured_output: prefer
+  on_all_failed: degrade_to_text
+  sections:
+    sentiment:
+      prompt_file: prompts/sentiment.md
+      output_schema: SentimentSection
+    capital:
+      prompt_file: prompts/capital.md
+      output_schema: CapitalSection
+    theme:
+      prompt_file: prompts/theme.md
+      output_schema: ThemeSection
+    dragon_tiger:
+      prompt_file: prompts/dragon_tiger.md
+      output_schema: DragonTigerSection
+    leader:
+      prompt_file: prompts/leader.md
+      output_schema: LeaderSection

@@ -1,0 +1,39 @@
+{
+  "name": "S06 ST 边界（无特殊处理）",
+  "description": "ST/*ST 按涨停池原样计数，不因 ±5% 涨跌幅另设阈值；封板率 2/3 先舍入成 66.7 再进温度加权。",
+  "datasets": {
+    "limit_pool": [
+      {"code": "600001", "name": "*ST甲", "consecutive_boards": 3},
+      {"code": "600002", "name": "ST乙", "consecutive_boards": 1}
+    ],
+    "broken_board": [{"code": "600003"}],
+    "yesterday_limit_up": [{"code": "600001"}, {"code": "600002"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 78.3,
+      "promotion_rate": 100.0,
+      "seal_rate": 66.7,
+      "limit_up_count": 2,
+      "broken_count": 1,
+      "yesterday_limit_up_count": 2,
+      "promoted_count": 2,
+      "max_board": 3,
+      "gap": true,
+      "gap_levels": [2],
+      "missing": []
+    },
+    "ladder": {
+      "available": true,
+      "height": 3,
+      "count": 2,
+      "levels": [3, 1],
+      "stocks": {"3": ["600001"], "1": ["600002"]},
+      "gap": true,
+      "gap_levels": [2],
+      "unknown_board": 0,
+      "leaders": ["600001"]
+    }
+  }
+}

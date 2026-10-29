@@ -1,0 +1,93 @@
+# 增量同步与冷热分离（文档 §6.2 + DEC-006）
+#
+# 每个数据集必须能在 core/boundary.py 的 DATASET_CATALOG 找到生态归属；
+# 这里只写「用哪几个 source id（见 sources.yaml）」与增量模式。
+# 主源失败 → 同 peer 备源 → 本地缓存回放；不启用任何自建采集。
+
+sync:
+  datasets:
+    daily_k:
+      primary: tickhub_kline
+      fallback: [tickhub_tdx_package]
+      watermark_field: trade_date
+      mode: append
+
+    limit_pool:
+      primary: tickhub_limit_pool
+      fallback: [tickhub_ths_limit_pool]
+      watermark_field: trade_date
+      mode: replace
+
+    broken_board:
+      primary: tickhub_broken_board
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    yesterday_limit_up:
+      primary: tickhub_yesterday_limit
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    sentiment:
+      primary: tickhub_sentiment
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    dragon_tiger:
+      primary: tickhub_dragon_tiger
+      fallback: [tickhub_dragon_tiger_backup]
+      watermark_field: trade_date
+      mode: replace
+
+    dragon_tiger_seats:
+      primary: tickhub_seats
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    industry_board:
+      primary: tickhub_industry
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    concept_board:
+      primary: tickhub_concept
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    fund_flow:
+      primary: tickhub_fund_flow
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    hot_rank:
+      primary: tickhub_hot_rank
+      fallback: [tickhub_hot_rank_em]
+      watermark_field: trade_date
+      mode: replace
+
+    # 可选：未安装 Wire 时整段跳过，题材段降级为纯指标叙述
+    theme_news:
+      primary: wire_digest
+      fallback: [wire_timeline]
+      watermark_field: data_as_of
+      mode: replace
+      optional: true
+
+    # 可选：只读拉取 Senate 已有报告，不发起合议
+    council_memo:
+      primary: senate_reports
+      fallback: []
+      watermark_field: data_as_of
+      mode: replace
+      optional: true
+
+  cold_hot:
+    intraday_cache_ttl_sec: 60
+    history_backend: duckdb

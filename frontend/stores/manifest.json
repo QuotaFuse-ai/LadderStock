@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 2,
+  "backend": "indexeddb",
+  "database": "ladderstock-state",
+  "indexFile": "data/state/frontend-index.json",
+  "stores": [
+    {
+      "id": "watchSnapshot",
+      "persistKey": "watch_snapshot",
+      "module": "stores/watchSnapshot.ts",
+      "kind": "snapshot",
+      "persist": true,
+      "ttlSec": 300,
+      "recoverable": false,
+      "description": "盘中盯盘快照：超过 TTL 或交易日变更即需重取，不信任旧值"
+    },
+    {
+      "id": "reviewDraft",
+      "persistKey": "review_draft",
+      "module": "stores/reviewDraft.ts",
+      "kind": "draft",
+      "persist": true,
+      "recoverable": true,
+      "description": "收盘复盘草稿：五段式正文，刷新/崩溃后原样恢复"
+    },
+    {
+      "id": "validationDraft",
+      "persistKey": "validation_draft",
+      "module": "stores/validationDraft.ts",
+      "kind": "draft",
+      "persist": true,
+      "recoverable": true,
+      "description": "明日验证条件草稿：未提交的触发条件同样恢复"
+    }
+  ]
+}

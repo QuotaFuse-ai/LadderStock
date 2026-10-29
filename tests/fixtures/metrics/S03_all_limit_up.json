@@ -1,0 +1,40 @@
+{
+  "name": "S03 全涨停无炸板（高度断层）",
+  "description": "4/2/1 板连续缺 3 板；炸板池为空 → 封板率按涨停数计 100%；晋级率 100%。",
+  "datasets": {
+    "limit_pool": [
+      {"code": "A", "consecutive_boards": 4},
+      {"code": "B", "consecutive_boards": 2},
+      {"code": "C", "consecutive_boards": 1}
+    ],
+    "broken_board": [],
+    "yesterday_limit_up": [{"code": "A"}, {"code": "B"}, {"code": "C"}]
+  },
+  "expected": {
+    "sentiment": {
+      "available": true,
+      "temperature": 93.3,
+      "promotion_rate": 100.0,
+      "seal_rate": 100.0,
+      "limit_up_count": 3,
+      "broken_count": 0,
+      "yesterday_limit_up_count": 3,
+      "promoted_count": 3,
+      "max_board": 4,
+      "gap": true,
+      "gap_levels": [3],
+      "missing": ["broken_board"]
+    },
+    "ladder": {
+      "available": true,
+      "height": 4,
+      "count": 3,
+      "levels": [4, 2, 1],
+      "stocks": {"4": ["A"], "2": ["B"], "1": ["C"]},
+      "gap": true,
+      "gap_levels": [3],
+      "unknown_board": 0,
+      "leaders": ["A"]
+    }
+  }
+}
