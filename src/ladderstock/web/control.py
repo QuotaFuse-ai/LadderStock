@@ -13,7 +13,8 @@ DEC-014 的五条硬约束在这里逐条落地：
    命令一律来自 `core/boundary.PEER_CONTROL` 白名单，peer 只能取枚举 id。
 3. **不动系统环境**：每个 peer 用自己的 `.venv`；不写 PATH、不装全局包、不改代理；
    **从不终止非本控制面启动的进程**（端口占用只报 PID，不杀）。
-4. **凭据只进 env**：密钥只写 peer 真正加载的那个 dotenv（`PeerControl.env_filename`，0600）；
+4. **凭据只进 env**：密钥只写 peer 真正加载的那个 dotenv（`PeerControl.env_filename`，
+   DACL 收口为「仅当前用户 + SYSTEM + Administrators」，QUOT-194 P1-3）；
    GET 只回 `{"set": true, "preview": "sk-****abcd"}`，日志与错误信息统一过 `mask_secrets()`。
 5. **失败即停**：每步最多重试 1 次，仍失败即 `failed` 并把最后 20 行输出写进任务日志；
    端口被占直接失败，**不自动换端口**（DEC-004）。
@@ -52,6 +53,11 @@ from pydantic import BaseModel, Field
 
 from ladderstock.cli.paths import config_dir
 from ladderstock.core.boundary import PEER_CONTROL, PeerControl
+from ladderstock.core.fsguard import (
+    AclError,
+    harden_file_acl,
+    require_local_peer_directories,
+)
 from ladderstock.core.validation import load_validation, validation_path, write_document
 
 # --------------------------------------------------------------------------- #
@@ -728,11 +734,29 @@ def probe_health(url: str, timeout: float = HEALTH_TIMEOUT_SEC) -> tuple[bool, s
 _ENV_KEY_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
 
-def read_env_file(path: Path) -> dict[str, str]:
-    """解析 KEY=VALUE（忽略注释/空行；去掉成对引号）。文件不存在返回空字典。"""
+class EnvFileUnreadable(OSError):
+    """dotenv 存在但读不出来（权限 / 被占用 / 编码）。
+
+    这是 fail closed 的边界（QUOT-194 P1-3）：文件里有密钥时，「读不到」绝不能
+    退化成「没有密钥」——那会让 `ai_test` 变成无鉴权请求、把未知键覆盖掉。
+    """
+
+
+def read_env_file(path: Path, *, strict: bool = False) -> dict[str, str]:
+    """解析 KEY=VALUE（忽略注释/空行；去掉成对引号）。文件不存在返回空字典。
+
+    `strict=True` 时，文件**存在但读不出来**抛 `EnvFileUnreadable`；默认宽松模式
+    只用于「拿不到就算了」的场合（例如日志脱敏，调用方另有兜底）。
+    """
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError) as exc:  # 编码错（如 GBK 手改）也算「读不出来」
+        if strict:
+            raise EnvFileUnreadable(
+                f"无法读取 {path.name}（{exc.__class__.__name__}）：{exc}"
+            ) from exc
         return {}
     values: dict[str, str] = {}
     for line in text.splitlines():
@@ -748,13 +772,29 @@ def read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def write_env_file(path: Path, updates: Mapping[str, str], removals: Iterable[str] = ()) -> None:
-    """原地更新 `.env.local`：保留无关键与注释，写入后 chmod 0600，且原子替换。"""
+def write_env_file(
+    path: Path,
+    updates: Mapping[str, str],
+    removals: Iterable[str] = (),
+    *,
+    harden: Callable[[Path], None] | None = None,
+) -> None:
+    """原地更新 `.env.local`：保留无关键与注释，原子替换，并把 DACL 收到 0600 等价。
+
+    顺序固定为「写临时文件 → 收紧临时文件 DACL → 原子替换」：成品路径上永远不会
+    出现一个权限未收口的版本（QUOT-194 P1-3）。读不出原文时**不覆盖**（fail closed）。
+    """
+    harden_acl = harden or harden_file_acl
     drop = {key for key in removals}
     try:
         original = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except FileNotFoundError:
         original = []
+    except (OSError, UnicodeError) as exc:
+        raise EnvFileUnreadable(
+            f"无法读取现有 {path.name}（{exc.__class__.__name__}）：{exc}；"
+            "为免覆盖其中的密钥/其它键，已中止写入"
+        ) from exc
 
     pending = dict(updates)
     lines: list[str] = []
@@ -774,12 +814,18 @@ def write_env_file(path: Path, updates: Mapping[str, str], removals: Iterable[st
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp")
-    tmp.write_text("\n".join(lines), encoding="utf-8")
     try:
-        os.chmod(tmp, 0o600)
-    except OSError:  # pragma: no cover - Windows 上是尽力而为
-        pass
-    os.replace(tmp, path)
+        tmp.write_text("\n".join(lines), encoding="utf-8")
+        harden_acl(tmp)
+        os.replace(tmp, path)
+    except Exception:
+        # 半成品不能留在磁盘上（含密钥）：收紧 DACL 失败、或替换失败（目标被占用）
+        # 都要收拾干净再把失败抛给调用方
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - 清理失败不改变结论
+            pass
+        raise
 
 
 # --------------------------------------------------------------------------- #
@@ -788,6 +834,15 @@ def write_env_file(path: Path, updates: Mapping[str, str], removals: Iterable[st
 
 class JobFailure(RuntimeError):
     """任务在某个步骤上失败（带步骤名，直接进入 `error` 字段）。"""
+
+
+class StatePersistError(JobFailure):
+    """状态文件落盘或 DACL 收紧失败（QUOT-194 P1-3）。
+
+    继承 `JobFailure`：启动/停止任务直接以干净文案失败，而不是「内部错误」。
+    fail closed 的取舍：宁可这次操作不记录，也不留下一个别的账户能改写的
+    `peer_state.json`——那等于把 P0-2（盲杀非本控制面进程）的门重新打开。
+    """
 
 
 @dataclass
@@ -1129,9 +1184,15 @@ class ControlPlane:
         process_info: Callable[[int, Path], tuple[str | None, str | None]] | None = None,
         process_started: Callable[[int], datetime | None] | None = None,
         resolve: Callable[[str], list[str]] | None = None,
+        harden_acl: Callable[[Path], None] | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         self.peers: dict[str, PeerControl] = dict(peers or PEER_CONTROL)
+        # 启动即校验 peer 目录（QUOT-194 P1-3）：共享盘上的 peer 等于把执行权
+        # 交给别人，命中即抛 SharedPeerDirectoryError，不进入任何动作。
+        require_local_peer_directories(
+            {key: ctl.directory for key, ctl in self.peers.items()}
+        )
         self._sources_loader = sources_loader or load_sources_peers
         self._run = run or run_step
         self._port_probe = port_probe or probe_port
@@ -1142,6 +1203,8 @@ class ControlPlane:
         # 进程创建时间单独注入（QUOT-177 P1-2）：测试给假时间，生产走 CIM/wmic
         self._process_started = process_started or process_created_at
         self._resolve = resolve or resolve_host_ips
+        # 文件权限收口可注入（QUOT-194 P1-3）：测试用它构造「icacls 失败」路径
+        self._harden_acl = harden_acl or harden_file_acl
 
         self._state_path = self.data_root / CONTROL_STATE_SUBDIR / CONTROL_STATE_FILE
         self._logs_dir = self.data_root / CONTROL_LOG_SUBDIR
@@ -1166,12 +1229,41 @@ class ControlPlane:
         return data
 
     def _save_state(self) -> None:
+        """原子落盘并收紧 DACL（QUOT-194 P1-3）。
+
+        顺序：写 `<name>.tmp` → `icacls` 收紧 tmp 的 DACL → `os.replace` 原子替换。
+        这样成品路径上永远不会出现「权限还没收口」的窗口（含首次创建）。
+
+        失败抛 `StatePersistError`（fail closed）：状态文件是「只终止自己启动的
+        进程」的唯一证据，宁可这次不记录，也不留一个别人能改写的版本。
+        """
+        tmp = self._state_path.with_name(f"{self._state_path.name}.tmp")
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            self._state_path.write_text(
+            tmp.write_text(
                 json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-        except OSError:  # pragma: no cover - 落盘失败不应该让请求 500
+            self._harden_acl(tmp)
+            os.replace(tmp, self._state_path)
+        except AclError as exc:
+            self._discard_tmp(tmp)
+            raise StatePersistError(
+                f"无法保存控制面状态文件：{exc}。为避免留下可被其他账户篡改的 "
+                f"{CONTROL_STATE_FILE}（谁改了它就能诱导控制面终止别的进程），"
+                "本次操作已中止；若刚启动过 peer，请人工核对端口占用与进程后再处理"
+            ) from exc
+        except OSError as exc:
+            self._discard_tmp(tmp)
+            raise StatePersistError(
+                f"无法写入控制面状态文件 {self._state_path}：{exc}；本次操作已中止"
+            ) from exc
+
+    @staticmethod
+    def _discard_tmp(tmp: Path) -> None:
+        """清掉半成品，不留未收口权限的文件。"""
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - 清理失败不改变结论
             pass
 
     def _peer_state(self, key: str) -> dict[str, Any]:
@@ -1672,7 +1764,7 @@ class ControlPlane:
         if record.get("legacy"):
             return (
                 f"无法确认该 PID 属于本 peer：PID {pid} 来自旧格式状态文件（只有 PID、"
-                "没有可执行文件路径），请先停止后重新启动，或人工确认后清理 "
+                "没有可执行文件路径）。请重新启动该 peer，或人工核对后清理 "
                 "data/control/peer_state.json 里的 pids"
             )
         if not _pid_alive(pid):
@@ -1704,7 +1796,7 @@ class ControlPlane:
         if not recorded_exe:
             return (
                 f"拒绝终止 PID {pid}：状态文件里没有该 PID 的可执行文件路径，"
-                "无法与实时进程比对（请先停止后重新启动，或人工确认后清理 "
+                "无法与实时进程比对（请重新启动该 peer，或人工核对后清理 "
                 "data/control/peer_state.json 里的 pids）"
             )
         if _norm_exe(exe) != _norm_exe(recorded_exe):
@@ -1728,10 +1820,13 @@ class ControlPlane:
             )
         drift = abs((_as_utc(started_at) - recorded_started).total_seconds())
         if drift > PROCESS_START_TOLERANCE_SEC:
+            # 一位小数 + 写明容差（QUOT-194 P2-8）：`:.0f` 会把 5.4s 印成「5 秒」，
+            # 看着像「明明在 5s 容差内却被拒」，会诱导下游去放宽判据
             return (
                 f"拒绝终止 PID {pid}：进程创建时间与启动记录不符"
                 f"（记录 {recorded_started.isoformat()}，实际 "
-                f"{_as_utc(started_at).isoformat()}，相差 {drift:.0f} 秒），疑似 PID 复用"
+                f"{_as_utc(started_at).isoformat()}，相差 {drift:.1f} 秒，"
+                f"容差 {PROCESS_START_TOLERANCE_SEC:.0f} 秒），疑似 PID 复用"
             )
         return None
 
@@ -1862,7 +1957,15 @@ class ControlPlane:
     def read_config(self, key: str) -> dict[str, Any]:
         ctl = self.peers[key]
         path = Path(ctl.directory) / ctl.env_filename
-        values = read_env_file(path)
+        try:
+            values = read_env_file(path, strict=True)
+        except EnvFileUnreadable as exc:
+            # fail closed（QUOT-194 P1-3）：读不到就当「不可读」报错，
+            # 不能退化成「全部未配置」骗下游去重填密钥
+            raise HTTPException(
+                status_code=500,
+                detail=f"{exc}；为避免误报「未配置」并覆盖现有密钥，已中止（fail closed）",
+            ) from None
         rows: dict[str, Any] = {}
         for name in ctl.config_keys:
             raw = values.get(name, "")
@@ -1910,7 +2013,16 @@ class ControlPlane:
         path = Path(ctl.directory) / ctl.env_filename
         if not path.parent.is_dir():
             raise HTTPException(status_code=400, detail=f"peer 目录不存在：{path.parent}")
-        write_env_file(path, updates, removals)
+        try:
+            write_env_file(path, updates, removals, harden=self._harden_acl)
+        except EnvFileUnreadable as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from None
+        except (AclError, OSError) as exc:
+            # fail closed：权限收不口就不写成品文件，也不假装成功
+            raise HTTPException(
+                status_code=500,
+                detail=f"写入 {path.name} 失败或收紧 DACL 失败：{exc}；已中止，未留下半成品文件",
+            ) from None
         payload = self.read_config(key)
         payload["updated"] = sorted(updates)
         payload["cleared"] = sorted(removals)
@@ -1942,7 +2054,13 @@ class ControlPlane:
         key = (api_key or "").strip()
         if not key:
             # 已存密钥只在白名单主机上回落，否则要求显式提供（QUOT-123 C10）
-            stored = read_env_file(Path(ctl.directory) / ctl.env_filename)
+            try:
+                stored = read_env_file(Path(ctl.directory) / ctl.env_filename, strict=True)
+            except EnvFileUnreadable as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"{exc}；无法确认是否已存密钥，为避免退化成无鉴权请求，已中止",
+                ) from None
             stored_key = next(
                 (stored[name] for name in ctl.secret_keys if stored.get(name)), ""
             )
@@ -2044,7 +2162,17 @@ class ControlPlane:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             lines = []
-        stored = read_env_file(Path(ctl.directory) / ctl.env_filename)
+        try:
+            stored = read_env_file(Path(ctl.directory) / ctl.env_filename, strict=True)
+        except EnvFileUnreadable as exc:
+            # 读不到密钥就脱不了敏（QUOT-194 P1-3）：宁可不给日志，也不能漏明文
+            return {
+                "peer": key,
+                "path": str(path),
+                "exists": path.is_file(),
+                "lines": [],
+                "error": f"{exc}；无法对日志脱敏，已隐去全部日志行（fail closed）",
+            }
         secrets = [stored.get(name, "") for name in ctl.secret_keys]
         return {
             "peer": key,
@@ -2277,6 +2405,7 @@ __all__ = [
     "CONTROL_ENABLED_ENV",
     "CONTROL_PREFIX",
     "ControlPlane",
+    "EnvFileUnreadable",
     "JOB_TAIL_LINES",
     "Job",
     "JobFailure",
@@ -2284,6 +2413,7 @@ __all__ = [
     "MAX_CONDITIONS",
     "MAX_TRIGGER_CHARS",
     "STATUS_LABELS",
+    "StatePersistError",
     "VALIDATION_CONDITION_FIELDS",
     "VALIDATION_MODES",
     "VALIDATION_REQUEST_FIELDS",

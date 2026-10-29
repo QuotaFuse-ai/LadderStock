@@ -104,9 +104,16 @@ def launch(*, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
     if host not in LOOPBACK_HOSTS:
         _log(f"警告：监听 {host} 会暴露到本机以外；默认应为 127.0.0.1（DEC-004）")
 
+    from ladderstock.core.fsguard import SharedPeerDirectoryError
     from ladderstock.web.server import create_app, serve
 
-    app = create_app()
+    try:
+        app = create_app()
+    except SharedPeerDirectoryError as exc:
+        # 控制面的启动校验（peer 目录不得在共享盘上，QUOT-194 P1-3）是配置问题：
+        # 按配置错误退出，而不是抛一屏 traceback
+        error(str(exc))
+        raise typer.Exit(EXIT_CONFIG) from None
     _log(f"看板已启动 http://{host}:{port}（只读 API + 静态页面；Ctrl+C 退出）")
     previous_break = _install_break_handler()
     try:

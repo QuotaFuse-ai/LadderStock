@@ -738,8 +738,14 @@ def create_app(
     #
     # 读写面单独成前缀 `/api/control/*`：`LDST_CONTROL_ENABLED=0` 时整族 404，
     # 数据面 7 个只读接口不受影响；非回环来源一律 403（见 `control._guard`）。
-    plane = control_plane if control_plane is not None else ControlPlane(data_root=root)
-    app.include_router(build_router(plane))
+    #
+    # 关掉控制面时**不构造** ControlPlane：它的启动校验（peer 目录不得在共享盘上，
+    # QUOT-194 P1-3）会对整机路径做判定，关掉控制面的人只想要数据面，不该被它拦下。
+    plane = control_plane
+    if plane is None and control_enabled():
+        plane = ControlPlane(data_root=root)
+    if plane is not None:
+        app.include_router(build_router(plane))
 
     # ------------------------------------------------------------ 静态看板
 
