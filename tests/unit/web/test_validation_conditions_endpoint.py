@@ -43,7 +43,7 @@ def _put(client: TestClient, payload: Any, **kwargs: Any):
 
 
 def _expected_id(code: str | None, trigger: str) -> str:
-    return hashlib.sha1(f"{code or ''}|{trigger}".encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha1(f"{code or ''}|{trigger}".encode()).hexdigest()[:12]
 
 
 def _seed_document(root: Path, document: dict[str, Any]) -> Path:

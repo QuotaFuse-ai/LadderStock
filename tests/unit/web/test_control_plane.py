@@ -173,7 +173,9 @@ def _wait(plane: ControlPlane, job_id: str, timeout: float = 5.0) -> Job:
 # 1. 状态判定 5 级
 # --------------------------------------------------------------------------- #
 
-def test_status_unconfigured_when_directory_missing(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+def test_status_unconfigured_when_directory_missing(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
     plane = _plane(tmp_path, peer_dirs)
     # alpha 目录存在且未装 venv → 未安装
     assert plane.snapshot("alpha")["status"] == control.STATUS_NOT_INSTALLED
@@ -183,7 +185,9 @@ def test_status_unconfigured_when_directory_missing(tmp_path: Path, peer_dirs: d
     assert "目录不存在" in plane.snapshot("beta")["detail"]
 
 
-def test_status_unconfigured_when_not_registered(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+def test_status_unconfigured_when_not_registered(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
     plane = _plane(tmp_path, peer_dirs, registered=("beta",))
     snapshot = plane.snapshot("alpha")
     assert snapshot["status"] == control.STATUS_UNCONFIGURED
@@ -209,9 +213,13 @@ def test_status_installed_when_import_succeeds(tmp_path: Path, peer_dirs: dict[s
     assert snapshot["actions"]["can_start"] is True
 
 
-def test_status_running_requires_port_and_health(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+def test_status_running_requires_port_and_health(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
     _venv(peer_dirs["alpha"])
-    ports = lambda port: [PortOwner(pid=999, process="python.exe")] if port == 8002 else []
+    def ports(port: int) -> list[PortOwner]:
+        return [PortOwner(pid=999, process="python.exe")] if port == 8002 else []
+
     plane = _plane(tmp_path, peer_dirs, ports=ports)
     snapshot = plane.snapshot("alpha")
     assert snapshot["status"] == control.STATUS_RUNNING
@@ -220,7 +228,9 @@ def test_status_running_requires_port_and_health(tmp_path: Path, peer_dirs: dict
 
 def test_status_failed_when_health_down(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     _venv(peer_dirs["alpha"])
-    ports = lambda port: [PortOwner(pid=999, process="python.exe")] if port == 8002 else []
+    def ports(port: int) -> list[PortOwner]:
+        return [PortOwner(pid=999, process="python.exe")] if port == 8002 else []
+
     plane = _plane(
         tmp_path,
         peer_dirs,

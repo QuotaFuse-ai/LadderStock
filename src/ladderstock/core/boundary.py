@@ -151,7 +151,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         config_notes=(
             "TickHub-CN 的 admin 健康检查在 /healthz（admin_api/app.py:291）。",
             "CN 源码只读 ADMIN_PORT / LOG_LEVEL 等环境变量：MCP 端口走 CLI --port（默认 8000），"
-            "日志键实际是 LOG_LEVEL；MCP_HTTP_PORT、TICKHUB_CN_LOG_LEVEL 按 PRD §5 保留但当前不生效。",
+            "日志键实际是 LOG_LEVEL；MCP_HTTP_PORT、TICKHUB_CN_LOG_LEVEL 按 PRD §5 保留"
+            "但当前不生效。",
         ),
     ),
     "tickhub_us": PeerControl(

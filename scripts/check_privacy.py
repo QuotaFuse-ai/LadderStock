@@ -11,7 +11,9 @@
 
 1. `config-secrets`       config/*.yaml 不得出现真实密钥，只允许 `*_env` 指向环境变量名；
 2. `credential-printing`  src 里把凭据 / Token 送进 print / log / error 的代码行；
-3. `privacy-surfaces`     MCP 工具清单、web 私有字段、journal 库不被 mcp/web/ai 引用；
+3. `privacy-surfaces`     MCP 工具清单、web 私有字段、journal 库不被 mcp/web/ai 引用
+                         （唯一例外：DEC-015 授权的 `web/server.py` → `journal.stats`，
+                         且该文件必须同时具备回环闸门与顶层键白名单）；
 4. `boundary-guards`      用反例验证 `scan_no_collection()` / `audit_sources()` 拦得住越界；
 5. `listener-defaults`    web / MCP 默认只绑回环；非回环必须显式开关 + 鉴权 Token。
 
@@ -143,6 +145,91 @@ def check_credential_printing() -> list[str]:
 # 3. 隐私面：MCP / web / AI 都不碰交易日志
 # --------------------------------------------------------------------------- #
 
+#: 对 `ladderstock.journal` 的 import（模块级，取到完整子模块名）。
+JOURNAL_IMPORT = re.compile(
+    r"^[ \t]*(?:from[ \t]+(ladderstock\.journal(?:\.[A-Za-z_]\w*)*)[ \t]+import\b"
+    r"|import[ \t]+(ladderstock\.journal(?:\.[A-Za-z_]\w*)*)\b)",
+    re.MULTILINE,
+)
+
+#: `ladderstock.journal` 导入白名单（DEC-015 Tier 1 / QUOT-196 / QUOT-202）。
+#: 只放行「哪个文件的哪个子模块」，且该文件必须同时具备：回环独占闸门
+#: `_journal_guard`（来源回环 + Host 白名单）与顶层键白名单 `JOURNAL_STATS_FIELDS`。
+#: **其它任何对 `ladderstock.journal` 的引用仍判 FAIL**，规则整体不放开。
+JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
+    "src/ladderstock/web/server.py": {
+        "ladderstock.journal.stats": (
+            "def _journal_guard(",
+            "is_loopback_host(",
+            "host_header_allowed(",
+            "JOURNAL_STATS_FIELDS",
+        ),
+    },
+}
+
+
+def _journal_import_problems(rel: str, text: str) -> list[str]:
+    """返回 `text` 里越界的 journal 引用；白名单命中但闸门缺失同样算越界。"""
+    allowed = JOURNAL_IMPORT_ALLOWLIST.get(rel, {})
+    problems: list[str] = []
+    for match in JOURNAL_IMPORT.finditer(text):
+        module = match.group(1) or match.group(2)
+        required = allowed.get(module)
+        if required is None:
+            problems.append(f"{rel} 引用了 {module}（隐私库不得进 MCP / web / AI）")
+            continue
+        absent = [piece for piece in required if piece not in text]
+        if absent:
+            problems.append(
+                f"{rel} 引用了 {module}，但缺少 DEC-015 要求的闸门：{absent}"
+            )
+    return problems
+
+
+def _journal_rule_selftest() -> list[str]:
+    """反例自检：规则必须有牙，白名单不能变成后门。"""
+    problems: list[str] = []
+
+    def caught(label: str, rel: str, text: str) -> bool:
+        if _journal_import_problems(rel, text):
+            return True
+        problems.append(f"journal 规则漏放反例 {label}")
+        return False
+
+    def passed(label: str, rel: str, text: str) -> None:
+        if _journal_import_problems(rel, text):
+            problems.append(f"journal 规则误报正例 {label}：{_journal_import_problems(rel, text)}")
+
+    # 反例 1：越界子模块（白名单之外的 journal 子模块）
+    caught("from-journal-store", "src/ladderstock/web/server.py",
+           "from ladderstock.journal.store import JournalStore\n")
+    # 反例 2：包级 import
+    caught("import-journal-package", "src/ladderstock/web/server.py",
+           "import ladderstock.journal\n")
+    # 反例 3：白名单模块挪到别的文件（mcp / ai）
+    caught("stats-in-mcp", "src/ladderstock/mcp/server.py",
+           "from ladderstock.journal.stats import compute_stats\n")
+    # 反例 4：白名单文件里出现白名单外的 journal 子模块
+    caught("mixed-in-web", "src/ladderstock/web/server.py",
+           "from ladderstock.journal.stats import compute_stats\n"
+           "from ladderstock.journal.ledger import Ledger\n")
+    # 反例 5：白名单模块在册，但闸门 / 顶层键白名单缺一不可
+    caught("no-loopback-guard", "src/ladderstock/web/server.py",
+           "from ladderstock.journal.stats import compute_stats\n"
+           "JOURNAL_STATS_FIELDS = ()\n"
+           "is_loopback_host(x)\n"
+           "host_header_allowed(r)\n")
+
+    # 正例：白名单文件 + 白名单模块 + 闸门齐全
+    passed("web-server-stats", "src/ladderstock/web/server.py",
+           "from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats\n"
+           "JOURNAL_STATS_FIELDS: tuple[str, ...] = ()\n"
+           "def _journal_guard(request) -> None:\n"
+           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+           "    if not host_header_allowed(request): raise ...\n")
+    return problems
+
+
 def check_privacy_surfaces() -> list[str]:
     problems: list[str] = []
 
@@ -160,16 +247,17 @@ def check_privacy_surfaces() -> list[str]:
     if missing:
         problems.append(f"web 私有字段少于 MCP，缺少：{missing}")
 
-    journal_ref = re.compile(
-        r"\bfrom\s+ladderstock\.journal\b|\bimport\s+ladderstock\.journal\b"
-    )
     for package in ("mcp", "web", "ai"):
         for path in sorted((SRC / "ladderstock" / package).rglob("*.py")):
             if "__pycache__" in path.parts:
                 continue
-            if journal_ref.search(path.read_text(encoding="utf-8", errors="ignore")):
-                rel = path.relative_to(ROOT).as_posix()
-                problems.append(f"{rel} 引用了 journal（隐私库不得进 MCP / web / AI）")
+            rel = path.relative_to(ROOT).as_posix()
+            problems.extend(
+                _journal_import_problems(
+                    rel, path.read_text(encoding="utf-8", errors="ignore")
+                )
+            )
+    problems.extend(_journal_rule_selftest())
     return problems
 
 

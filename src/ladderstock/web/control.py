@@ -415,7 +415,7 @@ def condition_id(code: str | None, trigger: str) -> str:
     `reconcile()` 按 `conditions[].id` 与 `reconcile.results[].id` 对齐，`id` 缺失
     就永远对不上账；由内容确定性生成，`replace` 之后同一条件的 id 不漂移。
     """
-    return hashlib.sha1(f"{code or ''}|{trigger}".encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha1(f"{code or ''}|{trigger}".encode()).hexdigest()[:12]
 
 
 def condition_key(item: Mapping[str, Any]) -> tuple[str, str]:
@@ -1054,7 +1054,7 @@ def _linux_process_created_at(pid: int) -> datetime | None:  # pragma: no cover 
             if row.startswith("btime "):
                 btime = int(row.split()[1])
                 break
-        hertz = int(getattr(os, "sysconf")("SC_CLK_TCK"))  # Windows 无 sysconf，此处仅 POSIX
+        hertz = int(os.sysconf("SC_CLK_TCK"))  # 仅 POSIX：调用方已按 os.name 分流，Windows 不走这里
     except (OSError, ValueError, IndexError):
         return None
     if btime is None or hertz <= 0:
@@ -1267,9 +1267,8 @@ class ControlPlane:
         )
 
         last_job = self._last_job.get(key)
-        open_url = (
-            f"http://127.0.0.1:{ctl.web_port}" if ctl.web_port and status == STATUS_RUNNING else None
-        )
+        running_with_web = status == STATUS_RUNNING and bool(ctl.web_port)
+        open_url = f"http://127.0.0.1:{ctl.web_port}" if running_with_web else None
         return {
             "id": key,
             "product": self._product_name(key),
@@ -1432,7 +1431,10 @@ class ControlPlane:
             "ports": {
                 "board": 5950,
                 "mcp": 5951,
-                **{key: {"mcp": ctl.mcp_port, "web": ctl.web_port} for key, ctl in self.peers.items()},
+                **{
+                    key: {"mcp": ctl.mcp_port, "web": ctl.web_port}
+                    for key, ctl in self.peers.items()
+                },
             },
         }
 
@@ -1593,8 +1595,8 @@ class ControlPlane:
         if occupied:
             port, owner = occupied[0]
             raise JobFailure(
-                f"端口 {port} 已被占用（PID {owner.pid or '未知'}，{owner.process or '未知进程'}）；"
-                "按 DEC-004 不自动换端口"
+                f"端口 {port} 已被占用（PID {owner.pid or '未知'}，"
+                f"{owner.process or '未知进程'}）；按 DEC-004 不自动换端口"
             )
 
         # 2. 安装检查
