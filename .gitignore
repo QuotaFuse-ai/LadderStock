@@ -41,3 +41,10 @@ tmp*
 var/
 *.pid
 chrome-profile*/
+
+# 内部过程材料：按 DEC-0026 只留本地，永不进入版本管理。
+# 复核证据 / 复跑脚本 / 任务产出 / 审计记录 / 对外无关的文档草稿。
+qa_evidence/
+docs/tasks/
+*.docx
+~$*

@@ -38,6 +38,9 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# 内部过程材料按 DEC-0026 只留本地、不进版本管理；留在工作副本里也不参与静态检查，
+# 否则 `ruff check .` 会被复核脚本的行长等噪声卡住（QUOT-206）。
+extend-exclude = ["docs/tasks", "qa_evidence", "tmp*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

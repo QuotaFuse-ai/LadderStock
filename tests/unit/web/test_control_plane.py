@@ -1174,8 +1174,29 @@ def test_ai_test_allows_loopback_only_without_credentials(
     assert sent == ["http://127.0.0.1:11434/v1/chat/completions"]
 
 
+def _drain_body(handler: Any) -> None:
+    """读完请求体再回应答。
+
+    不读完就直接关连接，Windows 会给对端回 RST（发送缓冲区里还有未读数据）。
+    客户端此时可能还没读到状态行，`recv` 就报 `WinError 10053`
+    `ConnectionAbortedError`——这条用例曾因此在全量跑时偶发失败（QUOT-206）。
+    """
+    try:
+        length = int(handler.headers.get("Content-Length") or 0)
+    except (TypeError, ValueError):
+        length = 0
+    if length > 0:
+        handler.rfile.read(length)
+
+
 def test_post_json_does_not_follow_redirects() -> None:
-    """C10：3xx 原样返回（算失败），绝不跟到新地址把密钥带出去。"""
+    """C10：3xx 原样返回（算失败），绝不跟到新地址把密钥带出去。
+
+    稳定性（QUOT-206）：两个桩服务都先把请求体读完、显式声明 `Content-Length: 0`
+    并 `Connection: close`，退出时 `server_close()` 释放监听套接字。原实现把请求体
+    留在内核缓冲区就关连接，Windows 会回 RST，导致客户端读状态行时偶发
+    `ConnectionAbortedError(10053)`——不是业务逻辑问题，是桩服务的 TCP 收尾不当。
+    """
     import http.server
     import threading
 
@@ -1183,10 +1204,12 @@ def test_post_json_does_not_follow_redirects() -> None:
 
     class _Sink(http.server.BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802 - http.server 约定
+            _drain_body(self)
             hits.append(self.path)
             body = b'{"model": "stolen"}'
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
 
@@ -1199,8 +1222,11 @@ def test_post_json_does_not_follow_redirects() -> None:
 
     class _Redirect(http.server.BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802 - http.server 约定
+            _drain_body(self)
             self.send_response(302)
             self.send_header("Location", f"http://127.0.0.1:{sink_port}/leak")
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
 
         def log_message(self, *args: Any) -> None:  # noqa: D401 - 静音
@@ -1219,6 +1245,8 @@ def test_post_json_does_not_follow_redirects() -> None:
     finally:
         redirect.shutdown()
         sink.shutdown()
+        redirect.server_close()
+        sink.server_close()
     assert status == 302
     assert hits == []
 
