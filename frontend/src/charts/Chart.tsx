@@ -26,12 +26,22 @@ export interface LineChartProps {
   band?: { lower: number; upper: number }
   threshold?: { value: number; label?: string }
   unit?: string
+  /** 画布本身不可读：调用方必须给一句文字结论（§9 图表要有等价文本） */
+  ariaLabel?: string
   className?: string
 }
 
 const AXIS_FONT = '12px var(--ldst-font-sans)'
 
-export function LineChart({ points, height = 220, band, threshold, unit = '', className }: LineChartProps) {
+export function LineChart({
+  points,
+  height = 220,
+  band,
+  threshold,
+  unit = '',
+  ariaLabel,
+  className,
+}: LineChartProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const theme = useThemeChoice()
   const pointsKey = useMemo(() => JSON.stringify(points), [points])
@@ -115,7 +125,14 @@ export function LineChart({ points, height = 220, band, threshold, unit = '', cl
     // pointsKey 覆盖 points 内容；theme 变化时必须重读 CSS 变量重绘
   }, [pointsKey, height, band?.lower, band?.upper, threshold?.value, threshold?.label, unit, theme]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={hostRef} className={cn('w-full', className)} />
+  return (
+    <div
+      ref={hostRef}
+      role={ariaLabel ? 'img' : undefined}
+      aria-label={ariaLabel}
+      className={cn('w-full', className)}
+    />
+  )
 }
 
 export interface BarPoint {
@@ -132,7 +149,7 @@ export interface BarChartProps {
 }
 
 /** CH-02 连板梯队：竖柱，数值即该板位数家数。 */
-export function BarChart({ points, height = 200, className }: BarChartProps) {
+export function BarChart({ points, height = 200, ariaLabel, className }: BarChartProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const theme = useThemeChoice()
   const pointsKey = useMemo(() => JSON.stringify(points), [points])
@@ -193,5 +210,12 @@ export function BarChart({ points, height = 200, className }: BarChartProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pointsKey, height, theme])
 
-  return <div ref={hostRef} className={cn('w-full', className)} />
+  return (
+    <div
+      ref={hostRef}
+      role={ariaLabel ? 'img' : undefined}
+      aria-label={ariaLabel}
+      className={cn('w-full', className)}
+    />
+  )
 }

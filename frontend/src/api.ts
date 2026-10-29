@@ -226,9 +226,27 @@ export interface WatchSnapshotPayload {
 }
 
 export interface ValidationCondition {
-  code: string
+  /** 盘上条件不一定带标的代码：`server.py:_validation_conditions` 对缺失值恒给 `null` */
+  code: string | null
+  /** 同上：条件文案缺失时后端给 `null`，前端不得当作字符串拼接 */
+  trigger: string | null
+  note?: string | null
+}
+
+/** `PUT /api/control/validation/conditions` 的请求条目（QUOT-197） */
+export interface ValidationConditionWrite {
+  code?: string | null
+  /** 必填且非空，最长 200 字（服务端校验，空串直接 400） */
   trigger: string
   note?: string | null
+}
+
+/** 写入响应：服务端回显**落盘后**的完整条件列表（`saved` = 条数） */
+export interface ValidationConditionsSaved {
+  trade_date: string
+  conditions: Array<{ id?: string; code?: string | null; trigger?: string | null; note?: string | null }>
+  updated_at: string
+  saved: number
 }
 
 export interface ValidationReconcile {
@@ -241,6 +259,8 @@ export interface ValidationPayload {
   trade_date: string
   conditions: ValidationCondition[]
   reconcile: ValidationReconcile | null
+  /** `missing` = 这一天还没有 validation 缓存（不是错误，是空态） */
+  data_source_status?: 'ok' | 'missing'
 }
 
 export interface StateConfigPayload {
@@ -545,6 +565,45 @@ export const api = {
         body,
         timeoutMs: 20000,
       }),
+    /**
+     * 保存「明日验证条件」到本机 validation 缓存（QUOT-197）。
+     * `merge` 按 `code+trigger` 去重追加；`replace` 整段覆盖（只改 `conditions`，
+     * 文件里已有的 `reconcile` 原样保留，写前备份 `.bak`）。
+     */
+    writeValidationConditions: (body: {
+      trade_date: string
+      conditions: ValidationConditionWrite[]
+      mode: 'merge' | 'replace'
+    }) =>
+      request<ValidationConditionsSaved>('/control/validation/conditions', {
+        method: 'PUT',
+        body,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /**
+     * 探测「后端写通道」是否就绪，**不写入任何文件**。
+     *
+     * 故意用 GET 打同一个路径：路由已注册但只允许 PUT 时 FastAPI 回 405
+     * （在路由层就被拦下，不进入 `_guard`，更不会写盘）→ 就绪；
+     * 控制面整族关闭或端点未合入时回 404 → 未就绪。
+     */
+    validationWriteProbe: async (signal?: AbortSignal): Promise<{ ready: boolean; detail: string }> => {
+      try {
+        await request<unknown>('/control/validation/conditions', {
+          signal,
+          timeoutMs: CONTROL_TIMEOUT_MS,
+        })
+        return { ready: true, detail: '控制面已响应' }
+      } catch (error) {
+        if (isApiError(error) && error.kind === 'http') {
+          if (error.status === 405) return { ready: true, detail: 'PUT 路由已注册（GET 返回 405）' }
+          if (error.status === 404) {
+            return { ready: false, detail: '控制面未启用或端点未合入（HTTP 404）' }
+          }
+        }
+        throw error
+      }
+    },
     job: (jobId: string, signal?: AbortSignal) =>
       request<JobView>(`/control/jobs/${encodeURIComponent(jobId)}`, {
         signal,
