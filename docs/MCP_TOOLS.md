@@ -27,7 +27,7 @@
 
 除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **13 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个）。
 
-> **命名偏差（已声明-接受，DEC-017 §1）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
+> **命名偏差（已声明-接受，DEC-019 §1）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
 > 因为 QUOT-145 的验收文字直接点名「MCP 只读工具 `candidate_pool`」。
 > 现有测试只锁「清单与文档一致 + 全部只读 + 无隐私关键字」，不锁前缀；
 > 若后续要统一成 `ladder_get_candidate_pool`，必须同时改 CLI 契约文档、`DOCUMENTED_TOOLS`
@@ -89,7 +89,7 @@
 
 补充约定：
 
-1. **禁止字段名**：`journal`、`trades`、`positions`、`watchlist`、`position`、`holding`、`自选` 不得出现在任何 MCP 工具名、描述或 `input_schema` 中。候选池因此把「地位」分项对外命名为 `standing`（中文标签「地位」只用于人类可读输出，不参与键名），见 DEC-017 §2。
+1. **禁止字段名**：`journal`、`trades`、`positions`、`watchlist`、`position`、`holding`、`自选` 不得出现在任何 MCP 工具名、描述或 `input_schema` 中。候选池因此把「地位」分项对外命名为 `standing`（中文标签「地位」只用于人类可读输出，不参与键名），见 DEC-019 §2。
 2. **禁止旁路**：MCP 不提供任何「查交易日志 / 持仓 / 自选」的工具；模型若需要纪律统计，只能由人类在 CLI 侧自行查看。
 3. **只读边界**：`/api/*` 全部为 `GET`，无写接口；写路径只有 CLI（`journal add`）。
 4. **本机回环**：web 只监听 `127.0.0.1:5950`（MCP `5951`）；端口被占用时 `ldst run` 直接以退出码 3 失败并提示 `--port`，绝不静默换端口（DEC-004）。
@@ -120,7 +120,7 @@
 
 - 新增 MCP 工具或字段前，先确认它不属于隐私域；若确需纪律统计或持仓查询，走 CLI + 人类显式导出，**不新增工具**。
 - 任何触达 `data/journal.sqlite` 的新代码都必须仅依赖 `data/sqlite_store.py`，不得在 `adapters/`、`core/`、`ai/`、`mcp/` 中出现对该库的引用。
-- 隐私域的新分项命名要绕开 `FORBIDDEN_KEYWORDS`：候选池的「地位」对外叫 `standing`（DEC-017 §2）。
+- 隐私域的新分项命名要绕开 `FORBIDDEN_KEYWORDS`：候选池的「地位」对外叫 `standing`（DEC-019 §2）。
 - 改 `positions` 表结构要 `SCHEMA_VERSION +1`、在 `_SCHEMA_V*` 追加一段 DDL，
   并保证「旧库升级不丢行、改结构前先备份、更高版本库被拒绝」三条仍有测试覆盖
   （`tests/unit/journal/test_position.py` §1）。

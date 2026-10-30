@@ -6,7 +6,7 @@
   `src/ladderstock/mcp/server.py::_tool_candidate_pool`（MCP `candidate_pool`）
 - 夹具：`tests/fixtures/pool/P01…P06.json` + `tests/unit/core/test_pool_golden.py`
 - 相关：`docs/specs/METRICS.md`（舍入与 6 板基准）、`DEC-006`（生态边界，不采集）、
-  `DEC-012`（`available=false` → 退出码 6）、`DEC-017`（本文两条命名/权重决策的来历）
+  `DEC-012`（`available=false` → 退出码 6）、`DEC-019`（本文两条命名/权重决策的来历）
 - 口径不变项：本文**不修改**任何既有指标口径；连板高度基准直接复用 `METRICS.md` §3.3 的 6 板。
 
 ## 0. 一句话
@@ -84,7 +84,7 @@ score = Σ(weight_i × part_i) / Σ(weight_i)   （i 只取 part_i 非 null 的�
 - 五个分项全为 `null` → `score = null`，该候选仍然出现，`absent_parts` 点名列满。
 
 对外键名用 `absent_parts` 而不是第二个 `missing`：顶层 `missing` 已经是「缺哪个**数据集**」，
-两个概念不同名（决策见 DEC-017 §3）。
+两个概念不同名（决策见 DEC-019 §3）。
 
 ## 4. 输出契约
 

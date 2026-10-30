@@ -124,7 +124,7 @@
 ## E″. 候选池与我的持仓（R7 增量，5）
 
 > 口径来源：`docs/specs/SPEC-CANDIDATE-POOL.md`（打分算式与手算对照）、
-> `docs/specs/SPEC-MY-POSITION.md`（字段、本地计算与隐私边界）、`DEC-017` / `DEC-018`。
+> `docs/specs/SPEC-MY-POSITION.md`（字段、本地计算与隐私边界）、`DEC-019` / `DEC-020`。
 > 这 5 条**不属于** DEC-003 的 31 条 P0 基线，测试矩阵按「R7 增量」单独登记。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
