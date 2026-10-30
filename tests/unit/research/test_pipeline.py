@@ -144,7 +144,10 @@ def test_interrupted_run_only_fills_missing_stages(tmp_path: Path) -> None:
     first = pipeline(tmp_path, broken).run(DAY)
     assert first.exit_code == 9
     assert first.failed == ["valuation", "report"]
-    assert broken.calls == ["company", "financial", "forecast", "valuation", "risk"]
+    # R1-3 起六段都走三级阶梯：失败段在阶梯上多撞一级，段序仍是 company→…→risk
+    assert broken.calls[:4] == ["company", "financial", "forecast", "valuation"]
+    assert broken.calls.count("valuation") > 1
+    assert broken.calls[-1] == "risk"
 
     resume = FakeClient()
     second = pipeline(tmp_path, resume).run(DAY)
