@@ -14,6 +14,7 @@ LadderStock 是生态第 4 层（短线复盘与纪律执行），**不采集、
 1. `DATASET_CATALOG` —— 每个数据集都必须登记归属 peer 与工具，没有归属就不许同步。
 2. `scan_no_collection()` —— 源码里出现采集库或行情站点直连即违规（测试与 `ldst doctor` 共用）。
 3. `merge_narrative()` / `assert_narrative_only()` —— AI 只能写叙述，不能改数字。
+4. `assert_provenance()` —— 数字必须有出处；没有出处的数值字段进不了 `verified` 集。
 
 任何越界统一抛 `BoundaryViolation`（属于施工期契约错误，不落到对外退出码）。
 """
@@ -21,7 +22,7 @@ LadderStock 是生态第 4 层（短线复盘与纪律执行），**不采集、
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 Mode = Literal["append", "replace"]
@@ -492,6 +493,239 @@ def merge_narrative(metrics: Mapping[str, Any], ai_payload: Mapping[str, Any]) -
     merged: dict[str, Any] = dict(metrics)
     merged["ai"] = dict(ai_payload)
     return merged
+
+
+# --------------------------------------------------------------------------- #
+# 数字级出处（R3）：谁给的数、什么时候给的、能不能当已核实
+# --------------------------------------------------------------------------- #
+#
+# `merge_narrative` 只保证「AI 不改数」，不保证「这个数字有出处」。一个没有出处的
+# 数字即使逐字正确也不可审计——出了问题追不回是谁给的。所以出处是**独立的一道闸门**：
+# 数值字段只有带合法 `Provenance` 才允许进 `verified` 集，其余一律未核实。
+#
+# 出处由程序写：`provenance` 不在 `AI_WRITABLE` 里，模型既改不了指标，也不能给自己
+# 发引用（`assert_narrative_only` 天然挡住，R3 不需要额外机制）。
+
+#: 合法出处族。前四个是生态 peer（`PEERS` 的对外名，带连字符），
+#: `computed` / `user` 是本机自有（程序算的 / 人敲的），`web` 是尚未批准的联网通道。
+PROVENANCE_SOURCES: tuple[str, ...] = (
+    "tickhub-cn",
+    "tickhub-us",
+    "wire",
+    "senate",
+    "computed",
+    "user",
+    "web",
+)
+
+#: 走 peer 的出处必须点名工具/端点，否则等于「听说 TickHub 给的」
+_PEER_SOURCES: frozenset[str] = frozenset({"tickhub-cn", "tickhub-us", "wire", "senate"})
+
+#: `web` 可以登记出处，但**永远不能当已核实**：联网检索是 DEC-006 / PRD §9 的硬边界，
+#: 未获人类批准前，把 web 数值放进 verified 集等于给未批准的通道背书。
+_NEVER_VERIFIED_SOURCES: frozenset[str] = frozenset({"web"})
+
+#: 判定「已核实」最少要有的引用要素：何时取 + 数据截至何时
+_REQUIRED_WHEN: tuple[str, ...] = ("fetched_at", "as_of")
+
+
+@dataclass(frozen=True)
+class Provenance:
+    """一个数字的出处。`value` 必须与它标注的指标值逐字相等（不等即判伪造引用）。"""
+
+    value: float | int | str
+    unit: str
+    source: str
+    fetched_at: str
+    as_of: str
+    endpoint: str | None = None
+    url: str | None = None
+    verified: bool = False
+    #: 这条出处属于哪个指标键（`values` 反查用，也让 sources 条目自解释）
+    metric: str = ""
+
+    def __post_init__(self) -> None:
+        if self.source not in PROVENANCE_SOURCES:
+            raise BoundaryViolation(
+                f"出处族 {self.source!r} 不在登记清单 {list(PROVENANCE_SOURCES)} 内——"
+                "新增出处族要先改 DATASET_CATALOG / PEERS，不要在调用处随手填一个字符串"
+            )
+        if self.value is None:
+            raise BoundaryViolation(f"指标 {self.metric or '(未命名)'} 的出处没有值可标")
+        if not self.verified:
+            return
+        if self.source in _NEVER_VERIFIED_SOURCES:
+            raise BoundaryViolation(
+                f"出处族 {self.source} 未获批准（DEC-006：联网检索属 R4），"
+                "不得标记为已核实"
+            )
+        missing = [name for name in _REQUIRED_WHEN if not str(getattr(self, name) or "").strip()]
+        if missing:
+            raise BoundaryViolation(
+                f"指标 {self.metric or '(未命名)'} 声称已核实但缺引用要素："
+                + "、".join(missing)
+            )
+        if self.source in _PEER_SOURCES and not str(self.endpoint or "").strip():
+            raise BoundaryViolation(
+                f"指标 {self.metric or '(未命名)'} 走 peer {self.source}，"
+                "已核实必须点名 endpoint（工具名），否则追不回是哪次调用给的"
+            )
+        if self.source not in _PEER_SOURCES and not (
+            str(self.url or "").strip() or str(self.endpoint or "").strip()
+        ):
+            raise BoundaryViolation(
+                f"指标 {self.metric or '(未命名)'} 的出处（{self.source}）既无 endpoint 也无 url，"
+                "无法点回落点，不得标 verified"
+            )
+
+    def as_dict(self) -> dict[str, Any]:
+        """落盘 / 注入 AI 上下文的形态：键顺序即 `Provenance` 的定义顺序。"""
+        return {
+            "value": self.value,
+            "unit": self.unit,
+            "source": self.source,
+            "endpoint": self.endpoint,
+            "fetched_at": self.fetched_at,
+            "as_of": self.as_of,
+            "url": self.url,
+            "verified": self.verified,
+        }
+
+
+#: `Provenance.as_dict()` 的键：出现在指标值的位置上就按出处记录解读
+PROVENANCE_FIELDS: frozenset[str] = frozenset(
+    {"value", "unit", "source", "endpoint", "fetched_at", "as_of", "url", "verified"}
+)
+
+
+def is_provenance_payload(payload: Any) -> bool:
+    """一个 mapping 是否是出处记录（从 JSON 读回来的形态，不必是 dataclass）。"""
+    return isinstance(payload, Mapping) and "source" in payload and "value" in payload
+
+
+def _as_record(key: str, payload: Any) -> Provenance:
+    if isinstance(payload, Provenance):
+        return payload if payload.metric else replace(payload, metric=key)
+    if not is_provenance_payload(payload):
+        raise BoundaryViolation(f"指标 {key} 的出处记录形状非法（缺 value / source）")
+    return Provenance(
+        value=payload["value"],
+        unit=str(payload.get("unit") or ""),
+        source=str(payload["source"]),
+        endpoint=payload.get("endpoint"),
+        fetched_at=str(payload.get("fetched_at") or ""),
+        as_of=str(payload.get("as_of") or ""),
+        url=payload.get("url"),
+        verified=bool(payload.get("verified")),
+        metric=key,
+    )
+
+
+def numeric_value(value: Any) -> float | None:
+    """能当数字看的才返回 float：`45` / `'45.2'` / `'45%'` / `'1,234'` 是同一个数。
+
+    `bool` 不算数字（口径与 METRICS.md §4.1 一致：布尔位不是指标）。
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().rstrip("%％").replace(",", "")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class ProvenanceAudit:
+    """一次出处审计的结果：谁能进 `verified`，谁只能挂〔未核实〕。"""
+
+    verified: frozenset[str]
+    unverified: frozenset[str]
+    records: Mapping[str, Provenance] = field(default_factory=dict)
+    #: 非数值字段（字符串口径、嵌套结构）：不参与「数字必须有出处」的判定
+    non_numeric: frozenset[str] = frozenset()
+    #: 出处与值解开后的纯指标载荷：进 `merge_narrative` 与产物 `facts` 的就是这一份
+    metrics: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def complete(self) -> bool:
+        """所有数值字段都有合法出处（R3 之后新写的产物应当成立）。"""
+        return not self.unverified
+
+
+def assert_provenance(
+    metrics: Mapping[str, Any],
+    provenance: Mapping[str, Any] | None = None,
+) -> ProvenanceAudit:
+    """数值字段 → 出处；**没有 provenance 的数值字段不得进入 `verified` 集**。
+
+    `metrics` 的取值有三种形态：标量（程序算出的指标值）、`Provenance`、
+    或出处记录 dict（从 `<stage>.json` 读回来的）。后两种把出处与值绑在一起，
+    第一种要求出处从 `provenance` 参数旁路传入。
+
+    抛 `BoundaryViolation` 的三种情形（施工期契约错误，与 `merge_narrative` 同级）：
+    出处族未登记、声称已核实但引用要素不全、**出处记的值与指标值不一致**（伪造引用）。
+    仅仅「没有出处」不抛——那是要挂〔未核实〕的正常状态，不是契约错误。
+    """
+    records: dict[str, Provenance] = {}
+    values: dict[str, Any] = {}
+    for key, raw in dict(metrics or {}).items():
+        if isinstance(raw, Provenance) or is_provenance_payload(raw):
+            record = _as_record(key, raw)
+            values[key] = record.value
+            records[key] = record
+        else:
+            values[key] = raw
+
+    for key, payload in dict(provenance or {}).items():
+        if key in records:
+            raise BoundaryViolation(
+                f"指标 {key} 的出处写了两处（既内联在指标值里又从 provenance 参数传入）"
+            )
+        records[key] = _as_record(key, payload)
+
+    stray = sorted(set(records) - set(values))
+    if stray:
+        raise BoundaryViolation(
+            "出处记录指向不存在的指标：" + "、".join(stray) + "（先确认指标键名）"
+        )
+
+    verified: set[str] = set()
+    unverified: set[str] = set()
+    non_numeric: set[str] = set()
+    for key, value in values.items():
+        found = records.get(key)
+        if found is not None and not _same_value(found.value, value):
+            raise BoundaryViolation(
+                f"指标 {key} 的值（{value!r}）与出处记录的 value（{found.value!r}）不一致——"
+                "引用被换过，这个数字不可信"
+            )
+        if numeric_value(value) is None:
+            non_numeric.add(key)
+        if found is None:
+            # 唯一的硬规则：没有出处的数值字段进不了 verified，只能挂〔未核实〕
+            if key not in non_numeric:
+                unverified.add(key)
+            continue
+        (verified if found.verified else unverified).add(key)
+
+    return ProvenanceAudit(
+        verified=frozenset(verified),
+        unverified=frozenset(unverified),
+        records=dict(sorted(records.items())),
+        non_numeric=frozenset(non_numeric),
+        metrics=values,
+    )
+
+
+def _same_value(record_value: Any, value: Any) -> bool:
+    """出处记的数与指标当前的数是不是同一个：能按数字比就按数字比（`45%` == 45）。"""
+    if record_value == value:
+        return True
+    left, right = numeric_value(record_value), numeric_value(value)
+    return left is not None and right is not None and left == right
 
 
 # --------------------------------------------------------------------------- #

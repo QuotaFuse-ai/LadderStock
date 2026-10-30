@@ -19,7 +19,7 @@ R2（QUOT-140）在这里再加一张**代码内常量**表 `ALLOWED_TOOLS`：�
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -109,7 +109,8 @@ JSON_RULES = (
     "1. 只输出一个 JSON 对象，字段仅限 narrative / highlights / risks / evidence；\n"
     "2. narrative 为字符串数组，每个元素一段完整叙述；\n"
     "3. 不得输出任何指标数字键，数字一律由程序计算；\n"
-    "4. 引用数字必须与给定快照逐字一致，快照没有的就说没有。"
+    "4. 引用数字必须与给定快照逐字一致，快照没有的就说没有；\n"
+    "5. 不要自己写引用角标 `[n]` 或〔未核实〕，来源标记一律由程序渲染。"
 )
 
 
@@ -152,12 +153,15 @@ def build_messages(
     day: str,
     facts: dict[str, Any],
     *,
+    provenance: Mapping[str, Any] | None = None,
     tool_names: Sequence[str] | None = None,
 ) -> tuple[str, str]:
     """拼 system / user；快照只读，AI 只能追加叙述。
 
-    `tool_names` 只在真要发工具请求时传（客户端支持 tool-calling）：不传时
+    R2：`tool_names` 只在真要发工具请求时传（客户端支持 tool-calling）：不传时
     system 与 R2 之前逐字相同，纯文本路径不受影响。
+    R3：指标进上下文时**同时**带出处（`provenance` 块），模型才有得可引；
+    没有出处的数字它照样只能照抄，渲染阶段会被标成〔未核实〕。
     """
     title = checkpoint.STAGE_TITLES.get(stage, stage)
     instruction = tools.tool_instruction(tool_names or ())
@@ -168,7 +172,8 @@ def build_messages(
         f"段落标识：{stage}\n"
         f"段落：{title}\n"
         "程序事实快照（只读）：\n"
-        f"{json.dumps(facts, ensure_ascii=False, indent=2, default=str)}\n\n"
+        f"{json.dumps(facts, ensure_ascii=False, indent=2, default=str)}\n"
+        f"{_provenance_block(provenance)}\n"
         "请基于快照写本段叙述，输出 JSON。"
     )
     return system, user
@@ -179,14 +184,26 @@ def plain_messages(
     stage: str,
     day: str,
     facts: dict[str, Any],
+    *,
+    provenance: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     """第三级降级（纯文本）用的消息：同样约束，但明确要求纯文本。
 
     刻意不接 `tool_names`：第三级是「模型连结构化都没做到」的收口，
     再挂工具只会多烧一轮额度，改不了格式问题。
     """
-    system, user = build_messages(code, stage, day, facts)
+    system, user = build_messages(code, stage, day, facts, provenance=provenance)
     return system.replace(JSON_RULES, _PLAIN_RULES), user.replace("输出 JSON。", "直接写叙述。")
+
+
+def _provenance_block(provenance: Mapping[str, Any] | None) -> str:
+    """出处块：没有来源就明说「本段数值全部未核实」，而不是留个空对象让模型猜。"""
+    if not provenance or not (provenance.get("sources") or provenance.get("values")):
+        return "数字出处（只读）：本段没有任何引用来源，出现的数字一律按未核实处理。\n"
+    return (
+        "数字出处（只读，程序写入）：\n"
+        f"{json.dumps(provenance, ensure_ascii=False, indent=2, default=str)}\n"
+    )
 
 
 def _constraints(title: str) -> str:
@@ -194,7 +211,8 @@ def _constraints(title: str) -> str:
         f"1. 只写「{title}」这一段的叙述，不写其他段；\n"
         "2. 不得输出或改写任何指标数字——数字由程序计算，你只能引用给定快照；\n"
         "3. 不联网、不编造来源；快照缺什么就明说缺什么；\n"
-        "4. 中文输出。"
+        "4. 不自行标注引用角标或「未核实」，来源标记由程序渲染；\n"
+        "5. 中文输出。"
     )
 
 
@@ -202,7 +220,7 @@ _PLAIN_RULES = (
     "\n\n硬约束（输出格式）：\n"
     "1. 中文纯文本输出，按段落分行，不要 JSON、不要代码围栏；\n"
     "2. 不得输出或改写任何指标数字，只能引用给定快照里的数字；\n"
-    "3. 不联网、不编造来源。"
+    "3. 不联网、不编造来源，也不自己标引用角标。"
 )
 
 
