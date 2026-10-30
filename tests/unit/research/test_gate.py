@@ -348,6 +348,39 @@ def test_all_failed_exit_9(tmp_path: Path, configured: None) -> None:
         assert (artifacts.artifact_dir(CODE, DAY, other) / f"{stage}.md").is_file(), stage
     assert not (artifacts.artifact_dir(CODE, DAY, other) / "risk.json").exists()
 
+    # 场景 C：六段全失败 → 整条管线以 9 退出，一件半成品都不留
+    worst = tmp_path / "all-failed"
+    client_c = FakeClient(fail_on=STAGES)
+    run_c = pipeline(worst, client_c).run(DAY)
+
+    assert run_c.exit_code == 9
+    assert run_c.failed == list(STAGES)
+    assert status_map(run_c) == {name: "failed" for name in STAGES}
+    assert run_c.degraded is False and run_c.models == [] and run_c.generated == []
+    # 前五段没有产物，报告段直接判「缺输入」而不是重新取数（一次模型调用都不发）
+    assert client_c.stages("report") == []
+    directory_c = artifacts.artifact_dir(CODE, DAY, worst)
+    assert not directory_c.exists() or not list(directory_c.glob("*")), list(
+        directory_c.glob("*")
+    )
+
+    checkpoint_c = json.loads(
+        Path(checkpoint.checkpoint_path(CODE, DAY, worst)).read_text(encoding="utf-8")
+    )
+    assert list(checkpoint_c["stages"]) == list(STAGES), "六段全失败也要每段一条状态"
+    for name in STAGES:
+        entry = checkpoint_c["stages"][name]
+        assert entry["status"] == "failed" and entry["completed_at"], name
+        assert entry["failure"]["retryable"] is True, name
+
+    # 全失败后续跑：`--retry-failed` 会把六段重新选中（失败段绝不复用）
+    retry_client = FakeClient()
+    run_d = pipeline(worst, retry_client).run(DAY, retry_failed=True)
+    assert run_d.generated == list(STAGES)
+    assert run_d.exit_code == 0
+    assert status_map(run_d) == {name: "ok" for name in STAGES}
+    assert set(run_d.as_dict()["artifacts"]) == set(STAGES)
+
 
 # --------------------------------------------------------------------------- #
 # 4. 产物结构：json 键形状 + md 非空 + checkpoint 每段一条
