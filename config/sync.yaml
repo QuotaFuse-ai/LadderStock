@@ -6,11 +6,20 @@
 
 sync:
   datasets:
+    # 逐只取数的数据集（tencent_kline / stock_fund_flow / dragon_tiger_seats 的 code 必填）
+    # 需要一个**代码池**。解析优先级（QUOT-233）：
+    #   1. 本次命令行 `ldst sync --codes 600000,000001`
+    #   2. 下面这份 `codes`
+    #   3. 本机隐私库自选表 watchlist（只读代码；对外输出只出现数量）
+    # 三处都为空 → 该数据集判 failed 且**一次调用都不发**：空 `code` 会被 TickHub 拒回
+    # QFSD-9001，历史上这里发的是空参，才把整包压成 1 行、日期取成抓取时间。
+    # 单次上限 100 只（超过请分批判 --codes；全市场口径是盘后包备源，不在这里硬顶）。
     daily_k:
       primary: tickhub_kline
       fallback: [tickhub_tdx_package]
       watermark_field: trade_date
       mode: append
+      codes: []
 
     limit_pool:
       primary: tickhub_limit_pool
@@ -47,6 +56,7 @@ sync:
       fallback: []
       watermark_field: trade_date
       mode: replace
+      codes: []
 
     industry_board:
       primary: tickhub_industry
@@ -65,6 +75,7 @@ sync:
       fallback: []
       watermark_field: trade_date
       mode: replace
+      codes: []
 
     hot_rank:
       primary: tickhub_hot_rank

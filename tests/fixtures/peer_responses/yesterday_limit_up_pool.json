@@ -1,0 +1,68 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "code": "000530",
+      "name": "冰山冷热",
+      "market": "sz",
+      "price": 7.92,
+      "change_pct": -3.766707420349121,
+      "turnover_rate": 43.2192497253418,
+      "amplitude": 13.24422836303711,
+      "speed": 0.0,
+      "amount": 2137009168.0,
+      "float_market_cap": 4752924462.0,
+      "total_market_cap": 6678243095.04,
+      "y_first_seal_time": "14:05:45",
+      "y_streak": 1,
+      "industry": "通用设备",
+      "limit_up_days": 2,
+      "limit_up_count": 1
+    },
+    {
+      "code": "000701",
+      "name": "厦门信达",
+      "market": "sz",
+      "price": 5.68,
+      "change_pct": 1.0676156282424927,
+      "turnover_rate": 18.691110610961914,
+      "amplitude": 11.921708106994629,
+      "speed": 0.0,
+      "amount": 718182592.0,
+      "float_market_cap": 3792800864.08,
+      "total_market_cap": 3796018430.72,
+      "y_first_seal_time": "10:20:42",
+      "y_streak": 1,
+      "industry": "贸易Ⅱ",
+      "limit_up_days": 2,
+      "limit_up_count": 1
+    },
+    {
+      "code": "001219",
+      "name": "青岛食品",
+      "market": "sz",
+      "price": 19.94,
+      "change_pct": 9.983452796936035,
+      "turnover_rate": 24.89775276184082,
+      "amplitude": 2.3717594146728516,
+      "speed": 0.0,
+      "amount": 944077296.0,
+      "float_market_cap": 3792538150.0000005,
+      "total_market_cap": 3887975975.0000005,
+      "y_first_seal_time": "09:25:00",
+      "y_streak": 4,
+      "industry": "休闲食品",
+      "limit_up_days": 5,
+      "limit_up_count": 5
+    }
+  ],
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:55:21+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "date": "20261030",
+    "count": 39
+  }
+}

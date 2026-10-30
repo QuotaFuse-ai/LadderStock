@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "data": {
+    "code": "600000",
+    "period": "daily",
+    "adjust": "qfq",
+    "klines": [
+      {
+        "date": "2026-10-23",
+        "open": 9.69,
+        "close": 9.53,
+        "high": 9.73,
+        "low": 9.52,
+        "volume": 755926.0,
+        "amount": null
+      },
+      {
+        "date": "2026-10-26",
+        "open": 9.48,
+        "close": 9.62,
+        "high": 9.68,
+        "low": 9.45,
+        "volume": 793761.0,
+        "amount": null
+      },
+      {
+        "date": "2026-10-27",
+        "open": 9.56,
+        "close": 9.82,
+        "high": 9.87,
+        "low": 9.53,
+        "volume": 807530.0,
+        "amount": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "tencent",
+    "fetched_at": "2026-10-30T19:54:41+08:00",
+    "cache_hit": false,
+    "confidence": "A",
+    "trace_id": "trace-fixture-1",
+    "count": 6
+  }
+}

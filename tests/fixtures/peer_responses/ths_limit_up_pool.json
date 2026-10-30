@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "code": "600258",
+      "name": "首旅酒店",
+      "price": 12.43,
+      "change_pct": 10.0,
+      "reason": "三季报净利增长+酒店扩张+大消费",
+      "board_type": "换手板",
+      "seal_rate": 1.0,
+      "break_times": 30,
+      "seal_amount": 2962243.0,
+      "high_days": "首板",
+      "first_time": "13:30:21",
+      "is_again": 1
+    },
+    {
+      "code": "605338",
+      "name": "巴比食品",
+      "price": 20.88,
+      "change_pct": 10.0105,
+      "reason": "中式面点+大消费+小笼包+三季报增",
+      "board_type": "换手板",
+      "seal_rate": 1.0,
+      "break_times": 7,
+      "seal_amount": 3889944.0,
+      "high_days": "2天2板",
+      "first_time": "13:32:03",
+      "is_again": 1
+    },
+    {
+      "code": "603200",
+      "name": "上海洗霸",
+      "price": 51.72,
+      "change_pct": 9.9957,
+      "reason": "固态电池+数据中心液冷+水处理",
+      "board_type": "换手板",
+      "seal_rate": 0.8333333333333334,
+      "break_times": 11,
+      "seal_amount": 53688360.0,
+      "high_days": "首板",
+      "first_time": "13:07:18",
+      "is_again": 1
+    }
+  ],
+  "meta": {
+    "source": "ths",
+    "fetched_at": "2026-10-30T19:55:12+08:00",
+    "cache_hit": false,
+    "confidence": "C",
+    "trace_id": "trace-fixture-1",
+    "date": "20261030",
+    "limit_up_count": 47,
+    "limit_down_count": 82,
+    "count": 47
+  }
+}

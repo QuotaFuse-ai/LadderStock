@@ -1,0 +1,72 @@
+{
+  "ok": true,
+  "data": {
+    "total": 49,
+    "page": 1,
+    "page_size": 5,
+    "items": [
+      {
+        "board_code": "new_blhy",
+        "board_name": "玻璃行业",
+        "price": 12.988947368421,
+        "change_pct": -4.4782474067193,
+        "change": -0.60894736842105,
+        "turnover_rate": 693349034.0,
+        "main_net_inflow": null,
+        "main_net_ratio": null,
+        "up_count": null,
+        "down_count": null,
+        "leader_name": "山东药玻",
+        "leader_change_pct": 18.03,
+        "leader_code": "0.670",
+        "member_count": 19,
+        "volume": 8884943446.0,
+        "amount": 600529.0
+      },
+      {
+        "board_code": "new_cbzz",
+        "board_name": "船舶制造",
+        "price": 13.051428571429,
+        "change_pct": -2.4661044090958,
+        "change": -0.33,
+        "turnover_rate": 217981317.0,
+        "main_net_inflow": null,
+        "main_net_ratio": null,
+        "up_count": null,
+        "down_count": null,
+        "leader_name": "江苏国信",
+        "leader_change_pct": 7.3,
+        "leader_code": "1.955",
+        "member_count": 8,
+        "volume": 3561788552.0,
+        "amount": 2608.0
+      },
+      {
+        "board_code": "new_cmyl",
+        "board_name": "传媒娱乐",
+        "price": 7.5961111111111,
+        "change_pct": -5.9143299501118,
+        "change": -0.4775,
+        "turnover_rate": 1652526067.0,
+        "main_net_inflow": null,
+        "main_net_ratio": null,
+        "up_count": null,
+        "down_count": null,
+        "leader_name": "中原传媒",
+        "leader_change_pct": 13.2,
+        "leader_code": "2.326",
+        "member_count": 40,
+        "volume": 12560277978.0,
+        "amount": 719.0
+      }
+    ]
+  },
+  "meta": {
+    "source": "sina",
+    "fetched_at": "2026-10-30T19:55:10+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 5
+  }
+}

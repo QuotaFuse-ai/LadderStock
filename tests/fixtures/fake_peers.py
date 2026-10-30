@@ -140,6 +140,9 @@ SYNC_DOC: dict[str, Any] = {
                 "fallback": ["tickhub_tdx_package"],
                 "watermark_field": "trade_date",
                 "mode": "append",
+                # `tencent_kline` 的 code 是必填（QUOT-233），桩里的池子给一只票，
+                # 让「一次同步 = 一次调用」的断言保持原样；多只票的扇出另有专门用例。
+                "codes": ["600000"],
             },
             "limit_pool": {
                 "primary": "tickhub_limit_pool",
@@ -263,6 +266,40 @@ def kline_records(day: str = "2026-10-24") -> list[dict[str, Any]]:
         {"code": "600000", "trade_date": day, "close": 10.5},
         {"code": "000001", "trade_date": day, "close": 12.1},
     ]
+
+
+def kline_tool_payload(
+    code: str,
+    days: list[str],
+    *,
+    fetched_at: str = "2026-10-24T15:05:00+08:00",
+    period: str = "daily",
+    adjust: str = "qfq",
+) -> dict[str, Any]:
+    """`tencent_kline` 的**真实**返回形状（QUOT-233）：`data` 是对象，K 线在 `klines` 里。
+
+    与 `tickhub_payload(kline_records(...))` 的区别就是要锁住这一点——
+    按「记录列表」解析真实返回会把整包压成 1 行、`code` 为空、日期取成抓取时间。
+    """
+    return {
+        "ok": True,
+        "data": {
+            "code": code,
+            "period": period,
+            "adjust": adjust,
+            "klines": [
+                {"date": day, "open": 10.0, "close": 10.5, "high": 10.8, "low": 9.9, "volume": 1e5}
+                for day in days
+            ],
+        },
+        "meta": {
+            "source": "stub",
+            "fetched_at": fetched_at,
+            "cache_hit": False,
+            "confidence": "A",
+            "trace_id": f"trace-stub-{code}",
+        },
+    }
 
 
 def limit_records(day: str = "2026-10-24") -> list[dict[str, Any]]:

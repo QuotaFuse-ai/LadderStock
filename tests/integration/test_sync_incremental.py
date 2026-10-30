@@ -24,6 +24,9 @@ from ladderstock.data import duckdb_store, watermark
 DAY1 = "2026-10-24"
 DAY2 = "2026-10-25"
 
+#: daily_k 走代码池分支后的真实入参（`tencent_kline` 的 code 必填，口径显式带上）
+KLINE_PARAMS = {"code": "600000", "period": "daily", "adjust": "qfq"}
+
 
 @pytest.fixture()
 def data_home(tmp_path, monkeypatch):
@@ -66,12 +69,13 @@ def test_first_run_is_full_then_next_run_sends_since(data_home) -> None:
     assert first["results"][0]["status"] == "ok"
     assert first["results"][0]["watermark_before"] is None
     assert first["results"][0]["watermark_after"] == DAY1
-    assert transport.calls[0].params == {}
+    assert transport.calls[0].params == KLINE_PARAMS
     assert store.value("daily_k") == DAY1
 
     second = run_sync(registry, store, ["daily_k"])
 
-    assert transport.calls[1].params == {"since": DAY1}
+    # 增量水位落到工具真正的入参名上：tencent_kline 没有 since，只有 start（含当日）
+    assert transport.calls[1].params == {**KLINE_PARAMS, "start": DAY1}
     assert second["results"][0]["watermark_before"] == DAY1
     assert second["results"][0]["mode"] == "incremental"
 
@@ -97,7 +101,7 @@ def test_full_mode_ignores_watermark_but_does_not_rewind_it(data_home) -> None:
 
     payload = run_sync(registry, store, ["daily_k"], full=True)
 
-    assert transport.calls[-1].params == {}
+    assert transport.calls[-1].params == KLINE_PARAMS
     assert payload["mode"] == "full"
     assert payload["results"][0]["mode"] == "full"
     assert store.value("daily_k") == DAY1
@@ -117,7 +121,7 @@ def test_new_trading_day_advances_watermark(data_home) -> None:
 
     assert store.value("daily_k") == DAY2
     assert duckdb_store.dataset_rows("daily_k") == 4
-    assert transport.calls[1].params == {"since": DAY1}
+    assert transport.calls[1].params == {**KLINE_PARAMS, "start": DAY1}
 
 
 def test_each_dataset_has_its_own_watermark(data_home) -> None:
@@ -260,13 +264,14 @@ def test_cli_sync_dataset_succeeds_and_prints_json(repo, data_home, monkeypatch)
         "ladderstock.data.provider_registry.build_transport", lambda _peers: transport
     )
 
-    result = CliRunner().invoke(app, ["sync", "--dataset", "daily_k"])
+    result = CliRunner().invoke(app, ["sync", "--dataset", "daily_k", "--codes", "600000"])
 
     assert result.exit_code == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["summary"]["exit_code"] == 0
     assert payload["results"][0]["dataset"] == "daily_k"
     assert payload["results"][0]["status"] == "ok"
+    assert transport.calls[0].params == KLINE_PARAMS
 
 
 def test_cli_sync_status_reports_watermarks(repo, data_home, monkeypatch) -> None:
@@ -274,7 +279,7 @@ def test_cli_sync_status_reports_watermarks(repo, data_home, monkeypatch) -> Non
     monkeypatch.setattr(
         "ladderstock.data.provider_registry.build_transport", lambda _peers: transport
     )
-    CliRunner().invoke(app, ["sync", "--dataset", "daily_k"])
+    CliRunner().invoke(app, ["sync", "--dataset", "daily_k", "--codes", "600000"])
 
     result = CliRunner().invoke(app, ["sync", "status"])
 

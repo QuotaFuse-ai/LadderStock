@@ -86,6 +86,58 @@ TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——800
 可达性只由 `ldst sources validate` / `ldst sources health` 负责，所以 peer 没启动
 不会让 `doctor` 变红。`sources validate` 的退出码优先级见 §8。
 
+### 2.2 TickHub 真实 `data` 的三种形状（QUOT-233）
+
+真实返回是 `{ok, data, meta}`，`data` 有**三种**形状——不是「永远是记录列表」。
+映射表在 `data/adapters/tickhub.py:ROW_SHAPES`，真实样本（脱敏）在
+`tests/fixtures/peer_responses/`，契约由 `tests/contract/test_tickhub_payload_mapping.py` 锁住：
+
+| 形状 | 工具 | 记录键 | 透传到每行 | 行必须有 `code` |
+|---|---|---|---|---|
+| 对象 + 数组 | `tencent_kline` | `klines` | `code` `period` `adjust` | 是 |
+| 对象 + 数组 | `tdx_daily_package`（daily_k 备源） | `rows` | — | 是 |
+| 对象 + 数组 | `limit_up_pool` / `broken_board_pool` | `items` | — | 是 |
+| 对象 + 数组 | `industry_boards` / `concept_boards` | `items` | — | 否（板块维度，代码在 `board_code`） |
+| 对象 + 数组 | `stock_fund_flow` | `flows` | `code` `name` | 是 |
+| 对象 + 数组 | `dragon_tiger_seats` | `records` | `code` | 是 |
+| 记录列表 | `dragon_tiger` / `ths_limit_up_pool` / `yesterday_limit_up_pool` / `ths_hot_rank` / `eastmoney_hot_rank` | 整个 `data` | — | 原样成行 |
+| 对象快照 | `market_sentiment` | —（未登记形状） | — | 整包落**一行**，嵌套 `leaders` 不展开 |
+
+三条口径：
+
+1. **形状表按工具登记**，备源与主源形状不同（`klines` vs `rows`）；表里声明的键
+   缺失就报错，不静默吞——上游改形状必须第一时间知道。没登记形状的工具回对象就按
+   快照落一行（DEC-006 闸门 2：不硬凑字段）。
+2. **行内 `date` → `trade_date`**，头部口径字段透传到每一行，否则落库只剩整包一行。
+3. **`data_as_of` 以 payload 自己声明的为准**：入参 > 对象头部日期（`date` /
+   `trade_date` / `latest_date` / `as_of`，支持 `YYYYMMDD`）> `meta` 同类字段 >
+   行内最大日期 > 抓取时间。`meta.fetched_at` 只证明「什么时候取的」，不证明「数据是哪天的」。
+
+`require_code` 的行（个股维度）如果补不出代码就**整行丢弃、不入库**，与 QUOT-231 L6
+口径一致：`(code, trade_date)` 是追加模式的幂等键，无代码行既无法幂等也会污染天梯候选。
+
+### 2.3 代码池数据集：`code` 必填的三个（QUOT-233）
+
+`daily_k` / `fund_flow` / `dragon_tiger_seats` 的真实工具 schema 里 `code` 是必填项，
+空参实测被拒回 `QFSD-9001 invalid_argument: missing a required argument: 'code'`。
+所以这三个数据集**一次同步 = 逐只代码各调一次**，结果合并成一个事务落库。
+
+池子来源只有三处，优先级固定（**只用仓库已有配置与本机数据，不新增供应商**）：
+
+1. 命令行 `--codes 600000,000001`；
+2. `config/sync.yaml` 的 `sync.datasets.<dataset>.codes`（schema 上限 100 只）；
+3. 本机隐私库自选表 `watchlist`（只读 `code` 列，库不存在就当作空，不因查询而建库）。
+
+- 三处都为空：**一次调用都不发**，该数据集记 `failed`（标了 `optional` 则 `skipped`），
+  `detail` 里写清三个来源与上游错误码——发空参只会拿到 `QFSD-9001`，或（上游哪天放宽了）
+  落回「整包压成一行、日期取成抓取时间」的脏数据。
+- 超过 100 只：判参数错误（退出码 2），**不悄悄截断**，要分批判。
+- 入参口径：`daily_k` 显式带 `period=daily` + `adjust=qfq`（与 `DATASET_CATALOG` 登记的
+  前复权口径是同一句话，不靠 peer 默认值）；增量用 `start=<水位>`（含当日，重叠那天由
+  `(code, trade_date)` upsert 折叠），`--full` 不带 `start`。
+- 单只失败不拖垮整轮：成功的照常落库，状态记 `degraded`，`detail` 只报**只数**。
+- 隐私：代码要发给本机 peer 才能取行情，但日志与对外输出只出现数量，不出现自选内容。
+
 ## 3. 降级顺序：主 → 同 peer 备 → 缓存回放
 
 ```

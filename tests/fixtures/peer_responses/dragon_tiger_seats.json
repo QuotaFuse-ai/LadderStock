@@ -1,0 +1,106 @@
+{
+  "ok": true,
+  "data": {
+    "code": "000530",
+    "records": [
+      {
+        "date": "2026-10-30",
+        "reason": "日换手率达到20%的前5只证券",
+        "net_buy": -12071.7,
+        "turnover": 43.22
+      },
+      {
+        "date": "2026-10-29",
+        "reason": "日换手率达到20%的前5只证券",
+        "net_buy": 15128.8,
+        "turnover": 37.92
+      },
+      {
+        "date": "2026-10-29",
+        "reason": "日涨幅偏离值达到7%的前5只证券",
+        "net_buy": 15128.8,
+        "turnover": 37.92
+      }
+    ],
+    "seats": {
+      "buy": [
+        {
+          "name": "机构专用",
+          "buy_amt": 4833.3,
+          "sell_amt": 2488.7,
+          "net": 2344.6
+        },
+        {
+          "name": "机构专用",
+          "buy_amt": 4204.0,
+          "sell_amt": 3935.8,
+          "net": 268.3
+        },
+        {
+          "name": "国信证券股份有限公司浙江互联网分公司",
+          "buy_amt": 3521.8,
+          "sell_amt": 2184.6,
+          "net": 1337.2
+        },
+        {
+          "name": "机构专用",
+          "buy_amt": 2579.3,
+          "sell_amt": 2087.0,
+          "net": 492.2
+        },
+        {
+          "name": "东方财富证券股份有限公司拉萨金融城南环路证券营业部",
+          "buy_amt": 2372.9,
+          "sell_amt": 1718.4,
+          "net": 654.5
+        }
+      ],
+      "sell": [
+        {
+          "name": "国新证券股份有限公司北京分公司",
+          "buy_amt": 0.9,
+          "sell_amt": 7169.8,
+          "net": -7168.8
+        },
+        {
+          "name": "国泰海通证券股份有限公司北京知春路证券营业部",
+          "buy_amt": 71.2,
+          "sell_amt": 6018.3,
+          "net": -5947.1
+        },
+        {
+          "name": "国泰海通证券股份有限公司上海自贸试验区第二分公司",
+          "buy_amt": 0.0,
+          "sell_amt": 4052.6,
+          "net": -4052.6
+        },
+        {
+          "name": "机构专用",
+          "buy_amt": 4204.0,
+          "sell_amt": 3935.8,
+          "net": 268.3
+        },
+        {
+          "name": "机构专用",
+          "buy_amt": 4833.3,
+          "sell_amt": 2488.7,
+          "net": 2344.6
+        }
+      ]
+    },
+    "institution": {
+      "buy_amt": 11616.6,
+      "sell_amt": 6424.4,
+      "net_amt": 5192.2
+    },
+    "latest_date": "2026-10-30"
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:58:01+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 7
+  }
+}

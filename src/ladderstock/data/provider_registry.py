@@ -956,7 +956,11 @@ class ProviderRegistry:
     ) -> LadderEnvelope:
         if spec.via == "tickhub":
             return from_tool_response(
-                spec.dataset, response, data_as_of=trade_date, topic=spec.dataset
+                spec.dataset,
+                response,
+                data_as_of=trade_date,
+                topic=spec.dataset,
+                tool=spec.tool,
             )
         body = dict(response)
         body.setdefault("data_as_of", (trade_date or _now().date()).isoformat())

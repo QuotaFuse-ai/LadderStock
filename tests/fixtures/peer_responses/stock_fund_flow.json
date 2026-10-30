@@ -1,0 +1,62 @@
+{
+  "ok": true,
+  "data": {
+    "code": "600000",
+    "name": "浦发银行",
+    "flows": [
+      {
+        "date": "2026-10-28",
+        "main_net": -35021972.0,
+        "small_net": -21054538.0,
+        "medium_net": 56076511.0,
+        "large_net": -20349851.0,
+        "super_large_net": -14672121.0,
+        "main_pct": -5.5,
+        "small_pct": -3.3,
+        "medium_pct": 8.8,
+        "large_pct": -3.19,
+        "super_large_pct": -2.3,
+        "close": 9.85,
+        "change_pct": 0.31
+      },
+      {
+        "date": "2026-10-29",
+        "main_net": 74623998.0,
+        "small_net": -10857573.0,
+        "medium_net": -63766427.0,
+        "large_net": 44630460.0,
+        "super_large_net": 29993538.0,
+        "main_pct": 9.97,
+        "small_pct": -1.45,
+        "medium_pct": -8.52,
+        "large_pct": 5.96,
+        "super_large_pct": 4.01,
+        "close": 9.99,
+        "change_pct": 1.42
+      },
+      {
+        "date": "2026-10-30",
+        "main_net": 7525885.0,
+        "small_net": -47578525.0,
+        "medium_net": 40052640.0,
+        "large_net": -12045144.0,
+        "super_large_net": 19571029.0,
+        "main_pct": 1.16,
+        "small_pct": -7.35,
+        "medium_pct": 6.18,
+        "large_pct": -1.86,
+        "super_large_pct": 3.02,
+        "close": 10.02,
+        "change_pct": 0.3
+      }
+    ]
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:55:05+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 3
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "rank": 1,
+      "code": "300502",
+      "name": "新易盛",
+      "market": 33,
+      "heat": 5734786.0,
+      "change_pct": -14.1856,
+      "tag": {
+        "concept_tag": [
+          "共封装光学(CPO)",
+          "5G"
+        ]
+      },
+      "analysis": null
+    },
+    {
+      "rank": 2,
+      "code": "300308",
+      "name": "中际旭创",
+      "market": 33,
+      "heat": 5350877.0,
+      "change_pct": -4.991,
+      "tag": {
+        "concept_tag": [
+          "共封装光学(CPO)",
+          "F5G概念"
+        ]
+      },
+      "analysis": null
+    },
+    {
+      "rank": 3,
+      "code": "000678",
+      "name": "襄阳轴承",
+      "market": 33,
+      "heat": 4681303.0,
+      "change_pct": -3.5733,
+      "tag": {
+        "concept_tag": [
+          "减速器",
+          "农机"
+        ],
+        "popularity_tag": "持续上榜"
+      },
+      "analysis": null
+    }
+  ],
+  "meta": {
+    "source": "ths",
+    "fetched_at": "2026-10-30T20:15:45+08:00",
+    "cache_hit": false,
+    "confidence": "C",
+    "trace_id": "trace-fixture-1",
+    "list_type": "day",
+    "count": 100
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "rank": 1,
+      "code": "300502",
+      "name": null,
+      "heat": 1.0,
+      "change_pct": null,
+      "history_rank": 4
+    },
+    {
+      "rank": 2,
+      "code": "000678",
+      "name": null,
+      "heat": 2.0,
+      "change_pct": null,
+      "history_rank": 1
+    },
+    {
+      "rank": 3,
+      "code": "300308",
+      "name": null,
+      "heat": 3.0,
+      "change_pct": null,
+      "history_rank": 1
+    }
+  ],
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:55:15+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 5
+  }
+}

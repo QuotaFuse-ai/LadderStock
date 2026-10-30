@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "error": {
+    "code": "QFSD-9001",
+    "name": "invalid_argument",
+    "message": "missing a required argument: 'code'",
+    "action": "修正参数",
+    "detail": null,
+    "retryable": false
+  }
+}

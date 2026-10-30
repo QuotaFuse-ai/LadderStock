@@ -68,6 +68,16 @@
 | 15 | `ldst sources validate` | 校验 peer 可达性与主备合法性 | 可选 `--id` | 源不可用 4 |
 | 16 | `ldst sources health` | peer 最近失败冷却与降级记录 | 可选 `--since` | 表格 |
 
+**`--codes`（QUOT-233，只作用于代码池数据集 `daily_k` / `fund_flow` / `dragon_tiger_seats`）**：
+这三个工具的真实 schema 里 `code` 必填，空参回 `QFSD-9001`，所以 `ldst sync` 对它们是
+「逐只代码各取一次再合并落库」。池子按 `--codes` → `sync.yaml` 的 `codes` → 本机自选
+`watchlist` 取，三处都为空时**不发空参请求**，该数据集直接 `failed`（可选数据集 `skipped`）。
+单次上限 100 只，超过判参数错误（退出码 2），不悄悄截断。口径与理由见 `docs/SOURCES.md` §2.3。
+
+```bash
+ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，水位增量自动带 start
+```
+
 ## C. 盘中、提醒与交易日志（7）
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |

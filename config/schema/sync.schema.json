@@ -23,7 +23,14 @@
               "fallback": { "type": "array", "items": { "type": "string" }, "default": [] },
               "optional": { "type": "boolean", "default": false },
               "watermark_field": { "type": "string" },
-              "mode": { "enum": ["append", "replace"] }
+              "mode": { "enum": ["append", "replace"] },
+              "codes": {
+                "type": "array",
+                "description": "代码池（QUOT-233）：tencent_kline / stock_fund_flow / dragon_tiger_seats 的 code 必填，逐只取数。优先级：--codes > 本键 > 本机自选表。为空则该数据集判 failed 且不发起调用。",
+                "items": { "type": "string", "pattern": "^[0-9A-Za-z.]{1,12}$" },
+                "maxItems": 100,
+                "default": []
+              }
             }
           }
         },

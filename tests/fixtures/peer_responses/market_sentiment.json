@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "data": {
+    "date": "20261030",
+    "limit_up": 47,
+    "broken": 31,
+    "limit_down": 82,
+    "seal_rate": 0.6026,
+    "max_streak": 5,
+    "broken_rate": 0.3974,
+    "leaders": [
+      {
+        "code": "001219",
+        "name": "青岛食品",
+        "streak": 5
+      },
+      {
+        "code": "603131",
+        "name": "上海沪工",
+        "streak": 3
+      },
+      {
+        "code": "002172",
+        "name": "澳洋健康",
+        "streak": 3
+      }
+    ]
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:55:19+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1"
+  }
+}

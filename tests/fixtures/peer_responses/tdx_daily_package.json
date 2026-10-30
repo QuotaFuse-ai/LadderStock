@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "data": {
+    "date": "2026-10-30",
+    "rows": [
+      {
+        "code": "204001",
+        "market": "SH",
+        "is_index": false,
+        "date": "2026-10-30",
+        "open": 12.75,
+        "high": 12.9,
+        "low": 8.2,
+        "close": 11.05,
+        "amount": 2234404306944.0,
+        "volume": 223440440
+      },
+      {
+        "code": "204007",
+        "market": "SH",
+        "is_index": false,
+        "date": "2026-10-30",
+        "open": 13.5,
+        "high": 14.0,
+        "low": 13.2,
+        "close": 13.65,
+        "amount": 113213202432.0,
+        "volume": 113213204
+      },
+      {
+        "code": "511360",
+        "market": "SH",
+        "is_index": false,
+        "date": "2026-10-30",
+        "open": 1141.2,
+        "high": 1141.25,
+        "low": 1141.16,
+        "close": 1141.24,
+        "amount": 71850811392.0,
+        "volume": 629603627
+      }
+    ]
+  },
+  "meta": {
+    "source": "exchange",
+    "fetched_at": "2026-10-30T19:58:25+08:00",
+    "cache_hit": false,
+    "confidence": "A",
+    "trace_id": "trace-fixture-1",
+    "count": 4157,
+    "data_as_of": "2026-10-30"
+  }
+}

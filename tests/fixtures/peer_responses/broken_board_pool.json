@@ -1,0 +1,74 @@
+{
+  "ok": true,
+  "data": {
+    "date": "20261030",
+    "pool": "炸板",
+    "items": [
+      {
+        "code": "605598",
+        "name": "上海港湾",
+        "market": "sh",
+        "price": 26.14,
+        "change_pct": 4.9799,
+        "amount": 689492592.0,
+        "float_market_cap": 6296306484.860001,
+        "total_market_cap": 6296306484.860001,
+        "turnover_rate": 10.731030464172363,
+        "streak": null,
+        "first_seal_time": "093016",
+        "last_seal_time": null,
+        "seal_amount": null,
+        "broken_times": 2,
+        "industry": "专业工程",
+        "limit_up_days": 2,
+        "limit_up_count": 1
+      },
+      {
+        "code": "600202",
+        "name": "哈空调",
+        "market": "sh",
+        "price": 4.78,
+        "change_pct": 3.6876,
+        "amount": 296603184.0,
+        "float_market_cap": 1832368412.16,
+        "total_market_cap": 1832368412.16,
+        "turnover_rate": 15.696385383605957,
+        "streak": null,
+        "first_seal_time": "093119",
+        "last_seal_time": null,
+        "seal_amount": null,
+        "broken_times": 1,
+        "industry": "通用设备",
+        "limit_up_days": 0,
+        "limit_up_count": 0
+      },
+      {
+        "code": "002031",
+        "name": "巨轮智能",
+        "market": "sz",
+        "price": 5.22,
+        "change_pct": 2.9586,
+        "amount": 1259477680.0,
+        "float_market_cap": 11480806247.4,
+        "total_market_cap": 11480845366.08,
+        "turnover_rate": 10.554563522338867,
+        "streak": null,
+        "first_seal_time": "093539",
+        "last_seal_time": null,
+        "seal_amount": null,
+        "broken_times": 1,
+        "industry": "专用设备",
+        "limit_up_days": 0,
+        "limit_up_count": 0
+      }
+    ]
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:55:13+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 31
+  }
+}

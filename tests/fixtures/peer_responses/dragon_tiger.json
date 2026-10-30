@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "data": [
+    {
+      "date": "2026-10-30",
+      "code": "000530",
+      "name": "冰山冷热",
+      "close": 7.92,
+      "change_pct": -3.7667,
+      "turnover_rate": 43.2192,
+      "amount": 2137009168.0,
+      "buy_amount": 175834392.58,
+      "sell_amount": 296550925.26,
+      "net_amount": -120716532.68,
+      "deal_amount": 472385317.84,
+      "net_ratio": -5.648854225224,
+      "reason": "日换手率达到20%的前5只证券"
+    },
+    {
+      "date": "2026-10-30",
+      "code": "000568",
+      "name": "泸州老窖",
+      "close": 77.07,
+      "change_pct": 10.0057,
+      "turnover_rate": 2.8119,
+      "amount": 3116403391.0,
+      "buy_amount": 803520809.71,
+      "sell_amount": 342557749.85,
+      "net_amount": 460963059.86,
+      "deal_amount": 1146078559.56,
+      "net_ratio": 14.791508095237,
+      "reason": "日涨幅偏离值达到7%的前5只证券"
+    },
+    {
+      "date": "2026-10-30",
+      "code": "000596",
+      "name": "古井贡酒",
+      "close": 95.7,
+      "change_pct": 10.0,
+      "turnover_rate": 2.561,
+      "amount": 1349372631.0,
+      "buy_amount": 398158391.61,
+      "sell_amount": 259936632.83,
+      "net_amount": 138221758.78,
+      "deal_amount": 658095024.44,
+      "net_ratio": 10.243409092829,
+      "reason": "连续三个交易日内，涨幅偏离值累计达到20%的证券"
+    }
+  ],
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:55:01+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 5
+  }
+}

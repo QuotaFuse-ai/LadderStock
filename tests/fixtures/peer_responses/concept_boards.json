@@ -1,0 +1,63 @@
+{
+  "ok": true,
+  "data": {
+    "total": 516,
+    "page": 1,
+    "page_size": 5,
+    "items": [
+      {
+        "board_code": "BK0477",
+        "board_name": "酿酒概念",
+        "price": 38793.09,
+        "change_pct": 2.74,
+        "change": 1035.34,
+        "turnover_rate": 2.01,
+        "main_net_inflow": 2609963888.0,
+        "main_net_ratio": 1579154032.0,
+        "up_count": 29,
+        "down_count": 7,
+        "leader_name": "迎驾贡酒",
+        "leader_change_pct": 9.99,
+        "leader_code": "603198"
+      },
+      {
+        "board_code": "BK0899",
+        "board_name": "CRO",
+        "price": 2079.65,
+        "change_pct": 1.97,
+        "change": 40.21,
+        "turnover_rate": 4.56,
+        "main_net_inflow": 1871524176.0,
+        "main_net_ratio": 1003821648.0,
+        "up_count": 30,
+        "down_count": 22,
+        "leader_name": "万邦医药",
+        "leader_change_pct": 20.0,
+        "leader_code": "301520"
+      },
+      {
+        "board_code": "BK0896",
+        "board_name": "白酒",
+        "price": 1803.55,
+        "change_pct": 1.85,
+        "change": 32.76,
+        "turnover_rate": 1.84,
+        "main_net_inflow": 2608949376.0,
+        "main_net_ratio": 1642999680.0,
+        "up_count": 23,
+        "down_count": 17,
+        "leader_name": "迎驾贡酒",
+        "leader_change_pct": 9.99,
+        "leader_code": "603198"
+      }
+    ]
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:54:59+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 5
+  }
+}

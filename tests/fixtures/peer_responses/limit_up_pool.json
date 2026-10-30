@@ -1,0 +1,74 @@
+{
+  "ok": true,
+  "data": {
+    "date": "20261030",
+    "pool": "涨停板",
+    "items": [
+      {
+        "code": "603703",
+        "name": "盛洋科技",
+        "market": "sh",
+        "price": 11.95,
+        "change_pct": 10.0368,
+        "amount": 91126637.0,
+        "float_market_cap": 4959036334.0,
+        "total_market_cap": 4959036429.599999,
+        "turnover_rate": 1.837587594985962,
+        "streak": 2,
+        "first_seal_time": "092500",
+        "last_seal_time": "092500",
+        "seal_amount": 242852202.0,
+        "broken_times": 0,
+        "industry": "光学光电",
+        "limit_up_days": 2,
+        "limit_up_count": 2
+      },
+      {
+        "code": "600261",
+        "name": "阳光照明",
+        "market": "sh",
+        "price": 4.09,
+        "change_pct": 9.9462,
+        "amount": 137021270.0,
+        "float_market_cap": 5460366630.94,
+        "total_market_cap": 5460366606.4,
+        "turnover_rate": 2.509378671646118,
+        "streak": 2,
+        "first_seal_time": "092502",
+        "last_seal_time": "092502",
+        "seal_amount": 610042588.0,
+        "broken_times": 0,
+        "industry": "照明设备",
+        "limit_up_days": 2,
+        "limit_up_count": 2
+      },
+      {
+        "code": "603131",
+        "name": "上海沪工",
+        "market": "sh",
+        "price": 17.55,
+        "change_pct": 10.0313,
+        "amount": 189684437.0,
+        "float_market_cap": 5912721711.0,
+        "total_market_cap": 5912721640.8,
+        "turnover_rate": 3.208073139190674,
+        "streak": 3,
+        "first_seal_time": "092502",
+        "last_seal_time": "092502",
+        "seal_amount": 257526418.0,
+        "broken_times": 0,
+        "industry": "通用设备",
+        "limit_up_days": 3,
+        "limit_up_count": 3
+      }
+    ]
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-10-30T19:55:03+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 47
+  }
+}
