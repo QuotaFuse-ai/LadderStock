@@ -8,7 +8,10 @@
 
 - **不联网取数**（联网检索属 R4，需人类批准）：`facts` 由调用方注入，默认空；
   六段（R1-2 前三段 + R1-3 后三段）都已接各自提示词与同一个三级降级阶梯；
-- `report` 段只消费前五段已落盘的结构化产物，不重新取数；
+- **R3：注入指标必须成对给出处**（`provenance`）。数值字段没有出处不会被视为错误，
+  但进不了 `verified` 集，渲染时只能挂〔未核实〕（`core/boundary.assert_provenance`）；
+- `report` 段只消费前五段已落盘的结构化产物，不重新取数；其 provenance 是前五段来源的
+  并集（`params.stage` + `params.upstream_id` 指回原段），不复制数值（DEC-024）；
 - AI 只能追加叙述：产物写盘前过 `core/boundary.merge_narrative` 闸门，
   模型试图输出指标键即判该段 `failed`（DEC-006 闸门 5）；
 - R2 起，结构化一级可以带**本段白名单内的受控工具**（`ai/tools.py` +
@@ -26,11 +29,30 @@ from typing import Any
 from ladderstock.ai import fallback, tools
 from ladderstock.ai.error_taxonomy import AiFailure, classify_error
 from ladderstock.ai.orchestrator import ChatClient, HttpChatClient, supports_tools
-from ladderstock.core.boundary import BoundaryViolation, merge_narrative
+from ladderstock.core.boundary import (
+    BoundaryViolation,
+    Provenance,
+    assert_provenance,
+    is_provenance_payload,
+    merge_narrative,
+)
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.research import artifacts, checkpoint, ladder, stages
 
 STAGES = checkpoint.STAGES
+
+
+def _plain_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """把内联的出处记录解回标量：产物与 `--output json` 里永远只放值，不放记录对象。"""
+    plain: dict[str, Any] = {}
+    for key, value in metrics.items():
+        if isinstance(value, Provenance):
+            plain[key] = value.value
+        elif is_provenance_payload(value):
+            plain[key] = value["value"]
+        else:
+            plain[key] = value
+    return plain
 
 
 @dataclass
@@ -98,19 +120,37 @@ class ResearchPipeline:
         day: date | str,
         *,
         facts: dict[str, dict[str, Any]] | None = None,
+        provenance: dict[str, dict[str, Any]] | None = None,
         force: bool = False,
         retry_failed: bool = False,
         only: str | None = None,
     ) -> ResearchRunResult:
+        """跑六段。`facts` 是程序算好的指标，`provenance` 是这些指标的出处。
+
+        两者按段成对注入（`facts={"valuation": {"pe": 18.4}}` 配
+        `provenance={"valuation": {"pe": Provenance(...)}}`），
+        指标进 AI 上下文时**同时**带出处——缺出处的数值不会被拒收，但只能挂〔未核实〕。
+        """
         day_text = str(day)
         facts_by_stage = dict(facts or {})
+        provenance_by_stage = dict(provenance or {})
         document = checkpoint.load(self.code, day_text, self.root)
         targets = checkpoint.targets(
             document, force=force, retry_failed=retry_failed, only=only
         )
+        # 未参与本次运行的段：载荷里仍按原样报出注入的指标（契约不变），只是解回标量
+        metrics_by_stage = {
+            stage: _plain_metrics(metrics) for stage, metrics in facts_by_stage.items()
+        }
 
         for stage in targets:
-            outcome = self._generate(stage, day_text, facts_by_stage.get(stage, {}))
+            outcome = self._generate(
+                stage,
+                day_text,
+                facts_by_stage.get(stage, {}),
+                provenance_by_stage.get(stage),
+            )
+            metrics_by_stage[stage] = outcome["metrics"]
             if outcome["status"] != "failed":
                 outcome["artifact"] = artifacts.write_stage(
                     artifacts.build_document(
@@ -127,6 +167,7 @@ class ResearchPipeline:
                         ai=outcome["ai"],
                         failure=outcome.get("failure"),
                         attempts=outcome.get("attempts"),
+                        provenance=outcome["provenance"],
                     ),
                     self.root,
                 )
@@ -144,13 +185,19 @@ class ResearchPipeline:
             )
             checkpoint.save(document, self.root)
 
-        return self._result(day_text, document, targets, facts_by_stage)
+        return self._result(day_text, document, targets, metrics_by_stage)
 
     # ------------------------------------------------------------------ #
     # 单段生成
     # ------------------------------------------------------------------ #
 
-    def _generate(self, stage: str, day: str, facts: dict[str, Any]) -> dict[str, Any]:
+    def _generate(
+        self,
+        stage: str,
+        day: str,
+        facts: dict[str, Any],
+        records: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if stage == checkpoint.REPORT_STAGE:
             inputs, missing = self._report_inputs(day)
             if missing:
@@ -168,7 +215,30 @@ class ResearchPipeline:
                     facts={},
                 )
             facts = {"upstream": inputs}
+            slot = artifacts.merge_slots(
+                {name: inputs[name]["provenance"] for name in inputs}
+            )
+            return self._compose(stage, day, facts, slot)
 
+        try:
+            audit = assert_provenance(facts, records)
+        except BoundaryViolation as exc:
+            return _failed(
+                classify_error(exc),
+                notes=[str(exc)],
+                facts={},
+            )
+        slot = artifacts.provenance_slot(audit, stage=stage)
+        return self._compose(stage, day, dict(audit.metrics), slot)
+
+    def _compose(
+        self,
+        stage: str,
+        day: str,
+        metrics: dict[str, Any],
+        slot: dict[str, Any],
+    ) -> dict[str, Any]:
+        """指标 + 出处 → 走占位或三级阶梯；两条路径共用同一份 provenance。"""
         if not fallback.is_configured(self.config):
             return _placeholder(
                 stage,
@@ -180,12 +250,14 @@ class ResearchPipeline:
                     + "），本段用占位叙述落盘，仅用于验证顺序执行与断点续跑"
                     "（配好凭据后由本段提示词 + 三级降级阶梯生成实际叙述）。"
                 ],
-                facts,
+                metrics,
+                slot,
             )
+        return self._laddered(stage, day, metrics, slot)
 
-        return self._laddered(stage, day, facts)
-
-    def _laddered(self, stage: str, day: str, facts: dict[str, Any]) -> dict[str, Any]:
+    def _laddered(
+        self, stage: str, day: str, facts: dict[str, Any], slot: dict[str, Any]
+    ) -> dict[str, Any]:
         """本段提示词 + 三级降级阶梯（`research/ladder.py`），产物结构与骨架一致。
 
         R2：客户端支持 tool-calling 时，结构化一级带上本段白名单里的受控工具；
@@ -200,9 +272,9 @@ class ResearchPipeline:
             self.config,
             stage,
             messages=stages.build_messages(
-                self.code, stage, day, facts, tool_names=tool_names
+                self.code, stage, day, facts, provenance=slot, tool_names=tool_names
             ),
-            plain=stages.plain_messages(self.code, stage, day, facts),
+            plain=stages.plain_messages(self.code, stage, day, facts, provenance=slot),
             ctx=ctx,
         )
         notes = list(outcome["notes"])
@@ -239,6 +311,8 @@ class ResearchPipeline:
             "failure": None,
             "attempts": outcome["attempts"],
             "facts": merged,
+            "metrics": facts,
+            "provenance": slot,
             "ai": merged["ai"],
         }
 
@@ -361,7 +435,12 @@ def _placeholder_text(stage: str, code: str, day: str) -> str:
 
 
 def _placeholder(
-    stage: str, code: str, day: str, notes: list[str], facts: dict[str, Any]
+    stage: str,
+    code: str,
+    day: str,
+    notes: list[str],
+    facts: dict[str, Any],
+    slot: dict[str, Any],
 ) -> dict[str, Any]:
     """未配置模型时的占位叙述：跑通链路与契约，如实标 degraded。"""
     narrative = [_placeholder_text(stage, code, day)]
@@ -377,6 +456,8 @@ def _placeholder(
         "failure": None,
         "attempts": [],
         "facts": merged,
+        "metrics": facts,
+        "provenance": slot,
         "ai": merged["ai"],
     }
 
@@ -398,6 +479,8 @@ def _failed(
         "failure": failure.as_dict(),
         "attempts": list(attempts or []),
         "facts": dict(facts),
+        "metrics": dict(facts),
+        "provenance": artifacts.empty_slot(),
         "ai": {"narrative": [], "degraded": False},
     }
 
