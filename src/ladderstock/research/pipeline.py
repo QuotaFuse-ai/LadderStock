@@ -7,7 +7,8 @@
 本段的边界：
 
 - **不联网取数**（联网检索属 R4，需人类批准）：`facts` 由调用方注入，默认空；
-  六段先用占位叙述跑通链路与契约，实际提示词与降级阶梯由 R1-2 接入；
+  `company` / `financial` / `forecast`（R1-2）已接实际提示词与三级降级阶梯，
+  `valuation` / `risk` / `report` 仍走骨架的单次文本路径，按 R1-3 / R1-4 逐段接；
 - `report` 段只消费前五段已落盘的结构化产物，不重新取数；
 - AI 只能追加叙述：产物写盘前过 `core/boundary.merge_narrative` 闸门，
   模型试图输出指标键即判该段 `failed`（DEC-006 闸门 5）；
@@ -26,7 +27,7 @@ from ladderstock.ai.error_taxonomy import AiFailure, classify_error
 from ladderstock.ai.orchestrator import ChatClient, HttpChatClient
 from ladderstock.core.boundary import BoundaryViolation, merge_narrative
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
-from ladderstock.research import artifacts, checkpoint
+from ladderstock.research import artifacts, checkpoint, ladder, stages
 
 STAGES = checkpoint.STAGES
 
@@ -176,19 +177,21 @@ class ResearchPipeline:
                     "未配置模型凭据（"
                     + "、".join(fallback.missing_env(self.config))
                     + "），本段用占位叙述落盘，仅用于验证顺序执行与断点续跑"
-                    "（R1-2 起替换为实际叙述）。"
+                    "（配好凭据后由本段提示词 + 三级降级阶梯生成实际叙述）。"
                 ],
                 facts,
             )
+
+        if stage in stages.FRONT_STAGES:
+            return self._front(stage, day, facts)
 
         models = fallback.model_chain(self.config)
         model = models[0] if models else None
         system, user = self._messages(stage, day, facts)
         attempts: list[dict[str, Any]] = []
         try:
-            # 骨架阶段只用链首模型、单次调用：格式重试与「网络/额度才换模型」的
-            # fallback 阶梯属 R1-2（三级降级阶梯与 prompts/ 一起接），届时这里换成
-            # 与 orchestrator 同一条 attempt 循环，attempts 逐模型登记。
+            # 骨架路径（valuation / risk）仍是链首模型单次文本调用：
+            # 三级降级阶梯已由 `_front` 接入，这两段按 R1-3 的提示词逐段搬过去。
             text = self.client.complete(model or "", system, user, json_mode=False)
         except Exception as exc:  # noqa: BLE001 - 分类后按段隔离，不影响前序成果
             failure = classify_error(exc)
@@ -218,8 +221,8 @@ class ResearchPipeline:
             )
         return {
             "status": "ok",
-            # 结构化输出阶梯（JSON + Schema → 文本补偿 → 纯文本）由 R1-2 接入，
-            # 骨架阶段只走纯文本一级，因此不标 degraded。
+            # 骨架路径只走纯文本一级（未降级到更低级，故不标 degraded）；
+            # 三级阶梯见 `_front` 与 `research/ladder.py`。
             "mode": "text",
             "model": model,
             "degraded": False,
@@ -227,6 +230,49 @@ class ResearchPipeline:
             "notes": [],
             "failure": None,
             "attempts": attempts,
+            "facts": merged,
+            "ai": merged["ai"],
+        }
+
+    def _front(self, stage: str, day: str, facts: dict[str, Any]) -> dict[str, Any]:
+        """前三段（R1-2）：实际提示词 + 三级降级阶梯，产物结构与骨架一致。"""
+        outcome = ladder.generate(
+            self.client,
+            self.config,
+            stage,
+            messages=stages.build_messages(self.code, stage, day, facts),
+            plain=stages.plain_messages(self.code, stage, day, facts),
+        )
+        if outcome["status"] == "failed":
+            title = checkpoint.STAGE_TITLES.get(stage, stage)
+            return _failed(
+                outcome["failure"],
+                notes=[f"{title}段生成失败，其他段不受影响"],
+                facts=facts,
+                attempts=outcome["attempts"],
+            )
+        ai_payload = {"narrative": outcome["narrative"], **outcome["extras"]}
+        ai_payload["degraded"] = outcome["degraded"]
+        if outcome["model"]:
+            ai_payload["model"] = outcome["model"]
+        try:
+            merged = merge_narrative(facts, ai_payload)
+        except BoundaryViolation as exc:
+            return _failed(
+                classify_error(exc),
+                notes=[str(exc)],
+                facts=facts,
+                attempts=outcome["attempts"],
+            )
+        return {
+            "status": outcome["status"],
+            "mode": outcome["mode"],
+            "model": outcome["model"],
+            "degraded": outcome["degraded"],
+            "narrative": outcome["narrative"],
+            "notes": outcome["notes"],
+            "failure": None,
+            "attempts": outcome["attempts"],
             "facts": merged,
             "ai": merged["ai"],
         }
