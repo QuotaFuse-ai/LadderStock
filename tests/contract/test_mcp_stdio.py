@@ -57,7 +57,12 @@ DOCUMENTED_TOOLS = {
     "ladder_get_sentiment",
     "ladder_get_validation",
     "ladder_get_review",
+    # R1-1（QUOT-190）新增：读个股研究六段进度
+    "research_status",
 }
+
+#: 以证券代码（而非 date）定位快照的工具，见 tests/contract/test_mcp_tools.py 同名片段
+CODE_SCOPED_TOOLS = {"research_status"}
 
 PRIVATE_WORDS = ("journal", "position", "watchlist", "交易日志", "持仓", "自选")
 
@@ -171,7 +176,7 @@ def test_stdio_handshake_and_tool_list(session: StdioSession) -> None:
     tools = session.recv()["result"]["tools"]
 
     assert {tool["name"] for tool in tools} == DOCUMENTED_TOOLS
-    assert len(tools) == 11
+    assert len(tools) == 12
 
     code = session.close()
     assert code == 0
@@ -215,9 +220,14 @@ def test_tool_list_declares_envelope_output_schema(session: StdioSession) -> Non
         assert schema["properties"]["freshness"]["enum"] == ["realtime", "cached", "archive"]
         assert schema["properties"]["confidence"]["enum"] == ["high", "medium", "low"]
 
-        # meta 工具（sources health）没有 date 参数，其余都必须要求 date
-        if name != "ladder_get_sources_health":
-            assert tool["inputSchema"]["required"] == ["date"], name
+        # meta 工具（sources health）没有 date 参数；以代码定位进度的工具（R1-1
+        # research_status）required 是 ["code"]、date 可选；其余都必须要求 date
+        if name == "ladder_get_sources_health":
+            continue
+        if name in CODE_SCOPED_TOOLS:
+            assert tool["inputSchema"]["required"] == ["code"], name
+            continue
+        assert tool["inputSchema"]["required"] == ["date"], name
 
 
 def test_tool_list_has_no_privacy_leak(session: StdioSession) -> None:

@@ -35,7 +35,8 @@ PACKAGES_DOC = ROOT / "docs" / "PACKAGES.md"
 
 runner = CliRunner()
 
-#: `docs/CLI.md` §0 的 11 个分组，加上 `run` / `export` / `doctor` 三个顶层命令。
+#: `docs/CLI.md` §0 的 11 个分组，加上 `run` / `export` / `doctor` 三个顶层命令，
+#: 再加 R1-1（QUOT-190）新增的 `research`（见 docs/CLI.md §0「R1-1 增量」行）。
 DOCUMENTED_GROUPS = {
     "run",
     "review",
@@ -50,6 +51,7 @@ DOCUMENTED_GROUPS = {
     "export",
     "state",
     "ai",
+    "research",
     "mcp",
     "config",
     "schedule",

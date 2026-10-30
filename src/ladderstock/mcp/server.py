@@ -255,6 +255,76 @@ def _tool_validation(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
     )
 
 
+def _tool_research_status(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
+    """个股研究六段进度：只读 `research_checkpoint/<code>/<date>.json`，不触发任何生成。
+
+    `code` 必填；`date` 缺省取该代码最近一次有记录的日期，没有则按今天报 `missing`。
+    缺哪一段就点名哪一段（`reason` + 可直接执行的补齐命令），**不伪造进度**。
+    """
+    from ladderstock.research import artifacts
+    from ladderstock.research import checkpoint as research_checkpoint
+
+    raw_code = arguments.get("code")
+    if not isinstance(raw_code, str) or not raw_code.strip():
+        raise ToolError("缺少 code（证券代码，6 位数字）")
+    try:
+        code = research_checkpoint.normalize_code(raw_code)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+
+    raw_day = arguments.get("date")
+    if raw_day in (None, ""):
+        latest = research_checkpoint.latest_day(code, root)
+        day_text = latest or date.today().isoformat()
+    else:
+        if not isinstance(raw_day, str):
+            raise ToolError(f"非法日期：{raw_day!r}（需要 YYYY-MM-DD）")
+        day_text = raw_day.strip()[:10]
+    try:
+        day = date.fromisoformat(day_text)
+    except ValueError:
+        raise ToolError(f"非法日期：{raw_day!r}（需要 YYYY-MM-DD）") from None
+
+    summary = research_checkpoint.status_summary(code, day.isoformat(), root)
+    summary["artifacts"] = artifacts.artifact_paths(code, day.isoformat(), root)
+    pending = summary["pending"]
+    available = bool(summary["complete"])
+    if available:
+        source_status = "ok"
+        detail = f"local research checkpoint: {summary['checkpoint']}"
+    elif summary["exists"]:
+        source_status = "partial"
+        detail = (
+            f"local research checkpoint: {summary['checkpoint']}；"
+            f"未完成：{'、'.join(pending) or '（含失败段）'}"
+        )
+    else:
+        source_status = "partial"
+        detail = (
+            f"local research checkpoint 不存在：{summary['checkpoint']}"
+            f"（先运行 ldst research {code} --date {day.isoformat()}）"
+        )
+    payload = {
+        "code": code,
+        "date": day.isoformat(),
+        "research": summary,
+        "reason": None if available else f"六段未完成，缺：{'、'.join(pending) or '失败段'}",
+        "data_source_status": (
+            "ok" if available else "partial" if summary["exists"] else "missing"
+        ),
+    }
+    return _envelope(
+        domain="review",
+        topic="research_status",
+        day=day,
+        payload=payload,
+        available=available,
+        source_detail=detail,
+        source_status=source_status,
+        confidence="high" if available else "medium" if summary["exists"] else "low",
+    )
+
+
 def _tool_sentiment(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
     day = _parse_day(arguments)
     result = sentiment_module.compute_sentiment(day, root=root)
@@ -659,6 +729,7 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "ladder_get_review": _tool_review,
     "ladder_get_validation": _tool_validation,
     "ladder_get_sentiment": _tool_sentiment,
+    "research_status": _tool_research_status,
 }
 
 

@@ -1,4 +1,4 @@
-"""MCP 工具注册表（只读白名单 + 1 个发起研究工具 + 3 个复盘类工具）。
+"""MCP 工具注册表（只读白名单 + 1 个发起研究工具 + 3 个复盘类工具 + 1 个研究进度工具）。
 
 隐私硬约束：交易日志与持仓（`journal.sqlite`）**永不出现在**任何工具的输出 schema 中。
 """
@@ -52,6 +52,25 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     _date_tool("ladder_get_review", "某日复盘结构化结果", "review"),
     _date_tool("ladder_get_validation", "明日验证条件与对账结果", "validation"),
     _date_tool("ladder_get_sentiment", "情绪温度、晋级率、梯队断层", "sentiment"),
+    # R1-1 个股研究管线（只读进度；`code` 必填、`date` 缺省取最近一次）
+    ToolSpec(
+        "research_status",
+        "个股研究六段（company/financial/forecast/valuation/risk/report）当前进度，只读",
+        True,
+        {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "证券代码（6 位，可带 .SH/.SZ/.BJ）"},
+                "date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "研究日期 YYYY-MM-DD；缺省取该代码最近一次",
+                },
+            },
+            "required": ["code"],
+        },
+        "research",
+    ),
 )
 
 TOOL_NAMES: tuple[str, ...] = tuple(spec.name for spec in TOOL_SPECS)

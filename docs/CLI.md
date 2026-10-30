@@ -11,6 +11,10 @@
 > - **33 个叶子路径** —— 表格去重后的命令叶子（`sync` 三种形态合并为一条）；
 > - **32 条可执行 argv** —— `scripts/check_commands.py` 实测矩阵（33 个叶子减去长驻服务 `run` / `mcp stdio` / `mcp http`，另加 `sync --dataset` / `sync --full` 两种形态各跑一次）。
 >
+> **R1-1 增量（QUOT-190，2026-10-30）**：基线 31 条口径**不变**，在其之上新增 1 条命令
+> `ldst research <code>`（个股研究六段管线）。加它之后：叶子 **34** 个、可执行 argv **33** 条。
+> 见 §0「研究管线」行与 §D′。
+>
 > **前置约束（DEC-006）**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
 ## 0. 总览（31 条）
@@ -27,6 +31,7 @@
 | 交易日志（3） | `journal add`、`journal list`、`journal stats` |
 | 导出与状态（3） | `export`、`state inspect`、`state reset` |
 | AI 编排（3） | `ai status`、`ai retry`、`ai chain test` |
+| 研究管线（1，R1-1 增量，不计入 31 条基线） | `research` |
 | MCP（3） | `mcp stdio`、`mcp http`、`mcp tools list` |
 | 配置与调度（4） | `config validate`、`config migrate`、`schedule list`、`schedule run` |
 | 体检（1） | `doctor` |
@@ -77,6 +82,22 @@
 | 25 | `ldst ai retry --date` | 重试指定日期失败段落 | `--date`、`--section` | 成功段落不重跑；仍失败 9 |
 | 26 | `ldst ai chain test` | 多后端兼容矩阵体检 | 可选 `--model` | 逐模型报告 tool_choice / JSON mode / 截断 |
 
+## D′. 研究管线（R1-1 增量，1）
+
+> **31 条 P0 基线之外的新增命令**（QUOT-139 / QUOT-190），行号从 36 起接排，不动上面的编号。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 36 | `ldst research <code>` | 个股六段研究管线：`company → financial → forecast → valuation → risk → report` 顺序执行，每段落 `data/research/<code>/<date>/<stage>.{json,md}` + 一份 checkpoint（`data/state/research_checkpoint/<code>/<date>.json`，原子写），中断重跑只补缺失段 | `--date`（缺省取今日）、`--only <stage>`、`--retry-failed`、`--force`、`--output` | `--output json` 载荷见 `ResearchRunResult.as_dict()`（键集合是 R1-2/R1-3/R1-8 的消费契约）；`code` 非法或 `--only` 未知 2；缺 `config/ai.yaml` 3；任一段失败或降级 9 |
+
+- `--only` / `--retry-failed` / `--force` 的**选择语义与五段复盘编排（`ai retry`）逐字一致**：
+  共用 `ai/checkpoint.select_targets()`，已完成段默认跳过，`--only <stage>` 命中已完成段时是
+  no-op（要重跑单段就配 `--force`），`--retry-failed` 只重跑 `failed` 段。
+- **本段不联网取数**（联网检索属 R4，需人类批准）：`facts` 由调用方注入，默认空；
+  未配置模型凭据时六段按占位叙述落盘并如实标 `degraded`（退出 9），用于验证顺序执行与断点续跑。
+- MCP 侧只读工具 `research_status`（`code` 必填、`date` 可选，缺省取该代码最近一次 checkpoint）
+  读同一份进度，输出走统一信封；**交易日志与持仓不出现在任何研究产物里**。
+
 ## E. MCP、配置、调度与体检（8）
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
@@ -92,6 +113,7 @@
 | 35 | `ldst doctor` | 环境体检：依赖、端口、缓存目录、数据源 | — | 对齐 `th-cn doctor` 习惯 |
 
 > 表内编号 1–35 为**行号**；去重后为 **33 个叶子路径**（`sync` 的三种形态合并为一条、`validate` 的两级子命令各算一个叶子）。P0 基线口径的 **31 条命令**见第 0 节；`scripts/check_commands.py` 实测覆盖 **32 条可执行 argv**（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。四套数字的对应关系见文首「命令计数口径」。
+> §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，**不计入上面的 31/33/35/32**；算上它则是 36 行 / 34 个叶子 / 33 条可执行 argv。
 
 ## F. 全局约定
 

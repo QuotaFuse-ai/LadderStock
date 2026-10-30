@@ -25,6 +25,7 @@ from ladderstock.cli.mcp import register as register_mcp
 from ladderstock.cli.notify import register as register_notify
 from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
+from ladderstock.cli.research import research as research_command
 from ladderstock.cli.review import register as register_review
 from ladderstock.cli.run import launch as launch_dashboard
 from ladderstock.cli.schedule import register as register_schedule
@@ -207,6 +208,15 @@ register_state(state_app)
 
 # 实现体在 cli/ai.py；此处只做注册（模型链 / 段落重试 / 兼容矩阵）
 register_ai(ai_app, chain_app)
+
+
+# ---------------------------------------------------------------- 个股研究（R1）
+
+# 实现体在 cli/research.py + research/pipeline.py；`research` 是叶子命令，
+# `<code>` 为位置参数，因此不能再挂子命令（见 cli/research.py 模块说明）
+app.command(help="个股六段研究管线（company→financial→forecast→valuation→risk→report）")(
+    research_command
+)
 
 
 # ---------------------------------------------------------------- MCP

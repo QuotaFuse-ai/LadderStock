@@ -8,6 +8,9 @@
 - 8  部分数据集失败（有成功的、也有失败的）
 
 （施工期占位码 70 已退役：31 条基线命令全部有实现，见 docs/CLI.md §F。）
+
+R1-1（QUOT-190）在基线之外新增 1 条命令 `ldst research <code>`：基线 31 条 /
+33 叶子 / 32 argv 的口径不变，加上它之后是 **34 个叶子路径、33 条可执行 argv**。
 """
 
 from __future__ import annotations
@@ -72,6 +75,9 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     (("ai", "status"), {0}),
     (("ai", "retry", "--date", DATE), {0, 9}),
     (("ai", "chain", "test"), {3}),
+    # R1-1 新增（在 31 条基线之外，见 docs/CLI.md §0 的「R1-1 增量」行）：
+    # 未配置模型凭据时六段按占位降级 -> 9；配好模型则 0。语义与 `ai retry` 同口径。
+    (("research", "600000"), {0, 9}),
     # MCP
     # `mcp stdio` / `mcp http` 是长驻服务（stdio 阻塞到客户端关闭、http 阻塞到
     # Ctrl+C），与 `run` 同口径不进矩阵：`mcp http` 端口占用 -> 3 见
@@ -126,6 +132,8 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("ai", "status"),
     ("ai", "retry"),
     ("ai", "chain", "test"),
+    # R1-1 新增叶子（不属 31 条基线，但同样受「全局 --output」契约管辖）
+    ("research",),
     ("mcp", "stdio"),
     ("mcp", "http"),
     ("mcp", "tools", "list"),

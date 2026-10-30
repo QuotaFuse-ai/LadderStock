@@ -22,8 +22,15 @@
 | `ladder_get_review` | 是 | `review` | `date` | 某日复盘结构化结果 |
 | `ladder_get_validation` | 是 | `validation` | `date` | 明日验证条件与对账结果 |
 | `ladder_get_sentiment` | 是 | `sentiment` | `date` | 情绪温度、晋级率、梯队断层 |
+| `research_status` | 是 | `research` | `code`、`date?` | 个股研究六段进度（R1-1，QUOT-190） |
 
 除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。
+
+> **`research_status` 的两处有意偏差**（2026-10-30，R1-1）：
+> ① 工具名不带 `ladder_` 前缀——issue 里定死的名字，与 CLI 命令 `ldst research` 同名，便于跨面引用；
+> ② 入参以 `code` 定位、`date` 可选（缺省取该代码最近一次 checkpoint），因为「读当前进度」
+> 本来就没有日期。契约测试用 `CODE_SCOPED_TOOLS` 显式登记这个例外，见
+> `tests/contract/test_mcp_tools.py`。信封域仍是 `review`（`LadderDomain` 取值集合不变）。
 
 ### 1.1 `ladder_get_watch` 的数据来源
 

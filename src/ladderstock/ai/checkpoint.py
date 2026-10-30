@@ -1,20 +1,24 @@
-"""五段 AI 编排的断点续跑（M3 §6.3）。
+"""AI 编排的断点续跑状态机（M3 §6.3 五段复盘 / R1-1 个股六段研究共用）。
 
-状态机顺序固定：情绪 → 资金 → 题材 → 龙虎榜 → 龙头。**每段完成即落盘**
-（`<data_dir>/state/ai_checkpoint/<date>.json`，原子写），因此某一段失败
-不会吞掉前序成果：
+本模块只负责**状态读写**，不调模型（编排在 `ai/orchestrator.py` 与
+`research/pipeline.py`）。两套编排的差别只有一个：落盘布局 `CheckpointLayout`。
 
-- 成功/降级段落保留叙述，`ai retry --section` 只重跑失败段；
+- 五段复盘：`<data_dir>/state/ai_checkpoint/<date>.json`，字段 `sections`；
+- 个股研究：`<data_dir>/state/research_checkpoint/<code>/<date>.json`，字段 `stages`。
+
+顺序固定、**每一段完成即落盘**，因此某一段失败不会吞掉前序成果：
+
+- 成功/降级段落保留叙述，`retry_failed` 只重跑失败或未跑过的段落；
 - 进程中途退出后再次运行，已完成段落直接复用，不重复消耗额度；
 - 文件损坏/不存在时返回全新状态，不把坏 JSON 当成功缓存。
-
-本模块只负责状态读写，不调模型（见 `ai/orchestrator.py`）。
 """
 
 from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,13 +32,48 @@ DONE_STATUSES: frozenset[str] = frozenset({"ok", "degraded"})
 CHECKPOINT_SUBDIR = ("state", "ai_checkpoint")
 
 
-def checkpoint_path(day: Any, root: Any = None) -> Path:
-    return checkpoint_dir(root) / f"{day}.json"
+@dataclass(frozen=True)
+class CheckpointLayout:
+    """一套编排的落盘布局：目录、段落顺序、文档里的段落字段名。
+
+    `parts` 是日期文件名之前的额外层级（个股研究按 `<code>` 分层）。
+    """
+
+    subdir: tuple[str, ...] = CHECKPOINT_SUBDIR
+    names: tuple[str, ...] = SECTIONS
+    field: str = "sections"
 
 
-def checkpoint_dir(root: Any = None) -> Path:
+REVIEW_LAYOUT = CheckpointLayout()
+
+
+def checkpoint_dir(
+    root: Any = None,
+    *,
+    layout: CheckpointLayout = REVIEW_LAYOUT,
+    parts: tuple[str, ...] = (),
+) -> Path:
     base = Path(root) if root is not None else _data_dir()
-    return base.joinpath(*CHECKPOINT_SUBDIR)
+    return base.joinpath(*layout.subdir, *parts)
+
+
+def checkpoint_path(
+    day: Any,
+    root: Any = None,
+    *,
+    layout: CheckpointLayout = REVIEW_LAYOUT,
+    parts: tuple[str, ...] = (),
+) -> Path:
+    return checkpoint_dir(root, layout=layout, parts=parts) / f"{day}.json"
+
+
+def atomic_write(path: Path, text: str) -> Path:
+    """原子写入：同目录临时文件 + `os.replace`，避免读到半截内容。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(text, encoding="utf-8")
+    os.replace(temp, path)
+    return path
 
 
 def _data_dir() -> Path:
@@ -47,51 +86,69 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def fresh(day: Any) -> dict[str, Any]:
-    return {
-        "date": str(day),
-        "version": 1,
-        "updated_at": _now(),
-        "sections": {name: {"status": "pending"} for name in SECTIONS},
-    }
-
-
-def load(day: Any, root: Any = None) -> dict[str, Any]:
-    """读 checkpoint；缺失或损坏时返回全新状态（并保留损坏文件的备份线索）。"""
-    path = checkpoint_path(day, root)
-    if not path.is_file():
-        return fresh(day)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return fresh(day)
-    if not isinstance(data, dict) or not isinstance(data.get("sections"), dict):
-        return fresh(day)
-    document = fresh(day)
-    document["updated_at"] = str(data.get("updated_at") or document["updated_at"])
-    for name in SECTIONS:
-        state = data["sections"].get(name)
-        if isinstance(state, dict) and state.get("status") in STATUSES:
-            document["sections"][name] = state
+def fresh(
+    day: Any,
+    *,
+    layout: CheckpointLayout = REVIEW_LAYOUT,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    document: dict[str, Any] = dict(extra or {})
+    document.update(
+        {
+            "date": str(day),
+            "version": 1,
+            "updated_at": _now(),
+            layout.field: {name: {"status": "pending"} for name in layout.names},
+        }
+    )
     return document
 
 
-def save(document: dict[str, Any], root: Any = None) -> Path:
-    """原子写入：临时文件 + `os.replace`，避免读到半截状态。"""
+def load(
+    day: Any,
+    root: Any = None,
+    *,
+    layout: CheckpointLayout = REVIEW_LAYOUT,
+    parts: tuple[str, ...] = (),
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """读 checkpoint；缺失或损坏时返回全新状态（不把坏 JSON 当成功缓存）。"""
+    path = checkpoint_path(day, root, layout=layout, parts=parts)
+    if not path.is_file():
+        return fresh(day, layout=layout, extra=extra)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return fresh(day, layout=layout, extra=extra)
+    if not isinstance(data, dict) or not isinstance(data.get(layout.field), dict):
+        return fresh(day, layout=layout, extra=extra)
+    document = fresh(day, layout=layout, extra=extra)
+    document["updated_at"] = str(data.get("updated_at") or document["updated_at"])
+    for name in layout.names:
+        state = data[layout.field].get(name)
+        if isinstance(state, dict) and state.get("status") in STATUSES:
+            document[layout.field][name] = state
+    return document
+
+
+def save(
+    document: dict[str, Any],
+    root: Any = None,
+    *,
+    layout: CheckpointLayout = REVIEW_LAYOUT,
+    parts: tuple[str, ...] = (),
+) -> Path:
     document["updated_at"] = _now()
-    path = checkpoint_path(document.get("date"), root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(
-        json.dumps(document, ensure_ascii=False, indent=2, default=str) + "\n",
-        encoding="utf-8",
+    path = checkpoint_path(document.get("date"), root, layout=layout, parts=parts)
+    return atomic_write(
+        path, json.dumps(document, ensure_ascii=False, indent=2, default=str) + "\n"
     )
-    os.replace(temp, path)
-    return path
 
 
-def section_state(document: dict[str, Any], name: str) -> dict[str, Any]:
-    sections = document.get("sections") or {}
+def section_state(
+    document: dict[str, Any], name: str, *, layout: CheckpointLayout = REVIEW_LAYOUT
+) -> dict[str, Any]:
+    sections = document.get(layout.field) or {}
     state = sections.get(name)
     return state if isinstance(state, dict) else {"status": "pending"}
 
@@ -108,11 +165,12 @@ def record(
     notes: list[str] | None = None,
     failure: dict[str, Any] | None = None,
     attempts: list[dict[str, Any]] | None = None,
+    layout: CheckpointLayout = REVIEW_LAYOUT,
 ) -> dict[str, Any]:
     """写入一段的执行结果；调用方随后应立即 `save()`。"""
     if status not in STATUSES:
         raise ValueError(f"未知段落状态：{status}")
-    document.setdefault("sections", {})[name] = {
+    document.setdefault(layout.field, {})[name] = {
         "status": status,
         "mode": mode,
         "model": model,
@@ -126,39 +184,80 @@ def record(
     return document
 
 
-def failed_sections(document: dict[str, Any]) -> list[str]:
+def failed_sections(
+    document: dict[str, Any], *, layout: CheckpointLayout = REVIEW_LAYOUT
+) -> list[str]:
     return [
         name
-        for name in SECTIONS
-        if section_state(document, name).get("status") == "failed"
+        for name in layout.names
+        if section_state(document, name, layout=layout).get("status") == "failed"
     ]
 
 
-def done_sections(document: dict[str, Any]) -> list[str]:
+def done_sections(
+    document: dict[str, Any], *, layout: CheckpointLayout = REVIEW_LAYOUT
+) -> list[str]:
     return [
         name
-        for name in SECTIONS
-        if section_state(document, name).get("status") in DONE_STATUSES
+        for name in layout.names
+        if section_state(document, name, layout=layout).get("status") in DONE_STATUSES
     ]
 
 
-def pending_sections(document: dict[str, Any]) -> list[str]:
+def pending_sections(
+    document: dict[str, Any], *, layout: CheckpointLayout = REVIEW_LAYOUT
+) -> list[str]:
     return [
         name
-        for name in SECTIONS
-        if section_state(document, name).get("status") == "pending"
+        for name in layout.names
+        if section_state(document, name, layout=layout).get("status") == "pending"
     ]
 
 
-def is_complete(document: dict[str, Any]) -> bool:
+def is_complete(document: dict[str, Any], *, layout: CheckpointLayout = REVIEW_LAYOUT) -> bool:
     return all(
-        section_state(document, name).get("status") in DONE_STATUSES for name in SECTIONS
+        section_state(document, name, layout=layout).get("status") in DONE_STATUSES
+        for name in layout.names
     )
 
 
+def select_targets(
+    document: dict[str, Any],
+    *,
+    layout: CheckpointLayout = REVIEW_LAYOUT,
+    force: bool = False,
+    retry_failed: bool = False,
+    only: str | None = None,
+    kind: str = "段落",
+) -> list[str]:
+    """按 `force` / `retry_failed` / `only` 选出本次要跑的段（两套编排共用同一语义）。
+
+    - `only`：只跑这一段，其余一律不动（不改其他段状态）；
+    - `retry_failed`：只补失败 / 未跑过的段，成功段一律不重跑；
+    - 默认：只补未完成的段（断点续跑）。
+    """
+    if only is not None and only not in layout.names:
+        raise ValueError(f"未知{kind}：{only}（可选：{', '.join(layout.names)}）")
+    done = set(done_sections(document, layout=layout))
+    targets: list[str] = []
+    for name in layout.names:
+        if only is not None and name != only:
+            continue
+        if force:
+            targets.append(name)
+        elif name not in done:
+            targets.append(name)
+    return targets
+
+
 __all__ = [
+    "CHECKPOINT_SUBDIR",
     "DONE_STATUSES",
+    "REVIEW_LAYOUT",
     "SECTIONS",
+    "STATUSES",
+    "CheckpointLayout",
+    "atomic_write",
     "checkpoint_dir",
     "checkpoint_path",
     "done_sections",
@@ -170,4 +269,5 @@ __all__ = [
     "record",
     "save",
     "section_state",
+    "select_targets",
 ]

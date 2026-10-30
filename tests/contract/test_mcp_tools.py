@@ -48,7 +48,14 @@ DOCUMENTED_TOOLS = {
     "ladder_get_sentiment",
     "ladder_get_validation",
     "ladder_get_review",
+    # R1-1（QUOT-190）新增：issue 里工具名定死为 `research_status`，
+    # 不带 `ladder_` 前缀是有意的偏差（与 CLI `ldst research` 同名，便于跨面引用）
+    "research_status",
 }
+
+#: 按**证券代码**定位进度的工具：`date` 可选（缺省取该代码最近一次 checkpoint），
+#: 所以不适用下面「取数类工具必须以 date 定位快照」这条不变量。
+CODE_SCOPED_TOOLS = {"research_status"}
 
 
 def test_tool_set_matches_document() -> None:
@@ -68,9 +75,20 @@ def test_no_privacy_keywords_leak_into_mcp() -> None:
 
 def test_date_tools_require_date() -> None:
     for spec in TOOL_SPECS:
-        if spec.domain == "meta":
+        if spec.domain == "meta" or spec.name in CODE_SCOPED_TOOLS:
             continue
         assert spec.input_schema.get("required") == ["date"], spec.name
+
+
+def test_code_scoped_tools_require_code_and_keep_date_optional() -> None:
+    """反向钉住偏差：`research_status` 必须 required=["code"]、date 可选且只读。"""
+    by_name = {spec.name: spec for spec in TOOL_SPECS}
+    assert CODE_SCOPED_TOOLS <= set(by_name)
+    for name in CODE_SCOPED_TOOLS:
+        spec = by_name[name]
+        assert spec.input_schema["required"] == ["code"], name
+        assert spec.input_schema["properties"]["date"]["type"] == "string", name
+        assert spec.read_only is True, name
 
 
 # --------------------------------------------------------------------------- #

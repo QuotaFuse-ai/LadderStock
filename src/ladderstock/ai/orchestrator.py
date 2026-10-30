@@ -190,22 +190,10 @@ class Orchestrator:
         retry_failed: bool,
         only: str | None,
     ) -> list[str]:
-        if only is not None and only not in checkpoint.SECTIONS:
-            raise ValueError(f"未知段落：{only}（可选：{', '.join(checkpoint.SECTIONS)}）")
-        done = set(checkpoint.done_sections(document))
-        targets: list[str] = []
-        for name in checkpoint.SECTIONS:
-            if only is not None and name != only:
-                continue
-            if force:
-                targets.append(name)
-            elif retry_failed:
-                # 只补失败 / 未跑过的段落，成功段落一律不重跑
-                if name not in done:
-                    targets.append(name)
-            elif name not in done:
-                targets.append(name)
-        return targets
+        # 段落选择语义与 `ldst research` 共用（`ai/checkpoint.select_targets`）
+        return checkpoint.select_targets(
+            document, force=force, retry_failed=retry_failed, only=only
+        )
 
     # ------------------------------------------------------------------ #
     # 单段生成
