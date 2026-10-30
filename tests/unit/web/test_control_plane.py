@@ -1323,3 +1323,113 @@ def test_control_disabled_all_methods_are_spa_shaped_404(
                 assert response.json()["detail"] == "Not Found"
     assert client.get("/api/health").status_code == 200
     assert client.get("/api/state/config").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# 8. AI 生成 / 重试任务（QUOT-236）：复用 Job 模型，不新增 peer
+# --------------------------------------------------------------------------- #
+
+def test_ai_generate_job_runs_review_cli(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    runtime = FakeRuntime()
+    runtime.default = StepResult(0, '{"ok": true, "degraded": false}\n')
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    job = plane.create_ai_job("generate", "2026-10-30", force=True)
+    done = _wait(plane, job.id)
+
+    assert done.status == "ok"
+    assert done.peer == control.AI_JOB_PEER
+    args = next(call for call in runtime.calls if "review" in call)
+    assert args[-4:] == ["review", "--date", "2026-10-30", "--force"]
+    # peer 任务的 PRD 字段集不变（AI 参数不泄漏进 view）
+    assert set(done.view()) == {
+        "id",
+        "peer",
+        "action",
+        "status",
+        "step",
+        "progress",
+        "started_at",
+        "ended_at",
+        "log_tail",
+        "error",
+    }
+    assert any("review" in line for line in done.tail())
+
+
+def test_ai_retry_job_scopes_section(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    runtime = FakeRuntime()
+    runtime.default = StepResult(0, "ok\n")
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    done = _wait(plane, plane.create_ai_job("retry", "2026-10-30", section="theme").id)
+
+    assert done.status == "ok"
+    args = next(call for call in runtime.calls if "retry" in call)
+    assert args[-6:] == ["ai", "retry", "--date", "2026-10-30", "--section", "theme"]
+
+
+def test_ai_job_exit_9_is_degraded_but_ok(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    runtime = FakeRuntime()
+    runtime.default = StepResult(9, "AI 降级完成\n")
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    done = _wait(plane, plane.create_ai_job("generate", "2026-10-30").id)
+
+    assert done.status == "ok"
+    assert done.error is None
+    assert any("降级" in line for line in done.tail())
+
+
+def test_ai_job_other_nonzero_is_failed(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    runtime = FakeRuntime()
+    runtime.default = StepResult(2, "非法参数\n")
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    done = _wait(plane, plane.create_ai_job("generate", "2026-10-30").id)
+
+    assert done.status == "failed"
+    assert "退出码 2" in (done.error or "")
+
+
+def test_ai_generate_route_validates_date_and_section(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    client = TestClient(
+        create_app(
+            data_root=tmp_path,
+            dist_dir=tmp_path / "missing",
+            control_plane=_plane(tmp_path, peer_dirs),
+        ),
+        client=LOOPBACK,
+        headers=WRITE_HEADERS,
+    )
+
+    assert client.post("/api/control/ai/generate", json={"date": "2026/10/30"}).status_code == 400
+    bad_section = client.post(
+        "/api/control/ai/retry", json={"date": "2026-10-30", "section": "nope"}
+    )
+    assert bad_section.status_code == 400
+    assert client.post("/api/control/ai/retry", json={"date": "2026-10-30"}).status_code == 200
+
+
+def test_ai_job_is_exclusive(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    import threading
+
+    gate = threading.Event()
+    runtime = FakeRuntime()
+
+    def blocked(args: list[str], cwd: Path, timeout: float) -> StepResult:
+        gate.wait(5)
+        return StepResult(0, "ok\n")
+
+    runtime.run = blocked  # type: ignore[method-assign]
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    first = plane.create_ai_job("generate", "2026-10-30")
+    try:
+        with pytest.raises(RuntimeError, match="已有 AI 生成任务"):
+            plane.create_ai_job("generate", "2026-10-30")
+    finally:
+        gate.set()
+    assert _wait(plane, first.id).status == "ok"

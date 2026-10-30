@@ -7,9 +7,30 @@
   "properties": {
     "ai": {
       "type": "object",
-      "required": ["default_model", "fallback_chain", "sections"],
+      "required": ["fallback_chain", "sections"],
       "additionalProperties": false,
+      "anyOf": [{ "required": ["backends"] }, { "required": ["default_model"] }],
       "properties": {
+        "backends": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "models"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "type": { "enum": ["openai", "anthropic"] },
+              "base_url_env": { "type": "string", "minLength": 1 },
+              "api_key_env": { "type": "string", "minLength": 1 },
+              "models": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
         "default_model": { "type": "string", "minLength": 1 },
         "base_url_env": { "type": "string" },
         "api_key_env": { "type": "string" },

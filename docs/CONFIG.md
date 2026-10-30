@@ -22,6 +22,8 @@
 | 变量 | 作用 |
 |---|---|
 | `LDST_CONFIG_DIR` / `LDST_DATA_DIR` | 覆盖配置 / 数据目录 |
+| `LDST_LLM_BASE_URL` / `LDST_LLM_API_KEY` | 默认 `openai` 兼容后端（旧配置也读这两个） |
+| `LDST_LLM_ANTHROPIC_BASE_URL` / `LDST_LLM_ANTHROPIC_API_KEY` | `anthropic` Messages 后端 |
 | `LDST_LEGACY_CONFIG_DIR` | 显式指定旧版配置文件（`vibe-research.config.json`）所在路径 |
 | `LDST_LEGACY_DATA_DIR` | 显式指定旧版数据目录（`data.js`、`review/`），迁移时只读复制 |
 | `LDST_SKIP_AUTO_MIGRATE` | `1` 关闭 `ldst run` 首启动的自动迁移（排障用） |
@@ -43,6 +45,37 @@
 | `config/schedule.yaml` | 定时任务表 | `config/schema/schedule.schema.json` |
 
 `ldst config validate` 逐文件校验并给出 `/a/b: 错误` 形式的路径；任一失败退出码 3。
+
+### 3.1 `ai.yaml` 多后端（QUOT-236）
+
+```yaml
+ai:
+  backends:
+    - id: openai            # `backend:model` 里的前缀，唯一
+      type: openai          # openai | anthropic（只决定协议，不决定厂商）
+      base_url_env: LDST_LLM_BASE_URL
+      api_key_env: LDST_LLM_API_KEY
+      models: [model-a, model-b]
+    - id: anthropic
+      type: anthropic
+      base_url_env: LDST_LLM_ANTHROPIC_BASE_URL
+      api_key_env: LDST_LLM_ANTHROPIC_API_KEY
+      models: [claude-sonnet-4-5]
+  default_model: openai:model-a
+  fallback_chain: [openai:model-b, anthropic:claude-sonnet-4-5]
+```
+
+- `default_model` / `fallback_chain` 用 `backend:model` 引用；裸模型名按 `backends[]`
+  的声明顺序落到第一个包含它的后端；
+- 只有 `base_url_env` + `api_key_env` 都有值的后端进入模型链，缺一组的后端**静默跳过**，
+  其余照常；全都没配则离线降级（退出码 9），不发起请求；
+- 换模型只在网络 / 额度错误时发生；格式错误先同模型重试一次（策略在编排层，
+  适配层不参与）；
+- 过渡期旧配置（顶层 `base_url_env` / `api_key_env` + 裸模型名）继续可读，等价于
+  一个隐式 `openai` 后端，**无需双写**。
+
+`ldst ai status --output json` 输出每个后端的 `base_url_env` / `api_key_env` /
+`api_key_set`，绝不回显密钥原文。
 
 ## 4. `ldst config migrate`
 

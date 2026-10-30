@@ -643,6 +643,20 @@ export const api = {
         body,
         timeoutMs: 20000,
       }),
+    /** 生成五段复盘（后台任务，轮询 `control.job` 直到 ok / failed）。 */
+    generateAi: (body: { date: string; force?: boolean }) =>
+      request<JobHandle>('/control/ai/generate', {
+        method: 'POST',
+        body,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 只重试失败 / 未完成段落；传 `section` 限定单段（QUOT-236）。 */
+    retryAi: (body: { date: string; section?: string }) =>
+      request<JobHandle>('/control/ai/retry', {
+        method: 'POST',
+        body,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
     /**
      * 保存「明日验证条件」到本机 validation 缓存（QUOT-197）。
      * `merge` 按 `code+trigger` 去重追加；`replace` 整段覆盖（只改 `conditions`，

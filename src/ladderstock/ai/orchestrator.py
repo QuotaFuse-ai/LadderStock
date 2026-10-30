@@ -17,21 +17,17 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
 import httpx
 
-from ladderstock.ai import checkpoint, fallback, structured_output
+from ladderstock.ai import checkpoint, fallback, providers, structured_output
 from ladderstock.ai.error_taxonomy import AiFailure, classify_error
+from ladderstock.ai.providers import UnconfiguredError
 from ladderstock.core.boundary import merge_narrative
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
-
-
-class UnconfiguredError(RuntimeError):
-    """缺少模型地址或密钥：属于本地配置问题，不是网络故障。"""
 
 
 class ChatClient(Protocol):
@@ -40,7 +36,7 @@ class ChatClient(Protocol):
 
 
 class HttpChatClient:
-    """OpenAI 兼容的 `/chat/completions` 客户端；密钥只从环境变量读。"""
+    """按模型标签解析后端，再交给对应协议适配器；密钥只从环境变量读。"""
 
     def __init__(
         self,
@@ -54,36 +50,16 @@ class HttpChatClient:
         self.transport = transport
 
     def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
-        base_url = os.environ.get(self.config.base_url_env, "").strip()
-        api_key = os.environ.get(self.config.api_key_env, "").strip()
-        if not base_url or not api_key:
-            raise UnconfiguredError(
-                f"未配置模型凭据（{self.config.base_url_env} / {self.config.api_key_env}）"
-            )
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.2,
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
-            response = client.post(
-                f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
-        try:
-            text = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            raise ValueError("模型响应缺少 choices[0].message.content") from None
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("模型返回空内容")
-        return text
+        target = self.config.resolve(model)
+        provider = providers.provider_for(target.backend.kind)
+        return provider.complete(
+            target,
+            system,
+            user,
+            json_mode=json_mode,
+            timeout=self.timeout,
+            transport=self.transport,
+        )
 
 
 @dataclass

@@ -52,7 +52,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from ladderstock.cli.paths import config_dir
+from ladderstock.ai import checkpoint
+from ladderstock.cli.paths import config_dir, project_root
 from ladderstock.core.boundary import PEER_CONTROL, PeerControl
 from ladderstock.core.fsguard import (
     AclError,
@@ -60,6 +61,7 @@ from ladderstock.core.fsguard import (
     require_local_peer_directories,
 )
 from ladderstock.core.validation import load_validation, validation_path, write_document
+from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 
 # --------------------------------------------------------------------------- #
 # 常量
@@ -131,6 +133,12 @@ STATUS_LABELS: dict[str, str] = {
 
 #: 任务日志里向前端暴露的尾部行数（PRD §4）
 JOB_TAIL_LINES = 20
+
+#: AI 生成 / 重试任务（QUOT-236）：复用同一套 Job 模型，不新增 peer
+AI_JOB_PEER = "ldst"
+AI_JOB_ACTIONS: frozenset[str] = frozenset({"generate", "retry"})
+#: 五段生成可能较慢；单次子进程的硬上限（超时即失败，不无限挂起）
+AI_JOB_TIMEOUT_SEC = 1800.0
 
 #: `import <pkg>` 探测超时（PRD §3.1）
 IMPORT_PROBE_TIMEOUT_SEC = 15.0
@@ -633,6 +641,21 @@ def _clean_env() -> dict[str, str]:
     return env
 
 
+def _ldst_command() -> list[str]:
+    """优先用当前解释器同目录的 `ldst`，找不到才退回 `python -m ...`。"""
+    scripts = Path(sys.executable).parent
+    for name in ("ldst.exe", "ldst"):
+        candidate = scripts / name
+        if candidate.is_file():
+            return [str(candidate)]
+    return [sys.executable, "-m", "ladderstock.cli.main"]
+
+
+def _ai_working_dir() -> Path:
+    """AI 子进程 cwd：工程根（含 prompts/ 与默认 config/），不随控制面从哪启动而漂移。"""
+    return project_root()
+
+
 def run_step(args: list[str], cwd: Path, timeout: float) -> StepResult:
     """参数数组 + `shell=False` + 显式超时（DEC-014 硬约束 2）。"""
     try:
@@ -874,7 +897,7 @@ class StatePersistError(JobFailure):
 
 @dataclass
 class Job:
-    """一次控制面动作（安装 / 启动 / 停止）。字段与 PRD §4 对齐。"""
+    """一次控制面动作（安装 / 启动 / 停止 / AI 生成 / AI 重试）。字段与 PRD §4 对齐。"""
 
     id: str
     peer: str
@@ -886,6 +909,10 @@ class Job:
     started_at: str | None = None
     ended_at: str | None = None
     error: str | None = None
+    # AI 任务参数（QUOT-236）；peer 任务留空，`view()` 只暴露 PRD 字段
+    day: str = ""
+    section: str | None = None
+    force: bool = False
     _log: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -1246,6 +1273,7 @@ class ControlPlane:
         self._validation_lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
         self._last_job: dict[str, Job] = {}
+        self._ai_job: Job | None = None
         self._handles: dict[str, list[Any]] = {}
         self._state: dict[str, Any] = self._load_state()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ldst-control")
@@ -1586,12 +1614,45 @@ class ControlPlane:
     def get_job(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
+    def create_ai_job(
+        self,
+        action: str,
+        day: str,
+        *,
+        section: str | None = None,
+        force: bool = False,
+    ) -> Job:
+        """建 AI 生成 / 重试任务（QUOT-236）：同一时刻只允许一个 AI 任务。
+
+        与 peer 任务共用 Job / 线程池 / `GET /jobs/{id}`，不扩展 `Job.view()` 字段。
+        """
+        if action not in AI_JOB_ACTIONS:
+            raise ValueError(f"未知 AI 动作：{action}")
+        with self._lock:
+            active = self._ai_job
+            if active is not None and active.status in {"queued", "running"}:
+                raise RuntimeError("已有 AI 生成任务在执行，请等待结束")
+            job = Job(
+                id=uuid.uuid4().hex,
+                peer=AI_JOB_PEER,
+                action=action,
+                day=day,
+                section=section,
+                force=force,
+            )
+            self._jobs[job.id] = job
+            self._ai_job = job
+        self._executor.submit(self._execute, job)
+        return job
+
     def _execute(self, job: Job) -> None:
         job.status = "running"
         job.started_at = _now_iso()
         job.log(f"{job.action} {job.peer} 开始")
         try:
-            if job.action == "install":
+            if job.action in AI_JOB_ACTIONS:
+                self._ai_run(job)
+            elif job.action == "install":
                 self._install(job)
             elif job.action == "start":
                 self._start(job)
@@ -1613,6 +1674,35 @@ class ControlPlane:
             job.ended_at = _now_iso()
             if job.status == "ok":
                 job.progress = 1.0
+
+    # ---------------------------------------------------------------- AI 任务
+
+    def _ai_command(self, job: Job) -> list[str]:
+        """AI 任务的子进程参数：只含日期 / 段名，密钥始终留给环境变量。"""
+        command = list(_ldst_command())
+        if job.action == "generate":
+            command += ["review", "--date", job.day]
+            if job.force:
+                command.append("--force")
+        else:
+            command += ["ai", "retry", "--date", job.day]
+            if job.section:
+                command += ["--section", job.section]
+        return command
+
+    def _ai_run(self, job: Job) -> None:
+        """跑 `ldst review` / `ldst ai retry`；退出码 9（AI 降级）仍算任务成功。"""
+        args = self._ai_command(job)
+        job.step = "生成复盘" if job.action == "generate" else "重试失败段"
+        job.log(f"$ {' '.join(args)}")
+        result = self._run(args, _ai_working_dir(), AI_JOB_TIMEOUT_SEC)
+        for line in tail_lines(result.output, JOB_TAIL_LINES * 2):
+            job.log(f"  {line}")
+        if result.returncode == EXIT_AI_DEGRADED:
+            job.log("AI 降级完成（退出码 9）：部分段落失败或降级，结果已落盘")
+            return
+        if result.returncode != EXIT_OK:
+            raise JobFailure(f"{job.step}失败（退出码 {result.returncode}）")
 
     def _step(
         self,
@@ -2333,6 +2423,24 @@ class AiTestRequest(BaseModel):
     api_key: str | None = None
 
 
+class AiGenerateRequest(BaseModel):
+    date: str
+    force: bool = False
+
+
+class AiRetryRequest(BaseModel):
+    date: str
+    section: str | None = None
+
+
+def _trade_date(value: str) -> str:
+    """`YYYY-MM-DD` 校验；非法直接 400（不把 422 抛给前端）。"""
+    try:
+        return date.fromisoformat((value or "").strip()).isoformat()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date 需要 YYYY-MM-DD") from None
+
+
 async def _json_body(request: Request) -> Any:
     """读请求体 JSON；解析失败一律 400（不把 422 / 500 抛给前端）。"""
     try:
@@ -2413,6 +2521,31 @@ def build_router(plane: ControlPlane) -> APIRouter:
             model=body.model,
             api_key=body.api_key,
         )
+
+    @router.post("/ai/generate")
+    def ai_generate(body: AiGenerateRequest) -> dict[str, Any]:
+        """生成指定日期的五段复盘（后台任务，前端轮询 `/jobs/{id}`）。"""
+        day = _trade_date(body.date)
+        try:
+            job = plane.create_ai_job("generate", day, force=body.force)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"job_id": job.id, "status": job.status}
+
+    @router.post("/ai/retry")
+    def ai_retry(body: AiRetryRequest) -> dict[str, Any]:
+        """只重试失败 / 未完成段落；`section` 可限定单段。"""
+        day = _trade_date(body.date)
+        if body.section is not None and body.section not in checkpoint.SECTIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知段落：{body.section}（可选：{', '.join(checkpoint.SECTIONS)}）",
+            )
+        try:
+            job = plane.create_ai_job("retry", day, section=body.section)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"job_id": job.id, "status": job.status}
 
     @router.put("/validation/conditions")
     async def write_validation_conditions(request: Request) -> dict[str, Any]:

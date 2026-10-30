@@ -51,3 +51,37 @@ describe('控制面写请求头（QUOT-178）', () => {
     }
   })
 })
+
+describe('AI 生成 / 重试调用链（QUOT-236）', () => {
+  it('generateAi / retryAi 走控制面写接口，保留日期与段名', async () => {
+    const calls: Array<{ url: string; method: string; headers: Record<string, string>; body: unknown }> = []
+    vi.stubGlobal('fetch', (input: string, init: RequestInit = {}) => {
+      calls.push({
+        url: input,
+        method: init.method ?? 'GET',
+        headers: (init.headers ?? {}) as unknown as Record<string, string>,
+        body: init.body ? JSON.parse(String(init.body)) : null,
+      })
+      return Promise.resolve(
+        new Response(JSON.stringify({ job_id: 'j1', status: 'queued' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+    })
+
+    await api.control.generateAi({ date: '2026-10-30' })
+    await api.control.retryAi({ date: '2026-10-30', section: 'theme' })
+
+    expect(calls.map((call) => call.url)).toEqual([
+      '/api/control/ai/generate',
+      '/api/control/ai/retry',
+    ])
+    expect(calls[0].body).toEqual({ date: '2026-10-30' })
+    expect(calls[1].body).toEqual({ date: '2026-10-30', section: 'theme' })
+    for (const call of calls) {
+      expect(call.method).toBe('POST')
+      expect(call.headers['X-LDST-Client']).toBe('1')
+    }
+  })
+})

@@ -102,7 +102,7 @@ AI 只负责**叙述**，数值一律程序直出；AI 全挂时以退出码 9 �
 | 结构化输出 | 所有命令统一 `--output json|table|csv`，字段稳定可供契约测试断言 |
 | `data/state/migration.json` | 迁移审计：版本、步骤、备份路径 |
 | `data/control/peer_state.json` | 控制面只记录**由本进程启动**的 peer PID 与启动时间；「停止」只对这些 PID 生效，绝不误杀他人进程 |
-| `/api/control/jobs/{id}` | 安装/启停任务的有界日志（`log_tail` 最多 20 行、线程池任务不随页面关闭丢失） |
+| `/api/control/jobs/{id}` | 安装/启停/AI 生成任务的统一任务视图（`log_tail` 最多 20 行、线程池任务不随页面关闭丢失） |
 | 静默原则 | 日志与报错不打印凭据原文；`scripts/check_privacy.py` 的 `credential-printing` 组扫描 |
 
 ## 6. 非目标
