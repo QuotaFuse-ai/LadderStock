@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw, Trash2 } from 'lucide-react'
 
@@ -7,6 +7,7 @@ import {
   describeApiError,
   isApiError,
   parseAiFailures,
+  type JobView,
   type LadderEnvelope,
   type ReviewAiFailure,
   type SentimentResult,
@@ -42,7 +43,8 @@ import {
  *
  * 3 张指标卡（程序直出，不可编辑）+ 五段固定顺序（情绪→资金→题材→龙虎榜→龙头）。
  * 「AI 叙述」只读、来自 `/api/review`；「我的判断」写 `reviewDraft`（IndexedDB 自动保存）。
- * 后端没有生成/重试接口，因此「重新生成」置灰并给出可见原因，不假装能跑。
+ * 「重新生成」走控制面 `POST /api/control/ai/generate`（后台任务 + 轮询 `/jobs/{id}`），
+ * 单段失败的重试走 `/ai/retry`；失败原因统一用 QUOT-235 的 `AiErrorNotice` 展示。
  * 任何缺失值显示 `—` + 原因，不补 0、不编造。
  */
 
@@ -182,8 +184,78 @@ export default function ReviewScreen() {
   const review = useAsync((signal) => api.review(tradeDate, signal), [tradeDate])
   const sentiment = useAsync((signal) => api.sentiment(tradeDate, signal), [tradeDate])
   const requests = [review, sentiment]
-  const reloadAll = () => requests.forEach((request) => request.reload())
+  const reloadAll = useCallback(() => {
+    review.reload()
+    sentiment.reload()
+  }, [review.reload, sentiment.reload]) // eslint-disable-line react-hooks/exhaustive-deps
   const busy = requests.some((request) => request.status === 'loading')
+
+  // AI 生成 / 重试任务：POST 建任务 → 轮询 `/control/jobs/{id}` 直到 ok / failed
+  const [aiJob, setAiJob] = useState<JobView | null>(null)
+  const [aiJobError, setAiJobError] = useState<string | null>(null)
+  const aiBusy = aiJob !== null
+
+  const startAi = async (mode: 'generate' | 'retry', section?: string) => {
+    setAiJobError(null)
+    setNotice(null)
+    try {
+      const handle =
+        mode === 'generate'
+          ? await api.control.generateAi({ date: tradeDate })
+          : await api.control.retryAi({ date: tradeDate, section })
+      setAiJob({
+        id: handle.job_id,
+        peer: 'ldst',
+        action: mode,
+        status: 'queued',
+        step: '',
+        progress: 0,
+        started_at: null,
+        ended_at: null,
+        log_tail: [],
+        error: null,
+      })
+    } catch (error) {
+      const described = describeApiError(error)
+      setAiJobError(`${described.title}：${described.detail}`)
+    }
+  }
+
+  useEffect(() => {
+    if (!aiJob) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const next = await api.control.job(aiJob.id)
+        if (cancelled) return
+        if (next.status === 'ok' || next.status === 'failed') {
+          setAiJob(null)
+          if (next.status === 'ok') {
+            setNotice(
+              next.action === 'retry' ? '失败段已重试完成，报告已刷新' : 'AI 生成完成，报告已刷新',
+            )
+            review.reload()
+            sentiment.reload()
+          } else {
+            setAiJobError(next.error ?? 'AI 生成失败')
+          }
+          return
+        }
+        setAiJob(next)
+      } catch (error) {
+        if (cancelled) return
+        setAiJob(null)
+        setAiJobError(describeApiError(error).detail)
+      }
+    }
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 1500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [aiJob]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 首帧快照：区分「本机恢复的草稿」与「本次新写的笔记」
   const [restored] = useState(() => {
@@ -221,6 +293,8 @@ export default function ReviewScreen() {
 
   const state = resolveState(forced, derived)
   const usable = state === 'normal' || state === 'partial'
+  // 生成 / 重试需要本机控制面可达；loading / error / offline 时不假装能跑
+  const canRunAi = usable || state === 'empty'
 
   // 五态下数据一律按「不可用」处理：强制态不依赖后端
   const viewSections = usable ? aiSections : []
@@ -278,7 +352,7 @@ export default function ReviewScreen() {
       actions={
         <>
           <Button
-            variant="primary"
+            variant="secondary"
             loading={busy && state !== 'loading'}
             disabled={state === 'loading'}
             onClick={reloadAll}
@@ -287,11 +361,13 @@ export default function ReviewScreen() {
             刷新
           </Button>
           <Button
-            variant="secondary"
-            disabled
-            disabledReason={`重新生成由 ldst review --date ${tradeDate} --retry-failed 触发；控制面未开放`}
+            variant="primary"
+            loading={aiBusy}
+            disabled={!canRunAi}
+            disabledReason={canRunAi ? undefined : '本地服务未连接，无法触发生成'}
+            onClick={() => void startAi('generate')}
           >
-            重新生成
+            {aiBusy ? 'AI 生成中…' : viewFailures.length > 0 ? '重试失败段' : '重新生成'}
           </Button>
         </>
       }
@@ -381,6 +457,19 @@ export default function ReviewScreen() {
         <p className="text-caption text-text-secondary" role="status">
           {notice}
         </p>
+      )}
+      {aiBusy && (
+        <Banner tone="info" title="AI 正在生成复盘">
+          五段依次生成，已完成段落会保留；完成后本页自动刷新。
+          {aiJob?.step ? `当前步骤：${aiJob.step}` : ''}
+        </Banner>
+      )}
+      {aiJobError && (
+        <AiErrorNotice
+          kind="internal"
+          message={aiJobError}
+          onOpenStatus={() => navigate('/settings?tab=ai')}
+        />
       )}
 
       {state === 'empty' && (
@@ -498,8 +587,8 @@ export default function ReviewScreen() {
                         message={failure.message}
                         action={failure.action}
                         keptPrevious={(payload?.narrative.length ?? 0) > 0}
-                        retryLabel="重新取数"
-                        onRetry={reloadAll}
+                        retryLabel={aiBusy ? 'AI 生成中…' : '重试该段'}
+                        onRetry={() => void startAi('retry', failure.section)}
                         onOpenStatus={() => navigate('/settings?tab=ai')}
                       />
                       {payload && payload.narrative.length > 0 && (
@@ -510,12 +599,6 @@ export default function ReviewScreen() {
                             </p>
                           ))}
                         </div>
-                      )}
-                      {failure.kind !== 'truncated' && failure.kind !== 'internal' && (
-                        <p className="text-caption text-text-muted">
-                          重新生成失败段需运行 `ldst review --date {tradeDate} --retry-failed`；控制面未开放，
-                          本页的「重新取数」只刷新已生成的报告。
-                        </p>
                       )}
                     </div>
                   ) : status === 'failed' ? (
