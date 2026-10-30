@@ -142,7 +142,11 @@ def drive_type(drive: str) -> int | None:
     import ctypes
 
     try:
-        kernel32 = ctypes.WinDLL("kernel32")  # 仅 Windows 存在
+        # typeshed 只在 Windows 平台给 ctypes 声明 WinDLL；用 getattr 取，Linux 上 mypy 也能过
+        windll = getattr(ctypes, "WinDLL", None)
+        if windll is None:  # pragma: no cover - 非 Windows 在函数开头就返回了
+            return None
+        kernel32 = windll("kernel32")
         root = drive if drive.endswith("\\") else f"{drive}\\"
         return int(kernel32.GetDriveTypeW(root))
     except (AttributeError, OSError, ValueError):  # pragma: no cover - 本机永远可查
