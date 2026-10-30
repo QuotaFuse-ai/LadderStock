@@ -20,10 +20,12 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import threading
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -32,6 +34,7 @@ from typing import Any, Protocol
 import httpx
 import yaml
 
+from ladderstock import __version__
 from ladderstock.cli.paths import config_dir, data_dir
 from ladderstock.core.boundary import BoundaryViolation, owner_of
 from ladderstock.core.models import LadderEnvelope
@@ -174,66 +177,294 @@ class Transport(Protocol):
     def probe(self, peer: PeerEndpoint, *, timeout: float) -> dict[str, Any]: ...
 
 
+#: 握手时声明的协议版本；服务端可以协商成它支持的版本，以响应为准。
+MCP_PROTOCOL_VERSION = "2025-06-18"
+MCP_SESSION_HEADER = "Mcp-Session-Id"
+MCP_PROTOCOL_HEADER = "MCP-Protocol-Version"
+MCP_ACCEPT = "application/json, text/event-stream"
+
+
+@dataclass
+class _McpSession:
+    """一个 peer 的 MCP 会话：握手一次，后续请求复用同一 `Mcp-Session-Id`。"""
+
+    session_id: str | None = None
+    protocol_version: str = ""
+
+
+class _SessionExpired(Exception):
+    """服务端已不认这个会话（404）；重新握手后把这次请求重发一次。"""
+
+
 class HttpMcpTransport:
-    """MCP Streamable HTTP（JSON-RPC 2.0）传输。只连 `sources.yaml` 里的 peer 地址。"""
+    """MCP Streamable HTTP 客户端（2025-06-18）。只连 `sources.yaml` 里的 peer 地址。
+
+    真实 peer 不是「裸 JSON-RPC POST」：必须先 `initialize` 拿 `Mcp-Session-Id`、
+    回一条 `notifications/initialized`，后续请求带会话头；响应是 SSE
+    （`text/event-stream` 的 `data:` 帧），中途还夹 `: ping` 保活注释。
+    缺任何一步真实 TickHub-CN 都回 400 `Missing session ID`（QUOT-164 根因）。
+
+    会话按 peer 缓存复用；服务端 404（会话过期）时重新握手并把这次请求重发一次。
+    官方 `mcp` 包只有 async 客户端，而数据层是同步 + 线程池，这里自实现；
+    只覆盖本层用到的 `initialize` / `tools/list` / `tools/call`。
+    """
 
     def __init__(self, peers: dict[str, PeerEndpoint] | None = None) -> None:
         self.peers = peers or {}
+        self._sessions: dict[str, _McpSession] = {}
+        self._locks: dict[str, threading.Lock] = {}
+        self._guard = threading.Lock()
+        self._ids = itertools.count(1)
+
+    # ---------------------------------------------------------------- 公共接口
 
     def call(
         self, peer: PeerEndpoint, tool: str, params: dict[str, Any], *, timeout: float
     ) -> dict[str, Any]:
-        body = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": tool, "arguments": params},
-        }
-        payload = self._post(peer, body, timeout=timeout)
-        result = payload.get("result")
+        result = self._request(
+            peer,
+            "tools/call",
+            {"name": tool, "arguments": params},
+            timeout=timeout,
+        )
         if not isinstance(result, dict):
             raise SourceUnavailable(f"{peer.mcp_name}/{tool} 返回缺少 result")
+        if result.get("isError"):
+            raise SourceUnavailable(
+                f"{peer.mcp_name}/{tool} 报错：{_content_text(result) or '未知错误'}"
+            )
         return _unwrap_mcp_result(result)
 
     def probe(self, peer: PeerEndpoint, *, timeout: float) -> dict[str, Any]:
-        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-        payload = self._post(peer, body, timeout=timeout)
-        result = payload.get("result") or {}
+        result = self._request(peer, "tools/list", {}, timeout=timeout)
         tools = result.get("tools") if isinstance(result, dict) else None
         names = [t.get("name") for t in (tools or []) if isinstance(t, dict)]
         return {"peer": peer.key, "tools": names}
 
-    def _post(self, peer: PeerEndpoint, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    # ---------------------------------------------------------------- JSON-RPC
+
+    def _request(
+        self, peer: PeerEndpoint, method: str, params: dict[str, Any], *, timeout: float
+    ) -> Any:
+        """带会话的 JSON-RPC 调用；会话过期时重握手并重发一次。"""
+        body = {"jsonrpc": "2.0", "id": self._next_id(), "method": method, "params": params}
+        for attempt in range(2):
+            session = self._ensure_session(peer, timeout=timeout)
+            try:
+                payload = self._post(peer, body, session=session, timeout=timeout)
+            except _SessionExpired:
+                if attempt:
+                    raise SourceUnavailable(
+                        f"{peer.product} 会话反复失效（{mask_url(peer.url)}）"
+                    ) from None
+                self._drop_session(peer)
+                continue
+            if payload.get("error"):
+                error = payload["error"]
+                detail = error.get("message") if isinstance(error, dict) else error
+                raise SourceUnavailable(f"{peer.product} 报错：{detail}")
+            return payload.get("result")
+        raise SourceUnavailable(  # pragma: no cover - 上面两轮必然 return 或 raise
+            f"{peer.product} 会话不可用（{mask_url(peer.url)}）"
+        )
+
+    def _next_id(self) -> int:
+        with self._guard:
+            return next(self._ids)
+
+    def _peer_lock(self, key: str) -> threading.Lock:
+        with self._guard:
+            return self._locks.setdefault(key, threading.Lock())
+
+    # ---------------------------------------------------------------- 会话
+
+    def _ensure_session(self, peer: PeerEndpoint, *, timeout: float) -> _McpSession:
+        with self._peer_lock(peer.key):
+            session = self._sessions.get(peer.key)
+            if session is None:
+                session = self._handshake(peer, timeout=timeout)
+                self._sessions[peer.key] = session
+            return session
+
+    def _drop_session(self, peer: PeerEndpoint) -> None:
+        with self._peer_lock(peer.key):
+            self._sessions.pop(peer.key, None)
+
+    def _handshake(self, peer: PeerEndpoint, *, timeout: float) -> _McpSession:
+        """`initialize` → 取 `Mcp-Session-Id` → `notifications/initialized`。"""
+        body = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "ladderstock", "version": __version__},
+            },
+        }
+        session = _McpSession()
+        result = self._post(peer, body, session=session, timeout=timeout, capture=session)
+        if not isinstance(result.get("result"), dict):
+            raise SourceUnavailable(f"{peer.product} 未完成 MCP 握手（缺 initialize 结果）")
+        session.protocol_version = str(result["result"].get("protocolVersion") or "")
+        if not session.session_id:
+            # 无状态实现（不回 Mcp-Session-Id）也允许：后续请求照常不带会话头。
+            return session
+        note = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+        self._post(peer, note, session=session, timeout=timeout, expect_response=False)
+        return session
+
+    # ---------------------------------------------------------------- 传输
+
+    def _post(
+        self,
+        peer: PeerEndpoint,
+        body: dict[str, Any],
+        *,
+        session: _McpSession,
+        timeout: float,
+        expect_response: bool = True,
+        capture: _McpSession | None = None,
+    ) -> dict[str, Any]:
         if not peer.url:
             raise SourceUnavailable(f"{peer.product} 未配置地址（{peer.key}）")
-        headers = {"accept": "application/json, text/event-stream"}
+        headers = {"content-type": "application/json", "accept": MCP_ACCEPT}
+        if session.session_id:
+            headers[MCP_SESSION_HEADER] = session.session_id
+        if session.protocol_version:
+            headers[MCP_PROTOCOL_HEADER] = session.protocol_version
+        session_id: str | None = None
         try:
-            response = httpx.post(peer.url, json=body, timeout=timeout, headers=headers)
-            response.raise_for_status()
+            # peer 永远是本机回环地址；Windows 系统代理（WinINET）会被 httpx 的
+            # trust_env 读进来，把 127.0.0.1 也转给代理，表现为莫名其妙的 503。
+            with httpx.stream(
+                "POST",
+                peer.url,
+                json=body,
+                headers=headers,
+                timeout=timeout,
+                trust_env=False,
+            ) as response:
+                if response.status_code == 404 and session.session_id:
+                    raise _SessionExpired()
+                if response.status_code >= 400:
+                    raise SourceUnavailable(
+                        f"{peer.product} 拒收（HTTP {response.status_code}"
+                        f"{_error_detail(response)}）"
+                    )
+                session_id = response.headers.get(MCP_SESSION_HEADER)
+                if not expect_response:
+                    return {}
+                payload = self._read_payload(
+                    peer, response, request_id=body.get("id"), timeout=timeout
+                )
+        except _SessionExpired:
+            raise
         except httpx.HTTPError as exc:
             # 地址可能带查询串凭据（audit R-3）：报错只留 scheme://host/path
             raise SourceUnavailable(
                 f"{peer.product} 不可达（{type(exc).__name__}，{mask_url(peer.url)}）"
             ) from exc
+        if capture is not None:
+            capture.session_id = session_id
+        elif session_id and session_id != session.session_id:
+            session.session_id = session_id
+        return payload
+
+    def _read_payload(
+        self,
+        peer: PeerEndpoint,
+        response: httpx.Response,
+        *,
+        request_id: Any,
+        timeout: float,
+    ) -> dict[str, Any]:
+        if "text/event-stream" in response.headers.get("content-type", "").lower():
+            deadline = time.monotonic() + timeout
+            for frame in _sse_frames(response.iter_lines(), deadline=deadline):
+                try:
+                    message = json.loads(frame)
+                except json.JSONDecodeError:
+                    continue  # 非 JSON 帧（服务端自定事件）不参与响应匹配
+                for item in message if isinstance(message, list) else [message]:
+                    if (
+                        isinstance(item, dict)
+                        and item.get("id") == request_id
+                        and ("result" in item or "error" in item)
+                    ):
+                        return item
+            raise SourceUnavailable(f"{peer.product} 的 SSE 流里没有对应的 JSON-RPC 响应")
         try:
-            payload = response.json()
+            payload = json.loads(response.read())
         except ValueError as exc:
             raise SourceUnavailable(f"{peer.product} 返回非 JSON") from exc
-        if isinstance(payload, dict) and payload.get("error"):
-            error = payload["error"]
-            detail = error.get("message") if isinstance(error, dict) else error
-            raise SourceUnavailable(f"{peer.product} 报错：{detail}")
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict) and item.get("id") == request_id:
+                    return item
+            raise SourceUnavailable(f"{peer.product} 返回里没有对应的 JSON-RPC 响应")
         return payload if isinstance(payload, dict) else {}
+
+
+def _sse_frames(lines: Iterable[str], *, deadline: float) -> Iterator[str]:
+    """按 SSE 规则切帧：空行分隔、多条 `data:` 用换行拼接、`:` 开头是注释。
+
+    真实 peer 每 15s 发一条 `: ping - <ts>` 保活注释——它必须被忽略，
+    但也会把连接一直保活，所以这里按**整体墙钟 deadline** 判超时，
+    而不是依赖 httpx 的逐次读超时（后者会被 ping 无限续命）。
+    """
+    data: list[str] = []
+    for line in lines:
+        if time.monotonic() > deadline:
+            raise httpx.ReadTimeout("peer 流式响应超时")
+        if not line:
+            if data:
+                yield "\n".join(data)
+                data.clear()
+            continue
+        if line.startswith(":"):
+            continue
+        field, separator, value = line.partition(":")
+        if not separator or field != "data":
+            continue
+        data.append(value[1:] if value.startswith(" ") else value)
+    if data:
+        yield "\n".join(data)
+
+
+def _error_detail(response: httpx.Response) -> str:
+    """HTTP 错误响应里的一句话（真实 peer 是 `{"error":{"message": ...}}`）。"""
+    try:
+        text = response.read().decode("utf-8", "replace").strip()
+    except httpx.HTTPError:  # pragma: no cover - 读失败就不再纠结细节
+        return ""
+    if not text:
+        return ""
+    try:
+        body = json.loads(text)
+    except ValueError:
+        return f"：{text[:160]}"
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return f"：{str(error['message'])[:160]}"
+        if body.get("message"):
+            return f"：{str(body['message'])[:160]}"
+    return f"：{text[:160]}"
 
 
 def _unwrap_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
     """MCP `tools/call` 结果 → 业务 JSON。
 
-    优先 `structuredContent`，其次把 `content[0].text` 当 JSON 解析；
+    优先 `structuredContent`（真实 TickHub-CN 按 outputSchema 把它包成
+    `{"result": {...}}`，这里拆掉这层壳），其次把 `content[0].text` 当 JSON 解析；
     两者都没有时把 result 原样返回（adapter 会按 peer 形状校验）。
     """
     structured = result.get("structuredContent")
     if isinstance(structured, dict):
+        inner = structured.get("result")
+        if len(structured) == 1 and isinstance(inner, dict):
+            return inner
         return structured
     content = result.get("content")
     if isinstance(content, list) and content:
@@ -246,6 +477,17 @@ def _unwrap_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
     return result
+
+
+def _content_text(result: dict[str, Any]) -> str:
+    """`tools/call` 失败时 `content[].text` 里的一句话（真实 peer 把校验错误放这里）。"""
+    content = result.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"]:
+                # 真实 peer 的校验错误是多行文本，压成一行再截断，别丢掉后半句
+                return " ".join(item["text"].split())[:200]
+    return ""
 
 
 def build_transport(peers: dict[str, PeerEndpoint]) -> Transport:

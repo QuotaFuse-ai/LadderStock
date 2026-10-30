@@ -24,8 +24,14 @@
 TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——8001 是 WSL 转发服务
 的固定端口，8787 已被 TickHub-CN 管理端占用，两者都不允许抢占（DEC-004 不自动换端口）。
 
-传输层是 MCP Streamable HTTP（JSON-RPC 2.0 的 `tools/call` / `tools/list`）：
-优先读 `structuredContent`，否则把 `content[0].text` 当 JSON 解析。
+传输层是 MCP Streamable HTTP（QUOT-232）：首次调用先 `initialize` 握手，拿响应头的
+`Mcp-Session-Id` 回一条 `notifications/initialized`，之后每个请求带
+`Mcp-Session-Id` 与 `MCP-Protocol-Version`；会话按 peer 复用，服务端 404
+（`Session not found`）时重新握手并重发一次。响应按 SSE 切帧（`data:` 行，
+`: ping` 保活注释忽略），业务内容优先读 `structuredContent`（拆掉生态统一的
+`{"result": {...}}` 外壳），否则把 `content[0].text` 当 JSON 解析；
+`isError` 时把 `content[].text` 的原文报出来。peer 是本机回环地址，传输**不走**
+系统代理（Windows 的 WinINET 代理会把 127.0.0.1 也转走，表现为无端 503）。
 
 ## 2. 数据集归属与主备
 
