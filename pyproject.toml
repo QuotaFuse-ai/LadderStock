@@ -25,7 +25,8 @@ dependencies = [
 mcp = ["mcp>=1.0,<3"]
 web = ["fastapi>=0.110,<1", "uvicorn>=0.29,<1"]
 pdf = ["reportlab>=4.0,<6", "fonttools>=4.50,<5"]
-all = ["ladderstock[mcp,web,pdf]"]
+schedule = ["apscheduler>=3.10,<4"]
+all = ["ladderstock[mcp,web,pdf,schedule]"]
 dev = ["pytest>=8.0,<10", "ruff>=0.5,<1", "mypy>=1.10,<3"]
 
 [project.scripts]
