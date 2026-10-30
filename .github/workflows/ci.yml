@@ -17,6 +17,7 @@ jobs:
   backend:
     name: backend (pytest / ruff / mypy)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +41,7 @@ jobs:
   frontend:
     name: frontend (tsc / vitest / build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
