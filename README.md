@@ -232,6 +232,8 @@ mypy src
 ldst doctor                                        # 22 项体检：解释器 / 依赖 / 端口 / 配置 / 边界
 ```
 
+CI 实际执行的 job、与 workflow 逐字对齐的本地命令（含 Windows / POSIX 的 venv 路径差异）以及 required checks 现状，见 [docs/CI.md](docs/CI.md)。
+
 测试不依赖网络与 API Key：全部走本地 fixture 与 offline provider。当前基线 **614 passed**（另有 4 个旧版兼容性用例由 xfail 转 XPASS）；31 条命令已全部注册可执行，施工期占位（退出码 `70`）已随 `config migrate` 落地而退役（见 `docs/CLI.md` §F、`docs/CONFIG.md`）。
 
 ## License
