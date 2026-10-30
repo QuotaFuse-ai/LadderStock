@@ -23,8 +23,15 @@
 | `ladder_get_validation` | 是 | `validation` | `date` | 明日验证条件与对账结果 |
 | `ladder_get_sentiment` | 是 | `sentiment` | `date` | 情绪温度、晋级率、梯队断层 |
 | `research_status` | 是 | `research` | `code`、`date?` | 个股研究六段进度（R1-1，QUOT-190） |
+| `candidate_pool` | 是 | `sentiment` | `date` | 当日候选池评分：强度 / 换手 / 地位 / 资金 / 题材分项与总分（口径见 `docs/specs/SPEC-CANDIDATE-POOL.md`） |
 
-除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。
+除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **13 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个）。
+
+> **命名偏差（已声明-接受，DEC-019 §1）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
+> 因为 QUOT-145 的验收文字直接点名「MCP 只读工具 `candidate_pool`」。
+> 现有测试只锁「清单与文档一致 + 全部只读 + 无隐私关键字」，不锁前缀；
+> 若后续要统一成 `ladder_get_candidate_pool`，必须同时改 CLI 契约文档、`DOCUMENTED_TOOLS`
+> 两处（`tests/contract/test_mcp_tools.py`、`tests/contract/test_mcp_stdio.py`）与本表，属新的改名决策。
 
 > **`research_status` 的两处有意偏差**（2026-10-30，R1-1）：
 > ① 工具名不带 `ladder_` 前缀——issue 里定死的名字，与 CLI 命令 `ldst research` 同名，便于跨面引用；
@@ -46,22 +53,43 @@
 
 后三种一律 `available=false`、`payload.watch=null`：**没有状态就说没有，不伪造任何信号**。
 
+### 1.2 `candidate_pool` 的数据来源与载荷
+
+`candidate_pool` 不取数、不算第二套公式，只把 `core/pool.compute_pool(day, root=…, limit=30)`
+的结果包成信封——与 `ldst pool` **同一条装配路径**（MCP 侧条数固定 `POOL_MCP_LIMIT=30`，`--limit` 是 CLI 侧的参数）。
+
+| 位置 | 载荷 |
+|---|---|
+| MCP | `payload.pool` = 打分结果对象，`payload.summary` = 一行人类可读结论（程序生成，AI 不得改写） |
+| `ldst pool` | `payload` 直接平铺打分结果对象（与 `ldst sentiment show` 一致） |
+
+四个输入全部来自本机缓存回放（`limit_pool` / `concept_board` / `fund_flow` + 复用 `compute_ladder` 的当日最高板），
+**不发起网络请求**。缓存缺失 → `available=false` + `missing` 点名字段 + `reason`，信封 `source_status=partial`；
+分项取不到数给 `null` 并把它的权重从分母剔除（重归一），不补 0。
+
+「地位」这个分项对外叫 **`standing`**：`position` 是本文件的禁止字段名（§2 补充约定 1），
+不能出现在工具结果里，中文标签「地位」只用于人类可读输出（`SUB_SCORE_LABELS`）。
+
 ## 2. 隐私边界（硬约束）
 
-本机隐私库 `data/journal.sqlite`（表 `trades` / `positions` / `watchlist`）是**只进不出本机**的数据：
+本机隐私库 `data/journal.sqlite`（表 `trades` / `positions` / `watchlist`；`positions` 自 schema v2 起有
+`code / cost / qty / entry_date / industry / note / updated_at`，见 `docs/specs/SPEC-MY-POSITION.md` §1）是**只进不出本机**的数据：
 
 | 出口 | 是否允许 | 依据 / 实现 |
 |---|---|---|
 | `ldst journal add/list/stats` | 允许（读写本机） | `journal/log.py`、`journal/stats.py`，只依赖本地 SQLite |
+| `ldst position add/list/update/remove` | 允许（读写本机，**只在终端打印**） | `journal/position.py`（只 import `data/sqlite_store` + `errors`）、`cli/position.py`；输出不构造信封，口径见 `docs/specs/SPEC-MY-POSITION.md` |
 | 本机只读 API（`127.0.0.1:5950`） | **不允许** | `web/server.py` 的 `_strip_private()` 递归剥掉 `journal` / `trades` / `positions` / `watchlist` |
 | `LadderEnvelope`（`extra="forbid"`） | **不允许** | 信封无隐私字段，journal 也不构造信封 |
 | MCP 工具结果 | **不允许** | `mcp/tools.py` 的 `TOOL_SPECS` 不含隐私域；`FORBIDDEN_KEYWORDS` 做静态护栏 |
 | AI prompt / 叙述上下文 | **不允许** | `core/boundary.py:AI_WRITABLE` 只放叙述字段 |
 | `ldst export` 导出文件 | 默认**不含**；`--with-journal` 显式才附加纪律统计摘要 | `cli/export.py`：默认走 `core/privacy.strip_private()` **递归**剥离（任意层级，含中文键写法，与 web / MCP 共用同一份实现），剥掉的字段名写 **stderr** 明示；`--with-journal` 才附加纪律统计摘要（不含明细/备注），并在 **stderr** 提示「隐私数据，请自行保管，勿上传」 |
+| `ldst position list --export <path>` | 默认**不落任何文件**；只有显式给路径才写出，内容与 stdout 同一份，stderr 同样提示隐私 | `cli/position.py::_write_export()`；目标不可写 → 退出码 3 且 stdout 为空 |
+| `ldst pool` / MCP `candidate_pool` | 允许，但**读不到隐私库** | `core/pool.py`、`cli/pool.py` 不 import `journal` / `sqlite_store` / `sqlite3`（AST 级断言），持仓不参与打分 |
 
 补充约定：
 
-1. **禁止字段名**：`journal`、`trades`、`positions`、`watchlist`、`position`、`holding`、`自选` 不得出现在任何 MCP 工具名、描述或 `input_schema` 中。
+1. **禁止字段名**：`journal`、`trades`、`positions`、`watchlist`、`position`、`holding`、`自选` 不得出现在任何 MCP 工具名、描述或 `input_schema` 中。候选池因此把「地位」分项对外命名为 `standing`（中文标签「地位」只用于人类可读输出，不参与键名），见 DEC-019 §2。
 2. **禁止旁路**：MCP 不提供任何「查交易日志 / 持仓 / 自选」的工具；模型若需要纪律统计，只能由人类在 CLI 侧自行查看。
 3. **只读边界**：`/api/*` 全部为 `GET`，无写接口；写路径只有 CLI（`journal add`）。
 4. **本机回环**：web 只监听 `127.0.0.1:5950`（MCP `5951`）；端口被占用时 `ldst run` 直接以退出码 3 失败并提示 `--port`，绝不静默换端口（DEC-004）。
@@ -77,7 +105,22 @@
 - `ldst export` 默认不含 journal 摘要，`--with-journal` 才写入并在 stderr 提示；
 - 隐私库 schema 迁移幂等、WAL 生效、更高版本库被拒绝（退出码 3）。
 
+`tests/integration/test_position_privacy.py`（R7 增量，QUOT-145 验收硬条）补四件事：
+
+- MCP 清单里没有 position 相关工具，且 `mcp/` `ai/` `web/` 三个对外面的 import 里不出现 `ladderstock.journal`
+  （`web/server.py` 的 `/api/journal/stats` 是唯一白名单，闸门由 DEC-015 那套回环 + Host 校验负责）；
+- 12 个只读工具逐个 `dispatch`，信封里不含持仓哨兵、不含 `entry_date` 等只在持仓里出现的字段名；
+- `strip_private()` → `build_messages()` 的 AI 上下文序列化结果不含持仓字段名（并反向断言哨兵在**未剥离**的载荷里确实存在，防止测试写成空断言）；
+- `ldst position` 不加 `--export` 时数据目录里只有 `journal.sqlite*`，加了才落文件；
+  目标不可写退出码 3 且 stdout 为空；
+- 候选池与持仓互不引用：`core/pool.py` / `cli/pool.py` 不 import 隐私库（AST），
+  `journal/position.py` 不 import 行情 / AI / MCP / 候选池。
+
 ## 4. 变更纪律
 
-- 新增 MCP 工具或字段前，先确认它不属于隐私域；若确需纪律统计，走 CLI + 人类显式导出，不新增工具。
+- 新增 MCP 工具或字段前，先确认它不属于隐私域；若确需纪律统计或持仓查询，走 CLI + 人类显式导出，**不新增工具**。
 - 任何触达 `data/journal.sqlite` 的新代码都必须仅依赖 `data/sqlite_store.py`，不得在 `adapters/`、`core/`、`ai/`、`mcp/` 中出现对该库的引用。
+- 隐私域的新分项命名要绕开 `FORBIDDEN_KEYWORDS`：候选池的「地位」对外叫 `standing`（DEC-019 §2）。
+- 改 `positions` 表结构要 `SCHEMA_VERSION +1`、在 `_SCHEMA_V*` 追加一段 DDL，
+  并保证「旧库升级不丢行、改结构前先备份、更高版本库被拒绝」三条仍有测试覆盖
+  （`tests/unit/journal/test_position.py` §1）。

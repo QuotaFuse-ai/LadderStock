@@ -8,8 +8,13 @@
 > **命令计数口径（四套数字，各有其用，勿混用）**：
 > - **31 条命令** —— P0 定稿的**命令**数（DEC-003 决策口径，测试逐条对比以此为准）；
 > - **35 行** —— 下方 §A–E 表格行号（`sync` 三种形态、`validate` 两级子命令各占一行）；
-> - **33 个叶子路径** —— 表格去重后的命令叶子（`sync` 三种形态合并为一条）；
-> - **32 条可执行 argv** —— `scripts/check_commands.py` 实测矩阵（33 个叶子减去长驻服务 `run` / `mcp stdio` / `mcp http`，另加 `sync --dataset` / `sync --full` 两种形态各跑一次）。
+> - **33 个叶子路径** —— §A–E 表格去重后的命令叶子（`sync` 三种形态合并为一条）；
+> - **32 条可执行 argv** —— §A–E 那 33 个叶子对应的矩阵条数（减去长驻服务 `run` / `mcp stdio` / `mcp http`，另加 `sync --dataset` / `sync --full` 两种形态各跑一次）。
+>
+> **R7 增量（2026-10-30，QUOT-145）**：§E″ 另有 **5 条**命令（`pool` + `position add|list|update|remove`），
+> 行号续编 37–41（全表 **41 行**），**不计入上面 31 条 P0 基线**；叶子路径因此共 **39** 个，
+> `tests/fixtures/command_matrix.py` 的 `LEAF_PATHS` 与之逐一对应（多一条/少一条都有测试点名），
+> `scripts/check_commands.py` 实测 argv 相应为 **38 条**（39 个叶子 − 3 个长驻服务 + `sync` 的两种形态各跑一次）。
 >
 > **R1-1 增量（QUOT-190，2026-10-30）**：基线 31 条口径**不变**，在其之上新增 1 条命令
 > `ldst research <code>`（个股研究六段管线）。加它之后：叶子 **34** 个、可执行 argv **33** 条。
@@ -19,7 +24,7 @@
 
 ## 0. 总览（31 条）
 
-> 口径说明：本节按 **P0 基线 31 条命令**统计（DEC-003）；下列分组明细展开后为 **35 行**表格、去重 **33 个叶子路径**，`check_commands.py` 实测 **32 条可执行 argv**（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。四套数字的关系见文首「命令计数口径」。
+> 口径说明：本节按 **P0 基线 31 条命令**统计（DEC-003）；下列分组明细展开后为 **35 行**表格、去重 **33 个叶子路径**，对应 `check_commands.py` 矩阵里的 **32 条**可执行 argv（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。§D′ 的 `research` 1 条与 §E″ 的 R7 增量 5 条另计，全表 41 行 / 39 叶子 / 38 argv。四套数字的关系见文首「命令计数口径」。
 
 | 分组 | 命令 |
 |---|---|
@@ -35,6 +40,7 @@
 | MCP（3） | `mcp stdio`、`mcp http`、`mcp tools list` |
 | 配置与调度（4） | `config validate`、`config migrate`、`schedule list`、`schedule run` |
 | 体检（1） | `doctor` |
+| **R7 增量（5，非 P0 基线）** | `pool`、`position add`、`position list`、`position update`、`position remove` |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -113,7 +119,25 @@
 | 35 | `ldst doctor` | 环境体检：依赖、端口、缓存目录、数据源 | — | 对齐 `th-cn doctor` 习惯 |
 
 > 表内编号 1–35 为**行号**；去重后为 **33 个叶子路径**（`sync` 的三种形态合并为一条、`validate` 的两级子命令各算一个叶子）。P0 基线口径的 **31 条命令**见第 0 节；`scripts/check_commands.py` 实测覆盖 **32 条可执行 argv**（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。四套数字的对应关系见文首「命令计数口径」。
-> §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，**不计入上面的 31/33/35/32**；算上它则是 36 行 / 34 个叶子 / 33 条可执行 argv。
+> §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，§E″ 的行 37–41（R7 增量 5 条）是 R7 基线之外的增量，**都不计入上面的 31/33/35/32**；算上它们则是 41 行 / 39 个叶子 / 38 条可执行 argv。
+
+## E″. 候选池与我的持仓（R7 增量，5）
+
+> 口径来源：`docs/specs/SPEC-CANDIDATE-POOL.md`（打分算式与手算对照）、
+> `docs/specs/SPEC-MY-POSITION.md`（字段、本地计算与隐私边界）、`DEC-019` / `DEC-020`。
+> 这 5 条**不属于** DEC-003 的 31 条 P0 基线，测试矩阵按「R7 增量」单独登记。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 37 | `ldst pool` | 当日候选池打分：强度 / 换手 / 地位 / 资金 / 题材五个分项 + 加权总分 | `--date`（缺省今天）、`--limit 30`、`--output` | `LadderEnvelope`（`topic=candidate_pool`），`payload` 平铺打分结果；**只读本机缓存**，涨停池为空 / 无可解析候选时 stdout 仍给完整结果且 `available=false` → **6**（DEC-012）；`--limit <= 0` 或日期非法 → 2 |
+| 38 | `ldst position add` | 记一条持仓（成本价、数量、建仓日、行业标注、备注） | `--code`、`--cost`、`--qty`、`--date`、`--industry`、`--note` | **仅写本机 `data/journal.sqlite`**；重复 code 提示改用 `update` → 2 |
+| 39 | `ldst position list` | 持仓 + 本地计算：浮动盈亏、集中度（top1/top3/HHI）、行业分布 | `--code`、`--date`（行情日期）、`--export <path>`、`--output` | 仅本地，载荷带 `local_only=true` 与 `price_lookup` 溯源；现价取不到 → 相应字段 `null` + stderr 说明（仍 0）；**不加 `--export` 不产生任何文件**；导出目标不可写 → 3 |
+| 40 | `ldst position update` | 改一条持仓（只改显式传入的字段） | `--code` + `--cost/--qty/--date/--industry/--note` | 一个字段都没给 → 2；code 不在库里 → **6** |
+| 41 | `ldst position remove` | 删一条持仓（只删本机记录，不产生文件） | `--code` | code 不在库里 → **6** |
+
+`position` 与 `journal` 同为**本地命令，可打印，不经 MCP**：持仓数据不进 `LadderEnvelope`、
+不进 MCP 工具清单、不进 AI 上下文（`docs/MCP_TOOLS.md` §2）。候选池与持仓**互不引用**——
+持仓不参与打分，隐私数据不可能经打分结果外溢（护栏见 `tests/integration/test_position_privacy.py`）。
 
 ## F. 全局约定
 
@@ -130,7 +154,7 @@
   curl -X POST http://127.0.0.1:5950/api/control/peers/wire/install \
     -H "X-LDST-Client: 1" -H "Content-Type: application/json" -d '{"dev": false}'
   ```
-- **隐私边界**：`journal *` 与持仓数据只写本机 SQLite（`data/journal.sqlite`），不进 `LadderEnvelope`、不被 MCP 读取、不注入 AI 上下文。
+- **隐私边界**：`journal *` 与 `position *` 的数据只写本机 SQLite（`data/journal.sqlite`，表 `trades` / `positions` / `watchlist`），不进 `LadderEnvelope`、不被 MCP 读取、不注入 AI 上下文。**持仓默认不落文件**：只有 `ldst position list --export <path>` 显式指定才写出，并在 stderr 提示「隐私数据，请自行保管，勿上传」；`ldst pool` 不读隐私库（持仓不参与打分）。
 - **兼容别名**：`ladderstock` 为 `ldst` 长别名；旧启动脚本（`scripts/start`、`scripts\start.cmd`）委托 `ldst run` 并打印迁移提示。
 - **配置迁移**：`config migrate` 旧文件只读、迁移前自动备份（`data/backups/<时间戳>/`、`journal.sqlite.bak-v<ver>-<时间戳>`），失败按备份回滚；`schema_version` 已最新时 `status=up_to_date` 且不写任何文件。完整契约见 `docs/CONFIG.md` §4。
 
@@ -145,5 +169,6 @@
 | 单源故障自动切备源、UI 标注 | `sources health` + 看板降级标识 |
 | MCP 新增工具可调用、带溯源 | `mcp stdio` / `mcp http` / `mcp tools list` |
 | 盯盘 / 盘前提醒 / 收盘对账实机验证 | `watch start`、`notify test`、`validate reconcile` |
-| 交易日志与持仓不出本机 | `journal *`（仅本地 SQLite） |
+| 交易日志与持仓不出本机 | `journal *`、`position *`（仅本地 SQLite；持仓只有 `--export` 才落文件） |
+| 候选池打分可解释、可复算 | `pool`（分项 + `raw` + `formula` + `weights`，手算对照 `SPEC-CANDIDATE-POOL.md` §5） |
 | 旧启动方式与旧数据目录过渡可用 | `config migrate` + 兼容脚本 |

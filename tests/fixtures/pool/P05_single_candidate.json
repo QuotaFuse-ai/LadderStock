@@ -1,0 +1,57 @@
+{
+  "name": "P05 单一候选：分位没有比较对象",
+  "description": "只有一只候选。资金分位是「集合内名次」，n=1 时没有比较对象，如实给中位 50.0（不是 0、也不是 100）；换手 0.6% 对 20% 基准 = 3.0。总分 = 0.30×100 + 0.10×3 + 0.25×100 + 0.20×50 + 0.15×20 = 68.3。",
+  "datasets": {
+    "limit_pool": [
+      {
+        "code": "600500",
+        "name": "庚",
+        "boards": 6,
+        "turnover_rate": 0.6,
+        "hot_topic": "AI应用"
+      }
+    ],
+    "concept_board": [
+      {
+        "name": "AI应用",
+        "change_pct": 1.0
+      }
+    ],
+    "fund_flow": [
+      {
+        "code": "600500",
+        "net_inflow": 500000
+      }
+    ]
+  },
+  "expected": {
+    "pool": {
+      "available": true,
+      "reason": null,
+      "height": 6,
+      "candidate_count": 1,
+      "candidates": [
+        {
+          "code": "600500",
+          "score": 68.3,
+          "parts": {
+            "strength": 100.0,
+            "turnover": 3.0,
+            "standing": 100.0,
+            "capital": 50.0,
+            "theme": 20.0
+          },
+          "absent_parts": []
+        }
+      ],
+      "counts": {
+        "limit_pool_rows": 1,
+        "dropped_duplicates": 0,
+        "unknown_code": 0,
+        "theme_boards": 1,
+        "fund_flow_rows": 1
+      },
+      "missing_datasets": []
+    }
+  }
+}

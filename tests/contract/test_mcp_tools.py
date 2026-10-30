@@ -51,6 +51,8 @@ DOCUMENTED_TOOLS = {
     # R1-1（QUOT-190）新增：issue 里工具名定死为 `research_status`，
     # 不带 `ladder_` 前缀是有意的偏差（与 CLI `ldst research` 同名，便于跨面引用）
     "research_status",
+    # R7 新增（QUOT-145）
+    "candidate_pool",
 }
 
 #: 按**证券代码**定位进度的工具：`date` 可选（缺省取该代码最近一次 checkpoint），
@@ -214,6 +216,83 @@ def test_review_tool_strips_private_fields(tmp_path: Any) -> None:
 
     _assert_envelope(envelope)
     assert envelope["source_status"] == "ok"
+    blob = json.dumps(envelope, ensure_ascii=False).lower()
+    for word in FORBIDDEN_KEYWORDS:
+        assert word.lower() not in blob, word
+
+
+def test_candidate_pool_tool_missing_is_partial(tmp_path: Any) -> None:
+    """R7：候选池工具在缓存为空时如实 partial + `available=false`，不伪造候选。"""
+    envelope = dispatch("candidate_pool", {"date": DAY.isoformat()}, root=tmp_path)
+
+    _assert_envelope(envelope)
+    assert envelope["domain"] == "sentiment"
+    assert envelope["topic"] == "candidate_pool"
+    assert envelope["source_status"] == "partial"
+    assert envelope["payload"]["data_source_status"] == "missing"
+    pool = envelope["payload"]["pool"]
+    assert pool["available"] is False
+    assert pool["candidates"] == []
+    # 口径随结果一起出：权重与算式必须让调用方能自己复算
+    assert pool["weights"] == {
+        "strength": 0.3,
+        "turnover": 0.1,
+        "standing": 0.25,
+        "capital": 0.2,
+        "theme": 0.15,
+    }
+    assert "Σ(weight_i × part_i)" in pool["formula"]
+    blob = json.dumps(envelope, ensure_ascii=False).lower()
+    for word in FORBIDDEN_KEYWORDS:
+        assert word.lower() not in blob, word
+
+
+def test_candidate_pool_tool_scores_and_stays_privacy_clean(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R7：缓存可用时给出分项与总分；「地位」的键名是 `standing`，不踩隐私关键字。
+
+    手算（`docs/specs/SPEC-CANDIDATE-POOL.md` §5）：600001 三板、当日最高 3 板、
+    题材板块 +4% → 强度 50.0（3/6）、地位 100.0（3/3）、题材 80.0（4/5），
+    换手与资金取不到数，权重重归一到 0.70 → (0.30×50 + 0.25×100 + 0.15×80)/0.70 = 74.3。
+    """
+    from ladderstock.core import pool as pool_module
+
+    rows = [
+        {"code": "600001", "name": "甲", "boards": 3, "hot_topic": "机器人"},
+        {"code": "600002", "name": "乙", "boards": 1, "hot_topic": "中药"},
+    ]
+
+    def fake_snapshot(dataset: str, day: Any = None, root: Any = None) -> tuple[list, str]:
+        if dataset == "limit_pool":
+            return rows, "given"
+        if dataset == "concept_board":
+            return [{"name": "机器人", "change_pct": 4.0}], "given"
+        return [], "none"
+
+    monkeypatch.setattr(pool_module, "dataset_snapshot", fake_snapshot)
+
+    envelope = dispatch("candidate_pool", {"date": DAY.isoformat()}, root=tmp_path)
+
+    _assert_envelope(envelope)
+    assert envelope["source_status"] == "ok"
+    assert envelope["payload"]["data_source_status"] == "ok"
+    pool = envelope["payload"]["pool"]
+    assert pool["available"] is True
+    assert pool["height"] == 3
+    top = pool["candidates"][0]
+    assert top["code"] == "600001"
+    assert set(top["parts"]) == {"strength", "turnover", "standing", "capital", "theme"}
+    assert top["parts"] == {
+        "strength": 50.0,
+        "turnover": None,
+        "standing": 100.0,
+        "capital": None,
+        "theme": 80.0,
+    }
+    assert top["absent_parts"] == ["turnover", "capital"]
+    assert top["score"] == 74.3
+    assert "候选池" in envelope["payload"]["summary"]
     blob = json.dumps(envelope, ensure_ascii=False).lower()
     for word in FORBIDDEN_KEYWORDS:
         assert word.lower() not in blob, word

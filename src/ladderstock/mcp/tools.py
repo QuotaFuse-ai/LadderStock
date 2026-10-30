@@ -1,4 +1,4 @@
-"""MCP 工具注册表（只读白名单 + 1 个发起研究工具 + 3 个复盘类工具 + 1 个研究进度工具）。
+"""MCP 工具注册表（只读白名单 + 1 个发起研究 + 3 个复盘类 + 1 个研究进度 + 1 个候选池）。
 
 隐私硬约束：交易日志与持仓（`journal.sqlite`）**永不出现在**任何工具的输出 schema 中。
 """
@@ -71,6 +71,11 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         },
         "research",
     ),
+    # R7 新增 1 个（QUOT-145）：候选池打分。**只读**、只出打分结果，域沿用 `sentiment`
+    # （与 `ldst pool` 的信封域一致）。工具名不加 `ladder_` 前缀：任务里点名的就是
+    # `candidate_pool`，且没有规则要求前缀（`tests/contract/test_mcp_tools.py` 按清单比对）。
+    # 分项「地位」对外叫 `standing`——`position` 是下面的隐私关键字。
+    _date_tool("candidate_pool", "当日候选池评分：强度/换手/地位/资金/题材分项与总分", "sentiment"),
 )
 
 TOOL_NAMES: tuple[str, ...] = tuple(spec.name for spec in TOOL_SPECS)

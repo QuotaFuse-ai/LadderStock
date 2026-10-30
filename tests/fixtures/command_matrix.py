@@ -70,6 +70,28 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     ),
     (("journal", "list"), {0}),
     (("journal", "stats"), {0}),
+    # R7 候选池（QUOT-145）：程序直出，与 `ladder show` 同口径——缓存里有涨停池 0，
+    # 一条候选都解析不出来（本机没同步）6。
+    (("pool", "--date", DATE), {0, 6}),
+    # R7 我的持仓（QUOT-145）：只写本机临时数据目录。`add` 成功 0；
+    # `list` 空库也照常出结构化结果 0（与 `journal list` 同口径）；
+    # `update` / `remove` 作用在不存在的代码上 -> 6（无结果，DEC-012）。
+    (
+        (
+            "position",
+            "add",
+            "--code",
+            "600000",
+            "--cost",
+            "10.5",
+            "--qty",
+            "100",
+        ),
+        {0},
+    ),
+    (("position", "list"), {0}),
+    (("position", "update", "--code", "600999", "--qty", "100"), {6}),
+    (("position", "remove", "--code", "600999"), {6}),
     # AI（M3 已实现）：status 只读且未配置也能输出 0；retry 未配置按降级 9；
     # chain test 未配置凭据 -> 3（明确告知缺哪个环境变量，不拨网络）。
     (("ai", "status"), {0}),
@@ -106,6 +128,9 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
 # `sync` 的三种形态（`sync` / `--dataset` / `--full`）共用一条路径，
 # `validate reconcile` 计数在 `validate` 之外——所以这里按「可执行路径」列。
 # `review` / `validate` / `sync` 三个组带 `invoke_without_command`，组本身也是叶子。
+# R7（QUOT-145）在此之外加了 5 条：`pool` + `position add|list|update|remove`，
+# 共 39 个叶子路径（含 R1-1 的 `research`）；它们是**增量命令**，
+# 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
     ("review",),
@@ -126,6 +151,12 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("journal", "add"),
     ("journal", "list"),
     ("journal", "stats"),
+    # R7 新增（QUOT-145，不计入 31 条基线，见 docs/CLI.md §D″）
+    ("pool",),
+    ("position", "add"),
+    ("position", "list"),
+    ("position", "update"),
+    ("position", "remove"),
     ("export",),
     ("state", "inspect"),
     ("state", "reset"),
@@ -162,6 +193,10 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     # M5：迁移结果（status / steps / backups / warnings）是结构化载荷，`--dry-run` 亦然
     ("config", "migrate"),
     ("doctor",),
+    # R7：`pool` 不在列——本机没同步涨停池时它按 6 退出（本表口径是 0/3），
+    # 打分载荷由 tests/unit/core/test_pool_golden.py 覆盖。
+    # `position list` 空库也是 0 + 结构化摘要，与 `journal` 同口径。
+    ("position", "list"),
     # M4：盯盘/通知/调度都有结构化 stdout。`watch start` 不在列：没有本机分钟样本
     # 时它按 4 退出（JSON_PATHS 的口径是 0/3），样本路径由
     # tests/integration/test_watch_signals.py 覆盖。

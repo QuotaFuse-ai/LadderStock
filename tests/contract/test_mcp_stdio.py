@@ -7,7 +7,7 @@
 - 每一行都必须能被 `json.loads` 解析成带 `jsonrpc: "2.0"` 的对象；
   出现一行日志（`ldst: ...`、traceback、进度提示）就算违约；
 - 日志必须落在 stderr（`ldst:` 前缀），且不能污染协议流；
-- 工具清单与 `mcp/tools.py` 的登记一致（11 个），每个都声明输出 schema，
+- 工具清单与 `mcp/tools.py` 的登记一致（12 个），每个都声明输出 schema，
   字段与本项目 `LadderEnvelope` 对齐；
 - 交易日志 / 持仓等隐私字段不得出现在工具清单里。
 
@@ -59,6 +59,7 @@ DOCUMENTED_TOOLS = {
     "ladder_get_review",
     # R1-1（QUOT-190）新增：读个股研究六段进度
     "research_status",
+    "candidate_pool",
 }
 
 #: 以证券代码（而非 date）定位快照的工具，见 tests/contract/test_mcp_tools.py 同名片段
@@ -176,7 +177,8 @@ def test_stdio_handshake_and_tool_list(session: StdioSession) -> None:
     tools = session.recv()["result"]["tools"]
 
     assert {tool["name"] for tool in tools} == DOCUMENTED_TOOLS
-    assert len(tools) == 12
+    # 13 = 11 个 P0 + R1-1 `research_status` + R7 `candidate_pool`；数量与清单一致才算没有重复注册
+    assert len(tools) == len(DOCUMENTED_TOOLS) == 13
 
     code = session.close()
     assert code == 0

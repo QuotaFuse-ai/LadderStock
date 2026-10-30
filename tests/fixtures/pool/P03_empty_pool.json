@@ -1,0 +1,26 @@
+{
+  "name": "P03 空池：没有任何缓存",
+  "description": "三个数据集都没有本机缓存（还没同步）。候选池如实 available=false，不伪造候选，`missing` 点名三个数据集；CLI 据此以 6（无结果，DEC-012）退出。",
+  "datasets": {
+    "limit_pool": [],
+    "concept_board": [],
+    "fund_flow": []
+  },
+  "expected": {
+    "pool": {
+      "available": false,
+      "reason_contains": "涨停池没有可解析的候选",
+      "height": null,
+      "candidate_count": 0,
+      "candidates": [],
+      "counts": {
+        "limit_pool_rows": 0,
+        "dropped_duplicates": 0,
+        "unknown_code": 0,
+        "theme_boards": 0,
+        "fund_flow_rows": 0
+      },
+      "missing_datasets": ["limit_pool", "concept_board", "fund_flow"]
+    }
+  }
+}

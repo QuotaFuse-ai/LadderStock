@@ -1,0 +1,73 @@
+{
+  "name": "P02 缺题材板块与资金流：权重重归一",
+  "description": "concept_board 与 fund_flow 都没缓存：题材、资金两个分项是 null（不是 0），其权重 0.15 + 0.20 从分母里剔除，总分按剩余 0.65 重归一。600001 = (0.30×50 + 0.10×40 + 0.25×100)/0.65 = 44/0.65 = 67.7。",
+  "datasets": {
+    "limit_pool": [
+      {
+        "code": "600001",
+        "name": "甲",
+        "boards": 3,
+        "turnover_rate": 8.0
+      },
+      {
+        "code": "600002",
+        "name": "乙",
+        "boards": 1,
+        "turnover_rate": 20.0
+      }
+    ],
+    "concept_board": [],
+    "fund_flow": []
+  },
+  "expected": {
+    "pool": {
+      "available": true,
+      "reason": null,
+      "height": 3,
+      "candidate_count": 2,
+      "candidates": [
+        {
+          "code": "600001",
+          "score": 67.7,
+          "parts": {
+            "strength": 50.0,
+            "turnover": 40.0,
+            "standing": 100.0,
+            "capital": null,
+            "theme": null
+          },
+          "absent_parts": [
+            "capital",
+            "theme"
+          ]
+        },
+        {
+          "code": "600002",
+          "score": 35.9,
+          "parts": {
+            "strength": 16.7,
+            "turnover": 100.0,
+            "standing": 33.3,
+            "capital": null,
+            "theme": null
+          },
+          "absent_parts": [
+            "capital",
+            "theme"
+          ]
+        }
+      ],
+      "counts": {
+        "limit_pool_rows": 2,
+        "dropped_duplicates": 0,
+        "unknown_code": 0,
+        "theme_boards": 0,
+        "fund_flow_rows": 0
+      },
+      "missing_datasets": [
+        "concept_board",
+        "fund_flow"
+      ]
+    }
+  }
+}
