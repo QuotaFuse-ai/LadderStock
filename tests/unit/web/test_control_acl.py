@@ -178,6 +178,10 @@ def test_shared_directory_reason_flags_unc() -> None:
     assert reason is not None and "UNC" in reason
 
 
+@pytest.mark.skipif(
+    not IS_WINDOWS,
+    reason="盘符与 GetDriveTypeW 是 Windows 专有概念；POSIX 上 'Z:\\...' 不是路径，drive 恒为空",
+)
 def test_shared_directory_reason_flags_mapped_remote_drive(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -639,7 +643,11 @@ def _stop_refusal(
     record: dict[str, Any],
     process_info: Any,
     process_started: Any,
+    monkeypatch: pytest.MonkeyPatch | None = None,
 ) -> str:
+    if monkeypatch is not None:
+        # 归属校验先看 PID 是否存活；这里只验后面几条判据，不让「本机恰好有这个 PID」决定结果
+        monkeypatch.setattr(control_module, "_pid_alive", lambda pid: True)
     plane = _plane(
         tmp_path, peer_dirs, process_info=process_info, process_started=process_started
     )
@@ -648,7 +656,7 @@ def _stop_refusal(
 
 
 def test_drift_message_prints_one_decimal_and_tolerance(
-    tmp_path: Path, peer_dirs: dict[str, Path]
+    tmp_path: Path, peer_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """5.4s 必须印成「5.4 秒」并写明容差 5 秒；印成「5 秒」会让人以为判据自相矛盾。"""
     exe = peer_dirs["alpha"] / ".venv" / "Scripts" / "python.exe"
@@ -660,6 +668,7 @@ def test_drift_message_prints_one_decimal_and_tolerance(
         record={"pid": 17136, "exe": str(exe), "started_at": RECORDED_AT},
         process_info=lambda pid, cwd: (str(exe), "python.exe"),
         process_started=lambda pid: RECORDED_AT_DT + timedelta(seconds=5.4),
+        monkeypatch=monkeypatch,
     )
     assert "相差 5.4 秒" in reason
     assert "容差 5 秒" in reason

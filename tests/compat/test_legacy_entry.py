@@ -71,9 +71,17 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
+#: rich 在 CI（非 Windows 的管道输出）上仍会插入 ANSI 样式，解析前先剥掉。
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def _python_module(*args: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
+    # 固定颜色与宽度：否则同一份帮助在不同 runner 上渲染不同，解析结果不可复现
+    env["NO_COLOR"] = "1"
+    env["TERM"] = "dumb"
+    env["COLUMNS"] = "120"
     return subprocess.run(
         [sys.executable, "-X", "utf8", "-m", "ladderstock", *args],
         cwd=ROOT,
@@ -125,11 +133,10 @@ def test_help_lists_no_undocumented_top_level_command(data_dir: Path) -> None:
     """反向断言：帮助里出现的命令组必须都在文档 §0 的分组内。"""
     completed = _python_module("--help")
     assert completed.returncode == 0, completed.stderr
+    stdout = ANSI_ESCAPE.sub("", completed.stdout)
     # Rich 用制表框渲染 Commands 段落：`│ run   启动本地工作台…`
-    listed = set(
-        re.findall(r"^\s*[│|]?\s*([a-z][a-z-]+)\s{2,}\S", completed.stdout, re.M)
-    )
-    assert listed, f"没解析到命令列表：\n{completed.stdout}"
+    listed = set(re.findall(r"^\s*[│|]?\s*([a-z][a-z-]+)\s{2,}\S", stdout, re.M))
+    assert listed, f"没解析到命令列表：\n{stdout}"
     assert listed <= DOCUMENTED_GROUPS, f"出现了未登记的命令：{sorted(listed - DOCUMENTED_GROUPS)}"
 
 

@@ -155,11 +155,22 @@ def _plane(
     )
 
 
+def _venv_bin(peer_dir: Path) -> Path:
+    """venv 的脚本目录：Windows 是 `Scripts/`，POSIX 是 `bin/`（与控制面探测路径一致）。"""
+    return peer_dir / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+
+
 def _venv(peer_dir: Path) -> Path:
-    venv = peer_dir / ".venv"
-    (venv / "Scripts").mkdir(parents=True, exist_ok=True)
-    (venv / "Scripts" / "python.exe").write_text("", encoding="utf-8")
-    return venv
+    scripts = _venv_bin(peer_dir)
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / ("python.exe" if os.name == "nt" else "python")).write_text(
+        "", encoding="utf-8"
+    )
+    return peer_dir / ".venv"
+
+
+def _venv_script(peer_dir: Path, name: str) -> Path:
+    return _venv_bin(peer_dir) / f"{name}{'.exe' if os.name == 'nt' else ''}"
 
 
 def _wait(plane: ControlPlane, job_id: str, timeout: float = 5.0) -> Job:
@@ -844,7 +855,7 @@ def test_start_records_pid_metadata(
 ) -> None:
     """P0-2：`_start` 落盘 `{pid, exe, started_at}`，不再只写裸 PID。"""
     _venv(peer_dirs["alpha"])
-    (peer_dirs["alpha"] / ".venv" / "Scripts" / "alpha.exe").write_text("", encoding="utf-8")
+    _venv_script(peer_dirs["alpha"], "alpha").write_text("", encoding="utf-8")
     spawned: list[Any] = []
 
     def _spawn(args: list[str], *, cwd: Path, log_path: Path) -> Any:
@@ -938,7 +949,13 @@ def test_stop_kills_only_when_ownership_confirmed(
     job = plane.create_job("alpha", "stop")
     finished = _wait(plane, job.id)
     assert finished.status == "ok", finished.error
-    assert any("taskkill" in " ".join(call) for call in runtime.calls)
+    # 终止命令跟平台走：Windows 是 taskkill，POSIX 是 kill -TERM（control.py 里同一分支）
+    expected_stop = (
+        ["taskkill", "/PID", "5555", "/T", "/F"]
+        if os.name == "nt"
+        else ["kill", "-TERM", "5555"]
+    )
+    assert expected_stop in runtime.calls
     entry = plane._peer_state("alpha")
     assert entry["pids"] == []
     assert entry["last_stop_at"]
@@ -1030,7 +1047,12 @@ def test_stop_allows_when_creation_time_within_tolerance(
         process_started=lambda pid: RECORDED_AT_DT - timedelta(seconds=2),
     )
     assert finished.status == "ok", finished.error
-    assert ["taskkill", "/PID", "17136", "/T", "/F"] in runtime.calls
+    expected_stop = (
+        ["taskkill", "/PID", "17136", "/T", "/F"]
+        if os.name == "nt"
+        else ["kill", "-TERM", "17136"]
+    )
+    assert expected_stop in runtime.calls
     entry = plane._peer_state("alpha")
     assert entry["pids"] == []
     assert entry["last_stop_at"]
