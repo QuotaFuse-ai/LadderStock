@@ -171,7 +171,8 @@ def compute_ladder(
         code = str(pick(record, CODE_KEYS) or "").strip()
         name = str(pick(record, NAME_KEYS) or "").strip()
         boards = as_int(pick(record, BOARD_KEYS))
-        if boards is None or boards < 1:
+        # 无 `code` 的行不参与层级（否则空串会污染 leader_candidates），原样记入 unknown_board
+        if not code or boards is None or boards < 1:
             unknown.append({"code": code, "name": name})
             continue
         rows.append(

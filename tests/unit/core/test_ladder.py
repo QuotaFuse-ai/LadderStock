@@ -119,6 +119,50 @@ def test_records_without_code_are_kept_for_unknown_count() -> None:
     assert ladder["unknown_board"] == 2
 
 
+def test_codeless_row_with_boards_stays_out_of_ladder() -> None:
+    """QUOT-231 L6：无 `code` 但有连板数的行不参与层级，只计 `unknown_board`。"""
+    ladder = compute_ladder(
+        DAY,
+        records=[
+            {"code": "A", "consecutive_boards": 2},
+            {"code": "", "name": "无代码", "consecutive_boards": 5},
+            {"code": "   ", "name": "空白代码", "consecutive_boards": 3},
+        ],
+    )
+    assert ladder["available"] is True
+    assert ladder["count"] == 1
+    assert ladder["height"] == 2
+    assert ladder["unknown_board"] == 2
+    assert [group["boards"] for group in ladder["ladder"]] == [2]
+    assert [row["code"] for row in ladder["leader_candidates"]] == ["A"]
+    all_codes = [row["code"] for group in ladder["ladder"] for row in group["stocks"]]
+    assert all_codes == ["A"]
+    assert "" not in all_codes
+
+
+def test_codeless_row_without_boards_counts_unknown_once() -> None:
+    """无 `code` 且缺连板数：仍只计一次 `unknown_board`，不是两次。"""
+    ladder = compute_ladder(DAY, records=[{"code": "", "name": "无代码"}])
+    assert ladder["available"] is False
+    assert ladder["unknown_board"] == 1
+
+
+def test_coded_rows_unaffected_by_codeless_guard() -> None:
+    """正常行（`code` 非空）不受影响：去重、高度、龙头照旧。"""
+    ladder = compute_ladder(
+        DAY,
+        records=[
+            {"code": "A", "consecutive_boards": 4},
+            {"code": "A", "consecutive_boards": 4},
+            {"code": "B", "consecutive_boards": 2},
+        ],
+    )
+    assert ladder["count"] == 2
+    assert ladder["height"] == 4
+    assert ladder["unknown_board"] == 0
+    assert [row["code"] for row in ladder["leader_candidates"]] == ["A"]
+
+
 def test_seal_time_passed_through_tolerantly() -> None:
     """D-01：封板时间按多名字段透传；缺失如实 null，不猜。"""
     ladder = compute_ladder(
