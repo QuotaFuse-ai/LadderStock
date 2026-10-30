@@ -1,15 +1,15 @@
-"""前三段（company / financial / forecast）的提示词与消息组装（R1-2）。
+"""六段的提示词与消息组装（R1-2 前三段 + R1-3 后三段）。
 
 每段的「提示词 + 产物结构」都在这里定稿：
 
 - 提示词：`prompts/research/<stage>.md`，只讲本段该写什么、不该写什么；
 - 产物结构：与五段复盘**同一个** `SECTION_SCHEMA`（`narrative` 必需，
-  `highlights` / `risks` / `evidence` 可选）。刻意不给三段各造一套 Schema：
-  Schema 里一个指标键都不能有（DEC-006 闸门 5），三段之间的差别是**关注点**，
+  `highlights` / `risks` / `evidence` 可选）。刻意不给六段各造一套 Schema：
+  Schema 里一个指标键都不能有（DEC-006 闸门 5），六段之间的差别是**关注点**，
   不是字段，字段不同会让 R3 的溯源和 R8 的页面各写一套分支；
 - 消息：沿用骨架的 `段落标识：<stage>` 行，报告段与假客户端都靠它认段。
 
-`valuation` / `risk` / `report` 不在本模块，仍走 R1-1 的单次文本路径。
+`report` 段的快照只有 `upstream`（前五段已落盘的产物），不重新取数。
 """
 
 from __future__ import annotations
@@ -21,16 +21,20 @@ from typing import Any
 from ladderstock.ai import structured_output
 from ladderstock.research import checkpoint
 
-#: R1-2 落地实际提示词与三级降级的段
+#: R1-2 落地前三段，R1-3 落地后三段；六段现在共用同一条三级降级阶梯
 FRONT_STAGES: tuple[str, ...] = checkpoint.STAGES[:3]
+BACK_STAGES: tuple[str, ...] = checkpoint.STAGES[3:]
 
 PROMPT_FILES: dict[str, str] = {
     "company": "prompts/research/company.md",
     "financial": "prompts/research/financial.md",
     "forecast": "prompts/research/forecast.md",
+    "valuation": "prompts/research/valuation.md",
+    "risk": "prompts/research/risk.md",
+    "report": "prompts/research/report.md",
 }
 
-#: 前三段的产物结构：直接复用五段复盘的叙述 Schema（无指标键），不另造
+#: 六段的产物结构：直接复用五段复盘的叙述 Schema（无指标键），不另造
 STAGE_SCHEMA: dict[str, Any] = structured_output.SECTION_SCHEMA
 
 JSON_RULES = (
@@ -104,4 +108,11 @@ _PLAIN_RULES = (
 )
 
 
-__all__ = ["FRONT_STAGES", "PROMPT_FILES", "STAGE_SCHEMA", "build_messages", "prompt_text"]
+__all__ = [
+    "BACK_STAGES",
+    "FRONT_STAGES",
+    "PROMPT_FILES",
+    "STAGE_SCHEMA",
+    "build_messages",
+    "prompt_text",
+]

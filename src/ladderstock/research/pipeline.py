@@ -7,8 +7,7 @@
 本段的边界：
 
 - **不联网取数**（联网检索属 R4，需人类批准）：`facts` 由调用方注入，默认空；
-  `company` / `financial` / `forecast`（R1-2）已接实际提示词与三级降级阶梯，
-  `valuation` / `risk` / `report` 仍走骨架的单次文本路径，按 R1-3 / R1-4 逐段接；
+  六段（R1-2 前三段 + R1-3 后三段）都已接各自提示词与同一个三级降级阶梯；
 - `report` 段只消费前五段已落盘的结构化产物，不重新取数；
 - AI 只能追加叙述：产物写盘前过 `core/boundary.merge_narrative` 闸门，
   模型试图输出指标键即判该段 `failed`（DEC-006 闸门 5）；
@@ -17,12 +16,11 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from ladderstock.ai import fallback, structured_output
+from ladderstock.ai import fallback
 from ladderstock.ai.error_taxonomy import AiFailure, classify_error
 from ladderstock.ai.orchestrator import ChatClient, HttpChatClient
 from ladderstock.core.boundary import BoundaryViolation, merge_narrative
@@ -182,60 +180,10 @@ class ResearchPipeline:
                 facts,
             )
 
-        if stage in stages.FRONT_STAGES:
-            return self._front(stage, day, facts)
+        return self._laddered(stage, day, facts)
 
-        models = fallback.model_chain(self.config)
-        model = models[0] if models else None
-        system, user = self._messages(stage, day, facts)
-        attempts: list[dict[str, Any]] = []
-        try:
-            # 骨架路径（valuation / risk）仍是链首模型单次文本调用：
-            # 三级降级阶梯已由 `_front` 接入，这两段按 R1-3 的提示词逐段搬过去。
-            text = self.client.complete(model or "", system, user, json_mode=False)
-        except Exception as exc:  # noqa: BLE001 - 分类后按段隔离，不影响前序成果
-            failure = classify_error(exc)
-            attempts.append({"model": model, "mode": "text", "kind": failure.kind})
-            return _failed(
-                failure,
-                notes=[f"{checkpoint.STAGE_TITLES.get(stage, stage)}段生成失败，其他段不受影响"],
-                facts=facts,
-                attempts=attempts,
-            )
-        payload = structured_output.plain_payload(text)
-        if payload is None:
-            failure = classify_error(ValueError("模型返回空内容"))
-            attempts.append({"model": model, "mode": "text", "kind": failure.kind})
-            return _failed(failure, notes=["模型返回空内容"], facts=facts, attempts=attempts)
-        attempts.append({"model": model, "mode": "text", "kind": None})
-        narrative = [str(item) for item in payload["narrative"]]
-        ai_payload = {"narrative": narrative, "degraded": False, "model": model}
-        try:
-            merged = merge_narrative(facts, ai_payload)
-        except BoundaryViolation as exc:
-            return _failed(
-                classify_error(exc),
-                notes=[str(exc)],
-                facts=facts,
-                attempts=attempts,
-            )
-        return {
-            "status": "ok",
-            # 骨架路径只走纯文本一级（未降级到更低级，故不标 degraded）；
-            # 三级阶梯见 `_front` 与 `research/ladder.py`。
-            "mode": "text",
-            "model": model,
-            "degraded": False,
-            "narrative": narrative,
-            "notes": [],
-            "failure": None,
-            "attempts": attempts,
-            "facts": merged,
-            "ai": merged["ai"],
-        }
-
-    def _front(self, stage: str, day: str, facts: dict[str, Any]) -> dict[str, Any]:
-        """前三段（R1-2）：实际提示词 + 三级降级阶梯，产物结构与骨架一致。"""
+    def _laddered(self, stage: str, day: str, facts: dict[str, Any]) -> dict[str, Any]:
+        """本段提示词 + 三级降级阶梯（`research/ladder.py`），产物结构与骨架一致。"""
         outcome = ladder.generate(
             self.client,
             self.config,
@@ -276,28 +224,6 @@ class ResearchPipeline:
             "facts": merged,
             "ai": merged["ai"],
         }
-
-    def _messages(self, stage: str, day: str, facts: dict[str, Any]) -> tuple[str, str]:
-        title = checkpoint.STAGE_TITLES.get(stage, stage)
-        system = (
-            "你是 A 股个股研究助手。硬约束：\n"
-            f"1. 只写「{title}」这一段的叙述，不写其他段；\n"
-            "2. 不得输出或改写任何指标数字——数字由程序计算，你只能引用给定快照；\n"
-            "3. 不联网、不编造来源；快照缺什么就明说缺什么；\n"
-            "4. 中文纯文本输出，按段落分行。"
-        )
-        user = (
-            f"证券代码：{self.code}\n"
-            f"研究日期：{day}\n"
-            # 段落标识单独一行且带机器名：报告段的快照里含前五段标题，
-            # 只按标题匹配会把「报告合成」误认成「公司画像」（假客户端最容易踩到）
-            f"段落标识：{stage}\n"
-            f"段落：{title}\n"
-            "程序事实快照（只读）：\n"
-            f"{json.dumps(facts, ensure_ascii=False, indent=2, default=str)}\n\n"
-            "请基于快照写本段叙述。"
-        )
-        return system, user
 
     def _report_inputs(self, day: str) -> tuple[dict[str, Any], list[str]]:
         """报告段的唯一输入 = 前五段已落盘的结构化产物（禁止重新取数）。"""
