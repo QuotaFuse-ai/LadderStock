@@ -86,6 +86,23 @@ ldst review --date D
 AI 只负责**叙述**，数值一律程序直出；AI 全挂时以退出码 9 交付已完成的部分，
 成功段落保留（`ai retry` 只补失败段落）。
 
+### 一次个股研究的路径（六段 + 受控工具）
+
+```
+ldst research <code> [--date --only --retry-failed --force]
+  → research/pipeline.py  company→financial→forecast→valuation→risk→report，
+                          每段结果过 core/boundary 闸门后落 data/research/<code>/<date>/<stage>.json|.md
+  → research/stages.py    提示词 + ALLOWED_TOOLS（每段能用哪几个工具，代码内常量）
+  → research/ladder.py    三级阶梯：structured → parsed（文本抢救）→ text（degraded）
+  → ai/tools.py           受控工具执行 + 审计（data/research/<code>/<date>/tool_calls.jsonl）
+```
+
+工具通道是**可选能力**：客户端没有 `complete_with_tools()`（五段复盘、既有集成）时，消息与调用序列
+与不带工具的版本逐字相同。模型调用本段白名单之外的工具 → 该段第 1 次即判 `failed`、不重试、不换模型，
+其余段不受影响（退出码 9）；参数或路径被拒 → 拒因回喂给模型，段继续跑。
+工具只能读写本次研究目录内的产物，canonical `<stage>.json|.md` 由程序落盘，模型写的是
+`<stage>__<name>` 草稿（DEC-026）。
+
 ## 4. 入口与输出约定
 
 - **stdout 只放结构化结果**，日志一律 stderr；`mcp stdio` 的 stdout 只跑协议报文。
@@ -100,6 +117,7 @@ AI 只负责**叙述**，数值一律程序直出；AI 全挂时以退出码 9 �
 |---|---|
 | `ldst doctor` | 22 项体检：解释器、依赖、端口、目录可写、配置、边界、数据源链路、版本；`--output json` 给机器 |
 | 结构化输出 | 所有命令统一 `--output json|table|csv`，字段稳定可供契约测试断言 |
+| `data/research/<code>/<date>/tool_calls.jsonl` | 受控工具审计：一次调用一行（段、工具、入参摘要、结果摘要、耗时、被拒与拒因），越权尝试同样留痕（DEC-026） |
 | `data/state/migration.json` | 迁移审计：版本、步骤、备份路径 |
 | `data/control/peer_state.json` | 控制面只记录**由本进程启动**的 peer PID 与启动时间；「停止」只对这些 PID 生效，绝不误杀他人进程 |
 | `/api/control/jobs/{id}` | 安装/启停/AI 生成任务的统一任务视图（`log_tail` 最多 20 行、线程池任务不随页面关闭丢失） |

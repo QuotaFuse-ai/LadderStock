@@ -11,6 +11,9 @@
 - `report` 段只消费前五段已落盘的结构化产物，不重新取数；
 - AI 只能追加叙述：产物写盘前过 `core/boundary.merge_narrative` 闸门，
   模型试图输出指标键即判该段 `failed`（DEC-006 闸门 5）；
+- R2 起，结构化一级可以带**本段白名单内的受控工具**（`ai/tools.py` +
+  `stages.ALLOWED_TOOLS`）：模型只能用列出来的那几个，越权调用第一次即判该段
+  `failed`，全过程落 `tool_calls.jsonl`；客户端不支持 tool-calling 时走原路径；
 - `ChatClient` 可注入假实现，验收不依赖真实模型。
 """
 
@@ -20,9 +23,9 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from ladderstock.ai import fallback
+from ladderstock.ai import fallback, tools
 from ladderstock.ai.error_taxonomy import AiFailure, classify_error
-from ladderstock.ai.orchestrator import ChatClient, HttpChatClient
+from ladderstock.ai.orchestrator import ChatClient, HttpChatClient, supports_tools
 from ladderstock.core.boundary import BoundaryViolation, merge_narrative
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.research import artifacts, checkpoint, ladder, stages
@@ -183,19 +186,33 @@ class ResearchPipeline:
         return self._laddered(stage, day, facts)
 
     def _laddered(self, stage: str, day: str, facts: dict[str, Any]) -> dict[str, Any]:
-        """本段提示词 + 三级降级阶梯（`research/ladder.py`），产物结构与骨架一致。"""
+        """本段提示词 + 三级降级阶梯（`research/ladder.py`），产物结构与骨架一致。
+
+        R2：客户端支持 tool-calling 时，结构化一级带上本段白名单里的受控工具；
+        客户端不支持（五段复盘、既有假客户端）时，消息与调用序列与今天一致。
+        """
+        names = stages.allowed_tools(stage)
+        use_tools = bool(names) and supports_tools(self.client)
+        ctx = self._tool_context(stage, day, names) if use_tools else None
+        tool_names = names if use_tools else None
         outcome = ladder.generate(
             self.client,
             self.config,
             stage,
-            messages=stages.build_messages(self.code, stage, day, facts),
+            messages=stages.build_messages(
+                self.code, stage, day, facts, tool_names=tool_names
+            ),
             plain=stages.plain_messages(self.code, stage, day, facts),
+            ctx=ctx,
         )
+        notes = list(outcome["notes"])
+        if ctx is not None and ctx.calls:
+            notes.append(_tool_note(ctx))
         if outcome["status"] == "failed":
             title = checkpoint.STAGE_TITLES.get(stage, stage)
             return _failed(
                 outcome["failure"],
-                notes=[f"{title}段生成失败，其他段不受影响"],
+                notes=[f"{title}段生成失败，其他段不受影响", *notes],
                 facts=facts,
                 attempts=outcome["attempts"],
             )
@@ -208,7 +225,7 @@ class ResearchPipeline:
         except BoundaryViolation as exc:
             return _failed(
                 classify_error(exc),
-                notes=[str(exc)],
+                notes=[str(exc), *notes],
                 facts=facts,
                 attempts=outcome["attempts"],
             )
@@ -218,12 +235,23 @@ class ResearchPipeline:
             "model": outcome["model"],
             "degraded": outcome["degraded"],
             "narrative": outcome["narrative"],
-            "notes": outcome["notes"],
+            "notes": notes,
             "failure": None,
             "attempts": outcome["attempts"],
             "facts": merged,
             "ai": merged["ai"],
         }
+
+    def _tool_context(self, stage: str, day: str, names: tuple[str, ...]) -> tools.ToolContext:
+        """本段的工具视野：只交出本次研究的落盘目录，别的根目录一概没有。"""
+        run_dir = artifacts.artifact_dir(self.code, day, self.root)
+        # 第一段跑起来时目录还不存在，而 `list_artifacts` 与审计日志都要有地方落
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return tools.ToolContext(
+            stage=stage,
+            roots={tools.RUN_ROOT: run_dir},
+            allowed=frozenset(names),
+        )
 
     def _report_inputs(self, day: str) -> tuple[dict[str, Any], list[str]]:
         """报告段的唯一输入 = 前五段已落盘的结构化产物（禁止重新取数）。"""
@@ -310,6 +338,21 @@ class ResearchPipeline:
             artifacts=artifacts.artifact_paths(self.code, day, self.root),
             configured=fallback.is_configured(self.config),
         )
+
+
+def _tool_note(ctx: tools.ToolContext) -> str:
+    """把本段的工具足迹写进 `notes`（产物的 15 键契约不变，DEC-021 §3）。"""
+    counts: dict[str, int] = {}
+    rejected = 0
+    for call in ctx.calls:
+        name = str(call.get("tool") or "?")
+        counts[name] = counts.get(name, 0) + 1
+        rejected += 1 if call.get("rejected") else 0
+    detail = "、".join(f"{name}×{times}" for name, times in sorted(counts.items()))
+    return (
+        f"本段调用受控工具 {ctx.call_count} 次（{detail}，被拒 {rejected} 次），"
+        "逐条审计见同目录 tool_calls.jsonl"
+    )
 
 
 def _placeholder_text(stage: str, code: str, day: str) -> str:

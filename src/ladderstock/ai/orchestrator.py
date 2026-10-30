@@ -13,19 +13,25 @@
 所有层级都失败时该段记 `failed`，整条复盘退出码为 9（`EXIT_AI_DEGRADED`）。
 
 边界：AI 只能写叙述（`core/boundary.py:merge_narrative`），指标原样保留。
+
+R2（QUOT-140）在这层加了可选的 tool-calling 通道：`ToolChatClient` 协议 +
+`HttpChatClient.complete_with_tools`（OpenAI 兼容的 `tools` / `tool_calls`）。
+`complete` 一个字没改，五段复盘仍走单次补全；工具本身与每段白名单在
+`ai/tools.py` 与 `research/stages.py`，工具循环在 `research/ladder.py`。
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard
 
 import httpx
 
 from ladderstock.ai import checkpoint, fallback, providers, structured_output
 from ladderstock.ai.error_taxonomy import AiFailure, classify_error
-from ladderstock.ai.providers import UnconfiguredError
+from ladderstock.ai.providers import ToolTurn, UnconfiguredError
 from ladderstock.core.boundary import merge_narrative
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 
@@ -33,6 +39,31 @@ from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 class ChatClient(Protocol):
     def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
         """返回模型正文；失败时抛异常，由 `classify_error` 归类。"""
+
+
+class ToolChatClient(ChatClient, Protocol):
+    """可选能力（R2）：在 `complete` 之外再实现带工具的一轮补全。
+
+    只有一条硬规矩：**实现它必须不破坏 `complete`**。五段复盘与所有既有假客户端
+    只实现 `complete`，编排层用 `supports_tools()` 判断，判不到就走原来的单次补全，
+    行为与 R2 之前逐字一致。
+    """
+
+    def complete_with_tools(
+        self,
+        model: str,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        json_mode: bool,
+    ) -> ToolTurn:
+        """返回正文 + 模型请求的工具调用；失败同样抛异常，由 `classify_error` 归类。"""
+
+
+def supports_tools(client: ChatClient) -> TypeGuard[ToolChatClient]:
+    """客户端是否实现了 tool-calling 通道（鸭子判断，假客户端不需要继承任何基类）。"""
+    callable_ = getattr(client, "complete_with_tools", None)
+    return callable_ is not None and callable(callable_)
 
 
 class HttpChatClient:
@@ -56,6 +87,25 @@ class HttpChatClient:
             target,
             system,
             user,
+            json_mode=json_mode,
+            timeout=self.timeout,
+            transport=self.transport,
+        )
+
+    def complete_with_tools(
+        self,
+        model: str,
+        messages: Sequence[Mapping[str, Any]],
+        tools: Sequence[Mapping[str, Any]],
+        *,
+        json_mode: bool,
+    ) -> ToolTurn:
+        target = self.config.resolve(model)
+        provider = providers.provider_for(target.backend.kind)
+        return provider.complete_with_tools(
+            target,
+            messages,
+            tools,
             json_mode=json_mode,
             timeout=self.timeout,
             transport=self.transport,
@@ -447,5 +497,8 @@ __all__ = [
     "HttpChatClient",
     "Orchestrator",
     "RunResult",
+    "ToolChatClient",
+    "ToolTurn",
     "UnconfiguredError",
+    "supports_tools",
 ]
