@@ -15,6 +15,8 @@
 export const API_BASE = '/api'
 const DEFAULT_TIMEOUT_MS = 5000
 const CONTROL_TIMEOUT_MS = 15000
+/** 控制面写请求的来源证据（QUOT-178）：服务端要求 Origin 同源或这个显式头 */
+const CONTROL_CLIENT_HEADER = 'X-LDST-Client'
 
 // ---------------------------------------------------------------- 错误
 
@@ -91,6 +93,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const abortFromCaller = () => controller.abort()
   signal?.addEventListener('abort', abortFromCaller)
+  const isControlWrite = path.startsWith('/control/') && method !== 'GET'
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       method,
@@ -98,6 +101,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       headers: {
         accept: 'application/json',
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        // 跨站 no-cors 简单请求带不上自定义头（会触发预检，服务端无 CORS 放行）
+        ...(isControlWrite ? { [CONTROL_CLIENT_HEADER]: '1' } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })

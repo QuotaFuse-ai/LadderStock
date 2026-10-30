@@ -43,6 +43,9 @@ from ladderstock.web.server import create_app
 LOOPBACK = ("127.0.0.1", 54321)
 REMOTE = ("10.1.2.3", 54321)
 
+#: 控制面写请求的来源证据（QUOT-178）：服务端要求 Origin 同源或这个显式头
+WRITE_HEADERS = {"X-LDST-Client": "1"}
+
 SENTINEL_KEY = "sk-live-QUOT121-SENTINEL-donotprint"
 
 #: 停止类用例的统一时间基准：状态文件里的 `started_at` 与假「进程创建时间」都用它。
@@ -461,7 +464,7 @@ def test_config_put_rejects_non_whitelisted_key(
         dist_dir=tmp_path / "missing",
         control_plane=_plane(tmp_path, peer_dirs),
     )
-    client = TestClient(app, client=LOOPBACK)
+    client = TestClient(app, client=LOOPBACK, headers=WRITE_HEADERS)
     response = client.put(
         "/api/control/peers/alpha/config",
         json={"values": {"PATH": "/evil", "MCP_HTTP_PORT": "8002"}},
@@ -554,7 +557,7 @@ def test_unknown_peer_and_job_are_404(
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=_plane(tmp_path, peer_dirs)
     )
-    client = TestClient(app, client=LOOPBACK)
+    client = TestClient(app, client=LOOPBACK, headers=WRITE_HEADERS)
     assert client.get("/api/control/peers/nope").status_code == 404
     assert client.post("/api/control/peers/nope/install").status_code == 404
     assert client.get("/api/control/jobs/nope").status_code == 404
@@ -576,7 +579,7 @@ def test_endpoints_return_expected_shapes(
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=_plane(tmp_path, peer_dirs)
     )
-    client = TestClient(app, client=LOOPBACK)
+    client = TestClient(app, client=LOOPBACK, headers=WRITE_HEADERS)
     board = client.get("/api/control/peers").json()
     assert board["ok"] is True
     assert [row["id"] for row in board["peers"]] == ["alpha", "beta"]
@@ -607,7 +610,7 @@ def test_ai_test_rejects_bad_input(
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=_plane(tmp_path, peer_dirs)
     )
-    client = TestClient(app, client=LOOPBACK)
+    client = TestClient(app, client=LOOPBACK, headers=WRITE_HEADERS)
     assert client.post(
         "/api/control/ai/test",
         json={"peer": "alpha", "base_url": "ftp://x", "model": "m"},
@@ -777,7 +780,7 @@ def test_cross_site_write_is_rejected_before_any_work(
     evil = {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
     assert client.post("/api/control/peers/alpha/install", headers=evil).status_code == 403
     assert client.post("/api/control/peers/alpha/start", headers=evil).status_code == 403
-    # 只带 Sec-Fetch-Site 也拒绝（Origin 可能被某些浏览器省略）
+    # 只带 Sec-Fetch-Site（没有任何正向证据）也拒绝
     assert (
         client.post(
             "/api/control/peers/alpha/start", headers={"Sec-Fetch-Site": "same-site"}
@@ -789,6 +792,51 @@ def test_cross_site_write_is_rejected_before_any_work(
     # 本机页面发起的同源写请求放行
     same = {"Origin": "http://127.0.0.1:5950", "Sec-Fetch-Site": "same-origin"}
     assert client.post("/api/control/peers/alpha/start", headers=same).status_code == 200
+
+
+def test_write_requires_positive_evidence(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """QUOT-178：写方法必须「Origin 同源」或「X-LDST-Client: 1」，双缺席 403。"""
+    runtime = FakeRuntime()
+    spawned: list[Any] = []
+    client = _loopback_client(
+        tmp_path,
+        peer_dirs,
+        runtime=runtime,
+        spawn=lambda args, *, cwd, log_path: spawned.append(args),
+    )
+
+    # ① 两个证据都缺席 → 403，且不建 job、不起进程
+    assert client.post("/api/control/peers/alpha/install").status_code == 403
+    assert runtime.calls == []
+    assert spawned == []
+
+    # ② 只带自定义头 → 200（curl / CLI / 脚本路径）
+    handled = client.post("/api/control/peers/alpha/install", headers=WRITE_HEADERS)
+    assert handled.status_code == 200
+    assert handled.json()["job_id"]
+
+    # ③ 只带同源 Origin → 200（浏览器路径）
+    assert (
+        client.post(
+            "/api/control/peers/beta/start", headers={"Origin": "http://127.0.0.1:5950"}
+        ).status_code
+        == 200
+    )
+
+    # ④ 跨站 Origin + 自定义头 → 403：Origin 优先，不被自定义头救回来
+    both = {"Origin": "https://evil.example", "X-LDST-Client": "1"}
+    assert client.post("/api/control/peers/alpha/install", headers=both).status_code == 403
+
+    # ⑤ Origin: null（沙箱 iframe / data: 页面）+ 自定义头 → 403
+    assert (
+        client.post(
+            "/api/control/peers/alpha/install",
+            headers={"Origin": "null", "X-LDST-Client": "1"},
+        ).status_code
+        == 403
+    )
 
 
 def test_start_records_pid_metadata(
