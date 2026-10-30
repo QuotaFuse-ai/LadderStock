@@ -3,7 +3,8 @@
 约定（见 docs/CLI.md §F）：
 - 结构化结果 -> stdout；日志与错误 -> stderr
 - 三档格式：json（默认用于管道）、table（交互）、csv
-- **全局 `--output`**：31 条基线命令 + R1-1 `research` + R7 增量 5 条（`pool` / `position *`，共 39 个叶子路径）
+- **全局 `--output`**：31 条基线命令 + R1-1 `research` + R7 增量 5 条
+  （`pool` / `position *`，共 39 个叶子路径）
   统一用 `OutputOption` 声明，未显式指定时按 `resolve_format()` 取默认值——
   交互终端 table、管道/重定向 json
 - Windows 控制台强制 UTF-8，避免中文变成乱码

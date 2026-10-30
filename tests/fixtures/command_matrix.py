@@ -129,7 +129,8 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
 # `validate reconcile` 计数在 `validate` 之外——所以这里按「可执行路径」列。
 # `review` / `validate` / `sync` 三个组带 `invoke_without_command`，组本身也是叶子。
 # R7（QUOT-145）在此之外加了 5 条：`pool` + `position add|list|update|remove`，
-# 共 39 个叶子路径（含 R1-1 的 `research`）；它们是**增量命令**，不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″）。
+# 共 39 个叶子路径（含 R1-1 的 `research`）；它们是**增量命令**，
+# 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
     ("review",),
