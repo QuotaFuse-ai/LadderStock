@@ -138,17 +138,19 @@ def ai_retry(
 # --------------------------------------------------------------------------- #
 
 def ai_chain_test(
-    model: Annotated[str | None, typer.Option(help="只测指定模型")] = None,
+    model: Annotated[str | None, typer.Option(help="只测指定模型（标签或 backend:model）")] = None,
     output: OutputOption = None,
 ) -> None:
     """按模型链逐档探测；未配置时明确报「未配置」并以 3 退出。"""
     config = _load_config()
     chain = fallback.model_chain(config)
     if model:
-        if model not in chain:
-            chain = [model, *chain]
-        else:
+        if model in chain:
             chain = [model]
+        elif any(label.endswith(f":{model}") for label in chain):
+            chain = [label for label in chain if label.endswith(f":{model}")]
+        else:
+            chain = [model, *chain]
 
     if not fallback.is_configured(config):
         missing = "、".join(fallback.missing_env(config))
@@ -169,12 +171,21 @@ def ai_chain_test(
     ok = 0
     for name in chain:
         try:
+            target = config.resolve(name)
+        except BoundaryViolation as exc:
+            error(str(exc))
+            raise typer.Exit(EXIT_CONFIG) from None
+        try:
             text = client.complete(name, PROBE_SYSTEM, PROBE_USER, json_mode=False)
         except Exception as exc:  # noqa: BLE001 - 失败分类后统一上报
             failure = classify_error(exc)
             results.append(
                 {
                     "model": name,
+                    "target": target.label,
+                    "backend": target.backend.id,
+                    "type": target.backend.kind,
+                    "upstream_model": target.model,
                     "ok": False,
                     "kind": failure.kind,
                     "message": failure.message,
@@ -183,7 +194,17 @@ def ai_chain_test(
             )
             continue
         ok += 1
-        results.append({"model": name, "ok": True, "chars": len(text)})
+        results.append(
+            {
+                "model": name,
+                "target": target.label,
+                "backend": target.backend.id,
+                "type": target.backend.kind,
+                "upstream_model": target.model,
+                "ok": True,
+                "chars": len(text),
+            }
+        )
 
     emit(
         {
