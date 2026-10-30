@@ -484,7 +484,8 @@ def test_control_plane_starts_with_private_directories(
 
 def _client(tmp_path: Path, plane: ControlPlane) -> TestClient:
     app = create_app(data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=plane)
-    return TestClient(app, client=LOOPBACK)
+    # 控制面写请求的来源证据（QUOT-178）：服务端要求 Origin 同源或这个显式头
+    return TestClient(app, client=LOOPBACK, headers={"X-LDST-Client": "1"})
 
 
 def test_config_put_keeps_file_untouched_when_harden_fails(

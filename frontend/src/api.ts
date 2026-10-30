@@ -15,6 +15,8 @@
 export const API_BASE = '/api'
 const DEFAULT_TIMEOUT_MS = 5000
 const CONTROL_TIMEOUT_MS = 15000
+/** 控制面写请求的来源证据（QUOT-178）：服务端要求 Origin 同源或这个显式头 */
+const CONTROL_CLIENT_HEADER = 'X-LDST-Client'
 
 // ---------------------------------------------------------------- 错误
 
@@ -91,6 +93,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const abortFromCaller = () => controller.abort()
   signal?.addEventListener('abort', abortFromCaller)
+  const isControlWrite = path.startsWith('/control/') && method !== 'GET'
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       method,
@@ -98,6 +101,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       headers: {
         accept: 'application/json',
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        // 跨站 no-cors 简单请求带不上自定义头（会触发预检，服务端无 CORS 放行）
+        ...(isControlWrite ? { [CONTROL_CLIENT_HEADER]: '1' } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
@@ -206,9 +211,82 @@ export interface LadderResult {
   unknown_board: number
 }
 
+/**
+ * 后端 `ai/error_taxonomy.py:FailureKind` 的镜像：四类面向用户的失败 + `internal` 兜底。
+ * 前端不重新分类，只按这个 kind 决定呈现与可执行操作。
+ */
+export type AiFailureKind = 'network' | 'quota' | 'format' | 'truncated' | 'internal'
+
+export const AI_FAILURE_KINDS: readonly AiFailureKind[] = [
+  'network',
+  'quota',
+  'format',
+  'truncated',
+  'internal',
+]
+
+export function isAiFailureKind(value: unknown): value is AiFailureKind {
+  return typeof value === 'string' && (AI_FAILURE_KINDS as readonly string[]).includes(value)
+}
+
+/** `review.ai_failures[]`（`ai/orchestrator.py:_result` 产出，字段一一对应）。 */
+export interface ReviewAiFailure {
+  section: string
+  kind: AiFailureKind
+  /** 后端已脱敏：类别标题 + 原因，如「网络请求失败：连接超时（10s）」 */
+  message: string
+  /** 后端给出的可行动建议（前端的按钮没接上时用作文字兜底） */
+  action: string
+  retryable: boolean
+}
+
+export interface ReviewSectionSummary {
+  name: string
+  title: string
+  status: string
+  mode: string | null
+  model: string | null
+  degraded: boolean
+  narrative: string[]
+  notes: string[]
+  metrics: Record<string, unknown>
+}
+
+/** `/api/review` 的 `review` 正文；保留索引签名，未知字段不因类型收窄而丢。 */
+export interface ReviewReport extends Record<string, unknown> {
+  sections?: ReviewSectionSummary[]
+  ai_failures?: ReviewAiFailure[]
+}
+
 export interface ReviewPayload {
   date: string
-  review: Record<string, unknown> | null
+  review: ReviewReport | null
+}
+
+/**
+ * 解析 `ai_failures`：只认结构完整的条目，缺 `section` 的丢弃，不猜、不补。
+ * `kind` 不在后端枚举内时归 `internal`（与后端兜底语义一致）。
+ */
+export function parseAiFailures(value: unknown): ReviewAiFailure[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const record = item as Record<string, unknown>
+    const section = typeof record.section === 'string' ? record.section.trim() : ''
+    if (!section) return []
+    return [
+      {
+        section,
+        kind: isAiFailureKind(record.kind) ? record.kind : 'internal',
+        message:
+          typeof record.message === 'string' && record.message.trim()
+            ? record.message
+            : 'AI 生成失败',
+        action: typeof record.action === 'string' ? record.action : '',
+        retryable: record.retryable === true,
+      },
+    ]
+  })
 }
 
 export interface WatchSnapshotRow {

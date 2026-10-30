@@ -6,8 +6,9 @@
 DEC-014 的五条硬约束在这里逐条落地：
 
 1. **只监听回环**：`_guard()` 对每个请求比对 `scope["client"]`，非回环来源 403；
-   `Host` 头按白名单校验（挡住 DNS rebinding），写方法再校验 `Origin` /
-   `Sec-Fetch-Site`（挡住跨站「简单请求」CSRF，QUOT-123 B5/B6）。
+   `Host` 头按白名单校验（挡住 DNS rebinding），写方法必须有正向来源证据——
+   本机页面 `Origin` 或显式头 `X-LDST-Client: 1`（挡住跨站「简单请求」CSRF，
+   QUOT-123 B5/B6、QUOT-178）。
    绑定地址仍由 `core/listener.require_binding_policy()` 把关，不可配 `0.0.0.0`。
 2. **不拼 shell**：所有子进程都是参数数组 + `shell=False` + 显式 `timeout`；
    命令一律来自 `core/boundary.PEER_CONTROL` 白名单，peer 只能取枚举 id。
@@ -74,6 +75,11 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 #: `Sec-Fetch-Site` 里算「本机页面 / 直接访问」的两种取值（其余一律拒绝）
 SAME_ORIGIN_SITES = frozenset({"same-origin", "none"})
+
+#: 写方法的第二种正向证据：非浏览器客户端（curl / CLI / 脚本）显式声明身份。
+#: 浏览器跨站发起时带不上这个头（会触发预检，而服务端无 CORS 放行头）。
+CLIENT_HEADER = "X-LDST-Client"
+CLIENT_HEADER_VALUE = "1"
 
 #: 已存密钥可回落的主机白名单（逗号分隔；默认只有自有 AI 中继，QUOT-123 C10）
 AI_ALLOWED_HOSTS_ENV = "LDST_AI_ALLOWED_HOSTS"
@@ -311,9 +317,11 @@ def host_header_allowed(request: Request) -> bool:
 
 
 def origin_allowed(request: Request) -> bool:
-    """写方法来源校验：`Origin` 必须是本机页面（`http(s)` + 回环主机 + 监听端口）。
+    """`Origin` 合法性：必须是本机页面（`http(s)` + 回环主机 + 监听端口）。
 
-    没有 `Origin` 头时返回 True（非浏览器客户端）；浏览器跨站请求必带该头。
+    本函数只回答「带了这个 Origin 能不能算本机页面」，**不回答写请求是否放行**：
+    没有 `Origin` 时它返回 True 只是为了单独可测；写方法的放行判据见
+    `write_source_allowed()`（QUOT-178：双证据二选一）。
     """
     raw = request.headers.get("origin")
     if raw is None:
@@ -337,6 +345,23 @@ def origin_allowed(request: Request) -> bool:
     return True
 
 
+def client_header_allowed(request: Request) -> bool:
+    """`X-LDST-Client: 1`——非浏览器客户端（curl / CLI / 脚本）的写请求证据。"""
+    return (request.headers.get(CLIENT_HEADER) or "").strip() == CLIENT_HEADER_VALUE
+
+
+def write_source_allowed(request: Request) -> bool:
+    """写方法的正向证据：`Origin` 同源 **或** `X-LDST-Client: 1`（QUOT-178）。
+
+    二选一，但 `Origin` 一旦出现就只认它：跨站 `Origin` 不会被自定义头救回来
+    （浏览器强制写入 `Origin`，脚本改不了；能带自定义头说明已过预检，而服务端
+    没有 CORS 放行头）。两个证据都缺席 → 403，不再默认放行。
+    """
+    if request.headers.get("origin") is not None:
+        return origin_allowed(request)
+    return client_header_allowed(request)
+
+
 async def _guard(request: Request) -> None:
     """控制面统一闸门：总开关 → 来源回环 → Host 白名单 → 写方法来源（QUOT-123）。
 
@@ -346,9 +371,10 @@ async def _guard(request: Request) -> None:
     - **Host**：只认回环主机名/IP（或与服务端监听地址完全一致，`TestClient` 的
       `testserver` 即属此类）；其余 403——挡住 DNS rebinding 把攻击者域名解析到
       127.0.0.1 的玩法。
-    - **写方法来源**：`POST/PUT/PATCH/DELETE` 若带 `Origin`，必须是本机页面；
-      若带 `Sec-Fetch-Site`，只接受 `same-origin` / `none`。两个头都缺席时放行
-      （curl / TestClient 这类非浏览器客户端本来就不会被跨站利用）。
+    - **写方法来源**：`POST/PUT/PATCH/DELETE` 必须有正向证据——`Origin` 是同源
+      本机页面，或显式带 `X-LDST-Client: 1`（curl / CLI / 脚本）；两者都缺席 → 403。
+      `Origin` 存在时只认它，跨站 Origin 不会被自定义头救回来。若带
+      `Sec-Fetch-Site`，只接受 `same-origin` / `none`。
     """
     if not control_enabled():
         # 与 SPA 兜底的 404 保持同一形状，不暴露「这里本来有个控制面」
@@ -364,12 +390,13 @@ async def _guard(request: Request) -> None:
             ),
         )
     if request.method.upper() in WRITE_METHODS:
-        if not origin_allowed(request):
+        if not write_source_allowed(request):
             raise HTTPException(
                 status_code=403,
                 detail=(
-                    f"跨站来源被拒绝：Origin={request.headers.get('origin')}"
-                    "（控制面只接受本机页面发起的写请求）"
+                    "写请求缺少来源证据：需要本机页面 Origin，或显式头 "
+                    f"{CLIENT_HEADER}: {CLIENT_HEADER_VALUE}"
+                    f"（Origin={request.headers.get('origin')}）"
                 ),
             )
         site = request.headers.get("sec-fetch-site")
@@ -2425,6 +2452,7 @@ __all__ = [
     "VALIDATION_REQUEST_FIELDS",
     "ai_allowed_hosts",
     "build_router",
+    "client_header_allowed",
     "client_host",
     "condition_id",
     "condition_key",
@@ -2449,4 +2477,5 @@ __all__ = [
     "secret_preview",
     "state_pids",
     "write_env_file",
+    "write_source_allowed",
 ]

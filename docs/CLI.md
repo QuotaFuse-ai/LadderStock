@@ -123,7 +123,13 @@
 - **端口（DEC-004）**：看板 `5950`、MCP http `5951`，默认仅回环监听。**端口被占用直接报错（退出码 3）并提示 `--port`，绝不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会让 M1 状态恢复失效。旧版端口 `5940` / `8770` 仅打印迁移提示。
 - **监听鉴权（R-1，判据唯一份：`core/listener.py`）**：回环（`127.0.0.1` / `localhost` / `::1`）无需配置；非回环**必须同时**设置 `<前缀>_ALLOW_REMOTE=1` 与 `<前缀>_TOKEN`（≥16 字符），否则拒绝启动、退出码 3，绝不静默对外暴露。前缀：web `LDST_WEB_*`，MCP `LDST_MCP_*`。开启后 web 校验 `/api/*`、MCP 校验 `/mcp`，均要求 `Authorization: Bearer <token>`（web 兼容 `X-Web-Token`），`hmac.compare_digest` 常量时间比较，失败 401 且不回显服务端细节。
 - **不撞端口**：Council WebUI `8788` / MCP `8765`、TickHub Admin `8787` / MCP `8000`、TickHub-US MCP `8002` / Admin `8789`、Wire `8790` / `8791`。
-- **控制面（DEC-014）**：`ldst run` 启动后看板页可在 `/api/control/*` 查看、安装、启停、配置四个 peer，实现落点 `src/ladderstock/web/control.py`。该族接口**只接受回环来源**（非回环 403），`LDST_CONTROL_ENABLED=0` 时整族返回 404 且数据面 7 个只读接口零影响；安装/启停一律 `subprocess.run([...], shell=False)` 走白名单命令，端口被占用直接报错、**绝不换端口也不杀占用者**（DEC-004）；密钥只写目标 peer **真正加载的那个 dotenv**（CN/US/Senate 为 `.env`、Wire 为 `.env.local`，0600），GET 只回 `{"set": true, "preview": "sk-****abcd"}`，日志同样脱敏。
+- **控制面（DEC-014）**：`ldst run` 启动后看板页可在 `/api/control/*` 查看、安装、启停、配置四个 peer，实现落点 `src/ladderstock/web/control.py`。该族接口**只接受回环来源**（非回环 403），`LDST_CONTROL_ENABLED=0` 时整族返回 404 且数据面 7 个只读接口零影响；**写方法（`POST`/`PUT`/`PATCH`/`DELETE`）必须带正向来源证据**——浏览器同源页面由 `Origin` 自动满足，`curl` / CLI / 脚本须显式加 `X-LDST-Client: 1`（否则 403，QUOT-178）；安装/启停一律 `subprocess.run([...], shell=False)` 走白名单命令，端口被占用直接报错、**绝不换端口也不杀占用者**（DEC-004）；密钥只写目标 peer **真正加载的那个 dotenv**（CN/US/Senate 为 `.env`、Wire 为 `.env.local`，0600），GET 只回 `{"set": true, "preview": "sk-****abcd"}`，日志同样脱敏。
+
+  ```bash
+  # 写接口示例：从命令行触发安装（Origin 缺席时必须带 X-LDST-Client）
+  curl -X POST http://127.0.0.1:5950/api/control/peers/wire/install \
+    -H "X-LDST-Client: 1" -H "Content-Type: application/json" -d '{"dev": false}'
+  ```
 - **隐私边界**：`journal *` 与持仓数据只写本机 SQLite（`data/journal.sqlite`），不进 `LadderEnvelope`、不被 MCP 读取、不注入 AI 上下文。
 - **兼容别名**：`ladderstock` 为 `ldst` 长别名；旧启动脚本（`scripts/start`、`scripts\start.cmd`）委托 `ldst run` 并打印迁移提示。
 - **配置迁移**：`config migrate` 旧文件只读、迁移前自动备份（`data/backups/<时间戳>/`、`journal.sqlite.bak-v<ver>-<时间戳>`），失败按备份回滚；`schema_version` 已最新时 `status=up_to_date` 且不写任何文件。完整契约见 `docs/CONFIG.md` §4。

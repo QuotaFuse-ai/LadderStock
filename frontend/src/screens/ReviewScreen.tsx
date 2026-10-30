@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw, Trash2 } from 'lucide-react'
 
 import {
   api,
   describeApiError,
   isApiError,
+  parseAiFailures,
   type LadderEnvelope,
+  type ReviewAiFailure,
   type SentimentResult,
 } from '../api'
+import { AiErrorNotice } from '../components/kit'
 import { useAsync } from '../lib/useAsync'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import { MISSING, formatInt, formatRatePct, formatTime, localDateIso } from '../lib/format'
@@ -50,6 +53,23 @@ const SECTION_STATUS: Record<string, { label: string; tone: SectionTone; badge: 
   ok: { label: '已完成', tone: 'ok', badge: 'ok' },
   degraded: { label: '降级完成', tone: 'warn', badge: 'warn' },
   failed: { label: '失败', tone: 'danger', badge: 'danger' },
+}
+
+/** 页面级汇总用的短名（UI-SPEC §5.4「5 段中 2 段失败（网络 / 截断）」）。 */
+const FAILURE_KIND_LABEL: Record<string, string> = {
+  network: '网络',
+  quota: '额度',
+  format: '格式',
+  truncated: '截断',
+  internal: '未归类',
+}
+
+const NO_FAILURES: ReviewAiFailure[] = []
+
+function summariseFailureKinds(failures: ReviewAiFailure[]): string {
+  return [...new Set(failures.map((failure) => FAILURE_KIND_LABEL[failure.kind] ?? failure.kind))].join(
+    ' / ',
+  )
 }
 
 /** 草稿分片键 → 复盘 payload 的段名（payload 用 `dragon_tiger`）。 */
@@ -147,6 +167,7 @@ function SourceBadge({ envelope }: { envelope: EnvelopeMeta | null }) {
 export default function ReviewScreen() {
   const forced = useForcedState()
   const [params] = useSearchParams()
+  const navigate = useNavigate()
 
   const draftTradeDate = useReviewDraft((state) => state.tradeDate)
   const updatedAt = useReviewDraft((state) => state.updatedAt)
@@ -181,6 +202,7 @@ export default function ReviewScreen() {
   const reviewData = review.data?.payload.review ?? null
   const aiSections = useMemo(() => parseSections(reviewData), [reviewData])
   const aiHeader = useMemo(() => parseHeader(reviewData), [reviewData])
+  const aiFailures = useMemo(() => parseAiFailures(reviewData?.ai_failures), [reviewData])
   const sent: SentimentResult | null = sentiment.data?.payload.sentiment ?? null
 
   const derived = useMemo<PageState>(() => {
@@ -211,6 +233,13 @@ export default function ReviewScreen() {
     return map
   }, [viewSections])
 
+  const viewFailures = usable ? aiFailures : NO_FAILURES
+  const failureMap = useMemo(() => {
+    const map = new Map<string, ReviewAiFailure>()
+    viewFailures.forEach((failure) => map.set(failure.section, failure))
+    return map
+  }, [viewFailures])
+
   const failedLabels = useMemo(() => {
     const labels: string[] = []
     if (review.status === 'error') labels.push('复盘正文')
@@ -235,6 +264,12 @@ export default function ReviewScreen() {
     setNotice('本机复盘草稿已清空')
   }
 
+  const focusSection = (name: string) => {
+    document
+      .getElementById(`review-section-${name}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
   const header = (
     <PageHeader
       title="收盘复盘"
@@ -254,7 +289,7 @@ export default function ReviewScreen() {
           <Button
             variant="secondary"
             disabled
-            disabledReason="AI 重新生成由 ldst review 命令触发；控制面未开放，本轮不接入"
+            disabledReason={`重新生成由 ldst review --date ${tradeDate} --retry-failed 触发；控制面未开放`}
           >
             重新生成
           </Button>
@@ -298,6 +333,20 @@ export default function ReviewScreen() {
           onRetry={reloadAll}
           retryLabel="重试该段"
         />
+      )}
+
+      {usable && viewFailures.length > 0 && (
+        <Banner
+          tone="danger"
+          title={`${REVIEW_SECTIONS.length} 段中 ${viewFailures.length} 段 AI 生成失败（${summariseFailureKinds(viewFailures)}）`}
+          action={
+            <Button variant="secondary" onClick={() => focusSection(viewFailures[0].section)}>
+              定位首个失败段
+            </Button>
+          }
+        >
+          失败原因与可执行操作见对应段；程序指标与你的判断不受影响，草稿仍可继续写。
+        </Banner>
       )}
 
       <div className="flex flex-wrap items-end gap-3">
@@ -399,14 +448,16 @@ export default function ReviewScreen() {
 
       <div className="flex flex-col gap-4">
         {REVIEW_SECTIONS.map((section, index) => {
-          const payload = sectionMap.get(SECTION_PAYLOAD_NAME[section.key])
+          const payloadName = SECTION_PAYLOAD_NAME[section.key]
+          const payload = sectionMap.get(payloadName)
+          const failure = failureMap.get(payloadName)
           const status = payload?.status ?? 'pending'
           const meta = SECTION_STATUS[status] ?? SECTION_STATUS.pending
           const draftText = sections[section.key]
           const textareaId = `review-draft-${section.key}`
           return (
+            <div key={section.key} id={`review-section-${payloadName}`} className="scroll-mt-6">
             <SectionCard
-              key={section.key}
               tone={meta.tone}
               title={
                 <span>
@@ -430,8 +481,43 @@ export default function ReviewScreen() {
                       模型 {payload?.model ?? '未启用'}
                     </span>
                   </div>
+                  {payload?.degraded && status !== 'failed' && (
+                    <AiErrorNotice
+                      kind="degraded"
+                      className="mb-2"
+                      onOpenStatus={() => navigate('/settings?tab=ai')}
+                    />
+                  )}
                   {status === 'running' ? (
                     <SkeletonText lines={3} />
+                  ) : failure ? (
+                    <div className="flex flex-col gap-2">
+                      <AiErrorNotice
+                        kind={failure.kind}
+                        section={section.label}
+                        message={failure.message}
+                        action={failure.action}
+                        keptPrevious={(payload?.narrative.length ?? 0) > 0}
+                        retryLabel="重新取数"
+                        onRetry={reloadAll}
+                        onOpenStatus={() => navigate('/settings?tab=ai')}
+                      />
+                      {payload && payload.narrative.length > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                          {payload.narrative.map((line) => (
+                            <p key={line} className="text-body leading-body text-text-secondary">
+                              {line}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {failure.kind !== 'truncated' && failure.kind !== 'internal' && (
+                        <p className="text-caption text-text-muted">
+                          重新生成失败段需运行 `ldst review --date {tradeDate} --retry-failed`；控制面未开放，
+                          本页的「重新取数」只刷新已生成的报告。
+                        </p>
+                      )}
+                    </div>
                   ) : status === 'failed' ? (
                     <ErrorBlock
                       variant="inline"
@@ -476,6 +562,7 @@ export default function ReviewScreen() {
                 </div>
               </div>
             </SectionCard>
+            </div>
           )
         })}
       </div>

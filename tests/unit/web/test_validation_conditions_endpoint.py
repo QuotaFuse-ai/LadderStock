@@ -31,11 +31,13 @@ LOOPBACK = ("127.0.0.1", 54321)
 REMOTE = ("10.1.2.3", 54321)
 DATE = "2026-10-30"
 URL = "/api/control/validation/conditions"
+#: 控制面写请求的来源证据（QUOT-178）：服务端要求 Origin 同源或这个显式头
+WRITE_HEADERS = {"X-LDST-Client": "1"}
 
 
 def _client(root: Path, client: tuple[str, int] = LOOPBACK, **kwargs: Any) -> TestClient:
     app = create_app(data_root=root, dist_dir=root / "no-dist", **kwargs)
-    return TestClient(app, client=client)
+    return TestClient(app, client=client, headers=WRITE_HEADERS)
 
 
 def _put(client: TestClient, payload: Any, **kwargs: Any):

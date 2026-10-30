@@ -50,7 +50,8 @@ flowchart TB
   不静默换端口（IndexedDB 按 origin 隔离）。
 - **DEC-014 控制面**：`web/control.py` 在读写面上单开一层 `/api/control/*`，让看板能看见、安装、
   启停、配置四个 peer（TickHub-CN / TickHub-US / Wire / StockSenate）。与数据面严格分层：只接受回环
-  来源（非回环 403），`LDST_CONTROL_ENABLED=0` 时整族 404 而数据面只读接口零影响；命令一律
+  来源（非回环 403），写方法另需正向证据（`Origin` 同源或 `X-LDST-Client: 1`，QUOT-178），
+  `LDST_CONTROL_ENABLED=0` 时整族 404 而数据面只读接口零影响；命令一律
   `subprocess.run([...], shell=False)` 走 `core/boundary.py` 白名单，不建 shell 字符串；只动 peer 自己的
   `.venv` 与**其真正加载的那个 dotenv**（TickHub-CN / US / Senate 是 `.env`，Wire 是 `.env.local`，
   由 `PeerControl.env_filename` 声明），不写 PATH、不改系统代理、不杀端口占用者（DEC-004）；密钥 GET
