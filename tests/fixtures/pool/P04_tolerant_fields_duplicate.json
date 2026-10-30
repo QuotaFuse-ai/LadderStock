@@ -1,0 +1,100 @@
+{
+  "name": "P04 字段容忍 + 重复代码 + 无代码行",
+  "description": "连板数四种命名（consecutive_boards / limit_up_days「2板」/ 连板数 / boards）、换手率两种命名（turnover / 换手率）、题材三种命名（theme / 概念）、资金两种命名（主力净流入 / 净流入）都能取到。600010 重复两行且数值等价（去重保留首条，dropped_duplicates=1）；无 code 的行不进候选、只计 unknown_code=1，且不参与当日最高板（QUOT-231 L6 口径，height 取有码行的 4）。",
+  "datasets": {
+    "limit_pool": [
+      {
+        "code": "600010",
+        "name": "戊",
+        "consecutive_boards": 2,
+        "turnover": 5.0,
+        "theme": "半导体,存储"
+      },
+      {
+        "code": "600010",
+        "name": "戊重复",
+        "limit_up_days": "2板",
+        "换手率": "5",
+        "概念": "半导体,存储"
+      },
+      {
+        "code": "600011",
+        "name": "己",
+        "连板数": "4",
+        "换手率": "30",
+        "概念": "半导体；光模块"
+      },
+      {
+        "code": "",
+        "name": "无码",
+        "boards": 2
+      }
+    ],
+    "concept_board": [
+      {
+        "name": "半导体",
+        "change_pct": 3.0
+      },
+      {
+        "name": "存储",
+        "change_pct": -2.0
+      },
+      {
+        "name": "光模块",
+        "change_pct": 5.0
+      }
+    ],
+    "fund_flow": [
+      {
+        "code": "600010",
+        "主力净流入": 12000000
+      },
+      {
+        "code": "600011",
+        "净流入": -3000000
+      }
+    ]
+  },
+  "expected": {
+    "pool": {
+      "available": true,
+      "reason": null,
+      "height": 4,
+      "candidate_count": 2,
+      "candidates": [
+        {
+          "code": "600011",
+          "score": 70.0,
+          "parts": {
+            "strength": 66.7,
+            "turnover": 100.0,
+            "standing": 100.0,
+            "capital": 0.0,
+            "theme": 100.0
+          },
+          "absent_parts": []
+        },
+        {
+          "code": "600010",
+          "score": 54.0,
+          "parts": {
+            "strength": 33.3,
+            "turnover": 25.0,
+            "standing": 50.0,
+            "capital": 100.0,
+            "theme": 60.0
+          },
+          "absent_parts": []
+        }
+      ],
+      "counts": {
+        "limit_pool_rows": 4,
+        "dropped_duplicates": 1,
+        "unknown_code": 1,
+        "theme_boards": 3,
+        "fund_flow_rows": 2
+      },
+      "missing_datasets": []
+    }
+  }
+}

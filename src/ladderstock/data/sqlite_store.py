@@ -31,7 +31,7 @@ from ladderstock.errors import EXIT_CONFIG, LadderStockError
 DB_FILENAME = "journal.sqlite"
 
 #: 隐私库 schema 版本；与 config/schema 的整数版本号同口径
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_META_TABLE = "schema_meta"
 
@@ -159,13 +159,19 @@ def _connection_path(conn: sqlite3.Connection) -> Path | None:
 
 
 def _apply(conn: sqlite3.Connection) -> None:
-    """v1 结构；`IF NOT EXISTS` 保证重复执行不改变已有数据。
+    """把库结构推到 `SCHEMA_VERSION`；`IF NOT EXISTS` 保证重复执行不改变已有数据。
+
+    只在 `version < SCHEMA_VERSION` 时被调用（`migrate()` 负责判版本），所以
+    v1 → v2 的 `ALTER` 天然只跑一次：整个 `_apply` 处在外层 `BEGIN IMMEDIATE`
+    事务里，任一条失败都回滚，不会出现「改了一半结构却没有版本号」的库。
 
     注意：这里逐条 `execute()` 而不用 `executescript()`——后者会先隐式提交，
     把外层 `BEGIN IMMEDIATE` 事务拆散，导致随后的 `COMMIT` 报
     “cannot rollback - no transaction is active”。
     """
     for statement in _split_statements(_SCHEMA_V1):
+        conn.execute(statement)
+    for statement in _split_statements(_SCHEMA_V2):
         conn.execute(statement)
     conn.execute(
         f"INSERT INTO {SCHEMA_META_TABLE} (key, value) VALUES ('schema_version', ?) "
@@ -219,6 +225,20 @@ CREATE TABLE IF NOT EXISTS watchlist (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_watchlist_created_at ON watchlist (created_at);
+"""
+
+#: v2（QUOT-145 R7「我的持仓」）：`positions` 补齐字段口径。
+#: 历史库只有 `avg_price`，改名成与 CLI / 文档一致的 `cost`（成本价），
+#: 并加建仓日 / 行业标注 / 备注。老库的既有行 `entry_date` 保持 NULL——
+#: 「不知道哪天建的仓」就照实说 NULL，不拿 `updated_at` 或今天冒充建仓日。
+#: `industry` 可空是必须的：本机没有「个股 → 行业」映射数据集（`docs/ROADMAP.md` §4），
+#: 行业只统计用户自己标注的，未标注的不会被猜。
+_SCHEMA_V2 = """
+ALTER TABLE positions RENAME COLUMN avg_price TO cost;
+ALTER TABLE positions ADD COLUMN entry_date TEXT;
+ALTER TABLE positions ADD COLUMN industry TEXT NOT NULL DEFAULT '';
+ALTER TABLE positions ADD COLUMN note TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_positions_entry_date ON positions (entry_date, code);
 """
 
 

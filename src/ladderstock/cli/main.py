@@ -25,6 +25,8 @@ from ladderstock.cli.mcp import register as register_mcp
 from ladderstock.cli.notify import register as register_notify
 from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
+from ladderstock.cli.pool import register as register_pool
+from ladderstock.cli.position import register as register_position
 from ladderstock.cli.research import research as research_command
 from ladderstock.cli.review import register as register_review
 from ladderstock.cli.run import launch as launch_dashboard
@@ -63,6 +65,7 @@ sources_app = typer.Typer(no_args_is_help=True, help="数据源")
 watch_app = typer.Typer(no_args_is_help=True, help="盘中盯盘")
 notify_app = typer.Typer(no_args_is_help=True, help="通知与提醒")
 journal_app = typer.Typer(no_args_is_help=True, help="交易日志（仅本机 SQLite）")
+position_app = typer.Typer(no_args_is_help=True, help="我的持仓（仅本机 SQLite，不经 MCP）")
 state_app = typer.Typer(no_args_is_help=True, help="前端持久化状态")
 ai_app = typer.Typer(no_args_is_help=True, help="AI 编排")
 chain_app = typer.Typer(no_args_is_help=True, help="多后端兼容矩阵")
@@ -81,6 +84,7 @@ for parent, child, name in (
     (app, watch_app, "watch"),
     (app, notify_app, "notify"),
     (app, journal_app, "journal"),
+    (app, position_app, "position"),
     (app, state_app, "state"),
     (app, ai_app, "ai"),
     (ai_app, chain_app, "chain"),
@@ -193,6 +197,16 @@ register_notify(notify_app)
 
 # 实现体在 cli/journal.py（仅本机 SQLite，隐私边界见 DEC-006）；此处只做注册
 register_journal(journal_app)
+
+
+# ---------------------------------------------------------------- 候选池与我的持仓
+
+# 候选池打分实现在 cli/pool.py + core/pool.py（R7）：只读本机缓存，公式见
+# docs/specs/SPEC-CANDIDATE-POOL.md。持仓实现在 cli/position.py + journal/position.py：
+# 同样只写本机 `data/journal.sqlite`，**不进 MCP 工具清单、不进 AI 上下文**（DEC-006）。
+# 两者互不引用：持仓不参与打分，打分结果里也不可能出现持仓字段。
+register_pool(app)
+register_position(position_app)
 
 
 # ---------------------------------------------------------------- 导出与状态

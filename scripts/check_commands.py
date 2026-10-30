@@ -21,10 +21,13 @@ python scripts/check_commands.py --report out.json  # 另存机器可读结果
   与 `pytest` 用的完全一致；
 - 退出码 70 = 施工期占位，属于已知偏差，单独计一列，不算失败但会在摘要里点名。
 
-命令条数的口径（`docs/CLI.md` §A–E）：表内 1–35 行，`sync` 三种形态合并为一条
-命令后是 33 个叶子路径（含 `run` / `mcp stdio` / `mcp http` 三个长驻服务）。
-矩阵覆盖其中 32 条**可执行 argv**——33 个叶子减去三个长驻服务，另加
-`sync --dataset` / `sync --full` 两种形态各跑一次。
+命令条数的口径（`docs/CLI.md`）：§A–E 是 P0 基线的 1–35 行，`sync` 三种形态合并为一条
+命令后是 33 个叶子路径（含 `run` / `mcp stdio` / `mcp http` 三个长驻服务）；
+§D′ 的 R1-1 `research` 1 行（36）与 §E″ 的 R7 增量 5 行（`pool` + `position *`，37–41）
+都是基线之外的增量，叶子路径因此共 39 个。
+矩阵覆盖 **38 条可执行 argv**——39 个叶子减去三个长驻服务，另加
+`sync --dataset` / `sync --full` 两种形态各跑一次。叶子数以
+`tests/fixtures/command_matrix.py:LEAF_PATHS` 为准，摘要行按它算，不写死。
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ if str(TESTS) not in sys.path:
 from fixtures.command_matrix import (  # noqa: E402  - 依赖上面的 sys.path 注入
     COMMAND_MATRIX,
     JSON_PATHS,
+    LEAF_PATHS,
 )
 
 UNIMPLEMENTED = 70
@@ -220,7 +224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     placeholders = [row for row in rows if row.placeholder]
     print()
     print(
-        f"合计 {len(rows)} 条可执行 argv（CLI.md §A–E 共 35 行、去重 33 个叶子路径，"
+        f"合计 {len(rows)} 条可执行 argv（CLI.md §A–E + §D′ + §E″ 共 41 行、"
+        f"去重 {len(LEAF_PATHS)} 个叶子路径，"
         f"其中 run / mcp stdio / mcp http 为长驻服务不入矩阵）："
         f"通过 {len(rows) - len(failures) - len(placeholders)}，"
         f"失败 {len(failures)}，施工期占位 {len(placeholders)}"

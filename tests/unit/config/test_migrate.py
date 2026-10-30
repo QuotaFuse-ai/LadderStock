@@ -193,7 +193,7 @@ def test_sqlite_is_backed_up_before_upgrade(tmp_path: Path) -> None:
     assert len(backups) == 1, "迁移前必须先落一份带时间戳的备份（R-6b）"
 
     check = sqlite3.connect(db)
-    assert check.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert check.execute("PRAGMA user_version").fetchone()[0] == sqlite_store.SCHEMA_VERSION
     assert check.execute("SELECT note FROM trades").fetchone()[0] == "keep-me"
     tables = sqlite_store.table_names(check)
     check.close()

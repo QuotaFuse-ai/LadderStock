@@ -1,4 +1,4 @@
-"""MCP Server（stdio / Streamable HTTP）：11 个工具，全部只读 + 1 个发起研究。
+"""MCP Server（stdio / Streamable HTTP）：13 个工具，全部只读 + 1 个发起研究。
 
 协议与数据边界：
 
@@ -33,6 +33,7 @@ from mcp.server.stdio import stdio_server
 
 from ladderstock import __version__
 from ladderstock.core import ladder as ladder_module
+from ladderstock.core import pool as pool_module
 from ladderstock.core import sentiment as sentiment_module
 from ladderstock.core import validation as validation_module
 from ladderstock.core.listener import TokenGuardMiddleware
@@ -386,6 +387,29 @@ def _tool_limit_ladder(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
     )
 
 
+#: `candidate_pool` 工具返回条数上限（与 `ldst pool` 的默认 `--limit` 同口径）。
+#: 工具入参只有 `date`（契约测试锁死），所以条数由服务端固定，不让调用方放宽。
+POOL_MCP_LIMIT = 30
+
+
+def _tool_candidate_pool(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
+    """候选池打分（R7）。分项里的「地位」叫 `standing`，不是隐私关键字。"""
+    day = _parse_day(arguments)
+    result = pool_module.compute_pool(day, root=root, limit=POOL_MCP_LIMIT)
+    available = bool(result.get("available"))
+    return _envelope(
+        domain="sentiment",
+        topic="candidate_pool",
+        day=day,
+        payload={
+            "pool": result,
+            "summary": pool_module.summary(result),
+        },
+        available=available,
+        source_detail=str(result.get("source_detail") or ""),
+    )
+
+
 def _tool_leader(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
     day = _parse_day(arguments)
     result = ladder_module.compute_ladder(day, root=root)
@@ -730,6 +754,7 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "ladder_get_validation": _tool_validation,
     "ladder_get_sentiment": _tool_sentiment,
     "research_status": _tool_research_status,
+    "candidate_pool": _tool_candidate_pool,
 }
 
 
