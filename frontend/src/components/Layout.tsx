@@ -1,7 +1,13 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
+  BarChart3,
+  CandlestickChart,
+  ChevronDown,
   ClipboardCheck,
+  Gauge,
   Home,
+  Layers,
   NotebookPen,
   Radar,
   ScrollText,
@@ -17,26 +23,81 @@ import { setTheme, useThemeChoice } from '../lib/prefs'
 import type { ThemeChoice } from '../lib/theme'
 
 /**
- * 应用外壳（DESIGN-SPEC §3.1 / §4）。
+ * 应用外壳（DESIGN-SPEC §3.1 / §4.1）。
  *
- * - 1280 起：232px 完整侧栏（图标 + 文字），内容区最大 1296。
- * - 1024–1279：收窄为 56px 图标栏，文字靠 `title` 与读屏标签保留。
- * - 「设置」固定在侧栏底部，用更弱的次级文字色，与 5 个业务页区分。
- * - 主题切换有两个入口（此处 + 设置页），共享 `lib/prefs` 的同一状态。
+ * 一级导航 6 组 + 底部固定的「设置」：
+ * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 验证 ─┬─ 设置（弱化、沉底）。
+ *
+ * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
+ * - 市场 3 段（情绪温度 / 连板梯队 / 题材轮动）都已实现 → 展开为二级；
+ * - 盯盘的「竞价与盘中」缺 6 时点快照、复盘的「每日复盘」是 P1 留位 → 本轮不展开，
+ *   直接是链接：宁可少一层，也不给空壳入口。
+ * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
+ *
+ * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进）。
+ * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）。
+ * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
  */
 
-interface NavItem {
+interface NavPage {
   to: string
   label: string
   icon: LucideIcon
+  /** 同路由多入口时用于判高亮（`/market?tab=…`） */
+  tab?: string
 }
 
-const PRIMARY_NAV: NavItem[] = [
-  { to: '/', label: '首页', icon: Home },
-  { to: '/watch', label: '盯盘', icon: Radar },
-  { to: '/review', label: '复盘', icon: NotebookPen },
-  { to: '/journal', label: '日志', icon: ScrollText },
-  { to: '/validate', label: '验证', icon: ClipboardCheck },
+interface NavSection {
+  key: string
+  label: string
+  icon: LucideIcon
+  pages: NavPage[]
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    key: 'home',
+    label: '首页',
+    icon: Home,
+    pages: [{ to: '/', label: '首页', icon: Home }],
+  },
+  {
+    key: 'market',
+    label: '市场',
+    icon: CandlestickChart,
+    pages: [
+      { to: '/market?tab=sentiment', label: '情绪温度', icon: Gauge, tab: 'sentiment' },
+      { to: '/market?tab=ladder', label: '连板梯队', icon: BarChart3, tab: 'ladder' },
+      { to: '/market?tab=theme', label: '题材轮动', icon: Layers, tab: 'theme' },
+    ],
+  },
+  {
+    key: 'watch',
+    label: '盯盘',
+    icon: Radar,
+    // 「竞价与盘中」缺 6 时点快照（就绪表 ❌），本轮不建入口
+    pages: [{ to: '/watch', label: '盘中信号', icon: Radar }],
+  },
+  {
+    key: 'review',
+    label: '复盘',
+    icon: NotebookPen,
+    // 「每日复盘」是 P1 留位（🟡），本轮不建入口
+    pages: [{ to: '/review', label: '情绪复盘', icon: NotebookPen }],
+  },
+  {
+    key: 'journal',
+    label: '日志',
+    icon: ScrollText,
+    // 单页；QUOT-187 的分页签上线后再补第二页
+    pages: [{ to: '/journal', label: '交易日志', icon: ScrollText }],
+  },
+  {
+    key: 'validate',
+    label: '验证',
+    icon: ClipboardCheck,
+    pages: [{ to: '/validate', label: '验证', icon: ClipboardCheck }],
+  },
 ]
 
 const THEME_OPTIONS: ReadonlyArray<{ value: ThemeChoice; label: string }> = [
@@ -44,6 +105,38 @@ const THEME_OPTIONS: ReadonlyArray<{ value: ThemeChoice; label: string }> = [
   { value: 'light', label: '浅色' },
   { value: 'dark', label: '深色' },
 ]
+
+const EXPANDED_KEY = 'ldst.nav.expanded'
+const GROUP_KEYS = NAV_SECTIONS.filter((section) => section.pages.length > 1).map((section) => section.key)
+
+function readExpanded(): string[] {
+  try {
+    const raw = window.localStorage.getItem(EXPANDED_KEY)
+    if (!raw) return GROUP_KEYS
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return GROUP_KEYS
+    return parsed.filter((value): value is string => typeof value === 'string')
+  } catch {
+    return GROUP_KEYS
+  }
+}
+
+function writeExpanded(keys: string[]): void {
+  try {
+    window.localStorage.setItem(EXPANDED_KEY, JSON.stringify(keys))
+  } catch {
+    // 隐私模式写入失败：只影响「下次是否记得展开」，不影响导航本身
+  }
+}
+
+/** 同路径多入口（`/market?tab=`）时，高亮要跟着 `?tab=` 走，而不是整组都亮。 */
+function pageActive(page: NavPage, location: Location): boolean {
+  const [path] = page.to.split('?')
+  if (location.pathname !== path) return false
+  if (!page.tab) return true
+  const current = new URLSearchParams(location.search).get('tab') ?? 'sentiment'
+  return current === page.tab
+}
 
 function navClass(isActive: boolean, secondary = false): string {
   return cn(
@@ -58,6 +151,16 @@ function navClass(isActive: boolean, secondary = false): string {
 
 export default function Layout() {
   const theme = useThemeChoice()
+  const location = useLocation()
+  const [expanded, setExpanded] = useState<string[]>(readExpanded)
+
+  const toggleGroup = (key: string) => {
+    setExpanded((current) => {
+      const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+      writeExpanded(next)
+      return next
+    })
+  }
 
   return (
     <div className="flex min-h-screen bg-bg text-text">
@@ -84,27 +187,98 @@ export default function Layout() {
 
         <nav aria-label="主导航" className="min-h-0 flex-1 overflow-y-auto p-2">
           <ul className="flex flex-col gap-1">
-            {PRIMARY_NAV.map((item) => (
-              <li key={item.to}>
-                <NavLink
-                  to={item.to}
-                  end={item.to === '/'}
-                  title={item.label}
-                  className={({ isActive }) => navClass(isActive)}
-                >
-                  {({ isActive }) => (
-                    <>
-                      <item.icon
-                        className={cn('size-4 shrink-0', isActive ? 'text-accent' : 'text-text-muted')}
-                        strokeWidth={1.75}
-                        aria-hidden="true"
-                      />
-                      <span className="truncate rail:hidden">{item.label}</span>
-                    </>
-                  )}
-                </NavLink>
-              </li>
-            ))}
+            {NAV_SECTIONS.map((section) => {
+              const isGroup = section.pages.length > 1
+              const isOpen = expanded.includes(section.key)
+              const childActive = section.pages.some((page) => pageActive(page, location))
+
+              if (!isGroup) {
+                const [page] = section.pages
+                return (
+                  <li key={section.key}>
+                    <NavLink
+                      to={page.to}
+                      end={page.to === '/'}
+                      title={page.label}
+                      className={({ isActive }) => navClass(isActive)}
+                    >
+                      {({ isActive }) => (
+                        <>
+                          <page.icon
+                            className={cn('size-4 shrink-0', isActive ? 'text-accent' : 'text-text-muted')}
+                            strokeWidth={1.75}
+                            aria-hidden="true"
+                          />
+                          <span className="truncate rail:hidden">{section.label}</span>
+                        </>
+                      )}
+                    </NavLink>
+                  </li>
+                )
+              }
+
+              return (
+                <li key={section.key}>
+                  <button
+                    type="button"
+                    aria-expanded={isOpen}
+                    aria-controls={`nav-group-${section.key}`}
+                    title={isOpen ? `收起${section.label}` : `展开${section.label}`}
+                    onClick={() => toggleGroup(section.key)}
+                    className={cn(
+                      'flex h-row w-full items-center gap-2 rounded px-2 text-body transition-colors duration-fast hover:bg-surface-3 hover:text-text rail:hidden',
+                      childActive ? 'font-medium text-text' : 'text-text-secondary',
+                    )}
+                  >
+                    <section.icon
+                      className={cn('size-4 shrink-0', childActive ? 'text-accent' : 'text-text-muted')}
+                      strokeWidth={1.75}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-left">{section.label}</span>
+                    <ChevronDown
+                      className={cn(
+                        'size-3.5 shrink-0 text-text-muted transition-transform duration-fast',
+                        !isOpen && '-rotate-90',
+                      )}
+                      aria-hidden="true"
+                    />
+                  </button>
+
+                  {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标 */}
+                  <ul
+                    id={`nav-group-${section.key}`}
+                    className={cn(
+                      'mt-1 flex flex-col gap-1 border-l border-border pl-2 rail:mt-0 rail:border-l-0 rail:pl-0',
+                      !isOpen && 'hidden rail:flex',
+                    )}
+                  >
+                    {section.pages.map((page) => {
+                      const active = pageActive(page, location)
+                      return (
+                        <li key={page.to}>
+                          {/* 用 Link 而不是 NavLink：NavLink 的 aria-current 只看 pathname，
+                              三段同路径会同时被标成「当前页」；这里以 `?tab=` 为准。 */}
+                          <Link
+                            to={page.to}
+                            title={page.label}
+                            aria-current={active ? 'page' : undefined}
+                            className={navClass(active, true)}
+                          >
+                            <page.icon
+                              className={cn('size-4 shrink-0', active ? 'text-accent' : 'text-text-muted')}
+                              strokeWidth={1.75}
+                              aria-hidden="true"
+                            />
+                            <span className="truncate rail:hidden">{page.label}</span>
+                          </Link>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </li>
+              )
+            })}
           </ul>
         </nav>
 

@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomeScreen from './screens/HomeScreen'
 import JournalScreen from './screens/JournalScreen'
+import MarketScreen from './screens/MarketScreen'
 import ReviewScreen from './screens/ReviewScreen'
 import SettingsScreen from './screens/SettingsScreen'
 import ValidateScreen from './screens/ValidateScreen'
@@ -14,6 +15,7 @@ import WatchScreen from './screens/WatchScreen'
  * 六个一级导航 + 设置，旧深链全部保留：
  * `/review` `/watch` `/validate` `/journal` 在此前版本就存在，不能 404；
  * 旧的 `index → /review` 重定向改成 `index → /`（首页是新的工作流起点）。
+ * `/market` 是 QUOT-198 新增：三段用 `?tab=sentiment|ladder|theme` 区分，不是三个子路由。
  */
 
 function NotFound() {
@@ -22,7 +24,7 @@ function NotFound() {
       <p className="text-caption text-text-muted">404</p>
       <h1 className="text-page font-semibold text-text">页面不存在</h1>
       <p className="text-body text-text-secondary">
-        地址可能已经变更。六个入口在左侧导航：首页 / 盯盘 / 复盘 / 日志 / 验证 / 设置。
+        地址可能已经变更。六个入口在左侧导航：首页 / 市场 / 盯盘 / 复盘 / 日志 / 验证（设置固定在底部）。
       </p>
       <Link
         to="/"
@@ -39,6 +41,7 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<HomeScreen />} />
+        <Route path="/market" element={<MarketScreen />} />
         <Route path="/watch" element={<WatchScreen />} />
         <Route path="/review" element={<ReviewScreen />} />
         <Route path="/journal" element={<JournalScreen />} />
