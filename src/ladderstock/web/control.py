@@ -265,7 +265,7 @@ def client_host(client: Any) -> str:
 
 def _server_identity(request: Request) -> tuple[str, int | None]:
     """服务端实际监听的 `(host, port)`（ASGI `scope["server"]`）。"""
-    server = request.scope.get("server") or ()
+    server: tuple[Any, ...] = tuple(request.scope.get("server") or ())
     host = str(server[0]).strip().lower() if len(server) >= 1 and server[0] else ""
     try:
         port = int(server[1]) if len(server) >= 2 and server[1] else None
@@ -934,8 +934,11 @@ def pid_records(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for item in raw:
         if isinstance(item, Mapping):
+            raw_pid = item.get("pid")
+            if raw_pid is None:
+                continue
             try:
-                pid = int(item.get("pid"))
+                pid = int(raw_pid)
             except (TypeError, ValueError):
                 continue
             records.append(
@@ -1020,9 +1023,9 @@ def process_image(pid: int, cwd: Path) -> tuple[str | None, str | None]:
         result = run_step(args, Path(cwd), PROCESS_QUERY_TIMEOUT_SEC)
         if not result.ok:
             continue
-        exe, name = _parse_image_output(result.output)
-        if exe:
-            return exe, name
+        found_exe, found_name = _parse_image_output(result.output)
+        if found_exe:
+            return found_exe, found_name
     return None, None
 
 
@@ -1100,6 +1103,9 @@ def _parse_creation_output(output: str) -> datetime | None:
 
 def _linux_process_created_at(pid: int) -> datetime | None:  # pragma: no cover - Windows 为主
     """`/proc/<pid>/stat` 第 22 个字段（starttime，单位 clock tick）+ `/proc/stat` 的 btime。"""
+    sysconf = getattr(os, "sysconf", None)
+    if sysconf is None:  # 仅 POSIX 提供 sysconf；Windows/其他平台没有，无从换算 tick
+        return None
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
         fields = stat[stat.rindex(")") + 2 :].split()
@@ -1109,7 +1115,7 @@ def _linux_process_created_at(pid: int) -> datetime | None:  # pragma: no cover 
             if row.startswith("btime "):
                 btime = int(row.split()[1])
                 break
-        hertz = int(os.sysconf("SC_CLK_TCK"))  # 仅 POSIX：调用方已按 os.name 分流，Windows 不走这里
+        hertz = int(sysconf("SC_CLK_TCK"))  # 仅 POSIX：调用方已按 os.name 分流，Windows 不走这里
     except (OSError, ValueError, IndexError):
         return None
     if btime is None or hertz <= 0:
@@ -1479,15 +1485,15 @@ class ControlPlane:
                 conflicts.append(
                     {"port": port, "pid": owner.pid, "process": owner.process, "note": note}
                 )
-        for port, owners in ((ctl.mcp_port, mcp_owners), (ctl.web_port, web_owners)):
-            if not port:
+        for bound_port, owners in ((ctl.mcp_port, mcp_owners), (ctl.web_port, web_owners)):
+            if not bound_port:
                 continue
             for owner in owners:
                 if owner.pid is not None and owner.pid in mine:
                     continue
                 conflicts.append(
                     {
-                        "port": port,
+                        "port": bound_port,
                         "pid": owner.pid,
                         "process": owner.process,
                         "note": "端口已被其他进程占用（不自动换端口，DEC-004）",
