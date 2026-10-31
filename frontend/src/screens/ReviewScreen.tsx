@@ -482,7 +482,13 @@ export default function ReviewScreen() {
             variant="primary"
             loading={aiBusy}
             disabled={!canRunAi}
-            disabledReason={canRunAi ? undefined : '本地服务未连接，无法触发生成'}
+            disabledReason={
+              canRunAi
+                ? undefined
+                : state === 'offline'
+                  ? '本地服务未连接，无法触发生成'
+                  : '取数未完成，暂不能触发生成'
+            }
             onClick={() => void startAi('generate')}
           >
             {aiBusy ? 'AI 生成中…' : viewFailures.length > 0 ? '重试失败段' : '重新生成'}
@@ -740,7 +746,13 @@ export default function ReviewScreen() {
                       onClick={() => void startAi('retry', payloadName)}
                       loading={aiBusy}
                       disabled={!canRunAi}
-                      disabledReason={canRunAi ? undefined : '本地服务未连接，无法重跑'}
+                      disabledReason={
+                        canRunAi
+                          ? undefined
+                          : state === 'offline'
+                            ? '本地服务未连接，无法重跑'
+                            : '取数未完成，暂不能重跑'
+                      }
                     >
                       {aiBusy ? '重跑中…' : '重跑该段'}
                     </Button>
