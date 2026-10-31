@@ -2556,6 +2556,19 @@ def build_router(plane: ControlPlane) -> APIRouter:
         """
         return plane.write_validation_conditions(await _json_body(request))
 
+    @router.get("/validation/conditions")
+    def validation_conditions_probe() -> Any:
+        """探针：PUT-only 路由的 GET 固定回 405 + `Allow: PUT`（QUOT-189 / QUOT-287）。
+
+        SPA 兜底 `@app.get("/{full_path:path}")` 是 FULL 匹配，优先于 PUT 路由的
+        PARTIAL 匹配，GET 因而在路由层就落到兜底回 404；前端把 404 读成「控制面未
+        启用」，`/validate` 的后端模式永远置灰。补这个 GET 只为把 405 造出来，
+        **不返回数据**（读条件仍走 `GET /api/validation?date=`，不另起数据面）。
+        闸门仍是路由级 `_guard`：开关关闭 404、非回环 403、Host 白名单外 403；
+        GET 不是写方法，不触发写来源校验。
+        """
+        raise HTTPException(status_code=405, headers={"Allow": "PUT"})
+
     @router.get("/jobs/{job_id}")
     def job(job_id: str) -> dict[str, Any]:
         found = plane.get_job(job_id)

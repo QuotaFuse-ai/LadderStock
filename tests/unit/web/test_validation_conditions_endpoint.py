@@ -10,7 +10,7 @@
 
 另外钉住：`replace` 覆盖、单条/顶层白名单外字段 400（不静默丢弃）、50 条上限、
 `trigger` 空 / 超 200 字 400、写前 `.bak` 留底、`LDST_CONTROL_ENABLED=0` → 404、
-原子写不留 `.tmp`。
+原子写不留 `.tmp`，以及写通道探针 `GET` → 405 + `Allow: PUT`（QUOT-189 / QUOT-287）。
 """
 
 from __future__ import annotations
@@ -390,3 +390,85 @@ def test_merge_keeps_programmatic_conditions(tmp_path: Path) -> None:
         "height_floor",
         _expected_id(None, "回踩不破"),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# 6. 写通道探针：GET → 405 + `Allow: PUT`（QUOT-189 / QUOT-287）
+# --------------------------------------------------------------------------- #
+#
+# 根因：SPA 兜底 `@app.get("/{full_path:path}")` 对 GET 是 FULL 匹配，优先于 PUT
+# 路由的 PARTIAL 匹配，GET 因此落到兜底回 404；`frontend/src/api.ts` 把 404 读成
+# 「控制面未启用或端点未合入」，`ValidateScreen` 的「后端」Tab 永远置灰。补一个同
+# 路径 GET，只为把 405 造出来——它不返回数据，读条件仍走 `GET /api/validation?date=`。
+
+def _state_files(root: Path) -> list[str]:
+    """`state/` 下的既有文件（POSIX 相对路径），用来断言探针不落盘。"""
+    base = root / "state"
+    if not base.is_dir():
+        return []
+    return sorted(
+        str(p.relative_to(base)).replace("\\", "/") for p in base.rglob("*") if p.is_file()
+    )
+
+
+def test_probe_get_is_405_with_allow_put(tmp_path: Path) -> None:
+    response = _client(tmp_path).get(URL)
+    assert response.status_code == 405, response.text
+    assert "PUT" in response.headers["allow"].upper(), response.headers
+    # 探针不写盘：干净目录扫不出任何文件
+    assert _state_files(tmp_path) == []
+
+
+def test_probe_never_touches_disk(tmp_path: Path) -> None:
+    """探针只产生状态码，已有文档与 `.bak` 留底都不该被它动到。"""
+    path = _seed_document(tmp_path, {"date": DATE, "conditions": [], "reconcile": None})
+    before = path.read_bytes()
+
+    for _ in range(3):
+        assert _client(tmp_path).get(URL).status_code == 405
+
+    assert path.read_bytes() == before
+    assert _state_files(tmp_path) == [f"validation/{DATE}.json"]
+
+
+def test_probe_put_route_is_still_writable(tmp_path: Path) -> None:
+    """补 GET 不改变 PUT 语义：探针在后、写在后都照常。"""
+    client = _client(tmp_path)
+    assert client.get(URL).status_code == 405
+    assert _put(
+        client, {"trade_date": DATE, "conditions": [{"trigger": "回踩不破"}]}
+    ).status_code == 200
+    assert _state_files(tmp_path) == [f"validation/{DATE}.json"]
+
+
+def test_probe_control_disabled_is_404_without_allow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """关闭态：与 SPA 兜底同形的 404，且不得带出 `Allow`（DEC-014 §1 —— 不暴露控制面存在）。"""
+    monkeypatch.setenv(control.CONTROL_ENABLED_ENV, "0")
+    client = _client(tmp_path)
+
+    response = client.get(URL)
+    assert response.status_code == 404, response.text
+    assert "allow" not in response.headers
+
+    # HEAD / OPTIONS 同样短路（中间件层，方法无关）
+    for method in ("head", "options"):
+        short = getattr(client, method)(URL)
+        assert short.status_code == 404, (method, short.text)
+    assert _state_files(tmp_path) == []
+
+
+def test_probe_non_loopback_and_rebinding_are_403(tmp_path: Path) -> None:
+    """探针复用路由级 `_guard`：非回环 403、Host 白名单外 403，GET 不触发写来源校验。"""
+    remote = _client(tmp_path, client=REMOTE).get(URL)
+    assert remote.status_code == 403, remote.text
+
+    rebinding = _client(tmp_path).get(URL, headers={"host": "evil.example.com"})
+    assert rebinding.status_code == 403, rebinding.text
+    assert _state_files(tmp_path) == []
+
+    # 对照：回环 + 正常 Host 才是 405 —— 不带任何写来源证据也放行
+    app = create_app(data_root=tmp_path, dist_dir=tmp_path / "no-dist")
+    plain = TestClient(app, client=LOOPBACK)
+    assert plain.get(URL).status_code == 405, plain.get(URL).text
