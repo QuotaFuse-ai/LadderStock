@@ -4,9 +4,10 @@
 只在本机终端打印；**不进 MCP 工具清单、不进 `LadderEnvelope`、不进 AI 上下文**，
 也不会自动生成文件——只有显式 `--export <path>` 才落盘（`docs/MCP_TOOLS.md` §2）。
 
-行情价由本命令读**本机 `daily_k` 缓存**后注入 `journal.position.compute_metrics()`：
-`journal/` 目录因此保持「只依赖 `data/sqlite_store`」，取不到价就是 `null`，
-不拿成本价冒充现价、不联网补数。
+行情价由 `core/quotes.py::price_map()` 读本机 `daily_k` 缓存后注入
+`journal/position.py::compute_metrics()`：`journal/` 目录因此保持「只依赖 `data/sqlite_store`」，
+取不到价就是 `null`，不拿成本价冒充现价、不联网补数。同一个函数也是 `GET /api/positions`
+（QUOT-279）的取价路径——CLI 与页面共用一张价格字段容忍表，不会有两个口径。
 
 实现与注册分离：`cli/main.py` 只 import + 一行 `register_position(position_app)`。
 """
@@ -15,16 +16,13 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date as date_type
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
 
 import typer
 
 from ladderstock.cli.output import OutputOption, emit, error
-from ladderstock.cli.review import parse_date
-from ladderstock.core.ladder import CODE_KEYS, as_float, dataset_snapshot, pick
-from ladderstock.data import archive
+from ladderstock.core.quotes import price_map
 from ladderstock.errors import EXIT_CONFIG, EXIT_OK, EXIT_USAGE, LadderStockError
 from ladderstock.journal.position import (
     add_position,
@@ -34,63 +32,10 @@ from ladderstock.journal.position import (
     update_position,
 )
 
-#: `daily_k` 里「收盘价」的候选键（同既有指标口径的容差表）
-PRICE_KEYS: tuple[str, ...] = ("close", "close_price", "latest_price", "price", "收盘")
-
-PRICE_DATASET = "daily_k"
-
 
 def _fail(exc: LadderStockError) -> NoReturn:
     error(exc.message)
     raise typer.Exit(exc.code if exc.code else EXIT_USAGE) from exc
-
-
-def _price_map(codes: list[str], day: str | None) -> tuple[dict[str, float], dict[str, Any]]:
-    """从本机 `daily_k` 缓存取最新价（`code -> price`）与溯源状态。
-
-    缺省读缓存里可用的最后一天；缓存没有就是「没有」——`status.reason` 说清原因，
-    返回空映射，让每条持仓的 `latest_price` 如实为 `null`。
-    """
-    status: dict[str, Any] = {
-        "dataset": PRICE_DATASET,
-        "date": None,
-        "backend": None,
-        "reason": None,
-    }
-    if not codes:
-        status["reason"] = "本机没有持仓，无需查价"
-        return {}, status
-
-    if day:
-        wanted = date_type.fromisoformat(parse_date(day))
-    else:
-        cached = archive.latest_day(PRICE_DATASET)
-        if cached is None:
-            status["reason"] = (
-                f"本机缓存里没有 {PRICE_DATASET} 数据（先 ldst sync --dataset {PRICE_DATASET}）"
-            )
-            return {}, status
-        wanted = cached
-
-    records, backend = dataset_snapshot(PRICE_DATASET, wanted)
-    status["date"] = wanted.isoformat()
-    status["backend"] = backend
-    if not records:
-        status["reason"] = f"{PRICE_DATASET} 在 {wanted.isoformat()} 没有缓存记录"
-        return {}, status
-
-    wanted_set = {code.upper() for code in codes}
-    prices: dict[str, float] = {}
-    for record in records:
-        code = str(pick(record, CODE_KEYS) or "").strip().upper()
-        if code not in wanted_set or code in prices:
-            continue
-        price = as_float(pick(record, PRICE_KEYS))
-        if price is not None and price > 0:
-            prices[code] = price
-    if not prices:
-        status["reason"] = f"{PRICE_DATASET} 缓存里没有这些代码的收盘价字段"
-    return prices, status
 
 
 def position_add(
@@ -142,7 +87,7 @@ def position_list(
     """我的持仓 + 本地计算：浮动盈亏、集中度、行业分布（只读本机）。"""
     try:
         rows = list_positions(code=code)
-        prices, status = _price_map([str(row["code"]) for row in rows], price_date)
+        prices, status = price_map([str(row["code"]) for row in rows], price_date)
         payload = compute_metrics(rows, prices, as_of=status["date"])
     except LadderStockError as exc:
         _fail(exc)

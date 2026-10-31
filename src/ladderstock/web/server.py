@@ -8,9 +8,10 @@
   研究面 `/api/research/*`（QUOT-275，只有一支续跑 POST）。
 - **隐私**：`journal.sqlite` 的内容不进入任何响应；即使复盘 JSON 里混进
   `journal` / `trades` / `positions` / `watchlist` 字段，返回前也会被剥掉。
-  唯一例外是 DEC-015 的 `GET /api/journal/stats`：**扁平 JSON、回环独占、只放聚合
-  数字**（无 `note` / 逐笔明细 / 标的清单），不进 `LadderEnvelope`，因此天然进不了
-  export / MCP / AI 三条出口。
+  仅有的两个例外都在回环独占的闸门后面、都是**扁平 JSON、不进 `LadderEnvelope`**，
+  因此天然进不了 export / MCP / AI 三条出口：DEC-015 的 `GET /api/journal/stats`
+  （只放聚合数字，无 `note` / 逐笔明细 / 标的清单）与 SPEC-RADAR-PAGES §6.1 的
+  `GET /api/positions`（本机私有持仓库自己的只读视图，「我的持仓」页唯一的真通道）。
 - **空态**：review / sentiment / ladder 在没有数据时返回 200 + 明确
   `payload.data_source_status = "missing"`，而不是 404 或伪造数字。
 - **静态**：优先托管 `frontend/dist`（SPA 回退到 `index.html`）；未构建时给出
@@ -59,6 +60,8 @@ from ladderstock.web.control import (
 )
 from ladderstock.web.industry import IndustryPlane
 from ladderstock.web.industry import build_router as build_industry_router
+from ladderstock.web.radar import RadarPlane
+from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 
@@ -492,9 +495,10 @@ def create_app(
     control_plane: Any | None = None,
     research_plane: Any | None = None,
     industry_plane: Any | None = None,
+    radar_plane: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
-    / `industry_plane` 可注入，便于测试。
+    / `industry_plane` / `radar_plane` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -846,6 +850,15 @@ def create_app(
     # 注册在 SPA 兜底之前，路径本身没接时才会落到兜底的 404。
     industry = industry_plane if industry_plane is not None else IndustryPlane(data_root=root)
     app.include_router(build_industry_router(industry))
+
+    # ------------------------------------------- 雷达面（QUOT-279 / SPEC-RADAR-PAGES §3–§6.1）
+    #
+    # `/api/news`、`/api/events`、`/api/pool`、`/api/positions` 四个只读接口：R6 / R7
+    # 既有实现的投影，字段照 SPEC 定稿，前端零改动切真实通道。前三个属于数据面（公开数据，
+    # 与控制面 / 产业面同样**不受 `LDST_CONTROL_ENABLED` 影响**）；`/api/positions` 是隐私
+    # 数据，回环独占 + 平面 JSON（`radar._positions_guard`，同 DEC-015 的日志面）。
+    radar = radar_plane if radar_plane is not None else RadarPlane(data_root=root)
+    app.include_router(build_radar_router(radar))
 
     # ------------------------------------------------------------ 静态看板
 

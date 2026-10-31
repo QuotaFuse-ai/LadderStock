@@ -339,6 +339,43 @@ def _row_to_item(row: sqlite3.Row) -> NewsItem:
     )
 
 
+def source_counts(
+    conn: sqlite3.Connection, *, start: date, end: date
+) -> dict[str, int]:
+    """窗口内各栏目的条目数（`GET /api/news` 的栏目账本用，QUOT-279）。
+
+    只算 `published_day` 落窗的行：没有发布时间的条目在这里不计——它们是合并候选，
+    不是这一天的展示视图（`load_items` 的口径反过来）。
+    """
+    rows = conn.execute(
+        "SELECT source, COUNT(1) AS n FROM news_items"
+        " WHERE published_day BETWEEN ? AND ? GROUP BY source",
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    return {str(row["source"]): int(row["n"]) for row in rows}
+
+
+def covering_run(
+    conn: sqlite3.Connection, *, start: date, end: date
+) -> dict[str, Any] | None:
+    """最近一次**覆盖** `[start, end]` 的取数账本；没有则 `None`。
+
+    `news_runs.detail.sources_status` 是当时每一栏的结论（含 `failed` / `skipped` 的原因），
+    只读接口用它把「某一路挂了」如实交给页面，而不必重新打一轮 peer。
+    窗口是 ISO 日期串，字典序即时间序；`id` 兜底同一秒内的多次运行。
+    """
+    row = conn.execute(
+        "SELECT * FROM news_runs WHERE window_start <= ? AND window_end >= ?"
+        " ORDER BY started_at DESC, id DESC LIMIT 1",
+        (start.isoformat(), end.isoformat()),
+    ).fetchone()
+    if row is None:
+        return None
+    document = dict(row)
+    document["detail"] = json.loads(document.get("detail") or "{}")
+    return document
+
+
 def list_events(
     conn: sqlite3.Connection,
     *,
