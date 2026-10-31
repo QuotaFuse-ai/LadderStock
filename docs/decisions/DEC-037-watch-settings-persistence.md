@@ -31,6 +31,8 @@
 
 - **schema_version 仍是 2**：这是新 key，不存在 v1 数据，`migrate.ts` 的 `MIGRATIONS` 不需要
   为它写 v1→v2；把版本号抬到 3 会让另外三个分片凭空多一步迁移，没有收益。
+  对应的护栏 `test_every_persisted_shard_has_a_v1_upgrade_step` 显式豁免 `watchSettings`
+  （`POST_V2_STORES`），同时断言豁免项必须仍在 manifest 里，避免名单失真。
 - **不新增后端接口**：分片仍走既有 state 读写通道（IndexedDB + `/__state/index` 上报），
   Python 侧只多看到一行 `config-only` / `index` 状态。
 
