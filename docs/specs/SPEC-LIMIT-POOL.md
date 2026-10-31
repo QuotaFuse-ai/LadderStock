@@ -28,6 +28,10 @@ GET /api/limit-pool?date=YYYY-MM-DD
 
 只读：本路由只注册 `GET`，其它方法由 FastAPI 回 405；不写库、不写文件、不取上游。
 
+> 继承 `_parse_day` 的既有口径：它用 `date.fromisoformat`，所以紧凑写法
+> `?date=20261030` 与 `?date=2026-10-30` 同样被接受（`/api/sentiment`、`/api/ladder`
+> 一直如此）。本接口不另开一套严格正则——前端应始终传 `YYYY-MM-DD`。
+
 ## 3. 外壳
 
 沿用 `LadderEnvelope`，与 `/api/ladder` 完全一致：没有可信数据时 `data_as_of=null`，
@@ -159,5 +163,5 @@ GET /api/limit-pool?date=YYYY-MM-DD
 | 封板时间原样透传、`trade_date` 不顶替 | `::test_seal_time_passes_through_verbatim` |
 | 空缓存 → 200 + `available=false` | `::test_empty_cache_is_unavailable_not_an_error`、`test_limit_pool_endpoint.py::test_empty_cache_is_200_unavailable` |
 | 信封两态（`data_as_of` / `confidence` / `source_status`） | `test_limit_pool_endpoint.py::test_success_envelope_and_payload` |
-| `date` 缺省 / 非法 → 400 | `test_limit_pool_endpoint.py::test_bad_date_is_400` |
+| `date` 缺省 / 非法 → 400；紧凑写法与 `/api/sentiment` 同被接受 | `test_limit_pool_endpoint.py::test_bad_date_is_400`、`::test_compact_date_accepted_like_sentiment` |
 | 只读（非 GET → 405）、数据面不加回环独占 | `::test_other_methods_rejected`、`::test_non_loopback_still_served` |

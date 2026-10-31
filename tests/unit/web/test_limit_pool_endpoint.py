@@ -161,6 +161,15 @@ def test_bad_date_is_400(tmp_path: Any, params: dict[str, str], detail: str) -> 
     assert detail in response.json()["detail"]
 
 
+def test_compact_date_accepted_like_sentiment(tmp_path: Any, seeded: None) -> None:
+    """`_parse_day` 用 `date.fromisoformat`，紧凑写法 `20261030` 照旧被接受
+    （与 `/api/sentiment` / `/api/ladder` 同一条口径，本接口不另开一套）。"""
+    client = _client(tmp_path)
+
+    assert client.get("/api/limit-pool", params={"date": "20261030"}).status_code == 200
+    assert client.get("/api/sentiment", params={"date": "20261030"}).status_code == 200
+
+
 def test_non_loopback_still_served(tmp_path: Any, seeded: None) -> None:
     """数据面接口（同 `/api/sentiment` / `/api/ladder`），不加回环独占。"""
     client = TestClient(
