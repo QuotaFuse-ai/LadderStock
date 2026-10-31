@@ -12,8 +12,10 @@
 1. `config-secrets`       config/*.yaml 不得出现真实密钥，只允许 `*_env` 指向环境变量名；
 2. `credential-printing`  src 里把凭据 / Token 送进 print / log / error 的代码行；
 3. `privacy-surfaces`     MCP 工具清单、web 私有字段、journal 库不被 mcp/web/ai 引用
-                         （唯一例外：DEC-015 授权的 `web/server.py` → `journal.stats`，
-                         且该文件必须同时具备回环闸门与顶层键白名单）；
+                         （两条授权例外：`web/server.py` → `journal.stats`（DEC-015）与
+                         `web/radar.py` → `journal.position`（DEC-030 / QUOT-279）；
+                         两处都必须同时具备回环闸门 + `Host` 白名单，持仓那条还必须有 `no-store`。
+                         经 `cli/position.py` 传递引用隐私库一律判 FAIL）；
 4. `boundary-guards`      用反例验证 `scan_no_collection()` / `audit_sources()` 拦得住越界；
 5. `listener-defaults`    web / MCP 默认只绑回环；非回环必须显式开关 + 鉴权 Token。
 
@@ -152,9 +154,13 @@ JOURNAL_IMPORT = re.compile(
     re.MULTILINE,
 )
 
-#: `ladderstock.journal` 导入白名单（DEC-015 Tier 1 / QUOT-196 / QUOT-202）。
-#: 只放行「哪个文件的哪个子模块」，且该文件必须同时具备：回环独占闸门
-#: `_journal_guard`（来源回环 + Host 白名单）与顶层键白名单 `JOURNAL_STATS_FIELDS`。
+#: `ladderstock.journal` 导入白名单（DEC-015 Tier 1 / QUOT-196 / QUOT-202；
+#: 第二条由 QUOT-279 / DEC-030 授权）。
+#: 只放行「哪个文件的哪个子模块」，且该文件必须同时具备闸门与出口形态：
+#: - `web/server.py` → `journal.stats`：`_journal_guard`（来源回环 + Host 白名单）+ 顶层键白名单
+#:   `JOURNAL_STATS_FIELDS`（聚合数字，永不带明细）；
+#: - `web/radar.py` → `journal.position`：`_positions_guard`（同一套回环 + Host 判据）+
+#:   `Cache-Control: no-store`（SPEC-RADAR-PAGES §6.1 的平面 JSON 只读通道，不进信封、不进 MCP）。
 #: **其它任何对 `ladderstock.journal` 的引用仍判 FAIL**，规则整体不放开。
 JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
     "src/ladderstock/web/server.py": {
@@ -165,7 +171,25 @@ JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
             "JOURNAL_STATS_FIELDS",
         ),
     },
+    "src/ladderstock/web/radar.py": {
+        "ladderstock.journal.position": (
+            "def _positions_guard(",
+            "is_loopback_host(",
+            "host_header_allowed(",
+            '"Cache-Control": "no-store"',
+        ),
+    },
 }
+
+
+#: 传递引用隐私库的「载体」模块：对外面（mcp / web / ai）直接 import 它，
+#: 就绕过了 `JOURNAL_IMPORT_ALLOWLIST`（QUOT-279 复核时发现：`cli/position.py` 里原本
+#: 挂着现价查询，接口层若要复用它就必须 import CLI）。白名单不管这个——引用它就判 FAIL。
+CARRIER_IMPORT = re.compile(
+    r"^[ \t]*(?:from[ \t]+(ladderstock\.cli\.position)[ \t]+import\b"
+    r"|import[ \t]+(ladderstock\.cli\.position)\b)",
+    re.MULTILINE,
+)
 
 
 def _journal_import_problems(rel: str, text: str) -> list[str]:
@@ -183,6 +207,12 @@ def _journal_import_problems(rel: str, text: str) -> list[str]:
             problems.append(
                 f"{rel} 引用了 {module}，但缺少 DEC-015 要求的闸门：{absent}"
             )
+    for match in CARRIER_IMPORT.finditer(text):
+        module = match.group(1) or match.group(2)
+        problems.append(
+            f"{rel} 引用了 {module}：它传递引用隐私库，等于绕过 journal 白名单"
+            "（要现价请直接用 `core.quotes.price_map()`）"
+        )
     return problems
 
 
@@ -219,6 +249,20 @@ def _journal_rule_selftest() -> list[str]:
            "JOURNAL_STATS_FIELDS = ()\n"
            "is_loopback_host(x)\n"
            "host_header_allowed(r)\n")
+    # 反例 6：持仓模块出现在白名单之外的文件
+    caught("position-in-mcp", "src/ladderstock/mcp/server.py",
+           "from ladderstock.journal.position import list_positions\n")
+    # 反例 7：持仓白名单在册，但少了 `no-store`（隐私响应不许被任何缓存留住）
+    caught("radar-without-no-store", "src/ladderstock/web/radar.py",
+           "from ladderstock.journal.position import list_positions\n"
+           "def _positions_guard(request) -> None:\n"
+           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+           "    if not host_header_allowed(request): raise ...\n")
+    # 反例 8：绕过白名单——经 CLI 载体模块传递引用隐私库
+    caught("carrier-import", "src/ladderstock/web/radar.py",
+           "from ladderstock.cli.position import price_map\n")
+    caught("carrier-import-mcp", "src/ladderstock/mcp/server.py",
+           "import ladderstock.cli.position\n")
 
     # 正例：白名单文件 + 白名单模块 + 闸门齐全
     passed("web-server-stats", "src/ladderstock/web/server.py",
@@ -227,6 +271,15 @@ def _journal_rule_selftest() -> list[str]:
            "def _journal_guard(request) -> None:\n"
            "    if not is_loopback_host(client_host(request.client)): raise ...\n"
            "    if not host_header_allowed(request): raise ...\n")
+    passed("web-radar-positions", "src/ladderstock/web/radar.py",
+           "from ladderstock.journal.position import compute_metrics, list_positions\n"
+           "def _positions_guard(request) -> None:\n"
+           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+           "    if not host_header_allowed(request): raise ...\n"
+           '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n')
+    # 正例：`cli.paths` 不是载体（它不碰隐私库），不能被这条规则误伤
+    passed("cli-paths-is-fine", "src/ladderstock/web/control.py",
+           "from ladderstock.cli.paths import config_dir, project_root\n")
     return problems
 
 

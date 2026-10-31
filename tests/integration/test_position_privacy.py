@@ -77,6 +77,20 @@ def _imports(rel: str) -> set[str]:
     return found
 
 
+#: `web/` 里被授权直接读隐私库的文件 → 必须同时具备的闸门（缺一即算越界）
+WEB_PRIVILEGED_IMPORTS: dict[str, tuple[str, ...]] = {
+    # DEC-015 Tier 1 / QUOT-196：`/api/journal/stats` 只出聚合数字
+    "web/server.py": ("def _journal_guard(", "is_loopback_host(", "host_header_allowed("),
+    # DEC-030 / QUOT-279：`GET /api/positions` 平面 JSON、回环独占、`no-store`
+    "web/radar.py": (
+        "def _positions_guard(",
+        "is_loopback_host(",
+        "host_header_allowed(",
+        '"Cache-Control": "no-store"',
+    ),
+}
+
+
 # --------------------------------------------------------------------------- #
 # 1. MCP 工具清单：没有持仓工具
 # --------------------------------------------------------------------------- #
@@ -100,6 +114,11 @@ def test_position_module_is_not_reachable_from_mcp_surface() -> None:
 
     与 `scripts/check_privacy.py` 第 3 组同一口径（那边还带白名单闸门自检），
     这里补的是「持仓」这条新链路：R7 加了工具与命令之后，这条断言仍然要成立。
+
+    被授权的只有两个只读出口，而且闸门必须**同时在文件里**才算白名单：
+    `/api/journal/stats`（只出聚合数字）与 `/api/positions`（平面 JSON、
+    回环独占、`no-store`）。`cli.position` 是传递引用隐私库的载体，同样算越界——
+    要现价请用 `core.quotes.price_map()`。
     """
     stray: list[str] = []
     for package in ("mcp", "web", "ai"):
@@ -107,10 +126,19 @@ def test_position_module_is_not_reachable_from_mcp_surface() -> None:
             if "__pycache__" in path.parts:
                 continue
             rel = path.relative_to(SRC).as_posix()
-            if package == "web" and rel == "web/server.py":
-                continue  # 唯一白名单：`/api/journal/stats`（DEC-015 Tier 1，带回环闸门）
-            if any(name.startswith("ladderstock.journal") for name in _imports(rel)):
-                stray.append(rel)
+            modules = _imports(rel)
+            private = [
+                m for m in modules
+                if m.startswith(("ladderstock.journal", "ladderstock.cli.position"))
+            ]
+            if not private:
+                continue
+            markers = WEB_PRIVILEGED_IMPORTS.get(rel)
+            if markers is not None:
+                missing = [m for m in markers if m not in path.read_text(encoding="utf-8")]
+                assert missing == [], f"{rel} 在册但闸门缺失：{missing}"
+                continue
+            stray.append(f"{rel} -> {private[0]}")
     assert stray == [], f"对外面引用了隐私库：{stray}"
 
 
