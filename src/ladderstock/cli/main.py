@@ -430,7 +430,9 @@ def main() -> None:
         app()
     except LadderStockError as exc:
         error(exc.message)
-        raise typer.Exit(exc.code) from exc
+        # 不能用 typer.Exit：`app()` 已经退出它自己的上下文，在外面抛 Exit 没人接，
+        # 结果是 traceback + 退出码 1——带码的业务异常等于白包装（QUOT-234 实测）。
+        sys.exit(exc.code)
 
 
 if __name__ == "__main__":
