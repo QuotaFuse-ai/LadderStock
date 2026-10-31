@@ -31,6 +31,15 @@
       "persist": true,
       "recoverable": true,
       "description": "明日验证条件草稿：未提交的触发条件同样恢复"
+    },
+    {
+      "id": "watchSettings",
+      "persistKey": "watch_settings",
+      "module": "stores/watchSettings.ts",
+      "kind": "settings",
+      "persist": true,
+      "recoverable": true,
+      "description": "盯盘阈值设置：涨幅阈值 / 冷却时间 / 封板检测开关，刷新、重启、多窗口共用；越界值拒绝写入"
     }
   ]
 }
