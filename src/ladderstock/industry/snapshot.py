@@ -866,6 +866,57 @@ def _leaf_value(payload: dict[str, Any], path: str) -> Any:
     return node
 
 
+def metric_projection(dimensions: dict[str, Any], windows: dict[str, Any]) -> dict[str, Any]:
+    """逐行业指标投影：`metric_paths()` 的键 → 快照里的叶子值（R9 / QUOT-276 缺口 #1）。
+
+    键集合与 `metric_paths()` 完全同名同序，**值缺失也保留键并显式给 `null`**——
+    前端把「省略键」当解析失败，把 `null` 当「无数据」（SPEC-INDUSTRY-PAGES §2.1）。
+    这里只是把 `build_snapshot()` 已经算出的叶子摊平，不新算任何一个数。
+    """
+    return {path: _leaf_value(dimensions, path) for path in metric_paths(windows)}
+
+
+def latest_day_per_industry(
+    records: list[dict[str, Any]], membership: dict[str, str]
+) -> dict[str, str]:
+    """每个申万一级代码在该数据集里**自己**的最新数据时点（逐行业，不用全局最大值顶替）。
+
+    行业 A 的资金流停在三天前时，A 那一行的时点就该是三天前——缓存全局最大值会让它
+    看起来像有最新数据（SPEC-INDUSTRY-PAGES §2.1「不冒充请求日期」的同一条底线）。
+    """
+    latest: dict[str, str] = {}
+    for row in records:
+        l1_code = membership.get(_code(row))
+        day = _day(row)
+        if l1_code and day and day > latest.get(l1_code, ""):
+            latest[l1_code] = day
+    return latest
+
+
+def metric_as_of(
+    paths: list[str], days_by_dataset: dict[str, dict[str, str]], l1_code: str | None
+) -> dict[str, str | None]:
+    """指标路径 → 该行业该字段的数据时点；结构性缺口（北向 / 指数涨跌幅）永远 `None`。
+
+    数据集归属沿用 `_source_for()`，与溯源段同一个映射，不再建第二份字段→数据集表。
+    """
+    out: dict[str, str | None] = {}
+    for path in paths:
+        dataset = _source_for(path)
+        out[path] = days_by_dataset.get(dataset or "", {}).get(l1_code or "") or None
+    return out
+
+
+def dimension_as_of(path_days: dict[str, str | None]) -> dict[str, str | None]:
+    """维度时点 = 该维度用到的字段时点里最新的一个；一个都没有才是 `None`。"""
+    out: dict[str, str | None] = {name: None for name in DIMENSIONS}
+    for path, day in path_days.items():
+        name = path.split(".", 1)[0]
+        if day and day > (out.get(name) or ""):
+            out[name] = day
+    return out
+
+
 def _source_detail(sources: dict[str, _Source]) -> str:
     parts = []
     for dataset in SNAPSHOT_DATASETS:
@@ -920,30 +971,50 @@ def industry_list(
     root: Path | None = None,
     config_root: Path | None = None,
     catalog: IndustryCatalog | None = None,
+    with_metrics: bool = False,
 ) -> dict[str, Any]:
-    """清单 + 每个行业的可用性摘要（同一批缓存只读一次，逐行业可复算）。"""
+    """清单 + 每个行业的可用性摘要（同一批缓存只读一次，逐行业可复算）。
+
+    `with_metrics=True` 时每个行业行多带三键（R9 / QUOT-276 缺口 #1）：`metrics`
+    （`metric_paths()` 同名投影）、`as_of`（逐维数据时点）、`metric_as_of`（逐字段数据时点）。
+    默认关——`ldst industry list` 与 MCP 出口的载荷一个键都不变，值也全部来自
+    同一次 `build_snapshot()`，不是第二套计算。
+    """
     active = catalog or load_catalog(config_root)
     reader = _Reader(root)
     sources = {dataset: reader.source(dataset) for dataset in SNAPSHOT_DATASETS}
+    paths = metric_paths(active.window)
+    days_by_dataset: dict[str, dict[str, str]] = {}
+    if with_metrics:
+        membership = current_membership(sources["sw_industry_map"].records)
+        days_by_dataset = {
+            dataset: latest_day_per_industry(sources[dataset].records, membership)
+            for dataset in SNAPSHOT_DATASETS
+            if dataset != "sw_industry_map"
+        }
     rows = []
     for entry in active.enabled_entries():
         payload = build_snapshot(entry, sources, active)
-        rows.append(
-            {
-                "name": entry.name,
-                "l1_code": entry.l1_code,
-                "bound": entry.bound,
-                "enabled": entry.enabled,
-                "available": payload["available"],
-                "constituent_count": payload["membership"]["constituent_count"],
-                "dimensions_available": {
-                    name: bool(payload["dimensions"][name].get("available")) for name in DIMENSIONS
-                },
-                "data_source_status": payload["data_source_status"],
-                "reason": payload["reason"],
-            }
-        )
-    return {
+        row: dict[str, Any] = {
+            "name": entry.name,
+            "l1_code": entry.l1_code,
+            "bound": entry.bound,
+            "enabled": entry.enabled,
+            "available": payload["available"],
+            "constituent_count": payload["membership"]["constituent_count"],
+            "dimensions_available": {
+                name: bool(payload["dimensions"][name].get("available")) for name in DIMENSIONS
+            },
+            "data_source_status": payload["data_source_status"],
+            "reason": payload["reason"],
+        }
+        if with_metrics:
+            path_days = metric_as_of(paths, days_by_dataset, entry.l1_code)
+            row["metrics"] = metric_projection(payload["dimensions"], active.window)
+            row["metric_as_of"] = path_days
+            row["as_of"] = dimension_as_of(path_days)
+        rows.append(row)
+    result: dict[str, Any] = {
         "available": any(row["available"] for row in rows),
         "caliber": active.membership_caliber,
         "windows": active.window,
@@ -958,6 +1029,14 @@ def industry_list(
         if any(row["available"] for row in rows)
         else "六个输入数据集在本机缓存里都没有可用记录（行业清单本身可读，指标全部显式 null）",
     }
+    if with_metrics:
+        # 顶层时点 = 所有行业该维度时点里最新的一个（不是缓存全局最大值，也不是请求日期）
+        top: dict[str, str | None] = {}
+        for name in DIMENSIONS:
+            days = [str(row["as_of"][name]) for row in rows if row["as_of"].get(name)]
+            top[name] = max(days) if days else None
+        result["as_of"] = top
+    return result
 
 
 __all__ = [
@@ -975,8 +1054,12 @@ __all__ = [
     "build_snapshot",
     "constituents_of",
     "current_membership",
+    "dimension_as_of",
     "industry_list",
     "industry_snapshot",
+    "latest_day_per_industry",
+    "metric_as_of",
     "metric_fields",
     "metric_paths",
+    "metric_projection",
 ]
