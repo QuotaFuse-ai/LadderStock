@@ -188,6 +188,54 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # ---------------- R5 产业研究：行业画像输入（QUOT-143） ----------------
+  # 三只逐股取数（代码池见 sync.yaml 的 codes）+ 一只按日整批替换的板块资金流。
+  # `board_fund_flow` 的上游 source 会在东财 BK 与新浪行业之间切换，口径由缓存里的
+  # `source` 列决定，输出字段逐条标注（DEC-018），所以这里不设备源。
+  - id: tickhub_sw_map
+    dataset: sw_industry_map
+    via: tickhub
+    tool: sw_industry_history
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 300
+    weight: 1.0
+
+  - id: tickhub_finance_indicators
+    dataset: finance_indicators
+    via: tickhub
+    tool: eastmoney_finance_indicators
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_valuation_history
+    dataset: valuation_history
+    via: tickhub
+    tool: baostock_valuation_history
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 300
+    weight: 1.0
+
+  - id: tickhub_industry_fund_flow
+    dataset: industry_fund_flow
+    via: tickhub
+    tool: board_fund_flow
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   - id: tickhub_hot_rank
     dataset: hot_rank
     via: tickhub

@@ -1,0 +1,99 @@
+{
+  "id": "I005",
+  "title": "未绑定行业 + 缓存有数：综合没绑申万代码 → 五维铺满 null，绝不借用别的行业的数（DEC-018）",
+  "industry": "综合",
+  "config": {
+    "industry": {
+      "version": 1,
+      "membership_caliber": "sw_l1",
+      "provenance": {"bound_via": "test_anchor", "retrieved_at": "2026-01-08T00:00:00+08:00"},
+      "window": {
+        "fund_days": 3,
+        "valuation_lookback_days": 4,
+        "turnover_lookback_days": 3,
+        "momentum_windows": [2]
+      },
+      "industries": [
+        {"name": "食品饮料", "l1_code": "340000"},
+        {"name": "综合", "l1_code": null, "note": "两个锚点给的 l1_code 不一致"}
+      ]
+    }
+  },
+  "datasets": {
+    "sw_industry_map": [
+      {"code": "600001", "trade_date": "2025-12-01", "l1_code": "340000"},
+      {"code": "600002", "trade_date": "2025-12-01", "l1_code": "340000"}
+    ],
+    "finance_indicators": [
+      {"code": "600001", "trade_date": "2025-12-31", "revenue_yoy": 12.5, "profit_yoy": -3.0, "roe": 8.0}
+    ],
+    "valuation_history": [
+      {"code": "600001", "trade_date": "2026-01-07", "pe_ttm": 18.0, "pb": 3.0, "turnover_rate": 2.0}
+    ],
+    "fund_flow": [
+      {"code": "600001", "trade_date": "2026-01-07", "main_net": 1000.0}
+    ],
+    "industry_fund_flow": [
+      {
+        "trade_date": "2026-01-07",
+        "board_code": "900009",
+        "board_name": "综合",
+        "main_net_inflow": 777.0,
+        "main_net_ratio": 7.7,
+        "change_pct": 7.0
+      }
+    ],
+    "daily_k": [
+      {"code": "600001", "trade_date": "2026-01-05", "close": 10.0, "amount": 800.0},
+      {"code": "600001", "trade_date": "2026-01-07", "close": 12.0, "amount": 1000.0}
+    ]
+  },
+  "expected": {
+    "available": false,
+    "data_source_status": "missing",
+    "unavailable_dimensions": ["prosperity", "capital", "valuation", "momentum", "crowding"],
+    "dimensions_available": {
+      "prosperity": false,
+      "capital": false,
+      "valuation": false,
+      "momentum": false,
+      "crowding": false
+    },
+    "membership": {"constituent_count": 0, "classified_codes": 2, "as_of": null},
+    "metrics": {
+      "prosperity.revenue_yoy_median": null,
+      "prosperity.profit_yoy_median": null,
+      "prosperity.roe_median": null,
+      "capital.constituents.main_net_inflow_nd": null,
+      "capital.constituents.main_net_inflow_nd_sampled": null,
+      "capital.board.main_net_inflow": null,
+      "capital.board.main_net_pct": null,
+      "capital.board.change_pct": null,
+      "capital.northbound": null,
+      "valuation.pe_median": null,
+      "valuation.pe_percentile": null,
+      "valuation.pb_median": null,
+      "valuation.pb_percentile": null,
+      "momentum.index_change_pct": null,
+      "momentum.change_pct_2d": null,
+      "momentum.amount_share_pct": null,
+      "crowding.turnover_median": null,
+      "crowding.turnover_percentile": null,
+      "crowding.fund_concentration_pct": null
+    },
+    "notes": {
+      "industry.bound": false,
+      "industry.l1_code": null,
+      "membership.constituent_count": 0,
+      "prosperity.caliber": null,
+      "capital.caliber": null,
+      "valuation.caliber": null,
+      "momentum.caliber": null,
+      "crowding.caliber": null
+    },
+    "reasons": {
+      "prosperity.reason": "未绑定申万一级代码",
+      "valuation.reason": "不猜码"
+    }
+  }
+}

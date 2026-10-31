@@ -115,7 +115,7 @@ ldst research <code> [--date --only --retry-failed --force]
 
 | 手段 | 说明 |
 |---|---|
-| `ldst doctor` | 22 项体检：解释器、依赖、端口、目录可写、配置、边界、数据源链路、版本；`--output json` 给机器 |
+| `ldst doctor` | 23 项体检：解释器、依赖、端口、目录可写、配置、边界、数据源链路、版本；`--output json` 给机器。配置项数 = `cli/paths.py:CONFIG_FILES` 的长度，新增一份配置就 +1（R5 加 `industry.yaml`，QUOT-143） |
 | 结构化输出 | 所有命令统一 `--output json|table|csv`，字段稳定可供契约测试断言 |
 | `data/research/<code>/<date>/tool_calls.jsonl` | 受控工具审计：一次调用一行（段、工具、入参摘要、结果摘要、耗时、被拒与拒因），越权尝试同样留痕（DEC-026） |
 | `data/state/migration.json` | 迁移审计：版本、步骤、备份路径 |

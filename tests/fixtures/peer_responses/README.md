@@ -1,6 +1,8 @@
 # 真实 peer 响应 fixture（QUOT-233）
 
 `th-cn tool call <tool>` 在 2026-10-30 抓的**原始返回**，文件名 = 工具名 + `.json`。
+R5 产业研究新增的四只（`sw_industry_history` / `eastmoney_finance_indicators` /
+`baostock_valuation_history` / `board_fund_flow`）抓于 2026-10-31，同一套裁剪规则。
 形状由这些样本锁定，不靠记忆——`tencent_kline` 的 `data` 是对象
 （`{code, period, adjust, klines: [...]}`）而不是记录列表，这正是 QUOT-233 的根因。
 

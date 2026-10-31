@@ -291,6 +291,15 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         _b("concept_board", "tickhub", "concept_boards", "replace", "trade_date",
            note="概念板块排行"),
         _b("fund_flow", "tickhub", "stock_fund_flow", "replace", "trade_date", note="个股资金流"),
+        # ---- R5 产业研究（QUOT-143）：行业画像的四路输入 ----
+        _b("sw_industry_map", "tickhub", "sw_industry_history", "append", "trade_date",
+           note="申万一级归属（成分表懒缓存，DEC-018）；行内 trade_date = 分类计入日期"),
+        _b("finance_indicators", "tickhub", "eastmoney_finance_indicators", "append", "trade_date",
+           note="景气聚合输入；行内 trade_date = report_date"),
+        _b("valuation_history", "tickhub", "baostock_valuation_history", "append", "trade_date",
+           note="估值 / 换手分位输入（北交所无源，实测缺）"),
+        _b("industry_fund_flow", "tickhub", "board_fund_flow", "replace", "trade_date",
+           note="板块资金流：caliber 随上游 source（东财 BK / 新浪行业），DEC-018 要求逐字段标注"),
         _b("hot_rank", "tickhub", "ths_hot_rank", "replace", "trade_date",
            ("eastmoney_hot_rank",), "热榜"),
         # ---- QuotaFuse Wire：题材段叙事（可选）----

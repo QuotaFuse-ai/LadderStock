@@ -77,6 +77,37 @@ sync:
       mode: replace
       codes: []
 
+    # ---- R5 产业研究（QUOT-143）----
+    # 前三只按代码池逐只取数：成分表是**懒缓存**（DEC-018），只同步用得到的代码，
+    # 不做全市场全量构建；代码池优先级同 daily_k（--codes > 这里 > 本机自选）。
+    sw_industry_map:
+      primary: tickhub_sw_map
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes: []
+
+    finance_indicators:
+      primary: tickhub_finance_indicators
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes: []
+
+    valuation_history:
+      primary: tickhub_valuation_history
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes: []
+
+    # 板块资金流：按日整批替换，board_type=industry 是登记在册的口径入参（不是猜默认值）
+    industry_fund_flow:
+      primary: tickhub_industry_fund_flow
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
     hot_rank:
       primary: tickhub_hot_rank
       fallback: [tickhub_hot_rank_em]

@@ -55,11 +55,15 @@ class RowShape:
       没有代码的行既无法幂等（`(code, trade_date)` 是追加模式的幂等键），
       也会污染下游天梯的 `leader_candidates`——照 QUOT-231 L6 的口径丢弃，不入库。
       板块榜（行业/概念）是**板块维度**，代码在 `board_code` 里，不适用这条规则。
+    - `date_keys`：行内日期键的别名。财务指标行只有 `report_date`、申万分类行只有
+      `start_date`，落库仍统一用 `trade_date` 当幂等键与水位（R5，QUOT-143）；
+      不新增别名之外的兜底，取不到日期就回落到本次同步日期。
     """
 
     rows_key: str
     passthrough: tuple[str, ...] = ()
     require_code: bool = True
+    date_keys: tuple[str, ...] = ()
 
 
 ROW_SHAPES: dict[str, RowShape] = {
@@ -70,6 +74,12 @@ ROW_SHAPES: dict[str, RowShape] = {
     "concept_board": RowShape("items", require_code=False),
     "fund_flow": RowShape("flows", passthrough=("code", "name")),
     "dragon_tiger_seats": RowShape("records", passthrough=("code",)),
+    # R5 产业研究（QUOT-143）：三只逐股 + 一只板块资金流，形状均为实测（见
+    # docs/specs/SPEC-INDUSTRY-METRICS.md §8 探针记录）。
+    "sw_industry_map": RowShape("history", passthrough=("code",), date_keys=("start_date",)),
+    "finance_indicators": RowShape("indicators", passthrough=("code",), date_keys=("report_date",)),
+    "valuation_history": RowShape("rows", passthrough=("code",)),
+    "industry_fund_flow": RowShape("items", require_code=False),
     # 备源：盘后全市场包，一天一个市场，行内自带 code/date
     "_tdx_daily_package": RowShape("rows"),
 }
@@ -83,13 +93,28 @@ _SHAPES_BY_TOOL: dict[str, RowShape] = {"tdx_daily_package": ROW_SHAPES["_tdx_da
 
 #: `code` 必填的数据集（真实 schema：`tencent_kline` / `stock_fund_flow` /
 #: `dragon_tiger_seats` 的 `code` 是必填项，空参实测回 `QFSD-9001 invalid_argument`）。
-#: 这三个数据集必须带代码池入参，不能发空参。
-CODE_POOL_DATASETS: frozenset[str] = frozenset({"daily_k", "fund_flow", "dragon_tiger_seats"})
+#: 这些数据集必须带代码池入参，不能发空参。
+#: R5 的三只（申万归属 / 财务指标 / 估值历史）同样是**逐股**工具，`code` 必填
+#: （QUOT-143 实测：空参被 MCP 入参校验直接拒回 `code Field required`，不是 QFSD 码）。
+#: 集合内容由 `tests/contract/test_tickhub_payload_mapping.py` 逐条点名，增删必改测试。
+CODE_POOL_DATASETS: frozenset[str] = frozenset(
+    {
+        "daily_k",
+        "fund_flow",
+        "dragon_tiger_seats",
+        "sw_industry_map",
+        "finance_indicators",
+        "valuation_history",
+    }
+)
 
 #: 固定口径入参。`daily_k` 的口径是「日线 + 前复权」（DATASET_CATALOG 的登记），
 #: 显式带上是为了让请求里的口径和落库口径是同一句话，不靠 peer 默认值。
+#: `industry_fund_flow` 必须显式带 `board_type=industry`：该工具默认虽然也是行业，
+#: 但概念板块与行业板块是两套榜（DEC-018 的口径标注不允许靠默认值）。
 FIXED_PARAMS: dict[str, dict[str, Any]] = {
     "daily_k": {"period": "daily", "adjust": "qfq"},
+    "industry_fund_flow": {"board_type": "industry", "page": 1, "page_size": 300},
 }
 
 #: 增量水位在各工具里的入参名。`tencent_kline` 没有 `since`，只有 `start`（含当日，
@@ -223,7 +248,8 @@ def normalize_records(
         if not isinstance(item, dict):
             continue
         row = {**defaults, **item}
-        if (day := _row_date(row)) is not None:
+        date_keys = shape.date_keys or ROW_DATE_KEYS
+        if (day := _row_date(row, date_keys)) is not None:
             row["trade_date"] = day.isoformat()
         elif header_date is not None:
             row["trade_date"] = header_date.isoformat()
@@ -253,8 +279,8 @@ def _failure_text(response: dict[str, Any]) -> str:
     return str(response.get("message") or response.get("code") or "未知错误")
 
 
-def _row_date(row: dict[str, Any]) -> date | None:
-    for key in ROW_DATE_KEYS:
+def _row_date(row: dict[str, Any], keys: tuple[str, ...] = ROW_DATE_KEYS) -> date | None:
+    for key in keys:
         parsed = _parse_date(row.get(key))
         if parsed is not None:
             return parsed

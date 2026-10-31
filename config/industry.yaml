@@ -1,0 +1,67 @@
+# 申万一级行业清单（R5 产业研究，QUOT-143）
+#
+# 口径（DEC-018）：**行业归属以申万一级为准**，资金流的板块口径单独标注，两套不混算。
+#
+# - `l1_code`：申万行业分类表的一级代码（6 位，前 2 位一级 + `0000`），
+#   与 TickHub-CN `sw_industry_history` 返回的 `l1_code` 同格式，直接对得上。
+#   上游只发布代码、不发布「代码 → 名称」快照（`sw_industry.py` 的 note 写明了这一点），
+#   所以名称与代码的绑定由**锚点股**建立：每个行业取 2 只无歧义的龙头股，
+#   2026-10-31 经 TickHub-CN `sw_industry_history` 实测，**两只回同一 l1_code 才写进本表**；
+#   两只不一致（说明锚点选错或归属有争议）的行业，`l1_code` 一律留 `null`，
+#   该行业的成分派生维度按「显式 null + unverified」输出，不猜码。
+# - `board_name`：板块口径资金流的同名板块绑定（仅供「板块口径」那一段字段使用）。
+#   同名不等于同成分——这一段字段永远标自己的 caliber（东财 BK / 新浪行业，
+#   取自缓存记录的实际 `source`），绝不冒充申万口径，也绝不与申万口径的字段相加。
+# - `enabled: false` 即从子集里裁掉该行业（任务要求「配置可裁剪子集」）。
+# - 本文件是**数据**，不是计算口径：公式与缺失策略一律见
+#   `docs/specs/SPEC-INDUSTRY-METRICS.md`。
+
+industry:
+  version: 1
+  membership_caliber: sw_l1
+  provenance:
+    bound_via: tickhub_sw_industry_history_anchor
+    retrieved_at: "2026-10-31T06:20:00+08:00"
+    source: swsresearch
+    note: 锚点归属由生态 peer TickHub-CN 只读工具实测，名称标签为人工指定，待上游「全市场申万分类快照」就绪后改为数据直取
+
+  window:
+    fund_days: 5 # 近 N 个交易日主力净流入（个股口径累加）
+    valuation_lookback_days: 250 # PE / PB 分位的历史窗口（交易日）
+    turnover_lookback_days: 60 # 换手分位的历史窗口（交易日）
+    momentum_windows: [5, 20] # 动量回看窗口（交易日）
+
+  industries:
+    - {name: 农林牧渔, l1_code: "110000", anchors: ["000876", "300498"], board_name: 农林牧渔, enabled: true}
+    - {name: 基础化工, l1_code: "220000", anchors: ["600309", "002648"], board_name: null, enabled: true}
+    - {name: 钢铁, l1_code: "230000", anchors: ["600019", "000898"], board_name: null, enabled: true}
+    - {name: 有色金属, l1_code: "240000", anchors: ["601899", "600111"], board_name: 有色金属, enabled: true}
+    - {name: 汽车, l1_code: "280000", anchors: ["600104", "002594"], board_name: null, enabled: true}
+    - {name: 电子, l1_code: "270000", anchors: ["002371", "002049"], board_name: null, enabled: true}
+    - {name: 家用电器, l1_code: "330000", anchors: ["000651", "000333"], board_name: null, enabled: true}
+    - {name: 食品饮料, l1_code: "340000", anchors: ["600519", "000858"], board_name: null, enabled: true}
+    - {name: 纺织服饰, l1_code: "350000", anchors: ["600398", "002293"], board_name: null, enabled: true}
+    - {name: 轻工制造, l1_code: "360000", anchors: ["002078", "603816"], board_name: null, enabled: true}
+    - {name: 医药生物, l1_code: "370000", anchors: ["600276", "300760"], board_name: null, enabled: true}
+    - {name: 公用事业, l1_code: "410000", anchors: ["600900", "600011"], board_name: null, enabled: true}
+    - {name: 交通运输, l1_code: "420000", anchors: ["600009", "601006"], board_name: 交通运输, enabled: true}
+    - {name: 房地产, l1_code: "430000", anchors: ["001979", "600048"], board_name: 房地产, enabled: true}
+    - {name: 商贸零售, l1_code: "450000", anchors: ["601933", "002251"], board_name: null, enabled: true}
+    - {name: 社会服务, l1_code: "460000", anchors: ["300144", "600258"], board_name: null, enabled: true}
+    - {name: 银行, l1_code: "480000", anchors: ["600036", "000001"], board_name: null, enabled: true}
+    - {name: 非银金融, l1_code: "490000", anchors: ["600030", "601318"], board_name: null, enabled: true}
+    - {name: 建筑材料, l1_code: "610000", anchors: ["600585", "002271"], board_name: null, enabled: true}
+    - {name: 建筑装饰, l1_code: "620000", anchors: ["601668", "601800"], board_name: null, enabled: true}
+    - {name: 电力设备, l1_code: "630000", anchors: ["300750", "300274"], board_name: null, enabled: true}
+    - {name: 机械设备, l1_code: "640000", anchors: ["300124", "002008"], board_name: null, enabled: true}
+    - {name: 国防军工, l1_code: "650000", anchors: ["600760", "002179"], board_name: null, enabled: true}
+    - {name: 计算机, l1_code: "710000", anchors: ["600570", "002230"], board_name: null, enabled: true}
+    - {name: 传媒, l1_code: "720000", anchors: ["002027", "300413"], board_name: null, enabled: true}
+    - {name: 通信, l1_code: "730000", anchors: ["000063", "600050"], board_name: null, enabled: true}
+    - {name: 煤炭, l1_code: "740000", anchors: ["601088", "601898"], board_name: null, enabled: true}
+    - {name: 石油石化, l1_code: "750000", anchors: ["601857", "600028"], board_name: null, enabled: true}
+    - {name: 环保, l1_code: "760000", anchors: ["600008", "603568"], board_name: null, enabled: true}
+    - {name: 美容护理, l1_code: "770000", anchors: ["603605", "300740"], board_name: null, enabled: true}
+    # 锚点实测不一致（600816→490000 非银金融、600654→710000 计算机），
+    # 说明这两个代码都不是「综合」，本表不猜码：l1_code 留 null。
+    - {name: 综合, l1_code: null, anchors: [], board_name: null, enabled: true, note: 锚点归属不一致，未绑定代码}

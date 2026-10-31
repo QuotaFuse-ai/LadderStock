@@ -19,6 +19,7 @@ import typer
 from ladderstock import __version__
 from ladderstock.cli.ai import register as register_ai
 from ladderstock.cli.export import export as export_command
+from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
 from ladderstock.cli.legacy_ports import warn_legacy_port
 from ladderstock.cli.mcp import register as register_mcp
@@ -60,6 +61,7 @@ validate_app = typer.Typer(
 )
 sentiment_app = typer.Typer(no_args_is_help=True, help="情绪指标")
 ladder_app = typer.Typer(no_args_is_help=True, help="连板天梯")
+industry_app = typer.Typer(no_args_is_help=True, help="产业研究（行业景气/资金/估值/动量/拥挤度）")
 sync_app = typer.Typer(no_args_is_help=False, invoke_without_command=True, help="增量同步")
 sources_app = typer.Typer(no_args_is_help=True, help="数据源")
 watch_app = typer.Typer(no_args_is_help=True, help="盘中盯盘")
@@ -79,6 +81,7 @@ for parent, child, name in (
     (app, validate_app, "validate"),
     (app, sentiment_app, "sentiment"),
     (app, ladder_app, "ladder"),
+    (app, industry_app, "industry"),
     (app, sync_app, "sync"),
     (app, sources_app, "sources"),
     (app, watch_app, "watch"),
@@ -207,6 +210,14 @@ register_journal(journal_app)
 # 两者互不引用：持仓不参与打分，打分结果里也不可能出现持仓字段。
 register_pool(app)
 register_position(position_app)
+
+
+# ---------------------------------------------------------------- 产业研究（R5）
+
+# 实现体在 cli/industry.py + industry/{catalog,metrics,snapshot}.py（QUOT-143）：
+# 只读本机缓存回放，五维口径见 docs/specs/SPEC-INDUSTRY-METRICS.md，
+# 行业清单与窗口参数在 config/industry.yaml（申万一级，可按 enabled 裁剪）。
+register_industry(industry_app)
 
 
 # ---------------------------------------------------------------- 导出与状态
@@ -391,7 +402,8 @@ def doctor(output: OutputOption = None) -> None:
     ok = all(c["ok"] for c in checks)
     # 待联调工具只在这里探测一次（短超时、失败不重试）：要么 warning 消失，
     # 要么措辞说准「peer 不可达 / 工具不在列表里」，不留「待联调」这种含糊说法。
-    # 探测结果不参与 ok 判定，检查项数仍是 22（DEC-008：可达性≠配置合法性）。
+    # 探测结果不参与 ok 判定，检查项数只由 `CONFIG_FILES` 与依赖表决定
+    # （DEC-008：可达性≠配置合法性）。
     warnings = [*report.warnings, *provisional_tool_warnings()]
     emit({"ok": ok, "checks": checks, "warnings": warnings}, output)
     raise typer.Exit(EXIT_OK if ok else EXIT_CONFIG)

@@ -156,6 +156,7 @@ ldst doctor                       # 依赖、端口、缓存目录、数据源�
 | `ladder_get_review(date)` | 某日复盘结构化结果 |
 | `ladder_get_validation(date)` | 明日验证条件与对账结果 |
 | `ladder_get_sentiment(date)` | 情绪温度、晋级率、梯队断层 |
+| `industry_snapshot(industry)` | 申万一级行业五维画像：景气 / 资金 / 估值 / 动量 / 拥挤度（R5） |
 
 输出统一 `LadderEnvelope`；隐私数据（交易日志、持仓、自选）永不出现在 MCP 输出与 AI 上下文中。
 
@@ -166,6 +167,7 @@ ldst doctor                       # 依赖、端口、缓存目录、数据源�
 | `config/sources.yaml` | 数据源与主备顺序、超时、重试、冷却、权重 |
 | `config/sync.yaml` | 数据集与增量模式（append / replace）、冷热分离 |
 | `config/ai.yaml` | 默认模型、fallback 链、分段 prompt 与输出 schema |
+| `config/industry.yaml` | 申万一级行业清单与窗口参数（R5，口径见 `docs/specs/SPEC-INDUSTRY-METRICS.md`） |
 | `config/state.yaml` | 前端持久化分片、TTL、schema 版本 |
 
 校验：`ldst config validate`；JSON Schema 位于 `config/schema/`。
@@ -229,7 +231,7 @@ pip install -e ".[dev]"
 python -X utf8 -m pytest -q                        # Windows 控制台建议 -X utf8
 ruff check .
 mypy src
-ldst doctor                                        # 22 项体检：解释器 / 依赖 / 端口 / 配置 / 边界
+ldst doctor                                        # 23 项体检：解释器 / 依赖 / 端口 / 配置 / 边界
 ```
 
 CI 实际执行的 job、与 workflow 逐字对齐的本地命令（含 Windows / POSIX 的 venv 路径差异）以及 required checks 现状，见 [docs/CI.md](docs/CI.md)。

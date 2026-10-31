@@ -24,8 +24,9 @@
 | `ladder_get_sentiment` | 是 | `sentiment` | `date` | 情绪温度、晋级率、梯队断层 |
 | `research_status` | 是 | `research` | `code`、`date?` | 个股研究六段进度（R1-1，QUOT-190） |
 | `candidate_pool` | 是 | `sentiment` | `date` | 当日候选池评分：强度 / 换手 / 地位 / 资金 / 题材分项与总分（口径见 `docs/specs/SPEC-CANDIDATE-POOL.md`） |
+| `industry_snapshot` | 是 | `sentiment` | `industry` | 申万一级行业五维画像：景气 / 资金 / 估值 / 动量 / 拥挤度，缺数显式 `null` 并给原因（口径见 `docs/specs/SPEC-INDUSTRY-METRICS.md`，R5 / QUOT-143） |
 
-除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **13 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个）。
+除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **14 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个 + R5 增量 `industry_snapshot` 1 个）。
 
 > **命名偏差（已声明-接受，DEC-019 §1）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
 > 因为 QUOT-145 的验收文字直接点名「MCP 只读工具 `candidate_pool`」。
@@ -38,6 +39,13 @@
 > ② 入参以 `code` 定位、`date` 可选（缺省取该代码最近一次 checkpoint），因为「读当前进度」
 > 本来就没有日期。契约测试用 `CODE_SCOPED_TOOLS` 显式登记这个例外，见
 > `tests/contract/test_mcp_tools.py`。信封域仍是 `review`（`LadderDomain` 取值集合不变）。
+
+> **`industry_snapshot` 的两处有意偏差**（2026-10-31，R5 / QUOT-143）：
+> ① 名字不带 `ladder_` 前缀——issue 验收文字直接点名「MCP 只读工具 `industry_snapshot`」，
+> 与 CLI 命令 `ldst industry` 同源，便于跨面引用（同 `candidate_pool` 的先例，DEC-019 §1）；
+> ② **入参没有 `date`**：按行业名定位，口径是「本机缓存里的最新一批」，各维度自己给出
+> `trade_date` / `as_of`（SPEC §1.2）。契约测试用 `INDUSTRY_SCOPED_TOOLS` 登记这个例外，
+> 并反向断言 schema 里没有 `date`——要加日期就得先改口径文件。信封域是 `sentiment`（取值集合不变）。
 
 ### 1.1 `ladder_get_watch` 的数据来源
 
@@ -70,6 +78,27 @@
 「地位」这个分项对外叫 **`standing`**：`position` 是本文件的禁止字段名（§2 补充约定 1），
 不能出现在工具结果里，中文标签「地位」只用于人类可读输出（`SUB_SCORE_LABELS`）。
 
+### 1.3 `industry_snapshot` 的数据来源与载荷
+
+`industry_snapshot` 不取数、不算第二套公式，只把 `industry/snapshot.industry_snapshot(name, root=…)`
+的快照包成信封——与 `ldst industry show` **同一条计算路径**（同一份 `META_PRIMARY_DATASET`
+常量决定信封 `data_as_of`，两个出口不会各说各话）。
+
+| 位置 | 载荷 |
+|---|---|
+| MCP | `payload.industry_metrics` = 五维快照（`industry` / `membership` / `dimensions` / `windows` / `formulas` / `datasets` / `provenance` / `missing` / `metrics_present`） |
+| `ldst industry show` | `payload` 直接平铺同一份快照对象（与 `ldst pool` 一致） |
+| `ldst industry list` | 平铺清单视图（配置视图，**不构造信封**，恒退出 0） |
+
+六个输入数据集全部来自本机缓存回放（`sw_industry_map` / `finance_indicators` /
+`valuation_history` / `fund_flow` / `industry_fund_flow` / `daily_k`），**不发起网络请求**，
+也不 import 其他子模块的内部代码。空缓存 → `available=false`、`data_source_status=missing`、
+五维字段**一个不少地铺成 `null`**，每个 `null` 都带 `reason`；
+`provenance.values` 里无数的路径是 `sources: []` + `unverified: true`，
+不存在「有值但无出处」，也不存在「有出处但没读到这批数据」。
+行业北向净流入与申万行业指数涨跌幅是**结构性缺口**（上游无对应工具，SPEC §9），
+永远显式 `null`——不降级成成分股聚合值，因为那是另一个字段。
+
 ## 2. 隐私边界（硬约束）
 
 本机隐私库 `data/journal.sqlite`（表 `trades` / `positions` / `watchlist`；`positions` 自 schema v2 起有
@@ -86,6 +115,7 @@
 | `ldst export` 导出文件 | 默认**不含**；`--with-journal` 显式才附加纪律统计摘要 | `cli/export.py`：默认走 `core/privacy.strip_private()` **递归**剥离（任意层级，含中文键写法，与 web / MCP 共用同一份实现），剥掉的字段名写 **stderr** 明示；`--with-journal` 才附加纪律统计摘要（不含明细/备注），并在 **stderr** 提示「隐私数据，请自行保管，勿上传」 |
 | `ldst position list --export <path>` | 默认**不落任何文件**；只有显式给路径才写出，内容与 stdout 同一份，stderr 同样提示隐私 | `cli/position.py::_write_export()`；目标不可写 → 退出码 3 且 stdout 为空 |
 | `ldst pool` / MCP `candidate_pool` | 允许，但**读不到隐私库** | `core/pool.py`、`cli/pool.py` 不 import `journal` / `sqlite_store` / `sqlite3`（AST 级断言），持仓不参与打分 |
+| `ldst industry` / MCP `industry_snapshot` | 允许，但**读不到隐私库** | `industry/` 只 import `data/archive.py` 的缓存回放与 `core/ladder.py` 的取值工具；快照里的 `industry` 指**申万行业名**（配置数据），与 `positions.industry`（持仓标注）没有任何关系，两者不同源 |
 
 补充约定：
 
@@ -109,7 +139,8 @@
 
 - MCP 清单里没有 position 相关工具，且 `mcp/` `ai/` `web/` 三个对外面的 import 里不出现 `ladderstock.journal`
   （`web/server.py` 的 `/api/journal/stats` 是唯一白名单，闸门由 DEC-015 那套回环 + Host 校验负责）；
-- 12 个只读工具逐个 `dispatch`，信封里不含持仓哨兵、不含 `entry_date` 等只在持仓里出现的字段名；
+- 13 个只读工具逐个 `dispatch`，信封里不含持仓哨兵、不含 `entry_date` 等只在持仓里出现的字段名
+  （`industry_snapshot` 缺 `industry` 入参走报错分支，同样断言报错文本里没有哨兵）；
 - `strip_private()` → `build_messages()` 的 AI 上下文序列化结果不含持仓字段名（并反向断言哨兵在**未剥离**的载荷里确实存在，防止测试写成空断言）；
 - `ldst position` 不加 `--export` 时数据目录里只有 `journal.sqlite*`，加了才落文件；
   目标不可写退出码 3 且 stdout 为空；

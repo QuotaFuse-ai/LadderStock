@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "data": {
+    "code": "600036",
+    "rows": [
+      {
+        "date": "2026-10-28",
+        "close": 42.13,
+        "pe_ttm": 7.00422,
+        "pb": 0.927922,
+        "ps_ttm": 3.073118,
+        "pcf_ttm": 7.336727,
+        "turnover_rate": 0.5225,
+        "tradestatus": "1"
+      },
+      {
+        "date": "2026-10-29",
+        "close": 42.94,
+        "pe_ttm": 7.138884,
+        "pb": 0.945763,
+        "ps_ttm": 3.132202,
+        "pcf_ttm": 7.477784,
+        "turnover_rate": 0.5272,
+        "tradestatus": "1"
+      },
+      {
+        "date": "2026-10-30",
+        "close": 43.55,
+        "pe_ttm": 7.240298,
+        "pb": 0.959198,
+        "ps_ttm": 3.176698,
+        "pcf_ttm": 7.584013,
+        "turnover_rate": 0.4979,
+        "tradestatus": "1"
+      }
+    ]
+  },
+  "meta": {
+    "source": "baostock",
+    "fetched_at": "2026-10-31T07:59:00+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 9
+  }
+}

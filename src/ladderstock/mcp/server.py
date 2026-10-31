@@ -1,4 +1,4 @@
-"""MCP Server（stdio / Streamable HTTP）：13 个工具，全部只读 + 1 个发起研究。
+"""MCP Server（stdio / Streamable HTTP）：14 个工具，全部只读 + 1 个发起研究。
 
 协议与数据边界：
 
@@ -42,6 +42,8 @@ from ladderstock.core.models import LadderEnvelope
 #: 隐私字段集合与剥离实现只有一份（`core/privacy.py`），与 web / export 共用；
 #: 这里 re-export 保持既有导入路径不变（audit F-2 / R-2）。
 from ladderstock.core.privacy import PRIVATE_KEYS, strip_private
+from ladderstock.errors import LadderStockError
+from ladderstock.industry import snapshot as industry_module
 from ladderstock.mcp.tools import TOOL_SPECS, ToolSpec
 
 SERVER_NAME = "ladderstock"
@@ -410,6 +412,31 @@ def _tool_candidate_pool(arguments: dict[str, Any], root: Any) -> dict[str, Any]
     )
 
 
+def _tool_industry_snapshot(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
+    """申万一级行业五维画像（R5）。只回放本机缓存，缺数显式 null + 原因，不伪造。
+
+    没有 `date` 入参：口径是「缓存里的最新一批」，信封 `data_as_of` 取行业归属
+    数据自己的最新日期，取不到才回落今天（那时点本来就没有数据）。
+    """
+    raw = arguments.get("industry")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ToolError("缺少 industry（申万一级行业名，见 `ldst industry list`）")
+    try:
+        result = industry_module.industry_snapshot(raw.strip(), root=root)
+    except LadderStockError as exc:
+        raise ToolError(exc.message) from exc
+    available = bool(result.get("available"))
+    as_of = result["datasets"][industry_module.META_PRIMARY_DATASET]["as_of"]
+    return _envelope(
+        domain="sentiment",
+        topic="industry_snapshot",
+        day=date.fromisoformat(str(as_of)[:10]) if as_of else date.today(),
+        payload={"industry_metrics": result},
+        available=available,
+        source_detail=str(result.get("source_detail") or ""),
+    )
+
+
 def _tool_leader(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
     day = _parse_day(arguments)
     result = ladder_module.compute_ladder(day, root=root)
@@ -755,6 +782,7 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "ladder_get_sentiment": _tool_sentiment,
     "research_status": _tool_research_status,
     "candidate_pool": _tool_candidate_pool,
+    "industry_snapshot": _tool_industry_snapshot,
 }
 
 

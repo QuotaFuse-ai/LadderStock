@@ -1,6 +1,8 @@
 # 数据源、同步与本地缓存（M2）
 
 - 状态：已落地（2026-10-28，M2 数据层）
+- 变更：2026-10-31 R5（QUOT-143）登记四路行业输入数据集 —— §2 归属表、§2.2 形状表、
+  §2.3 代码池（三个 → 六个）
 - 关联：DEC-006（四层生态边界）、DEC-007（重复采集治理）、`docs/CLI.md`（退出码）
 - 一句话：**LadderStock 只消费生态三件套**；主源失败只在同一 peer 内换工具，
   再不行就回放本地缓存，永不自行采集。
@@ -50,12 +52,24 @@ TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——800
 | `industry_board` | tickhub | `industry_boards` | — | replace | `trade_date` |
 | `concept_board` | tickhub | `concept_boards` | — | replace | `trade_date` |
 | `fund_flow` | tickhub | `stock_fund_flow` | — | replace | `trade_date` |
+| `sw_industry_map` | tickhub | `sw_industry_history` | — | append | `trade_date` |
+| `finance_indicators` | tickhub | `eastmoney_finance_indicators` | — | append | `trade_date` |
+| `valuation_history` | tickhub | `baostock_valuation_history` | — | append | `trade_date` |
+| `industry_fund_flow` | tickhub | `board_fund_flow` | — | replace | `trade_date` |
 | `hot_rank` | tickhub | `ths_hot_rank` | `eastmoney_hot_rank` | replace | `trade_date` |
 | `theme_news` | wire | `wire_get_digest` | `wire_timeline` | replace | `data_as_of` |
 | `council_memo` | senate | `report_query` | — | replace | `data_as_of` |
 
 `theme_news` / `council_memo` 在 `sync.yaml` 里标了 `optional: true`：peer 不可用时
 只记 `status=skipped`，不拖垮整轮同步，也不影响退出码。
+
+**R5 产业研究的四路输入（QUOT-143）**：`sw_industry_map` / `finance_indicators` /
+`valuation_history` 是**逐股**取数（代码池见 §2.3），成分表按 DEC-018 走**懒缓存**——
+只同步用得到的代码，不做全市场分类全量构建。四只都**不设备源**：板块资金流的上游
+source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `source` 列承担并逐字段标注
+（DEC-018），换备源等于换口径，不是降级。落库水位统一是 `trade_date`，但**语义不统一**：
+`finance_indicators` 的 `trade_date` 是 `report_date`（财报期），`sw_industry_map` 的是
+分类计入日期（`start_date`）——别名映射见 §2.2 第 2 条。
 
 ### 2.1 链路登记规则（DEC-008）
 
@@ -100,6 +114,10 @@ TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——800
 | 对象 + 数组 | `industry_boards` / `concept_boards` | `items` | — | 否（板块维度，代码在 `board_code`） |
 | 对象 + 数组 | `stock_fund_flow` | `flows` | `code` `name` | 是 |
 | 对象 + 数组 | `dragon_tiger_seats` | `records` | `code` | 是 |
+| 对象 + 数组 | `sw_industry_history`（R5） | `history` | `code` | 是（行内日期是 `start_date`） |
+| 对象 + 数组 | `eastmoney_finance_indicators`（R5） | `indicators` | `code` | 是（行内日期是 `report_date`） |
+| 对象 + 数组 | `baostock_valuation_history`（R5） | `rows` | `code` | 是 |
+| 对象 + 数组 | `board_fund_flow`（R5） | `items` | — | 否（板块维度，行内 `code` 是板块代码；**行内没有日期**） |
 | 记录列表 | `dragon_tiger` / `ths_limit_up_pool` / `yesterday_limit_up_pool` / `ths_hot_rank` / `eastmoney_hot_rank` | 整个 `data` | — | 原样成行 |
 | 对象快照 | `market_sentiment` | —（未登记形状） | — | 整包落**一行**，嵌套 `leaders` 不展开 |
 
@@ -108,19 +126,33 @@ TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——800
 1. **形状表按工具登记**，备源与主源形状不同（`klines` vs `rows`）；表里声明的键
    缺失就报错，不静默吞——上游改形状必须第一时间知道。没登记形状的工具回对象就按
    快照落一行（DEC-006 闸门 2：不硬凑字段）。
-2. **行内 `date` → `trade_date`**，头部口径字段透传到每一行，否则落库只剩整包一行。
+2. **行内日期 → `trade_date`**，头部口径字段透传到每一行，否则落库只剩整包一行。
+   行内日期键的别名按工具登记（`RowShape.date_keys`，R5 起）：财务指标只有
+   `report_date`、申万分类只有 `start_date`，落库仍统一用 `trade_date` 当幂等键与水位；
+   **不新增别名之外的兜底**，取不到日期就回落到本次同步日期。
 3. **`data_as_of` 以 payload 自己声明的为准**：入参 > 对象头部日期（`date` /
    `trade_date` / `latest_date` / `as_of`，支持 `YYYYMMDD`）> `meta` 同类字段 >
    行内最大日期 > 抓取时间。`meta.fetched_at` 只证明「什么时候取的」，不证明「数据是哪天的」。
+   `board_fund_flow` 实测两头都没有日期（对象头部没有、行内没有），所以它的 `data_as_of`
+   由 `meta.fetched_at` 承担。板块资金流是**当日榜**，整批替换、日粒度，
+   用抓取日当 `trade_date` 与它的语义一致；逐股那三只不许这样——它们有行内日期。
 
 `require_code` 的行（个股维度）如果补不出代码就**整行丢弃、不入库**，与 QUOT-231 L6
 口径一致：`(code, trade_date)` 是追加模式的幂等键，无代码行既无法幂等也会污染天梯候选。
 
-### 2.3 代码池数据集：`code` 必填的三个（QUOT-233）
+### 2.3 代码池数据集：`code` 必填的六个（QUOT-233 / R5 QUOT-143）
 
-`daily_k` / `fund_flow` / `dragon_tiger_seats` 的真实工具 schema 里 `code` 是必填项，
-空参实测被拒回 `QFSD-9001 invalid_argument: missing a required argument: 'code'`。
-所以这三个数据集**一次同步 = 逐只代码各调一次**，结果合并成一个事务落库。
+`daily_k` / `fund_flow` / `dragon_tiger_seats`（QUOT-233）加上 R5 的
+`sw_industry_map` / `finance_indicators` / `valuation_history`——这六只的真实工具
+schema 里 `code` 都是必填项，所以它们**一次同步 = 逐只代码各调一次**，结果合并成一个事务落库。
+两批的空参报错**不是同一个码**，别照抄：
+
+| 数据集 | 空参实测报错 | 拦在哪一层 |
+|---|---|---|
+| `daily_k` / `fund_flow` / `dragon_tiger_seats` | `QFSD-9001 invalid_argument: missing a required argument: 'code'` | 上游业务层 |
+| `sw_industry_map` / `finance_indicators` / `valuation_history` | `code Field required` | peer 的 MCP 入参校验（还没打到上游） |
+
+两处都是「拒绝」，语义相同：**没代码就没这次取数**，判 `failed` 而不是发一个注定被拒的请求。
 
 池子来源只有三处，优先级固定（**只用仓库已有配置与本机数据，不新增供应商**）：
 
@@ -128,13 +160,20 @@ TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——800
 2. `config/sync.yaml` 的 `sync.datasets.<dataset>.codes`（schema 上限 100 只）；
 3. 本机隐私库自选表 `watchlist`（只读 `code` 列，库不存在就当作空，不因查询而建库）。
 
+R5 的三只默认 `codes: []`：申万成分表按 DEC-018 是**懒缓存**，只同步用得到的代码，
+不做全市场分类全量构建。要覆盖某个行业，把该行业的成分代码写进池子再同步。
+
 - 三处都为空：**一次调用都不发**，该数据集记 `failed`（标了 `optional` 则 `skipped`），
-  `detail` 里写清三个来源与上游错误码——发空参只会拿到 `QFSD-9001`，或（上游哪天放宽了）
+  `detail` 里写清三个来源与上游错误码——发空参只会拿到上表那两个报错之一，或（上游哪天放宽了）
   落回「整包压成一行、日期取成抓取时间」的脏数据。
 - 超过 100 只：判参数错误（退出码 2），**不悄悄截断**，要分批判。
 - 入参口径：`daily_k` 显式带 `period=daily` + `adjust=qfq`（与 `DATASET_CATALOG` 登记的
   前复权口径是同一句话，不靠 peer 默认值）；增量用 `start=<水位>`（含当日，重叠那天由
   `(code, trade_date)` upsert 折叠），`--full` 不带 `start`。
+- **板块维度不在这六个里**：`industry_fund_flow`（`board_fund_flow`）按整板块一次取回，
+  不带代码，但必须显式带 `board_type=industry` + 分页参数（`FIXED_PARAMS`）。
+  该工具默认虽然也是行业，默认值却随时可能被上游挪走——DEC-018 要求口径写进请求，
+  不写进假设。
 - 单只失败不拖垮整轮：成功的照常落库，状态记 `degraded`，`detail` 只报**只数**。
 - 隐私：代码要发给本机 peer 才能取行情，但日志与对外输出只出现数量，不出现自选内容。
 

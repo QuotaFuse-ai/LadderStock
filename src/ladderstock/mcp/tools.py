@@ -1,4 +1,5 @@
-"""MCP 工具注册表（只读白名单 + 1 个发起研究 + 3 个复盘类 + 1 个研究进度 + 1 个候选池）。
+"""MCP 工具注册表（只读白名单 + 1 个发起研究 + 3 个复盘类 + 1 个研究进度
++ 1 个候选池 + 1 个行业画像）。
 
 隐私硬约束：交易日志与持仓（`journal.sqlite`）**永不出现在**任何工具的输出 schema 中。
 """
@@ -76,6 +77,27 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     # `candidate_pool`，且没有规则要求前缀（`tests/contract/test_mcp_tools.py` 按清单比对）。
     # 分项「地位」对外叫 `standing`——`position` 是下面的隐私关键字。
     _date_tool("candidate_pool", "当日候选池评分：强度/换手/地位/资金/题材分项与总分", "sentiment"),
+    # R5 新增 1 个（QUOT-143）：申万一级行业五维画像。**只读**、只回放本机缓存，
+    # 域沿用 `sentiment`（与 `ldst industry show` 的信封域一致）。
+    # 入参按**行业名**定位，没有 `date`：行业快照的口径是「本机缓存里的最新一批」，
+    # 各维度自己给出 `trade_date` / `as_of`，拿请求日期冒充数据日期会改口径
+    # （`docs/specs/SPEC-INDUSTRY-METRICS.md` §1.2），所以这里故意不套 `_date_tool`。
+    ToolSpec(
+        "industry_snapshot",
+        "申万一级行业五维画像：景气/资金/估值/动量/拥挤度，缺数显式 null 并给原因",
+        True,
+        {
+            "type": "object",
+            "properties": {
+                "industry": {
+                    "type": "string",
+                    "description": "申万一级行业名（与 config/industry.yaml 一致，如「食品饮料」）",
+                }
+            },
+            "required": ["industry"],
+        },
+        "sentiment",
+    ),
 )
 
 TOOL_NAMES: tuple[str, ...] = tuple(spec.name for spec in TOOL_SPECS)
