@@ -122,6 +122,20 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 盘中 6 时点快照（QUOT-286）：实时报价只给 `schedule` 的 kind=snapshot 用，
+  # **不进 sync.yaml / 不进台账**（机器存的盘面读数 vs 用户自己记的东西分开）。
+  # 无备源：同 peer 没有第二个批量报价工具；取不到就按 status=missing 记，不补跑。
+  - id: tickhub_spot_quote
+    dataset: spot_quote
+    via: tickhub
+    tool: tencent_quote_batch
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   - id: tickhub_dragon_tiger
     dataset: dragon_tiger
     via: tickhub

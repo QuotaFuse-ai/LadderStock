@@ -98,6 +98,27 @@ def test_every_catalog_dataset_has_a_primary_record() -> None:
         assert primaries.get(name) == binding.tool, f"{name} 缺 {binding.tool} 的 primary 记录"
 
 
+def test_intraday_spot_quote_is_registered_but_not_a_ledger_dataset() -> None:
+    """盘中快照（QUOT-286）：登记在 sources.yaml，但**不进 sync.yaml**。
+
+    进了 sync.yaml 就会被 `ldst sync` 当成要落台账的数据集；实时报价没有「一天一条」
+    的交易日水位，只能按 `sources.yaml` 的实时链路取（`fetch_live`）。
+    """
+    record = _record(_load("sources"), "tickhub_spot_quote")
+    assert record["dataset"] == "spot_quote"
+    assert record["via"] == "tickhub"
+    assert record["tool"] == "tencent_quote_batch"
+    assert record["fallback"] == []
+    assert record["timeout_sec"] == 10
+    assert record["retries"] == 2
+
+    assert "spot_quote" not in _load("sync")["sync"]["datasets"]
+    binding = owner_of("spot_quote")
+    assert binding.peer == "tickhub"
+    assert binding.mode == "replace"
+    assert binding.watermark_field == "timestamp"
+
+
 # --------------------------------------------------------------------------- #
 # 2. 回归：把 theme_news 改回旧的不一致状态，必须报红
 # --------------------------------------------------------------------------- #

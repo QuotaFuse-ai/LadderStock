@@ -13,6 +13,38 @@ jobs:
     enabled: true
     channel: console
     message: 盘前提醒：核对今日盯盘阈值、昨日晋级率与自选池，09:25 前把下单计划定下来
+  # 盘中 6 时点快照（QUOT-286）：只读 peer 的 `spot_quote` / 昨日涨停池 / 情绪，
+  # 落 `data/intraday/<date>/<HHMM>.json`（只创建不覆盖），窗口外记 skipped 不补跑。
+  - id: snapshot_0925
+    name: 09:25 竞价快照
+    kind: snapshot
+    trigger: "09:25"
+    enabled: true
+  - id: snapshot_0935
+    name: 09:35 开盘快照
+    kind: snapshot
+    trigger: "09:35"
+    enabled: true
+  - id: snapshot_1000
+    name: 10:00 盘中快照
+    kind: snapshot
+    trigger: "10:00"
+    enabled: true
+  - id: snapshot_1130
+    name: 11:30 午盘快照
+    kind: snapshot
+    trigger: "11:30"
+    enabled: true
+  - id: snapshot_1400
+    name: 14:00 午后快照
+    kind: snapshot
+    trigger: "14:00"
+    enabled: true
+  - id: snapshot_1500
+    name: 15:00 收盘快照
+    kind: snapshot
+    trigger: "15:00"
+    enabled: true
   - id: close_reconcile
     name: 15:05 收盘对账
     kind: reconcile

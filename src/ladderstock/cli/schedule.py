@@ -1,14 +1,16 @@
 """`ldst schedule list|run`：定时任务表（APScheduler）与单轮 tick。
 
 调度表落 `config/schedule.yaml`（JSON Schema 校验，`ldst config validate` 一并检查），
-默认两条：**09:05 盘前提醒**（notify）与 **15:05 收盘对账**（reconcile）。
+默认 **09:05 盘前提醒**（notify）、**盘中 6 时点快照**（snapshot，QUOT-286）与
+**15:05 收盘对账**（reconcile）。
 
 边界（DEC-006 / DEC-004）：
 
-- 任务只跑本机动作（发本机通知、对账本地已落盘数据），不新增采集、不直连行情站点；
+- 任务只跑本机动作（发本机通知、对账本地已落盘数据、按治理链路取 peer 读数）；
 - 单个任务失败只记 `degraded` / `skipped`，不拖垮整轮、不中断调度器；
 - `schedule run --once` 跑一轮就退出（冒烟、手动补跑都靠它）；不带 `--once` 是长驻
   调度器，按 `scheduler.timezone` 的本地时间触发，Ctrl+C 优雅退出。
+- snapshot 的时点窗口在 `core.intraday` 判定：窗口外只记 `skipped`，**不补跑**。
 """
 
 from __future__ import annotations
@@ -42,6 +44,48 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "enabled": True,
         "channel": notifier.CHANNEL_CONSOLE,
         "message": "盘前提醒：核对今日盯盘阈值、昨日晋级率与自选池，09:25 前把下单计划定下来",
+    },
+    {
+        "id": "snapshot_0925",
+        "name": "09:25 竞价快照",
+        "kind": "snapshot",
+        "trigger": "09:25",
+        "enabled": True,
+    },
+    {
+        "id": "snapshot_0935",
+        "name": "09:35 开盘快照",
+        "kind": "snapshot",
+        "trigger": "09:35",
+        "enabled": True,
+    },
+    {
+        "id": "snapshot_1000",
+        "name": "10:00 盘中快照",
+        "kind": "snapshot",
+        "trigger": "10:00",
+        "enabled": True,
+    },
+    {
+        "id": "snapshot_1130",
+        "name": "11:30 午盘快照",
+        "kind": "snapshot",
+        "trigger": "11:30",
+        "enabled": True,
+    },
+    {
+        "id": "snapshot_1400",
+        "name": "14:00 午后快照",
+        "kind": "snapshot",
+        "trigger": "14:00",
+        "enabled": True,
+    },
+    {
+        "id": "snapshot_1500",
+        "name": "15:00 收盘快照",
+        "kind": "snapshot",
+        "trigger": "15:00",
+        "enabled": True,
     },
     {
         "id": "close_reconcile",
@@ -97,8 +141,8 @@ def _structural_problems(data: Mapping[str, Any]) -> list[str]:
                 problems.append(f"{where}/trigger: 需要 HH:MM")
         elif "trigger" in job:
             problems.append(f"{where}/trigger: 需要 HH:MM")
-        if job.get("kind") not in ("notify", "reconcile"):
-            problems.append(f"{where}/kind: 只支持 notify / reconcile")
+        if job.get("kind") not in ("notify", "reconcile", "snapshot"):
+            problems.append(f"{where}/kind: 只支持 notify / reconcile / snapshot")
     return problems
 
 
@@ -219,8 +263,19 @@ def _run_reconcile(day: date | None = None) -> dict[str, Any]:
     }
 
 
-def run_job(job: Mapping[str, Any]) -> dict[str, Any]:
-    """执行一条任务；任何失败都折成结果字段，不向上抛（调度器要活着）。"""
+def run_job(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """执行一条任务；任何失败都折成结果字段，不向上抛（调度器要活着）。
+
+    `now` / `timezone` 只给 snapshot 用：时点窗口按调度表的本地时间判定，
+    测试可注入固定时刻（不靠系统时钟碰运气）。
+    """
     started = datetime.now()
     result: dict[str, Any] = {
         "id": job.get("id"),
@@ -242,6 +297,18 @@ def run_job(job: Mapping[str, Any]) -> dict[str, Any]:
             )
         elif kind == "reconcile":
             result.update(_run_reconcile())
+        elif kind == "snapshot":
+            from ladderstock.core import intraday
+
+            result.update(
+                intraday.run_slot(
+                    str(job.get("trigger") or ""),
+                    now=now,
+                    timezone=timezone,
+                    root=root,
+                    registry=registry,
+                )
+            )
         else:
             result.update(status="failed", detail=f"未知任务类型 {kind!r}")
     except Exception as exc:  # noqa: BLE001 - 单条任务失败不拖垮整轮
@@ -251,8 +318,8 @@ def run_job(job: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _run_job_logged(job: Mapping[str, Any]) -> None:
-    outcome = run_job(job)
+def _run_job_logged(job: Mapping[str, Any], *, timezone: str | None = None) -> None:
+    outcome = run_job(job, timezone=timezone)
     error(
         f"定时任务 {outcome.get('id')}（{outcome.get('trigger')}）"
         f"-> {outcome.get('status')}：{outcome.get('detail')}"
@@ -293,6 +360,7 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
             id=str(job.get("id")),
             name=str(job.get("name")),
             args=[job],
+            kwargs={"timezone": timezone},
             replace_existing=True,
         )
     error(
@@ -378,7 +446,7 @@ def schedule_run(
         start_daemon(table, enabled)
         return
 
-    results = [run_job(row) for row in enabled]
+    results = [run_job(row, timezone=table["scheduler"]["timezone"]) for row in enabled]
     payload: dict[str, Any] = {
         "ok": True,
         "config": source,

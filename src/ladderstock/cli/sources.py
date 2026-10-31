@@ -79,7 +79,12 @@ def _chain_rows(
     illegal = False
     for dataset in datasets:
         try:
-            specs = registry.chain(dataset)
+            # 实时类数据集（`spot_quote`）不登记在 sync.yaml，链路只来自 sources.yaml
+            specs = (
+                registry.chain(dataset)
+                if dataset in registry.datasets
+                else registry.source_chain(dataset)
+            )
         except LadderStockError as exc:
             illegal = True
             rows.append({"dataset": dataset, "ok": False, "chain": "-", "detail": exc.message})

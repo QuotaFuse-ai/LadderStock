@@ -26,6 +26,7 @@ TickHub-CN 的原始返回（README §envelope）不是 `DataEnvelope`，而是�
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -82,6 +83,9 @@ ROW_SHAPES: dict[str, RowShape] = {
     "industry_fund_flow": RowShape("items", require_code=False),
     # 备源：盘后全市场包，一天一个市场，行内自带 code/date
     "_tdx_daily_package": RowShape("rows"),
+    # 盘中快照（QUOT-286）：`tencent_quote_batch` 的 `quotes` 是按 code 索引的对象，
+    # 取值即记录行（见 `normalize_records` 对 Mapping 的处理）；行内只有 `timestamp`。
+    "spot_quote": RowShape("quotes"),
 }
 
 #: `tdx_daily_package` 是 daily_k 的备源工具，形状按工具名登记（同数据集两种形状）
@@ -235,6 +239,9 @@ def normalize_records(
         return data, header_date
 
     raw_rows = data.get(shape.rows_key)
+    if isinstance(raw_rows, Mapping):
+        # `tencent_quote_batch` 的 `quotes` 是 {code: row}：键只是索引，行本身带 code。
+        raw_rows = list(raw_rows.values())
     if not isinstance(raw_rows, list):
         raise LadderStockError(
             f"{dataset}：{tool} 的 data 里缺记录数组 {shape.rows_key}"
