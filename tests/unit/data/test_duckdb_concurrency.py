@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 import duckdb
@@ -94,48 +95,71 @@ def _wait_ready(proc: subprocess.Popen[str], marker: str) -> None:
 
 
 def _write_child(dataset: str, prefix: str, rows: int) -> str:
-    return f'''
+    """一个「同步进程」的最小形状：写 N 行，成功 0，占用 10，其他一律算未捕获。
+
+    子进程源码用占位符替换而不是嵌套 f-string——`{i}` 留在字符串里会被父层的
+    f-string 吃掉，结果 60 条记录全折叠成 1 行（幂等键相同），测了个寂寞。
+    """
+    template = '''
 import sys
 from ladderstock.data import duckdb_store
 from ladderstock.errors import LadderStockError
 
 records = [
-    {{"code": "{prefix}-{{i}}", "trade_date": "{DAY}", "close": 10.0 + i}}
-    for i in range({rows})
+    {"code": f"__PREFIX__-{i}", "trade_date": "__DAY__", "close": 10.0 + i}
+    for i in range(__ROWS__)
 ]
 try:
-    result = duckdb_store.write_dataset("{dataset}", records, source="fake")
+    result = duckdb_store.write_dataset("__DATASET__", records, source="fake")
 except LadderStockError as exc:
     sys.stderr.write(str(exc))
     sys.exit(exc.code)
 except BaseException as exc:  # noqa: BLE001 - 未捕获异常就是本单要修的洞
-    sys.stderr.write("UNCAUGHT {{type(exc).__name__}}: {{exc}}")
+    sys.stderr.write("UNCAUGHT " + type(exc).__name__ + ": " + str(exc))
     sys.exit(1)
 sys.stdout.write(str(result.rows))
 '''
+    return (
+        template.replace("__PREFIX__", prefix)
+        .replace("__ROWS__", str(rows))
+        .replace("__DAY__", DAY)
+        .replace("__DATASET__", dataset)
+    )
 
 
 # --------------------------------------------------------------------------- #
 # 验收①：并发写不出未捕获异常
 # --------------------------------------------------------------------------- #
 
-def test_three_processes_write_same_db_without_uncaught_errors(tmp_path) -> None:
-    procs = [_popen(_write_child("daily_k", f"p{index}", 60), tmp_path) for index in range(3)]
-    outs = [(p.wait(), p.stdout.read(), p.stderr.read()) for p in procs]
+ROWS_PER_PROCESS = 60
 
-    succeeded = [int(out) for rc, out, _ in outs if rc == 0]
-    busy = [err for rc, _, err in outs if rc == EXIT_DB_BUSY]
+
+def test_three_processes_write_same_db_without_uncaught_errors(tmp_path) -> None:
+    procs = [
+        _popen(_write_child("daily_k", f"p{index}", ROWS_PER_PROCESS), tmp_path)
+        for index in range(3)
+    ]
+    outs = [(p.wait(), p.stdout.read(), p.stderr.read()) for p in procs]
 
     # 只允许两种结局：写进去，或被明确判成「库被占用」
     assert {rc for rc, _, _ in outs} <= {0, EXIT_DB_BUSY}, outs
     for _, _, err in outs:
         assert "UNCAUGHT" not in err and "Traceback" not in err, err
-    assert succeeded, "三个进程全挂着：重试预算不够，不是可交付行为"
-    for err in busy:
-        assert "占用" in err
+    # 开局没人占库，最先连上的那个一定成——全挂着就是重试预算的问题
+    assert any(rc == 0 for rc, _, _ in outs), outs
 
-    # 成功的那些逐行落库，幂等键没被并发打乱
-    assert duckdb_store.dataset_rows("daily_k", root=tmp_path) == sum(succeeded)
+    # 判定不读 stdout：整批要么全落、要么一行没有（一个事务），按 code 前缀清点
+    counts = Counter(
+        str(row["code"]).split("-")[0]
+        for row in duckdb_store.query_dataset("daily_k", root=tmp_path)
+    )
+    for index, (rc, _, err) in enumerate(outs):
+        landed = counts.get(f"p{index}", 0)
+        if rc == 0:
+            assert landed == ROWS_PER_PROCESS, (index, landed, err)
+        else:
+            assert landed == 0, (index, landed)
+    assert sum(counts.values()) == ROWS_PER_PROCESS * sum(1 for rc, _, _ in outs if rc == 0)
 
 
 def test_held_db_reports_busy_instead_of_raw_ioerror(tmp_path) -> None:
