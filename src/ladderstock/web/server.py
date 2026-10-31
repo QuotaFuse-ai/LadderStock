@@ -4,8 +4,10 @@
 
 - **只读**：本模块只注册 GET 路由；没有任何写库/写文件接口。POST 等写方法由
   FastAPI 自动回 405。前端的状态持久化走浏览器 IndexedDB（DEC-001），不经这里。
-  唯一的两个例外各自成模块、各自成前缀：控制面 `/api/control/*`（DEC-014）与
-  研究面 `/api/research/*`（QUOT-275，只有一支续跑 POST）。
+  写面例外各自成模块、各自成前缀：控制面 `/api/control/*`（DEC-014）、
+  研究面 `/api/research/*`（QUOT-275，只有一支续跑 POST）、持仓写面
+  `/api/positions`（DEC-033），以及本机状态面 `/__state/index` 的 POST
+  （QUOT-288，只写前端上报的分片索引，不碰交易数据）。
 - **隐私**：`journal.sqlite` 的内容不进入任何响应；即使复盘 JSON 里混进
   `journal` / `trades` / `positions` / `watchlist` 字段，返回前也会被剥掉。
   仅有的例外都在回环独占的闸门后面、都是**扁平 JSON、不进 `LadderEnvelope`**，
@@ -72,6 +74,8 @@ from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
+from ladderstock.web.state_index import StateIndexPlane
+from ladderstock.web.state_index import build_router as build_state_index_router
 
 REVIEW_SUBDIR = "review"
 #: 周报产物目录（`ldst weekly` 落盘，QUOT-149）：`<data_dir>/weekly/<week>.json`
@@ -1298,6 +1302,14 @@ def create_app(
     # 数据，回环独占 + 平面 JSON（`radar._positions_guard`，同 DEC-015 的日志面）。
     radar = radar_plane if radar_plane is not None else RadarPlane(data_root=root)
     app.include_router(build_radar_router(radar))
+
+    # ------------------------------------------ 状态索引面（QUOT-288 / UI-SPEC §12.2 第 2 条）
+    #
+    # `/__state/index` 两个路由（GET 读回 / POST 上报）是前端分片索引的落盘通道，
+    # `ldst state inspect` / `state reset` 靠它。路径不在 `/api/*` 下，所以**必须注册在
+    # SPA 兜底之前**：兜底是 `@app.get`，POST 落到它身上就是生产态那 7 条 405。
+    # 闸门同控制面（回环 + `Host`），同样**不受 `LDST_CONTROL_ENABLED` 影响**。
+    app.include_router(build_state_index_router(StateIndexPlane(data_root=root)))
 
     # ------------------------------------------------------------ 静态看板
 
