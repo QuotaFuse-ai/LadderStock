@@ -7,6 +7,7 @@ import {
   CandlestickChart,
   ChevronDown,
   ClipboardCheck,
+  Flame,
   Gauge,
   Home,
   Layers,
@@ -112,7 +113,10 @@ const NAV_SECTIONS: NavSection[] = [
     key: 'validate',
     label: '验证',
     icon: ClipboardCheck,
-    pages: [{ to: '/validate', label: '验证', icon: ClipboardCheck }],
+    pages: [
+      { to: '/validate', label: '验证', icon: ClipboardCheck },
+      { to: '/limit-up', label: '涨停样本', icon: Flame },
+    ],
   },
 ]
 
