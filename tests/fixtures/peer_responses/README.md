@@ -13,5 +13,19 @@ R5 产业研究新增的四只（`sw_industry_history` / `eastmoney_finance_indi
 - `meta.trace_id` → `trace-fixture-<序号>`；
 - 记录数组最多留 3 行；`meta.count` 保留上游原值，所以可能与数组长度不等。
 
+## 例外：`tencent_quote_batch.json`（QUOT-286）
+
+盘中的 6 时点快照要的是**当场**报价，不能等到下一个交易日再补抓，所以这份不是
+`th-cn tool call` 的整包原文，而是按 TickHub-CN 文档与源码拼出来的等价形状：
+
+- 外层 `{total, succeeded, failed, quotes, failures}` 来自
+  `datasources/quotes.py:tencent_quote_batch` 的实现（`quotes` 是 **`{code: row}`
+  对象**，不是数组）；
+- 行内字段集合与 `_parse_qt_line` / `tencent_quote` 的真实返回一致
+  （`timestamp` 是 `YYYYMMDDHHMMSS`，`limit_up/limit_down` 可能为空）；
+- 代码与昨日涨停池 fixture 对齐，便于快照用例端到端跑通。
+
+拿到真实盘中整包后应原样替换本文件，形状不应变化。
+
 契约测试：`tests/contract/test_tickhub_payload_mapping.py`。
 新增/更换工具必须在这里补一份真实返回，并在 `adapters/tickhub.py:ROW_SHAPES` 登记形状。

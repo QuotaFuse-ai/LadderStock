@@ -115,6 +115,16 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
         date(2026, 10, 31),
         "medium",
     ),
+    # 盘中快照（QUOT-286）：`quotes` 是 {code: row} 对象，展开成行；
+    # 行内没有交易日字段，数据日取 `fetched_at` 的日期（快照本身另有 timestamp 校验）
+    (
+        "tencent_quote_batch.json",
+        "spot_quote",
+        "tencent_quote_batch",
+        3,
+        date(2026, 10, 30),
+        "high",
+    ),
 ]
 
 #: 快照型：整包一行，不硬凑记录

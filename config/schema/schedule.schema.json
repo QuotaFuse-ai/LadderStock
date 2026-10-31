@@ -24,7 +24,7 @@
         "properties": {
           "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
           "name": { "type": "string", "minLength": 1 },
-          "kind": { "enum": ["notify", "reconcile"] },
+          "kind": { "enum": ["notify", "reconcile", "snapshot"] },
           "trigger": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
           "enabled": { "type": "boolean" },
           "channel": { "enum": ["console", "desktop"] },

@@ -47,6 +47,7 @@ TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 
 | `broken_board` | tickhub | `broken_board_pool` | — | replace | `trade_date` |
 | `yesterday_limit_up` | tickhub | `yesterday_limit_up_pool` | — | replace | `trade_date` |
 | `sentiment` | tickhub | `market_sentiment` | — | replace | `trade_date` |
+| `spot_quote` | tickhub | `tencent_quote_batch` | — | replace | `timestamp`（**非**交易日水位） |
 | `dragon_tiger` | tickhub | `dragon_tiger` | `dragon_tiger_backup` | replace | `trade_date` |
 | `dragon_tiger_seats` | tickhub | `dragon_tiger_seats` | — | replace | `trade_date` |
 | `industry_board` | tickhub | `industry_boards` | — | replace | `trade_date` |
@@ -62,6 +63,11 @@ TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 
 
 `theme_news` / `council_memo` 在 `sync.yaml` 里标了 `optional: true`：peer 不可用时
 只记 `status=skipped`，不拖垮整轮同步，也不影响退出码。
+
+**`spot_quote`（盘中 6 时点快照）只在 `sources.yaml` 登记，不进 `sync.yaml`**：
+实时报价没有「一天一条」的交易日水位，进 sync 台账会被 `ldst sync` 当成按日落库的
+数据集。调度侧走 `ProviderRegistry.fetch_live()`（链路只按 `sources.yaml` 组装），
+口径见 `docs/specs/SPEC-INTRADAY-SNAPSHOT.md`。
 
 **R5 产业研究的四路输入**：`sw_industry_map` / `finance_indicators` /
 `valuation_history` 是**逐股**取数（代码池见 §2.3），成分表采用**懒缓存**——
@@ -118,6 +124,7 @@ source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `sour
 | 对象 + 数组 | `eastmoney_finance_indicators`（R5） | `indicators` | `code` | 是（行内日期是 `report_date`） |
 | 对象 + 数组 | `baostock_valuation_history`（R5） | `rows` | `code` | 是 |
 | 对象 + 数组 | `board_fund_flow`（R5） | `items` | — | 否（板块维度，行内 `code` 是板块代码；**行内没有日期**） |
+| 对象（按 code 索引） | `tencent_quote_batch`（`spot_quote`） | `quotes` | — | 是（`quotes` 是 `{code: row}`，展开成行） |
 | 记录列表 | `dragon_tiger` / `ths_limit_up_pool` / `yesterday_limit_up_pool` / `ths_hot_rank` / `eastmoney_hot_rank` | 整个 `data` | — | 原样成行 |
 | 对象快照 | `market_sentiment` | —（未登记形状） | — | 整包落**一行**，嵌套 `leaders` 不展开 |
 

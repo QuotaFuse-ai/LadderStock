@@ -764,7 +764,6 @@ class ProviderRegistry:
 
     def chain(self, dataset: str) -> list[SourceSpec]:
         """主工具 → 同 peer 备工具（顺序来自 sync.yaml，缺省用 sources.yaml 的 fallback）。"""
-        binding = owner_of(dataset)
         declared = self.datasets.get(dataset)
         if declared is None:
             raise LadderStockError(f"{dataset} 未在 config/sync.yaml 声明", EXIT_CONFIG)
@@ -774,6 +773,26 @@ class ProviderRegistry:
         ids = [primary_id, *(str(x) for x in (declared.get("fallback") or []))]
         if len(ids) == 1:
             ids.extend(self.specs[primary_id].fallback if primary_id in self.specs else ())
+        return self._validated_chain(dataset, ids)
+
+    def source_chain(self, dataset: str) -> list[SourceSpec]:
+        """只按 `sources.yaml` 的主备组装链路（用于**不进 sync 台账**的数据集）。
+
+        盘中快照（`spot_quote`）这类数据集不在 `sync.yaml` 里——进了 sync.yaml 就会
+        被 `ldst sync` 当作要落台账的数据集。链路来源不同，主备同 peer 的校验完全一样。
+        """
+        primary = next(
+            (spec for spec in self.specs.values() if spec.dataset == dataset and spec.primary),
+            None,
+        )
+        if primary is None:
+            raise LadderStockError(
+                f"{dataset} 在 sources.yaml 里没有 primary 记录", EXIT_CONFIG
+            )
+        return self._validated_chain(dataset, [primary.id, *primary.fallback])
+
+    def _validated_chain(self, dataset: str, ids: list[str]) -> list[SourceSpec]:
+        binding = owner_of(dataset)
         specs: list[SourceSpec] = []
         for sid in ids:
             spec = self.specs.get(sid)
@@ -801,8 +820,41 @@ class ProviderRegistry:
         allow_cache: bool = True,
     ) -> FetchOutcome:
         """按治理规则取数并返回带轨迹的结果。不可用且无缓存时抛 `SourceUnavailable`。"""
+        return self._fetch(
+            dataset,
+            self.chain(dataset),
+            trade_date=trade_date,
+            params=params,
+            allow_cache=allow_cache,
+        )
+
+    def fetch_live(
+        self,
+        dataset: str,
+        *,
+        trade_date: date | None = None,
+        params: dict[str, Any] | None = None,
+        allow_cache: bool = True,
+    ) -> FetchOutcome:
+        """同 `fetch`，但链路按 `sources.yaml` 的登记组装（数据集不在 sync.yaml）。"""
+        return self._fetch(
+            dataset,
+            self.source_chain(dataset),
+            trade_date=trade_date,
+            params=params,
+            allow_cache=allow_cache,
+        )
+
+    def _fetch(
+        self,
+        dataset: str,
+        chain: list[SourceSpec],
+        *,
+        trade_date: date | None = None,
+        params: dict[str, Any] | None = None,
+        allow_cache: bool = True,
+    ) -> FetchOutcome:
         owner_of(dataset)
-        chain = self.chain(dataset)
         key = (dataset, trade_date.isoformat() if trade_date else "", _key(params or {}))
         owner = False
         with self._guard:

@@ -282,6 +282,12 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
            note="晋级率输入"),
         _b("sentiment", "tickhub", "market_sentiment", "replace", "trade_date",
            note="情绪温度 / 晋级率，程序计算，AI 不改数"),
+        # 盘中 6 时点快照（QUOT-286）：只给 `schedule` 的 kind=snapshot 取现价，
+        # 不进 `sync.yaml`（快照不落台账）。`timestamp` 是行内行情时间
+        # （Tencent 的 YYYYMMDDHHMMSS），**不是交易日水位**——实时报价没有「一天
+        # 一条」的水位，硬套 `trade_date` 会让它看起来像可按日增量同步的数据集。
+        _b("spot_quote", "tickhub", "tencent_quote_batch", "replace", "timestamp",
+           note="实时批量报价（盘中快照用）；不进 sync 台账，timestamp 不作交易日水位"),
         _b("dragon_tiger", "tickhub", "dragon_tiger", "replace", "trade_date",
            ("dragon_tiger_backup",), "备源为交易所官方榜"),
         _b("dragon_tiger_seats", "tickhub", "dragon_tiger_seats", "replace", "trade_date",
