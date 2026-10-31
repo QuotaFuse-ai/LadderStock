@@ -4,6 +4,8 @@
 
 - **只读**：本模块只注册 GET 路由；没有任何写库/写文件接口。POST 等写方法由
   FastAPI 自动回 405。前端的状态持久化走浏览器 IndexedDB（DEC-001），不经这里。
+  唯一的两个例外各自成模块、各自成前缀：控制面 `/api/control/*`（DEC-014）与
+  研究面 `/api/research/*`（QUOT-275，只有一支续跑 POST）。
 - **隐私**：`journal.sqlite` 的内容不进入任何响应；即使复盘 JSON 里混进
   `journal` / `trades` / `positions` / `watchlist` 字段，返回前也会被剥掉。
   唯一例外是 DEC-015 的 `GET /api/journal/stats`：**扁平 JSON、回环独占、只放聚合
@@ -55,6 +57,8 @@ from ladderstock.web.control import (
     is_control_path,
     is_loopback_host,
 )
+from ladderstock.web.research import ResearchPlane
+from ladderstock.web.research import build_router as build_research_router
 
 REVIEW_SUBDIR = "review"
 STATE_INDEX = Path("state") / "frontend-index.json"
@@ -457,8 +461,10 @@ def create_app(
     data_root: Path | None = None,
     dist_dir: Path | None = None,
     control_plane: Any | None = None,
+    research_plane: Any | None = None,
 ) -> FastAPI:
-    """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` 可注入，便于测试。
+    """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
+    可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -746,6 +752,14 @@ def create_app(
         plane = ControlPlane(data_root=root)
     if plane is not None:
         app.include_router(build_router(plane))
+
+    # ------------------------------------------------ 研究面（QUOT-275 / SPEC-RESEARCH-PAGES §2）
+    #
+    # `/api/research/*` 三接口：六段只读视图、单段续跑、任务进度。字段照 SPEC 定稿，
+    # 前端不改字段即可从演示态切真实通道。闸门同控制面（回环 + Host + 写方法来源证据），
+    # 但**不受 `LDST_CONTROL_ENABLED` 影响**——读取属于数据面。
+    research = research_plane if research_plane is not None else ResearchPlane(data_root=root)
+    app.include_router(build_research_router(research))
 
     # ------------------------------------------------------------ 静态看板
 
