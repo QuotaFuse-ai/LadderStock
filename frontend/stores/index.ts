@@ -12,6 +12,9 @@ export {
 } from './validationDraft'
 export type { ValidationCondition, ValidationDraftState } from './validationDraft'
 
+export { useWatchSettings } from './watchSettings'
+export type { WatchSettingsState, WatchSettingsValues } from './watchSettings'
+
 export {
   STORE_META_LIST,
   STATE_BACKEND,
@@ -24,6 +27,12 @@ export type { StoreMeta } from './registry'
 import { useWatchSnapshot } from './watchSnapshot'
 import { useReviewDraft } from './reviewDraft'
 import { useValidationDraft } from './validationDraft'
+import { useWatchSettings } from './watchSettings'
 
 /** 供启动流程 / 测试一次性拿到全部分片。 */
-export const ALL_STORES = [useWatchSnapshot, useReviewDraft, useValidationDraft] as const
+export const ALL_STORES = [
+  useWatchSnapshot,
+  useReviewDraft,
+  useValidationDraft,
+  useWatchSettings,
+] as const

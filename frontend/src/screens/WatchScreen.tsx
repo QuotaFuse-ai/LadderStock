@@ -8,6 +8,15 @@ import {
   type SnapshotRow,
 } from '../../stores/watchSnapshot'
 import {
+  COOLDOWN_MAX_SEC,
+  COOLDOWN_MIN_SEC,
+  THRESHOLD_MAX,
+  THRESHOLD_MIN,
+  isValidCooldownSec,
+  isValidThresholdPct,
+  useWatchSettings,
+} from '../../stores/watchSettings'
+import {
   describeFreshness,
   evaluateSnapshotFreshness,
   localDateIso,
@@ -39,13 +48,10 @@ import {
  * 只展示「可信」的快照：超过 TTL、交易日变更、本机时间异常时旧值一律不渲染，
  * 只说明原因并给重取入口 —— 宁可空着，也不让人按过期数据做决策。
  *
- * 阈值属于会话偏好（§3.2 遗留决策点）：本轮只存内存，卡上明示「本次会话有效」，
- * 不写 IndexedDB、不改 `config/state.yaml`。
+ * 阈值是用户偏好（DEC-037）：落在 `watch_settings` 分片，刷新 / 重启 / 多窗口共用；
+ * 越界输入仍然拒绝保存，不会因为持久化放过非法值。
  */
 
-const DEFAULT_THRESHOLD_PCT = 3.0
-const THRESHOLD_MIN = 1.0
-const THRESHOLD_MAX = 10.0
 const SCAN_WINDOW_LABEL = '3 分钟（固定）'
 
 type LevelTone = 'danger' | 'warn' | 'flat'
@@ -178,15 +184,24 @@ export default function WatchScreen() {
   )
   const trustedRows = freshness.needsRefetch ? [] : storeRows
 
-  // ---- 阈值（本次会话有效） ----
-  const [pctText, setPctText] = useState(DEFAULT_THRESHOLD_PCT.toFixed(1))
-  const [cooldownText, setCooldownText] = useState('60')
-  const [detectOpen, setDetectOpen] = useState(true)
+  // ---- 阈值设置（watch_settings：刷新 / 重启 / 多窗口共用） ----
+  const thresholdPct = useWatchSettings((state) => state.thresholdPct)
+  const cooldownSec = useWatchSettings((state) => state.cooldownSec)
+  const detectOpen = useWatchSettings((state) => state.detectOpen)
+  const setThresholdPct = useWatchSettings((state) => state.setThresholdPct)
+  const setCooldownSec = useWatchSettings((state) => state.setCooldownSec)
+  const setDetectOpen = useWatchSettings((state) => state.setDetectOpen)
+
+  // 输入框保留用户原样文本（含中间态 / 非法值），只有通过校验才写分片；
+  // 失焦回到分片里的已保存值，避免「输入一半被改写」。
+  const [thresholdDraft, setThresholdDraft] = useState<string | null>(null)
+  const [cooldownDraft, setCooldownDraft] = useState<string | null>(null)
+  const pctText = thresholdDraft ?? thresholdPct.toFixed(1)
+  const cooldownText = cooldownDraft ?? String(cooldownSec)
   const parsedPct = Number(pctText)
-  const pctValid = Number.isFinite(parsedPct) && parsedPct >= THRESHOLD_MIN && parsedPct <= THRESHOLD_MAX
-  const thresholdPct = pctValid ? parsedPct : DEFAULT_THRESHOLD_PCT
+  const pctValid = pctText.trim() !== '' && isValidThresholdPct(parsedPct)
   const parsedCooldown = Number(cooldownText)
-  const cooldownValid = Number.isFinite(parsedCooldown) && parsedCooldown >= 0 && parsedCooldown <= 600
+  const cooldownValid = cooldownText.trim() !== '' && isValidCooldownSec(parsedCooldown)
   const columns = useMemo(() => buildColumns(thresholdPct), [thresholdPct])
 
   const [confirmClear, setConfirmClear] = useState(false)
@@ -406,8 +421,7 @@ export default function WatchScreen() {
         <SectionCard
           className="desk:col-span-4"
           title="阈值设置"
-          subtitle="改动即时用于本次会话"
-          actions={<Badge tone="info">本次会话有效</Badge>}
+          subtitle="改动即时保存到本机 · 刷新 / 重启 / 多窗口共用"
         >
           <div className="flex flex-col gap-3">
             <Field
@@ -425,7 +439,12 @@ export default function WatchScreen() {
                 max={THRESHOLD_MAX}
                 value={pctText}
                 invalid={!pctValid}
-                onChange={(event) => setPctText(event.target.value)}
+                onChange={(event) => {
+                  const text = event.target.value
+                  setThresholdDraft(text)
+                  if (text.trim() !== '') setThresholdPct(Number(text))
+                }}
+                onBlur={() => setThresholdDraft(null)}
               />
             </Field>
 
@@ -447,23 +466,28 @@ export default function WatchScreen() {
               label="同一标的冷却时间（秒）"
               htmlFor="watch-cooldown"
               hint="同一标的同类型信号在冷却期内合并为一条"
-              error={cooldownValid ? null : '冷却时间需在 0–600 秒之间'}
+              error={cooldownValid ? null : `冷却时间需在 ${COOLDOWN_MIN_SEC}–${COOLDOWN_MAX_SEC} 秒之间`}
             >
               <Input
                 id="watch-cooldown"
                 type="number"
                 inputMode="numeric"
                 step="30"
-                min={0}
-                max={600}
+                min={COOLDOWN_MIN_SEC}
+                max={COOLDOWN_MAX_SEC}
                 value={cooldownText}
                 invalid={!cooldownValid}
-                onChange={(event) => setCooldownText(event.target.value)}
+                onChange={(event) => {
+                  const text = event.target.value
+                  setCooldownDraft(text)
+                  if (text.trim() !== '') setCooldownSec(Number(text))
+                }}
+                onBlur={() => setCooldownDraft(null)}
               />
             </Field>
 
             <p className="border-t border-border pt-3 text-caption text-text-muted">
-              阈值不落盘：刷新后回到默认 3.0%。要跨刷新保留需新增 watch_settings 分片（另行决策，本轮不加）。
+              设置保存在本机 IndexedDB（watch_settings），刷新、重启与多窗口共用同一份；越界输入不会被保存。
             </p>
           </div>
         </SectionCard>

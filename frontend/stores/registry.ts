@@ -9,7 +9,7 @@
 import manifest from './manifest.json'
 import { SCHEMA_VERSION } from '../persist/migrate'
 
-export type StoreKind = 'draft' | 'snapshot'
+export type StoreKind = 'draft' | 'snapshot' | 'settings'
 
 export interface StoreMeta {
   id: string
