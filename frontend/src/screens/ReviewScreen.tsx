@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { RefreshCw, Trash2 } from 'lucide-react'
+import { Copy, FileText, RefreshCw, Trash2 } from 'lucide-react'
 
 import {
   api,
@@ -22,6 +22,7 @@ import {
   Banner,
   Button,
   ConfirmDialog,
+  EmptyState,
   ErrorBlock,
   Field,
   Input,
@@ -31,6 +32,7 @@ import {
   Textarea,
   type SectionTone,
 } from '../components/ui'
+import { KV_STORE, idbGet, idbSet } from '../../persist/indexeddb'
 import {
   REVIEW_SECTIONS,
   draftCharCount,
@@ -67,6 +69,46 @@ const FAILURE_KIND_LABEL: Record<string, string> = {
 }
 
 const NO_FAILURES: ReviewAiFailure[] = []
+
+/** 离线回放的 IndexedDB 快照：只存复盘正文与程序指标，不含「我的判断」。 */
+const CACHE_KEY = 'review_snapshot_cache_v1'
+const CACHE_SCHEMA = 1
+
+interface ReviewCache {
+  schema: typeof CACHE_SCHEMA
+  date: string
+  fetchedAt: string
+  review: Record<string, unknown>
+  sentiment: SentimentResult | null
+}
+
+function isReviewCache(value: unknown): value is ReviewCache {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Partial<ReviewCache>
+  return (
+    item.schema === CACHE_SCHEMA &&
+    typeof item.date === 'string' &&
+    typeof item.fetchedAt === 'string' &&
+    !!item.review &&
+    typeof item.review === 'object'
+  )
+}
+
+interface SectionTally {
+  failed: number
+  degraded: number
+}
+
+function tallySections(sections: AiSection[]): SectionTally {
+  return sections.reduce<SectionTally>(
+    (tally, section) => {
+      if (section.status === 'failed') tally.failed += 1
+      if (section.status === 'degraded') tally.degraded += 1
+      return tally
+    },
+    { failed: 0, degraded: 0 },
+  )
+}
 
 function summariseFailureKinds(failures: ReviewAiFailure[]): string {
   return [...new Set(failures.map((failure) => FAILURE_KIND_LABEL[failure.kind] ?? failure.kind))].join(
@@ -270,6 +312,40 @@ export default function ReviewScreen() {
 
   const [confirmReset, setConfirmReset] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [cached, setCached] = useState<ReviewCache | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  // 离线回放：只读取本机 IndexedDB 里的复盘快照（正文 + 程序指标）
+  useEffect(() => {
+    let alive = true
+    idbGet<unknown>(KV_STORE, CACHE_KEY)
+      .then((value) => {
+        if (alive && isReviewCache(value)) setCached(value)
+      })
+      .catch(() => {
+        /* 无缓存 / IndexedDB 不可用：离线态如实显示「没有可回放的缓存」 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (review.status !== 'ready') return
+    const report = review.data?.payload.review ?? null
+    if (!report) return
+    const entry: ReviewCache = {
+      schema: CACHE_SCHEMA,
+      date: tradeDate,
+      fetchedAt: new Date().toISOString(),
+      review: report,
+      sentiment: sentiment.data?.payload.sentiment ?? null,
+    }
+    setCached(entry)
+    void idbSet(KV_STORE, CACHE_KEY, entry).catch(() => {
+      /* 写缓存失败不影响当前展示，下次成功取数再写 */
+    })
+  }, [review.status, review.data, sentiment.status, sentiment.data, tradeDate])
 
   const reviewData = review.data?.payload.review ?? null
   const aiSections = useMemo(() => parseSections(reviewData), [reviewData])
@@ -286,20 +362,34 @@ export default function ReviewScreen() {
     }
     if (errors.length > 0) return 'partial'
     if (statuses.every((status) => status === 'ready')) {
-      return reviewData === null && total === 0 ? 'empty' : 'normal'
+      if (reviewData === null) return 'empty'
+      // 部分失败的主场景：五段里任一段 failed / degraded 即进入 partial，逐段标注
+      const tally = tallySections(parseSections(reviewData))
+      return tally.failed + tally.degraded > 0 ? 'partial' : 'normal'
     }
     return 'loading'
-  }, [review.status, sentiment.status, reviewData, total]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [review.status, sentiment.status, reviewData]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const state = resolveState(forced, derived)
   const usable = state === 'normal' || state === 'partial'
-  // 生成 / 重试需要本机控制面可达；loading / error / offline 时不假装能跑
+  // 生成 / 重试需要本机控制面可达；offline 只读回放，不假装能跑
   const canRunAi = usable || state === 'empty'
 
-  // 五态下数据一律按「不可用」处理：强制态不依赖后端
-  const viewSections = usable ? aiSections : []
-  const viewHeader = usable ? aiHeader : null
-  const viewSent = usable ? sent : null
+  // 离线回放：只用本机 IndexedDB 快照，日期不符就不冒充当天数据
+  const replay = state === 'offline' && cached && cached.date === tradeDate ? cached : null
+  const viewSections = useMemo(
+    () => (usable ? aiSections : replay ? parseSections(replay.review) : []),
+    [usable, aiSections, replay],
+  )
+  const viewHeader = usable ? aiHeader : replay ? parseHeader(replay.review) : null
+  const viewFailures = useMemo(
+    () => (usable ? aiFailures : replay ? parseAiFailures(replay.review.ai_failures) : NO_FAILURES),
+    [usable, aiFailures, replay],
+  )
+  const viewSent = usable ? sent : replay?.sentiment ?? null
+  const viewTally = useMemo(() => tallySections(viewSections), [viewSections])
+  const firstFailedSection = viewSections.find((section) => section.status === 'failed')?.name ?? null
+  const reviewCommand = `ldst review --date ${tradeDate}`
 
   const sectionMap = useMemo(() => {
     const map = new Map<string, AiSection>()
@@ -307,7 +397,6 @@ export default function ReviewScreen() {
     return map
   }, [viewSections])
 
-  const viewFailures = usable ? aiFailures : NO_FAILURES
   const failureMap = useMemo(() => {
     const map = new Map<string, ReviewAiFailure>()
     viewFailures.forEach((failure) => map.set(failure.section, failure))
@@ -321,16 +410,26 @@ export default function ReviewScreen() {
     return labels
   }, [review.status, sentiment.status])
 
-  const temperature = viewSent?.temperature ?? null
-  const promotionRate = viewSent?.promotion_rate ?? null
-  const gapLevels = viewSent?.gap_levels ?? null
+  // 程序指标不可用时整组按缺失处理：空数组的 `gap_levels` 不是「0 档断层」
+  const sentimentReady = viewSent?.available === true
+  const temperature = sentimentReady ? viewSent?.temperature ?? null : null
+  const promotionRate = sentimentReady ? viewSent?.promotion_rate ?? null : null
+  const gapLevels = sentimentReady ? viewSent?.gap_levels ?? null : null
 
   const summary = useMemo(() => {
-    if (state === 'offline') return '本地服务未连接'
+    if (state === 'offline') {
+      return replay
+        ? `离线 · 缓存回放（取数于 ${formatTime(replay.fetchedAt)}）`
+        : '本地服务未连接 · 没有可回放的缓存'
+    }
     if (state === 'error') return '取数失败'
-    if (state === 'empty') return `${tradeDate} 尚未生成复盘`
+    if (state === 'empty') return `${tradeDate} 尚未生成复盘 · 运行 ${reviewCommand}`
+    if (state === 'partial') {
+      if (failedLabels.length > 0) return `${tradeDate} · 部分数据源不可用`
+      return `${tradeDate} · 五段中 ${formatInt(viewTally.failed)} 段失败 / ${formatInt(viewTally.degraded)} 段降级`
+    }
     return `${tradeDate} · 草稿 ${formatInt(total)} 字 · 最后写入 ${formatTime(updatedAt)}`
-  }, [state, tradeDate, total, updatedAt])
+  }, [state, tradeDate, total, updatedAt, failedLabels.length, viewTally.failed, viewTally.degraded, replay, reviewCommand])
 
   const handleReset = () => {
     reset()
@@ -338,10 +437,29 @@ export default function ReviewScreen() {
     setNotice('本机复盘草稿已清空')
   }
 
+  const copyCommand = () => {
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+    if (!clipboard?.writeText) {
+      setNotice('当前浏览器不允许自动复制，请手动选中命令复制。')
+      return
+    }
+    void clipboard
+      .writeText(reviewCommand)
+      .then(() => {
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 2000)
+      })
+      .catch(() => setNotice('复制失败，请手动选中命令复制。'))
+  }
+
   const focusSection = (name: string) => {
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
     document
       .getElementById(`review-section-${name}`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      ?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
   }
 
   const header = (
@@ -388,10 +506,17 @@ export default function ReviewScreen() {
 
   if (state === 'error') {
     const firstError = requests.map((request) => request.error).find(Boolean)
+    const errorInfo = firstError
+      ? describeApiError(firstError)
+      : {
+          title: '复盘取数失败',
+          detail: '复盘接口没有返回可用数据。恢复后点「重试取数」；本屏不编造任何数字。',
+          code: 'DEMO · ?state=error',
+        }
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ErrorBlock {...describeApiError(firstError)} onRetry={reloadAll} />
+        <ErrorBlock {...errorInfo} onRetry={reloadAll} />
       </div>
     )
   }
@@ -401,27 +526,49 @@ export default function ReviewScreen() {
       {header}
 
       {state === 'offline' && <OfflineBanner onRetry={reloadAll} />}
-      {state === 'partial' && (
+      {state === 'offline' && replay && (
+        <Banner tone="warn" title="缓存回放（只读）">
+          本机服务未连接，以下为本机 IndexedDB 缓存的复盘快照 · 生成于{' '}
+          {formatTime(viewHeader?.generatedAt ?? null)} · 取数于 {formatTime(replay.fetchedAt)}。
+          快照只含复盘正文与程序指标，不含「我的判断」；恢复连接后点「刷新」取最新。
+        </Banner>
+      )}
+      {state === 'offline' && !replay && (
+        <Banner tone="warn" title="没有可回放的缓存">
+          本机服务未连接，IndexedDB 里也没有 {tradeDate} 的复盘快照。先在终端确认{' '}
+          <code className="ldst-num">ldst run</code> 是否在运行，恢复后点「刷新」。
+        </Banner>
+      )}
+      {state === 'partial' && failedLabels.length > 0 && (
         <ErrorBlock
           variant="banner"
           title="部分数据源不可用"
           detail={`${failedLabels.join('、')} 取数失败；其余内容照常展示，缺失处以 ${MISSING} 标注。草稿仍可继续写。`}
           onRetry={reloadAll}
-          retryLabel="重试该段"
+          retryLabel="重试取数"
         />
       )}
-
-      {usable && viewFailures.length > 0 && (
+      {state === 'partial' && failedLabels.length === 0 && viewTally.failed + viewTally.degraded > 0 && (
         <Banner
-          tone="danger"
-          title={`${REVIEW_SECTIONS.length} 段中 ${viewFailures.length} 段 AI 生成失败（${summariseFailureKinds(viewFailures)}）`}
+          tone={viewTally.failed > 0 ? 'danger' : 'warn'}
+          title={`五段中 ${formatInt(viewTally.failed)} 段失败、${formatInt(viewTally.degraded)} 段降级${
+            viewFailures.length > 0 ? `（${summariseFailureKinds(viewFailures)}）` : ''
+          }`}
           action={
-            <Button variant="secondary" onClick={() => focusSection(viewFailures[0].section)}>
-              定位首个失败段
-            </Button>
+            firstFailedSection ? (
+              <Button variant="secondary" onClick={() => focusSection(firstFailedSection)}>
+                定位首个失败段
+              </Button>
+            ) : undefined
           }
         >
-          失败原因与可执行操作见对应段；程序指标与你的判断不受影响，草稿仍可继续写。
+          每段已单独标注：失败段保留程序指标并可就地重跑，降级段保留降级说明；其余段落照常渲染。
+          「我的判断」草稿不受影响。
+        </Banner>
+      )}
+      {state === 'partial' && failedLabels.length === 0 && viewTally.failed + viewTally.degraded === 0 && (
+        <Banner tone="warn" title="部分失败 · 五段各自独立">
+          某一数据源或某一段不可用时进入本态：该段单独标注失败 / 降级，其余段落照常渲染，不整屏报错。
         </Banner>
       )}
 
@@ -473,16 +620,44 @@ export default function ReviewScreen() {
       )}
 
       {state === 'empty' && (
-        <ErrorBlock
-          variant="banner"
-          title="该交易日还没有复盘"
-          detail="先同步数据再生成复盘；也可以先写判断，正文会存本机（IndexedDB），不联网、不上传。"
-          onRetry={reloadAll}
-          retryLabel="重新检查"
-        />
+        <SectionCard
+          title="这一天还没有复盘"
+          subtitle={`数据面：ldst review 产物（只读）· ${tradeDate}`}
+          bodyClassName="p-0"
+          actions={<Badge tone="neutral">待生成</Badge>}
+        >
+          <EmptyState
+            icon={<FileText aria-hidden="true" />}
+            title={`${tradeDate} 尚未生成复盘`}
+            description="在终端运行下面这条命令生成五段复盘（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），落盘后回到本页点「重新检查」。未配置模型凭据时，五段会以「降级完成」落盘，程序指标照常保留。"
+            action={
+              <div className="flex w-full max-w-[720px] flex-col items-center gap-2">
+                <code className="ldst-num w-full break-all rounded border border-border bg-surface-3 px-3 py-2 text-left text-caption text-text-secondary">
+                  {reviewCommand}
+                </code>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={copyCommand}
+                    leadingIcon={<Copy className="size-3.5" aria-hidden="true" />}
+                  >
+                    {copied ? '已复制' : '复制命令'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={reloadAll}
+                    leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+                  >
+                    重新检查
+                  </Button>
+                </div>
+              </div>
+            }
+          />
+        </SectionCard>
       )}
 
-      <div className="grid grid-cols-1 gap-4 min-[1024px]:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 desk:grid-cols-3">
         <MetricCard
           label="情绪温度"
           hero
@@ -559,10 +734,21 @@ export default function ReviewScreen() {
                 <>
                   <Badge tone={meta.badge}>{meta.label}</Badge>
                   {payload?.degraded && <Badge tone="warn">降级</Badge>}
+                  {status === 'failed' && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => void startAi('retry', payloadName)}
+                      loading={aiBusy}
+                      disabled={!canRunAi}
+                      disabledReason={canRunAi ? undefined : '本地服务未连接，无法重跑'}
+                    >
+                      {aiBusy ? '重跑中…' : '重跑该段'}
+                    </Button>
+                  )}
                 </>
               }
             >
-              <div className="grid gap-4 min-[1100px]:grid-cols-[2fr_3fr]">
+              <div className="grid gap-4 desk:grid-cols-[2fr_3fr]">
                 <div className="rounded border border-border bg-surface-2 p-3">
                   <div className="mb-1.5 flex items-center justify-between gap-2">
                     <span className="text-caption font-medium text-text-secondary">AI 叙述</span>
@@ -602,11 +788,22 @@ export default function ReviewScreen() {
                       )}
                     </div>
                   ) : status === 'failed' ? (
-                    <ErrorBlock
-                      variant="inline"
-                      title="该段生成失败"
-                      detail={(payload?.notes ?? []).join(' ') || 'AI 未返回内容；程序指标与我的判断不受影响。'}
-                    />
+                    <div className="flex flex-col gap-2">
+                      <ErrorBlock
+                        variant="inline"
+                        title="该段生成失败"
+                        detail={
+                          (payload?.notes ?? []).join(' ') ||
+                          'AI 未返回内容；程序指标与我的判断不受影响。'
+                        }
+                        onRetry={canRunAi ? () => void startAi('retry', payloadName) : undefined}
+                        retryLabel={aiBusy ? 'AI 重跑中…' : '重跑该段'}
+                      />
+                      <p className="text-caption text-text-muted">
+                        可重跑：只重跑本段，其余失败段与已完成段落保留；也可运行{' '}
+                        <code className="ldst-num">{reviewCommand}</code> 整份重生成。
+                      </p>
+                    </div>
                   ) : payload && payload.narrative.length > 0 ? (
                     <div className="flex flex-col gap-1.5">
                       {payload.narrative.map((line) => (
@@ -622,7 +819,8 @@ export default function ReviewScreen() {
                     </div>
                   ) : (
                     <p className="text-body leading-body text-text-muted">
-                      该段还没有 AI 叙述（待生成）。{section.hint}。
+                      该段还没有 AI 叙述（待生成）。运行 <code className="ldst-num">{reviewCommand}</code>{' '}
+                      生成五段复盘，或点右上「重新生成」。{section.hint}。
                     </p>
                   )}
                 </div>
