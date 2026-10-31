@@ -20,6 +20,7 @@ runner = CliRunner()
 HELP_GROUPS = (
     "run",
     "review",
+    "weekly",
     "validate",
     "sentiment",
     "ladder",

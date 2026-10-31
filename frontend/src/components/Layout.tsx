@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-
 import {
   BarChart3,
   CalendarDays,
+  CalendarRange,
   CandlestickChart,
   ChevronDown,
   ClipboardCheck,
@@ -92,6 +93,8 @@ const NAV_SECTIONS: NavSection[] = [
     // 「每日复盘」是 P1 留位（🟡），本轮不建入口；候选池是复盘的产出
     pages: [
       { to: '/review', label: '情绪复盘', icon: NotebookPen },
+      // R11 周度复盘（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
+      { to: '/weekly', label: '周度复盘', icon: CalendarRange },
       { to: '/pool', label: '候选池', icon: ListChecks },
     ],
   },

@@ -29,11 +29,16 @@
 > `ldst events --month YYYY-MM`（事件日历），行号续编 44–45。加它之后：全表 **45 行**、
 > 叶子 **43** 个、`scripts/check_commands.py` 实测可执行 argv **42** 条。见 §D″。
 >
+> **R11 增量（2026-10-31）**：基线 31 条口径**不变**，在其之上新增 1 条命令
+> `ldst weekly [--week YYYY-Www]`（周度复盘：事实包确定性聚合 + 五段 AI 叙述，口径见
+> `docs/specs/SPEC-WEEKLY.md`）。行号续编 44，全表 **44 行**、叶子 **42** 个、
+> `scripts/check_commands.py` 实测可执行 argv **41** 条。见 §A′。
+>
 > **前置约束**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
 ## 0. 总览（31 条）
 
-> 口径说明：本节按 **P0 基线 31 条命令**统计（定稿口径）；下列分组明细展开后为 **35 行**表格、去重 **33 个叶子路径**，对应 `check_commands.py` 矩阵里的 **32 条**可执行 argv（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。§D′ 的 `research` 1 条、§E″ 的 R7 增量 5 条、§D‴ 的 R5 增量 2 条另计，全表 43 行 / 41 叶子 / 40 argv。四套数字的关系见文首「命令计数口径」。
+> 口径说明：本节按 **P0 基线 31 条命令**统计（定稿口径）；下列分组明细展开后为 **35 行**表格、去重 **33 个叶子路径**，对应 `check_commands.py` 矩阵里的 **32 条**可执行 argv（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。§D′ 的 `research` 1 条、§E″ 的 R7 增量 5 条、§D‴ 的 R5 增量 2 条、§A′ 的 R11 增量 1 条另计，全表 44 行 / 42 叶子 / 41 argv。四套数字的关系见文首「命令计数口径」。
 
 | 分组 | 命令 |
 |---|---|
@@ -52,6 +57,7 @@
 | 体检（1） | `doctor` |
 | **R7 增量（5，非 P0 基线）** | `pool`、`position add`、`position list`、`position update`、`position remove` |
 | **R5 增量（2，非 P0 基线）** | `industry list`、`industry show` |
+| **R11 增量（1，非 P0 基线）** | `weekly` |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -66,6 +72,30 @@
 | 7 | `ldst ladder show --date` | 连板天梯与梯队断层 | `--date`、`--output` | 表格 / JSON；数据不可用 6 |
 | 8 | `ldst export --format pdf\|md` | 导出复盘报告 | `--format`、`--date`、`--out` | PDF 失败自动降级 md 并提示 |
 | 9 | `ldst state inspect` | 前端持久化状态摘要（调试） | — | 只读 |
+
+## A′. 周度复盘（R11 增量，1）
+
+> **31 条 P0 基线之外的新增命令**，行号从 44 起接排，不动上面的编号。
+> 口径来源：`docs/specs/SPEC-WEEKLY.md`（聚合算式、周标签契约、退出码、降级规则）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 44 | `ldst weekly` | 周度复盘：把一周的 `state/review` + `state/ai_checkpoint` + `state/validation` 与本机缓存**确定性聚合**成周度事实包，再按五段（情绪 / 资金 / 题材 / 龙虎榜 / 龙头）生成 AI 叙述，落 `data/weekly/<week>.json` + `<week>.md` | `--week YYYY-Www`（也接受 `2026-w44` / `2026-10-28`，缺省本周）、`--force`（已完成段落也重跑）、`--output` | `--output json` 载荷 18 个顶层键（`week` / `range` / `ok` / `available` / `reason` / `configured` / `degraded` / `failed` / `models` / `session_days` / `missing_days` / `report_path` / `markdown_path` / `checkpoint` / `sections` / `ai_failures` / `headline` / `exit_code`）；非法周标签 **2**、整周没有可用单日指标 **6**、AI 段落降级或失败 **9**（与 `ldst review` 同口径） |
+
+- **「6 优先于 9」**：整周没数据时 AI 降级只是附带现象，脚本该看的是前者；
+  两种情况**两份产物都已落盘**（降级不整体失败）。
+- **口径与每日复盘同源**：单日指标一律走 `review.pipeline.load_report` /
+  `collect_metrics`（产物缺某段就用同一批函数补算那一段，来源标 `artifact` / `recomputed`），
+  题材走 `core/pool.theme_board_index`，本命令**不复制任何公式**（D-07）。
+- **事实包不含模型输出**（DEC-006）：`facts` 子树里没有 `ai` / `narrative`，每日 checkpoint
+  只读**段落状态**用来算本周 AI 完成度；叙述经 `core/boundary.py:merge_narrative` 合并，指标原样保留。
+- **可复算**：聚合层没有 `now()`、没有随机数、排序全有确定次键；同一份缓存连跑两次逐字节相同。
+  周标签先过白名单再拼文件名（防目录穿越）。
+- **断点续跑**：段落状态机复用 `ai/checkpoint.select_targets()`，但落盘是
+  `data/state/weekly_checkpoint/<week>.json`——**不与每日 checkpoint 混目录**，
+  否则 `ldst ai status` 的「取最近一份」（按文件名倒序）会被 `2026-W44` 顶掉。
+- 消费侧：`GET /api/weekly?week=`（`domain=review`、`topic=weekly_report`，无产物 200 + `missing`）
+  与看板 `/weekly`，页面不新算任何数字。
 
 ## B. 数据层（7）
 
@@ -169,7 +199,7 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 | 35 | `ldst doctor` | 环境体检：依赖、端口、缓存目录、数据源 | — | 对齐 `th-cn doctor` 习惯 |
 
 > 表内编号 1–35 为**行号**；去重后为 **33 个叶子路径**（`sync` 的三种形态合并为一条、`validate` 的两级子命令各算一个叶子）。P0 基线口径的 **31 条命令**见第 0 节；`scripts/check_commands.py` 实测覆盖 **32 条可执行 argv**（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。四套数字的对应关系见文首「命令计数口径」。
-> §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，§E″ 的行 37–41（R7 增量 5 条）是 R7 基线之外的增量，§D‴ 的行 42–43（R5 增量 2 条）是 R5 基线之外的增量，**都不计入上面的 31/33/35/32**；算上它们则是 43 行 / 41 个叶子 / 40 条可执行 argv。
+> §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，§E″ 的行 37–41（R7 增量 5 条）是 R7 基线之外的增量，§D‴ 的行 42–43（R5 增量 2 条）是 R5 基线之外的增量，§A′ 的行 44（`ldst weekly`）是 R11 基线之外的增量，**都不计入上面的 31/33/35/32**；算上它们则是 44 行 / 42 个叶子 / 41 条可执行 argv。
 
 ## E″. 候选池与我的持仓（R7 增量，5）
 
@@ -218,7 +248,7 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。
 - **输出格式**：全局 `--output json|table|csv`；默认 table（交互）/ json（管道）。
-- **退出码**：`0` 成功、`2` 参数错误、`3` 配置错误、`4` 数据源不可用、`6` 对象不存在 / 无结果（含 `sentiment show` / `ladder show` 的 `available=false`；含 `research --check` 的产物缺失）、`8` 部分数据源失败（含 `research --check` 查出引用不合格的数字）、`9` AI 降级完成。
+- **退出码**：`0` 成功、`2` 参数错误、`3` 配置错误、`4` 数据源不可用、`6` 对象不存在 / 无结果（含 `sentiment show` / `ladder show` 的 `available=false`；含 `research --check` 的产物缺失；含 `weekly` 的整周没有可用单日指标——**6 优先于 9**，此时产物照写）、`8` 部分数据源失败（含 `research --check` 查出引用不合格的数字）、`9` AI 降级完成。
 - **端口**：看板 `5950`、MCP http `5951`，默认仅回环监听。**端口被占用直接报错（退出码 3）并提示 `--port`，绝不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会让 M1 状态恢复失效。旧版端口 `5940` / `8770` 仅打印迁移提示。
 - **监听鉴权（R-1，判据唯一份：`core/listener.py`）**：回环（`127.0.0.1` / `localhost` / `::1`）无需配置；非回环**必须同时**设置 `<前缀>_ALLOW_REMOTE=1` 与 `<前缀>_TOKEN`（≥16 字符），否则拒绝启动、退出码 3，绝不静默对外暴露。前缀：web `LDST_WEB_*`，MCP `LDST_MCP_*`。开启后 web 校验 `/api/*`、MCP 校验 `/mcp`，均要求 `Authorization: Bearer <token>`（web 兼容 `X-Web-Token`），`hmac.compare_digest` 常量时间比较，失败 401 且不回显服务端细节。
 - **不撞端口**：Council WebUI `8788` / MCP `8765`、TickHub Admin `8787` / MCP `8000`、TickHub-US MCP `8002` / Admin `8789`、Wire `8790` / `8791`。
@@ -247,4 +277,5 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 | 交易日志与持仓不出本机 | `journal *`、`position *`（仅本地 SQLite；持仓只有 `--export` 才落文件） |
 | 候选池打分可解释、可复算 | `pool`（分项 + `raw` + `formula` + `weights`，手算对照 `SPEC-CANDIDATE-POOL.md` §5） |
 | 行业五维字段要么有值要么显式 `null`、可复算 | `industry list` / `industry show`（每字段带 R3 溯源，手算对照 `SPEC-INDUSTRY-METRICS.md` §7） |
+| 周报事实包稳定可复算、AI 失败仍出事实包 + 模板 | `weekly`（`SPEC-WEEKLY.md` §4 / §7 / §8；`--week` 非法 2、整周无读数 6、段落降级 9） |
 | 旧启动方式与旧数据目录过渡可用 | `config migrate` + 兼容脚本 |

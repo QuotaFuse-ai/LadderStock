@@ -20,6 +20,9 @@ from __future__ import annotations
 DATE = "2026-10-22"
 MONTH = "2026-11"
 
+#: `weekly` 的固定周标签（`DATE` 落在 2026-W43，这里取下一周以免与复盘产物纠缠）
+WEEK = "2026-W44"
+
 COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     # 启动与复盘
     # `run` 是长驻进程（会阻塞到 Ctrl+C），不放进矩阵：
@@ -33,6 +36,10 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     # 在 stderr 说明原因后以 6（DEC-003「6 = 无结果」）退出（DEC-012）。
     (("review", "--date", DATE), {0, 9}),
     (("review", "show", "--date", DATE), {6}),
+    # R11 周度复盘（QUOT-149，基线之外的增量，见 docs/CLI.md §A′）：矩阵跑在临时数据目录，
+    # 那一周没有任何每日产物与缓存 → 事实包 available=false → 6（产物仍落盘，要求 4）。
+    # 有数据的场景由 tests/unit/weekly/ 覆盖（0 / 9）。
+    (("weekly", "--week", WEEK), {6}),
     (("validate", "--date", DATE), {6}),
     (("validate", "reconcile", "--date", DATE), {6, 8}),
     (("sentiment", "show", "--date", DATE), {0, 6}),
@@ -142,12 +149,15 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
 # `review` / `validate` / `sync` 三个组带 `invoke_without_command`，组本身也是叶子。
 # R7（QUOT-145）在此之外加了 5 条：`pool` + `position add|list|update|remove`，
 # 共 39 个叶子路径（含 R1-1 的 `research`）；R5（QUOT-143）再加 2 条
-# `industry list|show` → **41 个叶子路径**。它们都是**增量命令**，
-# 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴）。
+# `industry list|show` → 41 个叶子路径；R11（QUOT-149）再加 1 条 `weekly` →
+# **42 个叶子路径**。它们都是**增量命令**，
+# 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴ / §A′）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
     ("review",),
     ("review", "show"),
+    # R11 新增（QUOT-149，不计入 31 条基线，见 docs/CLI.md §A′）
+    ("weekly",),
     ("validate",),
     ("validate", "reconcile"),
     ("sentiment", "show"),
@@ -228,6 +238,8 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     # `industry show` 不在列——五维全空时它按 6 退出（本表口径是 0/3），
     # 载荷由 tests/unit/industry/ 与 tests/contract/test_mcp_tools.py 覆盖。
     ("industry", "list"),
+    # R11：`weekly` 不在列——那一周没有每日产物时它按 6 退出（本表口径是 0/3），
+    # 载荷与降级路径由 tests/unit/weekly/ 覆盖。
 )
 
 # `--output` 的可选值必须与 docs/CLI.md §F 一字不差
