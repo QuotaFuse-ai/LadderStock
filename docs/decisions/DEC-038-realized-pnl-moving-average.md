@@ -1,10 +1,11 @@
 # DEC-038 已实现盈亏：移动加权平均、只读复算、与 journal stats 同源不同口径
 
 - 日期：2026-11-01
-- 提出：项目领导人（QUOT-292）；口径由老板拍板（移动加权平均，不是 FIFO）
+- 提出：项目领导人（QUOT-292）；口径由总经理 2026-10-31T23:02Z 裁决（Q1 = A 移动加权、
+  `journal stats` 的 FIFO 不动；Q2 批准，只加 `unheld_pnl` + `unheld_codes` 两个只读字段）
 - 状态：生效（随 QUOT-292 实现落地）
-- 编号说明：038 是**预占**编号，`docs/decisions/` 现有的 030–036 一律不动、不重排；
-  037 不在本文件范围（留给并行任务），刻意不补位。
+- 编号说明：038 是本单**预占**编号；030–036 一律不动、不重排，037 已由 QUOT-291
+  （`DEC-037-watch-settings-persistence`）占用，本文不碰。编号在本仓已撞过两次，只增不改。
 - 关联：DEC-006（数据只落本机）、DEC-015 Tier 1 / DEC-020（隐私库不进信封与 MCP）、
   DEC-033（持仓写面：`positions` 是唯一真相、不引入流水重放）、
   `SPEC-MY-POSITION` §3/§4/§5/§7、`SPEC-RADAR-PAGES` §6.1
@@ -62,6 +63,11 @@ FIFO 已实现 − WAVG 已实现  ≡  FIFO 剩余成本基础 − WAVG 剩余�
 FIFO 已实现 `8400−6000=2400`、WAVG `8400−7200=1200`，差 `1200`；
 剩余基础 FIFO `400@10+500@16=12000`、WAVG `900@12=10800`，差正是 `1200`。
 
+**两个数都正确，不是一个是错的**（裁决原文要求写进 spec）：纪律复盘要逐笔配对，FIFO 是它的正确口径；
+账户对账要券商口径，移动加权是它的正确口径。两条禁令同时成立——
+**不许为了对齐数字去改 `journal stats`**（QUOT-196 的已交付契约，胜率与盈亏比的定义会跟着变），
+**也不许拿 FIFO 偷算再标成移动加权**（`realized.method` 必须如实是 `moving_weighted_average`）。
+
 ### 2.3 计算只有一处，读流水只有一处
 
 - 引擎：`journal/realized.py::compute_realized(trades)`——纯函数，不 import `sqlite3`、
@@ -74,10 +80,12 @@ FIFO 已实现 `8400−6000=2400`、WAVG `8400−7200=1200`，差 `1200`；
 `scripts/check_privacy.py` 的 `JOURNAL_IMPORT_ALLOWLIST` 对 `web/radar.py` 只放开
 `journal.position` 一个模块（对 `web/server.py` 只放开 `journal.stats`）。
 放开口子等于给数据面再加一条隐私库通路，所以流水读取收在 `journal/position.py` 后面，
-接口层仍然只看见「持仓」这一个入口。相应地，
-`tests/integration/test_position_privacy.py` 的 import 白名单从
-`("ladderstock.data", "ladderstock.errors")` 放宽到再加 `ladderstock.journal.`
-——**同侧隐私库内部互相引用**，行情 / AI / MCP 依旧禁（测试名不变）。
+接口层仍然只看见「持仓」这一个入口。**裁决要求的「隐私白名单不放开」就是这一条：
+`scripts/check_privacy.py` 一行未改。**
+唯一跟着动的是 `tests/integration/test_position_privacy.py` 里那条 AST 断言的允许前缀：
+`("ladderstock.data", "ladderstock.errors")` → 再加 `ladderstock.journal.`，
+放的是**同侧隐私库内部互引**（`position` 读 `log` / `realized`），
+测试名 `test_position_does_not_import_market_or_ai` 不变，行情 / AI / MCP / 候选池依旧全禁。
 
 ### 2.4 空态：`null` 与 `0.0` 是两件事
 
@@ -118,6 +126,15 @@ items[i].realized_pnl                       # 该 code 的已实现，未卖过�
 而只报 `total_pnl` 又会出现「合计 ≠ Σ 明细」。所以合计拆成「在手 + 已不在持仓里」，
 `unheld_codes` 给出是哪些票。
 
+硬约束（裁决 Q2）：
+
+- `realized.total_pnl == Σ items[].realized_pnl + unheld_pnl`，由单测
+  `test_realized_total_is_items_plus_unheld` 用**两种形状**钉住：「已清仓的票」
+  （持仓存在，另一只 code 已 remove）与「未持仓但有流水」（持仓表为空）；
+- `unheld_codes` **只是 code 列表**（按 code 升序），不带成本、不带明细——
+  本单不把它扩成第二套账；
+- Q2 批准的只有这两个只读字段，其余出口字段都服务于 §2.4/§2.5 已定的口径说明。
+
 ### 2.7 卖出多于在手：如实计数，不编造成本
 
 流水可能从持仓中途开始记（先记了卖、没记买）。只结转在手的部分，
@@ -147,8 +164,9 @@ items[i].realized_pnl                       # 该 code 的已实现，未卖过�
   与 `items[].realized_pnl`）、`cli/position.py`（读流水并注入同一个 `compute_metrics`）、
   `web/radar.py`（`positions_view` 同一路径）、`tests/unit/journal/test_position.py`、
   `tests/unit/web/test_radar_endpoints.py`（CLI 与 API 同形断言）、
-  `tests/integration/test_position_privacy.py`（§2.3 的 import 白名单）、
-  `docs/specs/SPEC-MY-POSITION.md` §3/§4/§5/§7、`docs/specs/SPEC-RADAR-PAGES.md` §6.1、`docs/CLI.md`。
+  `tests/integration/test_position_privacy.py`（§2.3 的 import 断言前缀）、
+  `docs/specs/SPEC-MY-POSITION.md` §0/§2/§3/§4.1/§5.5/§6/§7、`docs/specs/SPEC-RADAR-PAGES.md` §6.1、
+  `docs/CLI.md`（第 39 行与对账命令）、`docs/MCP_TOOLS.md` §3–§4（隐私侧内部互引的准确表述）。
 - `GET /api/positions` 的既有字段与实现不动，只是载荷多出 `realized` 块；
   前端 `frontend/src/api/radar.ts::parsePositions()` 是白名单投影，未知顶层键被忽略，
   因此本轮不需要前端改动（要展示已实现盈亏是下一页的事）。

@@ -631,6 +631,58 @@ def test_realized_survives_empty_position_store() -> None:
     assert metrics["realized"]["unheld_codes"] == ["600000"]
 
 
+@pytest.mark.parametrize(
+    "rows, trades, item_pnls, unheld, unheld_codes",
+    [
+        # 已清仓：300750 卖掉后从持仓里 remove，600000 部分卖出仍在手
+        pytest.param(
+            [_row("600000", 10.0, 1000.0), _row("600519", 100.0, 100.0)],
+            [
+                _trade("buy", 10.0, 1000.0),
+                _trade("sell", 12.0, 400.0),  # 600000 在手 → +800
+                _trade("buy", 30.0, 100.0, code="300750"),
+                _trade("sell", 36.0, 100.0, code="300750"),  # 已清仓 → +600
+            ],
+            [800.0, None],
+            600.0,
+            ["300750"],
+            id="已清仓的票",
+        ),
+        # 未持仓但有流水：持仓表是空的，两只票的得失都归进 unheld
+        pytest.param(
+            [],
+            [
+                _trade("buy", 10.0, 1000.0),
+                _trade("sell", 14.0, 600.0),  # +2400
+                _trade("buy", 30.0, 100.0, code="300750"),
+                _trade("sell", 36.0, 100.0, code="300750"),  # +600
+            ],
+            [],
+            3000.0,
+            ["300750", "600000"],
+            id="未持仓但有流水",
+        ),
+    ],
+)
+def test_realized_total_is_items_plus_unheld(
+    rows: list[dict[str, Any]],
+    trades: list[dict[str, Any]],
+    item_pnls: list[float | None],
+    unheld: float,
+    unheld_codes: list[str],
+) -> None:
+    """`total_pnl == Σ items[].realized_pnl + unheld_pnl`（DEC-038 拍板，两种形状都钉）。"""
+    metrics = _metrics_with_trades(rows, trades)
+    realized = metrics["realized"]
+
+    assert [i["realized_pnl"] for i in metrics["items"]] == item_pnls
+    assert realized["unheld_pnl"] == unheld
+    assert realized["unheld_codes"] == unheld_codes
+    assert round(sum(p or 0.0 for p in item_pnls) + unheld, 2) == realized["total_pnl"]
+    # code 列表就只是 code 列表，不带成本 / 明细（本单不扩成第二套账）
+    assert all(isinstance(code, str) for code in realized["unheld_codes"])
+
+
 def test_cli_position_list_carries_the_realized_block(tmp_path: Path) -> None:
     position_module.add_position("600000", 10.0, 1000.0, root=tmp_path)
     for trade in (_trade("buy", 10.0, 1000.0), _trade("sell", 13.0, 500.0)):

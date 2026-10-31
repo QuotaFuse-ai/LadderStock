@@ -134,9 +134,10 @@ items[i].realized_pnl     # 没卖过 0.0；无流水 null；只按 code 匹配�
 
 三条口径纪律：
 
-1. **`held_pnl` + `unheld_pnl` = `total_pnl`**：全部清仓的票通常已从 `positions` 里删掉，
+1. **`total_pnl == Σ items[].realized_pnl + unheld_pnl`**：全部清仓的票通常已从 `positions` 里删掉，
    只按持仓行展示会把落袋的收益变没；只报合计又会出现「合计 ≠ Σ 明细」。
-   `unheld_codes` 说明差额来自哪几只（按 code 升序）；
+   `unheld_codes` 说明差额来自哪几只（按 code 升序，**只是 code 列表，不带成本或明细**）；
+   单测 `test_realized_total_is_items_plus_unheld` 用「已清仓的票」与「未持仓但有流水」两种形状钉住这条；
 2. **卖出多于在手**：只结转在手部分，多出来的进 `unmatched_sell_qty`，**不编造成本价**；
 3. **不含手续费**：`trades` 表没有费用列，所以是毛额口径，`fee_included=false` 写在出口上，
    不猜费率、不解析 `note`。
@@ -247,8 +248,10 @@ items[600000].realized_pnl = 800.0；items[600519].realized_pnl = null（一笔�
 - **`positions.code` 仍然 UNIQUE**：一条票只有一条记录，加仓走 `update` 改 `qty`/`cost`。
   要做「同一票多笔建仓」需要把主键改成 (code, entry_date) 并引入批次概念，属于新的表结构决策，不在 R7 范围。
 - **已实现盈亏只读复算，不写回**（DEC-038 取代原来的「不做已实现盈亏」）：`positions` 仍是持仓唯一真相，
-  `trades` 流水只用来算 `realized`，两边不重复实现同一件事；口径是移动加权平均（对账单口径），
-  与 `journal stats` 的 FIFO（纪律复盘口径）**不承诺同数**，差额由恒等式解释。
-  **不含手续费**——`trades` 表没有费用列，出口用 `fee_included=false` 写明，不猜费率。
+  `trades` 流水只用来算 `realized`，两边不重复实现同一件事。
+  **两种结转法回答的是两个不同的问题，两个数都正确**：纪律复盘要逐笔配对，所以 `journal stats` 用 FIFO
+  （胜率 / 盈亏比按它算，契约不动）；账户对账要券商口径，所以持仓侧用移动加权平均。
+  两者**不承诺同数**，差额由恒等式解释（DEC-038 §2.2），不许为了对齐数字去改 stats。
+  **不含手续费**——`trades` 表没有费用列，出口用 `fee_included=false` 写明，不猜费率、不新增字段。
 - **`entry_date` 允许 NULL**：旧库升级来的行没有建仓日，如实给 `NULL`，
   不拿 `updated_at` 或今天冒充。
