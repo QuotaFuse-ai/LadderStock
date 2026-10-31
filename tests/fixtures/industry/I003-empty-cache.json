@@ -1,0 +1,69 @@
+{
+  "id": "I003",
+  "title": "空缓存：六个输入数据集都没有记录 → 19 个指标字段全部显式 null，一个都不缺（验收条款「不估算」）",
+  "industry": "食品饮料",
+  "config": {
+    "industry": {
+      "version": 1,
+      "membership_caliber": "sw_l1",
+      "provenance": {"bound_via": "test_anchor", "retrieved_at": "2026-01-08T00:00:00+08:00"},
+      "window": {
+        "fund_days": 5,
+        "valuation_lookback_days": 250,
+        "turnover_lookback_days": 60,
+        "momentum_windows": [5, 20]
+      },
+      "industries": [
+        {"name": "食品饮料", "l1_code": "340000", "board_name": "食品饮料"},
+        {"name": "电子", "l1_code": "270000"}
+      ]
+    }
+  },
+  "datasets": {
+    "sw_industry_map": [],
+    "finance_indicators": [],
+    "valuation_history": [],
+    "fund_flow": [],
+    "industry_fund_flow": [],
+    "daily_k": []
+  },
+  "expected": {
+    "available": false,
+    "data_source_status": "missing",
+    "unavailable_dimensions": ["prosperity", "capital", "valuation", "momentum", "crowding"],
+    "dimensions_available": {
+      "prosperity": false,
+      "capital": false,
+      "valuation": false,
+      "momentum": false,
+      "crowding": false
+    },
+    "membership": {"constituent_count": 0, "classified_codes": 0, "as_of": null},
+    "metrics": {
+      "prosperity.revenue_yoy_median": null,
+      "prosperity.profit_yoy_median": null,
+      "prosperity.roe_median": null,
+      "capital.constituents.main_net_inflow_nd": null,
+      "capital.constituents.main_net_inflow_nd_sampled": null,
+      "capital.board.main_net_inflow": null,
+      "capital.board.main_net_pct": null,
+      "capital.board.change_pct": null,
+      "capital.northbound": null,
+      "valuation.pe_median": null,
+      "valuation.pe_percentile": null,
+      "valuation.pb_median": null,
+      "valuation.pb_percentile": null,
+      "momentum.index_change_pct": null,
+      "momentum.change_pct_5d": null,
+      "momentum.change_pct_20d": null,
+      "momentum.amount_share_pct": null,
+      "crowding.turnover_median": null,
+      "crowding.turnover_percentile": null,
+      "crowding.fund_concentration_pct": null
+    },
+    "reasons": {
+      "membership.reason": "sw_industry_map",
+      "capital.reason": "主力净流入两路口径都无本地缓存"
+    }
+  }
+}

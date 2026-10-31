@@ -60,10 +60,15 @@ DOCUMENTED_TOOLS = {
     # R1-1（QUOT-190）新增：读个股研究六段进度
     "research_status",
     "candidate_pool",
+    # R5（QUOT-143）新增：申万一级行业五维画像
+    "industry_snapshot",
 }
 
 #: 以证券代码（而非 date）定位快照的工具，见 tests/contract/test_mcp_tools.py 同名片段
 CODE_SCOPED_TOOLS = {"research_status"}
+
+#: 以行业名定位快照的工具（R5）：入参没有 date，理由同 `tests/contract/test_mcp_tools.py`
+INDUSTRY_SCOPED_TOOLS = {"industry_snapshot"}
 
 PRIVATE_WORDS = ("journal", "position", "watchlist", "交易日志", "持仓", "自选")
 
@@ -177,8 +182,9 @@ def test_stdio_handshake_and_tool_list(session: StdioSession) -> None:
     tools = session.recv()["result"]["tools"]
 
     assert {tool["name"] for tool in tools} == DOCUMENTED_TOOLS
-    # 13 = 11 个 P0 + R1-1 `research_status` + R7 `candidate_pool`；数量与清单一致才算没有重复注册
-    assert len(tools) == len(DOCUMENTED_TOOLS) == 13
+    # 14 = 11 个 P0 + R1-1 `research_status` + R7 `candidate_pool` + R5 `industry_snapshot`；
+    # 数量与清单一致才算没有重复注册
+    assert len(tools) == len(DOCUMENTED_TOOLS) == 14
 
     code = session.close()
     assert code == 0
@@ -228,6 +234,9 @@ def test_tool_list_declares_envelope_output_schema(session: StdioSession) -> Non
             continue
         if name in CODE_SCOPED_TOOLS:
             assert tool["inputSchema"]["required"] == ["code"], name
+            continue
+        if name in INDUSTRY_SCOPED_TOOLS:
+            assert tool["inputSchema"]["required"] == ["industry"], name
             continue
         assert tool["inputSchema"]["required"] == ["date"], name
 

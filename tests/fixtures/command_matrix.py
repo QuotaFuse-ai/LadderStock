@@ -73,6 +73,10 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     # R7 候选池（QUOT-145）：程序直出，与 `ladder show` 同口径——缓存里有涨停池 0，
     # 一条候选都解析不出来（本机没同步）6。
     (("pool", "--date", DATE), {0, 6}),
+    # R5 产业研究（QUOT-143）：`list` 是配置视图，清单本身永远可读 -> 0（指标缺就逐行显式 null）；
+    # `show` 与 `pool`/`ladder show` 同口径——五维有任一字段算得出 0，全空 6（DEC-012）。
+    (("industry", "list"), {0}),
+    (("industry", "show", "食品饮料"), {0, 6}),
     # R7 我的持仓（QUOT-145）：只写本机临时数据目录。`add` 成功 0；
     # `list` 空库也照常出结构化结果 0（与 `journal list` 同口径）；
     # `update` / `remove` 作用在不存在的代码上 -> 6（无结果，DEC-012）。
@@ -129,8 +133,9 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
 # `validate reconcile` 计数在 `validate` 之外——所以这里按「可执行路径」列。
 # `review` / `validate` / `sync` 三个组带 `invoke_without_command`，组本身也是叶子。
 # R7（QUOT-145）在此之外加了 5 条：`pool` + `position add|list|update|remove`，
-# 共 39 个叶子路径（含 R1-1 的 `research`）；它们是**增量命令**，
-# 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″）。
+# 共 39 个叶子路径（含 R1-1 的 `research`）；R5（QUOT-143）再加 2 条
+# `industry list|show` → **41 个叶子路径**。它们都是**增量命令**，
+# 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
     ("review",),
@@ -157,6 +162,9 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("position", "list"),
     ("position", "update"),
     ("position", "remove"),
+    # R5 新增（QUOT-143，同样不计入基线计数，见 docs/CLI.md §D‴）
+    ("industry", "list"),
+    ("industry", "show"),
     ("export",),
     ("state", "inspect"),
     ("state", "reset"),
@@ -205,6 +213,10 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     ("notify", "test"),
     ("schedule", "list"),
     ("schedule", "run", "--once"),
+    # R5：`industry list` 是配置视图，本机没缓存也照常 0 + 结构化清单。
+    # `industry show` 不在列——五维全空时它按 6 退出（本表口径是 0/3），
+    # 载荷由 tests/unit/industry/ 与 tests/contract/test_mcp_tools.py 覆盖。
+    ("industry", "list"),
 )
 
 # `--output` 的可选值必须与 docs/CLI.md §F 一字不差

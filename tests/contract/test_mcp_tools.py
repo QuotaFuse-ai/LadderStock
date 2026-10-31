@@ -53,11 +53,18 @@ DOCUMENTED_TOOLS = {
     "research_status",
     # R7 新增（QUOT-145）
     "candidate_pool",
+    # R5 新增（QUOT-143）：产业研究行业画像
+    "industry_snapshot",
 }
 
 #: 按**证券代码**定位进度的工具：`date` 可选（缺省取该代码最近一次 checkpoint），
 #: 所以不适用下面「取数类工具必须以 date 定位快照」这条不变量。
 CODE_SCOPED_TOOLS = {"research_status"}
+
+#: 按**行业名**定位的工具（R5）：行业快照的口径是「本机缓存里的最新一批」，
+#: 五维各自给出自己的 `trade_date` / `as_of`，所以入参里没有 `date`——
+#: 拿请求日期冒充数据日期会改口径（SPEC-INDUSTRY-METRICS.md §1.2）。
+INDUSTRY_SCOPED_TOOLS = {"industry_snapshot"}
 
 
 def test_tool_set_matches_document() -> None:
@@ -77,9 +84,25 @@ def test_no_privacy_keywords_leak_into_mcp() -> None:
 
 def test_date_tools_require_date() -> None:
     for spec in TOOL_SPECS:
-        if spec.domain == "meta" or spec.name in CODE_SCOPED_TOOLS:
+        if spec.domain == "meta" or spec.name in CODE_SCOPED_TOOLS | INDUSTRY_SCOPED_TOOLS:
             continue
         assert spec.input_schema.get("required") == ["date"], spec.name
+
+
+def test_industry_scoped_tools_require_industry_and_carry_no_date() -> None:
+    """反向钉住 R5 的偏差：`industry_snapshot` 必须 required=["industry"]、无 date、只读。
+
+    这条测试的存在是为了让「没有 date」是一个**写明理由的选择**，
+    而不是漏了一个入参——将来谁想加 `--date` 得先改口径文档。
+    """
+    by_name = {spec.name: spec for spec in TOOL_SPECS}
+    assert INDUSTRY_SCOPED_TOOLS <= set(by_name)
+    for name in INDUSTRY_SCOPED_TOOLS:
+        spec = by_name[name]
+        assert spec.input_schema["required"] == ["industry"], name
+        assert "date" not in spec.input_schema["properties"], name
+        assert spec.read_only is True, name
+        assert spec.domain == "sentiment", name
 
 
 def test_code_scoped_tools_require_code_and_keep_date_optional() -> None:
@@ -296,6 +319,67 @@ def test_candidate_pool_tool_scores_and_stays_privacy_clean(
     blob = json.dumps(envelope, ensure_ascii=False).lower()
     for word in FORBIDDEN_KEYWORDS:
         assert word.lower() not in blob, word
+
+
+def test_industry_snapshot_tool_missing_cache_is_partial_and_explicit_null(
+    repo: Any, tmp_path: Any
+) -> None:
+    """R5：本机没同步任何行业数据时，工具如实 partial，五维字段全部显式 null。
+
+    这条测试钉的是「不伪造」：`available=false` 的同时**字段一个都不能少**，
+    每个 null 都要有 `sources=[]` + `unverified=true` 的溯源，
+    而不是返回一个半空的 payload 让调用方猜哪些维度没实现。
+    """
+    envelope = dispatch("industry_snapshot", {"industry": "食品饮料"}, root=tmp_path)
+
+    assert set(envelope) == ENVELOPE_KEYS
+    assert envelope["domain"] == "sentiment"
+    assert envelope["topic"] == "industry_snapshot"
+    assert envelope["source_status"] == "partial"
+    assert envelope["confidence"] == "low"
+    assert envelope["freshness"] == "cached"
+
+    metrics = envelope["payload"]["industry_metrics"]
+    assert metrics["available"] is False
+    assert metrics["data_source_status"] == "missing"
+    assert metrics["industry"]["name"] == "食品饮料"
+    assert sorted(metrics["dimensions"]) == [
+        "capital",
+        "crowding",
+        "momentum",
+        "prosperity",
+        "valuation",
+    ]
+    for name, block in metrics["dimensions"].items():
+        assert block["available"] is False, name
+        assert block["reason"], name
+
+    provenance = metrics["provenance"]
+    assert provenance["unverified"] is True
+    # 一个数据集都没读到，只有配置本身算「用到的源」
+    assert [item["id"] for item in provenance["sources"]] == ["cfg:industry_yaml"]
+    for item in provenance["sources"]:
+        assert set(item) == {"id", "dataset", "params", "retrieved_at"}
+    # 溯源覆盖到每一个叶子（含说明性字段），而 `missing` 只列承诺过的指标字段
+    assert set(metrics["missing"]) <= set(provenance["values"])
+    assert metrics["metrics_present"] == []
+    for path in metrics["missing"]:
+        ref = provenance["values"][path]
+        # 指标字段既没有值、也没有可指认的数据源（配置只解释行业身份，不解释指标）
+        assert ref["sources"] == [], path
+        assert ref["unverified"] is True, path
+
+    blob = json.dumps(envelope, ensure_ascii=False, default=str).lower()
+    for word in FORBIDDEN_KEYWORDS:
+        assert word.lower() not in blob, word
+
+
+def test_industry_snapshot_tool_rejects_missing_industry(tmp_path: Any) -> None:
+    """R5：`industry` 是必填，空字符串也算缺——不猜「是不是想看清单里第一个行业」。"""
+    with pytest.raises(ToolError):
+        dispatch("industry_snapshot", {}, root=tmp_path)
+    with pytest.raises(ToolError):
+        dispatch("industry_snapshot", {"industry": "   "}, root=tmp_path)
 
 
 def test_dispatch_rejects_bad_usage(tmp_path: Any) -> None:

@@ -270,9 +270,10 @@ def test_doctor_green_when_chain_valid_even_if_peers_down(
 
     # 可达性仍只归 sources validate / health：doctor 唯一的探针是「待联调工具」
     # 那一次 `tools/list`（QUOT-112），只探 senate、只探一次，失败只改 warning 措辞，
-    # 不改 ok、不改退出码、不改 22 个检查项（DEC-008）。
+    # 不改 ok、不改退出码、不改检查项数（DEC-008）。
+    # 23 = 原 22 项 + R5 的 `config:industry.yaml`（QUOT-143）。
     assert peers_down.probes == ["senate"]
-    assert len(payload["checks"]) == 22
+    assert len(payload["checks"]) == 23
     assert any("未联调：peer 不可达" in text for text in payload["warnings"])
 
     problems = chain_problems(_load("sources"), _load("sync"))

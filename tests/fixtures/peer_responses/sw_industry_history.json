@@ -1,0 +1,50 @@
+{
+  "ok": true,
+  "data": {
+    "code": "600519",
+    "as_of": null,
+    "current": {
+      "code": "600519",
+      "start_date": "2021-07-30",
+      "industry_code": "340501",
+      "update_time": "2022-05-09",
+      "l1_code": "340000",
+      "l2_code": "340500",
+      "l3_code": "340501"
+    },
+    "history": [
+      {
+        "code": "600519",
+        "start_date": "2001-07-31",
+        "industry_code": "340301",
+        "update_time": "2015-10-27",
+        "l1_code": "340000",
+        "l2_code": "340300",
+        "l3_code": "340301",
+        "current": false
+      },
+      {
+        "code": "600519",
+        "start_date": "2021-07-30",
+        "industry_code": "340501",
+        "update_time": "2022-05-09",
+        "l1_code": "340000",
+        "l2_code": "340500",
+        "l3_code": "340501",
+        "current": true
+      }
+    ],
+    "total": 2,
+    "first_seen": "2001-07-31",
+    "last_changed": "2021-07-30"
+  },
+  "meta": {
+    "source": "swsresearch",
+    "fetched_at": "2026-10-31T06:10:00+08:00",
+    "cache_hit": true,
+    "confidence": "C",
+    "trace_id": "trace-fixture-1",
+    "count": 2,
+    "upstream": "申万宏源研究 SwClass2021/StockClassifyUse_stock.xls"
+  }
+}

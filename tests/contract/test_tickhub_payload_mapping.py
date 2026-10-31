@@ -73,6 +73,42 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
     ("dragon_tiger.json", "dragon_tiger", "dragon_tiger", 3, date(2026, 10, 30), "medium"),
     ("ths_hot_rank.json", "hot_rank", "ths_hot_rank", 3, date(2026, 10, 30), "low"),
     ("eastmoney_hot_rank.json", "hot_rank", "eastmoney_hot_rank", 3, date(2026, 10, 30), "medium"),
+    # ---- R5 产业研究（QUOT-143）：四只新工具的实测返回 ----
+    # 申万归属的行日期是 `start_date`（分类计入日，不是抓取日），所以 `data_as_of`
+    # 落在最新一次分类变更上；财务指标的行日期是 `report_date`。
+    (
+        "sw_industry_history.json",
+        "sw_industry_map",
+        "sw_industry_history",
+        2,
+        date(2021, 7, 30),
+        "low",
+    ),
+    (
+        "eastmoney_finance_indicators.json",
+        "finance_indicators",
+        "eastmoney_finance_indicators",
+        3,
+        date(2026, 9, 30),
+        "medium",
+    ),
+    (
+        "baostock_valuation_history.json",
+        "valuation_history",
+        "baostock_valuation_history",
+        3,
+        date(2026, 10, 30),
+        "medium",
+    ),
+    # 板块榜行内没有日期（真实返回如此），数据日由抓取时刻承担——与板块榜同源
+    (
+        "board_fund_flow.json",
+        "industry_fund_flow",
+        "board_fund_flow",
+        3,
+        date(2026, 10, 31),
+        "medium",
+    ),
 ]
 
 #: 快照型：整包一行，不硬凑记录
@@ -256,8 +292,33 @@ def test_unregistered_dataset_is_rejected() -> None:
 # --------------------------------------------------------------------------- #
 
 def test_code_pool_datasets_are_the_ones_requiring_code() -> None:
-    assert CODE_POOL_DATASETS == frozenset({"daily_k", "fund_flow", "dragon_tiger_seats"})
+    assert CODE_POOL_DATASETS == frozenset(
+        {
+            "daily_k",
+            "fund_flow",
+            "dragon_tiger_seats",
+            # R5 的三只同样是逐股工具（QUOT-143 实测：空参被 MCP 入参校验拒回
+            # `code Field required`，不是 QFSD 码，所以照样不能发空参）
+            "sw_industry_map",
+            "finance_indicators",
+            "valuation_history",
+        }
+    )
     assert set(CODE_POOL_DATASETS) == {d for d in DATASET_CATALOG if needs_code(d)}
+
+
+def test_industry_board_flow_is_a_whole_board_request() -> None:
+    """板块资金流是**板块维度**：不带代码，但 `board_type=industry` 必须显式给。
+
+    该工具默认也是行业榜，可概念板块与行业板块是两套榜，DEC-018 的口径标注
+    不允许靠上游默认值（QUOT-143）。
+    """
+    assert not needs_code("industry_fund_flow")
+    assert tool_params("industry_fund_flow") == {
+        "board_type": "industry",
+        "page": 1,
+        "page_size": 300,
+    }
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-"""CLI 表面契约：31 条基线命令（+ R7 增量 `pool` / `position`）全部注册且行为符合约定。
+"""CLI 表面契约：31 条基线 + R7/R5 增量（`pool` `position` `industry`）全部注册且行为符合约定。
 
 数据层命令（`sync` / `sources`）已经实现，本文件用离线假传输执行它们：
 基线契约不该拨真 peer（既慢又不可判定），也不该把冷却记录写进仓库的 `data/`。
@@ -30,6 +30,7 @@ HELP_GROUPS = (
     "journal",
     "pool",
     "position",
+    "industry",
     "export",
     "state",
     "ai",

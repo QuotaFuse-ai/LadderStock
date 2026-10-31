@@ -1,0 +1,169 @@
+{
+  "id": "I001",
+  "title": "五维齐：申万成分口径全部可算，板块口径同名命中一条（手算见 SPEC-INDUSTRY-METRICS.md §7）",
+  "industry": "食品饮料",
+  "config": {
+    "industry": {
+      "version": 1,
+      "membership_caliber": "sw_l1",
+      "provenance": {
+        "bound_via": "test_anchor",
+        "retrieved_at": "2026-01-08T00:00:00+08:00",
+        "source": "test"
+      },
+      "window": {
+        "fund_days": 3,
+        "valuation_lookback_days": 4,
+        "turnover_lookback_days": 3,
+        "momentum_windows": [2]
+      },
+      "industries": [
+        {
+          "name": "食品饮料",
+          "l1_code": "340000",
+          "anchors": ["010201"],
+          "board_name": "食品饮料"
+        },
+        {"name": "电子", "l1_code": "270000"},
+        {"name": "综合", "l1_code": null, "note": "锚点归属不一致"}
+      ]
+    }
+  },
+  "datasets": {
+    "sw_industry_map": [
+      {"code": "600001", "trade_date": "2025-12-01", "l1_code": "340000", "l1_name": "食品饮料"},
+      {"code": "600002", "trade_date": "2025-12-01", "l1_code": "340000", "l1_name": "食品饮料"},
+      {"code": "600003", "trade_date": "2025-12-01", "l1_code": "270000", "l1_name": "电子"},
+      {"code": "600004", "trade_date": "2025-12-01", "l1_code": "340000", "l1_name": "食品饮料"},
+      {"code": "600004", "trade_date": "2026-01-05", "l1_code": "270000", "l1_name": "电子"}
+    ],
+    "finance_indicators": [
+      {"code": "600001", "trade_date": "2025-09-30", "revenue_yoy": 10.0, "profit_yoy": 20.0, "roe": 5.0},
+      {"code": "600001", "trade_date": "2025-12-31", "revenue_yoy": 12.5, "profit_yoy": -3.0, "roe": 8.0},
+      {"code": "600002", "trade_date": "2025-12-31", "revenue_yoy": 8.5, "roe": 4.0},
+      {"code": "600003", "trade_date": "2025-12-31", "revenue_yoy": 99.0, "profit_yoy": 99.0, "roe": 99.0}
+    ],
+    "valuation_history": [
+      {"code": "600001", "trade_date": "2025-12-31", "pe_ttm": 26.0, "pb": 3.0, "turnover_rate": 1.0},
+      {"code": "600002", "trade_date": "2025-12-31", "pe_ttm": 26.0, "pb": 3.0, "turnover_rate": 1.0},
+      {"code": "600003", "trade_date": "2025-12-31", "pe_ttm": 999.0, "pb": 99.0, "turnover_rate": 99.0},
+      {"code": "600001", "trade_date": "2026-01-02", "pe_ttm": 28.0, "pb": 4.0, "turnover_rate": 2.0},
+      {"code": "600002", "trade_date": "2026-01-02", "pe_ttm": 30.0, "pb": 4.0, "turnover_rate": 4.0},
+      {"code": "600001", "trade_date": "2026-01-05", "pe_ttm": 24.0, "pb": 4.0, "turnover_rate": 6.0},
+      {"code": "600002", "trade_date": "2026-01-05", "pe_ttm": 20.0, "pb": 4.0, "turnover_rate": 8.0},
+      {"code": "600001", "trade_date": "2026-01-06", "pe_ttm": 32.0, "pb": 5.0, "turnover_rate": 4.0},
+      {"code": "600002", "trade_date": "2026-01-06", "pe_ttm": 28.0, "pb": 4.0, "turnover_rate": 6.0},
+      {"code": "600001", "trade_date": "2026-01-07", "pe_ttm": 18.0, "pb": 3.0, "turnover_rate": 2.0},
+      {"code": "600002", "trade_date": "2026-01-07", "pe_ttm": 22.0, "pb": 4.0, "turnover_rate": 4.0}
+    ],
+    "fund_flow": [
+      {"code": "600001", "trade_date": "2026-01-05", "main_net": 1000.0},
+      {"code": "600001", "trade_date": "2026-01-06", "main_net": -500.0},
+      {"code": "600001", "trade_date": "2026-01-07", "main_net": 2500.0},
+      {"code": "600002", "trade_date": "2026-01-05", "main_net": 2000.0},
+      {"code": "600002", "trade_date": "2026-01-06", "main_net": 1000.0},
+      {"code": "600002", "trade_date": "2026-01-07", "main_net": -1500.0},
+      {"code": "600003", "trade_date": "2026-01-05", "main_net": 500.0},
+      {"code": "600003", "trade_date": "2026-01-06", "main_net": 500.0},
+      {"code": "600003", "trade_date": "2026-01-07", "main_net": 500.0}
+    ],
+    "industry_fund_flow": [
+      {
+        "trade_date": "2026-01-07",
+        "board_code": "010201",
+        "board_name": "食品饮料",
+        "main_net_inflow": 123456789.0,
+        "main_net_ratio": 3.21,
+        "change_pct": 1.5
+      },
+      {
+        "trade_date": "2026-01-07",
+        "board_code": "010202",
+        "board_name": "银行",
+        "main_net_inflow": 1.0,
+        "main_net_ratio": 1.0,
+        "change_pct": 1.0
+      }
+    ],
+    "daily_k": [
+      {"code": "600001", "trade_date": "2026-01-05", "close": 10.0, "amount": 800.0},
+      {"code": "600001", "trade_date": "2026-01-06", "close": 11.0, "amount": 900.0},
+      {"code": "600001", "trade_date": "2026-01-07", "close": 12.0, "amount": 1000.0},
+      {"code": "600002", "trade_date": "2026-01-05", "close": 20.0, "amount": 300.0},
+      {"code": "600002", "trade_date": "2026-01-06", "close": 19.0, "amount": 400.0},
+      {"code": "600002", "trade_date": "2026-01-07", "close": 18.0, "amount": 500.0},
+      {"code": "600003", "trade_date": "2026-01-05", "close": 50.0, "amount": 1400.0},
+      {"code": "600003", "trade_date": "2026-01-06", "close": 55.0, "amount": 1450.0},
+      {"code": "600003", "trade_date": "2026-01-07", "close": 60.0, "amount": 1500.0}
+    ]
+  },
+  "expected": {
+    "available": true,
+    "data_source_status": "ok",
+    "unavailable_dimensions": [],
+    "dimensions_available": {
+      "prosperity": true,
+      "capital": true,
+      "valuation": true,
+      "momentum": true,
+      "crowding": true
+    },
+    "membership": {"constituent_count": 2, "classified_codes": 4, "as_of": "2025-12-01"},
+    "metrics": {
+      "prosperity.revenue_yoy_median": 10.5,
+      "prosperity.profit_yoy_median": -3.0,
+      "prosperity.roe_median": 6.0,
+      "capital.constituents.main_net_inflow_nd": 4500.0,
+      "capital.constituents.main_net_inflow_nd_sampled": 4500.0,
+      "capital.board.main_net_inflow": 123456789.0,
+      "capital.board.main_net_pct": 3.21,
+      "capital.board.change_pct": 1.5,
+      "capital.northbound": null,
+      "valuation.pe_median": 20.0,
+      "valuation.pe_percentile": 0.25,
+      "valuation.pb_median": 3.5,
+      "valuation.pb_percentile": 0.25,
+      "momentum.index_change_pct": null,
+      "momentum.change_pct_2d": 5.0,
+      "momentum.amount_share_pct": 50.0,
+      "crowding.turnover_median": 3.0,
+      "crowding.turnover_percentile": 0.3333,
+      "crowding.fund_concentration_pct": 85.0
+    },
+    "notes": {
+      "capital.board.caliber": "board:eastmoney",
+      "capital.board.matched_by": "name_exact",
+      "capital.board.trade_date": "2026-01-07",
+      "capital.board.board_code": "010201",
+      "capital.constituents.window_days": 3,
+      "capital.constituents.sample_count": 2,
+      "capital.constituents.coverage.expected_rows": 6,
+      "capital.constituents.coverage.rows_used": 6,
+      "capital.constituents.coverage.complete": true,
+      "capital.constituents.unit": "元",
+      "prosperity.stocks_with_report": 2,
+      "prosperity.sample_counts.revenue_yoy_median": 2,
+      "prosperity.sample_counts.profit_yoy_median": 1,
+      "valuation.window_days_used": 4,
+      "valuation.stocks_with_valuation": 2,
+      "momentum.trade_date": "2026-01-07",
+      "momentum.trading_days_available": 3,
+      "momentum.change_pct_sample_counts.change_pct_2d": 2,
+      "momentum.market_codes": 3,
+      "momentum.amount_industry": 1500.0,
+      "momentum.amount_market": 3000.0,
+      "crowding.turnover_window_days_used": 3,
+      "crowding.fund_window_days": 3,
+      "crowding.missing_flow_rows": 0
+    },
+    "reasons": {
+      "prosperity.reason": null,
+      "capital.reason": null,
+      "valuation.reason": null,
+      "momentum.reason": null,
+      "crowding.reason": null,
+      "momentum.index_change_pct_reason": "sw_industry_index",
+      "capital.northbound_reason": "无行业拆分"
+    }
+  }
+}

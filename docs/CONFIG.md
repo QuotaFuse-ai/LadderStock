@@ -43,6 +43,7 @@
 | `config/ai.yaml` | AI provider 顺序、超时、降级策略 | `config/schema/ai.schema.json` |
 | `config/state.yaml` | 前端持久化分片清单（`schema_version: 2`） | `config/schema/state.schema.json` |
 | `config/schedule.yaml` | 定时任务表 | `config/schema/schedule.schema.json` |
+| `config/industry.yaml` | 申万一级行业清单（`enabled` 可裁剪）与窗口参数（R5，QUOT-143） | 暂无 Schema：由 `industry/catalog.py` 校验（6 位申万一级代码、窗口为正整数、`board_name` 可选），读不动就退出码 3，不静默兜底成空清单 |
 
 `ldst config validate` 逐文件校验并给出 `/a/b: 错误` 形式的路径；任一失败退出码 3。
 

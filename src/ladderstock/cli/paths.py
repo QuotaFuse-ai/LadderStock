@@ -20,6 +20,8 @@ CONFIG_FILES: tuple[str, ...] = (
     "ai.yaml",
     "state.yaml",
     "schedule.yaml",
+    # R5 产业研究的行业清单与窗口参数（QUOT-143，口径见 SPEC-INDUSTRY-METRICS.md）
+    "industry.yaml",
 )
 
 #: 旧版环境变量前缀，按顺序兜底（PACKAGES.md §6「双读，新前缀优先」）

@@ -20,11 +20,16 @@
 > `ldst research <code>`（个股研究六段管线）。加它之后：叶子 **34** 个、可执行 argv **33** 条。
 > 见 §0「研究管线」行与 §D′。
 >
+> **R5 增量（QUOT-143，2026-10-31）**：基线 31 条口径**不变**，在其之上新增 2 条命令
+> `ldst industry list` / `ldst industry show <行业>`（申万一级行业五维画像，口径见
+> `docs/specs/SPEC-INDUSTRY-METRICS.md`）。行号续编 42–43，全表 **43 行**、叶子 **41** 个、
+> `scripts/check_commands.py` 实测可执行 argv **40** 条。见 §D‴。
+>
 > **前置约束（DEC-006）**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
 ## 0. 总览（31 条）
 
-> 口径说明：本节按 **P0 基线 31 条命令**统计（DEC-003）；下列分组明细展开后为 **35 行**表格、去重 **33 个叶子路径**，对应 `check_commands.py` 矩阵里的 **32 条**可执行 argv（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。§D′ 的 `research` 1 条与 §E″ 的 R7 增量 5 条另计，全表 41 行 / 39 叶子 / 38 argv。四套数字的关系见文首「命令计数口径」。
+> 口径说明：本节按 **P0 基线 31 条命令**统计（DEC-003）；下列分组明细展开后为 **35 行**表格、去重 **33 个叶子路径**，对应 `check_commands.py` 矩阵里的 **32 条**可执行 argv（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。§D′ 的 `research` 1 条、§E″ 的 R7 增量 5 条、§D‴ 的 R5 增量 2 条另计，全表 43 行 / 41 叶子 / 40 argv。四套数字的关系见文首「命令计数口径」。
 
 | 分组 | 命令 |
 |---|---|
@@ -41,6 +46,7 @@
 | 配置与调度（4） | `config validate`、`config migrate`、`schedule list`、`schedule run` |
 | 体检（1） | `doctor` |
 | **R7 增量（5，非 P0 基线）** | `pool`、`position add`、`position list`、`position update`、`position remove` |
+| **R5 增量（2，非 P0 基线）** | `industry list`、`industry show` |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -137,7 +143,7 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 | 35 | `ldst doctor` | 环境体检：依赖、端口、缓存目录、数据源 | — | 对齐 `th-cn doctor` 习惯 |
 
 > 表内编号 1–35 为**行号**；去重后为 **33 个叶子路径**（`sync` 的三种形态合并为一条、`validate` 的两级子命令各算一个叶子）。P0 基线口径的 **31 条命令**见第 0 节；`scripts/check_commands.py` 实测覆盖 **32 条可执行 argv**（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。四套数字的对应关系见文首「命令计数口径」。
-> §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，§E″ 的行 37–41（R7 增量 5 条）是 R7 基线之外的增量，**都不计入上面的 31/33/35/32**；算上它们则是 41 行 / 39 个叶子 / 38 条可执行 argv。
+> §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，§E″ 的行 37–41（R7 增量 5 条）是 R7 基线之外的增量，§D‴ 的行 42–43（R5 增量 2 条）是 R5 基线之外的增量，**都不计入上面的 31/33/35/32**；算上它们则是 43 行 / 41 个叶子 / 40 条可执行 argv。
 
 ## E″. 候选池与我的持仓（R7 增量，5）
 
@@ -156,6 +162,30 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 `position` 与 `journal` 同为**本地命令，可打印，不经 MCP**：持仓数据不进 `LadderEnvelope`、
 不进 MCP 工具清单、不进 AI 上下文（`docs/MCP_TOOLS.md` §2）。候选池与持仓**互不引用**——
 持仓不参与打分，隐私数据不可能经打分结果外溢（护栏见 `tests/integration/test_position_privacy.py`）。
+
+## D‴. 产业研究（R5 增量，2）
+
+> 口径来源：`docs/specs/SPEC-INDUSTRY-METRICS.md`（五维公式、数据源、缺失策略、手算复核）、
+> `DEC-006` / `DEC-012` / `DEC-018`。这 2 条**不属于** DEC-003 的 31 条 P0 基线，
+> 测试矩阵按「R5 增量」登记（`tests/fixtures/command_matrix.py`）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 42 | `ldst industry list` | 申万一级行业清单 + 每个行业的缓存可用性（`available` / `constituent_count` / 五维 `dimensions_available` / `data_source_status` / `reason`），并带出窗口参数与公式 | `--output` | 平铺载荷（**不是**信封）；**恒 0**——清单是配置视图，本机一个字节都没同步也照常出，指标缺就逐行显式 `null`；`config/industry.yaml` 读不动 → **3** |
+| 43 | `ldst industry show <行业>` | 单行业五维快照：景气 / 资金 / 估值 / 动量 / 拥挤度，每个字段带 R3 溯源 | `--output`；**没有 `--date`**（口径是「本机缓存里的最新一批」，见 SPEC §1.2） | `LadderEnvelope`（`domain=sentiment`、`topic=industry_snapshot`），载荷在 `payload`；五维任一字段算得出 → 0，全空 → **6**（stdout 仍是完整可解析信封，DEC-012）；行业不在清单 → **6** + `candidates`；配置错 → 3 |
+
+- **只读本机缓存、零外呼**：六个输入数据集（`sw_industry_map` / `finance_indicators` /
+  `valuation_history` / `fund_flow` / `industry_fund_flow` / `daily_k`）全部经
+  `data/archive.py` 回放，取数前先同步（`ldst sync --dataset <数据集> --codes <代码>`）。
+- **不估算**：算得出的给值，算不出的给 `null` + `reason`；缺上游工具的字段（行业北向、
+  申万指数涨跌幅）是**结构性缺口**，永远显式 `null`，不降级成成分股聚合值。
+- **两套分类不混算**（DEC-018）：行业归属以申万一级为准；板块资金流的字段只在
+  `config/industry.yaml` 配了同名 `board_name`、最新一日只有单一上游口径、
+  且同名恰好命中 1 条时才给，并各自标 `caliber="board:<实际 _source>"`。
+- **与 `ldst pool` 同一条信封装配路径**（`cli/review._metric_envelope`）：`data_as_of`
+  取 `sw_industry_map` 的最新日期，归属数据一条都没有时如实给 `null`。
+- **幂等**：同一份缓存 + 同一份配置重跑，除信封的取值时刻 `fetched_at` 之外逐字段一致
+  （溯源时间来自缓存的入库时间 `_ingested_at`，公式里没有 `now()`）。
 
 ## F. 全局约定
 
@@ -189,4 +219,5 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 | 盯盘 / 盘前提醒 / 收盘对账实机验证 | `watch start`、`notify test`、`validate reconcile` |
 | 交易日志与持仓不出本机 | `journal *`、`position *`（仅本地 SQLite；持仓只有 `--export` 才落文件） |
 | 候选池打分可解释、可复算 | `pool`（分项 + `raw` + `formula` + `weights`，手算对照 `SPEC-CANDIDATE-POOL.md` §5） |
+| 行业五维字段要么有值要么显式 `null`、可复算 | `industry list` / `industry show`（每字段带 R3 溯源，手算对照 `SPEC-INDUSTRY-METRICS.md` §7） |
 | 旧启动方式与旧数据目录过渡可用 | `config migrate` + 兼容脚本 |
