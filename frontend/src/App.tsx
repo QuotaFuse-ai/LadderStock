@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import HomeScreen from './screens/HomeScreen'
 import IndustryDetailScreen from './screens/industry/IndustryDetailScreen'
 import IndustryMatrixScreen from './screens/industry/IndustryMatrixScreen'
+import LimitUpScreen from './screens/limitup/LimitUpScreen'
 import JournalScreen from './screens/JournalScreen'
 import MarketScreen from './screens/MarketScreen'
 import CalendarScreen from './screens/radar/CalendarScreen'
@@ -58,6 +59,8 @@ export default function App() {
         <Route path="/weekly" element={<WeeklyScreen />} />
         <Route path="/journal" element={<JournalScreen />} />
         <Route path="/validate" element={<ValidateScreen />} />
+        {/* 涨停样本：挂在「验证」分组下的二级入口，支持 `?date=YYYY-MM-DD` 深链 */}
+        <Route path="/limit-up" element={<LimitUpScreen />} />
         {/* R10 资讯雷达 / 事件日历 / 候选池 / 我的持仓；挂二级导航，不新增一级 */}
         <Route path="/news" element={<NewsScreen />} />
         <Route path="/calendar" element={<CalendarScreen />} />

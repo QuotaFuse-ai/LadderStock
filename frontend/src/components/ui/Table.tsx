@@ -37,6 +37,8 @@ export interface DataTableProps<T> {
   onRowClick?: (row: T) => void
   rowClassName?: (row: T) => string | undefined
   initialSort?: { key: string; dir: 'asc' | 'desc' }
+  /** `cycle`（默认）升序→降序→取消；`flip` 只在升序/降序间切换 */
+  sortToggle?: 'cycle' | 'flip'
 }
 
 const ROW_HEIGHT = {
@@ -65,6 +67,7 @@ export function DataTable<T>({
   onRowClick,
   rowClassName,
   initialSort,
+  sortToggle = 'cycle',
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(initialSort ?? null)
 
@@ -79,6 +82,7 @@ export function DataTable<T>({
   const toggleSort = (key: string) => {
     setSort((current) => {
       if (current?.key !== key) return { key, dir: 'asc' }
+      if (sortToggle === 'flip') return { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
       return current.dir === 'asc' ? { key, dir: 'desc' } : null
     })
   }
