@@ -37,6 +37,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from ladderstock import __version__
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir, project_root
 from ladderstock.core.ladder import compute_ladder
+from ladderstock.core.limit_pool import compute_limit_pool
 from ladderstock.core.listener import LOOPBACK_HOSTS, TokenGuardMiddleware
 from ladderstock.core.listener import require_binding_policy as _require_binding_policy
 from ladderstock.core.models import LadderEnvelope
@@ -650,6 +651,29 @@ def create_app(
             "limit_ladder",
             target,
             {"ladder": result},
+            available=available,
+            source_detail=str(result.get("source_detail") or ""),
+        )
+
+    @app.get("/api/limit-pool")
+    def limit_pool(
+        date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
+    ) -> dict[str, Any]:
+        """涨停样本（`limit_pool` 数据集的原样投影，SPEC-LIMIT-POOL）。
+
+        只读本机涨停池缓存：不采集、不估算、不补空值、不重算指标。当日没同步就是
+        200 + `available=false` + `rows=[]`，不 500、不造行；`streak` / 封板时间 /
+        `reason` / `trade_date` 取不到一律 `null`，不用请求日期或默认值顶替。
+        去重与排序与 `/api/ladder` 同源（`core/limit_pool.py`）。
+        """
+        target = _parse_day(date_str)
+        result = compute_limit_pool(target, root=root)
+        available = bool(result.get("available"))
+        return _envelope(
+            "sentiment",
+            "limit_pool",
+            target,
+            result,
             available=available,
             source_detail=str(result.get("source_detail") or ""),
         )
