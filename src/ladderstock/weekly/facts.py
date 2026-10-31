@@ -328,8 +328,8 @@ def theme_metrics(days: list[date], root: Any = None) -> dict[str, Any]:
         hits = [index for index, window in enumerate(windows) if name in window]
         streak = 0
         best_streak = 0
-        for index in range(len(windows)):
-            if index in hits:
+        for position in range(len(windows)):
+            if position in hits:
                 streak += 1
                 best_streak = max(best_streak, streak)
             else:
@@ -384,7 +384,7 @@ def _condition_rows(
             continue
         row = results.get(str(condition.get("id")))
         settled = isinstance(row, dict)
-        verdict = row.get("passed") if settled else None
+        verdict = row.get("passed") if isinstance(row, dict) else None
         rows.append(
             {
                 "generated_date": generated_date,
@@ -393,7 +393,7 @@ def _condition_rows(
                 "metric": condition.get("metric"),
                 "operator": condition.get("operator"),
                 "target": condition.get("value"),
-                "actual": row.get("actual") if settled else None,
+                "actual": row.get("actual") if isinstance(row, dict) else None,
                 "settled": settled,
                 "passed": verdict if settled else None,
                 "next_session": (reconcile or {}).get("next_session"),
