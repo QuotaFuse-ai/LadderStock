@@ -5,7 +5,7 @@
 - 归属：前端架构
 - 实现：`frontend/src/api/financecoffer.ts`（读侧客户端）、`frontend/src/components/valuation/ValuationBasisPanel.tsx`（展示面板）
 - 测试：`frontend/tests/financecoffer-api.test.ts`、`frontend/tests/valuation-basis-panel.test.tsx`
-- 关联：`DEC-023`（落点与边界）、`docs/ROADMAP.md`（R8 个股深挖 + 研究报告页）、`docs/specs/PRD-UI-REDESIGN.md` §3
+- 关联：`docs/UI-SPEC.md`（界面规范）
 - 口径真源：FinanceCoffer 读侧 `GET /v1/structured/{symbol}`；本文不复制任何 PE / PB / ROE 公式
 
 ## 0. 一句话
@@ -19,8 +19,7 @@ LadderStock 只负责「让用户选口径 + 如实展示服务端结果」：�
 ### 1.1 R8 是否存在
 
 **不存在。** 前端路由只有 `/` `/market` `/watch` `/review` `/journal` `/validate` `/settings`
-（`frontend/src/App.tsx`），没有个股深挖页 / 研究报告页；`docs/ROADMAP.md` 把 R8 列为
-「R1、R2、R3 之后」且「R3 未交付不许开工」，当前 R8 未交付。
+（`frontend/src/App.tsx`），没有个股深挖页 / 研究报告页；R8 以 R1、R2、R3 交付为前提，当前未交付。
 
 ### 1.2 现有六屏有没有可挂的指标位
 

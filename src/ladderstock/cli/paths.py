@@ -24,7 +24,7 @@ CONFIG_FILES: tuple[str, ...] = (
     "industry.yaml",
 )
 
-#: 旧版环境变量前缀，按顺序兜底（PACKAGES.md §6「双读，新前缀优先」）
+#: 旧版环境变量前缀，按顺序兜底（旧前缀双读，新前缀优先）
 LEGACY_ENV_PREFIXES: tuple[str, ...] = ("VRA_", "VIBE_ASTOCK_")
 
 

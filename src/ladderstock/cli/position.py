@@ -34,7 +34,7 @@ from ladderstock.journal.position import (
     update_position,
 )
 
-#: `daily_k` 里「收盘价」的候选键（同 `docs/specs/METRICS.md` §容差表口径）
+#: `daily_k` 里「收盘价」的候选键（同既有指标口径的容差表）
 PRICE_KEYS: tuple[str, ...] = ("close", "close_price", "latest_price", "price", "收盘")
 
 PRICE_DATASET = "daily_k"
