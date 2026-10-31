@@ -4,7 +4,7 @@
 `frontend/src/api/radar.ts` 与 `docs/specs/SPEC-RADAR-PAGES.md` §3–§6.2。这里按那份契约
 做投影，前端零改动即可从演示态切真实通道。
 
-四条口径（详见 `docs/decisions/DEC-030-radar-http-endpoints.md` 与 DEC-032）：
+四条口径（详见 `docs/decisions/DEC-030-radar-http-endpoints.md` 与 DEC-033）：
 
 1. **只做投影，不重算、不改口径**：资讯流投影 R6 的本机资讯库
    （`news.store.load_items()` + `news.events.extract_events()`）、日历走 R6
