@@ -28,7 +28,7 @@
 | `news_stream` | 是 | `news` | `date`、`until?`、`sources?`、`codes?`、`limit?`、`store?`、`ai?` | 统一资讯流 + 规则抽取事件（R6） |
 | `event_calendar` | 是 | `news` | `month`、`codes?`、`limit?`、`fetch?` | 事件日历五小节，含三个「暂无数据源」（R6） |
 
-除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **16 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个 + R5 增量 `industry_snapshot` 1 个 + R6 增量 `news_stream` / `event_calendar` 2 个）。
+除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。**工具数量与名称以 `ldst mcp tools list` 的输出为准**，本文不写死数字；下表按域登记语义与入参，新增或删除工具须同步本表（契约测试 `tests/contract/test_mcp_tools.py` 会比对两者）。
 
 > **命名偏差（已声明-接受）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
 > 验收口径直接点名「MCP 只读工具 `candidate_pool`」。
