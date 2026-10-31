@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -224,7 +225,9 @@ def test_news_ai_requested_without_config_degrades_to_exit_9(
 def test_events_requires_a_month(repo) -> None:
     result = runner.invoke(app, ["events"])
     assert result.exit_code == 2
-    assert "--month" in result.stderr
+    # rich 会把选项名拆成两个着色片段（`-` + `-month`），先去掉 ANSI 再断言。
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stderr)
+    assert "--month" in " ".join(plain.split())
 
 
 def test_events_validates_the_month_format(repo) -> None:
