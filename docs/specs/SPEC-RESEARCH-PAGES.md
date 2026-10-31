@@ -1,12 +1,11 @@
 # SPEC-RESEARCH-PAGES 个股深挖与六阶段研究报告（前端）
 
-- 版本：v0.1（QUOT-146 定稿：页面骨架 + 只读接口契约 + 五态矩阵）
+- 版本：v0.1（定稿：页面骨架 + 只读接口契约 + 五态矩阵）
 - 日期：2026-10-31
-- 归属：前端架构
+- 归属：前端页面
 - 实现：`frontend/src/screens/research/`、`frontend/src/components/research/`、
   `frontend/src/api/research.ts`、`frontend/src/lib/citation.ts`
-- 关联：`SPEC-RESEARCH-PROVENANCE`（R3 产物与角标口径）、`DEC-024`（后三段只消费上游）、
-  `DEC-025`（估值事实键）、`DEC-027`（来源白名单）、`UI-SPEC`（令牌与五态）
+- 关联：`SPEC-RESEARCH-PROVENANCE`（R3 产物与角标口径）、`UI-SPEC`（令牌与五态）
 
 ## 1. 路由与页面职责
 
@@ -158,10 +157,10 @@
 2. **续跑接口错误语义**：`POST /run` 的 409（已有任务）/ 422（参数）分支待后端定义；
    前端目前统一走 `describeResearchError`，接口上线后可补专门文案。
 3. **估值分位**：依赖 FinanceCoffer 快照提供 `pe_percentile_5y` / `pb_percentile_5y`
-   （DEC-025）；缺失时页面明确留白。
+   ；缺失时页面明确留白。
 4. **日志/导出**：报告导出 PDF、段级审计结果（`--check`）展示不在本页范围。
 
 ## 变更记录
 
-- v0.1（2026-10-31，QUOT-146）：两页路由、六段导航、来源抽屉、失败段续跑、五态矩阵与
+- v0.1（2026-10-31）：两页路由、六段导航、来源抽屉、失败段续跑、五态矩阵与
   只读接口契约定稿；记录后端接口缺口与演示参数。

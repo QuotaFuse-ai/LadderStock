@@ -1,7 +1,7 @@
 # CI 门禁：实际命令、本地等价命令与 required checks
 
 本文件描述 `.github/workflows/ci.yml` 的真实行为，以及在本机复现同一门禁的命令。
-最后核对：**2026-10-31**（`main@128b414`，CI 绿）。
+最后核对：**2026-10-31**（CI 绿）。
 
 ## 一、CI 实际跑什么
 
@@ -27,7 +27,7 @@ python -m mypy
 
 ## 二、本地等价命令
 
-前置：Python ≥ 3.11（本仓开发环境固定 3.12，见 [DEC-002](decisions/DEC-002-python312-venv.md)）；Node ≥ 22 仅前端构建需要。
+前置：Python ≥ 3.11（本仓开发环境固定 3.12）；Node ≥ 22 仅前端构建需要。
 
 ### Windows（PowerShell / cmd）
 

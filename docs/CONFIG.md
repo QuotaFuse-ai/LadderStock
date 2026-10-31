@@ -1,8 +1,7 @@
 # 配置与迁移（CONFIG）
 
-本文是配置目录、环境变量与旧版迁移的**唯一权威说明**。改动前请先看
-`docs/decisions/DEC-001-local-first-development.md`（本地优先）与
-`docs/decisions/DEC-009-config-migration-and-legacy-entry.md`（迁移口径）。
+本文是配置目录、环境变量与旧版迁移的**唯一权威说明**。改动前请先理解本地优先与
+迁移口径两项约束（见仓库历史）。
 
 ## 1. 目录解析顺序
 
@@ -38,16 +37,16 @@
 
 | 文件 | 内容 | Schema |
 |---|---|---|
-| `config/sources.yaml` | 生态 peer 与数据集登记（DEC-006 边界） | `config/schema/sources.schema.json` |
+| `config/sources.yaml` | 生态 peer 与数据集登记 | `config/schema/sources.schema.json` |
 | `config/sync.yaml` | 增量水位与同步策略 | `config/schema/sync.schema.json` |
 | `config/ai.yaml` | AI provider 顺序、超时、降级策略 | `config/schema/ai.schema.json` |
 | `config/state.yaml` | 前端持久化分片清单（`schema_version: 2`） | `config/schema/state.schema.json` |
 | `config/schedule.yaml` | 定时任务表 | `config/schema/schedule.schema.json` |
-| `config/industry.yaml` | 申万一级行业清单（`enabled` 可裁剪）与窗口参数（R5，QUOT-143） | 暂无 Schema：由 `industry/catalog.py` 校验（6 位申万一级代码、窗口为正整数、`board_name` 可选），读不动就退出码 3，不静默兜底成空清单 |
+| `config/industry.yaml` | 申万一级行业清单（`enabled` 可裁剪）与窗口参数 | 暂无 Schema：由 `industry/catalog.py` 校验（6 位申万一级代码、窗口为正整数、`board_name` 可选），读不动就退出码 3，不静默兜底成空清单 |
 
 `ldst config validate` 逐文件校验并给出 `/a/b: 错误` 形式的路径；任一失败退出码 3。
 
-### 3.1 `ai.yaml` 多后端（QUOT-236）
+### 3.1 `ai.yaml` 多后端
 
 ```yaml
 ai:
@@ -128,5 +127,5 @@ ai:
 | `scripts/start.cmd`（cmd） | 同上，找不到 `ldst` 时回落 `python -m ladderstock run` |
 | `compatibility/start.py` | 翻译旧前缀环境变量后把参数原样交给 `ldst`；首个参数不是已知子命令时补 `run` |
 
-旧端口 `5940` / `8770` 只打印迁移提示，**不接管、不回退**（DEC-004）；这两个数字只允许
+旧端口 `5940` / `8770` 只打印迁移提示，**不接管、不回退**；这两个数字只允许
 出现在文档的迁移说明里，`src/**/*.py` 中不得出现（`tests/compat/test_legacy_entry.py` 会扫）。

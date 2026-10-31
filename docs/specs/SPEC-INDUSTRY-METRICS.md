@@ -1,7 +1,7 @@
 # SPEC-INDUSTRY-METRICS 行业五维画像口径
 
 - 日期：2026-10-31
-- 归属：数据面 R5（QUOT-143）
+- 归属：数据面 R5
 - 实现：`src/ladderstock/industry/catalog.py`（清单加载与校验）、
   `src/ladderstock/industry/metrics.py`（公式层，纯函数）、
   `src/ladderstock/industry/snapshot.py`（装配层，只读缓存回放）、
@@ -11,9 +11,8 @@
 - 夹具：`tests/fixtures/industry/I001…I005.json` + `tests/unit/industry/`
 - 相关：`docs/specs/METRICS.md`（既有指标口径，本文**不修改**任何一条）、
   `docs/specs/SPEC-RESEARCH-PROVENANCE.md`（§10 的溯源形状即 R3）、
-  `docs/specs/SPEC-CANDIDATE-POOL.md`（同一套信封装配与 DEC-012 退出码习惯）、
-  `DEC-006`（生态边界，不采集）、`DEC-012`（`available=false` → 退出码 6）、
-  `DEC-018`（申万 / 板块两套分类不混算）、`D-07`（口径只有一份）
+  `docs/specs/SPEC-CANDIDATE-POOL.md`（同一套信封装配与退出码习惯）、
+  `D-07`（口径只有一份）
 
 ## 0. 一句话
 
@@ -37,7 +36,7 @@
 
 三条硬约束：
 
-1. **不新增采集入口**（DEC-006）：读取路径与 `core/pool.py` 完全一致，走
+1. **不新增采集入口**：读取路径与 `core/pool.py` 完全一致，走
    `data/archive.py`（Parquet 优先 → DuckDB 兜底），本模块不 import `data/providers` /
    `httpx` / `sqlite3`，单测用 `provider_registry.build_transport` 直接抛异常来证明零外呼。
 2. **不读隐私库**：交易日志与持仓（`journal.sqlite`）不出现在任何字段里，
@@ -116,7 +115,7 @@
 
 ## 3. 资金（capital）
 
-两路口径**并列输出、互不换算**（DEC-018）：
+两路口径**并列输出、互不换算**：
 
 | 段 | 公式 | caliber |
 |---|---|---|
@@ -248,7 +247,7 @@
 
 | 工具 | 实调入参 | 实测形状 | 结论 |
 |---|---|---|---|
-| `sw_industry_history` | `code` 必填（空参被入参校验拒回 `code Field required`） | `data.{code, as_of: null, current, history[], total, first_seen, last_changed}`，行内日期是 `start_date`，`meta.confidence=C`（上游是申万分类表 xls，非日频） | 落库 `trade_date = start_date`，成分表按**懒缓存**逐代码同步（DEC-018），置信度 `low` |
+| `sw_industry_history` | `code` 必填（空参被入参校验拒回 `code Field required`） | `data.{code, as_of: null, current, history[], total, first_seen, last_changed}`，行内日期是 `start_date`，`meta.confidence=C`（上游是申万分类表 xls，非日频） | 落库 `trade_date = start_date`，成分表按**懒缓存**逐代码同步，置信度 `low` |
 | `eastmoney_finance_indicators` | `code` 必填（`periods` 可选） | `data.{code, indicators[]}`，行内 `report_date` 是 `"YYYY-MM-DD 00:00:00"` | `trade_date = report_date`，取前 10 位解析 |
 | `baostock_valuation_history` | `code` 必填（`start`/`end`） | `data.{code, rows[]}`，行内 `date/close/pe_ttm/pb/ps_ttm/pcf_ttm/turnover_rate/tradestatus` | 估值 + 换手的唯一数据源；**北交所标的实测无源**，所以该段可能只有部分成分有数 |
 | `board_fund_flow` | `board_type=industry`、`page`、`page_size`（**必须显式**，不靠默认值） | `data.{scope, total: null, page, page_size, items[]}`，行内 `code/name/main_net/main_net_pct/change_pct`，无日期字段 | 板块段字段直接来自 `items`；行内无日期 ⇒ 由落库分区日承担 `trade_date`。实测上游会在东财 BK 与新浪行业之间回落，`_source` 不同 ⇒ caliber 逐字段标注，两套榜不混算 |
@@ -268,7 +267,7 @@
 | `capital.northbound` | 北向资金上游只有市场级（`northbound_flow` 无行业拆分），行业北向净流入接不上 | 市场级总量摊到行业是**编出来的分配**，不是缺失 |
 | `momentum.index_change_pct` | 申万行业指数历史不可得（实测），指数口径涨跌幅不降级为成分股聚合 | 等权成分是**另一个字段**（§5 已单列），把聚合值标成指数值会让两个口径无法区分 |
 
-这两条是 `ROADMAP.md` §4 判定「接不上」的结果，不是实现偷懒：
+这两条是既有规划判定「接不上」的结果，不是实现偷懒：
 字段留在 schema 里、`provenance` 里 `sources: []` + `unverified: true`，
 上游一旦就绪，只改 reason 与取值路径，schema 不动。
 
@@ -295,7 +294,7 @@
 | 出口 | 载荷 | 退出码 / 状态 |
 |---|---|---|
 | `ldst industry list --output json` | 清单 + 每行业 `available` / `constituent_count` / 五维 `dimensions_available` / `data_source_status` / `reason` + `windows` / `formulas` / `datasets` | **恒 0**：清单是配置视图，配置读得到就出得来（指标全缺也逐行标 `missing`）；清单读不动 → 3 |
-| `ldst industry show <name> --output json` | `LadderEnvelope`（`domain=sentiment`、`topic=industry_snapshot`），`payload` 是 §1–§10 的快照 | 五维任一字段算得出 → 0；全空 → **6**（DEC-012，stdout 仍是完整可解析信封）；行业不在清单 → 6 + `candidates`；配置错 → 3 |
+| `ldst industry show <name> --output json` | `LadderEnvelope`（`domain=sentiment`、`topic=industry_snapshot`），`payload` 是 §1–§10 的快照 | 五维任一字段算得出 → 0；全空 → **6**（stdout 仍是完整可解析信封）；行业不在清单 → 6 + `candidates`；配置错 → 3 |
 | MCP `industry_snapshot` | 同一份快照放在 `payload.industry_metrics`，域 `sentiment` | 只读；`industry` 必填、**没有 `date`**（§1.2）；`available=false` → `source_status=partial` + `confidence=low` |
 
 `source_status` / `data_source_status`：五维全出 → `ok`；部分维度出数 → `partial`；

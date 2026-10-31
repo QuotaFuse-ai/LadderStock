@@ -17,7 +17,7 @@
 4. `boundary-guards`      用反例验证 `scan_no_collection()` / `audit_sources()` 拦得住越界；
 5. `listener-defaults`    web / MCP 默认只绑回环；非回环必须显式开关 + 鉴权 Token。
 
-WARN 项是「已知缺口 / 需要跨模块改动」的提示，详见 `docs/tasks/TASK-SECURITY/audit.md`。"""
+WARN 项是「已知缺口 / 需要跨模块改动」的提示。"""
 
 from __future__ import annotations
 

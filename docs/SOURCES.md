@@ -1,9 +1,9 @@
 # 数据源、同步与本地缓存（M2）
 
 - 状态：已落地（2026-10-28，M2 数据层）
-- 变更：2026-10-31 R5（QUOT-143）登记四路行业输入数据集 —— §2 归属表、§2.2 形状表、
+- 变更：2026-10-31 R5 登记四路行业输入数据集 —— §2 归属表、§2.2 形状表、
   §2.3 代码池（三个 → 六个）
-- 关联：DEC-006（四层生态边界）、DEC-007（重复采集治理）、`docs/CLI.md`（退出码）
+- 关联：`docs/CLI.md`（退出码）
 - 一句话：**LadderStock 只消费生态三件套**；主源失败只在同一 peer 内换工具，
   再不行就回放本地缓存，永不自行采集。
 
@@ -23,10 +23,10 @@
 | `wire` | QuotaFuse Wire | `qfw` | `LDST_WIRE_MCP_URL` | `http://127.0.0.1:8791/mcp` | 可选消费（题材叙事） |
 | `senate` | StockSenate | `ssenate` | `LDST_SENATE_MCP_URL` | `http://127.0.0.1:8765/mcp` | 只读消费（不复现合议） |
 
-TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——8001 是 WSL 转发服务
-的固定端口，8787 已被 TickHub-CN 管理端占用，两者都不允许抢占（DEC-004 不自动换端口）。
+TickHub-US 的端口固定为 MCP **8002**、管理端 **8789**——8001 是 WSL 转发服务
+的固定端口，8787 已被 TickHub-CN 管理端占用，两者都不允许抢占（不自动换端口）。
 
-传输层是 MCP Streamable HTTP（QUOT-232）：首次调用先 `initialize` 握手，拿响应头的
+传输层是 MCP Streamable HTTP：首次调用先 `initialize` 握手，拿响应头的
 `Mcp-Session-Id` 回一条 `notifications/initialized`，之后每个请求带
 `Mcp-Session-Id` 与 `MCP-Protocol-Version`；会话按 peer 复用，服务端 404
 （`Session not found`）时重新握手并重发一次。响应按 SSE 切帧（`data:` 行，
@@ -63,15 +63,14 @@ TickHub-US 的端口按 DEC-013 定：MCP **8002**、管理端 **8789**——800
 `theme_news` / `council_memo` 在 `sync.yaml` 里标了 `optional: true`：peer 不可用时
 只记 `status=skipped`，不拖垮整轮同步，也不影响退出码。
 
-**R5 产业研究的四路输入（QUOT-143）**：`sw_industry_map` / `finance_indicators` /
-`valuation_history` 是**逐股**取数（代码池见 §2.3），成分表按 DEC-018 走**懒缓存**——
+**R5 产业研究的四路输入**：`sw_industry_map` / `finance_indicators` /
+`valuation_history` 是**逐股**取数（代码池见 §2.3），成分表走**懒缓存**——
 只同步用得到的代码，不做全市场分类全量构建。四只都**不设备源**：板块资金流的上游
-source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `source` 列承担并逐字段标注
-（DEC-018），换备源等于换口径，不是降级。落库水位统一是 `trade_date`，但**语义不统一**：
+source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `source` 列承担并逐字段标注，换备源等于换口径，不是降级。落库水位统一是 `trade_date`，但**语义不统一**：
 `finance_indicators` 的 `trade_date` 是 `report_date`（财报期），`sw_industry_map` 的是
 分类计入日期（`start_date`）——别名映射见 §2.2 第 2 条。
 
-### 2.1 链路登记规则（DEC-008）
+### 2.1 链路登记规则
 
 「配置里写的链路」与「门禁允许的链路」必须是同一个事实。两边各改一半是
 `theme_news` 事故的成因：yaml 有 `wire_timeline`，目录却只登记了 `wire_get_digest`，
@@ -81,7 +80,7 @@ source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `sour
 测试共用这一个函数）：**
 
 1. 每条 `sources.yaml` 记录的 `dataset` 必须已在 `DATASET_CATALOG` 登记；
-2. `via` 必须等于该数据集登记的 `peer`（主备同 peer，DEC-006 闸门 3）；
+2. `via` 必须等于该数据集登记的 `peer`（主备同 peer）；
 3. `tool` 必须在该数据集的**允许工具集合**内，即（登记主工具 + 登记的备工具）；
 4. `primary: true` 的记录，工具必须正好是登记主工具；同一数据集只能有一个主源；
 5. `fallback` 引用的 id 必须存在、同 dataset、同 peer；
@@ -100,7 +99,7 @@ source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `sour
 可达性只由 `ldst sources validate` / `ldst sources health` 负责，所以 peer 没启动
 不会让 `doctor` 变红。`sources validate` 的退出码优先级见 §8。
 
-### 2.2 TickHub 真实 `data` 的三种形状（QUOT-233）
+### 2.2 TickHub 真实 `data` 的三种形状
 
 真实返回是 `{ok, data, meta}`，`data` 有**三种**形状——不是「永远是记录列表」。
 映射表在 `data/adapters/tickhub.py:ROW_SHAPES`，真实样本（脱敏）在
@@ -125,7 +124,7 @@ source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `sour
 
 1. **形状表按工具登记**，备源与主源形状不同（`klines` vs `rows`）；表里声明的键
    缺失就报错，不静默吞——上游改形状必须第一时间知道。没登记形状的工具回对象就按
-   快照落一行（DEC-006 闸门 2：不硬凑字段）。
+   快照落一行（不硬凑字段）。
 2. **行内日期 → `trade_date`**，头部口径字段透传到每一行，否则落库只剩整包一行。
    行内日期键的别名按工具登记（`RowShape.date_keys`，R5 起）：财务指标只有
    `report_date`、申万分类只有 `start_date`，落库仍统一用 `trade_date` 当幂等键与水位；
@@ -137,12 +136,12 @@ source 会在东财 BK 与新浪行业之间切换，口径由缓存里的 `sour
    由 `meta.fetched_at` 承担。板块资金流是**当日榜**，整批替换、日粒度，
    用抓取日当 `trade_date` 与它的语义一致；逐股那三只不许这样——它们有行内日期。
 
-`require_code` 的行（个股维度）如果补不出代码就**整行丢弃、不入库**，与 QUOT-231 L6
+`require_code` 的行（个股维度）如果补不出代码就**整行丢弃、不入库**，
 口径一致：`(code, trade_date)` 是追加模式的幂等键，无代码行既无法幂等也会污染天梯候选。
 
-### 2.3 代码池数据集：`code` 必填的六个（QUOT-233 / R5 QUOT-143）
+### 2.3 代码池数据集：`code` 必填的六个（R5）
 
-`daily_k` / `fund_flow` / `dragon_tiger_seats`（QUOT-233）加上 R5 的
+`daily_k` / `fund_flow` / `dragon_tiger_seats` 加上 R5 的
 `sw_industry_map` / `finance_indicators` / `valuation_history`——这六只的真实工具
 schema 里 `code` 都是必填项，所以它们**一次同步 = 逐只代码各调一次**，结果合并成一个事务落库。
 两批的空参报错**不是同一个码**，别照抄：
@@ -160,7 +159,7 @@ schema 里 `code` 都是必填项，所以它们**一次同步 = 逐只代码各
 2. `config/sync.yaml` 的 `sync.datasets.<dataset>.codes`（schema 上限 100 只）；
 3. 本机隐私库自选表 `watchlist`（只读 `code` 列，库不存在就当作空，不因查询而建库）。
 
-R5 的三只默认 `codes: []`：申万成分表按 DEC-018 是**懒缓存**，只同步用得到的代码，
+R5 的三只默认 `codes: []`：申万成分表是**懒缓存**，只同步用得到的代码，
 不做全市场分类全量构建。要覆盖某个行业，把该行业的成分代码写进池子再同步。
 
 - 三处都为空：**一次调用都不发**，该数据集记 `failed`（标了 `optional` 则 `skipped`），
@@ -172,7 +171,7 @@ R5 的三只默认 `codes: []`：申万成分表按 DEC-018 是**懒缓存**，�
   `(code, trade_date)` upsert 折叠），`--full` 不带 `start`。
 - **板块维度不在这六个里**：`industry_fund_flow`（`board_fund_flow`）按整板块一次取回，
   不带代码，但必须显式带 `board_type=industry` + 分页参数（`FIXED_PARAMS`）。
-  该工具默认虽然也是行业，默认值却随时可能被上游挪走——DEC-018 要求口径写进请求，
+  该工具默认虽然也是行业，默认值却随时可能被上游挪走——口径必须写进请求，
   不写进假设。
 - 单只失败不拖垮整轮：成功的照常落库，状态记 `degraded`，`detail` 只报**只数**。
 - 隐私：代码要发给本机 peer 才能取行情，但日志与对外输出只出现数量，不出现自选内容。
@@ -194,11 +193,11 @@ sync.yaml 的 primary
 - 主备引用的 source id 必须在 `sources.yaml` 里真实存在；
 - 未在 `DATASET_CATALOG` 登记的数据集不许同步。
 
-缓存回放（DEC-007 §2.5）读 `archive.snapshot()`：**Parquet 日分区优先 → DuckDB 兜底**。
+缓存回放读 `archive.snapshot()`：**Parquet 日分区优先 → DuckDB 兜底**。
 回放出的信封 `freshness=cached`、`source_status=degraded`、`confidence=low`，
 `source_detail` 里写清读的是哪个后端、哪一天。回放**不重写库、不推进水位**。
 
-## 4. 运行期治理（DEC-007 §2.4）
+## 4. 运行期治理
 
 实现在 `provider_registry.ProviderRegistry`，四条规则全部默认开启，测试可显式关掉：
 
@@ -313,7 +312,7 @@ sync.yaml 的 primary
   `sources_in_cooldown`、`peers`；
 - 健康事件是排障入口：`reason` 区分 `timeout` / `unreachable` / `unavailable` / `rejected`。
 
-### 7.1 控制面的健康与端口预检（DEC-014）
+### 7.1 控制面的健康与端口预检
 
 看板 `/api/control/*`（`web/control.py`）复用同一套 peer 元数据，但只做「看与动」，不改数据链路：
 
@@ -347,7 +346,7 @@ sync.yaml 的 primary
 
 `optional: true` 的数据集永远只记 `skipped`，不参与失败计数。
 
-`sources validate` 的退出码优先级（DEC-008 / docs/CLI.md §F）：
+`sources validate` 的退出码优先级（见 `docs/CLI.md` §F）：
 
 - 配置非法（catalog ↔ yaml 不一致、跨 peer、工具未登记）→ `3`，stderr 与 JSON 的
   `problems` 会指出**哪份文件、哪条记录、哪个字段**；此时**跳过**可达性探测，

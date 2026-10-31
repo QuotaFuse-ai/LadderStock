@@ -3,7 +3,7 @@
 浏览器读不到本机文件，R8 的两页（`/research/:code`、`/research/:code/report`）只认这三个
 接口。载荷与 MCP `research_status` 同形，字段名**照 SPEC §2 定稿**，前端不改字段即可切换。
 
-三条设计取舍（详见 `docs/decisions/DEC-028-research-http-endpoints.md`）：
+三条设计取舍（见仓库历史）：
 
 - **读取用既有真源**：六段状态取 `research/checkpoint.status_summary()`，产物取
   `research/artifacts`，这里只做组装与降级判定，不重算任何数字、也不补齐缺失值。

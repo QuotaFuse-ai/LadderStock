@@ -46,7 +46,7 @@ LadderStock 是 QuotaFuse 产品线里的**短线复盘工作台**：情绪温�
 
 ### 边界是可执行的，不只是写在文档里
 
-LadderStock 是**第四层：复盘与纪律执行层**，只消费前三层。这条边界由代码和 CI 强制，不是口头约定（[DEC-006](docs/decisions/DEC-006-ecosystem-boundary.md)）：
+LadderStock 是**第四层：复盘与纪律执行层**，只消费前三层。这条边界由代码和 CI 强制，不是口头约定：
 
 | 闸门 | 实现 | 拦什么 |
 |---|---|---|
@@ -90,7 +90,7 @@ ldst doctor --output json     # boundary:no_collection / boundary:datasets
 └─────────────────────────────────────────────────────┘
 ```
 
-前端形态与生态内看板保持一致：**React + Vite 本地浏览器 UI**（由 `ldst run` 在本机托管），不引入 Electron；Tauri 2.0 仅作为 M4 的可选打包壳，见 [DEC-005](docs/decisions/DEC-005-frontend-shell.md)。
+前端形态与生态内看板保持一致：**React + Vite 本地浏览器 UI**（由 `ldst run` 在本机托管），不引入 Electron；Tauri 2.0 仅作为 M4 的可选打包壳。
 
 ## 安装
 
@@ -104,7 +104,7 @@ pip install -e ".[dev]"           # 开发
 
 可选 extras：`mcp`（MCP Server）、`web`（本地看板）、`pdf`（PDF 导出与中文字体）、`all`。
 
-开发环境固定为 `[local-path]\ruanjian\python312\python.exe`（3.12.10）创建的 `[local-path]\LadderStock\.venv`，见 [DEC-002](docs/decisions/DEC-002-python312-venv.md)。
+开发环境建议使用 Python 3.12 虚拟环境；CI 以 Python 3.11 为基线，两者都受支持。
 
 ## 快速开始
 
@@ -118,7 +118,7 @@ ldst run                   # 打开本地工作台 http://127.0.0.1:5950
 
 结构化结果走 stdout，日志走 stderr；`--output json|table|csv` 三档可选。
 
-端口固定 `5950`（看板）/ `5951`（MCP http），默认只监听 `127.0.0.1`；**端口被占用时直接报错并提示 `--port`，不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会丢前端状态（[DEC-004](docs/decisions/DEC-004-port-policy.md)）。
+端口固定 `5950`（看板）/ `5951`（MCP http），默认只监听 `127.0.0.1`；**端口被占用时直接报错并提示 `--port`，不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会丢前端状态。
 
 ## 命令行
 
@@ -207,21 +207,21 @@ ladderstock/
 | 端口 | 5950（看板）/ 5951（MCP http） | 被占用直接报错不换端口；旧 5940 / 8770 仅打印迁移提示 |
 | 配置与环境变量 | `~/.ladderstock/`、`LDST_*` | 首次启动只读迁移，兼容读取旧前缀 |
 
-## 决策记录
+## 设计取舍
 
-实现口径以 `docs/decisions/` 为准（只增不改）：
+下列口径是当前实现的既定约束，详细取舍背景见仓库历史：
 
-| 编号 | 决策 |
+| 主题 | 口径 |
 |---|---|
-| DEC-001 | 在本地目录先行开发，暂不接入工作区仓库 |
-| DEC-002 | 开发环境固定为 `[local-path]\LadderStock\.venv`（Python 3.12.10） |
-| DEC-003 | CLI 基线 31 条命令全部 P0 |
-| DEC-004 | 端口占用直接报错，不自动换端口 |
-| DEC-005 | 前端沿用 React + Vite 本地浏览器 UI，Tauri 2.0 仅作 M4 可选 |
-| DEC-006 | 四层生态边界：不采集，只消费 peer；主源 → 同 peer 备源 → 缓存重放 |
-| DEC-007 | 数据集归属唯一真源 + 幂等增量同步（水位只进不退） |
-| DEC-008 | `sources.yaml` 链路与门禁目录对齐，配置非法在 `doctor` / `sources validate` 直接报红 |
-| DEC-009 | `config migrate` 落地（只读旧文件、先备份、失败回滚、版本上限拒绝），旧入口委托 `ldst run` |
+| 开发位置 | 先在本地目录开发，成熟后再接入工作区仓库 |
+| 开发环境 | Python 3.12 虚拟环境；CI 以 3.11 为基线 |
+| CLI 基线 | 31 条命令全部 P0 |
+| 端口 | 占用直接报错，不自动换端口 |
+| 前端 | React + Vite 本地浏览器 UI；Tauri 2.0 仅作可选打包壳 |
+| 生态边界 | 四层结构：不采集，只消费 peer；主源 → 同 peer 备源 → 缓存重放 |
+| 数据集归属 | 归属唯一真源 + 幂等增量同步（水位只进不退） |
+| 数据源配置 | `sources.yaml` 链路与门禁目录对齐，非法配置在 `doctor` / `sources validate` 直接报红 |
+| 配置迁移 | `config migrate` 只读旧文件、先备份、失败回滚、版本上限拒绝；旧入口委托 `ldst run` |
 
 ## 开发
 

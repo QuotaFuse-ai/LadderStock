@@ -231,7 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_created_at ON watchlist (created_at);
 #: 历史库只有 `avg_price`，改名成与 CLI / 文档一致的 `cost`（成本价），
 #: 并加建仓日 / 行业标注 / 备注。老库的既有行 `entry_date` 保持 NULL——
 #: 「不知道哪天建的仓」就照实说 NULL，不拿 `updated_at` 或今天冒充建仓日。
-#: `industry` 可空是必须的：本机没有「个股 → 行业」映射数据集（`docs/ROADMAP.md` §4），
+#: `industry` 可空是必须的：本机没有「个股 → 行业」映射数据集（见仓库历史），
 #: 行业只统计用户自己标注的，未标注的不会被猜。
 _SCHEMA_V2 = """
 ALTER TABLE positions RENAME COLUMN avg_price TO cost;

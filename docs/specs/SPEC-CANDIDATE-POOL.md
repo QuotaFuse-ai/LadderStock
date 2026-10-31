@@ -1,12 +1,11 @@
 # SPEC-CANDIDATE-POOL 候选池评分口径
 
 - 日期：2026-10-30
-- 归属：数据面 R7（QUOT-145）
+- 归属：数据面 R7
 - 实现：`src/ladderstock/core/pool.py`（打分）、`src/ladderstock/cli/pool.py`（`ldst pool`）、
   `src/ladderstock/mcp/server.py::_tool_candidate_pool`（MCP `candidate_pool`）
 - 夹具：`tests/fixtures/pool/P01…P06.json` + `tests/unit/core/test_pool_golden.py`
-- 相关：`docs/specs/METRICS.md`（舍入与 6 板基准）、`DEC-006`（生态边界，不采集）、
-  `DEC-012`（`available=false` → 退出码 6）、`DEC-019`（本文两条命名/权重决策的来历）
+- 相关：`docs/specs/METRICS.md`（舍入与 6 板基准）、`docs/CLI.md`（退出码）
 - 口径不变项：本文**不修改**任何既有指标口径；连板高度基准直接复用 `METRICS.md` §3.3 的 6 板。
 
 ## 0. 一句话
@@ -26,7 +25,7 @@
 
 三条硬约束：
 
-1. **不新增采集入口**（DEC-006）：四个数据集都是 `data/archive.py` 里已登记的缓存回放，
+1. **不新增采集入口**：四个数据集都是 `data/archive.py` 里已登记的缓存回放，
    本模块不发起任何网络请求；缓存没有就是没有 → `available=false` + 退出码 6。
 2. **不读隐私库**：本模块不 import `ladderstock.journal` / `data.sqlite_store` / `sqlite3`
    （AST 级断言见 `tests/integration/test_position_privacy.py::test_pool_does_not_import_privacy_store`），
@@ -84,7 +83,7 @@ score = Σ(weight_i × part_i) / Σ(weight_i)   （i 只取 part_i 非 null 的�
 - 五个分项全为 `null` → `score = null`，该候选仍然出现，`absent_parts` 点名列满。
 
 对外键名用 `absent_parts` 而不是第二个 `missing`：顶层 `missing` 已经是「缺哪个**数据集**」，
-两个概念不同名（决策见 DEC-019 §3）。
+两个概念不同名。
 
 ## 4. 输出契约
 
@@ -128,7 +127,7 @@ score = Σ(weight_i × part_i) / Σ(weight_i)   （i 只取 part_i 非 null 的�
 | MCP `candidate_pool` | `LadderEnvelope`（`_envelope()`，带 `summary`） | `payload.pool` = 上面的对象，`payload.summary` = 一行人类可读结论 |
 
 这与既有工具一致（`ladder_get_sentiment` 也是 `payload.sentiment`），CLI 侧则与
-`ldst sentiment show` 一样平铺。`available=false` 时 CLI 退出码 **6**（DEC-012），
+`ldst sentiment show` 一样平铺。`available=false` 时 CLI 退出码 **6**，
 stdout 仍是完整结构化结果，stderr 说明原因。
 
 ## 5. 手算对照（与夹具逐条一致）
@@ -172,7 +171,7 @@ stdout 仍是完整结构化结果，stderr 说明原因。
 ### P04 字段容忍 + 重复代码 + 无代码行
 
 4 行原始数据里：`600010` 重复（保留首条，`dropped_duplicates=1`）、一行没有 code
-（`unknown_code=1`，且不参与当日最高板，`height=4` 取有码行的最大值——QUOT-231 L6 口径）。
+（`unknown_code=1`，且不参与当日最高板，`height=4` 取有码行的最大值——口径）。
 
 | code | 取到的字段 | strength | turnover | standing | capital | theme | score |
 |---|---|---|---|---|---|---|---|

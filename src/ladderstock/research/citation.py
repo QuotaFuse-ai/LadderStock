@@ -19,7 +19,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-#: 未核实标记：纯文本、可复制，与 vibe-astock 同款语义（PRD-UI-REDESIGN §3 缺口 #3）
+#: 未核实标记：纯文本、可复制，与旧版看板同款语义
 UNVERIFIED_MARK = "〔未核实〕"
 
 #: 数值 token：一段连续数字（允许千分位与小数），前面不能再有数字
