@@ -36,6 +36,7 @@ from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
+from ladderstock.cli.weekly import register as register_weekly
 from ladderstock.core.boundary import DATASET_CATALOG
 from ladderstock.core.boundary import audit as boundary_audit
 from ladderstock.data.provider_registry import provisional_tool_warnings
@@ -179,6 +180,10 @@ def run(
 
 # 实现体在 cli/review.py（指标直出 + 五段编排 + 验证条件；DEC-003 命令名不变）
 register_review(review_app, validate_app, sentiment_app, ladder_app)
+
+# R11 周度复盘（QUOT-149）：实现体在 cli/weekly.py + weekly/{week,facts,checkpoint,pipeline}.py。
+# 事实包只聚合本机每日产物与本机缓存，AI 只写叙述（DEC-006），口径见 docs/specs/SPEC-WEEKLY.md
+register_weekly(app)
 
 
 # ---------------------------------------------------------------- 数据层

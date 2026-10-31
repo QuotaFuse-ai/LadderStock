@@ -61,6 +61,10 @@ from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 
 REVIEW_SUBDIR = "review"
+#: 周报产物目录（`ldst weekly` 落盘，QUOT-149）：`<data_dir>/weekly/<week>.json`
+WEEKLY_SUBDIR = "weekly"
+#: 周标签白名单：它直接拼进文件名，所以必须先过正则再拼路径（同 `research.normalize_code`）
+_WEEK_PATTERN = re.compile(r"^(\d{4})-W(\d{2})$")
 STATE_INDEX = Path("state") / "frontend-index.json"
 
 WEB_PORT = 5950
@@ -150,6 +154,29 @@ def _parse_day_param(value: str | None, name: str) -> date | None:
         return date.fromisoformat(text)
     except ValueError:
         raise HTTPException(status_code=400, detail=detail) from None
+
+
+def _parse_week(value: str | None) -> str:
+    """`?week=YYYY-Www`（大写 W、两位周序，小写归一）；非法一律 400。
+
+    周标签要拼文件名，所以先过白名单再拼路径（防目录穿越，同
+    `research/checkpoint.normalize_code()` 那道防线）。
+    """
+    text = (value or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="缺少 week（YYYY-Www）")
+    matched = _WEEK_PATTERN.match(text.upper())
+    detail = f"非法周标签：{value!r}（需要 YYYY-Www，例如 2026-W44）"
+    if not matched:
+        raise HTTPException(status_code=400, detail=detail)
+    year, number = int(matched.group(1)), int(matched.group(2))
+    if not 1 <= number <= 53:
+        raise HTTPException(status_code=400, detail=detail)
+    try:
+        date.fromisocalendar(year, number, 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=detail) from None
+    return f"{year}-W{number:02d}"
 
 
 def _parse_deviation(raw: str | None) -> float:
@@ -538,6 +565,54 @@ def create_app(
             {"date": target.isoformat(), "review": clean},
             available=True,
             source_detail=f"local review cache: {path.name}",
+        )
+
+    @app.get("/api/weekly")
+    def weekly(
+        week: Annotated[str | None, Query(alias="week", description="YYYY-Www")] = None,
+    ) -> dict[str, Any]:
+        """周报只读视图（R11 / QUOT-149）：读 `weekly/<week>.json`，不重算任何东西。
+
+        与 `/api/review` 同一条空态口径：没有产物就 200 + `data_source_status=missing`，
+        不 404、不伪造数字；`domain` 复用 `review`（`LadderEnvelope` 的域名枚举里没有 weekly）。
+        """
+        tag = _parse_week(week)
+        path = root / WEEKLY_SUBDIR / f"{tag}.json"
+        if not path.is_file():
+            return _envelope(
+                "review",
+                "weekly_report",
+                None,
+                {"week": tag, "weekly": None},
+                available=False,
+                source_detail=f"local weekly cache: {path.name} 不存在",
+            )
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=500, detail=f"周报文件不可读：{exc}") from None
+        clean = strip_private(parsed)
+        if not isinstance(clean, dict):
+            raise HTTPException(status_code=500, detail="周报结构不合法：顶层不是对象")
+        session_days = [
+            str(item)
+            for item in ((clean.get("facts") or {}).get("session_days") or [])
+            if isinstance(item, str)
+        ]
+        as_of: date | None = None
+        if session_days:
+            try:
+                as_of = date.fromisoformat(session_days[-1][:10])
+            except ValueError:
+                as_of = None
+        available = bool(clean.get("available")) and as_of is not None
+        return _envelope(
+            "review",
+            "weekly_report",
+            as_of,
+            {"week": tag, "weekly": clean},
+            available=available,
+            source_detail=str((clean.get("facts") or {}).get("source_detail") or path.name),
         )
 
     @app.get("/api/sentiment")

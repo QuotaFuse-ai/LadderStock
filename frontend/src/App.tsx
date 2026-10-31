@@ -13,6 +13,7 @@ import SettingsScreen from './screens/SettingsScreen'
 import SignalsScreen from './screens/signals/SignalsScreen'
 import ValidateScreen from './screens/ValidateScreen'
 import WatchScreen from './screens/WatchScreen'
+import WeeklyScreen from './screens/WeeklyScreen'
 
 /**
  * 路由表（DESIGN-SPEC §4.1）。
@@ -49,6 +50,8 @@ export default function App() {
         <Route path="/market" element={<MarketScreen />} />
         <Route path="/watch" element={<WatchScreen />} />
         <Route path="/review" element={<ReviewScreen />} />
+        {/* R11 周度复盘（QUOT-149）：`?week=YYYY-Www`，缺省本周 */}
+        <Route path="/weekly" element={<WeeklyScreen />} />
         <Route path="/journal" element={<JournalScreen />} />
         <Route path="/validate" element={<ValidateScreen />} />
         {/* R9 产业研究：矩阵 / 单行业 / 规则信号；深链进入，不占一级导航 */}

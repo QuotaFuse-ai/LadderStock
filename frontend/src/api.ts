@@ -263,6 +263,173 @@ export interface ReviewPayload {
   review: ReviewReport | null
 }
 
+// ---------------------------------------------------------------- R11 周报契约
+
+/** 周度趋势（`weekly/facts.py:_trend()`）：首值、末值、变化、均值、样本数。 */
+export interface WeeklyTrend {
+  first: number | null
+  last: number | null
+  change: number | null
+  avg: number | null
+  samples: number
+}
+
+export interface WeeklySentimentDay {
+  date: string
+  available: boolean
+  temperature: number | null
+  promotion_rate: number | null
+  seal_rate: number | null
+  limit_up_count: number | null
+  broken_count: number | null
+  max_board: number | null
+  gap_levels: number[]
+  reason: string | null
+  /** `artifact`（当日复盘产物）/ `recomputed`（同一批函数补算） */
+  source: string | null
+}
+
+export interface WeeklyLadderDay {
+  date: string
+  available: boolean
+  height: number | null
+  count: number | null
+  gap: boolean
+  gap_levels: number[]
+  unknown_board: number | null
+  reason: string | null
+}
+
+export interface WeeklyBreadthBand {
+  band: string
+  count: number
+  share_pct: number | null
+}
+
+export interface WeeklyThemeRow {
+  name: string
+  days_on_top: number
+  streak_days: number
+  first_date: string
+  last_date: string
+  best_change_pct: number | null
+  avg_change_pct: number | null
+  days: string[]
+}
+
+export interface WeeklyValidationItem {
+  generated_date: string
+  id: string | null
+  text: string | null
+  metric: string | null
+  operator: string | null
+  target: unknown
+  actual: number | null
+  settled: boolean
+  passed: boolean | null
+  next_session: string | null
+}
+
+export interface WeeklyLeader {
+  code: string
+  name: string | null
+  boards: number | null
+  date: string
+}
+
+export interface WeeklyMissingDay {
+  date: string
+  reason: string
+  has_report: boolean
+}
+
+/** 周度事实包：纯程序聚合，页面拿它算不出任何新数字，只展示。 */
+export interface WeeklyFacts extends Record<string, unknown> {
+  week?: string
+  range?: { start?: string; end?: string }
+  session_days?: string[]
+  missing_days?: WeeklyMissingDay[]
+  available?: boolean
+  reason?: string | null
+  sentiment?: {
+    series?: WeeklySentimentDay[]
+    temperature?: WeeklyTrend
+    promotion_rate?: WeeklyTrend
+    seal_rate?: WeeklyTrend
+    limit_up_total?: number | null
+    broken_total?: number | null
+    gap_days?: number
+  }
+  ladder?: {
+    series?: WeeklyLadderDay[]
+    height?: WeeklyTrend
+    peak_height?: number | null
+    count_total?: number | null
+    gap_days?: number
+    leaders?: WeeklyLeader[]
+  }
+  breadth?: {
+    available?: boolean
+    reason?: string | null
+    distribution?: WeeklyBreadthBand[]
+    up_count?: number
+    down_count?: number
+    flat_count?: number
+    samples?: number
+    up_share_pct?: number | null
+  }
+  themes?: {
+    available?: boolean
+    reason?: string | null
+    window?: number
+    observed?: number
+    themes?: WeeklyThemeRow[]
+  }
+  validation?: {
+    available?: boolean
+    reason?: string | null
+    conditions?: number
+    settled?: number
+    passed?: number
+    failed?: number
+    unknown?: number
+    pending?: number
+    pass_rate?: number | null
+    items?: WeeklyValidationItem[]
+  }
+  ai_coverage?: {
+    days_with_checkpoint?: number
+    sections_expected?: number
+    sections_done?: number
+    sections_degraded?: number
+    sections_failed?: number
+    sections_pending?: number
+  }
+  caliber?: Record<string, string>
+  source_detail?: string
+}
+
+/**
+ * `/api/weekly` 的 `weekly` 正文（`weekly/pipeline.py:build_report`）。
+ * `sections` 与每日复盘同形（`ReviewSectionSummary`）：AI 只写 `narrative`，指标在 `metrics`。
+ */
+export interface WeeklyReport extends Record<string, unknown> {
+  week?: string
+  range?: { start?: string; end?: string }
+  headline?: string[]
+  available?: boolean
+  reason?: string | null
+  ai?: { model?: string | null; degraded?: boolean }
+  sections?: ReviewSectionSummary[]
+  ai_failures?: ReviewAiFailure[]
+  facts?: WeeklyFacts
+}
+
+export interface WeeklyPayload {
+  week: string
+  weekly: WeeklyReport | null
+}
+
 /**
  * 解析 `ai_failures`：只认结构完整的条目，缺 `section` 的丢弃，不猜、不补。
  * `kind` 不在后端枚举内时归 `internal`（与后端兜底语义一致）。
@@ -559,6 +726,9 @@ export const api = {
   // 数据面
   review: (date: string, signal?: AbortSignal) =>
     request<LadderEnvelope<ReviewPayload>>(`/review?date=${encodeURIComponent(date)}`, { signal }),
+  /** R11 周报：只读本机 `weekly/<week>.json`，非法 week → 400，无产物 → 200 + missing */
+  weekly: (week: string, signal?: AbortSignal) =>
+    request<LadderEnvelope<WeeklyPayload>>(`/weekly?week=${encodeURIComponent(week)}`, { signal }),
   sentiment: (date: string, signal?: AbortSignal) =>
     request<LadderEnvelope<{ sentiment: SentimentResult }>>(
       `/sentiment?date=${encodeURIComponent(date)}`,

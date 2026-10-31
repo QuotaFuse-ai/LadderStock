@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
   BarChart3,
+  CalendarRange,
   CandlestickChart,
   ChevronDown,
   ClipboardCheck,
@@ -83,7 +84,11 @@ const NAV_SECTIONS: NavSection[] = [
     label: '复盘',
     icon: NotebookPen,
     // 「每日复盘」是 P1 留位（🟡），本轮不建入口
-    pages: [{ to: '/review', label: '情绪复盘', icon: NotebookPen }],
+    pages: [
+      { to: '/review', label: '情绪复盘', icon: NotebookPen },
+      // R11 周度复盘（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
+      { to: '/weekly', label: '周度复盘', icon: CalendarRange },
+    ],
   },
   {
     key: 'journal',
