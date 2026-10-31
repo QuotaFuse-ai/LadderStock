@@ -57,6 +57,8 @@ from ladderstock.web.control import (
     is_control_path,
     is_loopback_host,
 )
+from ladderstock.web.industry import IndustryPlane
+from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 
@@ -462,9 +464,10 @@ def create_app(
     dist_dir: Path | None = None,
     control_plane: Any | None = None,
     research_plane: Any | None = None,
+    industry_plane: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
-    可注入，便于测试。
+    / `industry_plane` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -760,6 +763,14 @@ def create_app(
     # 但**不受 `LDST_CONTROL_ENABLED` 影响**——读取属于数据面。
     research = research_plane if research_plane is not None else ResearchPlane(data_root=root)
     app.include_router(build_research_router(research))
+
+    # -------------------------------------------------- 产业面（QUOT-276 / SPEC-INDUSTRY-PAGES §2）
+    #
+    # `/api/industry`、`/api/industry/{name}`、`/api/signals` 三个只读接口：R5 快照的投影 +
+    # 后端的规则判定。闸门同研究面，同样**不受 `LDST_CONTROL_ENABLED` 影响**（纯数据面）。
+    # 注册在 SPA 兜底之前，路径本身没接时才会落到兜底的 404。
+    industry = industry_plane if industry_plane is not None else IndustryPlane(data_root=root)
+    app.include_router(build_industry_router(industry))
 
     # ------------------------------------------------------------ 静态看板
 
