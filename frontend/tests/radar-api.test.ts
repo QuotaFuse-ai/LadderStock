@@ -333,4 +333,23 @@ describe('HTTP 源', () => {
     expect(isApiError(error)).toBe(true)
     if (isApiError(error)) expect(error.kind).toBe('not-connected')
   })
+
+  it('持仓写入全部走 POST：upsert /api/positions，删除 /api/positions/{code}/delete', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({ ok: true, local_only: true, store: 'local_sqlite', position: { code: '600519', cost: 10, qty: 100 } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await httpRadarSource.addPosition({ code: '600519', cost: 10, qty: 100 })
+    await httpRadarSource.removePosition('600 519')
+
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>
+    expect(calls[0][0]).toBe('/api/positions')
+    expect(calls[0][1].method).toBe('POST')
+    expect(calls[1][0]).toBe('/api/positions/600%20519/delete')
+    expect(calls[1][1].method).toBe('POST')
+  })
 })

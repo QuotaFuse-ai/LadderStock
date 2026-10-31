@@ -7,7 +7,11 @@
  *   GET    /api/events?month=&code=                      事件日历（envelope，domain=news）
  *   GET    /api/pool?date=&limit=                        候选池（envelope，domain=sentiment）
  *   GET    /api/positions?date=                          持仓（**平面 JSON**，隐私数据不进信封）
- *   POST   /api/positions · PATCH/DELETE /api/positions/{code}
+ *   POST   /api/positions                               按 code upsert 一条持仓
+ *   POST   /api/positions/{code}/delete                 硬删除一条持仓
+ *
+ * 写面只有这两条、都是 `POST`（删除也不换 `DELETE` 动词）：换动词会绕开
+ * 「写方法必须带同源 Origin 或 `X-LDST-Client: 1`」这条防线。
  *
  * 三条硬规矩：
  * 1. **不重算指标**：候选分项、盈亏、集中度、行业分布全部用后端载荷；`null` 就是「没有」，
@@ -316,10 +320,7 @@ export interface PositionInput {
   note?: string
 }
 
-export type PositionPatch = Partial<Omit<PositionInput, 'code'>>
-
-export interface PositionMutation {
-  ok: true
+export interface PositionMutation {  ok: true
   local_only: true
   store: 'local_sqlite'
   position?: PositionItem
@@ -355,14 +356,13 @@ export interface RadarSource {
   pool(query: PoolQuery, signal?: AbortSignal): Promise<CandidatePoolPayload>
   positions(query: PositionsQuery, signal?: AbortSignal): Promise<PositionsPayload>
   addPosition(input: PositionInput, signal?: AbortSignal): Promise<PositionMutation>
-  updatePosition(code: string, patch: PositionPatch, signal?: AbortSignal): Promise<PositionMutation>
   removePosition(code: string, signal?: AbortSignal): Promise<PositionMutation>
 }
 
 // ---------------------------------------------------------------- 请求
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method?: 'GET' | 'POST'
   body?: unknown
   signal?: AbortSignal
   timeoutMs?: number
@@ -953,18 +953,10 @@ export const httpRadarSource: RadarSource = {
     ),
   addPosition: async (input, signal) =>
     parsePositionMutation(await request<unknown>('/api/positions', { method: 'POST', body: input, signal })),
-  updatePosition: async (code, patch, signal) =>
-    parsePositionMutation(
-      await request<unknown>(`/api/positions/${encodeURIComponent(code)}`, {
-        method: 'PATCH',
-        body: patch,
-        signal,
-      }),
-    ),
   removePosition: async (code, signal) =>
     parsePositionMutation(
-      await request<unknown>(`/api/positions/${encodeURIComponent(code)}`, {
-        method: 'DELETE',
+      await request<unknown>(`/api/positions/${encodeURIComponent(code)}/delete`, {
+        method: 'POST',
         signal,
       }),
     ),

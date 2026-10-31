@@ -71,13 +71,19 @@ def add_position(
     entry_date: str | date | None = None,
     note: str = "",
     industry: str = "",
+    upsert: bool = False,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """新增一条持仓，返回落库后的行（只写本机 `data/journal.sqlite`）。"""
+    """新增一条持仓，返回落库后的行（只写本机 `data/journal.sqlite`）。
+
+    `upsert=True` 时按 `code` 覆盖同一条记录（`POST /api/positions` 用）；缺省 `False`
+    保持 CLI `ldst position add` 的口径——重复代码是用法错误。缺 `entry_date` 时新增
+    取今天、覆盖则保留原建仓日，不把「没填」当成「改到今天」。
+    """
     clean_code = _clean_code(code)
     clean_cost = _positive(cost, "cost")
     clean_qty = _positive(qty, "qty")
-    day = sqlite_store.parse_day(entry_date) or date.today()
+    day = sqlite_store.parse_day(entry_date)
 
     conn = sqlite_store.connect(root=root, create=True)
     assert conn is not None  # create=True 时不会返回 None
@@ -85,24 +91,48 @@ def add_position(
         exists = conn.execute(
             "SELECT 1 FROM positions WHERE code = ?", (clean_code,)
         ).fetchone()
-        if exists:
+        if exists and not upsert:
             raise LadderStockError(
                 f"{clean_code} 已在本机持仓里；要改请用 ldst position update --code {clean_code}",
                 EXIT_USAGE,
             )
-        conn.execute(
-            "INSERT INTO positions (code, cost, qty, entry_date, industry, note, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                clean_code,
-                clean_cost,
-                clean_qty,
-                day.isoformat(),
-                industry.strip(),
-                note.strip(),
-                sqlite_store.now_iso(),
-            ),
-        )
+        if upsert:
+            # 单条 UPSERT：`entry_date` 为空时只有新增走今天，覆盖保留旧值。
+            conn.execute(
+                "INSERT INTO positions (code, cost, qty, entry_date, industry, note, updated_at)"
+                " VALUES (?, ?, ?, COALESCE(?, ?), ?, ?, ?)"
+                " ON CONFLICT(code) DO UPDATE SET"
+                " cost = excluded.cost, qty = excluded.qty,"
+                " entry_date = CASE WHEN ? IS NULL THEN positions.entry_date"
+                " ELSE excluded.entry_date END,"
+                " industry = excluded.industry, note = excluded.note,"
+                " updated_at = excluded.updated_at",
+                (
+                    clean_code,
+                    clean_cost,
+                    clean_qty,
+                    day.isoformat() if day else None,
+                    date.today().isoformat(),
+                    industry.strip(),
+                    note.strip(),
+                    sqlite_store.now_iso(),
+                    day.isoformat() if day else None,
+                ),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO positions (code, cost, qty, entry_date, industry, note, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    clean_code,
+                    clean_cost,
+                    clean_qty,
+                    (day or date.today()).isoformat(),
+                    industry.strip(),
+                    note.strip(),
+                    sqlite_store.now_iso(),
+                ),
+            )
         row = conn.execute(f"{_SELECT} WHERE code = ?", (clean_code,)).fetchone()
     finally:
         sqlite_store.close(conn)

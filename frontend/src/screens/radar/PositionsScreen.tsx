@@ -584,17 +584,8 @@ export default function PositionsScreen() {
     setSubmitting(true)
     setFormError(null)
     try {
-      if (editor.mode === 'add') {
-        await view.addPosition(input)
-      } else if (editor.item) {
-        await view.updatePosition(editor.item.code, {
-          cost: input.cost,
-          qty: input.qty,
-          entry_date: input.entry_date ?? '',
-          industry: input.industry ?? '',
-          note: input.note ?? '',
-        })
-      }
+      // 写面只有一条 POST upsert：新增与编辑同一条调用（编辑时 form 已带原 code）。
+      await view.addPosition(input)
       setEditor(null)
       setMessage(`${editor.mode === 'add' ? '已新增' : '已更新'} ${input.code}（本机 SQLite）`)
     } catch (cause) {

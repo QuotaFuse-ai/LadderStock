@@ -780,30 +780,22 @@ export function demoSource(variant: DemoVariant): RadarSource {
     positions: async () => positionsFrom(holdings),
     addPosition: async (input) => {
       const code = input.code.trim()
-      if (!code) throw new ApiError('http', '缺少代码', 422, 'code 不能为空')
-      if (holdings.some((item) => item.code === code)) {
-        throw new ApiError('http', `持仓里已经有 ${code}`, 409, '代码重复，请改用「编辑」')
-      }
-      const item = position(code, input.industry ?? '', input.cost, input.qty, input.entry_date ?? DEMO_POOL_DATE, null)
-      item.note = input.note ?? ''
-      holdings = [...holdings, item]
-      return { ok: true, local_only: true, store: 'local_sqlite', position: item }
-    },
-    updatePosition: async (code, patch) => {
-      const index = holdings.findIndex((item) => item.code === code)
-      if (index < 0) throw new ApiError('http', `持仓里没有 ${code}`, 404, '代码不存在')
-      const current = holdings[index]
-      const next = position(
-        current.code,
-        patch.industry ?? current.industry,
-        patch.cost ?? current.cost,
-        patch.qty ?? current.qty,
-        patch.entry_date ?? current.entry_date ?? DEMO_POOL_DATE,
-        current.latest_price,
+      if (!code) throw new ApiError('http', '缺少代码', 400, 'code 不能为空')
+      // 与后端同一条契约：按 code upsert；没给建仓日时保留原值（新增才用演示日期）。
+      const existing = holdings.find((item) => item.code === code)
+      const item = position(
+        code,
+        input.industry ?? '',
+        input.cost,
+        input.qty,
+        input.entry_date ?? existing?.entry_date ?? DEMO_POOL_DATE,
+        existing?.latest_price ?? null,
       )
-      next.note = patch.note ?? current.note
-      holdings = holdings.map((item, position) => (position === index ? next : item))
-      return { ok: true, local_only: true, store: 'local_sqlite', position: next }
+      item.note = input.note ?? ''
+      holdings = existing
+        ? holdings.map((row) => (row.code === code ? item : row))
+        : [...holdings, item]
+      return { ok: true, local_only: true, store: 'local_sqlite', position: item }
     },
     removePosition: async (code) => {
       const current = holdings.find((item) => item.code === code)
