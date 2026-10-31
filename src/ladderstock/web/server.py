@@ -596,8 +596,9 @@ def _theme_status(target: date, backend: str, total: int, themes: int) -> tuple[
             "theme_news 的记录里没有可用的题材名，出不了题材强度",
         )
     reason = (
-        f"theme_news 未接入（QuotaFuse Wire），先配置 qfw："
-        f"后端 {backend} 在 {target} 没有记录（配置后运行 ldst sync --dataset theme_news）"
+        "theme_news 未接入（QuotaFuse Wire），先配置 qfw："
+        f"缓存后端 {backend}，{target} 没有 theme_news 记录"
+        "（配置后运行 ldst sync --dataset theme_news）"
     )
     return reason, reason
 

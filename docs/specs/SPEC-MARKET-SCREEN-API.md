@@ -1,7 +1,7 @@
 # SPEC-MARKET-SCREEN-API 市场屏两段只读接口
 
-- 版本：v0.1（首版：`GET /api/market/history` + `GET /api/market/theme` 契约与空态矩阵）
-- 日期：2026-10-31
+- 版本：v0.2（2026-11-01：空态文案微调，字段 / 状态码 / 表头不变）
+- 日期：2026-11-01
 - 归属：后端架构（数据面只读接口）
 - 实现：`src/ladderstock/web/server.py`（路由 + 投影 + 回环闸门），
   取数复用 `core/sentiment.py::compute_sentiment`、`data/archive.py::has_partition`、
@@ -120,12 +120,12 @@ GET /api/market/theme?date=2026-10-23
   "topic": "theme_rotation",
   "data_as_of": null,
   "available": false,
-  "source_detail": "theme_news 未接入（QuotaFuse Wire），先配置 qfw：后端 none 在 2026-10-31 没有记录（配置后运行 ldst sync --dataset theme_news）",
+  "source_detail": "theme_news 未接入（QuotaFuse Wire），先配置 qfw：缓存后端 none，2026-10-31 没有 theme_news 记录（配置后运行 ldst sync --dataset theme_news）",
   "source_status": "partial",
   "payload": {
     "date": "2026-10-31",
     "available": false,
-    "reason": "theme_news 未接入（QuotaFuse Wire），先配置 qfw：后端 none 在 2026-10-31 没有记录（配置后运行 ldst sync --dataset theme_news）",
+    "reason": "theme_news 未接入（QuotaFuse Wire），先配置 qfw：缓存后端 none，2026-10-31 没有 theme_news 记录（配置后运行 ldst sync --dataset theme_news）",
     "themes": [],
     "data_source_status": "missing"
   }
@@ -179,3 +179,6 @@ GET /api/market/theme?date=2026-10-23
 
 - v0.1（2026-10-31）：首版。两接口参数表、交易日窗口口径、分位与较昨日的算法、
   题材字段别名与白名单、空态矩阵、已知边界。理由与取舍见 DEC-031。
+- v0.2（2026-11-01）：实机冒烟（真 uvicorn + 真 HTTP）后发现「未接入」文案里
+  「后端 none 在 … 没有记录」读起来像故障，改为「缓存后端 none，… 没有 theme_news 记录」，
+  §2 的示例同步。字段、状态码、`no-store` 均未变。
