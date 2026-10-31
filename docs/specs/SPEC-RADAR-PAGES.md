@@ -160,7 +160,7 @@
 - 查询参数：`date`（缺省今天）、`limit`（默认 30）。
 - 排序在页面侧只做**展示排序**（`score` / 分项），不改变接口顺序语义（接口已按 score 降序）。
 
-## 6. `GET/POST/PATCH/DELETE /api/positions` 我的持仓
+## 6. `GET/POST /api/positions` 我的持仓（写面只有 `POST`）
 
 **平面 JSON（不是 `LadderEnvelope`）**：持仓是隐私数据，`SPEC-MY-POSITION` §6 明令不进信封、
 不进 MCP、不进 AI 上下文。接口只在回环可读写的本机服务上存在（同 `/api/journal/stats` 的闸门）。
@@ -195,22 +195,36 @@
   与 `coverage_pct`，不得把 `null` 当 0；`latest_price=null` 的行显示 `—` + 原因。
 - 空持仓：`data_source_status="missing"`、`position_count=0`，页面空态（不是错误）。
 
-### 6.2 写：`POST /api/positions`、`PATCH /api/positions/{code}`、`DELETE /api/positions/{code}`
+### 6.2 写：`POST /api/positions`（upsert）、`POST /api/positions/{code}/delete`
 
-| 方法 / 路径 | 请求体 | 成功响应 |
+写面照参考仓库 vibe-astock 的口径（QUOT-285）：**所有写操作一律 `POST`**，删除也不换
+`DELETE` 动词。换动词就绕开了「写方法必须带来源证据」这条无预检防线
+（`web/control.py::WRITE_METHODS` 的判据只覆盖写方法来源），所以这里不提供
+`PUT` / `PATCH` / `DELETE`。
+
+| 方法 / 路径 | 请求体 | 成功响应（平面 JSON） |
 | --- | --- | --- |
 | `POST /api/positions` | `{code, cost, qty, entry_date?, industry?, note?}` | `{ok:true, local_only:true, store:"local_sqlite", position:{…}}` |
-| `PATCH /api/positions/{code}` | 至少一个 `{cost?, qty?, entry_date?, industry?, note?}` | 同上 |
-| `DELETE /api/positions/{code}` | — | `{ok:true, local_only:true, store:"local_sqlite", removed:{code, cost, qty}}` |
+| `POST /api/positions/{code}/delete` | — | `{ok:true, local_only:true, store:"local_sqlite", removed:{code, cost, qty}}` |
 
-语义沿用 CLI（`SPEC-MY-POSITION` §2）：`code` 唯一、重复 `add` 返回 `409`（提示改用 update）、
-`PATCH`/`DELETE` 的 code 不在库里 `404`、请求体校验失败 `422`。
+- **六字段白名单**：`code` / `cost` / `qty` / `entry_date` / `industry` / `note`，多一个键就
+  `400`。券商账号、资金密码类字段没有入口——白名单本身就是拒绝清单，不做模糊匹配。
+- **校验**：缺 `code` / `cost` / `qty` → `400`；`cost` / `qty` 非 JSON 数值或为负 → `400`
+  （0 按 CLI 同口径拒绝：必须大于 0）；`entry_date` 非 `YYYY-MM-DD` → `400`。
+  `entry_date` 省略时新增取今天、覆盖保留原建仓日。
+- **upsert 语义**：按 `code` 覆盖同一条记录，走 `journal.position.add_position(upsert=True)`；
+  **不新增存储、不改表结构**，SQLite 的 `positions` 表就是唯一真相。
+- **硬删除**：`POST /api/positions/{code}/delete` 直接删行——**不留软删除标记、不加审计链**。
+  本地 SQLite 就是唯一副本；要留底由用户自己导出（`ldst position list --export <path>`）。
+  参考仓库的 `audit_chain` 只登记研究证据，不覆盖用户台账。
+- **闸门**：回环独占 + `Host` 白名单（同 §6.1），写方法额外要求**同源 `Origin` 或显式头
+  `X-LDST-Client: 1`**；带 `Sec-Fetch-Site` 时只认 `same-origin` / `none`。不新增第二种鉴权。
+- **错误码**：`400`（校验）/ `403`（闸门）/ `404`（删除不存在的 code）/ `500`（写不动）。
+- 响应**不进信封**：`payload` / `domain` / `fetched_at` 这些键一个都不出现；`no-store`。
 
-> **待决策（不在本文件单方面生效）**：UI-SPEC v1.0 §0 写「持仓不经 HTTP」，而页面要做增删改
-> 就必然有一条本机写路径。DEC-015 / DEC-016 已有「回环独占 + 聚合只读 / 用户数据写」的例外先例。
-> 本页实现按上面的契约走，但在决策落定前，**接口缺失时页面提供两条完全本机的兜底**：
-> ①导入用户自己 `ldst position list --export` 出来的 JSON（FileReader，不上传、不落浏览器存储）；
-> ②增删改对话框在提交失败时给出等价 CLI 命令并支持复制。是否开放写接口由安全工程师 / 人类拍板。
+> **决策记录（QUOT-285）**：UI-SPEC v1.0 §0 的「持仓不经 HTTP」按 DEC-015 / DEC-016 的
+> 既有例外收窄为「不经任何非回环出口」。页面仍保留两条完全本机的兜底：导入用户自己
+> `ldst position list --export` 出来的 JSON，以及写入失败时给出等价 CLI 命令并支持复制。
 
 ### 6.3 页面的隐私硬约束
 
@@ -229,7 +243,9 @@
 | 3 | 事件日历读接口 | `GET /api/events` | §4 全量（含 `no_source` 的 `reason` / `ask`） | 200 / 422 / 500 |
 | 4 | 候选池读接口（R7 只交付 CLI / MCP） | `GET /api/pool` | §5 全量 | 200 / 422 / 500 |
 | 5 | 持仓读接口 | `GET /api/positions` | §6.1 全量 | 200 / 422 / 500 / 403（非回环） |
-| 6 | 持仓写接口（**需隐私决策**） | `POST/PATCH/DELETE /api/positions` | §6.2 | 200 / 201 / 404 / 409 / 422 / 403 |
+
+持仓写接口（§6.2）已由 QUOT-285 交付：`POST /api/positions` 与
+`POST /api/positions/{code}/delete`，不再是缺口。
 
 接口按本文实现后，前端不需要改字段即可切换真实通道（`api/radar.ts` 的解析已按本文写死）。
 
@@ -243,4 +259,5 @@
 | 候选池可排序、分项可展开、显式导出 | `radar-pages.test.tsx`「候选池」组 |
 | 持仓盈亏 / 集中度 / 行业分布 + 隐私提示 | `radar-pages.test.tsx`「我的持仓」组 |
 | 持仓不落浏览器存储 | `tests/positions-privacy.test.tsx` |
+| 持仓写面（白名单 / 闸门 / upsert / 硬删除） | `tests/unit/web/test_positions_write_endpoints.py` |
 | 载荷解析（含缺字段 / null 不补 0） | `tests/radar-api.test.ts` |

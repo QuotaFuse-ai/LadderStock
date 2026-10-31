@@ -319,7 +319,7 @@ describe('我的持仓 /positions', () => {
     expect(screen.getByText('已新增 600036（本机 SQLite）')).toBeTruthy()
   })
 
-  it('重复代码给出 409 原因与等价 CLI 命令', async () => {
+  it('重复代码按 upsert 覆盖（与后端 POST /api/positions 同一条写契约）', async () => {
     renderAt('/positions?demo=1')
     fireEvent.click(await screen.findByRole('button', { name: /新增持仓/ }))
 
@@ -329,9 +329,9 @@ describe('我的持仓 /positions', () => {
     fireEvent.change(within(dialog).getByLabelText(/^数量/), { target: { value: '1000' } })
     fireEvent.click(within(dialog).getByRole('button', { name: '新增持仓' }))
 
-    expect(await within(dialog).findByText('代码重复，请改用「编辑」')).toBeTruthy()
-    expect(within(dialog).getByText('HTTP 409')).toBeTruthy()
-    expect(within(dialog).getByText(/ldst position add --code 600000/)).toBeTruthy()
+    expect(await screen.findByText('已新增 600000（本机 SQLite）')).toBeTruthy()
+    expect(screen.queryByText('HTTP 409')).toBeNull()
+    expect(screen.getAllByText('600000').length).toBeGreaterThan(0)
   })
 
   it('删除走确认对话框，删除后行不再出现', async () => {

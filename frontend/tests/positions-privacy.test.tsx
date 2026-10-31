@@ -68,6 +68,19 @@ describe('持仓页静态检查', () => {
     expect(source).not.toMatch(/setSearchParams|setParams\(/)
     expect(source).not.toMatch(/URLSearchParams/)
   })
+
+  it('持仓模块不 import persist/、不写 localStorage（QUOT-285 写面也不落浏览器）', () => {
+    const files = [...walk(RADAR_SCREENS), RADAR_API]
+    for (const file of files) {
+      const source = readFileSync(file, 'utf8')
+      expect(source, `${path.basename(file)} import 了 persist/`).not.toMatch(
+        /from\s+['"][^'"]*persist\//,
+      )
+      expect(source, `${path.basename(file)} 访问了 localStorage`).not.toMatch(
+        /localStorage\s*[.[]/,
+      )
+    }
+  })
 })
 
 function renderPositions() {

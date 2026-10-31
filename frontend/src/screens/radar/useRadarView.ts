@@ -10,7 +10,6 @@ import {
   type NewsStreamPayload,
   type PositionInput,
   type PositionMutation,
-  type PositionPatch,
   type PositionsPayload,
   type RadarSource,
 } from '../../api/radar'
@@ -180,7 +179,6 @@ export function usePoolView(query: { date: string }): RequestView<CandidatePoolP
 
 export interface PositionsView extends RequestView<PositionsPayload> {
   addPosition: (input: PositionInput) => Promise<PositionMutation>
-  updatePosition: (code: string, patch: PositionPatch) => Promise<PositionMutation>
   removePosition: (code: string) => Promise<PositionMutation>
 }
 
@@ -207,15 +205,6 @@ export function usePositionsView(): PositionsView {
     [source, reload],
   )
 
-  const updatePosition = useCallback(
-    async (code: string, patch: PositionPatch) => {
-      const mutation = await source.updatePosition(code, patch)
-      reload()
-      return mutation
-    },
-    [source, reload],
-  )
-
   const removePosition = useCallback(
     async (code: string) => {
       const mutation = await source.removePosition(code)
@@ -234,7 +223,6 @@ export function usePositionsView(): PositionsView {
     error: request.error,
     reload,
     addPosition,
-    updatePosition,
     removePosition,
   }
 }

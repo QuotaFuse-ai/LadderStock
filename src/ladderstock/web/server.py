@@ -8,10 +8,12 @@
   研究面 `/api/research/*`（QUOT-275，只有一支续跑 POST）。
 - **隐私**：`journal.sqlite` 的内容不进入任何响应；即使复盘 JSON 里混进
   `journal` / `trades` / `positions` / `watchlist` 字段，返回前也会被剥掉。
-  仅有的两个例外都在回环独占的闸门后面、都是**扁平 JSON、不进 `LadderEnvelope`**，
+  仅有的例外都在回环独占的闸门后面、都是**扁平 JSON、不进 `LadderEnvelope`**，
   因此天然进不了 export / MCP / AI 三条出口：DEC-015 的 `GET /api/journal/stats`
-  （只放聚合数字，无 `note` / 逐笔明细 / 标的清单）与 SPEC-RADAR-PAGES §6.1 的
-  `GET /api/positions`（本机私有持仓库自己的只读视图，「我的持仓」页唯一的真通道）。
+  （只放聚合数字，无 `note` / 逐笔明细 / 标的清单）、SPEC-RADAR-PAGES §6.1 的
+  `GET /api/positions`（本机私有持仓库自己的只读视图，「我的持仓」页唯一的真通道），
+  以及 §6.2 的两条写入路由（`POST /api/positions` upsert、`POST /api/positions/{code}/delete`
+  硬删除）——写面额外要求同源 `Origin` 或 `X-LDST-Client: 1`，且只有 `POST`。
 - **行情聚合不出机器**：`/api/market/history`、`/api/market/theme`（Q172-7）虽只出
   公开行情聚合，仍复用 `/api/journal/stats` 那道回环闸门（`_journal_guard`）——
   本机缓存的整体聚合本身就是「这台机器在看什么」的信号。

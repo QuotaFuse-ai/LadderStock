@@ -587,16 +587,23 @@ def test_positions_invalid_date_is_422(tmp_path: Path, params: dict[str, str]) -
 # 只读 / 数据面 / 隐私面：四条共用
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize(
-    "path", ["/api/news", "/api/events", "/api/pool", "/api/positions"]
-)
+@pytest.mark.parametrize("path", ["/api/news", "/api/events", "/api/pool"])
 def test_write_methods_are_not_registered(tmp_path: Path, path: str) -> None:
-    """§6.2 的写接口按 §7 缺口 6 另议：这里连方法都不提供。"""
+    """三个公开读接口连方法都不提供。"""
     client = _client(tmp_path)
     for method in ("post", "put", "patch", "delete"):
         response = getattr(client, method)(path)
         assert response.status_code == 405, (path, method, response.status_code)
         assert response.headers["allow"] == "GET"
+
+
+def test_positions_write_verbs_other_than_post_are_not_registered(tmp_path: Path) -> None:
+    """QUOT-285：写面只有 `POST`，`PUT` / `PATCH` / `DELETE` 一律 405（连闸门都不过）。"""
+    client = _client(tmp_path)
+    for method in ("put", "patch", "delete"):
+        response = getattr(client, method)("/api/positions")
+        assert response.status_code == 405, (method, response.status_code)
+        assert "POST" not in response.headers.get("allow", "")
 
 
 @pytest.mark.parametrize(
