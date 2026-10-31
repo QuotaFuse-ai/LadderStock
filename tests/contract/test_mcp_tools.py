@@ -51,10 +51,13 @@ DOCUMENTED_TOOLS = {
     # R1-1（QUOT-190）新增：issue 里工具名定死为 `research_status`，
     # 不带 `ladder_` 前缀是有意的偏差（与 CLI `ldst research` 同名，便于跨面引用）
     "research_status",
-    # R7 新增（QUOT-145）
+    # R7 新增
     "candidate_pool",
-    # R5 新增（QUOT-143）：产业研究行业画像
+    # R5 新增：产业研究行业画像
     "industry_snapshot",
+    # R6 新增：资讯流与事件日历，都只读；工具名按任务原文
+    "news_stream",
+    "event_calendar",
 }
 
 #: 按**证券代码**定位进度的工具：`date` 可选（缺省取该代码最近一次 checkpoint），
@@ -65,6 +68,10 @@ CODE_SCOPED_TOOLS = {"research_status"}
 #: 五维各自给出自己的 `trade_date` / `as_of`，所以入参里没有 `date`——
 #: 拿请求日期冒充数据日期会改口径（SPEC-INDUSTRY-METRICS.md §1.2）。
 INDUSTRY_SCOPED_TOOLS = {"industry_snapshot"}
+
+#: R6 资讯类工具：`news_stream` 仍以 `date` 定位窗口起点（守住下面的不变量），
+#: `event_calendar` 以**月份**定位，是第三条定位口径，单独钉住。
+MONTH_SCOPED_TOOLS = {"event_calendar"}
 
 
 def test_tool_set_matches_document() -> None:
@@ -84,7 +91,9 @@ def test_no_privacy_keywords_leak_into_mcp() -> None:
 
 def test_date_tools_require_date() -> None:
     for spec in TOOL_SPECS:
-        if spec.domain == "meta" or spec.name in CODE_SCOPED_TOOLS | INDUSTRY_SCOPED_TOOLS:
+        if spec.domain == "meta" or spec.name in (
+            CODE_SCOPED_TOOLS | INDUSTRY_SCOPED_TOOLS | MONTH_SCOPED_TOOLS
+        ):
             continue
         assert spec.input_schema.get("required") == ["date"], spec.name
 
@@ -103,6 +112,26 @@ def test_industry_scoped_tools_require_industry_and_carry_no_date() -> None:
         assert "date" not in spec.input_schema["properties"], name
         assert spec.read_only is True, name
         assert spec.domain == "sentiment", name
+
+
+def test_news_tools_keep_their_own_locators() -> None:
+    """反向钉住 R6 的两个口径：日历按月份定位、资讯流必须默认不写库、模型默认关闭。"""
+    by_name = {spec.name: spec for spec in TOOL_SPECS}
+    assert MONTH_SCOPED_TOOLS <= set(by_name)
+
+    calendar = by_name["event_calendar"]
+    assert calendar.input_schema["required"] == ["month"], calendar.name
+    assert calendar.read_only is True
+    assert calendar.domain == "news"
+
+    stream = by_name["news_stream"]
+    # 资讯流仍以 date 定位窗口起点，与下面这条不变量一致
+    assert stream.input_schema["required"] == ["date"], stream.name
+    assert stream.read_only is True
+    props = stream.input_schema["properties"]
+    # 「只读工具默认不留副作用」：store 与 ai 都必须默认 false
+    assert props["store"]["default"] is False, "news_stream 默认不得写本机库"
+    assert props["ai"]["default"] is False, "模型叙述必须默认关闭（R6 要求 2）"
 
 
 def test_code_scoped_tools_require_code_and_keep_date_optional() -> None:

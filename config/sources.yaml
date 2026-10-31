@@ -258,6 +258,153 @@ sources:
     cooldown_sec: 60
     weight: 0.8
 
+  # ---------------- 资讯雷达（R6 / QUOT-144）：公告 / 研报 / 快讯 / 新闻 ----------------
+  # 全部是 TickHub-CN 的只读工具；`ldst news` 按需按时间窗取，不进 `sync.yaml`
+  # 的按日增量（资讯是「越来越多」，不是「整日覆盖」，幂等靠 news/store 的 upsert）。
+  - id: tickhub_announce_cninfo
+    dataset: announcement_cninfo
+    via: tickhub
+    tool: cninfo_announcements
+    primary: true
+    fallback: [tickhub_announce_cninfo_backup]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_announce_cninfo_backup
+    dataset: announcement_cninfo
+    via: tickhub
+    tool: announcements_backup
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  - id: tickhub_announce_szse
+    dataset: announcement_szse
+    via: tickhub
+    tool: szse_announcements
+    primary: true
+    fallback: [tickhub_announce_szse_backup]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_announce_szse_backup
+    dataset: announcement_szse
+    via: tickhub
+    tool: announcements_backup
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  - id: tickhub_research_report
+    dataset: research_report
+    via: tickhub
+    tool: eastmoney_reports
+    primary: true
+    fallback: [tickhub_research_report_sina]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_research_report_sina
+    dataset: research_report
+    via: tickhub
+    tool: sina_research_reports
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  - id: tickhub_news_stock
+    dataset: news_eastmoney_stock
+    via: tickhub
+    tool: eastmoney_stock_news
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_news_cctv
+    dataset: news_cctv
+    via: tickhub
+    tool: cctv_news
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_flash_cls
+    dataset: flash_cls
+    via: tickhub
+    tool: cls_telegraph
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_flash_wsc
+    dataset: flash_wallstreetcn
+    via: tickhub
+    tool: wallstreetcn_lives
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_flash_em
+    dataset: flash_eastmoney
+    via: tickhub
+    tool: eastmoney_global_news
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  # ---------------- 事件日历的结构化源（R6）----------------
+  - id: tickhub_lockup_calendar
+    dataset: lockup_calendar
+    via: tickhub
+    tool: lockup_expiry
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_earnings_preview
+    dataset: earnings_preview
+    via: tickhub
+    tool: earnings_forecast
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
   # ---------------- 题材叙事：QuotaFuse Wire（可选） ----------------
   - id: wire_digest
     dataset: theme_news

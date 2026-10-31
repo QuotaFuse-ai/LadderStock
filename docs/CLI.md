@@ -22,8 +22,12 @@
 >
 > **R5 增量（2026-10-31）**：基线 31 条口径**不变**，在其之上新增 2 条命令
 > `ldst industry list` / `ldst industry show <行业>`（申万一级行业五维画像，口径见
-> `docs/specs/SPEC-INDUSTRY-METRICS.md`）。行号续编 42–43，全表 **43 行**、叶子 **41** 个、
-> `scripts/check_commands.py` 实测可执行 argv **40** 条。见 §D‴。
+> `docs/specs/SPEC-INDUSTRY-METRICS.md`）。行号续编 42–43，见 §D‴。
+>
+> **R6 增量（2026-10-31）**：在上述增量之上再新增 2 条命令
+> `ldst news <date>`（资讯流：公告 / 研报 / 快讯 / 政策 + 规则事件抽取）与
+> `ldst events --month YYYY-MM`（事件日历），行号续编 44–45。加它之后：全表 **45 行**、
+> 叶子 **43** 个、`scripts/check_commands.py` 实测可执行 argv **42** 条。见 §D″。
 >
 > **R11 增量（2026-10-31）**：基线 31 条口径**不变**，在其之上新增 1 条命令
 > `ldst weekly [--week YYYY-Www]`（周度复盘：事实包确定性聚合 + 五段 AI 叙述，口径见
@@ -47,6 +51,7 @@
 | 导出与状态（3） | `export`、`state inspect`、`state reset` |
 | AI 编排（3） | `ai status`、`ai retry`、`ai chain test` |
 | 研究管线（1，R1-1 增量，不计入 31 条基线） | `research` |
+| 资讯雷达（2，R6 增量，不计入 31 条基线） | `news`、`events` |
 | MCP（3） | `mcp stdio`、`mcp http`、`mcp tools list` |
 | 配置与调度（4） | `config validate`、`config migrate`、`schedule list`、`schedule run` |
 | 体检（1） | `doctor` |
@@ -158,6 +163,27 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 - MCP 侧只读工具 `research_status`（`code` 必填、`date` 可选，缺省取该代码最近一次 checkpoint）
   读同一份进度，输出走统一信封；**交易日志与持仓不出现在任何研究产物里**。
 
+## D″. 资讯雷达（R6 增量，2）
+
+> **31 条 P0 基线之外的新增命令**，行号从 44 起接排，不动上面的编号。
+> 口径与验收见 `docs/specs/NEWS-RADAR.md`；本任务**不含页面**（四页归 R10）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 44 | `ldst news <date>` | 一天（或 `--until` 区间）的资讯流：公告 / 研报 / 快讯 / 政策统一 schema，跨源合并去重，规则抽取事件，默认落 `data/news.sqlite` | `<date>`（缺省今日）、`--until`（≤31 天）、`--source`（可重复）、`--code`（可重复，公告类必填）、`--limit`、`--store/--no-store`、`--ai`（**默认关闭**）、`--output` | `--output json` 载荷见 `StreamResult.as_dict()` + `payload.ai`；日期非法 / `--source` 未知 / 窗口超长 2；全部栏目失败 4；部分失败 8；`--ai` 请求了但一条叙述都没成 9 |
+| 45 | `ldst events --month YYYY-MM` | 事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口 | `--month`（必填）、`--code`（解禁栏目必需）、`--limit`、`--fetch/--no-fetch`、`--output` | `--output json` 载荷见 `CalendarResult.as_dict()`；月份格式非法 2；有源小节全挂 4；部分挂 8 |
+
+- **两个命令都不读隐私库**：`journal.sqlite`（交易日志 / 持仓 / 自选）与资讯面完全无关，
+  要按代码过滤只能显式 `--code`。隐私字段名在任何出口（stdout / MCP / 导出）递归剥离，
+  唯一口径 `core/privacy.py`。
+- **`ldst events` 不默认「当月」**：`--month` 必填，避免把月历当今日视图误用。
+- **日历的三个缺口是明写的**：`earnings_disclosure` / `shareholder_meeting` / `policy_window`
+  返回 `status="no_source"` + `entries=[]` + `reason` + `ask`，**不估算、不编日期**。
+- **模型只写叙述**：`--ai` 不加就绝不碰模型；加了也只给规则已抽出的事件补一句 `ai_note`，
+  送模型的只有标题 + ≤200 字摘要 + url（`docs/specs/NEWS-RADAR.md` §隐私面）。
+- MCP 侧同口径只读工具：`news_stream`（`store` 默认 false，工具被反复调用不留库文件）、
+  `event_calendar`（`data_as_of` 用月份首日，缺口在 `source_status` 上如实标 `partial`）。
+
 ## E. MCP、配置、调度与体检（8）
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
@@ -216,6 +242,7 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
   取 `sw_industry_map` 的最新日期，归属数据一条都没有时如实给 `null`。
 - **幂等**：同一份缓存 + 同一份配置重跑，除信封的取值时刻 `fetched_at` 之外逐字段一致
   （溯源时间来自缓存的入库时间 `_ingested_at`，公式里没有 `now()`）。
+> §D′ 的行 36（`ldst research`）、§E″ 的行 37–41（R7 增量 5 条）、§D‴ 的行 42–43（R5 增量 2 条）、§D″ 的行 44–45（R6 增量 2 条）都在 31 条基线之外，**不计入上面的 31/33/35/32**；全部算上是 45 行 / **43 个叶子** / **42 条可执行 argv**（`scripts/check_commands.py` 现覆盖 42 条）。
 
 ## F. 全局约定
 

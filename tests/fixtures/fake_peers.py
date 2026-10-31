@@ -241,16 +241,22 @@ def make_registry(
 # --------------------------------------------------------------------------- #
 
 def tickhub_payload(
-    records: list[dict[str, Any]],
+    records: Any,
     *,
     fetched_at: str = "2026-10-24T15:05:00+08:00",
     cache_hit: bool = False,
     source: str = "stub",
 ) -> dict[str, Any]:
-    """TickHub-CN `th-cn tool call` 的返回形状（ok/data/meta）。"""
+    """TickHub-CN `th-cn tool call` 的返回形状（ok/data/meta）。
+
+    `data` 可以是记录列表，也可以是工具自己的包裹形状（cninfo 的
+    `{"code": ..., "announcements": [...]}`、lockup 的 `{"history": [...], "upcoming": [...]}`），
+    与真实返回一致——资讯层必须两种形状都会翻，这里就不替他抹平。
+    """
+    data = records if isinstance(records, (list, dict)) else list(records)
     return {
         "ok": True,
-        "data": list(records),
+        "data": data,
         "meta": {
             "source": source,
             "fetched_at": fetched_at,
@@ -335,3 +341,95 @@ def senate_payload(day: str = "2026-10-24") -> dict[str, Any]:
 
 def day(value: str) -> date:
     return date.fromisoformat(value)
+
+
+# --------------------------------------------------------------------------- #
+# R6 资讯雷达：数据集 → 工具登记表，与 config/sources.yaml + config/sync.yaml 同构
+# --------------------------------------------------------------------------- #
+
+#: 每个资讯数据集只有一个 owning peer + 一条工具族（DEC-006 闸门 1/3）
+NEWS_TOOL_BY_DATASET: dict[str, str] = {
+    "announcement_cninfo": "cninfo_announcements",
+    "announcement_szse": "szse_announcements",
+    "research_report": "eastmoney_reports",
+    "news_eastmoney_stock": "eastmoney_stock_news",
+    "news_cctv": "cctv_news",
+    "flash_cls": "cls_telegraph",
+    "flash_wallstreetcn": "wallstreetcn_lives",
+    "flash_eastmoney": "eastmoney_global_news",
+    "lockup_calendar": "lockup_expiry",
+    "earnings_preview": "earnings_forecast",
+}
+
+#: 备源一律同 peer（闸门 3），id → (dataset, tool)
+NEWS_FALLBACK_TOOLS: dict[str, tuple[str, str]] = {
+    "announcement_cninfo": ("tickhub_announce_cninfo_backup", "announcements_backup"),
+    "announcement_szse": ("tickhub_announce_szse_backup", "announcements_backup"),
+    "research_report": ("tickhub_research_report_sina", "sina_research_reports"),
+}
+
+
+def news_sources_doc() -> dict[str, Any]:
+    """资讯数据集的最小 `sources.yaml`（主源 + 同 peer 备源）。"""
+    sources: list[dict[str, Any]] = []
+    for dataset, tool in NEWS_TOOL_BY_DATASET.items():
+        fallbacks: list[str] = []
+        if dataset in NEWS_FALLBACK_TOOLS:
+            fallback_id, fallback_tool = NEWS_FALLBACK_TOOLS[dataset]
+            fallbacks.append(fallback_id)
+            sources.append(
+                {
+                    "id": fallback_id,
+                    "dataset": dataset,
+                    "via": "tickhub",
+                    "tool": fallback_tool,
+                    "primary": False,
+                    "fallback": [],
+                    "timeout_sec": 1,
+                    "retries": 0,
+                    "cooldown_sec": 120,
+                }
+            )
+        sources.append(
+            {
+                "id": f"tickhub_{dataset}",
+                "dataset": dataset,
+                "via": "tickhub",
+                "tool": tool,
+                "primary": True,
+                "fallback": fallbacks,
+                "timeout_sec": 1,
+                "retries": 0,
+                "cooldown_sec": 120,
+            }
+        )
+    return {"peers": dict(SOURCES_DOC["peers"]), "sources": sources}
+
+
+def news_sync_doc() -> dict[str, Any]:
+    """资讯数据集的 `sync.yaml`：`chain()` 只认登记过的数据集，所以这步不能省。"""
+    datasets = {
+        dataset: {
+            "primary": f"tickhub_{dataset}",
+            "fallback": (
+                [NEWS_FALLBACK_TOOLS[dataset][0]] if dataset in NEWS_FALLBACK_TOOLS else []
+            ),
+            "watermark_field": "data_as_of",
+            "mode": "append",
+            "optional": True,
+        }
+        for dataset in NEWS_TOOL_BY_DATASET
+    }
+    return {"sync": {"datasets": datasets, "cold_hot": {"intraday_cache_ttl_sec": 60}}}
+
+
+def make_news_registry(
+    transport: FakeTransport, root: Path | None = None, *, ttl_sec: float = 0.0
+) -> ProviderRegistry:
+    return make_registry(
+        transport,
+        root,
+        sources=news_sources_doc(),
+        sync=news_sync_doc(),
+        ttl_sec=ttl_sec,
+    )

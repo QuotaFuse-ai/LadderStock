@@ -1,7 +1,9 @@
 """MCP 工具注册表（只读白名单 + 1 个发起研究 + 3 个复盘类 + 1 个研究进度
-+ 1 个候选池 + 1 个行业画像）。
++ 1 个候选池 + 1 个行业画像 + 2 个资讯工具）。
 
 隐私硬约束：交易日志与持仓（`journal.sqlite`）**永不出现在**任何工具的输出 schema 中。
+R6 的两个资讯工具（`news_stream` / `event_calendar`）同样只读：默认不写本机库，
+`store=true` 才落 `data/news.sqlite`（公开数据，与隐私库分库）。
 """
 
 from __future__ import annotations
@@ -72,12 +74,12 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         },
         "research",
     ),
-    # R7 新增 1 个（QUOT-145）：候选池打分。**只读**、只出打分结果，域沿用 `sentiment`
+    # R7 新增 1 个：候选池打分。**只读**、只出打分结果，域沿用 `sentiment`
     # （与 `ldst pool` 的信封域一致）。工具名不加 `ladder_` 前缀：任务里点名的就是
     # `candidate_pool`，且没有规则要求前缀（`tests/contract/test_mcp_tools.py` 按清单比对）。
     # 分项「地位」对外叫 `standing`——`position` 是下面的隐私关键字。
     _date_tool("candidate_pool", "当日候选池评分：强度/换手/地位/资金/题材分项与总分", "sentiment"),
-    # R5 新增 1 个（QUOT-143）：申万一级行业五维画像。**只读**、只回放本机缓存，
+    # R5 新增 1 个：申万一级行业五维画像。**只读**、只回放本机缓存，
     # 域沿用 `sentiment`（与 `ldst industry show` 的信封域一致）。
     # 入参按**行业名**定位，没有 `date`：行业快照的口径是「本机缓存里的最新一批」，
     # 各维度自己给出 `trade_date` / `as_of`，拿请求日期冒充数据日期会改口径
@@ -97,6 +99,75 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "required": ["industry"],
         },
         "sentiment",
+    ),
+    # R6 资讯雷达：统一资讯流 + 事件日历（都只读；模型叙述默认关闭）
+    ToolSpec(
+        "news_stream",
+        "公告/研报/快讯/政策的统一资讯流（去重合并 + 规则事件抽取，只落本机）",
+        True,
+        _date_schema(
+            {
+                "until": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "区间右端 YYYY-MM-DD；缺省等于 date（窗口上限 31 天）",
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "栏目名（announcement_cninfo / flash_cls / ...）；缺省全部",
+                },
+                "codes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "证券代码过滤；公告类栏目需要它",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                    "description": "每栏取数上限（默认 100）",
+                },
+                "ai": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "模型叙述：默认 false，只给规则已抽出的事件补一句叙述",
+                },
+                "store": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "默认不写本机库（保持本工具只读）；true 才落 data/news.sqlite",
+                },
+            }
+        ),
+        "news",
+    ),
+    ToolSpec(
+        "event_calendar",
+        "事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口；无数据源的小节显式标 no_source",
+        True,
+        {
+            "type": "object",
+            "properties": {
+                "month": {
+                    "type": "string",
+                    "pattern": r"^\d{4}-\d{2}$",
+                    "description": "月份 YYYY-MM",
+                },
+                "codes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "按代码过滤；解禁栏目必需",
+                },
+                "fetch": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "false = 只读本机已入库事件，不向 peer 取数",
+                },
+            },
+            "required": ["month"],
+        },
+        "news",
     ),
 )
 

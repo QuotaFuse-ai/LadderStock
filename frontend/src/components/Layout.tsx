@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
   BarChart3,
+  CalendarDays,
   CalendarRange,
   CandlestickChart,
   ChevronDown,
@@ -9,11 +10,14 @@ import {
   Gauge,
   Home,
   Layers,
+  ListChecks,
+  Newspaper,
   NotebookPen,
   Radar,
   ScrollText,
   Settings,
   TrendingUp,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -30,9 +34,10 @@ import type { ThemeChoice } from '../lib/theme'
  * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 验证 ─┬─ 设置（弱化、沉底）。
  *
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
- * - 市场 3 段（情绪温度 / 连板梯队 / 题材轮动）都已实现 → 展开为二级；
- * - 盯盘的「竞价与盘中」缺 6 时点快照、复盘的「每日复盘」是 P1 留位 → 本轮不展开，
- *   直接是链接：宁可少一层，也不给空壳入口。
+ * - 市场 5 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达 / 事件日历）都已实现 → 展开为二级；
+ * - 复盘 2 段（情绪复盘 / 候选池）、日志 2 段（交易日志 / 我的持仓）同样展开；
+ * - 盯盘的「竞价与盘中」缺 6 时点快照 → 本轮不展开，直接是链接：
+ *   宁可少一层，也不给空壳入口（R10 遵守「不新增一级导航」）。
  * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
  *
  * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进）。
@@ -70,6 +75,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/market?tab=sentiment', label: '情绪温度', icon: Gauge, tab: 'sentiment' },
       { to: '/market?tab=ladder', label: '连板梯队', icon: BarChart3, tab: 'ladder' },
       { to: '/market?tab=theme', label: '题材轮动', icon: Layers, tab: 'theme' },
+      { to: '/news', label: '资讯雷达', icon: Newspaper },
+      { to: '/calendar', label: '事件日历', icon: CalendarDays },
     ],
   },
   {
@@ -83,19 +90,23 @@ const NAV_SECTIONS: NavSection[] = [
     key: 'review',
     label: '复盘',
     icon: NotebookPen,
-    // 「每日复盘」是 P1 留位（🟡），本轮不建入口
+    // 「每日复盘」是 P1 留位（🟡），本轮不建入口；候选池是复盘的产出
     pages: [
       { to: '/review', label: '情绪复盘', icon: NotebookPen },
       // R11 周度复盘（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
       { to: '/weekly', label: '周度复盘', icon: CalendarRange },
+      { to: '/pool', label: '候选池', icon: ListChecks },
     ],
   },
   {
     key: 'journal',
     label: '日志',
     icon: ScrollText,
-    // 单页；QUOT-187 的分页签上线后再补第二页
-    pages: [{ to: '/journal', label: '交易日志', icon: ScrollText }],
+    // 交易日志与我的持仓同属本机私有数据
+    pages: [
+      { to: '/journal', label: '交易日志', icon: ScrollText },
+      { to: '/positions', label: '我的持仓', icon: Wallet },
+    ],
   },
   {
     key: 'validate',

@@ -11,11 +11,14 @@
 
 R1-1（QUOT-190）在基线之外新增 1 条命令 `ldst research <code>`：基线 31 条 /
 33 叶子 / 32 argv 的口径不变，加上它之后是 **34 个叶子路径、33 条可执行 argv**。
+R6（QUOT-144）再新增 2 条：`ldst news <date>` / `ldst events --month YYYY-MM`，
+合计 **36 个叶子路径、35 条可执行 argv**。
 """
 
 from __future__ import annotations
 
 DATE = "2026-10-22"
+MONTH = "2026-11"
 
 #: `weekly` 的固定周标签（`DATE` 落在 2026-W43，这里取下一周以免与复盘产物纠缠）
 WEEK = "2026-W44"
@@ -111,6 +114,11 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     # R1-1 新增（在 31 条基线之外，见 docs/CLI.md §0 的「R1-1 增量」行）：
     # 未配置模型凭据时六段按占位降级 -> 9；配好模型则 0。语义与 `ai retry` 同口径。
     (("research", "600000"), {0, 9}),
+    # R6 资讯雷达（QUOT-144，同样在 31 条基线之外）：peer 全挂且无缓存 4；
+    # 部分栏目成功部分失败 8；都取到 0。日历里「暂无数据源」的三个小节是口径缺口，
+    # 不额外拖退出码（有源小节取到就 0），所以期望集合含 4 而不含 2。
+    (("news", DATE), {0, 4, 8}),
+    (("events", "--month", MONTH), {0, 4}),
     # MCP
     # `mcp stdio` / `mcp http` 是长驻服务（stdio 阻塞到客户端关闭、http 阻塞到
     # Ctrl+C），与 `run` 同口径不进矩阵：`mcp http` 端口占用 -> 3 见
@@ -183,6 +191,9 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("ai", "chain", "test"),
     # R1-1 新增叶子（不属 31 条基线，但同样受「全局 --output」契约管辖）
     ("research",),
+    # R6（QUOT-144）新增的两个叶子命令，同上
+    ("news",),
+    ("events",),
     ("mcp", "stdio"),
     ("mcp", "http"),
     ("mcp", "tools", "list"),

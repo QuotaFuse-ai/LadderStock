@@ -21,7 +21,13 @@ from typing import Any
 
 import pytest
 
-from ladderstock.core.boundary import DATASET_CATALOG, BoundaryViolation, owner_of
+from ladderstock.core.boundary import (
+    DATASET_CATALOG,
+    NEWS_CALENDAR_DATASETS,
+    NEWS_STREAM_DATASETS,
+    BoundaryViolation,
+    owner_of,
+)
 from ladderstock.data.adapters.tickhub import (
     CODE_POOL_DATASETS,
     FIXED_PARAMS,
@@ -117,7 +123,13 @@ SNAPSHOT_CASES = [("market_sentiment.json", "sentiment", "market_sentiment", dat
 #: 记录型三个用例共用的参数名（同一批 fixture，各测一个侧面）
 _RECORD_PARAMS = "tool_file,dataset,tool,rows,as_of,confidence"
 _SNAPSHOT_PARAMS = "tool_file,dataset,tool,as_of"
-TICKHUB_DATASETS = sorted(name for name, b in DATASET_CATALOG.items() if b.peer == "tickhub")
+# 资讯类数据集走自己的解码器注册表（`news/normalize.py`，由 tests/unit/news/test_normalize.py
+# 与目录逐项比对），不经下面这套「按工具形状展开」的通用映射，因此不要求 peer_responses 样本。
+TICKHUB_DATASETS = sorted(
+    name
+    for name, b in DATASET_CATALOG.items()
+    if b.peer == "tickhub" and name not in NEWS_STREAM_DATASETS + NEWS_CALENDAR_DATASETS
+)
 
 
 def load(tool_file: str) -> dict[str, Any]:

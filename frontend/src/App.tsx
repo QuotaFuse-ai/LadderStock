@@ -6,6 +6,10 @@ import IndustryDetailScreen from './screens/industry/IndustryDetailScreen'
 import IndustryMatrixScreen from './screens/industry/IndustryMatrixScreen'
 import JournalScreen from './screens/JournalScreen'
 import MarketScreen from './screens/MarketScreen'
+import CalendarScreen from './screens/radar/CalendarScreen'
+import NewsScreen from './screens/radar/NewsScreen'
+import PoolScreen from './screens/radar/PoolScreen'
+import PositionsScreen from './screens/radar/PositionsScreen'
 import ResearchDetailScreen from './screens/research/ResearchDetailScreen'
 import ResearchReportScreen from './screens/research/ResearchReportScreen'
 import ReviewScreen from './screens/ReviewScreen'
@@ -54,6 +58,11 @@ export default function App() {
         <Route path="/weekly" element={<WeeklyScreen />} />
         <Route path="/journal" element={<JournalScreen />} />
         <Route path="/validate" element={<ValidateScreen />} />
+        {/* R10 资讯雷达 / 事件日历 / 候选池 / 我的持仓；挂二级导航，不新增一级 */}
+        <Route path="/news" element={<NewsScreen />} />
+        <Route path="/calendar" element={<CalendarScreen />} />
+        <Route path="/pool" element={<PoolScreen />} />
+        <Route path="/positions" element={<PositionsScreen />} />
         {/* R9 产业研究：矩阵 / 单行业 / 规则信号；深链进入，不占一级导航 */}
         <Route path="/industry" element={<IndustryMatrixScreen />} />
         <Route path="/industry/:name" element={<IndustryDetailScreen />} />
