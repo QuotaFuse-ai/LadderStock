@@ -1,4 +1,4 @@
-# DEC-034 跨进程写 DuckDB：sync 入口进程级锁 + connect 有界退避重试
+# DEC-036 跨进程写 DuckDB：sync 入口进程级锁 + connect 有界退避重试
 
 - 日期：2026-11-01
 - 提出：后端架构师（QUOT-234，来源 QUOT-164 复核）
