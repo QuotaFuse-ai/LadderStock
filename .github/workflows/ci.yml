@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 # 同仓 PR 门禁用仓库内置 GITHUB_TOKEN，不需要任何 secret（QUOT-238 决定②）。
 permissions:
