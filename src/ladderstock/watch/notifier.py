@@ -4,7 +4,7 @@
 凭据、不发网络请求。需要别的投递方式时通过 `LDST_DESKTOP_NOTIFY_CMD` 指定一条
 **本机命令**，标题与正文经环境变量传入（不拼进 shell 命令行，避免引号与注入问题）。
 
-失败语义（CLI.md §B `notify test`、`docs/RELEASE_CHECKLIST.md`）：
+失败语义（CLI.md §B `notify test`、发布前检查）：
 
 - `send()` **从不因投递失败抛异常**：返回 `DeliveryResult(ok=False, degraded=True)`，
   由调用方决定是告警继续（定时任务、复盘）还是报错退出（`notify test`）；

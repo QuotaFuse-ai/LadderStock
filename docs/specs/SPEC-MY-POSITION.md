@@ -1,12 +1,12 @@
 # SPEC-MY-POSITION 我的持仓（本地私有库）
 
 - 日期：2026-10-30
-- 归属：数据面 R7（QUOT-145）
+- 归属：数据面 R7
 - 实现：`src/ladderstock/journal/position.py`（读写 + 本地计算）、`src/ladderstock/cli/position.py`（命令体）、
   `src/ladderstock/data/sqlite_store.py`（`positions` 表，schema v2）
 - 测试：`tests/unit/journal/test_position.py`（字段口径 / CRUD / 手算对照）、
   `tests/integration/test_position_privacy.py`（四个出口的隐私断言）
-- 相关：`DEC-006`（生态边界）、`DEC-015`（隐私库只读数据面边界）、`DEC-020`（本文的 schema v2 与边界决策）、
+- 相关：生态边界、隐私库只读数据面边界、本文的 schema v2 与边界决策、
   `docs/MCP_TOOLS.md` §2（禁止字段名）
 
 ## 0. 一句话

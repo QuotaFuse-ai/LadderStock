@@ -8,7 +8,7 @@
   以及角标指过去的来源记录与这个数字对不对得上（伪造引用的形态）。
 
 豁免名单（`EXEMPTIONS`）是显式的一份，不是「看着不像数」的感觉：日期、时刻、封板时间
-（`HHMMSS` 原样串）、证券代码、序号、百分位、版本号——`docs/specs/METRICS.md` §4.1
+（`HHMMSS` 原样串）、证券代码、序号、百分位、版本号——既有指标口径 §4.1
 规定「原样字符串」的那几类都在这里，逐条写明理由。新增豁免要能说出它不是指标。
 """
 
@@ -19,7 +19,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-#: 未核实标记：纯文本、可复制，与 vibe-astock 同款语义（PRD-UI-REDESIGN §3 缺口 #3）
+#: 未核实标记：纯文本、可复制，与 vibe-astock 同款语义
 UNVERIFIED_MARK = "〔未核实〕"
 
 #: 数值 token：一段连续数字（允许千分位与小数），前面不能再有数字

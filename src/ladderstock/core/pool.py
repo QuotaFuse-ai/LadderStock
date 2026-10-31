@@ -12,7 +12,7 @@
 分项固定五个，顺序即口径顺序，**不可增删**：`strength / turnover / standing / capital / theme`
 （强度 / 换手 / 地位 / 资金 / 题材）。权重、算式、字段容忍表与手算对照全部写在
 `docs/specs/SPEC-CANDIDATE-POOL.md`；夹具 `tests/fixtures/pool/P*.json` 与实现逐条对齐
-（做法与 `docs/specs/METRICS.md` + `tests/fixtures/metrics/S*.json` 相同）。
+（做法与 `tests/fixtures/metrics/S*.json` 相同）。
 
 两条硬约束：
 

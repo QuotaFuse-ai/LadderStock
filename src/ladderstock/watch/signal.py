@@ -4,7 +4,7 @@ DEC-006 边界：本模块只消费**本机已有的分钟级样本**——TickH
 回放 fixture，不采集、不直连任何行情站点，也不新增数据集登记。指标与事件全部
 由程序计算，AI 只读不写（`core/boundary.py:AI_WRITABLE`）。
 
-信号口径（`docs/RELEASE_CHECKLIST.md` 有对应的冒烟步骤）：
+信号口径（发布前检查 有对应的冒烟步骤）：
 
 | kind | 触发条件 | value |
 |---|---|---|

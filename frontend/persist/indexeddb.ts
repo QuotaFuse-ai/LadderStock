@@ -1,7 +1,7 @@
 /**
  * IndexedDB 存储实现（Zustand `persist` 的 StateStorage 后端）。
  *
- * 设计要点（DEC-005 / docs/STATE_PERSISTENCE.md）：
+ * 设计要点（前端状态分片约定）：
  * - 用 IndexedDB 而不是 localStorage：容量、事务与结构化存储都更可靠；
  * - 每个分片一个 key（`watch_snapshot` / `review_draft` / `validation_draft`），
  *   互不影响，单分片损坏可单独丢弃；

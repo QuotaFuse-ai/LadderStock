@@ -1,6 +1,6 @@
 """旧入口兼容：`ladderstock` 长别名、`python -m ladderstock`、旧启动脚本与旧端口。
 
-文档要求（`docs/CLI.md` §F / §G、`docs/PACKAGES.md` §6）：
+文档要求（`docs/CLI.md` §F / §G）：
 
 - `ladderstock` 是 `ldst` 的长别名，指向同一个 Typer app，命令面不得分叉；
 - `python -m ladderstock` 等价于 `ldst`（`compatibility/start.py` 只做参数翻译与委托）；
@@ -9,7 +9,7 @@
 - 旧配置/数据目录通过 `config migrate` 只读迁移（`docs/CLI.md` §G 最后一行）。
 
 仓库尚未实现的兼容件用 `xfail(strict=False)` 标出：现在是「已知缺口」，
-实现了自动转为通过，不需要再改测试。缺陷明细写在 `docs/tasks/TASK-VERIFY/report.md`。
+实现了自动转为通过，不需要再改测试。缺陷明细见测试报告。
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = ROOT / "pyproject.toml"
 SRC = ROOT / "src" / "ladderstock"
 CLI_DOC = ROOT / "docs" / "CLI.md"
-PACKAGES_DOC = ROOT / "docs" / "PACKAGES.md"
 
 runner = CliRunner()
 
@@ -245,7 +244,7 @@ def test_legacy_start_script_delegates_to_ldst_run() -> None:
     assert "迁移" in text, "旧脚本必须打印迁移提示，不能静默等价"
 
 
-@_missing("docs/PACKAGES.md §6：compatibility/start.py 只做参数翻译与委托")
+@_missing("包映射约定：compatibility/start.py 只做参数翻译与委托")
 def test_compatibility_entry_shim_exists() -> None:
     shim = ROOT / "compatibility" / "start.py"
     assert shim.is_file(), "兼容入口缺失：compatibility/start.py"
@@ -259,7 +258,7 @@ def test_config_migration_module_exists() -> None:
     assert module.is_file(), "缺少 config/migrate.py（config migrate 的实现落脚点）"
 
 
-@_missing("docs/PACKAGES.md §6：兼容读取旧 LDST_ 前缀，新前缀优先")
+@_missing("包映射约定：兼容读取旧 LDST_ 前缀，新前缀优先")
 def test_legacy_env_prefix_is_read_but_never_overrides() -> None:
     text = (SRC / "cli" / "paths.py").read_text(encoding="utf-8")
     assert "LDST_DATA_DIR" in text

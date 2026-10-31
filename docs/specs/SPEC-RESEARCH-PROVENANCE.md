@@ -5,7 +5,7 @@
 - 归属：后端架构
 - 实现：`src/ladderstock/research/artifacts.py`（`PROVENANCE_KEYS` / `provenance_slot` / `merge_slots` / `build_document`）、
   `src/ladderstock/research/citation.py`（渲染与审计）、`src/ladderstock/core/boundary.py`（`Provenance` / `assert_provenance`）
-- 关联：`DEC-017`（研究管线骨架）、`DEC-024`（R1-3 后三段 0 次取数）、`DEC-027`（本版本的来源）
+- 关联：研究管线骨架、后三段零取数、来源白名单口径
 
 ## 1. 顶层形状（v0.1 定稿，v0.2 未改）
 
@@ -33,7 +33,7 @@
 | `endpoint` | `string\|null` | peer 侧落点，peer 来源必填 |
 | `as_of` | `string` | 该数值的时效边界（「截至什么时候有效」） |
 | `url` | `string\|null` | 非 peer 来源的落点 |
-| `verified` | `bool` | `true` 才允许被角标引用；`web` 来源永远 `false`（`DEC-027` §2） |
+| `verified` | `bool` | `true` 才允许被角标引用；`web` 来源永远 `false`（见 §2） |
 
 ## 3. 渲染（`<stage>.md`）
 
@@ -45,7 +45,7 @@
 
 ## 4. 豁免名单（不要求角标的数字形态）
 
-`citation.EXEMPTIONS` 是显式一份，逐条带理由：角标自身、日期、时刻、封板时间（`HHMMSS` 原样串，`METRICS.md` §4.1）、证券代码、行首与括注序号、序数位次、百分位记号、版本号与决策号（`v2.1` / `R3` / `DEC-027` / `QUOT-141` / `§4.1`）。产物自己的证券代码由调用方以 `identifiers` 显式传入，不靠正则猜。新增豁免要能说明它为什么不是指标。
+`citation.EXEMPTIONS` 是显式一份，逐条带理由：角标自身、日期、时刻、封板时间（`HHMMSS` 原样串）、证券代码、行首与括注序号、序数位次、百分位记号、版本号与决策号（`v2.1` / `R3` / `§4.1`）。产物自己的证券代码由调用方以 `identifiers` 显式传入，不靠正则猜。新增豁免要能说明它为什么不是指标。
 
 ## 5. 审计（`ldst research <code> [--only <stage>] --check`）
 
@@ -53,5 +53,5 @@
 
 ## 变更记录
 
-- v0.2（2026-10-31，QUOT-141 / `DEC-027`）：`sources[]` 条目补 `value`/`unit`/`endpoint`/`as_of`/`url`/`verified` 六个引用要素；`provenance_slot()` 开始填值（程序写入，模型写不进去）；定稿 Markdown 渲染格式、豁免名单与 `--check` 审计口径；`unverified` 的判定改为「本段每个数值字段都得有出处」。
-- v0.1（2026-10-31，QUOT-192）：字段名与嵌套形状定稿，R1-3 只保证键存在、不渲染。
+- v0.2（2026-10-31）：`sources[]` 条目补 `value`/`unit`/`endpoint`/`as_of`/`url`/`verified` 六个引用要素；`provenance_slot()` 开始填值（程序写入，模型写不进去）；定稿 Markdown 渲染格式、豁免名单与 `--check` 审计口径；`unverified` 的判定改为「本段每个数值字段都得有出处」。
+- v0.1（2026-10-31）：字段名与嵌套形状定稿，R1-3 只保证键存在、不渲染。

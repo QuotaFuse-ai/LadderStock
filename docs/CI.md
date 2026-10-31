@@ -27,7 +27,7 @@ python -m mypy
 
 ## 二、本地等价命令
 
-前置：Python ≥ 3.11（本仓开发环境固定 3.12，见 [DEC-002](decisions/DEC-002-python312-venv.md)）；Node ≥ 22 仅前端构建需要。
+前置：Python ≥ 3.11（本仓开发环境固定 3.12）；Node ≥ 22 仅前端构建需要。
 
 ### Windows（PowerShell / cmd）
 

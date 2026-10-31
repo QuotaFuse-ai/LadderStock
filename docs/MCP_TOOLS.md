@@ -1,8 +1,8 @@
 # MCP 工具清单与隐私边界
 
 - 日期：2026-10-28
-- 归属：个人端 / 本地工作台（QUOT-95）
-- 相关：`DEC-006`（生态四层边界）、`DEC-004`（回环端口与退出码）、`src/ladderstock/mcp/tools.py`、`docs/MCP_TOOLS.md` 对应实现
+- 归属：个人端 / 本地工作台
+- 相关：`src/ladderstock/mcp/tools.py`、`docs/MCP_TOOLS.md` 对应实现
 
 本文登记 LadderStock 对外暴露的 MCP 工具（`TOOL_SPECS`），并明确一条硬约束：
 **本机隐私库 `data/journal.sqlite` 不进入任何 MCP 工具结果、`LadderEnvelope` 或 AI prompt。**
@@ -22,14 +22,14 @@
 | `ladder_get_review` | 是 | `review` | `date` | 某日复盘结构化结果 |
 | `ladder_get_validation` | 是 | `validation` | `date` | 明日验证条件与对账结果 |
 | `ladder_get_sentiment` | 是 | `sentiment` | `date` | 情绪温度、晋级率、梯队断层 |
-| `research_status` | 是 | `research` | `code`、`date?` | 个股研究六段进度（R1-1，QUOT-190） |
+| `research_status` | 是 | `research` | `code`、`date?` | 个股研究六段进度（R1-1） |
 | `candidate_pool` | 是 | `sentiment` | `date` | 当日候选池评分：强度 / 换手 / 地位 / 资金 / 题材分项与总分（口径见 `docs/specs/SPEC-CANDIDATE-POOL.md`） |
-| `industry_snapshot` | 是 | `sentiment` | `industry` | 申万一级行业五维画像：景气 / 资金 / 估值 / 动量 / 拥挤度，缺数显式 `null` 并给原因（口径见 `docs/specs/SPEC-INDUSTRY-METRICS.md`，R5 / QUOT-143） |
+| `industry_snapshot` | 是 | `sentiment` | `industry` | 申万一级行业五维画像：景气 / 资金 / 估值 / 动量 / 拥挤度，缺数显式 `null` 并给原因（口径见 `docs/specs/SPEC-INDUSTRY-METRICS.md`，R5） |
 
 除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **14 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个 + R5 增量 `industry_snapshot` 1 个）。
 
-> **命名偏差（已声明-接受，DEC-019 §1）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
-> 因为 QUOT-145 的验收文字直接点名「MCP 只读工具 `candidate_pool`」。
+> **命名偏差（已声明-接受）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
+> 验收口径直接点名「MCP 只读工具 `candidate_pool`」。
 > 现有测试只锁「清单与文档一致 + 全部只读 + 无隐私关键字」，不锁前缀；
 > 若后续要统一成 `ladder_get_candidate_pool`，必须同时改 CLI 契约文档、`DOCUMENTED_TOOLS`
 > 两处（`tests/contract/test_mcp_tools.py`、`tests/contract/test_mcp_stdio.py`）与本表，属新的改名决策。
@@ -40,9 +40,9 @@
 > 本来就没有日期。契约测试用 `CODE_SCOPED_TOOLS` 显式登记这个例外，见
 > `tests/contract/test_mcp_tools.py`。信封域仍是 `review`（`LadderDomain` 取值集合不变）。
 
-> **`industry_snapshot` 的两处有意偏差**（2026-10-31，R5 / QUOT-143）：
+> **`industry_snapshot` 的两处有意偏差**（2026-10-31，R5）：
 > ① 名字不带 `ladder_` 前缀——issue 验收文字直接点名「MCP 只读工具 `industry_snapshot`」，
-> 与 CLI 命令 `ldst industry` 同源，便于跨面引用（同 `candidate_pool` 的先例，DEC-019 §1）；
+> 与 CLI 命令 `ldst industry` 同源，便于跨面引用（同 `candidate_pool` 的先例）；
 > ② **入参没有 `date`**：按行业名定位，口径是「本机缓存里的最新一批」，各维度自己给出
 > `trade_date` / `as_of`（SPEC §1.2）。契约测试用 `INDUSTRY_SCOPED_TOOLS` 登记这个例外，
 > 并反向断言 schema 里没有 `date`——要加日期就得先改口径文件。信封域是 `sentiment`（取值集合不变）。
@@ -50,7 +50,7 @@
 ### 1.1 `ladder_get_watch` 的数据来源
 
 `ladder_get_watch` 不取数、不计算信号，只读 `ldst watch start` 落盘的 `<data_dir>/watch/status.json`
-（判型实现只有一份：`ladderstock.watch.status`，见 DEC-011）。四种状态：
+（判型实现只有一份：`ladderstock.watch.status`）。四种状态：
 
 | `watch_state` | `data_source_status` | 含义 |
 |---|---|---|
@@ -119,10 +119,10 @@
 
 补充约定：
 
-1. **禁止字段名**：`journal`、`trades`、`positions`、`watchlist`、`position`、`holding`、`自选` 不得出现在任何 MCP 工具名、描述或 `input_schema` 中。候选池因此把「地位」分项对外命名为 `standing`（中文标签「地位」只用于人类可读输出，不参与键名），见 DEC-019 §2。
+1. **禁止字段名**：`journal`、`trades`、`positions`、`watchlist`、`position`、`holding`、`自选` 不得出现在任何 MCP 工具名、描述或 `input_schema` 中。候选池因此把「地位」分项对外命名为 `standing`（中文标签「地位」只用于人类可读输出，不参与键名）。
 2. **禁止旁路**：MCP 不提供任何「查交易日志 / 持仓 / 自选」的工具；模型若需要纪律统计，只能由人类在 CLI 侧自行查看。
 3. **只读边界**：`/api/*` 全部为 `GET`，无写接口；写路径只有 CLI（`journal add`）。
-4. **本机回环**：web 只监听 `127.0.0.1:5950`（MCP `5951`）；端口被占用时 `ldst run` 直接以退出码 3 失败并提示 `--port`，绝不静默换端口（DEC-004）。
+4. **本机回环**：web 只监听 `127.0.0.1:5950`（MCP `5951`）；端口被占用时 `ldst run` 直接以退出码 3 失败并提示 `--port`，绝不静默换端口。
 5. **非回环必须鉴权**（R-1）：两条监听面共用 `core/listener.py` 的同一判据——回环放行；非回环必须 `<前缀>_ALLOW_REMOTE=1` + `<前缀>_TOKEN`（≥16 字符，web `LDST_WEB_*`、MCP `LDST_MCP_*`），否则拒绝启动（退出码 3）。开启后 `/api/*` 与 `/mcp` 均要求 `Authorization: Bearer <token>`，`hmac.compare_digest` 比较，失败 401。
 
 ## 3. 自动化护栏
@@ -135,10 +135,10 @@
 - `ldst export` 默认不含 journal 摘要，`--with-journal` 才写入并在 stderr 提示；
 - 隐私库 schema 迁移幂等、WAL 生效、更高版本库被拒绝（退出码 3）。
 
-`tests/integration/test_position_privacy.py`（R7 增量，QUOT-145 验收硬条）补四件事：
+`tests/integration/test_position_privacy.py`（R7 增量验收项）补四件事：
 
 - MCP 清单里没有 position 相关工具，且 `mcp/` `ai/` `web/` 三个对外面的 import 里不出现 `ladderstock.journal`
-  （`web/server.py` 的 `/api/journal/stats` 是唯一白名单，闸门由 DEC-015 那套回环 + Host 校验负责）；
+  （`web/server.py` 的 `/api/journal/stats` 是唯一白名单，闸门由回环 + Host 校验负责）；
 - 13 个只读工具逐个 `dispatch`，信封里不含持仓哨兵、不含 `entry_date` 等只在持仓里出现的字段名
   （`industry_snapshot` 缺 `industry` 入参走报错分支，同样断言报错文本里没有哨兵）；
 - `strip_private()` → `build_messages()` 的 AI 上下文序列化结果不含持仓字段名（并反向断言哨兵在**未剥离**的载荷里确实存在，防止测试写成空断言）；
@@ -151,7 +151,7 @@
 
 - 新增 MCP 工具或字段前，先确认它不属于隐私域；若确需纪律统计或持仓查询，走 CLI + 人类显式导出，**不新增工具**。
 - 任何触达 `data/journal.sqlite` 的新代码都必须仅依赖 `data/sqlite_store.py`，不得在 `adapters/`、`core/`、`ai/`、`mcp/` 中出现对该库的引用。
-- 隐私域的新分项命名要绕开 `FORBIDDEN_KEYWORDS`：候选池的「地位」对外叫 `standing`（DEC-019 §2）。
+- 隐私域的新分项命名要绕开 `FORBIDDEN_KEYWORDS`：候选池的「地位」对外叫 `standing`（§2）。
 - 改 `positions` 表结构要 `SCHEMA_VERSION +1`、在 `_SCHEMA_V*` 追加一段 DDL，
   并保证「旧库升级不丢行、改结构前先备份、更高版本库被拒绝」三条仍有测试覆盖
   （`tests/unit/journal/test_position.py` §1）。
