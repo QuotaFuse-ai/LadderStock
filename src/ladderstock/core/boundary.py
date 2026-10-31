@@ -302,6 +302,31 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
            note="板块资金流：caliber 随上游 source（东财 BK / 新浪行业），DEC-018 要求逐字段标注"),
         _b("hot_rank", "tickhub", "ths_hot_rank", "replace", "trade_date",
            ("eastmoney_hot_rank",), "热榜"),
+        # ---- 资讯雷达（R6 / QUOT-144）：公告 / 快讯 / 新闻 / 研报 ----
+        # 全部是 TickHub-CN 已注册的只读工具，本层不采集（DEC-006 闸门 4）。
+        # 模式统一 `append`：资讯的时间轴是「越来越多」，不是「按日整替」；
+        # 幂等靠 `news.store` 的 (id upsert + url/标题归一化去重)，不靠整日覆盖。
+        _b("announcement_cninfo", "tickhub", "cninfo_announcements", "append", "data_as_of",
+           ("announcements_backup",), "巨潮公告（沪/深/北）：code 必填"),
+        _b("announcement_szse", "tickhub", "szse_announcements", "append", "data_as_of",
+           ("announcements_backup",), "深交所公告：仅深市 code"),
+        _b("flash_cls", "tickhub", "cls_telegraph", "append", "data_as_of",
+           note="财联社 7x24 快讯：无 code 维度，related_codes 靠正文抽取"),
+        _b("flash_wallstreetcn", "tickhub", "wallstreetcn_lives", "append", "data_as_of",
+           note="华尔街见闻 Live（a-stock 频道）"),
+        _b("flash_eastmoney", "tickhub", "eastmoney_global_news", "append", "data_as_of",
+           note="东财 7x24 全球快讯"),
+        _b("news_eastmoney_stock", "tickhub", "eastmoney_stock_news", "append", "data_as_of",
+           note="东财个股新闻：code 必填"),
+        _b("news_cctv", "tickhub", "cctv_news", "append", "data_as_of",
+           note="新闻联播逐日条目：政策口径的主来源"),
+        _b("research_report", "tickhub", "eastmoney_reports", "append", "data_as_of",
+           ("sina_research_reports",), "券商研报；新浪研报为同 peer 备源（东财故障时用）"),
+        # ---- 事件日历的两个结构化数据源（R6）----
+        _b("lockup_calendar", "tickhub", "lockup_expiry", "replace", "trade_date",
+           note="限售解禁日历：日历「解禁」段的唯一来源"),
+        _b("earnings_preview", "tickhub", "earnings_forecast", "replace", "notice_date",
+           note="业绩预告（notice_date 为披露日）——不是「财报预约披露日」，两者不混用（DEC-018）"),
         # ---- QuotaFuse Wire：题材段叙事（可选）----
         # 摘要为主、时间线为同 peer 备源（DEC-008）：两者都是 Wire 的只读工具，
         # 不跨供应商，符合 DEC-006「主备同 peer」。
@@ -312,6 +337,23 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
            note="只读报告，不在本项目内复现辩论/风控流程"),
     )
 }
+
+#: 资讯雷达（R6 / QUOT-144）统一流的 8 个栏目：`ldst news --source` 的合法取值。
+#: 顺序即默认抓取顺序，也是「同稿多源合并」时保留哪一条的优先级——
+#: 公告类（交易所/巨潮，置信度 A）优先于快讯类（财联社/见闻，置信度 C）。
+NEWS_STREAM_DATASETS: tuple[str, ...] = (
+    "announcement_cninfo",
+    "announcement_szse",
+    "research_report",
+    "news_eastmoney_stock",
+    "news_cctv",
+    "flash_cls",
+    "flash_wallstreetcn",
+    "flash_eastmoney",
+)
+
+#: 事件日历的结构化数据源（不是资讯流成员，按 code + 时间窗直接取）。
+NEWS_CALENDAR_DATASETS: tuple[str, ...] = ("lockup_calendar", "earnings_preview")
 
 # 工具名尚未在真实 peer 上确认的数据集：`ldst doctor` 会探**一次** tools/list，
 # 连得上就按实际工具名下结论（在列表里 = 已联调、不在 = 明确报工具不存在），

@@ -48,7 +48,7 @@ from ladderstock.mcp.tools import TOOL_SPECS, ToolSpec
 
 SERVER_NAME = "ladderstock"
 SERVER_INSTRUCTIONS = (
-    "LadderStock 只读工具集：复盘、情绪、连板天梯、龙虎榜、验证条件与对账。"
+    "LadderStock 只读工具集：复盘、情绪、连板天梯、龙虎榜、验证条件与对账、资讯雷达。"
     "所有指标由程序计算，AI 只写叙述；交易日志与持仓不在本服务范围内。"
 )
 
@@ -56,7 +56,7 @@ SERVER_INSTRUCTIONS = (
 ENVELOPE_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "domain": {"type": "string", "enum": ["review", "sentiment", "validation"]},
+        "domain": {"type": "string", "enum": ["review", "sentiment", "validation", "news"]},
         "topic": {"type": "string"},
         "event_id": {"type": ["string", "null"]},
         "data_as_of": {"type": "string", "format": "date"},
@@ -325,6 +325,199 @@ def _tool_research_status(arguments: dict[str, Any], root: Any) -> dict[str, Any
         source_detail=detail,
         source_status=source_status,
         confidence="high" if available else "medium" if summary["exists"] else "low",
+    )
+
+
+def _news_list_arg(arguments: dict[str, Any], key: str) -> list[str]:
+    """`sources` / `codes`：接受字符串或字符串数组，别的类型直接拒绝。"""
+    raw = arguments.get(key)
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+    if isinstance(raw, list):
+        out: list[str] = []
+        for item in raw:
+            if isinstance(item, (dict, list)):
+                raise ToolError(f"非法 {key}：数组元素必须是字符串")
+            text = str(item).strip()
+            if text:
+                out.append(text)
+        return out
+    raise ToolError(f"非法 {key}：需要字符串或字符串数组，收到 {type(raw).__name__}")
+
+
+def _news_bool_arg(arguments: dict[str, Any], key: str, default: bool) -> bool:
+    raw = arguments.get(key, default)
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw)
+
+
+def _news_int_arg(arguments: dict[str, Any], key: str, default: int) -> int:
+    raw = arguments.get(key)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ToolError(f"非法 {key}：需要整数，收到 {raw!r}") from None
+
+
+def _news_envelope_fields(
+    statuses: list[Any], exit_code: int
+) -> dict[str, Any]:
+    """把资讯流的取数账本折算成信封的四个字段——降级必须显式可见。"""
+    from ladderstock.errors import EXIT_PARTIAL, EXIT_SOURCE
+    from ladderstock.news.stream import STATUS_EMPTY, STATUS_OK
+
+    succeeded = [s for s in statuses if s.status in (STATUS_OK, STATUS_EMPTY)]
+    if exit_code == EXIT_SOURCE:
+        return {
+            "available": False,
+            "source_status": "partial",
+            "confidence": "low",
+            "freshness": "cached",
+        }
+    if exit_code == EXIT_PARTIAL:
+        source_status = "partial"
+    elif any(getattr(s, "degraded", False) for s in succeeded):
+        source_status = "degraded"
+    else:
+        source_status = "ok"
+    if any(s.freshness == "realtime" for s in succeeded):
+        freshness = "realtime"
+    elif any(s.freshness == "archive" for s in succeeded):
+        freshness = "archive"
+    else:
+        freshness = "cached"
+    return {
+        "available": True,
+        "source_status": source_status,
+        "confidence": "high" if source_status == "ok" else "medium",
+        "freshness": freshness,
+    }
+
+
+def _news_day_arg(raw: Any, flag: str) -> date:
+    """资讯工具的日期只认 `YYYY-MM-DD`，与 `ldst news` 同一条口径。
+
+    `_parse_day` 直接 `date.fromisoformat`，Python 3.11+ 连 `20261030` 也收；
+    但资讯的窗口键、本机库的 `published_day` 都按规范日期串存，简写会生出两个
+    「看起来不同」的窗口。其它工具的既有契约不动，只有资讯这两个工具收紧。
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise ToolError(f"缺少 {flag}（YYYY-MM-DD）")
+    text = raw.strip()
+    try:
+        parsed = date.fromisoformat(text[:10])
+    except ValueError:
+        raise ToolError(f"非法 {flag}：{raw!r}（需要 YYYY-MM-DD）") from None
+    if parsed.isoformat() != text:
+        raise ToolError(f"非法 {flag}：{raw!r}（需要 YYYY-MM-DD）") from None
+    return parsed
+
+
+def _tool_news_stream(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
+    """R6 统一资讯流：公告 / 研报 / 快讯 / 政策，去重合并 + 规则事件抽取。
+
+    只读口径：**默认不写本机库**（`store=false`）。取数本身走同步层的缓存链路
+    （DEC-007），但 `data/news.sqlite` 只在调用方显式 `store=true` 时落盘——
+    工具被反复调用不该留下副作用，落库是 `ldst news` 的职责。
+    模型叙述同样默认关闭（`ai=false`，见 `news/ai_enrich.py`）。
+    """
+    from ladderstock.errors import LadderStockError
+    from ladderstock.news import ai_enrich
+    from ladderstock.news import stream as news_stream
+
+    start = _news_day_arg(arguments.get("date"), "date")
+    raw_until = arguments.get("until")
+    end = start if raw_until in (None, "") else _news_day_arg(raw_until, "until")
+
+    limit = _news_int_arg(arguments, "limit", news_stream.DEFAULT_LIMIT)
+    try:
+        result = news_stream.collect_stream(
+            start=start,
+            end=end,
+            datasets=_news_list_arg(arguments, "sources"),
+            codes=_news_list_arg(arguments, "codes"),
+            root=Path(root) if isinstance(root, str) else root,
+            persist=_news_bool_arg(arguments, "store", False),
+            limit=limit,
+        )
+    except LadderStockError as exc:
+        raise ToolError(str(exc)) from exc
+
+    payload = result.as_dict()
+    payload["ai"] = ai_enrich.apply_to_stream(
+        result, enabled=_news_bool_arg(arguments, "ai", False)
+    )
+    fields = _news_envelope_fields(result.statuses, result.exit_code)
+    detail = "；".join(
+        f"{status.dataset}:{status.status}×{status.items}" for status in result.statuses
+    )
+    return _envelope(
+        domain="news",
+        topic="news_stream",
+        day=end,
+        payload=payload,
+        available=fields["available"],
+        source_detail=f"news stream {start.isoformat()}→{end.isoformat()}：{detail}"[:500],
+        source_status=fields["source_status"],
+        confidence=fields["confidence"],
+        freshness=fields["freshness"],
+    )
+
+
+def _tool_event_calendar(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
+    """R6 事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口。
+
+    `data_as_of` 用**月份首日**：日历描述的是那个月，不是取数那一刻（取数时间在
+    `fetched_at`）。没有数据源的三个小节原样返回 `status="no_source"`，
+    页面据此显示「暂无数据源」——本工具绝不估算日期（DEC-018 R6）。
+    """
+    from ladderstock.errors import EXIT_SOURCE, LadderStockError
+    from ladderstock.news.calendar import build_calendar
+
+    raw_month = arguments.get("month")
+    if not isinstance(raw_month, str) or not raw_month.strip():
+        raise ToolError("缺少 month（YYYY-MM）")
+    limit = _news_int_arg(arguments, "limit", 200)
+    fetch = _news_bool_arg(arguments, "fetch", True)
+    try:
+        result = build_calendar(
+            raw_month.strip(),
+            codes=_news_list_arg(arguments, "codes"),
+            root=Path(root) if isinstance(root, str) else root,
+            fetch=fetch,
+            limit=limit,
+        )
+    except LadderStockError as exc:
+        raise ToolError(str(exc)) from exc
+
+    payload = result.as_dict()
+    missing = payload["summary"]["no_source"]
+    sourced = [s for s in result.sections if s.status == "sourced"]
+    degraded = any(s.degraded for s in sourced) or result.exit_code == EXIT_SOURCE
+    has_entries = any(s.entries for s in sourced)
+    # 三个「暂无数据源」的小节今天是常态，所以日历的 source_status 一般是 partial：
+    # 这不是取数失败，是**口径本身不完整**——把它标出来，页面与监控才知道缺什么
+    source_status = "degraded" if degraded else "partial" if missing else "ok"
+    confidence = "high" if has_entries and not degraded else "medium" if sourced else "low"
+    return _envelope(
+        domain="news",
+        topic="event_calendar",
+        day=date.fromisoformat(payload["window"]["start"]),
+        payload=payload,
+        available=bool(sourced) and not degraded,
+        source_detail=(
+            f"event calendar {payload['month']}；"
+            f"有源小节：{'、'.join(s.key for s in sourced) or '（无）'}；"
+            f"暂无数据源：{'、'.join(missing) or '（无）'}"
+        )[:500],
+        source_status=source_status,
+        confidence=confidence,
+        freshness="realtime" if fetch and sourced and not degraded else "cached",
     )
 
 
@@ -783,6 +976,8 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "research_status": _tool_research_status,
     "candidate_pool": _tool_candidate_pool,
     "industry_snapshot": _tool_industry_snapshot,
+    "news_stream": _tool_news_stream,
+    "event_calendar": _tool_event_calendar,
 }
 
 

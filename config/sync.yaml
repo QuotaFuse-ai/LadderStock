@@ -114,6 +114,81 @@ sync:
       watermark_field: trade_date
       mode: replace
 
+    # ---------------- 资讯雷达（R6 / QUOT-144）----------------
+    # 全部 `optional: true`：资讯是「按需按时间窗」的（`ldst news`），
+    # 定时增量只是顺带归档。取不到只记 skipped，不把整轮 sync 的退出码拖成 8/4。
+    # 三个 code 必填的栏目（巨潮 / 深交所 / 东财个股新闻）在裸 `ldst sync` 里
+    # 必然被 peer 拒（上游要求 code），这是预期行为，不是链路故障。
+    announcement_cninfo:
+      primary: tickhub_announce_cninfo
+      fallback: [tickhub_announce_cninfo_backup]
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    announcement_szse:
+      primary: tickhub_announce_szse
+      fallback: [tickhub_announce_szse_backup]
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    research_report:
+      primary: tickhub_research_report
+      fallback: [tickhub_research_report_sina]
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    news_eastmoney_stock:
+      primary: tickhub_news_stock
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    news_cctv:
+      primary: tickhub_news_cctv
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    flash_cls:
+      primary: tickhub_flash_cls
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    flash_wallstreetcn:
+      primary: tickhub_flash_wsc
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    flash_eastmoney:
+      primary: tickhub_flash_em
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    lockup_calendar:
+      primary: tickhub_lockup_calendar
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      optional: true
+
+    earnings_preview:
+      primary: tickhub_earnings_preview
+      fallback: []
+      watermark_field: notice_date
+      mode: replace
+      optional: true
+
     # 可选：未安装 Wire 时整段跳过，题材段降级为纯指标叙述
     theme_news:
       primary: wire_digest

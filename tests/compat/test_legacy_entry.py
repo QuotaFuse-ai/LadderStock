@@ -36,8 +36,9 @@ runner = CliRunner()
 
 #: `docs/CLI.md` §0 的 11 个分组，加上 `run` / `export` / `doctor` 三个顶层命令，
 #: 再加 R1-1（QUOT-190）新增的 `research`（见 docs/CLI.md §0「R1-1 增量」行），
-#: 以及 R7 增量两个（`pool` 候选池、`position` 我的持仓，QUOT-145 / §E″），
-#: 再加 R5 增量一个（`industry` 产业研究，QUOT-143 / §D‴）。
+#: 以及 R7 增量两个（`pool` 候选池、`position` 我的持仓，§E″），
+#: 再加 R5 增量一个（`industry` 产业研究，§D‴），
+#: 再加 R6 新增的 `news` / `events`（见 docs/CLI.md §0「资讯雷达」行）。
 DOCUMENTED_GROUPS = {
     "run",
     "review",
@@ -56,6 +57,8 @@ DOCUMENTED_GROUPS = {
     "state",
     "ai",
     "research",
+    "news",
+    "events",
     "mcp",
     "config",
     "schedule",

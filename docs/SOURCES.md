@@ -176,6 +176,41 @@ R5 的三只默认 `codes: []`：申万成分表是**懒缓存**，只同步用�
   不写进假设。
 - 单只失败不拖垮整轮：成功的照常落库，状态记 `degraded`，`detail` 只报**只数**。
 - 隐私：代码要发给本机 peer 才能取行情，但日志与对外输出只出现数量，不出现自选内容。
+### 2.4 资讯雷达数据集（R6，按需取数，不进 `sync.yaml`）
+
+唯一真源仍是 `core.boundary.DATASET_CATALOG`；分组口径是两个集合：
+`NEWS_STREAM_DATASETS`（资讯流八栏）与 `NEWS_CALENDAR_DATASETS`（日历两个有源小节）。
+`news/normalize.py` 的解码器注册表必须与之**完全相等**，由
+`tests/unit/news/test_normalize.py` 钉住。
+
+| 数据集 | peer | 主工具 | 同 peer 备源 | 模式 | 水位字段 |
+|---|---|---|---|---|---|
+| `announcement_cninfo` | tickhub | `cninfo_announcements` | `announcements_backup` | append | `data_as_of` |
+| `announcement_szse` | tickhub | `szse_announcements` | `announcements_backup` | append | `data_as_of` |
+| `research_report` | tickhub | `eastmoney_reports` | `sina_research_reports` | append | `data_as_of` |
+| `news_eastmoney_stock` | tickhub | `eastmoney_stock_news` | — | append | `data_as_of` |
+| `news_cctv` | tickhub | `cctv_news` | — | append | `data_as_of`（只到日） |
+| `flash_cls` | tickhub | `cls_telegraph` | — | append | `data_as_of` |
+| `flash_wallstreetcn` | tickhub | `wallstreetcn_lives` | — | append | `data_as_of` |
+| `flash_eastmoney` | tickhub | `eastmoney_global_news` | — | append | `data_as_of` |
+| `lockup_calendar` | tickhub | `lockup_expiry` | — | replace | `trade_date`（`code` 必填 + `forward_days`） |
+| `earnings_preview` | tickhub | `earnings_forecast` | — | replace | `notice_date`（上游无时间窗参数，本地过滤） |
+
+三个有备源的数据集（两个公告栏共用 `announcements_backup`、研报用 `sina_research_reports`）
+都是**同 peer 备源**（生态边界闸门 3），不是换一家供应商。
+
+为什么不进 `sync.yaml`：行情类数据集是「整日覆盖 / 追加」，资讯是「越来越多、按时间窗回捞」，
+把它塞进水位线机制会逼同步层去解释「一条稿子的 watermark 是什么」。资讯的幂等在
+`news/store.py` 的 upsert 层表达就够了（`id` 由去重键单向哈希，`ON CONFLICT(id) DO UPDATE`，
+`first_seen_at` 不变），决策口径见 `docs/specs/NEWS-RADAR.md`。落库位置是独立的 `data/news.sqlite`，
+**不与隐私库 `journal.sqlite` 共用连接**。
+
+`sources:chain` 门禁照旧覆盖这十个数据集（主备同 peer、工具在允许集合内、yaml 有 primary 记录）；
+降级顺序也与 §3 完全一致：主 → 同 peer 备 → 缓存回放。全栏目失败时 `ldst news` 退出 4，
+部分失败 8，`sources_status` 里逐栏写明 `status ∈ {ok, empty, skipped, failed}` 与本轮条数，
+并带 `tool / source / source_detail / freshness / confidence`（`skipped` 含
+「这一栏上游要求 `--code` 但本轮没给」，不是静默少一路；走了备源或缓存回放的栏目
+额外 `degraded=true`）。
 
 ## 3. 降级顺序：主 → 同 peer 备 → 缓存回放
 
