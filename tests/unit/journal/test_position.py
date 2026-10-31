@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 from ladderstock.cli.main import app
 from ladderstock.data import sqlite_store
 from ladderstock.errors import EXIT_NOT_FOUND, EXIT_USAGE, LadderStockError
+from ladderstock.journal import log as log_module
 from ladderstock.journal import position as position_module
 
 runner = CliRunner()
@@ -349,6 +350,8 @@ def test_metrics_partial_price_coverage_keeps_cost_basis() -> None:
         "market_value": None,
         "unrealized_pnl": None,
         "unrealized_pnl_pct": None,
+        # DEC-038 给每条加了已实现盈亏；这里没传流水，如实是 None 而不是 0
+        "realized_pnl": None,
     }
 
     concentration = metrics["concentration"]
@@ -529,3 +532,117 @@ def test_cli_table_output_is_printable(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stderr
     assert "600000" in result.stdout
     assert "哨兵-D" in result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# 5. 已实现盈亏（移动加权成本，QUOT-292 / DEC-038）：手算对照
+# --------------------------------------------------------------------------- #
+
+
+def _trade(side: str, price: float, qty: float, *, code: str = "600000") -> dict[str, Any]:
+    """构造一条 `list_journal_trades` 形状的行（`compute_metrics(trades=…)` 的入参）。"""
+    return {"code": code, "side": side, "price": price, "qty": qty}
+
+
+def _metrics_with_trades(
+    rows: list[dict[str, Any]],
+    trades: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    return position_module.compute_metrics(rows, {}, trades=trades)
+
+
+def test_realized_is_per_code_and_splits_held_from_unheld() -> None:
+    rows = [_row("600000", 10.0, 1000.0), _row("600519", 100.0, 100.0)]
+    trades = [
+        _trade("buy", 10.0, 1000.0),
+        _trade("sell", 12.0, 400.0),  # (12−10)×400 = +800
+        _trade("buy", 30.0, 100.0, code="300750"),
+        _trade("sell", 36.0, 100.0, code="300750"),  # 已清仓：(36−30)×100 = +600
+    ]
+    metrics = _metrics_with_trades(rows, trades)
+
+    by_code = {item["code"]: item for item in metrics["items"]}
+    assert by_code["600000"]["realized_pnl"] == 800.0
+    assert by_code["600519"]["realized_pnl"] is None  # 这只票一笔流水都没有
+
+    realized = metrics["realized"]
+    assert realized["method"] == "moving_weighted_average"
+    assert realized["status"] == "ok" and realized["reason"] is None
+    assert realized["total_pnl"] == 1400.0
+    assert realized["held_pnl"] == 800.0  # 600000 还在持仓表里
+    assert realized["unheld_pnl"] == 600.0  # 300750 已被 remove，得失不能跟着消失
+    assert realized["unheld_codes"] == ["300750"]
+    # 合计与明细之间不许有解释不了的缺口
+    held_sum = sum(i["realized_pnl"] or 0.0 for i in metrics["items"])
+    assert round(held_sum + realized["unheld_pnl"], 2) == realized["total_pnl"]
+
+
+def test_realized_uses_rolled_cost_not_the_entered_position_cost() -> None:
+    """`positions.cost` 是用户填的，只服务浮动盈亏；已实现按流水复算，两套基础不许混。"""
+    rows = [_row("600000", 12.0, 1000.0)]  # 用户填的成本价 12
+    trades = [_trade("buy", 10.0, 1000.0), _trade("sell", 14.0, 500.0)]
+    metrics = _metrics_with_trades(rows, trades)
+
+    # 按流水单价 10 → (14−10)×500 = +2000；若错用 positions.cost 会得到 (14−12)×500 = +1000
+    assert metrics["items"][0]["realized_pnl"] == 2000.0
+    assert metrics["realized"]["total_pnl"] == 2000.0
+
+
+def test_realized_is_null_without_any_trade_not_zero() -> None:
+    metrics = _metrics_with_trades([_row("600000", 10.0, 1000.0)], [])
+
+    assert metrics["realized"]["status"] == "missing"
+    assert metrics["realized"]["total_pnl"] is None
+    assert metrics["realized"]["held_pnl"] is None
+    assert metrics["realized"]["unheld_pnl"] is None
+    assert "流水为空" in str(metrics["realized"]["reason"])
+    assert metrics["items"][0]["realized_pnl"] is None
+
+
+def test_realized_says_the_caller_loaded_nothing_when_trades_omitted() -> None:
+    """`trades=None`（没载入）与 `trades=[]`（本机没记过）原因必须不同，别把漏接线显示成没数据。"""
+    metrics = position_module.compute_metrics([_row("600000", 10.0, 1000.0)], {})
+
+    assert metrics["realized"]["status"] == "missing"
+    assert metrics["realized"]["total_pnl"] is None
+    assert "trades=None" in str(metrics["realized"]["reason"])
+    assert metrics["items"][0]["realized_pnl"] is None
+
+
+def test_realized_oversell_counts_unmatched_and_invents_no_cost() -> None:
+    rows = [_row("600000", 10.0, 50.0)]
+    trades = [_trade("sell", 10.0, 200.0), _trade("buy", 10.0, 100.0), _trade("sell", 12.0, 150.0)]
+    metrics = _metrics_with_trades(rows, trades)
+
+    realized = metrics["realized"]
+    assert realized["total_pnl"] == 200.0  # 只结转有成本可配对的那 100 股
+    assert realized["matched_sell_qty"] == 100.0
+    assert realized["unmatched_sell_qty"] == 250.0
+
+
+def test_realized_survives_empty_position_store() -> None:
+    """没有持仓也要能报出已实现合计（「卖光了的票赚了多少」正是这类问题）。"""
+    metrics = _metrics_with_trades([], [_trade("buy", 10.0, 100.0), _trade("sell", 12.0, 100.0)])
+
+    assert metrics["position_count"] == 0 and metrics["items"] == []
+    assert metrics["realized"]["total_pnl"] == 200.0
+    assert metrics["realized"]["held_pnl"] == 0.0
+    assert metrics["realized"]["unheld_pnl"] == 200.0
+    assert metrics["realized"]["unheld_codes"] == ["600000"]
+
+
+def test_cli_position_list_carries_the_realized_block(tmp_path: Path) -> None:
+    position_module.add_position("600000", 10.0, 1000.0, root=tmp_path)
+    for trade in (_trade("buy", 10.0, 1000.0), _trade("sell", 13.0, 500.0)):
+        log_module.add_trade(
+            trade["code"], trade["side"], trade["price"], trade["qty"], root=tmp_path
+        )
+
+    listed = _invoke(["list", "--output", "json"])
+    assert listed.exit_code == 0, listed.stderr
+    body = json.loads(listed.stdout)
+
+    assert body["realized"]["total_pnl"] == 1500.0
+    assert body["items"][0]["realized_pnl"] == 1500.0
+    # 只读：读已实现盈亏不建库也不写文件（隐私面同 DEC-006）
+    assert _invoke(["list", "--output", "table"]).exit_code == 0

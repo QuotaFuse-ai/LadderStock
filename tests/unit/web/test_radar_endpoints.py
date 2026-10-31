@@ -32,11 +32,14 @@ import pytest
 from fastapi.testclient import TestClient
 from fixtures.fake_peers import FakeTransport, make_news_registry
 from fixtures.news_samples import news_handlers, news_tools
+from typer.testing import CliRunner
 
+from ladderstock.cli.main import app
 from ladderstock.core import pool as pool_module
 from ladderstock.core.boundary import NEWS_STREAM_DATASETS
 from ladderstock.core.privacy import private_keys_present, strip_private
 from ladderstock.data.provider_registry import ProviderRegistry
+from ladderstock.journal import log as log_module
 from ladderstock.journal import position as position_module
 from ladderstock.news import store as news_store
 from ladderstock.news.calendar import NO_SOURCE_SECTIONS, SECTION_ORDER
@@ -508,6 +511,21 @@ def _seed_positions(root: Path) -> None:
     )
 
 
+def _seed_trades(root: Path) -> None:
+    """给两条持仓灌成交流水（QUOT-292 的已实现盈亏用例）。
+
+    600519：买 1000@12.34、卖 400@14 → 移动加权单价 12.34 → `(14−12.34)×400 = +664`
+    000001：买 500@10、卖 200@9 → `(9−10)×200 = −200` → 合计 `+464`
+    """
+    for code, side, price, qty in (
+        ("600519", "buy", 12.34, 1000.0),
+        ("600519", "sell", 14.0, 400.0),
+        ("000001", "buy", 10.0, 500.0),
+        ("000001", "sell", 9.0, 200.0),
+    ):
+        log_module.add_trade(code, side, price, qty, root=root)
+
+
 def test_positions_is_flat_json_not_an_envelope(tmp_path: Path) -> None:
     _seed_positions(tmp_path)
     response = _client(tmp_path).get("/api/positions")
@@ -533,14 +551,60 @@ def test_positions_is_flat_json_not_an_envelope(tmp_path: Path) -> None:
 
 
 def test_positions_are_the_cli_numbers_not_a_reimplementation(tmp_path: Path) -> None:
-    """接口层只做投影：与 `ldst position list` 调的同一个 `compute_metrics()`，逐键相等。"""
+    """接口层只做投影：与 `ldst position list` 调的同一个 `compute_metrics()`，逐键相等。
+
+    已实现盈亏加进来以后这条更关键了：接口层必须把**同一份流水**注入同一个函数，
+    而不是在 web 里再复算一遍（QUOT-292 / DEC-038）。
+    """
     _seed_positions(tmp_path)
+    _seed_trades(tmp_path)
     body = _client(tmp_path).get("/api/positions").json()
 
     expected = position_module.compute_metrics(
-        position_module.list_positions(root=tmp_path), {}, as_of=None
+        position_module.list_positions(root=tmp_path),
+        {},
+        as_of=None,
+        trades=position_module.list_journal_trades(root=tmp_path),
     )
     assert {key: value for key, value in body.items() if key != "price_lookup"} == expected
+
+
+def test_positions_cli_and_api_return_the_same_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CLI `position list --output json` 与 `GET /api/positions` 同形：同一份计算结果。"""
+    _seed_positions(tmp_path)
+    _seed_trades(tmp_path)
+    monkeypatch.setenv("LDST_DATA_DIR", str(tmp_path))
+
+    listed = CliRunner().invoke(app, ["position", "list", "--output", "json"])
+    assert listed.exit_code == 0, listed.stderr
+    api_body = _client(tmp_path).get("/api/positions").json()
+
+    cli_body = {k: v for k, v in json.loads(listed.stdout).items() if k != "price_lookup"}
+    assert cli_body == {k: v for k, v in api_body.items() if k != "price_lookup"}
+
+    realized = api_body["realized"]
+    assert realized["method"] == "moving_weighted_average"
+    assert realized["total_pnl"] == 464.0
+    assert realized["held_pnl"] == 464.0 and realized["unheld_pnl"] == 0.0
+    assert realized["unheld_codes"] == []
+    assert realized["fee_included"] is False  # 流水没有费用列，毛额口径必须自己写明
+    by_code = {item["code"]: item for item in api_body["items"]}
+    assert by_code["600519"]["realized_pnl"] == 664.0
+    assert by_code["000001"]["realized_pnl"] == -200.0
+
+
+def test_positions_realized_absent_without_any_trade_file(tmp_path: Path) -> None:
+    """只灌持仓、不灌流水：已实现是 `null` + 原因，不是 0（「没记过」≠「不赚不亏」）。"""
+    _seed_positions(tmp_path)
+    body = _client(tmp_path).get("/api/positions").json()
+
+    assert body["realized"]["status"] == "missing"
+    assert body["realized"]["total_pnl"] is None
+    assert body["realized"]["held_pnl"] is None
+    assert "流水为空" in str(body["realized"]["reason"])
+    assert all(item["realized_pnl"] is None for item in body["items"])
 
 
 def test_empty_positions_store_is_200_without_creating_a_file(tmp_path: Path) -> None:

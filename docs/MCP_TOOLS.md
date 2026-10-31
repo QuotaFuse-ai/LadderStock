@@ -164,11 +164,17 @@
   目标不可写退出码 3 且 stdout 为空；
 - 候选池与持仓互不引用：`core/pool.py` / `cli/pool.py` 不 import 隐私库（AST），
   `journal/position.py` 不 import 行情 / AI / MCP / 候选池。
+  **2026-11-01 补充（DEC-038）**：同侧隐私库内部可以互相引用——`journal/position.py` 复算已实现盈亏时
+  import `journal/log.py`（读流水）与 `journal/realized.py`（纯计算），
+  上面那条 AST 断言的白名单因此是 `ladderstock.data.*` / `ladderstock.errors` / `ladderstock.journal.*`；
+  行情、AI、MCP、候选池依旧禁，且流水读取收在 `journal/position.py` 后面，
+  `cli/position.py` / `web/radar.py` 不直接 import `journal.log`。
 
 ## 4. 变更纪律
 
 - 新增 MCP 工具或字段前，先确认它不属于隐私域；若确需纪律统计或持仓查询，走 CLI + 人类显式导出，**不新增工具**。
-- 任何触达 `data/journal.sqlite` 的新代码都必须仅依赖 `data/sqlite_store.py`，不得在 `adapters/`、`core/`、`ai/`、`mcp/` 中出现对该库的引用。
+- 任何触达 `data/journal.sqlite` 的新代码都必须只经由隐私侧（`data/sqlite_store.py` 与 `journal/` 内部），
+  不得在 `adapters/`、`core/`、`ai/`、`mcp/` 中出现对该库的引用（DEC-038 的口径：`journal/` 内互引不算越界）。
 - 隐私域的新分项命名要绕开 `FORBIDDEN_KEYWORDS`：候选池的「地位」对外叫 `standing`（§2）。
 - 改 `positions` 表结构要 `SCHEMA_VERSION +1`、在 `_SCHEMA_V*` 追加一段 DDL，
   并保证「旧库升级不丢行、改结构前先备份、更高版本库被拒绝」三条仍有测试覆盖

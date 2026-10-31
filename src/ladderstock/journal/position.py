@@ -5,7 +5,9 @@
 
 三条硬约束：
 
-1. **只依赖 `data/sqlite_store` 与标准库**：本模块不 import 适配器、MCP、AI，不产生任何网络请求；
+1. **只依赖本机隐私库**：`data/sqlite_store`、同侧的 `journal/log`（成交流水）与
+   `journal/realized`（纯算法），加标准库。不 import 适配器、行情缓存、MCP、AI，
+   不产生任何网络请求；
 2. **不出本机**：返回值只交给 CLI `emit()` 打到本机终端，不进 `LadderEnvelope`、
    不进 MCP 工具清单、不进 AI 上下文（`docs/MCP_TOOLS.md` §2、`scripts/check_privacy.py` 第 3 组）；
 3. **不自动导出**：只有 `ldst position list --export <path>` 显式指定才写文件。
@@ -27,6 +29,8 @@ from typing import Any
 
 from ladderstock.data import sqlite_store
 from ladderstock.errors import EXIT_NOT_FOUND, EXIT_USAGE, LadderStockError
+from ladderstock.journal.log import list_trades
+from ladderstock.journal.realized import compute_realized
 
 #: 本模块输出的记录字段（隐私测试用它断言不外溢）
 POSITION_FIELDS: tuple[str, ...] = (
@@ -160,6 +164,20 @@ def list_positions(
         return sqlite_store.rows_to_dicts(rows)
     finally:
         sqlite_store.close(conn)
+
+
+#: 已实现盈亏要复算全部历史，取数上限与 `journal/stats.py` 一致（同一份流水、同一口径）
+TRADE_SCAN_LIMIT = 1_000_000
+
+
+def list_journal_trades(*, root: Path | None = None) -> list[dict[str, Any]]:
+    """把复算已实现盈亏要用的成交流水读出来（`ldst position list` 与 `/api/positions` 共用）。
+
+    只读：`create=False`，本机没有流水时返回空列表且不建库。顺序、上限都取自
+    `journal.log.list_trades`，与 `journal stats` 吃的是同一条时间线——
+    两个出口各读一份就会各算一份（DEC-038 §2.1）。
+    """
+    return list_trades(limit=TRADE_SCAN_LIMIT, root=root)
 
 
 def update_position(
@@ -317,19 +335,83 @@ def _sector_distribution(
     }
 
 
+#: 调用方没传流水的原因，与「本机确实没有成交记录」分开：接线漏了不能显示成「你没记」
+NOT_LOADED_REASON = "调用方未传入成交流水（`trades=None`），本次不计算已实现盈亏"
+
+
+def _round_realized(entry: dict[str, Any] | None) -> float | None:
+    """该 code 在流水里出现过才给数字；没出现过给 `null`，不拿 0 冒充「不赚不亏」。"""
+    return None if entry is None else round(float(entry["realized_pnl"]), 2)
+
+
+def _realized_projection(
+    trades: list[dict[str, Any]] | None,
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """复算一次已实现盈亏，给出（可对外的聚合块, 每个 code 的原值表）。
+
+    `total_pnl` 是**全部流水**的合计（与 `journal stats` 同范围，不受 `--code` 过滤影响）；
+    `held_pnl` / `unheld_pnl` 把它拆成「还在持仓表里的」与「只有流水、已不在持仓的」，
+    于是 `Σ items[].realized_pnl + unheld_pnl == total_pnl`——合计与明细之间不会有
+    解释不了的缺口，已清仓那只票的得失也不会因为从持仓里删掉就消失（DEC-038 §2.5）。
+    """
+    summary = compute_realized([]) if trades is None else compute_realized(trades)
+    if trades is None:
+        summary["reason"] = NOT_LOADED_REASON
+
+    codes: dict[str, dict[str, Any]] = summary.pop("codes")
+    total_raw = summary["total_pnl"]
+    held = {str(row["code"]) for row in rows}
+    unheld_codes = sorted(code for code in codes if code not in held)
+
+    total_pnl: float | None
+    held_pnl: float | None
+    unheld_pnl: float | None
+    if total_raw is None:
+        total_pnl = held_pnl = unheld_pnl = None
+    else:
+        total_pnl = round(total_raw, 2)
+        held_pnl = round(sum(v["realized_pnl"] for c, v in codes.items() if c in held), 2)
+        unheld_pnl = round(sum(v["realized_pnl"] for c, v in codes.items() if c not in held), 2)
+
+    return (
+        {
+            "method": summary["method"],
+            "status": summary["status"],
+            "reason": summary["reason"],
+            "fee_included": summary["fee_included"],
+            "buy_count": summary["buy_count"],
+            "sell_count": summary["sell_count"],
+            "matched_sell_qty": round(summary["matched_sell_qty"], 4),
+            "unmatched_sell_qty": round(summary["unmatched_sell_qty"], 4),
+            "total_pnl": total_pnl,
+            "held_pnl": held_pnl,
+            "unheld_pnl": unheld_pnl,
+            "unheld_codes": unheld_codes,
+        },
+        codes,
+    )
+
+
 def compute_metrics(
     rows: list[dict[str, Any]],
     prices: dict[str, float] | None = None,
     *,
     as_of: str | date | None = None,
+    trades: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """持仓本地计算：浮动盈亏、集中度、行业分布（全部只读入参，不碰网络）。
+    """持仓本地计算：浮动盈亏、已实现盈亏、集中度、行业分布（全部只读入参，不碰网络）。
 
     `prices` 是调用方从**本机行情缓存**取到的最新价（代码 → 价格）；取不到的代码
     一律 `null`，其盈亏如实缺席，并计入 `valuation.unpriced_cost`。
+
+    `trades` 是调用方用 `list_journal_trades()` 取到的成交流水，用来离线复算
+    已实现盈亏（移动加权平均，DEC-038）。缺省 `None` 表示「本次没有载入流水」，
+    与「本机没有成交记录」分开说原因——两处出口都必须传同一份入参，才算同一份数字。
     """
     price_map = prices or {}
     day = sqlite_store.parse_day(as_of)
+    realized_block, realized_by_code = _realized_projection(trades, rows)
 
     items: list[dict[str, Any]] = []
     cost_weights: list[float] = []
@@ -368,6 +450,7 @@ def compute_metrics(
                 "market_value": market_value,
                 "unrealized_pnl": pnl,
                 "unrealized_pnl_pct": pnl_pct,
+                "realized_pnl": _round_realized(realized_by_code.get(code)),
             }
         )
 
@@ -395,6 +478,7 @@ def compute_metrics(
                 _pct(unrealized / priced_cost) if priced_cost > 0 else None
             ),
         },
+        "realized": realized_block,
         "items": items,
         "concentration": _concentration(items, weights, basis),
         "sector_distribution": _sector_distribution(items, weights, basis),
@@ -403,9 +487,11 @@ def compute_metrics(
 
 __all__ = [
     "POSITION_FIELDS",
+    "TRADE_SCAN_LIMIT",
     "UNLABELED_INDUSTRY",
     "add_position",
     "compute_metrics",
+    "list_journal_trades",
     "list_positions",
     "remove_position",
     "update_position",
