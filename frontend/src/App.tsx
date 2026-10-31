@@ -4,6 +4,8 @@ import Layout from './components/Layout'
 import HomeScreen from './screens/HomeScreen'
 import JournalScreen from './screens/JournalScreen'
 import MarketScreen from './screens/MarketScreen'
+import ResearchDetailScreen from './screens/research/ResearchDetailScreen'
+import ResearchReportScreen from './screens/research/ResearchReportScreen'
 import ReviewScreen from './screens/ReviewScreen'
 import SettingsScreen from './screens/SettingsScreen'
 import ValidateScreen from './screens/ValidateScreen'
@@ -47,6 +49,9 @@ export default function App() {
         <Route path="/journal" element={<JournalScreen />} />
         <Route path="/validate" element={<ValidateScreen />} />
         <Route path="/settings" element={<SettingsScreen />} />
+        {/* QUOT-146：个股深挖与六阶段研究报告（深链进入，不占一级导航） */}
+        <Route path="/research/:code" element={<ResearchDetailScreen />} />
+        <Route path="/research/:code/report" element={<ResearchReportScreen />} />
         {/* 旧入口：此前首页重定向到复盘；带查询串保留（`?state=` 演示态） */}
         <Route path="/index.html" element={<Navigate to="/" replace />} />
         <Route path="*" element={<NotFound />} />
