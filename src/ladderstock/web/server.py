@@ -12,6 +12,9 @@
   因此天然进不了 export / MCP / AI 三条出口：DEC-015 的 `GET /api/journal/stats`
   （只放聚合数字，无 `note` / 逐笔明细 / 标的清单）与 SPEC-RADAR-PAGES §6.1 的
   `GET /api/positions`（本机私有持仓库自己的只读视图，「我的持仓」页唯一的真通道）。
+- **行情聚合不出机器**：`/api/market/history`、`/api/market/theme`（Q172-7）虽只出
+  公开行情聚合，仍复用 `/api/journal/stats` 那道回环闸门（`_journal_guard`）——
+  本机缓存的整体聚合本身就是「这台机器在看什么」的信号。
 - **空态**：review / sentiment / ladder 在没有数据时返回 200 + 明确
   `payload.data_source_status = "missing"`，而不是 404 或伪造数字。
 - **静态**：优先托管 `frontend/dist`（SPA 回退到 `index.html`）；未构建时给出
@@ -26,7 +29,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -36,7 +39,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ladderstock import __version__
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir, project_root
-from ladderstock.core.ladder import compute_ladder
+from ladderstock.core.ladder import compute_ladder, dataset_snapshot, pick
 from ladderstock.core.limit_pool import compute_limit_pool
 from ladderstock.core.listener import LOOPBACK_HOSTS, TokenGuardMiddleware
 from ladderstock.core.listener import require_binding_policy as _require_binding_policy
@@ -47,6 +50,8 @@ from ladderstock.core.models import LadderEnvelope
 from ladderstock.core.privacy import PRIVATE_KEYS, strip_private
 from ladderstock.core.sentiment import compute_sentiment
 from ladderstock.core.validation import load_validation, validation_path
+from ladderstock.core.validation import session_days as cached_session_days
+from ladderstock.data import archive
 from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
@@ -124,6 +129,77 @@ _FORBIDDEN_FIELD_SET = frozenset(JOURNAL_FORBIDDEN_FIELDS)
 
 #: `from` / `to` 只接受严格的 `YYYY-MM-DD`（`date.fromisoformat` 还认 `20261029`）
 _DAY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+#: `/api/market/history`（Q172-7 CH-01）：情绪温度折线的窗口参数。
+#: 上限 60 个交易日——回看越多，逐日 `compute_sentiment` 越慢，而本机缓存也就那么宽。
+MARKET_HISTORY_DEFAULT_DAYS = 20
+MARKET_HISTORY_MIN_DAYS = 1
+MARKET_HISTORY_MAX_DAYS = 60
+
+#: `/api/market/history` 的点和 `/api/market/theme` 的题材行：**出站白名单**，
+#: 一个字段都不多。`theme_news` 是资讯源，正文/摘要/链接天然进不了这里（DEC-008 §4）。
+#: payload 白名单同时是 Q172-8 契约与前端 `MarketHistoryPayload` / `MarketThemePayload`
+#: 的字段并集（DEC-031 §2.3：顶层与 payload 都给出 `available`，两侧都能读）。
+MARKET_HISTORY_PAYLOAD_FIELDS: tuple[str, ...] = (
+    "date",
+    "available",
+    "reason",
+    "window",
+    "points",
+    "missing_days",
+    "quantile",
+    "delta_vs_prev",
+)
+MARKET_THEME_PAYLOAD_FIELDS: tuple[str, ...] = ("date", "available", "reason", "themes")
+MARKET_HISTORY_POINT_FIELDS: tuple[str, ...] = (
+    "date",
+    "temperature",
+    "promotion_rate",
+    "limit_up_count",
+)
+MARKET_THEME_FIELDS: tuple[str, ...] = (
+    "theme",
+    "strength",
+    "limit_up_count",
+    "leader",
+    "delta",
+)
+MARKET_THEME_MAX_ROWS = 20
+
+#: `theme_news`（QuotaFuse Wire）记录的字段别名：Wire 的摘要工具没有固定 schema，
+#: 按优先级取第一个能解析的值；都取不到就如实给 `null`（同 `core/ladder.py` 的字段容忍）。
+THEME_NAME_KEYS: tuple[str, ...] = ("theme", "theme_name", "name", "sector", "题材", "板块")
+THEME_STRENGTH_KEYS: tuple[str, ...] = ("strength", "score", "heat", "intensity", "强度", "热度")
+THEME_LIMIT_KEYS: tuple[str, ...] = ("limit_up_count", "limit_up_cnt", "涨停家数", "涨停数")
+THEME_LEADER_KEYS: tuple[str, ...] = ("leader", "leader_name", "龙头", "龙头股")
+THEME_LEADER_CODE_KEYS: tuple[str, ...] = ("leader_code", "code", "龙头代码")
+THEME_LEADER_NAME_KEYS: tuple[str, ...] = ("leader_sec_name", "sec_name", "龙头名称")
+THEME_DELTA_KEYS: tuple[str, ...] = ("delta", "strength_delta", "score_delta", "change", "变化")
+
+#: 题材面额外递归剔除的字段：资讯正文与地址。白名单已经不含它们，这里是兜底——
+#: 将来有人往 `MARKET_THEME_FIELDS` 加字段，正文不会跟着漏出去（同 DEC-015 §3.4 的做法）。
+THEME_FORBIDDEN_FIELDS: tuple[str, ...] = (
+    "summary",
+    "content",
+    "body",
+    "text",
+    "abstract",
+    "digest",
+    "title",
+    "headline",
+    "url",
+    "link",
+    "href",
+    "source_url",
+    "正文",
+    "摘要",
+    "标题",
+    "链接",
+    "原文",
+)
+
+_FORBIDDEN_FIELD_SET = frozenset(JOURNAL_FORBIDDEN_FIELDS)
+_THEME_FORBIDDEN_SET = frozenset(THEME_FORBIDDEN_FIELDS)
 
 #: 默认只绑回环（DEC-004）；非回环必须显式声明 + 提供鉴权 Token
 REMOTE_ALLOW_ENV = "LDST_WEB_ALLOW_REMOTE"
@@ -293,6 +369,237 @@ def _journal_stats_payload(
     return _drop_forbidden_fields(
         {key: payload[key] for key in JOURNAL_STATS_FIELDS if key in payload}
     )
+
+
+def _parse_days(*raws: str | None) -> int:
+    """窗口天数：按给定顺序取第一个非空值；缺省 20；非整数 400；越界**钳制**到 1–60。
+
+    传 999 不该把本机拖去逐日重算，所以钳制而不是报错——`days` 与 `window` 都走这里
+    （后者是前端 `api.ts` 已有的名字，DEC-031 §2.3）。
+    """
+    text = next((item.strip() for item in raws if item and item.strip()), "")
+    if not text:
+        return MARKET_HISTORY_DEFAULT_DAYS
+    try:
+        value = int(text)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="days 必须是整数（回看的交易日数）") from None
+    return max(MARKET_HISTORY_MIN_DAYS, min(MARKET_HISTORY_MAX_DAYS, value))
+
+
+def _int_or_none(value: Any) -> int | None:
+    """计数类字段：取不到就 `null`，**不补 0**（0 是「真的没有」，不是「不知道」）。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
+def _recent_session_days(to: date, days: int, root: Path) -> list[date]:
+    """`to`（含）往前最近 `days` 个交易日，升序。
+
+    交易日以**本机涨停池缓存**为准，两种后端都认：Parquet 日分区是 `archive.snapshot`
+    的第一优先后端（逐日 `has_partition`，只做一次 stat，不读数据）；分区一条都没有时
+    才退回 `core/validation.session_days`（DuckDB 全表扫描）。周末直接跳过；法定节假日
+    本机本来就没有那天的缓存，自然不进窗口——与其猜节日，不如只报数得出来的日子。
+    """
+    found: list[date] = []
+    cursor = to
+    for _ in range(2 * days + 30):  # 上界：足够跨过周末与长假，不做无界回看
+        if cursor.weekday() < 5 and archive.has_partition("limit_pool", cursor, root=root):
+            found.append(cursor)
+            if len(found) >= days:
+                break
+        cursor -= timedelta(days=1)
+    if found:
+        return found[::-1]
+    return [day for day in cached_session_days(root=root) if day <= to][-days:]
+
+
+def _sentiment_history_payload(
+    window: list[date], *, to: date, days: int, root: Path
+) -> dict[str, Any]:
+    """逐日 `compute_sentiment` → 折线可用的点；算不出来的日子如实进 `missing_days`。
+
+    `quantile` / `delta_vs_prev` 都以**最后一个可用日**为准，样本不足 `null`：
+    单点画不出折线，也谈不上「近 N 日分位」和「较昨日」。
+    `date` / `available` / `reason` / `window` 是前端 `MarketHistoryPayload` 的字段
+    （`frontend/src/api.ts`），与顶层 `available` 同值，两侧任选其一读。
+    """
+    points: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for day in window:
+        result = compute_sentiment(day, root=root)
+        temperature = _sample_or_none(result.get("temperature"))
+        if result.get("available") and temperature is not None:
+            points.append(
+                {
+                    "date": day.isoformat(),
+                    "temperature": temperature,
+                    "promotion_rate": _sample_or_none(result.get("promotion_rate")),
+                    "limit_up_count": _int_or_none(result.get("limit_up_count")),
+                }
+            )
+        else:
+            missing.append(day.isoformat())
+
+    quantile: float | None = None
+    delta_vs_prev: float | None = None
+    if len(points) >= 2:
+        temperatures = [float(item["temperature"]) for item in points]
+        latest = temperatures[-1]
+        delta_vs_prev = round(latest - temperatures[-2], 1)
+        at_or_below = sum(1 for value in temperatures if value <= latest)
+        quantile = round(at_or_below / len(temperatures) * 100.0, 1)
+
+    available = len(points) >= 2
+    payload: dict[str, Any] = {
+        "date": points[-1]["date"] if points else to.isoformat(),
+        "available": available,
+        "reason": None if available else _history_reason(window, points, missing, days),
+        "window": days,
+        "points": points,
+        "missing_days": missing,
+        "quantile": quantile,
+        "delta_vs_prev": delta_vs_prev,
+    }
+    return {key: payload[key] for key in MARKET_HISTORY_PAYLOAD_FIELDS}
+
+
+def _history_reason(
+    window: list[date], points: list[dict[str, Any]], missing: list[str], days: int
+) -> str:
+    """空态的一句话：三种「为什么画不出折线」分开说，排障路径不一样。"""
+    if not window:
+        return f"本机没有近 {days} 个交易日的涨停池缓存（先运行 ldst sync）"
+    if not points:
+        return (
+            f"近 {len(window)} 个交易日的情绪指标都算不出来"
+            f"（缺数据: {', '.join(missing)}），先运行 ldst sync"
+        )
+    return (
+        f"近 {len(window)} 个交易日里只有 {len(points)} 个可用点"
+        f"（{points[0]['date']}），单点画不出折线"
+    )
+
+
+def _history_detail(window: list[date], days: int, payload: dict[str, Any]) -> str:
+    """`source_detail` 要说清缺哪几天：前端的「数据未同步」空态直接拿它当文案。"""
+    missing: list[str] = list(payload["missing_days"])
+    parts = [
+        f"limit_pool 缓存: {len(window)}/{days} 个交易日"
+        + (f"（{window[0]}~{window[-1]}）" if window else ""),
+        f"可用点: {len(payload['points'])}",
+    ]
+    if missing:
+        parts.append("缺失交易日: " + ", ".join(missing))
+    if len(window) < days:
+        parts.append("本机没有更早的交易日缓存（先运行 ldst sync）")
+    return "; ".join(parts)
+
+
+def _text_or_none(value: Any) -> str | None:
+    """字符串字段：空白 / 缺失 → `null`；数字型龙头代码原样转字符串。"""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    text = value.strip() if isinstance(value, str) else str(value)
+    return text or None
+
+
+def _leader_label(record: dict[str, Any]) -> str | None:
+    """龙头：优先现成的字符串，其次 `代码 名称` 拼接；都取不到就是 `null`，不编造。"""
+    direct = _text_or_none(pick(record, THEME_LEADER_KEYS))
+    if direct:
+        return direct
+    code = _text_or_none(pick(record, THEME_LEADER_CODE_KEYS))
+    name = _text_or_none(pick(record, THEME_LEADER_NAME_KEYS))
+    label = " ".join(part for part in (code, name) if part)
+    return label or None
+
+
+def _theme_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把 `theme_news` 记录按题材聚合，只出 `MARKET_THEME_FIELDS`，强度降序最多 20 条。
+
+    同一题材多条资讯（资讯流的常态）：`strength` / `limit_up_count` 取**最大**那条，
+    `leader` / `delta` 取第一条能取到的；全都没有就是 `null`。**不做任何估算**——
+    Wire 没给强度就不出强度，宁可让前端画不出柱状图，也不给一个编出来的数。
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        theme = _text_or_none(pick(record, THEME_NAME_KEYS))
+        if not theme:
+            continue
+        row = grouped.setdefault(
+            theme,
+            {
+                "theme": theme,
+                "strength": None,
+                "limit_up_count": None,
+                "leader": None,
+                "delta": None,
+            },
+        )
+        strength = _sample_or_none(pick(record, THEME_STRENGTH_KEYS))
+        if strength is not None and (row["strength"] is None or strength > row["strength"]):
+            row["strength"] = strength
+        count = _int_or_none(pick(record, THEME_LIMIT_KEYS))
+        if count is not None and (
+            row["limit_up_count"] is None or count > row["limit_up_count"]
+        ):
+            row["limit_up_count"] = count
+        if row["leader"] is None:
+            row["leader"] = _leader_label(record)
+        if row["delta"] is None:
+            row["delta"] = _sample_or_none(pick(record, THEME_DELTA_KEYS))
+
+    rows = sorted(
+        grouped.values(),
+        key=lambda row: (
+            row["strength"] is None,  # 无强度的题材排最后，不占前 20 的名额
+            -(row["strength"] or 0.0),
+            -(row["limit_up_count"] or 0),
+            row["theme"],
+        ),
+    )
+    # 白名单收口 + 正文兜底剔除，再交给 envelope（envelope 自己还会跑 strip_private）
+    projected = [{key: row[key] for key in MARKET_THEME_FIELDS} for row in rows]
+    return _drop_theme_text(projected[:MARKET_THEME_MAX_ROWS])
+
+
+def _drop_theme_text(value: Any) -> Any:
+    """递归剔除资讯正文类字段（`summary` / `content` / `url` / 正文 / 链接 …）。"""
+    if isinstance(value, Mapping):
+        return {
+            key: _drop_theme_text(item)
+            for key, item in value.items()
+            if str(key).lower() not in _THEME_FORBIDDEN_SET
+        }
+    if isinstance(value, list):
+        return [_drop_theme_text(item) for item in value]
+    return value
+
+
+def _theme_status(target: date, backend: str, total: int, themes: int) -> tuple[str, str | None]:
+    """返回 `(source_detail, reason)`：可用时 `reason=None`。
+
+    空态分三种，排障路径不同，文案要能区分：没接入 Wire / 接入了但当日没数据 /
+    有记录却没有题材名。前两种的下一步都是「配置 qfw 再 sync」。
+    """
+    if themes:
+        return f"theme_news: {backend}（{total} 条 → {themes} 个题材，{target}）", None
+    if total:
+        return (
+            f"theme_news: {backend}（{total} 条，但没有题材字段，{target}）",
+            "theme_news 的记录里没有可用的题材名，出不了题材强度",
+        )
+    reason = (
+        f"theme_news 未接入（QuotaFuse Wire），先配置 qfw："
+        f"后端 {backend} 在 {target} 没有记录（配置后运行 ldst sync --dataset theme_news）"
+    )
+    return reason, reason
 
 
 def _envelope(
@@ -474,6 +781,27 @@ def _watch_unavailable_detail(read: watch_status.StatusRead) -> str:
     if read.state == watch_status.STATE_CORRUPT:
         return f"盯盘状态文件不可读：{path}（{read.error}）"
     return f"盯盘状态文件结构不合法：{path}（{read.error}）"
+
+
+def _market_envelope(
+    topic: str,
+    day: date | None,
+    payload: dict[str, Any],
+    *,
+    available: bool,
+    source_detail: str,
+) -> dict[str, Any]:
+    """`/api/market/*` 的出站信封：`LadderEnvelope` + 一个顶层 `available` 布尔。
+
+    `LadderEnvelope` 是 `extra="forbid"`，没有「有没有数」这个字段（既有接口靠
+    `payload.data_source_status` 表达）。市场屏的空态判定要直接读 `available`
+    （Q172-8 契约），所以在出站的 dict 上补这一层——两个键都留着，前端任选。
+    """
+    envelope = _envelope(
+        "sentiment", topic, day, payload, available=available, source_detail=source_detail
+    )
+    envelope["available"] = available
+    return envelope
 
 
 def default_dist_dir() -> Path:
@@ -820,6 +1148,90 @@ def create_app(
         )
         payload = _journal_stats_payload(stats, day_from=start, day_to=end)
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/market/history")
+    def market_history(
+        request: Request,
+        days_raw: Annotated[
+            str | None, Query(alias="days", description="回看交易日数，默认 20，钳制 1–60")
+        ] = None,
+        window_raw: Annotated[
+            str | None, Query(alias="window", description="`days` 的别名（前端 api.ts 的名字）")
+        ] = None,
+        to_raw: Annotated[
+            str | None, Query(alias="to", description="窗口末日 YYYY-MM-DD，默认今天")
+        ] = None,
+        date_raw: Annotated[
+            str | None, Query(alias="date", description="`to` 的别名（前端 api.ts 的名字）")
+        ] = None,
+    ) -> JSONResponse:
+        """近 N 个交易日的情绪温度序列（Q172-7 CH-01）：折线 + 近 N 日分位 + 较昨日。
+
+        `/api/sentiment` 只有单日，画不出折线，所以这里按本机涨停池缓存里最近 `days`
+        个交易日**逐日**调 `compute_sentiment`，只收 `available` 的点。可用点少于 2 个
+        → `available=false`（单点不是趋势，前端走「数据未同步」空态），缺的日子写进
+        `source_detail`。只读、回环独占、`no-store`，不触发 `sync`。
+
+        `window` / `date` 是 `days` / `to` 的别名：`frontend/src/api.ts` 的
+        `marketHistory()` 先按这两个名字上线（DEC-031 §2.3），同时给时以本名为准。
+        """
+        _journal_guard(request)
+        days = _parse_days(days_raw, window_raw)
+        if (to_raw or "").strip():
+            raw_end, end_name = to_raw, "to"
+        else:
+            raw_end, end_name = date_raw, "date"
+        to = _parse_day_param(raw_end, end_name) or date.today()
+
+        window = _recent_session_days(to, days, root)
+        payload = _sentiment_history_payload(window, to=to, days=days, root=root)
+        points: list[dict[str, Any]] = list(payload["points"])
+        available = bool(payload["available"])
+        return JSONResponse(
+            _market_envelope(
+                "shortline_sentiment_history",
+                date.fromisoformat(points[-1]["date"]) if available else None,
+                payload,
+                available=available,
+                source_detail=_history_detail(window, days, payload),
+            ),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/market/theme")
+    def market_theme(
+        request: Request,
+        date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
+    ) -> JSONResponse:
+        """题材强度轮动（Q172-7 CH-03）：唯一数据源是 QuotaFuse Wire 的 `theme_news`。
+
+        只出白名单字段（题材 / 强度 / 涨停家数 / 龙头 / 变化），资讯正文与链接一律不进
+        响应。Wire 未接入或当日没有数据 → 200 + `available=false` + 一句「先配置 qfw」：
+        **这是预期空态，不是 bug**，接入 Wire 属于配置动作，不在本接口职责里。
+        同 `/api/journal/stats` 的回环闸门（本机行情聚合不出机器）、只 GET、`no-store`。
+        """
+        _journal_guard(request)
+        target = _parse_day_param(date_str, "date") or date.today()
+        records, backend = dataset_snapshot("theme_news", target, root)
+        themes = _theme_rows(records)
+        available = bool(themes)
+        detail, reason = _theme_status(target, backend, len(records), len(themes))
+        raw: dict[str, Any] = {
+            "date": target.isoformat(),
+            "available": available,
+            "reason": reason,
+            "themes": themes,
+        }
+        return JSONResponse(
+            _market_envelope(
+                "theme_rotation",
+                target if available else None,
+                {key: raw[key] for key in MARKET_THEME_PAYLOAD_FIELDS},
+                available=available,
+                source_detail=detail,
+            ),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/state/config")
     def state_config() -> dict[str, Any]:
