@@ -1,8 +1,9 @@
-# DEC-031 后端写通道探针：同路径补 GET 回 405，不新增读取 conditions 的 GET
+# DEC-032 后端写通道探针：同路径补 GET 回 405，不新增读取 conditions 的 GET
 
 - 日期：2026-10-31
 - 提出：后端架构师（QUOT-287，方案来自父 issue QUOT-189 的拍板 A）
 - 状态：生效（随 QUOT-287 实现落地）
+- 编号：原拟 DEC-031，与 QUOT-199 的 `DEC-031-market-history-theme-endpoints` 撞号，落地时顺延为 DEC-032
 - 关联：DEC-014（控制面 / 数据面分离、关闭态不暴露）、DEC-016（验证条件写路径）、
   DEC-030（HTTP 层只投影、口径只有一份）、`frontend/src/api.ts:validationWriteProbe`
   （探针契约）、`frontend/src/screens/ValidateScreen.tsx`（「后端」Tab 的可用性判据）
@@ -13,7 +14,7 @@
 回 **405** 才算「PUT 路由已注册 → 就绪」，回 **404** 被判成「控制面未启用或端点未合入」并置灰。
 QUOT-189 在真实部署实测到的是 404，于是后端模式永远打不开，console 每条 `404 GET /api/control/validation/conditions`。
 
-根因不在闸门，在 Starlette 的匹配优先级：`web/server.py:896` 的 SPA 兜底是
+根因不在闸门，在 Starlette 的匹配优先级：`web/server.py:create_app` 里的 SPA 兜底 `spa()` 是
 `@app.get("/{full_path:path}")`，对 `GET /api/control/validation/conditions` 是 **FULL** 匹配；
 `PUT /validation/conditions`（QUOT-197）对同一个 GET 请求只是 **PARTIAL** 匹配。
 FULL 优先于 PARTIAL，所以 GET 在路由层就落进兜底回 404，「PUT-only 路由自然产生 405」这个
