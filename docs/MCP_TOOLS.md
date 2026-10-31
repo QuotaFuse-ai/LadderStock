@@ -25,14 +25,32 @@
 | `research_status` | 是 | `research` | `code`、`date?` | 个股研究六段进度（R1-1） |
 | `candidate_pool` | 是 | `sentiment` | `date` | 当日候选池评分：强度 / 换手 / 地位 / 资金 / 题材分项与总分（口径见 `docs/specs/SPEC-CANDIDATE-POOL.md`） |
 | `industry_snapshot` | 是 | `sentiment` | `industry` | 申万一级行业五维画像：景气 / 资金 / 估值 / 动量 / 拥挤度，缺数显式 `null` 并给原因（口径见 `docs/specs/SPEC-INDUSTRY-METRICS.md`，R5） |
+| `news_stream` | 是 | `news` | `date`、`until?`、`sources?`、`codes?`、`limit?`、`store?`、`ai?` | 统一资讯流 + 规则抽取事件（R6） |
+| `event_calendar` | 是 | `news` | `month`、`codes?`、`limit?`、`fetch?` | 事件日历五小节，含三个「暂无数据源」（R6） |
 
-除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **14 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个 + R5 增量 `industry_snapshot` 1 个）。
+除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。共 **16 个**工具（11 个 P0 + R1-1 增量 `research_status` 1 个 + R7 增量 `candidate_pool` 1 个 + R5 增量 `industry_snapshot` 1 个 + R6 增量 `news_stream` / `event_calendar` 2 个）。
 
 > **命名偏差（已声明-接受）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
 > 验收口径直接点名「MCP 只读工具 `candidate_pool`」。
 > 现有测试只锁「清单与文档一致 + 全部只读 + 无隐私关键字」，不锁前缀；
 > 若后续要统一成 `ladder_get_candidate_pool`，必须同时改 CLI 契约文档、`DOCUMENTED_TOOLS`
 > 两处（`tests/contract/test_mcp_tools.py`、`tests/contract/test_mcp_stdio.py`）与本表，属新的改名决策。
+
+> **R6 两个资讯工具的三条口径**（2026-10-31）：
+> ① `store` **默认 false**——工具被外部 agent 反复调用不在本机留 `data/news.sqlite`，
+> 落库是 `ldst news` 的职责；契约测试 `test_news_stream_is_read_only_by_default` 连调两次后
+> 断言库文件不存在。
+> ② `ai` **默认 false**，开了也只给规则已抽出的事件补 `ai_note`（受生态边界闸门约束）。
+> ③ 这两个工具的 `date` / `until` 只接受 `YYYY-MM-DD`（`_news_day_arg`），**不收** `20261030`
+> 这种简写——窗口键与 `published_day` 按规范日期串存，简写会生出两个「看起来不同」的窗口。
+> 其它工具沿用宽松的 `_parse_day`，既有契约不动。工具名同样不带 `ladder_` 前缀（与
+> `research_status` 同一条例外：issue 里定死的名字，契约测试用 `CODE_SCOPED_TOOLS` /
+> 域登记处理）。
+>
+> `event_calendar` 的 `source_status` 一般是 `partial`：财报预约披露日 / 股东大会 /
+> 政策发布窗口**当前没有数据源**，日历不完整是口径事实、不是取数失败，
+> 信封必须把它说出来。它的 `data_as_of` 用**月份首日**（日历描述的是那个月，
+> 取数时间在 `fetched_at`）。
 
 > **`research_status` 的两处有意偏差**（2026-10-30，R1-1）：
 > ① 工具名不带 `ladder_` 前缀——issue 里定死的名字，与 CLI 命令 `ldst research` 同名，便于跨面引用；

@@ -11,7 +11,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Domain = Literal["review", "sentiment", "validation", "trade_log"]
+#: `news` = R6 资讯雷达（QUOT-144 / DEC-019）：资讯流与事件日历的信封域，
+#: payload 只含公开稿件，隐私面由 `core.privacy.strip_private` 兜底
+Domain = Literal["review", "sentiment", "validation", "trade_log", "news"]
 Freshness = Literal["realtime", "cached", "archive"]
 Confidence = Literal["high", "medium", "low"]
 SourceStatus = Literal["ok", "degraded", "partial"]
@@ -22,7 +24,7 @@ class LadderEnvelope(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    domain: Domain = Field(description="review / sentiment / validation / trade_log")
+    domain: Domain = Field(description="review / sentiment / validation / trade_log / news")
     topic: str = Field(description="领域主题，如 shortline_sentiment")
     event_id: str | None = Field(default=None, description="事件 ID，无则为空")
     data_as_of: date | None = Field(

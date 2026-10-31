@@ -60,8 +60,11 @@ DOCUMENTED_TOOLS = {
     # R1-1（QUOT-190）新增：读个股研究六段进度
     "research_status",
     "candidate_pool",
-    # R5（QUOT-143）新增：申万一级行业五维画像
+    # R5 新增：申万一级行业五维画像
     "industry_snapshot",
+    # R6 新增：资讯流 + 事件日历
+    "news_stream",
+    "event_calendar",
 }
 
 #: 以证券代码（而非 date）定位快照的工具，见 tests/contract/test_mcp_tools.py 同名片段
@@ -69,6 +72,9 @@ CODE_SCOPED_TOOLS = {"research_status"}
 
 #: 以行业名定位快照的工具（R5）：入参没有 date，理由同 `tests/contract/test_mcp_tools.py`
 INDUSTRY_SCOPED_TOOLS = {"industry_snapshot"}
+
+#: R6 事件日历以月份（YYYY-MM）定位，是第三条定位口径
+MONTH_SCOPED_TOOLS = {"event_calendar"}
 
 PRIVATE_WORDS = ("journal", "position", "watchlist", "交易日志", "持仓", "自选")
 
@@ -182,9 +188,9 @@ def test_stdio_handshake_and_tool_list(session: StdioSession) -> None:
     tools = session.recv()["result"]["tools"]
 
     assert {tool["name"] for tool in tools} == DOCUMENTED_TOOLS
-    # 14 = 11 个 P0 + R1-1 `research_status` + R7 `candidate_pool` + R5 `industry_snapshot`；
-    # 数量与清单一致才算没有重复注册
-    assert len(tools) == len(DOCUMENTED_TOOLS) == 14
+    # 16 = 11 个 P0 + `research_status` + `candidate_pool` + `industry_snapshot`
+    # + `news_stream` + `event_calendar`；数量与清单一致才算没有重复注册
+    assert len(tools) == len(DOCUMENTED_TOOLS) == 16
 
     code = session.close()
     assert code == 0
@@ -229,7 +235,8 @@ def test_tool_list_declares_envelope_output_schema(session: StdioSession) -> Non
         assert schema["properties"]["confidence"]["enum"] == ["high", "medium", "low"]
 
         # meta 工具（sources health）没有 date 参数；以代码定位进度的工具（R1-1
-        # research_status）required 是 ["code"]、date 可选；其余都必须要求 date
+        # research_status）required 是 ["code"]、date 可选；以月份定位的日历（R6
+        # event_calendar）required 是 ["month"]；其余都必须要求 date
         if name == "ladder_get_sources_health":
             continue
         if name in CODE_SCOPED_TOOLS:
@@ -237,6 +244,10 @@ def test_tool_list_declares_envelope_output_schema(session: StdioSession) -> Non
             continue
         if name in INDUSTRY_SCOPED_TOOLS:
             assert tool["inputSchema"]["required"] == ["industry"], name
+            continue
+        if name in MONTH_SCOPED_TOOLS:
+            assert tool["inputSchema"]["required"] == ["month"], name
+            assert tool["annotations"]["readOnlyHint"] is True, name
             continue
         assert tool["inputSchema"]["required"] == ["date"], name
 

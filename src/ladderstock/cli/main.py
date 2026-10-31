@@ -23,6 +23,7 @@ from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
 from ladderstock.cli.legacy_ports import warn_legacy_port
 from ladderstock.cli.mcp import register as register_mcp
+from ladderstock.cli.news import events_command, news_command
 from ladderstock.cli.notify import register as register_notify
 from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
@@ -241,6 +242,16 @@ register_ai(ai_app, chain_app)
 # `<code>` 为位置参数，因此不能再挂子命令（见 cli/research.py 模块说明）
 app.command(help="个股六段研究管线（company→financial→forecast→valuation→risk→report）")(
     research_command
+)
+
+
+# ---------------------------------------------------------------- 资讯雷达（R6）
+
+# 实现体在 cli/news.py + news/ 包；两个都是顶层叶子命令（DEC-003 命令名口径）。
+# 只从 DATASET_CATALOG 登记过的 peer 工具取数，只落本机 data/news.sqlite（DEC-006）
+app.command("news", help="资讯雷达：聚合公告/研报/快讯/政策，规则抽取事件")(news_command)
+app.command("events", help="事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口")(
+    events_command
 )
 
 
