@@ -2,10 +2,13 @@ import { Link, Navigate, Route, Routes } from 'react-router-dom'
 
 import Layout from './components/Layout'
 import HomeScreen from './screens/HomeScreen'
+import IndustryDetailScreen from './screens/industry/IndustryDetailScreen'
+import IndustryMatrixScreen from './screens/industry/IndustryMatrixScreen'
 import JournalScreen from './screens/JournalScreen'
 import MarketScreen from './screens/MarketScreen'
 import ReviewScreen from './screens/ReviewScreen'
 import SettingsScreen from './screens/SettingsScreen'
+import SignalsScreen from './screens/signals/SignalsScreen'
 import ValidateScreen from './screens/ValidateScreen'
 import WatchScreen from './screens/WatchScreen'
 
@@ -46,6 +49,10 @@ export default function App() {
         <Route path="/review" element={<ReviewScreen />} />
         <Route path="/journal" element={<JournalScreen />} />
         <Route path="/validate" element={<ValidateScreen />} />
+        {/* R9 产业研究：矩阵 / 单行业 / 规则信号；深链进入，不占一级导航 */}
+        <Route path="/industry" element={<IndustryMatrixScreen />} />
+        <Route path="/industry/:name" element={<IndustryDetailScreen />} />
+        <Route path="/signals" element={<SignalsScreen />} />
         <Route path="/settings" element={<SettingsScreen />} />
         {/* 旧入口：此前首页重定向到复盘；带查询串保留（`?state=` 演示态） */}
         <Route path="/index.html" element={<Navigate to="/" replace />} />
