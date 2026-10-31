@@ -21,8 +21,15 @@
 直接判该数据集失败并在 detail 里写清去哪配。
 
 退出码：全部成功 0；部分必需数据集失败 8；**一个都没成**（peer 全挂且无缓存）
-4；配置/边界错误 3。`optional: true` 的数据集（Wire / Senate）取不到只记
+4；配置/边界错误 3；**历史库被别的进程占着**（拿锁超时 / 打库重试耗尽）10。
+`optional: true` 的数据集（Wire / Senate）取不到只记
 `skipped`，不拖垮整体。
+
+**并发口径（QUOT-234）**：命令一进来先拿本机历史库的进程级写锁
+（`data/db_lock.py`），同库的多个 `ldst sync` 排队而不是互相把对方的
+`duckdb.connect()` 顶成 `IOException`；等待上限 `LDST_DB_LOCK_TIMEOUT`
+（秒，默认 30），超时明确报错。没走这个入口的写方（`ldst review`、归档读）
+由 `duckdb_store.connect()` 的有界退避重试兜底。
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ from ladderstock.core.boundary import BoundaryViolation, owner_of
 from ladderstock.core.models import LadderEnvelope
 from ladderstock.data import duckdb_store, sqlite_store, watermark
 from ladderstock.data.adapters.tickhub import needs_code, tool_params
+from ladderstock.data.db_lock import writer_lock
 from ladderstock.data.provider_registry import (
     ProviderRegistry,
     SourceUnavailable,
@@ -634,7 +642,11 @@ def sync_command(
     registry = ProviderRegistry()
     targets = _targets(registry, dataset)
     store = watermark.WatermarkStore(root=registry.root)
-    payload = run_sync(registry, store, targets, full=full, codes=codes)
+    # 进程级串行：DuckDB 库文件锁是独占的，两个 sync 并发就是一个必抛 IOException。
+    # 锁跟着 `write_dataset()` 真正写的那个库走（data_dir），不跟 registry.root——
+    # 落库路径本来就不读 registry.root，锁在它上面等于没锁。
+    with writer_lock(holder="ldst sync"):
+        payload = run_sync(registry, store, targets, full=full, codes=codes)
     emit(payload, output)
     raise typer.Exit(payload["summary"]["exit_code"])
 

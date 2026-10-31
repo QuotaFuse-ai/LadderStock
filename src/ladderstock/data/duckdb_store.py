@@ -18,6 +18,12 @@
 - 提交成功后才导出 Parquet；导出用 tmp 文件 + `os.replace` 原子替换；
 - 空记录**不覆盖**已有数据（防止 peer 返回空把当日清空），由调用方按 `empty` 处理。
 
+跨进程并发（QUOT-234）：DuckDB 的库文件锁是**独占**的，另一个进程连着同一个
+`market.duckdb` 时，本进程 `connect()` 直接抛 `_duckdb.IOException`——写侧的串行化
+由 `db_lock.writer_lock()` 在 `ldst sync` 入口兜，`connect()` 这里再兜一层
+**有界退避重试**（覆盖 `ldst review` / 归档读 / 未加锁的旧调用方），
+耗尽后一律转 `LadderStockError`，不再让裸异常穿透成 exit 1 + traceback。
+
 表结构统一为 5 列，`payload` 存原始记录 JSON——M3/M4 的计算层需要什么字段就自己解，
 这里不做「猜字段」的映射补全（DEC-006 闸门 2）：:
 
@@ -34,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -43,9 +50,29 @@ import duckdb
 
 from ladderstock.cli.paths import data_dir
 from ladderstock.core.boundary import owner_of
+from ladderstock.errors import EXIT_CONFIG, EXIT_DB_BUSY, LadderStockError
 
 DB_FILENAME = "market.duckdb"
 ARCHIVE_DIRNAME = "archive"
+
+#: 打不开库时算「跨进程争用」而不是「库坏了」的语义线索（QUOT-234）。
+#: 中英文都要——Windows 的共享冲突文案跟系统 ANSI 代码页走，只有 DuckDB 自己
+#: 追加的那句 `File is already open in` 是 locale 无关的，所以把它当主判据。
+CONFLICT_HINTS: tuple[str, ...] = (
+    "already open",
+    "could not set a lock",
+    "conflicting lock",
+    "being used by another process",
+    "另一个程序正在使用",
+    "进程无法访问",
+    "无法锁定",
+)
+
+#: 有界重试：最多 `CONNECT_ATTEMPTS` 次、总等待不超过约 1.5s，够让一次
+#: 秒级同步落地后释放文件锁；拿不到就明确报错，绝不无界重试拖死调度任务。
+CONNECT_ATTEMPTS = 6
+CONNECT_BACKOFF_BASE = 0.05
+CONNECT_BACKOFF_CAP = 0.4
 
 COLUMNS: tuple[str, ...] = ("code", "trade_date", "ingested_at", "source", "payload")
 
@@ -64,12 +91,51 @@ def archive_root(root: Path | None = None) -> Path:
     return base / ARCHIVE_DIRNAME
 
 
-def connect(path: Path | None = None, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
-    """打开历史库；父目录不存在时创建（回放只读模式下不创建）。"""
+def is_lock_conflict(exc: BaseException) -> bool:
+    """异常文案是否指向「同一个库被别的进程占着」，而不是真的打不开。"""
+    text = str(exc).lower()
+    return any(hint in text for hint in CONFLICT_HINTS)
+
+
+def connect(
+    path: Path | None = None, *, read_only: bool = False, attempts: int = CONNECT_ATTEMPTS
+) -> duckdb.DuckDBPyConnection:
+    """打开历史库；父目录不存在时创建（回放只读模式下不创建）。
+
+    跨进程文件锁冲突 → 指数退避重试到 `attempts`，仍冲突转 `EXIT_DB_BUSY`；
+    其他开库失败（损坏 / 无权限 / 路径问题）不重试，直接转 `EXIT_CONFIG`。
+    两条路径都保证**不把裸异常抛给调用方**（QUOT-234 的验收点）。
+    """
     target = Path(path) if path is not None else db_path()
     if not read_only:
         target.parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(str(target), read_only=read_only)
+    delay = CONNECT_BACKOFF_BASE
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return duckdb.connect(str(target), read_only=read_only)
+        except Exception as exc:  # noqa: BLE001 - 开库口子只有一种正确结局：连上，或带码报错
+            if not is_lock_conflict(exc):
+                raise LadderStockError(
+                    f"历史库打不开：{target}\n{type(exc).__name__}: {_one_line(exc)}\n"
+                    "提示：这不是并发问题。确认数据目录可写；库文件损坏时先手工备份"
+                    " `market.duckdb`，再用 `ldst sync --full` 重建",
+                    EXIT_CONFIG,
+                ) from exc
+            if attempt >= attempts:
+                raise LadderStockError(
+                    f"历史库被其他进程占用，已重试 {attempt} 次仍不可用：{target}\n"
+                    f"{type(exc).__name__}: {_one_line(exc)}\n"
+                    "提示：同一时刻只允许一个进程写这个库。请等前一个 ldst 进程跑完"
+                    "（`ldst sync status` 看最近一轮同步），或把并发的写任务改成串行",
+                    EXIT_DB_BUSY,
+                ) from exc
+            time.sleep(delay)
+            delay = min(delay * 2, CONNECT_BACKOFF_CAP)
+    raise AssertionError("connect() 重试循环不应走到这里")  # pragma: no cover
+
+
+def _one_line(exc: BaseException) -> str:
+    return " ".join(str(exc).split())
 
 
 def close(conn: duckdb.DuckDBPyConnection | None) -> None:
