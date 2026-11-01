@@ -8,8 +8,11 @@
  *      没有 `ldst run` 时退回 `npm run dev`（http://127.0.0.1:5173），各屏会拍到「未接入 / 降级」态。
  *   2. 拍基线：`node scripts/visual-shot.mjs`            → 18 屏 × 暗/亮 = 36 张
  *   3. 改完之后拍 after：`node scripts/visual-shot.mjs --suffix after`
+ *   4. 拍演示态 / 强制态（QUOT-319）：
+ *        node scripts/visual-shot.mjs --query demo=1 --suffix after-demo --routes limit-up,industry,...
+ *        node scripts/visual-shot.mjs --query 'demo=1&state=offline' --suffix after-missing --routes signals
  *
- * 输出：`docs/screenshots/<route>-<before|after>-<dark|light>.png`，视口 1440×900，
+ * 输出：`docs/screenshots/<route>-<before|after|-after-demo>-<dark|light>.png`，视口 1440×900，
  * `<route>` 取路由段小写连字符；带参数的路由用参数名（`industry-name`、`research-code`、
  * `research-code-report`），实参用 `ROUTES[].path` 里的样例值。
  *
@@ -17,10 +20,15 @@
  *   --base <url>       前端地址（默认自动选：5199 在跑用 5199，否则 5173）
  *   --out <dir>        输出目录（默认 ../docs/screenshots）
  *   --suffix <s>       文件名后缀（默认 before）
+ *   --query <str>      追加到路由后的查询串，如 `demo=1` / `demo=1&state=offline`（`?` 可省）
  *   --themes <a,b>     主题（默认 dark,light）
  *   --routes <a,b>     只拍指定 slug，逗号分隔
  *   --settle <ms>      load 之后额外等待（默认 1500，留给 React 渲染 + 图表重绘）
  *   --chrome <path>    浏览器可执行文件（默认自动找 Chrome/Edge，或读环境变量 LDST_CHROME）
+ *
+ * `--query` 会污染文件名：不带 `--suffix` 时自动把查询串的键名并进后缀
+ * （`--query demo=1` → `<route>-before-demo-<theme>.png`），演示态图不会覆盖正常态基线。
+ * 显式给了 `--suffix` 就按给的写，由使用者保证不撞名（约定：演示态用 `after-demo`）。
  *
  * 主题切换走既有机制：`localStorage['ldst.theme']`（见 `src/lib/theme.ts`），
  * 通过 CDP 的 `Page.addScriptToEvaluateOnNewDocument` 在页面脚本之前写入，不碰任何屏幕代码。
@@ -59,24 +67,34 @@ const ROUTES = [
   { slug: 'research-code-report', path: '/research/600519/report' },
 ]
 
+const DEFAULT_SUFFIX = 'before'
+
 function parseArgs(argv) {
   const options = {
     base: null,
     out: join(REPO_ROOT, 'docs', 'screenshots'),
-    suffix: 'before',
+    suffix: DEFAULT_SUFFIX,
+    query: null,
     themes: ['dark', 'light'],
     routes: null,
     settle: 1500,
     chrome: process.env.LDST_CHROME ?? null,
     port: 9333,
   }
+  let suffixExplicit = false
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]
     const next = () => argv[++i]
     if (flag === '--base') options.base = next().replace(/\/$/, '')
     else if (flag === '--out') options.out = resolve(next())
-    else if (flag === '--suffix') options.suffix = next()
-    else if (flag === '--themes') options.themes = next().split(',').filter(Boolean)
+    else if (flag === '--suffix') {
+      options.suffix = next()
+      suffixExplicit = true
+    } else if (flag === '--query') {
+      const raw = next() ?? ''
+      // `?demo=1` 与 `demo=1` 都接受；只取 ? 之后的部分，路由本身不带查询串
+      options.query = raw.replace(/^[?#]/, '').trim()
+    } else if (flag === '--themes') options.themes = next().split(',').filter(Boolean)
     else if (flag === '--routes') options.routes = next().split(',').filter(Boolean)
     else if (flag === '--settle') options.settle = Number(next())
     else if (flag === '--chrome') options.chrome = next()
@@ -86,8 +104,34 @@ function parseArgs(argv) {
   for (const theme of options.themes) {
     if (theme !== 'dark' && theme !== 'light') throw new Error(`主题只能是 dark/light，收到 ${theme}`)
   }
+  if (options.query !== null && options.query === '') throw new Error('--query 不能是空串')
+  if (options.query !== null && /\s/.test(options.query)) {
+    throw new Error(`--query 不能含空格：${options.query}（PowerShell 下用引号包住整个串）`)
+  }
+  if (options.query !== null && !suffixExplicit) {
+    const tag = queryTag(options.query)
+    if (tag) options.suffix = `${DEFAULT_SUFFIX}-${tag}`
+  }
   return options
 }
+
+/** `demo=1&state=offline` → `demo-state`，用来给文件名区分演示态与正常态。 */
+function queryTag(query) {
+  return [
+    ...new Set(
+      query
+        .split('&')
+        .map((pair) => pair.split('=')[0])
+        .filter(Boolean),
+    ),
+  ].join('-')
+}
+
+/** 路由 + 查询串 → 待导航的 URL。`path` 里的样例参数已经 encodeURIComponent 过。 */
+function urlFor(base, route, options) {
+  return options.query ? `${base}${route.path}?${options.query}` : `${base}${route.path}`
+}
+
 
 function findChrome(explicit) {
   if (explicit) return explicit
@@ -230,7 +274,7 @@ async function shoot(cdp, base, route, theme, options) {
       sessionId,
     )
     const loaded = cdp.once('Page.loadEventFired', 30_000)
-    await cdp.send('Page.navigate', { url: `${base}${route.path}` }, sessionId)
+    await cdp.send('Page.navigate', { url: urlFor(base, route, options) }, sessionId)
     await loaded
     await sleep(options.settle)
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId)
@@ -265,6 +309,7 @@ async function main() {
   if (!options.base)
     throw new Error('前端没起来（见文件头注释的启动命令），或用 --base 指定')
   console.log(`前端：${options.base}`)
+  console.log(`后缀：${options.suffix}${options.query ? ` · 查询串 ?${options.query}` : ''}`)
 
   const profile = mkdtempSync(join(tmpdir(), 'ldst-visual-shot-'))
   const browser = spawn(
