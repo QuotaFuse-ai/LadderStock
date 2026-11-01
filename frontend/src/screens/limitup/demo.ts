@@ -14,6 +14,9 @@ export type LimitPoolDemoVariant = 'full' | 'partial' | 'empty'
 
 export const DEMO_LIMIT_POOL_DATE = '2026-10-30'
 
+/** 演示态的取数时刻：固定值，保证截图与用例可复现。外壳字段同 `/api/limit-pool`。 */
+const DEMO_FETCHED_AT = '2026-10-30T15:00:04+08:00'
+
 const ROWS: LimitPoolRow[] = [
   {
     code: '002594',
@@ -73,6 +76,7 @@ const ROWS: LimitPoolRow[] = [
 
 function demoPayload(variant: LimitPoolDemoVariant, date: string): LimitPoolPayload {
   if (variant === 'empty') {
+    // 外壳口径同 `_envelope(available=false)`：`data_as_of=null`、`source_status=partial`
     return {
       date,
       available: false,
@@ -81,6 +85,10 @@ function demoPayload(variant: LimitPoolDemoVariant, date: string): LimitPoolPayl
       count: 0,
       data_source_status: 'missing',
       rows: [],
+      freshness: 'cached',
+      source_status: 'partial',
+      data_as_of: null,
+      fetched_at: DEMO_FETCHED_AT,
     }
   }
   const partial = variant === 'partial'
@@ -92,6 +100,10 @@ function demoPayload(variant: LimitPoolDemoVariant, date: string): LimitPoolPayl
     count: ROWS.length,
     data_source_status: partial ? 'partial' : 'ok',
     rows: ROWS,
+    freshness: 'cached',
+    source_status: partial ? 'partial' : 'ok',
+    data_as_of: date,
+    fetched_at: DEMO_FETCHED_AT,
   }
 }
 

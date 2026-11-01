@@ -1,5 +1,5 @@
 import { cn } from '../../lib/cn'
-import type { EnvelopeFreshness, EnvelopeSourceStatus, LadderEnvelope } from '../../api'
+import type { EnvelopeFreshness, EnvelopeSourceStatus } from '../../api'
 import { Badge, type BadgeTone } from './Badge'
 
 /**
@@ -77,18 +77,25 @@ export type SourceSeverity = (typeof SOURCE_SEVERITY)[number]
 export type FreshnessLike = EnvelopeFreshness | (string & {})
 export type SourceStatusLike = EnvelopeSourceStatus | (string & {})
 
-/** 徽标只用到 envelope 这几个字段，payload 类型不同也能传同一份。 */
-export type SourceBadgeMeta = Pick<
-  LadderEnvelope<unknown>,
-  'freshness' | 'source_status' | 'source_detail' | 'data_as_of'
->
+/** 徽标只用到 envelope 这几个字段，payload 类型不同也能传同一份。
+ *
+ * 允许 `null`：后端没给这一档时屏侧仍要出「未知」，而不是让徽标消失（QUOT-331）——
+ * 「未登记」与「没有值」是同一类事实，都只能落到「不编造」那一档。
+ */
+export type SourceBadgeMeta = {
+  freshness: FreshnessLike | null
+  source_status: SourceStatusLike | null
+  source_detail: string | null
+  data_as_of: string | null
+}
 
 function titleOf(lines: Array<string | false | null | undefined>): string {
   return lines.filter((line): line is string => !!line).join('\n')
 }
 
 /** 后端 key 可能不在规范枚举里（`api/radar.ts:129`），查表统一走这两个「命中/未命中」入口。 */
-function findFreshness(value: string): FreshnessSpec | null {
+function findFreshness(value: string | null | undefined): FreshnessSpec | null {
+  if (!value) return null
   const keys = Object.keys(FRESHNESS) as string[]
   return keys.includes(value) ? FRESHNESS[value as EnvelopeFreshness] : null
 }
@@ -101,7 +108,8 @@ export function asSourceBadgeStatus(value: string | null | undefined): SourceSta
   return value && findSourceStatus(value) ? (value as SourceStatusLike) : null
 }
 
-function findSourceStatus(value: string): SourceStatusSpec | null {
+function findSourceStatus(value: string | null | undefined): SourceStatusSpec | null {
+  if (!value) return null
   const extraKeys = Object.keys(SOURCE_STATUS_EXTRA) as string[]
   if (extraKeys.includes(value)) return SOURCE_STATUS_EXTRA[value as SourceStatusExtension]
   const keys = Object.keys(SOURCE_STATUS) as string[]
@@ -109,7 +117,8 @@ function findSourceStatus(value: string): SourceStatusSpec | null {
 }
 
 export interface FreshnessBadgeProps {
-  freshness: FreshnessLike
+  /** `null` = 后端外壳里没有这一档，徽标出「未知」，不回落成 `cached` */
+  freshness: FreshnessLike | null
   /** `data_as_of`：悬浮说明里的数据时间 */
   asOf?: string | null
   sourceDetail?: string | null
@@ -124,7 +133,11 @@ export function FreshnessBadge({ freshness, asOf, sourceDetail, className }: Fre
     <Badge
       tone={spec ? spec.tone : 'neutral'}
       title={titleOf([
-        spec ? spec.hint(asOfText) : `未登记的 freshness：${freshness}（数据时间 ${asOfText}）`,
+        spec
+          ? spec.hint(asOfText)
+          : freshness
+            ? `未登记的 freshness：${freshness}（数据时间 ${asOfText}）`
+            : `后端未提供 freshness（数据时间 ${asOfText}）`,
         sourceDetail,
       ])}
       icon={<Glyph symbol={spec ? spec.glyph : '○'} />}
@@ -136,7 +149,7 @@ export function FreshnessBadge({ freshness, asOf, sourceDetail, className }: Fre
 }
 
 export interface SourceStatusBadgeProps {
-  status: SourceStatusLike
+  status: SourceStatusLike | null
   /** 走了哪条备路 / 缺了哪些项：§5.2 要求 `degraded` 悬浮必须能说明路线 */
   detail?: string | null
   className?: string
@@ -149,7 +162,11 @@ export function SourceStatusBadge({ status, detail, className }: SourceStatusBad
     <Badge
       tone={spec ? spec.tone : 'neutral'}
       title={titleOf([
-        spec ? spec.hint : `未登记的 source_status：${status}`,
+        spec
+          ? spec.hint
+          : status
+            ? `未登记的 source_status：${status}`
+            : '后端未提供 source_status',
         status === 'partial' && '必须列出缺失项，否则不给结论',
         detail,
       ])}
@@ -202,11 +219,12 @@ const WORST_TONE: Record<SourceSeverity, SourceTone> = {
  * 本身比 `partial` 更严重，直接取它自己的色调；两条都不在排序里时按完整性判断：
  * `ok` 才是 `ok`，未登记的 key 一律按 `warn` 处理（宁可提示，不静默）。
  */
-export function worstSourceTone(freshness: FreshnessLike, status: SourceStatusLike): SourceTone {
-  const rankOf = (value: string): number => (SOURCE_SEVERITY as readonly string[]).indexOf(value)
+export function worstSourceTone(freshness: FreshnessLike | null, status: SourceStatusLike | null): SourceTone {
+  const rankOf = (value: string | null): number =>
+    value ? (SOURCE_SEVERITY as readonly string[]).indexOf(value) : -1
   const statusRank = rankOf(status)
   if (statusRank >= 0) return WORST_TONE[SOURCE_SEVERITY[statusRank]]
-  if (status in SOURCE_STATUS_EXTRA) return SOURCE_STATUS_EXTRA[status as SourceStatusExtension].tone
+  if (status && status in SOURCE_STATUS_EXTRA) return SOURCE_STATUS_EXTRA[status as SourceStatusExtension].tone
   const freshnessRank = rankOf(freshness)
   if (freshnessRank >= 0) return WORST_TONE[SOURCE_SEVERITY[freshnessRank]]
   return status === 'ok' ? 'ok' : 'warn'

@@ -47,7 +47,11 @@ GET /api/limit-pool?date=YYYY-MM-DD
 | `freshness` | `"cached"` | `"cached"` |
 | `payload.data_source_status` | `"ok"` | `"missing"` |
 
-载荷里显式带 `data_source_status`：前端只下钻 `payload`，信封顶层读不到。
+载荷里显式带 `data_source_status`：它是载荷级的四档（多一个 `missing`），比信封的三档细，
+前端完整度徽标用它。信封顶层的 `freshness` / `source_status` / `data_as_of` / `fetched_at`
+由解析层一并读出（`frontend/src/api/envelope.ts`，QUOT-331）——此前前端只下钻 `payload`，
+这四键停在外壳上被丢弃，`/limit-up` 的新度徽标只能退「未知」。后端没给的键一律 `null`，
+屏侧照实出「未知」，不补 `cached`、不猜档位。
 
 ## 4. `payload` 字段
 
