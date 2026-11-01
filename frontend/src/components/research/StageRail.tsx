@@ -42,7 +42,7 @@ export function StageRail({
   const pct = Math.round(Math.min(1, Math.max(0, progress)) * 100)
 
   return (
-    <nav aria-label="研究阶段" className={cn('flex flex-wrap gap-1 desk:flex-col desk:flex-nowrap', className)}>
+    <nav aria-label="研究阶段" className={cn('grid grid-cols-2 gap-1 desk:grid-cols-1', className)}>
       {RESEARCH_STAGES.map((name, index) => {
         const stage = byName.get(name)
         const status = stage?.status ?? 'pending'
@@ -56,12 +56,19 @@ export function StageRail({
             onClick={() => onSelect(name)}
             aria-current={isActive ? 'step' : undefined}
             className={cn(
-              'flex min-h-control min-w-[8.5rem] flex-1 flex-col justify-center gap-0.5 rounded px-2 py-1 text-left transition-colors duration-fast desk:w-full desk:flex-none',
+              'flex min-h-control flex-col justify-center gap-half rounded px-2 py-1 text-left transition-colors duration-fast ease-ldst',
               isActive ? 'bg-surface-3' : 'hover:bg-surface-3',
             )}
           >
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span className="ldst-num shrink-0 text-caption text-text-muted">
+            <span className="flex min-w-0 items-center gap-1">
+              <span
+                className={cn(
+                  'ldst-num shrink-0 text-caption',
+                  // 激活项底色是 surface-3，序号若继续用 text-text-muted 会掉到 3:1 以下；
+                  // 层级改由「正文是否加粗 + 是否提亮」承担。
+                  isActive ? 'text-text-secondary' : 'text-text-muted',
+                )}
+              >
                 {String(index + 1).padStart(2, '0')}
               </span>
               <span
@@ -85,7 +92,7 @@ export function StageRail({
                 className="mt-1 block h-1 w-full overflow-hidden rounded-pill bg-surface-3"
                 aria-hidden="true"
               >
-                <span className="block h-full bg-accent" style={{ width: `${pct}%` }} />
+                <span className="block h-full bg-accent transition-all duration-fast ease-ldst" style={{ width: `${pct}%` }} />
               </span>
             )}
           </button>

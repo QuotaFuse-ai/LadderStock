@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Radar, RefreshCw, ScrollText } from 'lucide-react'
 
 import type { IndustrySignal, SignalEvidence, SignalRule } from '../../api/industry'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
+import { LinkButton } from '../../components/research/bits'
 import {
   Badge,
   Banner,
@@ -13,13 +14,16 @@ import {
   Drawer,
   EmptyState,
   ErrorBlock,
+  Field,
   MetricCard,
   SectionCard,
   Segmented,
   Select,
+  Skeleton,
+  SkeletonRows,
   type Column,
+  type Expandable,
 } from '../../components/ui'
-import { cn } from '../../lib/cn'
 import { formatInt, MISSING } from '../../lib/format'
 import { formatEvidenceValue } from '../industry/metrics'
 import { withParams } from '../industry/links'
@@ -44,7 +48,8 @@ const DIRECTION_OPTIONS: ReadonlyArray<{ value: DirectionFilter; label: string }
 const SEVERITY_LABEL: Record<IndustrySignal['severity'], string> = {
   info: '提示',
   warn: '关注',
-  danger: '风险',
+  // 三档级别以 UI-SPEC §3.2 的词表为准（提示 / 关注 / 强信号），本屏不自造「风险」这第三说
+  danger: '强信号',
 }
 
 const SEVERITY_TONE: Record<IndustrySignal['severity'], 'info' | 'warn' | 'danger'> = {
@@ -99,7 +104,7 @@ const EVIDENCE_COLUMNS: Array<Column<SignalEvidence>> = [
     key: 'asOf',
     header: '时点 / 数据集',
     align: 'right',
-    width: '150px',
+    width: '152px',
     render: (row) => (
       <span className="flex min-w-0 flex-col items-end leading-tight">
         <span className="ldst-num text-caption text-text-secondary">{row.as_of}</span>
@@ -127,8 +132,23 @@ export default function SignalsScreen() {
     setParams(next, { replace: true })
   }
 
+  // 演示开关走真锚点：`href="/signals?demo=1"` 会把当前筛选整串丢掉并触发整页重载
+  const demoHref = useMemo(() => {
+    const next = new URLSearchParams(params)
+    next.set('demo', '1')
+    return `/signals?${next.toString()}`
+  }, [params])
+
   const rules = payload?.rules ?? []
   const signals = payload?.signals ?? []
+
+  const filtersActive = direction !== 'all' || rule !== null || industry !== null
+
+  const clearFilters = () => {
+    const next = new URLSearchParams(params)
+    for (const key of ['direction', 'rule', 'industry']) next.delete(key)
+    setParams(next, { replace: true })
+  }
 
   const visible = useMemo(
     () => signals.filter((signal) => direction === 'all' || signal.direction === direction),
@@ -158,7 +178,8 @@ export default function SignalsScreen() {
           <Link
             to={withParams(`/industry/${encodeURIComponent(row.industry)}`, { demo: demo ? '1' : null })}
             onClick={(event) => event.stopPropagation()}
-            className="line-clamp-1 font-medium text-text underline-offset-2 hover:text-accent-hover hover:underline"
+            title={row.industry}
+            className="line-clamp-1 font-medium text-text underline-offset-2 transition-colors duration-fast ease-ldst hover:text-accent-hover hover:underline"
           >
             {row.industry}
           </Link>
@@ -217,11 +238,12 @@ export default function SignalsScreen() {
         render: (row) => (
           <button
             type="button"
+            aria-haspopup="dialog"
             onClick={(event) => {
               event.stopPropagation()
               setSelectedId(row.id)
             }}
-            className="whitespace-nowrap rounded-xs px-1 text-caption font-medium text-accent underline-offset-2 hover:underline"
+            className="whitespace-nowrap rounded-xs px-1 text-caption font-medium text-accent underline-offset-2 transition-colors duration-fast ease-ldst hover:underline"
           >
             查看证据
           </button>
@@ -253,7 +275,7 @@ export default function SignalsScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ScreenSkeleton metrics={3} rows={6} />
+        <SignalsSkeleton />
       </div>
     )
   }
@@ -293,39 +315,41 @@ export default function SignalsScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <Card>
-          <EmptyState
-            icon={<Radar aria-hidden="true" />}
-            title={payload === null ? '接口未接入' : '没有命中的规则信号'}
-            description={
-              payload === null ? (
-                <>
-                  页面已按 <code className="ldst-num">GET /api/signals</code> 契约实现；规则判定在后端执行（DEC-028），
-                  前端不自行计算信号。接口上线后自动接入。
-                </>
-              ) : (
-                <>
-                  {payload.reason ?? '当前 R5 数据没有触发任何规则。'}
-                  。规则由后端基于五维指标判定，缺数据时不产生信号。
-                </>
-              )
-            }
-            action={
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button variant="secondary" onClick={reload}>刷新</Button>
-                {!demo && (
-                  <a
-                    href="/signals?demo=1"
-                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
-                  >
-                    查看演示数据
-                  </a>
-                )}
-              </div>
-            }
-          />
-        </Card>
-        {rules.length > 0 && <RulesCard rules={rules} signals={signals} />}
+        {/* 与正常态同一段 12 栏：空态卡占左 8 栏、规则卡仍占右 4 栏，切态时不跳版 */}
+        <div className="grid grid-cols-1 gap-4 desk:grid-cols-12">
+          <div className={rules.length > 0 ? 'desk:col-span-8' : 'desk:col-span-12'}>
+            <Card>
+              <EmptyState
+                icon={<Radar aria-hidden="true" />}
+                title={payload === null ? '接口未接入' : '没有命中的规则信号'}
+                description={
+                  payload === null ? (
+                    <>
+                      页面已按 <code className="ldst-num">GET /api/signals</code> 契约实现；规则判定在后端执行（DEC-028），
+                      前端不自行计算信号。接口上线后自动接入。
+                    </>
+                  ) : (
+                    <>
+                      {payload.reason ?? '当前 R5 数据没有触发任何规则。'}
+                      规则由后端基于五维指标判定，缺数据时不产生信号。
+                    </>
+                  )
+                }
+                action={
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <Button variant="secondary" onClick={reload}>刷新</Button>
+                    {!demo && <LinkButton to={demoHref}>查看演示数据</LinkButton>}
+                  </div>
+                }
+              />
+            </Card>
+          </div>
+          {rules.length > 0 && (
+            <aside className="flex flex-col gap-4 desk:col-span-4">
+              <RulesCard rules={rules} signals={signals} />
+            </aside>
+          )}
+        </div>
       </div>
     )
   }
@@ -340,16 +364,14 @@ export default function SignalsScreen() {
         </Banner>
       )}
 
-      <div className="grid grid-cols-3 gap-3">
-        <MetricCard
-          label="命中信号"
-          hero
-          value={payload?.counts.total ?? 0}
-          unit="条"
-          note={`${rules.length} 条规则参与判定`}
-        />
-        <MetricCard label="偏多" value={payload?.counts.bullish ?? 0} unit="条" note="规则方向 bullish" />
-        <MetricCard label="偏空" value={payload?.counts.bearish ?? 0} unit="条" note="规则方向 bearish" />
+      <div className="grid grid-cols-3 gap-4">
+        {/*
+          三张卡都不带 `note`：`MetricCard` 固定 `h-metric`（96px）只装得下「标签 + 数值」两行，
+          第三行 `note` 会压到卡片下沿之外（审计已记为 ui 侧 R-项）。规则条数改由右栏副标题承载。
+        */}
+        <MetricCard label="命中信号" hero value={payload?.counts.total ?? 0} unit="条" />
+        <MetricCard label="偏多" value={payload?.counts.bullish ?? 0} unit="条" />
+        <MetricCard label="偏空" value={payload?.counts.bearish ?? 0} unit="条" />
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -359,13 +381,12 @@ export default function SignalsScreen() {
           value={direction}
           onChange={(next) => setParam('direction', next === 'all' ? null : next)}
         />
-        <label className="flex flex-col gap-1 text-caption text-text-secondary">
-          规则
+        {/* C-06 Field：标签与控件的绑定、说明位都在组件里，屏侧不再手写 <label> 外壳 */}
+        <Field label="规则" htmlFor="signal-rule-filter" className="w-56">
           <Select
-            aria-label="按规则筛选"
+            id="signal-rule-filter"
             value={rule ?? ''}
             onChange={(event) => setParam('rule', event.target.value || null)}
-            className="w-56"
           >
             <option value="">全部规则</option>
             {rules.map((item) => (
@@ -374,14 +395,12 @@ export default function SignalsScreen() {
               </option>
             ))}
           </Select>
-        </label>
-        <label className="flex flex-col gap-1 text-caption text-text-secondary">
-          行业
+        </Field>
+        <Field label="行业" htmlFor="signal-industry-filter" className="w-40">
           <Select
-            aria-label="按行业筛选"
+            id="signal-industry-filter"
             value={industry ?? ''}
             onChange={(event) => setParam('industry', event.target.value || null)}
-            className="w-40"
           >
             <option value="">全部行业</option>
             {industries.map((name) => (
@@ -390,9 +409,11 @@ export default function SignalsScreen() {
               </option>
             ))}
           </Select>
-        </label>
+        </Field>
         <div className="grow" />
-        <span className="text-caption text-text-muted">{visible.length} 条可见 · 点击行或「查看证据」展开</span>
+        <span className="ldst-num text-caption text-text-muted">
+          {visible.length} 条可见 · 点击行或「查看证据」展开
+        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-4 desk:grid-cols-12">
@@ -410,7 +431,18 @@ export default function SignalsScreen() {
               <EmptyState
                 compact
                 title="当前筛选没有信号"
-                description="把方向切回「全部」，或清空规则 / 行业筛选。"
+                description={
+                  filtersActive
+                    ? '方向 / 规则 / 行业三个筛选叠加后没有命中；清空即可回到全部信号。'
+                    : '后端本次没有返回任何命中记录；可刷新重取，或切到演示数据看完整交互。'
+                }
+                action={
+                  filtersActive ? (
+                    <Button variant="secondary" onClick={clearFilters}>清空筛选</Button>
+                  ) : (
+                    <Button variant="secondary" onClick={reload}>刷新</Button>
+                  )
+                }
               />
             }
           />
@@ -429,12 +461,9 @@ export default function SignalsScreen() {
         footer={
           selected ? (
             <div className="flex items-center gap-2">
-              <Link
-                to={withParams(`/industry/${encodeURIComponent(selected.industry)}`, { demo: demo ? '1' : null })}
-                className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
-              >
+              <LinkButton to={withParams(`/industry/${encodeURIComponent(selected.industry)}`, { demo: demo ? '1' : null })}>
                 打开行业详情
-              </Link>
+              </LinkButton>
               <Button variant="primary" onClick={() => setSelectedId(null)}>
                 关闭
               </Button>
@@ -491,38 +520,109 @@ function RulesCard({
   rules: SignalRule[]
   signals: IndustrySignal[]
 }) {
+  const hits = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const signal of signals) map.set(signal.rule_id, (map.get(signal.rule_id) ?? 0) + 1)
+    return map
+  }, [signals])
+
+  const columns = useMemo<Array<Column<SignalRule>>>(
+    () => [
+      {
+        key: 'title',
+        header: '规则',
+        truncate: true,
+        sort: (a, b) => a.title.localeCompare(b.title, 'zh-CN'),
+        render: (row) => row.title,
+      },
+      {
+        key: 'direction',
+        header: '方向',
+        align: 'center',
+        width: '56px',
+        sort: (a, b) => a.direction.localeCompare(b.direction),
+        render: (row) => <Badge tone={row.direction === 'bullish' ? 'up' : 'down'}>{directionLabel(row.direction)}</Badge>,
+        cellTitle: (row) => directionLabel(row.direction),
+      },
+      {
+        key: 'hits',
+        header: '命中',
+        numeric: true,
+        width: '48px',
+        sort: (a, b) => (hits.get(a.id) ?? 0) - (hits.get(b.id) ?? 0),
+        render: (row) => hits.get(row.id) ?? 0,
+      },
+    ],
+    [hits],
+  )
+
+  const expandable: Expandable<SignalRule> = {
+    label: '展开规则表达式',
+    render: (row) => (
+      <code className="ldst-num block break-words text-caption leading-body text-text-secondary">
+        {row.expression || '未给出表达式'}
+      </code>
+    ),
+  }
+
   return (
     <SectionCard
       title="规则说明"
-      subtitle="后端判定，前端只读"
+      subtitle={rules.length > 0 ? `后端判定，前端只读 · ${rules.length} 条参与判定` : '后端判定，前端只读'}
       actions={<ScrollText className="size-4 text-text-muted" aria-hidden="true" />}
       bodyClassName="p-0"
     >
       {rules.length === 0 ? (
         <EmptyState compact title="接口未返回规则清单" description="规则与阈值应在 /api/signals 的 rules 字段中给出。" />
       ) : (
-        <ul className="divide-y divide-border">
-          {rules.map((rule) => {
-            const count = signals.filter((signal) => signal.rule_id === rule.id).length
-            return (
-              <li key={rule.id} className="flex flex-col gap-1 px-4 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-body text-text" title={rule.title}>
-                    {rule.title}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-1">
-                    <Badge tone={rule.direction === 'bullish' ? 'up' : 'down'}>{directionLabel(rule.direction)}</Badge>
-                    <span className={cn('ldst-num text-caption', count > 0 ? 'text-text' : 'text-text-muted')}>
-                      {count} 条
-                    </span>
-                  </span>
-                </div>
-                <code className="ldst-num break-all text-caption leading-body text-text-muted">{rule.expression || '未给出表达式'}</code>
-              </li>
-            )
-          })}
-        </ul>
+        <DataTable<SignalRule>
+          columns={columns}
+          rows={rules}
+          rowKey={(row) => row.id}
+          caption="点行首展开规则表达式；命中数按本次 payload 统计"
+          density="compact"
+          stickyFirstColumn={false}
+          expandable={expandable}
+          initialSort={{ key: 'hits', dir: 'desc' }}
+        />
       )}
     </SectionCard>
+  )
+}
+
+/**
+ * 整屏 loading 骨架：列数与栅格与正常态一一对应（§10「骨架与真实内容形状同构」）。
+ * `PageShell.ScreenSkeleton` 是 5 列指标阵，与本屏的 3 列 + 右栏规则表不同形，所以在本屏内给。
+ */
+function SignalsSkeleton() {
+  return (
+    <div className="flex flex-col gap-5" aria-busy="true" aria-live="polite">
+      <span className="sr-only">正在加载…</span>
+      <div className="grid grid-cols-3 gap-4">
+        {[0, 1, 2].map((index) => (
+          <div key={index} className="flex h-metric flex-col justify-between rounded border border-border bg-surface p-4">
+            <Skeleton className="w-1/2" />
+            <Skeleton className="h-6 w-2/3" />
+            <Skeleton className="w-1/3" />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-end gap-3">
+        <Skeleton className="h-control w-56" />
+        <Skeleton className="h-control w-40" />
+      </div>
+      <div className="grid grid-cols-1 gap-4 desk:grid-cols-12">
+        <div className="desk:col-span-8">
+          <div className="rounded border border-border bg-surface">
+            <SkeletonRows rows={6} slots={['16%', '34%', '12%', '12%', '10%']} />
+          </div>
+        </div>
+        <aside className="desk:col-span-4">
+          <div className="rounded border border-border bg-surface">
+            <SkeletonRows rows={4} slots={['52%', '20%', '16%']} />
+          </div>
+        </aside>
+      </div>
+    </div>
   )
 }

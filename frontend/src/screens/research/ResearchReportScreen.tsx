@@ -14,7 +14,7 @@ import {
 } from '../../api/research'
 import { buildCitationIndex } from '../../lib/citation'
 import { MISSING, formatTime } from '../../lib/format'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
   asSourceBadgeStatus,
   Badge,
@@ -26,13 +26,15 @@ import {
   CardHeader,
   EmptyState,
   ErrorBlock,
+  Skeleton,
+  SkeletonText,
   SourceStatusBadge,
 } from '../../components/ui'
 import { MarkdownView } from '../../components/research/MarkdownView'
 import { ProvenanceDrawer } from '../../components/research/ProvenanceDrawer'
 import { StageRail } from '../../components/research/StageRail'
 import { LinkButton } from '../../components/research/bits'
-import { artifactMarkdown } from './facts'
+import { artifactMarkdown, failureKindLabel, modeLabel } from './facts'
 import { detailHref } from './links'
 import { useResearchRun } from './useResearchRun'
 import { useResearchView } from './useResearchView'
@@ -78,9 +80,42 @@ function RunProgress({
         aria-valuenow={pct}
         className="h-2 w-full overflow-hidden rounded-pill bg-surface-3"
       >
-        <span className="block h-full bg-accent transition-[width] duration-base" style={{ width: `${pct}%` }} />
+        <span
+          className="block h-full bg-accent transition-all duration-fast ease-ldst"
+          style={{ width: `${pct}%` }}
+        />
       </div>
       <p className="text-caption text-text-muted">{step ?? '等待任务返回…'} · 每秒轮询一次</p>
+    </div>
+  )
+}
+
+/**
+ * 整屏 loading 骨架：与 settle 后的「左阶段栏 + 右正文」双栏同形（QUOT-309 审计 P2：
+ * 原来的 `ScreenSkeleton metrics={6}` 是「六指标卡 + 表格」，和这屏的真实版式无关，
+ * 加载完成时整页重排）。
+ */
+function ReportSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 desk:flex-row desk:items-start" aria-busy="true" aria-live="polite">
+      <span className="sr-only">正在加载…</span>
+      <Card className="min-w-0 desk:w-52 desk:shrink-0">
+        <CardHeader title="研究阶段" subtitle="六段 · 点击切换" />
+        <CardBody className="flex flex-col gap-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={index} className={index === 2 ? 'w-3/4' : 'w-1/2'} />
+          ))}
+        </CardBody>
+      </Card>
+      <Card className="min-w-0 flex-1">
+        <CardHeader title="段落标题" subtitle="第 N 段 · 状态" />
+        <CardBody className="flex flex-col gap-4">
+          <Skeleton className="h-5 w-1/3" />
+          <SkeletonText lines={6} />
+          <Skeleton className="h-5 w-1/4" />
+          <SkeletonText lines={5} />
+        </CardBody>
+      </Card>
     </div>
   )
 }
@@ -151,6 +186,7 @@ export default function ResearchReportScreen() {
   }
 
   const title = view.name ?? (view.code ? view.code : '研究报告')
+  const status = view.status
   const summary =
     view.state === 'offline'
       ? '本机服务未连接'
@@ -158,9 +194,11 @@ export default function ResearchReportScreen() {
         ? '取数失败'
         : view.state === 'empty'
           ? '还没有研究产物'
-          : view.status?.complete
-            ? `六段齐备 · 更新于 ${formatTime(view.status.updated_at)}`
-            : `${view.status?.failed.length ?? 0} 段失败 · ${view.status?.pending.length ?? 0} 段待跑`
+          : status?.complete
+            ? `六段齐备 · 更新于 ${formatTime(status.updated_at)}`
+            : status
+              ? `${status.failed.length} 段失败 · ${status.pending.length} 段待跑`
+              : MISSING
 
   const header = (
     <PageHeader
@@ -207,7 +245,7 @@ export default function ResearchReportScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ScreenSkeleton metrics={6} rows={5} />
+        <ReportSkeleton />
       </div>
     )
   }
@@ -277,8 +315,8 @@ export default function ResearchReportScreen() {
     `第 ${ordinal} 段`,
     STAGE_STATUS_LABEL[stage.status],
     stage.degraded ? '降级' : null,
-    document?.mode ? `mode=${document.mode}` : null,
-    document?.model ? `模型=${document.model}` : null,
+    document?.mode ? `生成方式 ${modeLabel(document.mode)}` : null,
+    document?.model ? `模型 ${document.model}` : null,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -300,7 +338,7 @@ export default function ResearchReportScreen() {
       )}
 
       <div className="flex flex-col gap-4 desk:flex-row desk:items-start">
-        <Card className="min-w-0 desk:w-[208px] desk:shrink-0 desk:sticky desk:top-4">
+        <Card className="min-w-0 desk:w-52 desk:shrink-0 desk:sticky desk:top-4">
           <CardHeader title="研究阶段" subtitle="六段 · 点击切换" />
           <CardBody className="p-2">
             <StageRail
@@ -351,7 +389,12 @@ export default function ResearchReportScreen() {
                 }
               >
                 {runErrorView(run.error).detail}
-                {runErrorView(run.error).code ? `（${runErrorView(run.error).code}）` : ''}
+                {/* 错误码是给支持排查用的，用等宽 + 弱化色标成「码」，不混在正文句子里 */}
+                {runErrorView(run.error).code && (
+                  <code className="ldst-num ml-1 text-caption text-text-muted">
+                    {runErrorView(run.error).code}
+                  </code>
+                )}
               </Banner>
             )}
 
@@ -432,14 +475,17 @@ export default function ResearchReportScreen() {
           {document && (
             <CardFooter>
               <div className="flex flex-wrap items-center justify-between gap-2">
+                {/* 只给数字套 .ldst-num：它会换字体族，套在整句上会让中文也走数字字体 */}
                 <span>
-                  来源 {sources.length} 条 · 已核实 {verified} 条 · 未核实 {sources.length - verified} 条
+                  来源 <span className="ldst-num">{sources.length}</span> 条 · 已核实{' '}
+                  <span className="ldst-num">{verified}</span> 条 · 未核实{' '}
+                  <span className="ldst-num">{sources.length - verified}</span> 条
                   {document.provenance.unverified ? ' · 本段至少一处未核实' : ''}
                 </span>
                 <span>
                   {document.failure
-                    ? `失败：${document.failure.kind ?? 'unknown'}`
-                    : `更新于 ${formatTime(view.status?.updated_at ?? null)}`}
+                    ? `失败：${failureKindLabel(document.failure.kind)}`
+                    : `更新于 ${formatTime(status?.updated_at ?? null)}`}
                 </span>
               </div>
             </CardFooter>
