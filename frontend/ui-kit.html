@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="LadderStock 组件层能力自证页（QUOT-310，不进生产包）" />
+    <title>组件层能力自证 · LadderStock UI Kit</title>
+    <script>
+      /*
+       * 首帧主题：与 index.html 同一套机制（§7.5），但默认深色、且允许 `?theme=light` 覆盖，
+       * 便于取证脚本在不碰任何屏幕代码的前提下拍暗 / 亮两张。
+       */
+      ;(function () {
+        var root = document.documentElement
+        var query = new URLSearchParams(window.location.search).get('theme')
+        var theme = query === 'light' ? 'light' : 'dark'
+        root.setAttribute('data-ldst-theme', theme)
+        root.setAttribute('data-ldst-scheme', theme)
+        root.style.colorScheme = theme
+        var density = new URLSearchParams(window.location.search).get('density')
+        if (density === 'compact' || density === 'comfortable' || density === 'default') {
+          root.setAttribute('data-ldst-density', density)
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>本页需要启用 JavaScript。</noscript>
+    <script type="module">
+      // 能力自证：只挂 `components/ui` 的 Gallery，不走 App / 路由 / api，也不进生产构建。
+      import { createElement } from 'react'
+      import { createRoot } from 'react-dom/client'
+      import '/src/styles/tokens.css'
+      import '/src/styles/index.css'
+      import { Gallery } from '/src/components/ui/Gallery.tsx'
+
+      createRoot(document.getElementById('root')).render(
+        createElement(Gallery, {
+          // `?drawer=1` 直接以打开态渲染抽屉，便于取证 §7.3 duration-base 例外的实际观感
+          initialDrawerOpen: new URLSearchParams(window.location.search).has('drawer'),
+        }),
+      )
+    </script>
+  </body>
+</html>
