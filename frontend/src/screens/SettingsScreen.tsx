@@ -338,7 +338,7 @@ function PeerCard({
                 className="h-1 w-24 overflow-hidden rounded-pill bg-surface-3"
               >
                 <span
-                  className="block h-full rounded-pill bg-accent transition-[width] duration-base"
+                  className="block h-full rounded-pill bg-accent transition-all duration-base"
                   style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }}
                 />
               </span>
