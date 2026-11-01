@@ -408,5 +408,5 @@
 ## 12. 遗留与下一步
 
 1. **阈值持久化**：已由 DEC-037 落地 `watch_settings` 分片（`config/state.yaml` + `stores/manifest.json` + 契约测试三处同步），刷新 / 重启 / 多窗口共用同一份。
-2. **生产态 `/__state/index`**：`ldst run`（M2）需补同路径端点，否则日志屏与状态提示只能用开发态索引。
+2. **生产态 `/__state/index`**：已由 DEC-034 落地（`src/ladderstock/web/state_index.py`，`ldst run` 同路径 GET 读回 / POST 上报，注册在 SPA 兜底之前，语义照抄 Vite 中间件），开发态索引不再是唯一通道。
 3. **设计还原度**：前端实现后按 §11 逐条走查；组件与 token 的偏差需在 PR 评论中说明理由，不静默例外。
