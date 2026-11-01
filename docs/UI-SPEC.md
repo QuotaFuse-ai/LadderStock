@@ -12,6 +12,7 @@
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v1.0 | 2026-10-28 | 首版：四屏 IA、状态恢复、降级与溯源、AI 四类错误、视觉 token、组件清单 |
+| v1.1 | 2026-11-01 | §10 映射表补「盯盘·竞价与盘中」一行：后端读面 `GET /api/intraday` / `/api/intraday/snapshot` 已落地（QUOT-301 / DEC-039 / SPEC-INTRADAY-READ），页面本身仍未建（QUOT-302） |
 
 ## 0. 范围与非目标
 
@@ -388,6 +389,7 @@
 |---|---|---|---|---|
 | 复盘 | `review`、`review show`、`sentiment show`、`ladder show`、`ai retry`、`export` | `GET /api/review?date`、`/api/sentiment?date`、`/api/ladder?date` | `review_draft` | 指标永远只读；AI 段独立降级 |
 | 盯盘 | `watch start/status/stop`、`notify test` | `GET /api/watch/snapshot` | `watch_snapshot`（TTL 300s） | 过期即不渲染旧值 |
+| 盯盘·竞价与盘中 | （无命令，读 `ldst schedule` 落盘的快照） | `GET /api/intraday?date`、`GET /api/intraday/snapshot?date&slot`（回环独占） | 无（快照走 `data/intraday/`，不进分片） | 逐时点状态只信 `status.json`；文件不在就写「没有快照」，不补 0（SPEC-INTRADAY-READ） |
 | 验证 | `validate`、`validate reconcile` | `GET /api/validation?date` | `validation_draft` | 15:00 前不可对账；部分缺失只给参考结论 |
 | 日志 | `journal add/list/stats` | **无 HTTP**（仅本机 SQLite） | 无（`journal_draft` 预留，待 journal 前端接入） | 不出本机、不进 AI |
 | 全局 | `state inspect`、`state reset`、`ai status`、`sources health`、`doctor` | `GET /api/health` | 索引文件 | 索引只含元数据 |
