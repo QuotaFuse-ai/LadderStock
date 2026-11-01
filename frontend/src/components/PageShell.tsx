@@ -24,11 +24,15 @@ export interface PageHeaderProps {
 export function PageHeader({ title, subtitle, actions, badge, meta, className }: PageHeaderProps) {
   return (
     <header className={cn('flex min-h-topbar flex-wrap items-center justify-between gap-3', className)}>
-      <div className="flex min-w-0 flex-wrap items-center gap-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
         <h1 className="text-page font-semibold leading-tight text-text">{title}</h1>
         {badge}
-        {subtitle && <p className="text-caption text-text-secondary">{subtitle}</p>}
-        {meta}
+        {/* 说明与状态行必然带计数 / 时间，挂 `.ldst-num` 与正文数字同一基线（§7.2、§11.0）。
+            只加可继承的 `font-variant-numeric`，不动各屏自己的字号与颜色；
+            h1 / badge / subtitle / meta 仍是同级兄弟节点，页头 DOM 契约不变。
+            纵向 `gap-y-1`：换行时收进 4px，不再用 12px 把标题栏撑成两段。 */}
+        {subtitle && <p className="ldst-num text-caption text-text-secondary">{subtitle}</p>}
+        {meta && <div className="ldst-num">{meta}</div>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
@@ -91,8 +95,10 @@ export function OfflineBanner({ onRetry }: { onRetry?: () => void }) {
         ) : undefined
       }
     >
-      先运行 <code className="ldst-num">ldst run</code> 启动本机只读 API（默认
-      127.0.0.1:5950）。本机草稿仍可编辑，恢复自 IndexedDB 的内容不会丢。
+      <p className="max-w-measure">
+        先运行 <code className="ldst-num">ldst run</code> 启动本机只读 API（默认
+        127.0.0.1:5950）。本机草稿仍可编辑，恢复自 IndexedDB 的内容不会丢。
+      </p>
     </Banner>
   )
 }

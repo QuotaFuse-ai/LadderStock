@@ -33,7 +33,7 @@ import { setTheme, useThemeChoice } from '../lib/prefs'
 import type { ThemeChoice } from '../lib/theme'
 
 /**
- * 应用外壳（DESIGN-SPEC §3.1 / §4.1）。
+ * 应用外壳（UI-SPEC §2「全局外壳」/ §7.3 结构尺寸）。
  *
  * 一级导航 9 组 + 底部固定的「设置」：
  * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
@@ -47,8 +47,9 @@ import type { ThemeChoice } from '../lib/theme'
  *   「竞价与盘中」由 QUOT-302 补上，前置是 QUOT-286（6 时点快照落盘）+ QUOT-301（读接口）。
  * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
  *
- * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进）。
- * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）。
+ * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进 16px）。
+ * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）；
+ *   展平后 19 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
  */
 
@@ -199,6 +200,12 @@ function pageActive(page: NavPage, location: Location): boolean {
   return current === page.tab
 }
 
+/**
+ * 图标栏（1024–1279）下的组间分隔：展平后 19 行图标同形同距，只靠这条 1px 线保留分组可读性。
+ * `ul` 本身已有 `gap-1`，所以这里只加线、不加内距，避免把溢出推得更长。
+ */
+const RAIL_GROUP = 'rail:border-t rail:border-border rail:first:border-t-0'
+
 function navClass(isActive: boolean, secondary = false): string {
   return cn(
     'group flex h-row items-center gap-2 rounded px-2 text-body transition-colors duration-fast rail:justify-center rail:px-0',
@@ -246,7 +253,7 @@ export default function Layout() {
           </div>
         </div>
 
-        <nav aria-label="主导航" className="min-h-0 flex-1 overflow-y-auto p-2">
+        <nav aria-label="主导航" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           <ul className="flex flex-col gap-1">
             {NAV_SECTIONS.map((section) => {
               const isGroup = section.pages.length > 1
@@ -256,7 +263,7 @@ export default function Layout() {
               if (!isGroup) {
                 const [page] = section.pages
                 return (
-                  <li key={section.key}>
+                  <li key={section.key} className={RAIL_GROUP}>
                     <NavLink
                       to={page.to}
                       end={page.to === '/'}
@@ -279,7 +286,7 @@ export default function Layout() {
               }
 
               return (
-                <li key={section.key}>
+                <li key={section.key} className={RAIL_GROUP}>
                   <button
                     type="button"
                     aria-expanded={isOpen}
@@ -306,11 +313,13 @@ export default function Layout() {
                     />
                   </button>
 
-                  {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标 */}
+                  {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标。
+                      完整侧栏下二级缩进 16px：导引线落在一级图标正下方（`ml-2`），线与文字
+                      仍留 8px 呼吸（`pl-2`）。原来总缩进只有 8px，分组标题与条目几乎同列。 */}
                   <ul
                     id={`nav-group-${section.key}`}
                     className={cn(
-                      'mt-1 flex flex-col gap-1 border-l border-border pl-2 rail:mt-0 rail:border-l-0 rail:pl-0',
+                      'mt-1 ml-2 flex flex-col gap-1 border-l border-border pl-2 rail:ml-0 rail:mt-0 rail:border-l-0 rail:pl-0',
                       !isOpen && 'hidden rail:flex',
                     )}
                   >
