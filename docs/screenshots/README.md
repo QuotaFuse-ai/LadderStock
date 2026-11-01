@@ -22,6 +22,35 @@ cd frontend && node scripts/visual-shot.mjs             # 或 npm run shots
 改完视觉后拍 after：`node scripts/visual-shot.mjs --suffix after`。
 只拍部分屏幕：`--routes home,pool --themes dark`。其余开关见脚本头注释。
 
+## 演示态 / 强制态取图口径（QUOT-319）
+
+脚本支持 `--query <str>`，把查询串拼到路由后面，用于拍 `?demo=1` 演示源与 `?state=` 强制态：
+
+```bash
+# 10 张能进演示态的屏 × 暗/亮 = 20 张 → <route>-after-demo-<dark|light>.png
+node scripts/visual-shot.mjs --query demo=1 --suffix after-demo \
+  --routes limit-up,industry,industry-name,signals,news,calendar,pool,positions,research-code,research-code-report
+
+# 缺失态（B 族）：?state=offline 会让 header 走「取不到数」的分支
+node scripts/visual-shot.mjs --query state=offline --suffix after-missing \
+  --routes signals,industry,positions,settings,weekly,pool
+
+# 两个参数可以叠：--query 'demo=1&state=offline'
+```
+
+- `--routes` 的取值以脚本内 `ROUTES` 的 `slug` 为准，radar 四屏挂在 `/news` `/calendar` `/pool` `/positions`，**不是 `/radar/...`**。
+- 演示态图**必须带可区分的后缀**（约定 `after-demo`），否则会覆盖正常态的 before/after 基线。
+  不带 `--suffix` 时脚本会自动把查询串的键名并进后缀（`--query demo=1` → `<route>-before-demo-<theme>.png`），基线不会被演示态图冲掉。
+- `?demo=1` 是**唯一**的演示源开关（`screens/*/demo.ts`），纯前端渲染，不需要 `ldst run`；
+  `?state=` 走 `lib/pageState.ts` 的强制态，同样不需要后端。所以这两组在 5173 上就能拍。
+- 演示态是否合格，判定标准只有一条：**每张图页头都要有同一枚「演示数据」水印徽标**（UI-SPEC §8 / DEC-028）。
+  各屏自写的行内「· 演示数据」文本不算（资讯 / 深挖 / 报告三屏此前各写一套）。
+- 拍不到的态：需要交互或真实数据才能出现的，脚本无点击能力，只能人工构造后补图——
+  候选池抽屉的权重列（`radar/PoolScreen.tsx:156`，要先点开行抽屉）、
+  周度题材条形图的缺失槽位（`WeeklyScreen.tsx:543`，要有 `streak_days` 为 null 的真实周数据）、
+  复盘页 `source_status` 的 partial / degraded 色序对照（`ReviewScreen.tsx:198`，`?state=` 强制的是页面态不是数据完整度，
+  要后端返回 `data_source_status: partial` / `degraded` 两份 envelope）。这三处当前以 vitest 断言为准，图待补。
+
 依赖：Node 22+（内置 fetch / 全局 WebSocket）+ 本机 Chrome 或 Edge headless，不引第三方包。
 
 ## before 基线的取数环境（2026-11-01）
