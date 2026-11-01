@@ -107,6 +107,41 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     expect(moved).not.toContain('/calendar')
   })
 
+  it('聚合是移动不是砍功能：DEC-044 之前的 14 条已交付入口一条都不能少', () => {
+    const delivered = [
+      '/',
+      '/market',
+      '/news',
+      '/watch',
+      '/intraday',
+      '/review',
+      '/weekly',
+      '/pool',
+      '/journal',
+      '/positions',
+      '/calendar',
+      '/validate',
+      '/limit-up',
+      '/industry',
+      '/signals',
+      '/research',
+      '/settings',
+    ]
+    expect(new Set(NAV_PATHS.filter((path) => delivered.includes(path)))).toEqual(new Set(delivered))
+    for (const to of NAV_TO_KEYS) expect(ROUTE_PATHS).toContain(pathOf(to))
+  })
+
+  it('提醒 / 自选没有已交付页面：导航里不许出现点进去是空页的占位入口（DEC-044 §2.4）', () => {
+    expect(NAV_PATHS.filter((path) => /inbox|remind|watchlist/.test(path))).toEqual([])
+    const labels = NAV_SECTIONS.flatMap((section) => [section.label, ...section.pages.map((page) => page.label)])
+    expect(labels.filter((label) => /提醒|自选/.test(label))).toEqual([])
+  })
+
+  it('单页组不挂二级（`pages.length > 1` 才展开）：持仓移出后日志只剩交易日志', () => {
+    const single = NAV_SECTIONS.filter((section) => section.pages.length === 1).map((section) => section.key)
+    expect(single).toEqual(['home', 'journal', 'deep-dive'])
+  })
+
   it('设置沉底、不参与分组展开，其余页面都在分组里', () => {
     expect(NAV_SECTIONS.flatMap((section) => section.pages.map((page) => page.to))).not.toContain('/settings')
     expect(PINNED_NAV.map((page) => page.to)).toEqual(['/settings'])
