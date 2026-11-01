@@ -104,6 +104,8 @@ export default {
         /* QUOT-310：状态条与表格展开列走 token，不再用 w-[3px] 这类任意值 */
         'status-bar': cssVar(tokens.layout.statusBar.cssVar),
         'expander-col': cssVar(tokens.layout.expanderCol.cssVar),
+        /* 结构尺寸（非视觉令牌）：条件表横向最小宽，低于此值列被压扁无法编辑 */
+        'table-min': '960px',
       },
       inset: {
         'expander-col': cssVar(tokens.layout.expanderCol.cssVar),
@@ -127,6 +129,8 @@ export default {
         row: cssVar(tokens.layout.row.cssVar),
         empty: '200px',
         textarea: cssVar(tokens.layout.textareaMin.cssVar),
+        /* 结构尺寸（非视觉令牌）：月历格最小高，保证一天两枚胶囊可见 */
+        'calendar-cell': '76px',
       },
       minWidth: {
         icon: cssVar(tokens.layout.iconButton.cssVar),
