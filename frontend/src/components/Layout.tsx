@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
   BarChart3,
+  Building2,
   CalendarDays,
   CalendarRange,
   CandlestickChart,
@@ -12,8 +13,10 @@ import {
   Home,
   Layers,
   ListChecks,
+  Microscope,
   Newspaper,
   NotebookPen,
+  Radio,
   Radar,
   ScrollText,
   Settings,
@@ -31,8 +34,9 @@ import type { ThemeChoice } from '../lib/theme'
 /**
  * 应用外壳（DESIGN-SPEC §3.1 / §4.1）。
  *
- * 一级导航 6 组 + 底部固定的「设置」：
- * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 验证 ─┬─ 设置（弱化、沉底）。
+ * 一级导航 8 组 + 底部固定的「设置」：
+ * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
+ * 前 6 组顺序是既有的，QUOT-300 只往后追加，不打乱 `docs/UI-SPEC.md` 的四屏主顺序。
  *
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
  * - 市场 5 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达 / 事件日历）都已实现 → 展开为二级；
@@ -46,7 +50,7 @@ import type { ThemeChoice } from '../lib/theme'
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
  */
 
-interface NavPage {
+export interface NavPage {
   to: string
   label: string
   icon: LucideIcon
@@ -54,14 +58,19 @@ interface NavPage {
   tab?: string
 }
 
-interface NavSection {
+export interface NavSection {
   key: string
   label: string
   icon: LucideIcon
   pages: NavPage[]
 }
 
-const NAV_SECTIONS: NavSection[] = [
+/**
+ * 导出给导航一致性测试（`tests/nav-routes.test.ts`，QUOT-300）：
+ * 每条 `to` 必须在 `App.tsx` 的 `APP_ROUTES` 里命中，反之每条已交付路由也要有入口。
+ * 「做了页面忘接导航」已经发生过一次（产业研究 / 个股深挖四页），断言比人肉检查可靠。
+ */
+export const NAV_SECTIONS: NavSection[] = [
   {
     key: 'home',
     label: '首页',
@@ -118,7 +127,27 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/limit-up', label: '涨停样本', icon: Flame },
     ],
   },
+  // QUOT-300：R9 产业研究两页已交付却进不去，补一级入口（新组排在验证之后、设置之前）
+  {
+    key: 'industry',
+    label: '产业研究',
+    icon: Building2,
+    pages: [
+      { to: '/industry', label: '产业研究', icon: Building2 },
+      { to: '/signals', label: '产业信号', icon: Radio },
+    ],
+  },
+  {
+    key: 'deep-dive',
+    label: '个股深挖',
+    icon: Microscope,
+    // 落地页收 6 位代码后才跳 `/research/:code`：侧栏本身没有代码可带
+    pages: [{ to: '/research', label: '个股深挖', icon: Microscope }],
+  },
 ]
+
+/** 侧栏底部固定项：不进 `NAV_SECTIONS`（不参与展开分组），但仍是一等入口，一致性测试要覆盖。 */
+export const PINNED_NAV: NavPage[] = [{ to: '/settings', label: '设置', icon: Settings }]
 
 const THEME_OPTIONS: ReadonlyArray<{ value: ThemeChoice; label: string }> = [
   { value: 'system', label: '系统' },
@@ -313,10 +342,12 @@ export default function Layout() {
               className="w-full justify-between"
             />
           </div>
-          <NavLink to="/settings" title="设置" className={({ isActive }) => navClass(isActive, true)}>
-            <Settings className="size-4 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
-            <span className="truncate rail:hidden">设置</span>
-          </NavLink>
+          {PINNED_NAV.map((page) => (
+            <NavLink key={page.to} to={page.to} title={page.label} className={({ isActive }) => navClass(isActive, true)}>
+              <page.icon className="size-4 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
+              <span className="truncate rail:hidden">{page.label}</span>
+            </NavLink>
+          ))}
           <p className="px-2 text-caption leading-body text-text-muted rail:hidden">
             仅监听本机回环 · 草稿只存本机 IndexedDB
           </p>
