@@ -17,25 +17,28 @@ import {
 import { buildCitationIndex } from '../../lib/citation'
 import { MISSING, formatTime } from '../../lib/format'
 import { cn } from '../../lib/cn'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
   Badge,
   Banner,
   Button,
   Card,
   CardBody,
-  CardFooter,
   CardHeader,
+  DataTable,
   EmptyState,
   ErrorBlock,
   MetricCard,
   SectionCard,
+  Skeleton,
+  SkeletonText,
   Sparkline,
+  type Column,
 } from '../../components/ui'
 import { MarkdownView } from '../../components/research/MarkdownView'
 import { ProvenanceDrawer } from '../../components/research/ProvenanceDrawer'
 import { StageRail } from '../../components/research/StageRail'
-import { LinkButton, PercentileBar } from '../../components/research/bits'
+import { LinkButton, NUMBER_CHIP, PercentileBar } from '../../components/research/bits'
 import { ValuationBasisPanel } from '../../components/valuation/ValuationBasisPanel'
 import { createDemoValuationLoader } from './demo'
 import { asSourceBadgeStatus, SourceStatusBadge } from '../industry/sourceBadges'
@@ -113,7 +116,9 @@ function MetricRow({
   metrics: Array<{ key: string; label: string }>
 }) {
   return (
-    <div className="grid grid-cols-2 gap-3 rail:grid-cols-3 desk:grid-cols-5">
+    // 三列而不是五列：本卡在 `desk:` 下占 7/12（约 690px），五列会把每卡压到 130px，
+    // 「1,203.6」这种七位数字连 `text-page` 都放不下，数值会顶穿卡片右边。
+    <div className="grid grid-cols-2 gap-3 rail:grid-cols-3 desk:grid-cols-3">
       {metrics.map(({ key, label }) => {
         const present = facts[key] !== null && facts[key] !== undefined
         const parts = present
@@ -226,29 +231,57 @@ function SourceFoot({
   )
 }
 
-function SeriesRow({ series }: { series: SeriesFact }) {
+function SeriesCell({ series }: { series: SeriesFact }) {
   const first = series.values[0]
   const last = series.values[series.values.length - 1]
   const tone = last > first ? 'up' : last < first ? 'down' : 'flat'
   return (
-    // 原来 `flex-wrap justify-between`：折行时标签、数字、走势线三者各自换行，行间对不齐。
-    // 改成「标签吃剩余 + 数字定宽右对齐 + 走势线定宽」，行间天然成列。
-    <li className="flex items-center gap-3">
-      <span className="min-w-0 flex-1 truncate text-body text-text" title={series.label}>
-        {series.label}
-      </span>
-      <span className="ldst-num w-28 shrink-0 text-right text-caption text-text-secondary">
-        {first} → {last} · {series.values.length} 期
-      </span>
-      <Sparkline
-        className="shrink-0"
-        values={series.values}
-        tone={tone}
-        ariaLabel={`${series.label}，${series.values.length} 个数据点，从 ${first} 到 ${last}`}
-      />
-    </li>
+    <Sparkline
+      values={series.values}
+      tone={tone}
+      ariaLabel={`${series.label}，${series.values.length} 个数据点，从 ${first} 到 ${last}`}
+    />
   )
 }
+
+/**
+ * 历史序列走 C-09 `DataTable`（原来是手写 `ul`/`li` 三列：标签 + 数字 + 走势线，
+ * 折行时三者各自换行、行间不成列）。数字列 `numeric` 右对齐 + `.ldst-num`，
+ * 走势列定宽不随标签长度抖；数值一律用 `facts` 里的原值，页面不重算。
+ */
+const SERIES_COLUMNS: Array<Column<SeriesFact>> = [
+  {
+    key: 'label',
+    header: '指标',
+    truncate: true,
+    sort: (a, b) => a.label.localeCompare(b.label, 'zh-CN'),
+    render: (row) => row.label,
+  },
+  {
+    key: 'range',
+    header: '首期 → 末期',
+    numeric: true,
+    width: '160px',
+    // 自动布局下列宽只是提示，两个数字加箭头会被挤成两行；数字列折行比横向滚动更难读
+    className: 'whitespace-nowrap',
+    render: (row) => `${row.values[0]} → ${row.values[row.values.length - 1]}`,
+  },
+  {
+    key: 'points',
+    header: '期数',
+    numeric: true,
+    width: '56px',
+    render: (row) => row.values.length,
+  },
+  {
+    key: 'trend',
+    header: '走势',
+    align: 'right',
+    width: '112px',
+    render: (row) => <SeriesCell series={row} />,
+    cellTitle: (row) => `${row.label} 走势`,
+  },
+]
 
 interface SectionProps {
   stage: ResearchStage
@@ -322,11 +355,14 @@ function FinancialCard({ stage, artifact, view, onCitation }: SectionProps) {
                 description="本段只提供当期数字，facts 中没有 `*_series`；页面不会自行拼一条趋势线。"
               />
             ) : (
-              <ul className="flex flex-col gap-3">
-                {series.map((item) => (
-                  <SeriesRow key={item.key} series={item} />
-                ))}
-              </ul>
+              <DataTable<SeriesFact>
+                columns={SERIES_COLUMNS}
+                rows={series}
+                rowKey={(row) => row.key}
+                caption="首期 → 末期与期数取自 facts 的原值，页面不重算、不补点"
+                density="compact"
+                stickyFirstColumn={false}
+              />
             )}
           </div>
           <Narrative document={document} onCitation={(n) => onCitation(stage.name, n)} />
@@ -475,6 +511,38 @@ function PercentileCard({ stage, artifact }: { stage: ResearchStage; artifact: S
   )
 }
 
+/**
+ * 整屏 loading 骨架：与 settle 后的「三行 7/5 双卡」同形。
+ *
+ * 原来这里是 `ScreenSkeleton metrics={5} rows={6}`——五张指标卡加一张表格，
+ * 而这屏正文是六张内容卡，加载完成时整页重排（QUOT-309 审计 P2「骨架与正文不同源」）。
+ * 只借用 `components/ui` 的骨架件，不新造样式。
+ */
+function DetailSkeleton() {
+  return (
+    <div className="flex flex-col gap-4" aria-busy="true" aria-live="polite">
+      <span className="sr-only">正在加载…</span>
+      {Array.from({ length: 3 }).map((_, row) => (
+        <div key={row} className="grid gap-4 desk:grid-cols-12">
+          <Card className="min-w-0 desk:col-span-7">
+            <CardHeader title="区块标题" subtitle="状态 · 来源" />
+            <CardBody className="flex flex-col gap-4">
+              <Skeleton className="h-5 w-1/4" />
+              <SkeletonText lines={row === 1 ? 5 : 3} />
+            </CardBody>
+          </Card>
+          <Card className="min-w-0 desk:col-span-5">
+            <CardHeader title="区块标题" subtitle="状态 · 来源" />
+            <CardBody>
+              <SkeletonText lines={4} />
+            </CardBody>
+          </Card>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function ResearchDetailScreen() {
   const view = useResearchView()
   const navigate = useNavigate()
@@ -519,6 +587,9 @@ export default function ResearchDetailScreen() {
   const valuationStage = status ? stageOf(status, 'valuation') : null
   const riskStage = status ? stageOf(status, 'risk') : null
   const problems = stages.filter((stage) => stage.status === 'failed' || stage.status === 'pending')
+  // 计数与左栏 StageRail 读同一份 `stages`，避免「副标题 0 段待跑 / rail 六段待跑」自相矛盾
+  const failedCount = stages.filter((stage) => stage.status === 'failed').length
+  const pendingCount = stages.filter((stage) => stage.status === 'pending').length
 
   const summary =
     view.state === 'offline'
@@ -551,7 +622,7 @@ export default function ResearchDetailScreen() {
           )}
         </div>
       }
-      meta={<span className="text-caption text-text-secondary">{summary}</span>}
+      meta={<span className="ldst-num text-caption text-text-secondary">{summary}</span>}
       actions={
         <>
           <Button
@@ -576,7 +647,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ScreenSkeleton metrics={5} rows={6} />
+        <DetailSkeleton />
       </div>
     )
   }
@@ -599,7 +670,10 @@ export default function ResearchDetailScreen() {
       <div className="flex flex-col gap-5">
         {header}
         <ErrorBlock {...info} onRetry={view.code ? view.reload : undefined} />
-        <Link to="/" className="text-caption text-info underline underline-offset-2">
+        <Link
+          to="/"
+          className="w-fit text-caption text-info underline underline-offset-2 transition-colors duration-fast ease-ldst hover:text-accent-hover"
+        >
           回到首页
         </Link>
       </div>
@@ -669,19 +743,19 @@ export default function ResearchDetailScreen() {
       )}
 
       <div className="grid gap-4 desk:grid-cols-12 desk:items-start">
-        <div className="desk:col-span-7">
+        <div className="min-w-0 desk:col-span-7">
           {companyStage && <CompanyCard {...sectionProps(companyStage)} />}
         </div>
-        <div className="desk:col-span-5">
+        <div className="min-w-0 desk:col-span-5">
           {forecastStage && <ForecastCard {...sectionProps(forecastStage)} />}
         </div>
       </div>
 
       <div className="grid gap-4 desk:grid-cols-12 desk:items-start">
-        <div className="desk:col-span-7">
+        <div className="min-w-0 desk:col-span-7">
           {financialStage && <FinancialCard {...sectionProps(financialStage)} />}
         </div>
-        <div className="desk:col-span-5">
+        <div className="min-w-0 desk:col-span-5">
           {riskStage && <RiskCard {...sectionProps(riskStage)} />}
         </div>
       </div>
@@ -699,7 +773,11 @@ export default function ResearchDetailScreen() {
           {valuationStage && <PercentileCard stage={valuationStage} artifact={artifacts.get('valuation') ?? null} />}
           <SectionCard
             title="六段状态"
-            subtitle={status?.complete ? '六段齐备' : `失败 ${status?.failed.length ?? 0} · 待跑 ${status?.pending.length ?? 0}`}
+            subtitle={
+              status?.complete
+                ? '六段齐备'
+                : `失败 ${failedCount} · 待跑 ${pendingCount} · 共 ${stages.length} 段`
+            }
             bodyClassName="p-2"
           >
             <StageRail

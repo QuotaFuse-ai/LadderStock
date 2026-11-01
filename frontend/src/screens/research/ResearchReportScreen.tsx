@@ -97,7 +97,7 @@ function RunProgress({
 function ReportSkeleton() {
   return (
     <div className="flex flex-col gap-4 desk:flex-row desk:items-start" aria-busy="true" aria-live="polite">
-      <span className="sr-only">正在读取研究产物…</span>
+      <span className="sr-only">正在加载…</span>
       <Card className="min-w-0 desk:w-52 desk:shrink-0">
         <CardHeader title="研究阶段" subtitle="六段 · 点击切换" />
         <CardBody className="flex flex-col gap-3">
