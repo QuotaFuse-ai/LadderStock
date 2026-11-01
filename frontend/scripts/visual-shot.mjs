@@ -6,7 +6,7 @@
  *   1. 起前端（推荐带后端代理的取证配置，`/api` 指向本机 `ldst run` 的 5950）：
  *        cd frontend && npm install && npm run dev -- --config vite.shot.config.ts   # http://127.0.0.1:5199
  *      没有 `ldst run` 时退回 `npm run dev`（http://127.0.0.1:5173），各屏会拍到「未接入 / 降级」态。
- *   2. 拍基线：`node scripts/visual-shot.mjs`            → 18 屏 × 暗/亮 = 36 张
+ *   2. 拍基线：`node scripts/visual-shot.mjs`            → 19 屏 × 暗/亮 = 38 张
  *   3. 改完之后拍 after：`node scripts/visual-shot.mjs --suffix after`
  *
  * 输出：`docs/screenshots/<route>-<before|after>-<dark|light>.png`，视口 1440×900，
@@ -23,6 +23,11 @@
  *                      配合 `--suffix after-demo` 这类后缀拍演示态与缺失态
  *   --settle <ms>      load 之后额外等待（默认 1500，留给 React 渲染 + 图表重绘）
  *   --chrome <path>    浏览器可执行文件（默认自动找 Chrome/Edge，或读环境变量 LDST_CHROME）
+ *   --width <px>       视口宽（默认 1440；验收 1280 零横向溢出时传 1280）
+ *   --height <px>      视口高（默认 900）
+ *
+ * 每张图拍完都会量 `documentElement.scrollWidth` 与 `innerWidth`，脚本结束统一报告横向溢出清单
+ * （QUOT-304 / QUOT-317 的 1280px 证据就是这条输出的原文）。
  *
  * 主题切换走既有机制：`localStorage['ldst.theme']`（见 `src/lib/theme.ts`），
  * 通过 CDP 的 `Page.addScriptToEvaluateOnNewDocument` 在页面脚本之前写入，不碰任何屏幕代码。
@@ -39,11 +44,13 @@ const VIEWPORT = { width: 1440, height: 900 }
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..', '..')
 
-/** 18 屏，以 `src/App.tsx` 路由表为准（radar 四屏实际挂在 `/news` `/calendar` `/pool` `/positions`）。 */
+/** 19 屏，以 `src/App.tsx` 路由表为准（radar 四屏实际挂在 `/news` `/calendar` `/pool` `/positions`）。 */
 const ROUTES = [
   { slug: 'home', path: '/' },
   { slug: 'market', path: '/market' },
   { slug: 'watch', path: '/watch' },
+  // QUOT-302 第 19 屏：竞价与盘中（此前漏在巡检脚本之外）
+  { slug: 'intraday', path: '/intraday' },
   { slug: 'review', path: '/review' },
   { slug: 'weekly', path: '/weekly' },
   { slug: 'journal', path: '/journal' },
@@ -72,6 +79,8 @@ function parseArgs(argv) {
     settle: 1500,
     chrome: process.env.LDST_CHROME ?? null,
     port: 9333,
+    width: VIEWPORT.width,
+    height: VIEWPORT.height,
   }
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]
@@ -85,6 +94,8 @@ function parseArgs(argv) {
     else if (flag === '--settle') options.settle = Number(next())
     else if (flag === '--chrome') options.chrome = next()
     else if (flag === '--port') options.port = Number(next())
+    else if (flag === '--width') options.width = Number(next())
+    else if (flag === '--height') options.height = Number(next())
     else throw new Error(`未知参数：${flag}（--help 见文件头注释）`)
   }
   for (const theme of options.themes) {
@@ -220,7 +231,7 @@ async function shoot(cdp, base, route, theme, options) {
     await cdp.send('Page.enable', {}, sessionId)
     await cdp.send(
       'Emulation.setDeviceMetricsOverride',
-      { width: VIEWPORT.width, height: VIEWPORT.height, deviceScaleFactor: 1, mobile: false },
+      { width: options.width, height: options.height, deviceScaleFactor: 1, mobile: false },
       sessionId,
     )
     await cdp.send(
@@ -238,10 +249,19 @@ async function shoot(cdp, base, route, theme, options) {
     await cdp.send('Page.navigate', { url: `${base}${route.path}${query}` }, sessionId)
     await loaded
     await sleep(options.settle)
+    const measured = await cdp.send(
+      'Runtime.evaluate',
+      {
+        expression: `JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })`,
+        returnByValue: true,
+      },
+      sessionId,
+    )
+    const { scrollWidth, innerWidth } = JSON.parse(measured.result.value)
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId)
     const file = join(options.out, `${route.slug}-${options.suffix}-${theme}.png`)
     writeFileSync(file, Buffer.from(data, 'base64'))
-    return file
+    return { file, scrollWidth, innerWidth, overflow: scrollWidth > innerWidth }
   } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
   }
@@ -295,6 +315,7 @@ async function main() {
   const started = Date.now()
   let failures = []
   let captured = 0
+  const overflows = []
   try {
     const version = await waitForJson(`http://127.0.0.1:${options.port}/json/version`, 20_000)
     const cdp = await Cdp.connect(version.webSocketDebuggerUrl)
@@ -303,9 +324,10 @@ async function main() {
         for (const theme of options.themes) {
           const label = `${route.slug} · ${theme}`
           try {
-            await shoot(cdp, options.base, route, theme, options)
+            const shot = await shoot(cdp, options.base, route, theme, options)
             captured += 1
-            console.log(`  ✓ ${label}`)
+            if (shot.overflow) overflows.push({ label, scrollWidth: shot.scrollWidth, innerWidth: shot.innerWidth })
+            console.log(`  ✓ ${label}${shot.overflow ? ` — 横向溢出 ${shot.scrollWidth} > ${shot.innerWidth}` : ''}`)
           } catch (error) {
             failures.push({ label, reason: error.message })
             console.log(`  ✗ ${label} — ${error.message}`)
@@ -327,6 +349,12 @@ async function main() {
     )}s`,
   )
   for (const failure of failures) console.log(`  失败：${failure.label} — ${failure.reason}`)
+  if (overflows.length > 0) {
+    console.log(`  横向溢出 ${overflows.length} 项（视口 ${options.width}px）：`)
+    for (const item of overflows) console.log(`    ${item.label} — ${item.scrollWidth} > ${item.innerWidth}`)
+  } else {
+    console.log(`  横向溢出 0 项（视口 ${options.width}px）`)
+  }
   if (failures.length > 0) process.exitCode = 1
 }
 

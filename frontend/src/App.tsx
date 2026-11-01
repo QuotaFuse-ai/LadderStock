@@ -42,8 +42,8 @@ function NotFound() {
       <p className="text-caption text-text-muted">404</p>
       <h1 className="text-page font-semibold text-text">页面不存在</h1>
       <p className="text-body text-text-secondary">
-        地址可能已经变更。八个入口在左侧导航：首页 / 市场 / 盯盘 / 复盘 / 日志 / 验证 / 产业研究 /
-        个股深挖（设置固定在底部）。
+        地址可能已经变更。九个入口在左侧导航：首页 / 市场 / 盯盘 / 复盘 / 日志 / 我的股票 / 验证 /
+        产业研究 / 个股深挖（设置固定在底部）。
       </p>
       <Link
         to="/"

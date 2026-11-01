@@ -35,13 +35,14 @@ import type { ThemeChoice } from '../lib/theme'
 /**
  * 应用外壳（DESIGN-SPEC §3.1 / §4.1）。
  *
- * 一级导航 8 组 + 底部固定的「设置」：
- * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
- * 前 6 组顺序是既有的，QUOT-300 只往后追加，不打乱 `docs/UI-SPEC.md` 的四屏主顺序。
+ * 一级导航 9 组 + 底部固定的「设置」：
+ * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
+ * 「我的股票」由 QUOT-304 从「市场 / 日志」抽出（DEC-044）：持仓与事件日历同属"我自己相关"，
+ * 聚成一组但不改路由、不新建页面；自选与提醒没有已交付页面，登记为范围外。
  *
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
- * - 市场 5 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达 / 事件日历）都已实现 → 展开为二级；
- * - 复盘 2 段（情绪复盘 / 候选池）、日志 2 段（交易日志 / 我的持仓）同样展开；
+ * - 市场 4 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达）已实现 → 展开为二级；
+ * - 复盘 3 段（情绪复盘 / 周度复盘 / 候选池）、我的股票 2 段（持仓 / 事件日历）同样展开；
  * - 盯盘 2 段（盘中信号 / 竞价与盘中）都已实现 → 展开为二级；
  *   「竞价与盘中」由 QUOT-302 补上，前置是 QUOT-286（6 时点快照落盘）+ QUOT-301（读接口）。
  * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
@@ -87,7 +88,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/market?tab=ladder', label: '连板梯队', icon: BarChart3, tab: 'ladder' },
       { to: '/market?tab=theme', label: '题材轮动', icon: Layers, tab: 'theme' },
       { to: '/news', label: '资讯雷达', icon: Newspaper },
-      { to: '/calendar', label: '事件日历', icon: CalendarDays },
     ],
   },
   {
@@ -116,10 +116,18 @@ export const NAV_SECTIONS: NavSection[] = [
     key: 'journal',
     label: '日志',
     icon: ScrollText,
-    // 交易日志与我的持仓同属本机私有数据
+    // 交易日志留在「日志」；我的持仓按 QUOT-304 移入「我的股票」
+    pages: [{ to: '/journal', label: '交易日志', icon: ScrollText }],
+  },
+  // QUOT-304 / DEC-044：把「我自己相关」的持仓与事件日历聚成一组。
+  // 自选、提醒没有已交付页面，登记为范围外，不建占位入口。
+  {
+    key: 'my-stocks',
+    label: '我的股票',
+    icon: Wallet,
     pages: [
-      { to: '/journal', label: '交易日志', icon: ScrollText },
       { to: '/positions', label: '我的持仓', icon: Wallet },
+      { to: '/calendar', label: '事件日历', icon: CalendarDays },
     ],
   },
   {

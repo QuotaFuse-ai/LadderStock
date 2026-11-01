@@ -14,6 +14,7 @@
 |---|---|---|
 | v1.0 | 2026-10-28 | 首版：四屏 IA、状态恢复、降级与溯源、AI 四类错误、视觉 token、组件清单 |
 | v1.1 | 2026-11-01 | 覆盖 4 屏 → **18 屏**（QUOT-308，决策 DEC-040）。§0 逐屏清单 + §2 外壳/断点/标题层级按 `components/Layout.tsx:64-119`、`tailwind.config.ts:40-44` 校正（删除从未实现的「<1024 顶部横向导航」「<720 表格转卡片」，最低支持视口定为 1024）；§3.5–§3.18 补 14 屏信息架构；§5 增加溯源徽标唯一实现、演示态水印、`freshness` 缺省态；§6 组件清单按实际文件重写（v1.0 登记的 `kit/Badge.tsx` 等 11 个文件不存在）；§7 token 表按 `tokens.json` v2 全量校正（圆角收敛 8/4/999，字号 12/14/16/20/28/36，补 accent-solid / chart / skeleton / scrim 族）；§7.5 按 DEC-040 裁定 120ms / 180ms 分工；§8 补缺失值、时间格式、计数与后端 key 直显规则；§10 扩到 18 屏；§11 由「四屏清单」改为「逐屏清单」；§12.4 规范变更与理由，§12.5 整改清单 R-01…R-26。 ；同版补「盯盘·竞价与盘中」（`/intraday`，QUOT-301 / QUOT-302 / SPEC-INTRADAY-READ）：§0 与 §10 记为第 19 屏。 |
+| v1.2 | 2026-11-02 | 导航信息架构更新（QUOT-304，决策 DEC-044）：新增一级组「我的股票」（我的持仓 `/positions` + 事件日历 `/calendar`），从「日志」「市场」移出，顺序为 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖；自选、提醒无已交付页面，登记为范围外，不建占位入口。§2「导航顺序」与导航可达性段落同步改写；路由零变更。 |
 
 ## 0. 范围与非目标
 
@@ -100,10 +101,10 @@
 | 键盘 | 首元素「跳到主内容」（`Layout.tsx:191`）；Tab 顺序与视觉顺序一致；`main` 可聚焦（`tabIndex=-1`） | `Layout.tsx:191,328` |
 | 焦点可见 | `:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible` 走 `--ldst-focus-ring` | `styles/index.css:30` |
 | 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx:327`），页面级 `Banner` 在 `PageHeader` 之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
-| 导航顺序 | **登记现状，不改结构**（QUOT-306 边界）：首页 → 市场（3 段 + 资讯雷达 + 事件日历）→ 盯盘 → 复盘（情绪 / 周度 / 候选池）→ 日志（交易日志 / 我的持仓）→ 验证（验证 / 涨停样本）；主题分段控件与设置固定在侧栏底部 | `Layout.tsx:64-119,306-320` |
+| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（情绪 / 周度 / 候选池）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件与设置固定在侧栏底部（QUOT-304 / DEC-044） | `Layout.tsx` `NAV_SECTIONS` |
 | 侧栏本机说明 | 「仅监听本机回环 · 草稿只存本机 IndexedDB」常驻 | `Layout.tsx:320-322` |
 
-**18 屏导航可达性**：**5 屏完全没有侧栏入口**（`/industry` `/industry/:name` `/signals` `/research/:code` `/research/:code/report`，`Layout.tsx:64-119` 无对应项，只能改地址栏进入）。§3 的「入口」列必须写明用户实际怎么走到那里；写不出路径的屏按 R-05 整改（补跨链，不动 `NAV_SECTIONS` 结构）。
+**19 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
 
 ## 3. 逐屏信息架构
 
@@ -1006,6 +1007,6 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 
 - QUOT-307（视觉巡检最小版 + 18 屏 before 截图）：§11 的截图证据依赖它，分支 `agent/agent/c2e06ff2f397`。
 - QUOT-309（逐屏粗糙点清单，315 条）：与本文件**互补**——它按"屏 × 维度"枚举证据，本文件按"条款"给规范。§12.5 的 R 编号是本文件的整改面，不与 QUOT-309 的 M 编号合并。
-- QUOT-300 / QUOT-304（导航补入口与分组）：正在改 `Layout.tsx`，本规范 §2 只登记现状，**不动** `NAV_SECTIONS` 结构（QUOT-306 边界 5）。
+- QUOT-300 / QUOT-304（导航补入口与分组）：QUOT-304 已按 DEC-044 完成「我的股票」分组，本规范 §2 同步到新结构；后续再动 `NAV_SECTIONS` 必须先改决策与本节。
 - `docs/specs/SPEC-RESEARCH-PAGES.md` / `SPEC-RESEARCH-PROVENANCE.md`：§3.16–§3.17 与其口径一致，冲突时以这两个 spec 的**后端契约**为准、以本文件的**视觉 token** 为准。
 - 交付位置说明：本文件与 `docs/decisions/DEC-040-*.md` 都在受版本管理的目录内；`docs/tasks/` 被 `.gitignore:48` 排除（DEC-0026），故本次产出不放 `docs/tasks/`。
