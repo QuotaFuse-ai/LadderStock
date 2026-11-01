@@ -11,12 +11,13 @@ import {
   DataTable,
   EmptyState,
   ErrorBlock,
+  FreshnessBadge,
   Skeleton,
   SkeletonRows,
   SourceStatusBadge,
   type Column,
 } from '../../components/ui'
-import { formatBoards, formatInt, formatSealTime, localDateIso, MISSING } from '../../lib/format'
+import { formatBoards, formatInt, formatSealTime, formatTime, localDateIso, MISSING } from '../../lib/format'
 import { DEMO_LIMIT_POOL_DATE } from './demo'
 import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
 
@@ -27,7 +28,8 @@ import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
  * - 连板数默认降序，点击表头可切换；
  * - 缺失值显示 `—` + 悬浮原因，不补 0；
  * - 封板时间按 §8 把后端裸 `HHMMSS` 格式化成 `HH:mm:ss`，不换算时区、不猜；
- * - 完整度一律走同源徽标 `components/ui/SourceBadges`（§5.5），演示水印归 `PageShell`（R-18 / QUOT-320）。
+ * - 完整度一律走同源徽标 `components/ui/SourceBadges`（§5.5），演示水印归 `PageShell`（R-18 / QUOT-320）；
+ * - 新度徽标吃 envelope 外壳的 `freshness` / `data_as_of`（QUOT-331）：后端没给就是「未知」，屏侧不编。
  */
 
 function MissingCell({ reason }: { reason: string }) {
@@ -149,7 +151,9 @@ export default function LimitUpScreen() {
         payload ? (
           <span>
             <span className="ldst-num">{payload.date || date}</span> · <span className="ldst-num">{formatInt(payload.count)}</span>{' '}
-            只 · 来源 {payload.source_detail || MISSING}
+            只 · 来源 {payload.source_detail || MISSING} · 数据时间{' '}
+            <span className="ldst-num">{payload.data_as_of ?? MISSING}</span> · 取数{' '}
+            <span className="ldst-num">{formatTime(payload.fetched_at)}</span>
           </span>
         ) : (
           <span className="ldst-num">{date}</span>
@@ -158,7 +162,16 @@ export default function LimitUpScreen() {
       badge={
         <>
           <DemoStateBadge state={forced} />
-          {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
+          {payload && (
+            <>
+              <FreshnessBadge
+                freshness={payload.freshness}
+                asOf={payload.data_as_of}
+                sourceDetail={payload.source_detail || null}
+              />
+              <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />
+            </>
+          )}
         </>
       }
       actions={

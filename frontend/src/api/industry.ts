@@ -14,6 +14,7 @@
  */
 
 import { ApiError } from '../api'
+import { envelopeMetaOf, type EnvelopeFields } from './envelope'
 
 export const INDUSTRY_DIMENSIONS = [
   'prosperity',
@@ -95,7 +96,7 @@ export interface IndustrySummaryRow {
   as_of: Partial<Record<IndustryDimension, string | null>>
 }
 
-export interface IndustryListPayload {
+export interface IndustryListPayload extends EnvelopeFields {
   available: boolean
   caliber: string | null
   windows: IndustryWindows
@@ -272,7 +273,7 @@ export interface RelatedItem {
   industries: string[]
 }
 
-export interface IndustryDetailPayload {
+export interface IndustryDetailPayload extends EnvelopeFields {
   available: boolean
   meta: IndustryMeta
   membership: MembershipBlock
@@ -333,7 +334,7 @@ export interface IndustrySignal {
   evidence: SignalEvidence[]
 }
 
-export interface SignalsPayload {
+export interface SignalsPayload extends EnvelopeFields {
   available: boolean
   as_of: string | null
   rules: SignalRule[]
@@ -400,6 +401,8 @@ function asRecordOf<T>(value: unknown, map: (item: unknown) => T): Record<string
 /**
  * 兼容三种外壳：契约平铺、`{payload: {...}}`、MCP `{payload: {industry_metrics: {...}}}`。
  * 返回最内层的业务对象。
+ * 外壳顶层的 `freshness` / `source_status` / `fetched_at` 不在这里取，
+ * 由 `envelopeMetaOf()` 单独读出（QUOT-331）。
  */
 function unwrap(value: unknown, what: string, nestedKey?: string): Record<string, unknown> {
   let root = asRecord(value, what)
@@ -515,7 +518,10 @@ export function parseIndustryList(payload: unknown): IndustryListPayload {
     throw parseError('行业清单响应里没有可解析的行业行（缺 name）')
   }
   const available = root.available === true
+  const meta = envelopeMetaOf(payload)
   return {
+    // 外壳的溯源五键先铺，载荷里的同名键以载荷为准（QUOT-331）
+    ...meta,
     available,
     caliber: asString(root.caliber),
     windows: parseWindows(root.windows),
@@ -523,9 +529,9 @@ export function parseIndustryList(payload: unknown): IndustryListPayload {
     as_of: parseAsOf(root.as_of),
     industries: rowList,
     datasets: parseDatasets(root.datasets),
-    source_detail: asString(root.source_detail),
+    source_detail: asString(root.source_detail) ?? meta.source_detail,
     reason: asString(root.reason),
-    data_as_of: asString(root.data_as_of),
+    data_as_of: asString(root.data_as_of) ?? meta.data_as_of,
   }
 }
 
@@ -749,7 +755,10 @@ export function parseIndustryDetail(payload: unknown, expectedName?: string): In
   const membership = block(root.membership)
   const available = root.available === true
   const name = asString(industry.name) ?? expectedName ?? ''
+  const meta = envelopeMetaOf(payload)
   return {
+    // 外壳的溯源五键先铺，载荷里的同名键以载荷为准（QUOT-331）
+    ...meta,
     available,
     meta: parseMeta(industry, name),
     membership: {
@@ -774,7 +783,7 @@ export function parseIndustryDetail(payload: unknown, expectedName?: string): In
     ),
     data_source_status: parseStatus(root.data_source_status, available),
     reason: asString(root.reason),
-    source_detail: asString(root.source_detail),
+    source_detail: asString(root.source_detail) ?? meta.source_detail,
     history: parseHistory(root.history),
     constituents: Array.isArray(root.constituents)
       ? root.constituents
@@ -873,7 +882,10 @@ export function parseSignals(payload: unknown): SignalsPayload {
     : []
   const counts = block(root.counts)
   const available = root.available === true || signals.length > 0
+  const meta = envelopeMetaOf(payload)
   return {
+    // 外壳的溯源五键先铺，载荷里的同名键以载荷为准（QUOT-331）
+    ...meta,
     available,
     as_of: asString(root.as_of),
     rules,
@@ -886,7 +898,7 @@ export function parseSignals(payload: unknown): SignalsPayload {
     },
     reason: asString(root.reason),
     dropped: rawSignals.length - signals.length,
-    data_as_of: asString(root.data_as_of),
+    data_as_of: asString(root.data_as_of) ?? meta.data_as_of,
   }
 }
 
