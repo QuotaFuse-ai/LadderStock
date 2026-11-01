@@ -31,6 +31,21 @@ cd frontend && node scripts/visual-shot.mjs             # 或 npm run shots
 不是设计稿、也不是 `?demo=1` 演示态（演示态带水印，不代表用户实际所见）。
 后续若要拍到有数据的 before/after，先跑 `ldst sync --date <交易日>` 再重新执行上面的命令。
 
+## QUOT-320 共享层 after（`--query`，2026-11-01 夜）
+
+`visual-shot.mjs` 加了 `--query <str>`：把查询串追加到路由上，配合 `--suffix` 拍演示态与缺失态
+（文件名仍是 `<route>-<suffix>-<theme>.png`）。
+
+```bash
+cd frontend && npm run dev -- --port 5173     # 另开终端
+node scripts/visual-shot.mjs --routes news     --query "demo=1"                    --suffix after-320-demo    # 水印上屏
+node scripts/visual-shot.mjs --routes news     --query "demo=1&variant=partial"    --suffix after-320-missing # 部分缺失=danger 橙红
+node scripts/visual-shot.mjs --routes settings --query "tab=ports&state=offline"   --suffix after-320-ports   # 端口未取到=—
+```
+
+`after-320-*` 六张（暗 + 亮）证明三件事：`?demo=1` 单独出现时水印也上屏、
+`source_status` 的色序按 §5.2（`partial` 橙红、`degraded` 黄）、离线时端口列写 `—` 而不是默认 5950/5951。
+
 ## radar 四屏阶段二对比（QUOT-312，2026-11-01）
 
 `<route>-<before|after>-s2-<dark|light>.png` 是 QUOT-306 阶段二（radar 4 屏精修）的对比组，
@@ -41,5 +56,5 @@ cd frontend && node scripts/visual-shot.mjs             # 或 npm run shots
 `pool-*` 两张是点开第一行「展开」后的分项抽屉——被精修的裸表落在这里，主屏截图看不到。
 
 `frontend/scripts/visual-shot.mjs` 的路由表写死不带查询串，这一组用同一份脚本的临时副本拍摄
-（路由带日期 + 抽屉先点击「展开」+ `--settle 6000`），脚本本身未改动。
+（路由带日期 + 抽屉先点击「展开」+ `--settle 6000`），当时 `visual-shot.mjs` 还没有 `--query`。
 

@@ -33,6 +33,7 @@ import {
   MetricCard,
   SectionCard,
   Sparkline,
+  SourceBadges,
   type Column,
   type SectionTone,
 } from '../components/ui'
@@ -161,21 +162,6 @@ function trendNote(trend: WeeklyTrend | undefined, unit = ''): string {
   const last = value.last === null ? MISSING : `${value.last}${unit}`
   const change = value.change === null ? MISSING : `${value.change > 0 ? '+' : ''}${value.change}${unit}`
   return `周内 ${first} → ${last} · 变化 ${change} · ${value.samples} 天有读数`
-}
-
-function SourceBadge({ envelope }: { envelope: { freshness: string; source_status: string; source_detail: string; data_as_of: string | null; fetched_at: string } | null }) {
-  if (!envelope) return null
-  const tone = envelope.source_status === 'ok' ? 'ok' : envelope.source_status === 'partial' ? 'warn' : 'danger'
-  const title = [
-    `来源：${envelope.source_detail}`,
-    `数据时间：${envelope.data_as_of ?? '未知'}`,
-    `取数：${formatTime(envelope.fetched_at)}`,
-  ].join('\n')
-  return (
-    <Badge tone={tone} title={title}>
-      {envelope.freshness === 'cached' ? '缓存' : envelope.freshness}
-    </Badge>
-  )
 }
 
 interface SentimentDayRow {
@@ -382,7 +368,7 @@ export default function WeeklyScreen() {
         <MetricCard
           label="周情绪温度均值"
           hero
-          badge={<SourceBadge envelope={envelope} />}
+          badge={<SourceBadges envelope={envelope} />}
           value={formatOneDecimal(number(sentiment?.temperature?.avg))}
           note={trendNote(sentiment?.temperature)}
           icon={
@@ -393,19 +379,19 @@ export default function WeeklyScreen() {
         />
         <MetricCard
           label="周晋级率均值"
-          badge={<SourceBadge envelope={envelope} />}
+          badge={<SourceBadges envelope={envelope} />}
           value={formatRatePct(number(sentiment?.promotion_rate?.avg)).text}
           note={trendNote(sentiment?.promotion_rate, '%')}
         />
         <MetricCard
           label="周封板率均值"
-          badge={<SourceBadge envelope={envelope} />}
+          badge={<SourceBadges envelope={envelope} />}
           value={formatRatePct(number(sentiment?.seal_rate?.avg)).text}
           note={`涨停合计 ${formatInt(number(sentiment?.limit_up_total))} · 炸板 ${formatInt(number(sentiment?.broken_total))} · 断层 ${formatInt(number(sentiment?.gap_days))} 天`}
         />
         <MetricCard
           label="连板高度"
-          badge={<SourceBadge envelope={envelope} />}
+          badge={<SourceBadges envelope={envelope} />}
           value={formatBoards(number(ladder?.peak_height))}
           note={trendNote(ladder?.height)}
         />
@@ -517,7 +503,7 @@ export default function WeeklyScreen() {
             <HBarList
               items={(breadth.distribution ?? []).map((band) => ({
                 label: band.band,
-                value: number(band.count) ?? 0,
+                value: number(band.count),
                 hint: band.share_pct === null || band.share_pct === undefined ? undefined : `${band.share_pct}%`,
               }))}
               unit=" 只"
@@ -540,7 +526,7 @@ export default function WeeklyScreen() {
             <HBarList
               items={(themes.themes ?? []).map((theme) => ({
                 label: theme.name,
-                value: number(theme.streak_days) ?? 0,
+                value: number(theme.streak_days),
                 hint: `入窗 ${theme.days_on_top} 天 · 均涨幅 ${theme.avg_change_pct ?? MISSING}%`,
               }))}
               unit=" 天"

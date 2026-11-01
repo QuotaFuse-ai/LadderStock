@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 import { WifiOff } from 'lucide-react'
 
 import { cn } from '../lib/cn'
-import type { PageState } from '../lib/pageState'
-import { Banner, Skeleton } from './ui'
+import { useDemoEnabled, type PageState } from '../lib/pageState'
+import { Badge, Banner, Skeleton } from './ui'
 
 /**
  * 页面骨架件：标题栏 / 演示态标记 / 离线提示 / 整屏骨架。
@@ -43,13 +43,34 @@ export const DEMO_STATE_LABEL: Record<Exclude<PageState, 'normal'>, string> = {
   offline: '离线',
 }
 
-/** 演示态水印：让人一眼看出这是 `?state=` 强制态，不是真实数据。 */
+/**
+ * 演示水印的唯一真源（UI-SPEC §5.6 / 整改项 R-18）。
+ *
+ * 两件事分别标识，互不替代：
+ * - `?demo=1` → 演示徽标「演示数据 · ?demo=1」（§5.6 硬约束，`tone="warn"`）；
+ * - `?state=` → 强制态水印 `演示态：…（?state=…）`。
+ *
+ * `state` 为 null 且无 `?demo=1` 时才不渲染——旧实现只认 `?state=`，
+ * 于是 `?demo=1` 的假数据整屏零标识（R-18 的 P0 根因）。
+ * 各屏调用点保持 `<DemoStateBadge state={forced} />` 不改签名：演示开关由组件自读。
+ */
 export function DemoStateBadge({ state }: { state: PageState | null }) {
-  if (!state || state === 'normal') return null
+  const demo = useDemoEnabled()
+  const forced = state && state !== 'normal' ? state : null
+  if (!demo && !forced) return null
   return (
-    <span className="inline-flex h-5 items-center rounded-xs border border-border-strong px-2 text-caption text-text-secondary">
-      演示态：{DEMO_STATE_LABEL[state]}（?state={state}）
-    </span>
+    <>
+      {demo && (
+        <Badge tone="warn" title="本页数据来自 demo.ts 演示源，不是真实行情">
+          演示数据 · ?demo=1
+        </Badge>
+      )}
+      {forced && (
+        <span className="inline-flex h-5 items-center rounded-xs border border-border-strong px-2 text-caption text-text-secondary">
+          演示态：{DEMO_STATE_LABEL[forced]}（?state={forced}）
+        </span>
+      )}
+    </>
   )
 }
 

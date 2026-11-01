@@ -19,6 +19,8 @@
  *   --suffix <s>       文件名后缀（默认 before）
  *   --themes <a,b>     主题（默认 dark,light）
  *   --routes <a,b>     只拍指定 slug，逗号分隔
+ *   --query <str>      追加到每个路由的查询串（`demo=1` / `demo=1&variant=partial` / `tab=ports`），
+ *                      配合 `--suffix after-demo` 这类后缀拍演示态与缺失态
  *   --settle <ms>      load 之后额外等待（默认 1500，留给 React 渲染 + 图表重绘）
  *   --chrome <path>    浏览器可执行文件（默认自动找 Chrome/Edge，或读环境变量 LDST_CHROME）
  *
@@ -66,6 +68,7 @@ function parseArgs(argv) {
     suffix: 'before',
     themes: ['dark', 'light'],
     routes: null,
+    query: null,
     settle: 1500,
     chrome: process.env.LDST_CHROME ?? null,
     port: 9333,
@@ -78,6 +81,7 @@ function parseArgs(argv) {
     else if (flag === '--suffix') options.suffix = next()
     else if (flag === '--themes') options.themes = next().split(',').filter(Boolean)
     else if (flag === '--routes') options.routes = next().split(',').filter(Boolean)
+    else if (flag === '--query') options.query = next()
     else if (flag === '--settle') options.settle = Number(next())
     else if (flag === '--chrome') options.chrome = next()
     else if (flag === '--port') options.port = Number(next())
@@ -230,7 +234,8 @@ async function shoot(cdp, base, route, theme, options) {
       sessionId,
     )
     const loaded = cdp.once('Page.loadEventFired', 30_000)
-    await cdp.send('Page.navigate', { url: `${base}${route.path}` }, sessionId)
+    const query = options.query ? `${route.path.includes('?') ? '&' : '?'}${options.query}` : ''
+    await cdp.send('Page.navigate', { url: `${base}${route.path}${query}` }, sessionId)
     await loaded
     await sleep(options.settle)
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId)

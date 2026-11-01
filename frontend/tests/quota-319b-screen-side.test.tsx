@@ -164,8 +164,8 @@ describe('data_source_status 上屏（UI-SPEC §5.2 / §5.3）', () => {
   it('radar 四屏：ok 载荷给「数据完整」（ok 青绿）', async () => {
     for (const path of ['/news', '/calendar', '/pool', '/positions']) {
       const view = renderAt(`${path}?demo=1`)
-      await screen.findByText('● 数据完整')
-      expect(badgeClass('● 数据完整')).toContain('bg-ok-soft')
+      await screen.findByText('数据完整')
+      expect(badgeClass('数据完整')).toContain('bg-ok-soft')
       view.unmount()
       cleanup()
     }
@@ -174,26 +174,26 @@ describe('data_source_status 上屏（UI-SPEC §5.2 / §5.3）', () => {
   it('radar 四屏：partial 载荷给「部分缺失」（danger 橙红，不是 warn 黄）', async () => {
     for (const path of ['/news', '/calendar', '/pool']) {
       const view = renderAt(`${path}?demo=1&variant=partial`)
-      await screen.findByText('◑ 部分缺失')
-      expect(badgeClass('◑ 部分缺失')).toContain('bg-danger-soft')
+      await screen.findByText('部分缺失')
+      expect(badgeClass('部分缺失')).toContain('bg-danger-soft')
       view.unmount()
       cleanup()
     }
     const positions = renderAt('/positions?demo=1&variant=partial')
-    await screen.findByText('◑ 部分缺失')
-    expect(badgeClass('◑ 部分缺失')).toContain('bg-danger-soft')
+    await screen.findByText('部分缺失')
+    expect(badgeClass('部分缺失')).toContain('bg-danger-soft')
     positions.unmount()
   })
 
   it('research 两屏：降级态给「部分缺失」，与演示水印并排两枚', async () => {
     renderAt('/research/600519?demo=1&state=partial')
-    await screen.findByText('◑ 部分缺失')
+    await screen.findByText('部分缺失')
     expect(screen.getByText(/演示态：部分失败/)).toBeTruthy()
-    expect(screen.getByText('演示数据（?demo=1）')).toBeTruthy()
+    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
   })
 
   it('research 报告页同样上屏', async () => {
     renderAt('/research/600519/report?demo=1&state=partial')
-    await screen.findByText('◑ 部分缺失')
+    await screen.findByText('部分缺失')
   })
 })

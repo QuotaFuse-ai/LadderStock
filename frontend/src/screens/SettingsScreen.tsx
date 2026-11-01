@@ -31,7 +31,7 @@ import {
 } from '../api'
 import { useAsync, type AsyncResult } from '../lib/useAsync'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
-import { MISSING } from '../lib/format'
+import { MISSING, countOrMissing } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
   Badge,
@@ -460,7 +460,8 @@ function StaticPeerCard({ peer, reason }: { peer: StaticPeer; reason: string }) 
 type PortState = 'ok' | 'busy' | 'self' | 'out' | 'unknown'
 
 interface PortRow {
-  port: number
+  /** `null` = 没取到（§8）：显示 `—`，不许拿默认端口号当真实读数 */
+  port: number | null
   usage: string
   state: PortState
   owner: string
@@ -481,7 +482,9 @@ const PORT_COLUMNS: Array<Column<PortRow>> = [
     header: '端口',
     align: 'right',
     width: '88px',
-    render: (row) => <span className="ldst-num font-medium text-text">{row.port}</span>,
+    render: (row) => (
+      <span className="ldst-num font-medium text-text">{row.port === null ? MISSING : row.port}</span>
+    ),
   },
   { key: 'usage', header: '用途', render: (row) => <span className="text-text">{row.usage}</span> },
   {
@@ -510,8 +513,11 @@ function buildPortRows(board: BoardPayload | null, probed: boolean): PortRow[] {
   board?.port_conflicts.forEach((conflict) => conflicts.set(conflict.port, conflict))
 
   const rows: PortRow[] = []
-  const push = (port: number | null, usage: string, listening: PortOwner[] | null): void => {
-    if (port === null || port === undefined) return
+  const push = (port: number | null | undefined, usage: string, listening: PortOwner[] | null): void => {
+    if (port === null || port === undefined) {
+      rows.push({ port: null, usage, state: 'unknown', owner: MISSING, note: `${MISSING} 未取到：本机服务未连接，端口未知` })
+      return
+    }
     if (port < 1024 || port > 65535) {
       rows.push({ port, usage, state: 'out', owner: MISSING, note: '端口越界（合法范围 1024–65535）' })
       return
@@ -538,8 +544,8 @@ function buildPortRows(board: BoardPayload | null, probed: boolean): PortRow[] {
     rows.push({ port, usage, state: 'ok', owner: MISSING, note: '空闲' })
   }
 
-  push(board?.ports.board ?? 5950, '看板 Web', null)
-  push(board?.ports.mcp ?? 5951, '看板 MCP', null)
+  push(board?.ports.board, '看板 Web', null)
+  push(board?.ports.mcp, '看板 MCP', null)
 
   const live = board?.peers ?? []
   if (live.length > 0) {
@@ -1343,7 +1349,7 @@ export default function SettingsScreen() {
           <div className="flex flex-col gap-4">
             <SectionCard
               title="端口占用"
-              subtitle={`看板 ${board.data?.ports.board ?? 5950} / MCP ${board.data?.ports.mcp ?? 5951} · 四个模块`}
+              subtitle={`看板 ${countOrMissing(board.data?.ports.board)} / MCP ${countOrMissing(board.data?.ports.mcp)} · 四个模块`}
               bodyClassName="p-0"
               actions={
                 <div className="flex items-center gap-2">

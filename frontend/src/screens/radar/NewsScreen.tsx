@@ -22,13 +22,13 @@ import {
   Field,
   FreshnessBadge,
   Input,
+  SourceStatusBadge,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { formatTime, localDateIso, MISSING } from '../../lib/format'
 import { DEMO_NEWS_DATE } from './demo'
 import { useDemoEnabled, useNewsView } from './useRadarView'
 import { withParams } from '../industry/links'
-import { SourceStatusBadge } from '../industry/sourceBadges'
 
 /**
  * P-R10-01 资讯雷达（`/news`）。
@@ -285,12 +285,10 @@ function TimelineColumn({
 function DetailColumn({
   item,
   events,
-  demo,
   state,
 }: {
   item: NewsItem | null
   events: ExtractedEvent[]
-  demo: boolean
   state: string | null
 }) {
   return (
@@ -389,7 +387,6 @@ function DetailColumn({
               )}
               <p className="break-all text-caption text-text-muted">
                 id <code className="ldst-num">{item.id}</code>
-                {demo && <span className="ml-1">· 演示数据</span>}
                 {state === 'partial' && <span className="ml-1">· 部分栏目降级</span>}
               </p>
             </div>
@@ -622,7 +619,7 @@ export default function NewsScreen() {
           onSelect={setSelectedId}
         />
 
-        <DetailColumn item={activeItem} events={activeEvents} demo={demo} state={state} />
+        <DetailColumn item={activeItem} events={activeEvents} state={state} />
       </div>
 
       <p className="text-caption leading-body text-text-muted">

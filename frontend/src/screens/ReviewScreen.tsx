@@ -8,7 +8,6 @@ import {
   isApiError,
   parseAiFailures,
   type JobView,
-  type LadderEnvelope,
   type ReviewAiFailure,
   type SentimentResult,
 } from '../api'
@@ -29,6 +28,7 @@ import {
   MetricCard,
   SectionCard,
   SkeletonText,
+  SourceBadges,
   Textarea,
   type SectionTone,
 } from '../components/ui'
@@ -178,34 +178,6 @@ function parseHeader(review: Record<string, unknown> | null): ReviewHeader {
     aiModel: ai && typeof ai.model === 'string' ? ai.model : null,
     aiDegraded: ai?.degraded === true,
   }
-}
-
-const FRESHNESS_LABEL: Record<LadderEnvelope<unknown>['freshness'], string> = {
-  realtime: '实时',
-  cached: '缓存',
-  archive: '归档',
-}
-
-/** 溯源徽标只用到这几条公共字段，任何 envelope 的 payload 类型都能传。 */
-type EnvelopeMeta = Pick<
-  LadderEnvelope<unknown>,
-  'freshness' | 'source_status' | 'source_detail' | 'data_as_of' | 'fetched_at'
->
-
-/** 指标卡右上角溯源徽标（§4.2 L2）：freshness · source_status，hover 出明细。 */
-function SourceBadge({ envelope }: { envelope: EnvelopeMeta | null }) {
-  if (!envelope) return null
-  const tone = envelope.source_status === 'ok' ? 'ok' : envelope.source_status === 'partial' ? 'warn' : 'danger'
-  const title = [
-    `来源：${envelope.source_detail}`,
-    `数据时间：${envelope.data_as_of ?? '未知'}`,
-    `取数：${formatTime(envelope.fetched_at)}`,
-  ].join('\n')
-  return (
-    <Badge tone={tone} title={title}>
-      {FRESHNESS_LABEL[envelope.freshness]}
-    </Badge>
-  )
 }
 
 export default function ReviewScreen() {
@@ -667,7 +639,7 @@ export default function ReviewScreen() {
         <MetricCard
           label="情绪温度"
           hero
-          badge={<SourceBadge envelope={sentiment.data} />}
+          badge={<SourceBadges envelope={sentiment.data} />}
           value={temperature === null ? MISSING : formatInt(temperature)}
           note={
             temperature === null
@@ -677,7 +649,7 @@ export default function ReviewScreen() {
         />
         <MetricCard
           label="晋级率"
-          badge={<SourceBadge envelope={sentiment.data} />}
+          badge={<SourceBadges envelope={sentiment.data} />}
           value={formatRatePct(promotionRate).text}
           note={
             promotionRate === null
@@ -687,7 +659,7 @@ export default function ReviewScreen() {
         />
         <MetricCard
           label="梯队断层"
-          badge={<SourceBadge envelope={sentiment.data} />}
+          badge={<SourceBadges envelope={sentiment.data} />}
           value={gapLevels === null ? MISSING : formatInt(gapLevels.length)}
           unit={gapLevels === null ? undefined : '档'}
           note={

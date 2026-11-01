@@ -16,6 +16,7 @@ import { buildCitationIndex } from '../../lib/citation'
 import { MISSING, formatTime } from '../../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
+  asSourceBadgeStatus,
   Badge,
   Banner,
   Button,
@@ -27,13 +28,13 @@ import {
   ErrorBlock,
   Skeleton,
   SkeletonText,
+  SourceStatusBadge,
 } from '../../components/ui'
 import { MarkdownView } from '../../components/research/MarkdownView'
 import { ProvenanceDrawer } from '../../components/research/ProvenanceDrawer'
 import { StageRail } from '../../components/research/StageRail'
 import { LinkButton } from '../../components/research/bits'
 import { artifactMarkdown, failureKindLabel, modeLabel } from './facts'
-import { asSourceBadgeStatus, SourceStatusBadge } from '../industry/sourceBadges'
 import { detailHref } from './links'
 import { useResearchRun } from './useResearchRun'
 import { useResearchView } from './useResearchView'
@@ -205,11 +206,6 @@ export default function ResearchReportScreen() {
       subtitle={view.code ? `${view.code} · ${view.date} · 研究报告` : '研究报告'}
       badge={
         <div className="flex flex-wrap items-center gap-2">
-          {view.demo && (
-            <Badge tone="info" title="演示数据：不是真实研究产物">
-              演示数据（?demo=1）
-            </Badge>
-          )}
           <DemoStateBadge state={view.forced} />
           {view.status && (
             <SourceStatusBadge

@@ -23,7 +23,6 @@ import {
 } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
-  Badge,
   Button,
   Card,
   CardHeader,
@@ -34,6 +33,8 @@ import {
   SectionCard,
   SignedNumber,
   StatusDot,
+  SourceBadges,
+  type SourceBadgeMeta,
   type Column,
 } from '../components/ui'
 import { useReviewDraft } from '../../stores/reviewDraft'
@@ -50,36 +51,8 @@ import { useValidationDraft } from '../../stores/validationDraft'
 
 type Envelope = LadderEnvelope<unknown>
 
-/** 溯源徽标只需要这三个字段，四路 payload 类型不同也能放在同一数组里。 */
-type EnvelopeMeta = Pick<Envelope, 'source_status' | 'source_detail' | 'fetched_at'>
-
-const FRESHNESS_LABEL: Record<Envelope['freshness'], string> = {
-  realtime: '实时',
-  cached: '缓存',
-  archive: '归档',
-}
-
-const SOURCE_LABEL: Record<Envelope['source_status'], string> = {
-  ok: '完整',
-  degraded: '降级',
-  partial: '部分',
-}
-
-/** 指标卡右上的溯源徽标：freshness + source_status，hover 出 detail 与 data_as_of（§4.2 L2）。 */
-function SourceBadge({ envelope }: { envelope: Envelope | null }) {
-  if (!envelope) return null
-  const tone = envelope.source_status === 'ok' ? 'ok' : envelope.source_status === 'partial' ? 'warn' : 'danger'
-  const title = [
-    `来源：${envelope.source_detail}`,
-    `数据时间：${envelope.data_as_of ?? '未知'}`,
-    `取数：${formatTime(envelope.fetched_at)}`,
-  ].join('\n')
-  return (
-    <Badge tone={tone} title={title}>
-      {FRESHNESS_LABEL[envelope.freshness]}·{SOURCE_LABEL[envelope.source_status]}
-    </Badge>
-  )
-}
+/** 溯源徽标只需要 envelope 的公共字段（§5.5 单一实现），四路 payload 类型不同也能放在同一数组里。 */
+type EnvelopeMeta = SourceBadgeMeta & Pick<Envelope, 'fetched_at'>
 
 /** 五段区间带的透明度分层（同一 `chart.band` 单色，不换色相 —— §6 CH-01）。 */
 const BAND_STEPS = [
@@ -257,7 +230,13 @@ export default function HomeScreen() {
     const list = [sentiment.data, ladder.data, watch.data, validation.data]
     return list.flatMap((item) =>
       item
-        ? [{ source_status: item.source_status, source_detail: item.source_detail, fetched_at: item.fetched_at }]
+        ? [{
+            freshness: item.freshness,
+            source_status: item.source_status,
+            source_detail: item.source_detail,
+            data_as_of: item.data_as_of,
+            fetched_at: item.fetched_at,
+          }]
         : [],
     )
   }, [sentiment.data, ladder.data, watch.data, validation.data])
@@ -377,7 +356,7 @@ export default function HomeScreen() {
       <div className="grid grid-cols-2 gap-4 rail:grid-cols-3 desk:grid-cols-5">
         <MetricCard
           label="情绪温度"
-          badge={<SourceBadge envelope={sentiment.data} />}
+          badge={<SourceBadges envelope={sentiment.data} />}
           value={formatInt(temperature)}
           note={
             temperature !== null
@@ -387,7 +366,7 @@ export default function HomeScreen() {
         />
         <MetricCard
           label="最高连板"
-          badge={<SourceBadge envelope={sentiment.data ?? ladder.data} />}
+          badge={<SourceBadges envelope={sentiment.data ?? ladder.data} />}
           value={formatBoards(maxBoard)}
           note={
             maxBoard !== null
@@ -402,7 +381,7 @@ export default function HomeScreen() {
         />
         <MetricCard
           label="盯盘异动"
-          badge={<SourceBadge envelope={watch.data} />}
+          badge={<SourceBadges envelope={watch.data} />}
           value={viewWatch.length > 0 ? `${formatInt(viewWatch.length)} 条` : MISSING}
           note={
             viewWatch.length > 0
@@ -414,7 +393,7 @@ export default function HomeScreen() {
         />
         <MetricCard
           label="待验证"
-          badge={<SourceBadge envelope={validation.data} />}
+          badge={<SourceBadges envelope={validation.data} />}
           value={viewConditions.length > 0 ? `${formatInt(viewConditions.length)} 项` : MISSING}
           note={
             viewConditions.length > 0

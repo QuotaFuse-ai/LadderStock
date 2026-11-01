@@ -21,11 +21,11 @@ import {
   EmptyState,
   ErrorBlock,
   IconButton,
+  SourceStatusBadge,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { localDateIso, MISSING } from '../../lib/format'
 import { withParams } from '../industry/links'
-import { SourceStatusBadge } from '../industry/sourceBadges'
 import { DEMO_MONTH } from './demo'
 import { useCalendarView, useDemoEnabled } from './useRadarView'
 

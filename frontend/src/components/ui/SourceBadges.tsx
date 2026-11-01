@@ -32,6 +32,13 @@ export const SOURCE_STATUS_LABEL: Record<EnvelopeSourceStatus, string> = {
   partial: '部分缺失',
 }
 
+/**
+ * `data_source_status` 系契约（`api/radar.ts:27`、`api/industry.ts:80`、`api/limitPool.ts:18`、
+ * `api/research.ts:122`）在 §5.2 三态之外还会给 `missing`——数据集整块没取到。
+ * 规范没给它档位，本模块按「不轻于 `partial`」定成 danger；排序仍守 §5.3 四条不变。
+ */
+export type SourceStatusExtension = 'missing'
+
 type FreshnessSpec = { label: string; glyph: string; tone: 'info' | 'warn' | 'neutral'; hint: (asOf: string) => string }
 type SourceStatusSpec = { label: string; tone: 'ok' | 'warn' | 'danger'; hint: string }
 
@@ -48,6 +55,15 @@ const SOURCE_STATUS = {
   degraded: { label: SOURCE_STATUS_LABEL.degraded, tone: 'warn', hint: '同 peer 备工具或缓存回放' },
   partial: { label: SOURCE_STATUS_LABEL.partial, tone: 'danger', hint: '数据集缺项' },
 } satisfies Record<EnvelopeSourceStatus, SourceStatusSpec>
+
+/**
+ * `missing` 是 `data_source_status` 系契约的第四档，§5.2 表里没有它，
+ * 但 radar / industry / limitPool / research 的后端确会给（整块没取到）。
+ * 档位定成 danger：整块缺失不可能比缺项更轻。§5.3 的四条排序不含它，`SOURCE_SEVERITY` 不动。
+ */
+const SOURCE_STATUS_EXTRA: Record<SourceStatusExtension, SourceStatusSpec> = {
+  missing: { label: '未取到', tone: 'danger', hint: '数据集整块未取到' },
+}
 
 /**
  * §5.3 严重度排序，一次定死：**partial > degraded > cached > realtime**。
@@ -77,7 +93,17 @@ function findFreshness(value: string): FreshnessSpec | null {
   return keys.includes(value) ? FRESHNESS[value as EnvelopeFreshness] : null
 }
 
+/**
+ * 只认已登记的档位（§5.2 三态 + 契约扩展的 `missing`）。
+ * 调用点用它决定是否用后端给的那一档，未登记的 key 不猜档位（research 用它回落到 `source_status`）。
+ */
+export function asSourceBadgeStatus(value: string | null | undefined): SourceStatusLike | null {
+  return value && findSourceStatus(value) ? (value as SourceStatusLike) : null
+}
+
 function findSourceStatus(value: string): SourceStatusSpec | null {
+  const extraKeys = Object.keys(SOURCE_STATUS_EXTRA) as string[]
+  if (extraKeys.includes(value)) return SOURCE_STATUS_EXTRA[value as SourceStatusExtension]
   const keys = Object.keys(SOURCE_STATUS) as string[]
   return keys.includes(value) ? SOURCE_STATUS[value as EnvelopeSourceStatus] : null
 }
@@ -172,13 +198,15 @@ const WORST_TONE: Record<SourceSeverity, SourceTone> = {
 
 /**
  * 提示条取色：§5.3「颜色取二者最严重者」= 两条各自在 `SOURCE_SEVERITY` 里查位次，取靠前的那条。
- * 排序外的取值（`ok` / `archive`）不参与比较，退回另一条；两条都不在排序里时按完整性判断：
+ * 排序外的取值（`ok` / `archive`）不参与比较，退回另一条；`missing` 是 §5.2 表外的契约扩展档，
+ * 本身比 `partial` 更严重，直接取它自己的色调；两条都不在排序里时按完整性判断：
  * `ok` 才是 `ok`，未登记的 key 一律按 `warn` 处理（宁可提示，不静默）。
  */
 export function worstSourceTone(freshness: FreshnessLike, status: SourceStatusLike): SourceTone {
   const rankOf = (value: string): number => (SOURCE_SEVERITY as readonly string[]).indexOf(value)
   const statusRank = rankOf(status)
   if (statusRank >= 0) return WORST_TONE[SOURCE_SEVERITY[statusRank]]
+  if (status in SOURCE_STATUS_EXTRA) return SOURCE_STATUS_EXTRA[status as SourceStatusExtension].tone
   const freshnessRank = rankOf(freshness)
   if (freshnessRank >= 0) return WORST_TONE[SOURCE_SEVERITY[freshnessRank]]
   return status === 'ok' ? 'ok' : 'warn'
