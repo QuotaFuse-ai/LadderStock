@@ -3,7 +3,6 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 
 import {
-  api,
   describeApiError,
   isApiError,
   type LadderEnvelope,
@@ -29,6 +28,7 @@ import {
   DataTable,
   EmptyState,
   ErrorBlock,
+  FreshnessBadge,
   MetricCard,
   SectionCard,
   SignedNumber,
@@ -41,6 +41,8 @@ import {
 import { useDensity } from '../lib/prefs'
 import { useReviewDraft } from '../../stores/reviewDraft'
 import { useValidationDraft } from '../../stores/validationDraft'
+import { DEMO_TRADE_DATE } from './home/demo'
+import { useHomeDemoEnabled, useHomeSource } from './home/useHomeSource'
 
 /**
  * 首页（P-01 / DESIGN-SPEC §4.2）。
@@ -48,7 +50,8 @@ import { useValidationDraft } from '../../stores/validationDraft'
  * 3 秒内回答「今天值不值得动手」：5 个指标卡 + 情绪温度条 + 待办 + 连板 Top 10。
  * 数据聚合 `/api/sentiment` `/api/ladder` `/api/watch/snapshot` `/api/validation`；
  * 任何一路缺失都显示 `—` + 原因，**不补 0、不编造**。
- * 五态演示统一走 `?state=empty|loading|error|partial|offline`（§8）。
+ * 五态演示统一走 `?state=empty|loading|error|partial|offline`（§8）；
+ * 演示数据走 `home/useHomeSource`，与真实通道互斥，**真实请求失败不回落到演示数据**（§5.6）。
  */
 
 type Envelope = LadderEnvelope<unknown>
@@ -154,12 +157,16 @@ export default function HomeScreen() {
   // 否则「设置 → 表格密度」在这张屏上会是静默失效的。
   const density = useDensity()
   const [params] = useSearchParams()
-  const tradeDate = params.get('date') || localDateIso()
+  const demoEnabled = useHomeDemoEnabled()
+  // 演示源讲的是 `limitup/demo.ts` 同一个交易日的 facts：请求日期跟随它，
+  // 否则「2026-11-01 的演示涨停池」这种自相矛盾的标题会写在首屏上。`?date=` 优先。
+  const tradeDate = params.get('date') || (demoEnabled ? DEMO_TRADE_DATE : localDateIso())
+  const { source } = useHomeSource(tradeDate)
 
-  const sentiment = useAsync((signal) => api.sentiment(tradeDate, signal), [tradeDate])
-  const ladder = useAsync((signal) => api.ladder(tradeDate, signal), [tradeDate])
-  const watch = useAsync((signal) => api.watchSnapshot(signal), [tradeDate])
-  const validation = useAsync((signal) => api.validation(tradeDate, signal), [tradeDate])
+  const sentiment = useAsync((signal) => source.sentiment(tradeDate, signal), [source, tradeDate])
+  const ladder = useAsync((signal) => source.ladder(tradeDate, signal), [source, tradeDate])
+  const watch = useAsync((signal) => source.watchSnapshot(signal), [source, tradeDate])
+  const validation = useAsync((signal) => source.validation(tradeDate, signal), [source, tradeDate])
 
   const requests = [sentiment, ladder, watch, validation]
   const reloadAll = () => requests.forEach((request) => request.reload())
@@ -325,7 +332,7 @@ export default function HomeScreen() {
 
   if (state === 'loading') {
     return (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
         {header}
         <ScreenSkeleton metrics={5} rows={8} />
       </div>
@@ -336,7 +343,7 @@ export default function HomeScreen() {
     const firstError = requests.map((request) => request.error).find(Boolean)
     const info = describeApiError(firstError)
     return (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
         {header}
         <ErrorBlock {...info} onRetry={reloadAll} />
       </div>
@@ -346,7 +353,7 @@ export default function HomeScreen() {
   if (state === 'empty') {
     // §11.5：空态是「今日无数据 + 引导」，不是把整屏渲染成一组「—」
     return (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
         {header}
         <EmptyState
           title={`${tradeDate} 没有可用数据`}
@@ -372,7 +379,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       {header}
 
       {state === 'offline' && <OfflineBanner onRetry={reloadAll} />}
@@ -423,7 +430,12 @@ export default function HomeScreen() {
         />
         <MetricCard
           label="主线题材"
-          badge={<SourceStatusBadge status="missing" detail="本屏没有题材 / 板块数据源" />}
+          badge={
+            <span className="inline-flex items-center gap-1">
+              <FreshnessBadge freshness={null} asOf={tradeDate} sourceDetail="本屏没有题材 / 板块数据源" />
+              <SourceStatusBadge status="missing" detail="本屏没有题材 / 板块数据源" />
+            </span>
+          }
           value={MISSING}
           note="本地无板块/题材数据（先运行 ldst sync）"
         />
@@ -460,28 +472,6 @@ export default function HomeScreen() {
           }
         />
       </div>
-
-      {todos.length > 0 && (
-        <Card>
-          <CardHeader title="待办" subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>} />
-          <ul>
-            {todos.map((todo) => (
-              <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
-                <Link
-                  to={todo.to}
-                  className="flex min-h-control items-center gap-3 px-4 py-2 transition-colors duration-fast ease-ldst hover:bg-surface-3"
-                >
-                  <StatusDot tone={todo.tone}>{todo.tag}</StatusDot>
-                  <span className="min-w-0 flex-1 truncate text-body text-text" title={todo.title}>
-                    {todo.title}
-                  </span>
-                  <span className="shrink-0 text-caption text-text-secondary">{todo.action} →</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
 
       <div className="grid gap-4 desk:grid-cols-12">
         <SectionCard
@@ -522,14 +512,29 @@ export default function HomeScreen() {
           />
         </SectionCard>
 
+        {/* 首屏层级（§11.5）：待办与主面板同高排在右栏，梯队表不再被整块推到折叠线以下 */}
         <div className="flex flex-col gap-4 desk:col-span-4">
-          <SectionCard title="题材强度 Top 5" subtitle="本地无题材数据集" bodyClassName="p-4">
-            <EmptyState
-              compact
-              title="还没有题材数据"
-              description="情绪温度与连板天梯可用；题材轮动需要先接入板块/概念行情（ldst sync）。"
-            />
-          </SectionCard>
+          {todos.length > 0 && (
+            <Card>
+              <CardHeader title="待办" subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>} />
+              <ul>
+                {todos.map((todo) => (
+                  <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
+                    <Link
+                      to={todo.to}
+                      className="flex min-h-row items-center gap-3 px-4 transition-colors duration-fast ease-ldst hover:bg-surface-3"
+                    >
+                      <StatusDot tone={todo.tone}>{todo.tag}</StatusDot>
+                      <span className="min-w-0 flex-1 truncate text-body text-text" title={todo.title}>
+                        {todo.title}
+                      </span>
+                      <span className="shrink-0 text-caption text-text-secondary">{todo.action} →</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           <SectionCard
             title="最近异动"
@@ -547,9 +552,12 @@ export default function HomeScreen() {
                       key={row.code}
                       className="flex min-h-row items-center justify-between gap-2 rounded-xs px-1"
                     >
-                      <span className="min-w-0 truncate text-body text-text" title={`${row.code} ${row.name}`}>
+                      <span
+                        className="min-w-0 truncate text-body text-text"
+                        title={`${row.code} ${row.name ?? MISSING}`}
+                      >
                         <span className="ldst-num mr-2 text-caption text-text-muted">{row.code}</span>
-                        {row.name}
+                        {row.name ?? MISSING}
                       </span>
                       <SignedNumber text={change.text} tone={change.tone} arrow={change.arrow} className="text-body" />
                     </li>
@@ -560,6 +568,14 @@ export default function HomeScreen() {
             <p className="mt-3 border-t border-border pt-2 text-caption text-text-muted">
               口径：快照涨跌幅绝对值排序；仅供扫读，不构成建议。
             </p>
+          </SectionCard>
+
+          <SectionCard title="题材强度 Top 5" subtitle="本地无题材数据集" bodyClassName="p-4">
+            <EmptyState
+              compact
+              title="还没有题材数据"
+              description="情绪温度与连板天梯可用；题材轮动需要先接入板块/概念行情（ldst sync）。"
+            />
           </SectionCard>
         </div>
       </div>
