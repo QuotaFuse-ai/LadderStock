@@ -92,7 +92,7 @@ function stageBadgeTone(stage: ResearchStage): 'ok' | 'warn' | 'danger' | 'neutr
 
 function Fact({ label, value, wide }: { label: string; value: string | null; wide?: boolean }) {
   return (
-    <div className={cn('flex min-w-0 flex-col gap-0.5', wide && 'min-[1024px]:col-span-2')}>
+    <div className={cn('flex min-w-0 flex-col gap-half', wide && 'desk:col-span-2')}>
       <dt className="text-caption text-text-muted">{label}</dt>
       <dd className="break-words text-body text-text">{value ?? MISSING}</dd>
     </div>
@@ -192,6 +192,14 @@ function StageProblem({
   )
 }
 
+/**
+ * 卡片底部的来源行。
+ *
+ * 原本这里放的是 `CardFooter`，靠外层 `-mx-4 -mb-4` 负边距把页脚从 `SectionCard` 的
+ * `p-4` 体里顶出去（同屏 4 次）。负边距是「组件没有 footer 插槽」的补偿写法：
+ * 一旦卡片内距改了，四处一起错位。现在改成体内收尾行——上边框分隔、随正文自然收尾，
+ * 不需要知道父级的内距是多少。`SectionCard` 补 `footer` 插槽后（已记给组件层）可再收一次。
+ */
 function SourceFoot({
   stage,
   artifact,
@@ -204,34 +212,38 @@ function SourceFoot({
   const sources = artifact.document.provenance.sources
   const verified = sources.filter((source) => source.verified).length
   return (
-    <CardFooter>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span>
-          来源 {sources.length} 条 · 已核实 {verified} 条 · 未核实 {sources.length - verified} 条
-        </span>
-        <button
-          type="button"
-          onClick={() => onOpen(stage)}
-          className="font-medium text-info underline underline-offset-2"
-        >
-          查看来源
-        </button>
-      </div>
-    </CardFooter>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 text-caption text-text-secondary">
+      {/* 数字单独套 .ldst-num：它会换字体族，套整句会让中文也走数字字体 */}
+      <span>
+        来源 <span className="ldst-num">{sources.length}</span> 条 · 已核实{' '}
+        <span className="ldst-num">{verified}</span> 条 · 未核实{' '}
+        <span className="ldst-num">{sources.length - verified}</span> 条
+      </span>
+      <Button variant="ghost" onClick={() => onOpen(stage)}>
+        查看来源
+      </Button>
+    </div>
   )
 }
 
 function SeriesRow({ series }: { series: SeriesFact }) {
   const first = series.values[0]
   const last = series.values[series.values.length - 1]
+  const tone = last > first ? 'up' : last < first ? 'down' : 'flat'
   return (
-    <li className="flex flex-wrap items-center justify-between gap-2">
-      <span className="min-w-0 text-body text-text">{series.label}</span>
-      <span className="ldst-num text-caption text-text-secondary">
+    // 原来 `flex-wrap justify-between`：折行时标签、数字、走势线三者各自换行，行间对不齐。
+    // 改成「标签吃剩余 + 数字定宽右对齐 + 走势线定宽」，行间天然成列。
+    <li className="flex items-center gap-3">
+      <span className="min-w-0 flex-1 truncate text-body text-text" title={series.label}>
+        {series.label}
+      </span>
+      <span className="ldst-num w-28 shrink-0 text-right text-caption text-text-secondary">
         {first} → {last} · {series.values.length} 期
       </span>
       <Sparkline
+        className="shrink-0"
         values={series.values}
+        tone={tone}
         ariaLabel={`${series.label}，${series.values.length} 个数据点，从 ${first} 到 ${last}`}
       />
     </li>
@@ -260,7 +272,7 @@ function CompanyCard({ stage, artifact, view, onCitation }: SectionProps) {
         <StageProblem stage={stage} view={view} />
       ) : (
         <>
-          <dl className="grid gap-x-6 gap-y-3 min-[1024px]:grid-cols-2">
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-3 desk:grid-cols-2">
             <Fact label="所属行业" value={stringFact(facts, ['industry'])} />
             <Fact label="上市板块" value={stringFact(facts, ['listed_board'])} />
             <Fact label="主营业务" value={stringFact(facts, ['main_business'])} wide />
@@ -278,9 +290,7 @@ function CompanyCard({ stage, artifact, view, onCitation }: SectionProps) {
         </>
       )}
       {artifact && (
-        <div className="-mx-4 -mb-4 mt-4">
-          <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
-        </div>
+        <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
       )}
     </SectionCard>
   )
@@ -323,9 +333,7 @@ function FinancialCard({ stage, artifact, view, onCitation }: SectionProps) {
         </>
       )}
       {artifact && (
-        <div className="-mx-4 -mb-4 mt-4">
-          <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
-        </div>
+        <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
       )}
     </SectionCard>
   )
@@ -368,9 +376,7 @@ function ForecastCard({ stage, artifact, view, onCitation }: SectionProps) {
         </>
       )}
       {artifact && (
-        <div className="-mx-4 -mb-4 mt-4">
-          <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
-        </div>
+        <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
       )}
     </SectionCard>
   )
@@ -392,7 +398,9 @@ function RiskCard({ stage, artifact, view, onCitation }: SectionProps) {
         <StageProblem stage={stage} view={view} />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 min-[1024px]:grid-cols-3">
+          {/* 断点表达与上方 MetricRow 同一条（`grid-cols-2 rail:grid-cols-3`）：
+              原来这里用 `min-[1024px]:` 自己造了一档，同一屏两套断点写法。 */}
+          <div className="grid grid-cols-2 gap-3 rail:grid-cols-3">
             {RISK_METRICS.map(({ key, label }) => {
               const present = facts[key] !== null && facts[key] !== undefined
               return (
@@ -410,7 +418,7 @@ function RiskCard({ stage, artifact, view, onCitation }: SectionProps) {
               <ul className="flex flex-col gap-2">
                 {risks.map((risk, index) => (
                   <li key={`${index}-${risk}`} className="flex items-start gap-2">
-                    <span className="ldst-num mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-xs bg-warn-soft text-caption font-medium text-warn">
+                    <span className={cn(NUMBER_CHIP, 'ldst-num mt-half bg-warn-soft text-warn')}>
                       {index + 1}
                     </span>
                     <span className="min-w-0 text-body leading-body text-text-secondary">{risk}</span>
@@ -429,9 +437,7 @@ function RiskCard({ stage, artifact, view, onCitation }: SectionProps) {
         </>
       )}
       {artifact && (
-        <div className="-mx-4 -mb-4 mt-4">
-          <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
-        </div>
+        <SourceFoot stage={stage.name} artifact={artifact} onOpen={(name) => onCitation(name, null)} />
       )}
     </SectionCard>
   )
