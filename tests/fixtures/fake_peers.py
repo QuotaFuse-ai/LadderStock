@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -20,6 +21,7 @@ from ladderstock.data.provider_registry import (
     PeerEndpoint,
     ProviderRegistry,
     SourceUnavailable,
+    _unwrap_mcp_result,
 )
 
 # peer 地址只用回环占位，桩 transport 从不去拨；环境变量名刻意取不存在的名字，
@@ -97,6 +99,8 @@ SOURCES_DOC: dict[str, Any] = {
             "cooldown_sec": 60,
         },
         {
+            # 与真实 config/sources.yaml 同构：`wire_timeline` 在这里是**能力登记**
+            # （同 peer、工具在册），但 `sync.yaml` 的 theme_news 链路显式排除了它（DEC-043）。
             "id": "wire_digest",
             "dataset": "theme_news",
             "via": "wire",
@@ -152,10 +156,15 @@ SYNC_DOC: dict[str, Any] = {
             },
             "theme_news": {
                 "primary": "wire_digest",
-                "fallback": ["wire_timeline"],
+                # 显式空值 = 「这条链只有主源」，`chain()` 不回填 sources.yaml 的
+                # fallback（DEC-043）：`wire_get_timeline` 要 `event_id`，按日摘要没有事件维度。
+                "fallback": [],
                 "watermark_field": "data_as_of",
                 "mode": "replace",
                 "optional": True,
+                # 赛道池（QUOT-328）：`wire_get_digest` 的 `topic` 必填、只认 Wire 的赛道
+                # slug，一个 slug 一次调用。桩里给两个，够锁「扇出次数 = slug 数」。
+                "topics": ["ai", "semiconductor"],
             },
             "council_memo": {
                 "primary": "senate_reports",
@@ -205,7 +214,10 @@ class FakeTransport:
         handler = self.handlers.get(tool)
         if handler is None:
             raise SourceUnavailable(f"{peer.mcp_name}/{tool} 未在桩里定义")
-        return handler(dict(params))
+        # 真实 `McpTransport.call` 在返回业务 JSON 前会跑 `_unwrap_mcp_result`
+        # （拆 `structuredContent` / `content[0].text` 两层壳，QUOT-328 的第二处缺陷就在
+        # 这一层）。桩走同一个函数，handler 才能既回解开的信封、也回真实的字符串壳。
+        return _unwrap_mcp_result(handler(dict(params)))
 
     def probe(self, peer: PeerEndpoint, *, timeout: float) -> dict[str, Any]:
         self.probes.append(peer.key)
@@ -316,15 +328,52 @@ def limit_records(day: str = "2026-10-24") -> list[dict[str, Any]]:
     ]
 
 
-def wire_payload(day: str = "2026-10-24") -> dict[str, Any]:
-    """Wire 叙事信封：没有行概念，整包落一行。"""
+def wire_digest_envelope(
+    topic: str,
+    day: str = "2026-10-24",
+    *,
+    status: str = "ok",
+    items: int = 3,
+) -> dict[str, Any]:
+    """`wire_get_digest(topic, date=None)` 的**真实**返回形状（QUOT-328 实测）。
+
+    外层是 Wire 的 `WireEnvelope`，内层是它的 `TopicDigest`：赛道名在 `payload.topic`
+    （**slug**，Wire 的 `config/topics.yaml` 的 `id`），只有 `summary` / `key_points` /
+    `items`，**没有任何强度或涨停家数字段**——题材强度那列本来就取不到，只能显式 `null`。
+    LLM 上游不可达时 Wire 回 `status="partial"` + 一句兜底 summary（外层信封的
+    `source_status` 也跟着降），不是报错——实测 2026-11-01 的 12 个赛道全是这一形状。
+    """
     return {
         "data_as_of": day,
         "fetched_at": f"{day}T08:30:00+08:00",
-        "source_status": "ok",
+        "source_status": "ok" if status == "ok" else "partial",
         "freshness": "realtime",
         "confidence": "medium",
-        "payload": {"digest": "题材面情绪回暖", "themes": ["半导体", "机器人"]},
+        "payload": {
+            "topic": topic,
+            "date": day,
+            "summary": "题材面情绪回暖" if status == "ok" else "共采集若干资讯；模型当前不可用。",
+            "key_points": [f"要点 {i}" for i in range(items)] if status == "ok" else [],
+            "items": [{"title": f"资讯 {i}", "url": f"about:item-{i}"} for i in range(items)],
+            "generated_at": f"{day}T08:29:00+08:00",
+            "provider": "stub",
+            "model": "stub-model",
+            "partial": status == "partial",
+            "status": status,
+            "error": None,
+            "fallback": False,
+        },
+    }
+
+
+def wire_digest_tool_result(topic: str, day: str = "2026-10-24", **kwargs: Any) -> dict[str, Any]:
+    """把上面的信封**序列化成字符串**：真实 FastMCP 把 `model_dump_json()` 放进
+    `structuredContent.result`，`_unwrap_mcp_result` 不认这一层壳就会落一行空壳。
+    """
+    return {
+        "structuredContent": {
+            "result": json.dumps(wire_digest_envelope(topic, day, **kwargs), ensure_ascii=False)
+        }
     }
 
 

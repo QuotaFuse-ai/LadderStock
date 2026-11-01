@@ -20,6 +20,12 @@
 三处都为空时**不发空参请求**（那正是把整包压成 1 行、日期取成抓取时间的旧洞），
 直接判该数据集失败并在 detail 里写清去哪配。
 
+**赛道池数据集**（`theme_news`，Wire）是同一条纪律的另一个形状：`wire_get_digest`
+的 `topic` 必填且只认**赛道 slug**（`semiconductor`，不是「半导体」），一次调用只覆盖
+一个赛道，所以按 `config/sync.yaml` 的 `topics` 逐个取数再合并落库（QUOT-328）。
+空池同样一次调用都不发——空参直接被上游判 `topic Field required`，`theme_news`
+因此永远同步不到。
+
 退出码：全部成功 0；部分必需数据集失败 8；**一个都没成**（peer 全挂且无缓存）
 4；配置/边界错误 3；**历史库被别的进程占着**（拿锁超时 / 打库重试耗尽）10。
 `optional: true` 的数据集（Wire / Senate）取不到只记
@@ -37,6 +43,7 @@ from __future__ import annotations
 import sqlite3
 import sys
 from collections import Counter
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -48,6 +55,8 @@ from ladderstock.core.boundary import BoundaryViolation, owner_of
 from ladderstock.core.models import LadderEnvelope
 from ladderstock.data import duckdb_store, sqlite_store, watermark
 from ladderstock.data.adapters.tickhub import needs_code, tool_params
+from ladderstock.data.adapters.wire import needs_topic
+from ladderstock.data.adapters.wire import tool_params as wire_tool_params
 from ladderstock.data.db_lock import writer_lock
 from ladderstock.data.provider_registry import (
     ProviderRegistry,
@@ -72,6 +81,12 @@ MAX_POOL_CODES = 100
 #: 池子来源（写进 detail，便于复盘时知道这次是谁提供的代码）
 POOL_CLI = "命令行 --codes"
 POOL_CONFIG = "config/sync.yaml"
+
+#: 扇出内的连续失败止损上限（QUOT-328）。扇出不吃 source 冷却——一次失败常常只是
+#: 「这个入参上游不认识」，按冷却判下去就是 1 个坏元素废掉整池。代价是 peer 真下线时
+#: 会把整池撞一遍，所以留这道闸：连续这么多项全失败，就判定它是不健康而不是入参问题，
+#: 剩余元素不发起调用。上限取 3：单个坏元素后面仍连着 1 次成功，不会误伤。
+FANOUT_FAILURE_STOP = 3
 POOL_WATCHLIST = "本机自选(watchlist)"
 
 # 视为「这一天跑成功了」的状态：只有 failed 才影响退出码
@@ -258,12 +273,138 @@ def sync_code_pool(
     scope = "全量" if full else (f"水位 {before} 之后" if before else "首次全量")
     _log(f"sync {dataset}（{scope}，代码池 {len(codes)} 只/{pool_source}）")
 
-    if not codes:
-        status = "skipped" if optional else "failed"
-        detail = (
-            f"代码池为空：`--codes` / config/sync.yaml 的 sync.datasets.{dataset}.codes / "
-            f"本机自选均为空，未发起调用（{binding.tool} 的 code 必填，空参实测回 QFSD-9001）"
+    if len(codes) > MAX_POOL_CODES:
+        raise LadderStockError(
+            f"{dataset} 代码池 {len(codes)} 只，超过单次上限 {MAX_POOL_CODES} 只；"
+            f"请分批判 `--codes` 同步（全市场口径请用登记在册的盘后包备源，不新供商）",
+            EXIT_USAGE,
         )
+
+    return sync_per_item(
+        registry,
+        store,
+        dataset,
+        binding=binding,
+        mode=mode,
+        before=before,
+        optional=optional,
+        started=started,
+        items=codes,
+        pool_desc=f"代码池 {len(codes)} 只（{pool_source}）",
+        unit="只",
+        params_for=lambda code: tool_params(
+            dataset, code=code, since=None if full else before
+        ),
+        empty_detail=(
+            f"代码池为空：`--codes` / config/sync.yaml 的 sync.datasets.{dataset}.codes / "
+            f"本机自选均为空，未发起调用（{binding.tool} 的 code 必填，"
+            "空参实测回 QFSD-9001）"
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 赛道池（QUOT-328：`topic` 必填的 Wire 数据集）
+# --------------------------------------------------------------------------- #
+
+def resolve_topic_pool(declared: dict[str, Any]) -> list[str]:
+    """`config/sync.yaml` 里该数据集的 `topics`：Wire 认的是**赛道 slug**。
+
+    中文名（`半导体`）上游直接判「未知赛道」，所以这里只收 slug，代码里也不留一份
+    赛道名常量表——合法取值以 Wire 的报错回包为准（`未知赛道: …（可用: ai、semiconductor…）`）。
+    """
+    return clean_codes(declared.get("topics") or [])
+
+
+def sync_topic_pool(
+    registry: ProviderRegistry,
+    store: watermark.WatermarkStore,
+    dataset: str,
+    *,
+    binding: Any,
+    declared: dict[str, Any],
+    mode: str,
+    before: str | None,
+    full: bool,
+    optional: bool,
+    started: str,
+) -> dict[str, Any]:
+    """`topic` 必填的 Wire 数据集：按赛道 slug 逐个取数，合并成一个事务落库。
+
+    Wire 的 `wire_get_digest(topic, date=None)` 里 `topic` 是必填赛道 slug，
+    **没有「空参 = 取全部赛道」的调用形状**：空参直接吃 `1 validation error …
+    topic Field required`，这就是 `theme_news` 永远 `unavailable` 的根因（QUOT-328）。
+    摘要按天整批替换，Wire 侧没有增量入参，所以这里不带 `since`。
+    """
+    chain = registry.chain(dataset)
+    for spec in chain:
+        if not needs_topic(spec.tool):
+            raise LadderStockError(
+                f"{dataset} 的链路里 {spec.id} 用的是 {spec.tool}，它不是「按赛道 slug 取数」的工具"
+                f"（`wire_get_timeline` 要 `event_id`，按日同步没有事件维度），"
+                f"请把它从 config/sync.yaml 的 sync.datasets.{dataset}.fallback 里摘掉"
+                "（DEC-043）",
+                EXIT_CONFIG,
+            )
+    tool = chain[0].tool
+    topics = resolve_topic_pool(declared)
+    if len(topics) > MAX_POOL_CODES:
+        raise LadderStockError(
+            f"{dataset} 赛道池 {len(topics)} 个，超过单次上限 {MAX_POOL_CODES} 个；"
+            "请分批写进 config/sync.yaml 的 topics（一次调用一个赛道，上限由 peer 侧"
+            "并发与最小间隔决定，不悄悄截断）",
+            EXIT_USAGE,
+        )
+    scope = "全量" if full else (f"水位 {before} 之后" if before else "首次全量")
+    _log(f"sync {dataset}（{scope}，赛道 {len(topics)} 个/{POOL_CONFIG}）")
+
+    return sync_per_item(
+        registry,
+        store,
+        dataset,
+        binding=binding,
+        mode=mode,
+        before=before,
+        optional=optional,
+        started=started,
+        items=topics,
+        pool_desc=f"赛道池 {len(topics)} 个（{POOL_CONFIG}）",
+        unit="个",
+        params_for=lambda topic: wire_tool_params(tool, topic=topic),
+        empty_detail=(
+            f"赛道池为空：config/sync.yaml 的 sync.datasets.{dataset}.topics 为空，"
+            f"未发起调用（{tool} 的 topic 必填，空参实测回 `topic Field required` 校验错误；"
+            "取值为 Wire 的赛道 slug，不是中文赛道名）"
+        ),
+    )
+
+
+def sync_per_item(
+    registry: ProviderRegistry,
+    store: watermark.WatermarkStore,
+    dataset: str,
+    *,
+    binding: Any,
+    mode: str,
+    before: str | None,
+    optional: bool,
+    started: str,
+    items: list[str],
+    pool_desc: str,
+    unit: str,
+    params_for: Callable[[str], dict[str, Any]],
+    empty_detail: str,
+) -> dict[str, Any]:
+    """「一个元素一次工具调用」的数据集：逐项取数、合并、一次事务落库。
+
+    上游把某个入参做成必填时（TickHub 的 `code`、Wire 的 `topic`），一次调用只覆盖
+    一个元素，池子来源与单位由调用方给；纪律只有三条——**空池不发调用**、
+    单项失败记进 detail 不拖垮整轮（**不吃 source 冷却**，见 `fetch(ignore_cooldown)`）、
+    连续失败到 `FANOUT_FAILURE_STOP` 才止损，全失败才判 `failed`（可选数据集 `skipped`）。
+    """
+    if not items:
+        status = "skipped" if optional else "failed"
+        detail = empty_detail
         _log(f"  {dataset} {status}：{detail}")
         store.record_run(
             dataset,
@@ -278,31 +419,37 @@ def sync_code_pool(
             detail=detail,
         )
         return _skip_row(
-            dataset, mode=mode, status=status, detail=detail, before=before, optional=optional
-        )
-
-    if len(codes) > MAX_POOL_CODES:
-        raise LadderStockError(
-            f"{dataset} 代码池 {len(codes)} 只，超过单次上限 {MAX_POOL_CODES} 只；"
-            f"请分批判 `--codes` 同步（全市场口径请用登记在册的盘后包备源，不新供商）",
-            EXIT_USAGE,
+            dataset,
+            mode=mode,
+            status=status,
+            detail=detail,
+            before=before,
+            optional=optional,
         )
 
     rows: list[dict[str, Any]] = []
     sources: list[str] = []
     trail: list[str] = []
     failures: list[str] = []
+    halted: list[str] = []
     cache_hits = 0
     degraded = False
     last_envelope: LadderEnvelope | None = None
+    consecutive = 0
 
-    for code in codes:
-        params = tool_params(dataset, code=code, since=None if full else before)
+    for index, item in enumerate(items):
+        if consecutive >= FANOUT_FAILURE_STOP:
+            # 连续失败到上限：这就不像「某个入参被拒」而像 peer 整体不健康，
+            # 剩下的元素不再逐个去撞（DEC-007 的止损，扇出内唯一保留的闸门）
+            halted = items[index:]
+            break
         try:
-            outcome = registry.fetch(dataset, params=params)
+            outcome = registry.fetch(dataset, params=params_for(item), ignore_cooldown=True)
         except SourceUnavailable as exc:
-            failures.append(f"{code}：{_one_line(exc)}")
+            consecutive += 1
+            failures.append(f"{item}：{_one_line(exc)}")
             continue
+        consecutive = 0
         trail.extend(outcome.trail)
         if outcome.from_cache:
             cache_hits += 1
@@ -314,16 +461,21 @@ def sync_code_pool(
         if outcome.used_fallback or envelope.source_status != "ok":
             degraded = True
 
-    succeeded = len(codes) - len(failures) - cache_hits
+    succeeded = len(items) - len(failures) - len(halted) - cache_hits
+    halt_note = (
+        f"；连续 {FANOUT_FAILURE_STOP} {unit}失败后止损，剩余 {len(halted)} {unit}未发起调用"
+        if halted
+        else ""
+    )
     if not succeeded:
         if cache_hits:
             detail = (
-                f"peer 全部不可用，回放本地缓存（代码池 {len(codes)} 只，freshness=cached，"
+                f"peer 全部不可用，回放本地缓存（{pool_desc}，freshness=cached，"
                 "未重写、未推进水位）"
             )
             status, source = "degraded", "local_cache"
         else:
-            detail = f"代码池 {len(codes)} 只全部失败：{_clip('; '.join(failures))}"
+            detail = f"{pool_desc}全部失败：{_clip('; '.join(failures))}{halt_note}"
             status, source = ("skipped" if optional else "failed"), "-"
         _log(f"  {dataset} {status}：{detail}")
         store.record_run(
@@ -363,18 +515,19 @@ def sync_code_pool(
     if result.empty or not value:
         status = "empty"
         after = before
-        detail = f"代码池 {len(codes)} 只（{pool_source}）返回空记录，未覆盖已有数据，水位保持"
+        detail = f"{pool_desc}返回空记录，未覆盖已有数据，水位保持"
     else:
-        status = "degraded" if (degraded or failures or cache_hits) else "ok"
+        status = "degraded" if (degraded or failures or halted or cache_hits) else "ok"
         after = store.advance(
             dataset, value, rows=result.rows, source=result_source(sources), status=status
         ).value
         detail = f"{result.rows} 行 / {len(result.days)} 天，分区 {len(result.partitions)} 个"
-        detail += f"；代码池 {len(codes)} 只（{pool_source}），成功 {succeeded} 只"
+        detail += f"；{pool_desc}，成功 {succeeded} {unit}"
         if failures:
-            detail += f"，失败 {len(failures)} 只：{_clip('; '.join(failures))}"
+            detail += f"，失败 {len(failures)} {unit}：{_clip('; '.join(failures))}"
+        detail += halt_note
         if cache_hits:
-            detail += f"，{cache_hits} 只走本地缓存"
+            detail += f"，{cache_hits} {unit}走本地缓存"
 
     _log(f"  {dataset} {status}：{detail}，水位 {before or '-'} → {after or '-'}")
     store.record_run(
@@ -404,6 +557,7 @@ def sync_code_pool(
         "detail": detail,
         "trail": trail,
     }
+
 
 
 def result_source(sources: list[str]) -> str:
@@ -447,6 +601,19 @@ def sync_one(
             optional=optional,
             started=started,
             cli_codes=pool_codes,
+        )
+    if binding.peer == "wire" and needs_topic(registry.chain(dataset)[0].tool):
+        return sync_topic_pool(
+            registry,
+            store,
+            dataset,
+            binding=binding,
+            declared=declared,
+            mode=mode,
+            before=before,
+            full=full,
+            optional=optional,
+            started=started,
         )
     params: dict[str, Any] = {} if full or not before else {"since": before}
     scope = "全量" if full else (f"水位 {before} 之后" if before else "首次全量")

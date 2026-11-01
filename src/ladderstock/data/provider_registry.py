@@ -453,18 +453,35 @@ def _error_detail(response: httpx.Response) -> str:
     return f"：{text[:160]}"
 
 
+def _json_object(text: str) -> dict[str, Any] | None:
+    """把一段 JSON 文本解成对象；不是对象（或不是合法 JSON）就返回 None。"""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _unwrap_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
     """MCP `tools/call` 结果 → 业务 JSON。
 
     优先 `structuredContent`（真实 TickHub-CN 按 outputSchema 把它包成
     `{"result": {...}}`，这里拆掉这层壳），其次把 `content[0].text` 当 JSON 解析；
     两者都没有时把 result 原样返回（adapter 会按 peer 形状校验）。
+
+    `{"result": "<JSON 字符串>"}` 也要拆：真实 Wire 的四个工具返回的是**序列化后的
+    信封字符串**（`envelope.model_dump_json()`），FastMCP 把它塞进 `structuredContent.result`。
+    不认这一形状，`theme_news` 落库的就是一行空壳——参数修对了也取不到叙事（QUOT-328）。
     """
     structured = result.get("structuredContent")
     if isinstance(structured, dict):
         inner = structured.get("result")
         if len(structured) == 1 and isinstance(inner, dict):
             return inner
+        if len(structured) == 1 and isinstance(inner, str):
+            parsed = _json_object(inner)
+            if parsed is not None:
+                return parsed
         return structured
     content = result.get("content")
     if isinstance(content, list) and content:
@@ -477,6 +494,7 @@ def _unwrap_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
     return result
+
 
 
 def _content_text(result: dict[str, Any]) -> str:
@@ -763,16 +781,23 @@ class ProviderRegistry:
     # ---------------------------------------------------------------- 链路
 
     def chain(self, dataset: str) -> list[SourceSpec]:
-        """主工具 → 同 peer 备工具（顺序来自 sync.yaml，缺省用 sources.yaml 的 fallback）。"""
+        """主工具 → 同 peer 备工具（顺序来自 sync.yaml，**没写这个键**才回填 sources.yaml）。
+
+        `sync.yaml` 里显式写 `fallback: []` 是「这条链只有主源」的**声明**，不是「忘了写」，
+        所以不回填 `sources.yaml`——`theme_news` 就靠这一点把 `wire_get_timeline` 挡在按日链路
+        之外：它在 `sources.yaml` 里是合规的同 peer 备源（能力登记），但 `event_id` 维度的
+        下钻和「一天一条摘要」的同步链路不同构，挂上去等于备源必然一起失败（DEC-043）。
+        """
         declared = self.datasets.get(dataset)
         if declared is None:
             raise LadderStockError(f"{dataset} 未在 config/sync.yaml 声明", EXIT_CONFIG)
         primary_id = str(declared.get("primary") or "")
         if not primary_id:
             raise LadderStockError(f"{dataset} 在 sync.yaml 里缺 primary", EXIT_CONFIG)
-        ids = [primary_id, *(str(x) for x in (declared.get("fallback") or []))]
-        if len(ids) == 1:
-            ids.extend(self.specs[primary_id].fallback if primary_id in self.specs else ())
+        declared_fallback = declared.get("fallback")
+        if declared_fallback is None:
+            declared_fallback = self.specs[primary_id].fallback if primary_id in self.specs else ()
+        ids = [primary_id, *(str(x) for x in declared_fallback)]
         return self._validated_chain(dataset, ids)
 
     def source_chain(self, dataset: str) -> list[SourceSpec]:
@@ -818,14 +843,25 @@ class ProviderRegistry:
         trade_date: date | None = None,
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
+        ignore_cooldown: bool = False,
     ) -> FetchOutcome:
-        """按治理规则取数并返回带轨迹的结果。不可用且无缓存时抛 `SourceUnavailable`。"""
+        """按治理规则取数并返回带轨迹的结果。不可用且无缓存时抛 `SourceUnavailable`。
+
+        `ignore_cooldown` 只给**扇出**用（`ldst sync` 的代码池 / 赛道池，QUOT-328）：
+        冷却是「这个 source 现在不健康，下一轮别再来」的**跨轮**闸门，而扇出里一次的
+        失败往往只是**某一个入参**被拒（代码不存在、赛道 slug 打错），peer 本身好好的。
+        照旧闸门判下去，就是「1 个坏元素废掉整池」——本项目的赛道池实测过这个形态。
+        治理没有放松：失败照旧记健康事件、照旧设冷却（下一轮仍受保护），
+        本轮内的调用次数由池子大小（≤100）与 peer 的最小间隔/并发闸门兜住，
+        连续失败的止损由 `cli.sync` 的扇出负责。
+        """
         return self._fetch(
             dataset,
             self.chain(dataset),
             trade_date=trade_date,
             params=params,
             allow_cache=allow_cache,
+            ignore_cooldown=ignore_cooldown,
         )
 
     def fetch_live(
@@ -853,6 +889,7 @@ class ProviderRegistry:
         trade_date: date | None = None,
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
+        ignore_cooldown: bool = False,
     ) -> FetchOutcome:
         owner_of(dataset)
         key = (dataset, trade_date.isoformat() if trade_date else "", _key(params or {}))
@@ -891,7 +928,12 @@ class ProviderRegistry:
         error: Exception | None = None
         try:
             outcome = self._resolve(
-                dataset, chain, trade_date, params or {}, allow_cache=allow_cache
+                dataset,
+                chain,
+                trade_date,
+                params or {},
+                allow_cache=allow_cache,
+                ignore_cooldown=ignore_cooldown,
             )
             with self._guard:
                 self._cache[key] = (time.monotonic() + self.ttl_sec, outcome.envelope.model_copy())
@@ -914,11 +956,12 @@ class ProviderRegistry:
         params: dict[str, Any],
         *,
         allow_cache: bool,
+        ignore_cooldown: bool = False,
     ) -> FetchOutcome:
         trail: list[str] = []
         failures: list[str] = []
         for index, spec in enumerate(chain):
-            until = self.health.cooldown_until(spec.id)
+            until = None if ignore_cooldown else self.health.cooldown_until(spec.id)
             if until is not None:
                 trail.append(f"{spec.trail_label()}:cooldown")
                 self.health.record(
