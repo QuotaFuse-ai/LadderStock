@@ -39,6 +39,7 @@ import {
   MISSING,
 } from '../../lib/format'
 import { withParams } from '../industry/links'
+import { SourceStatusBadge } from '../industry/sourceBadges'
 import { useDemoEnabled, usePositionsView } from './useRadarView'
 
 /**
@@ -370,7 +371,23 @@ function buildColumns(
   return columns
 }
 
-function cliHint(mode: 'add' | 'edit' | 'delete', item: PositionItem | null, input?: PositionInput): string {
+/** CLI 兜底命令的入参：`PositionInput` 可直接传；校验失败的表单值走占位符。 */
+interface CliHintInput {
+  code: string
+  cost: number | string
+  qty: number | string
+}
+
+/**
+ * 非法输入渲染成 `<成本>` / `<数量>`，不渲染成看似可执行的 `0`
+ * ——照着 `--cost 0` 敲下去会把真实成本覆盖成 0（UI-SPEC §8 缺失不写 0）。
+ */
+function numericOrPlaceholder(raw: string, placeholder: string): number | string {
+  const value = Number(raw)
+  return raw.trim() !== '' && Number.isFinite(value) && value > 0 ? value : placeholder
+}
+
+function cliHint(mode: 'add' | 'edit' | 'delete', item: PositionItem | null, input?: CliHintInput): string {
   if (mode === 'add' && input) {
     return `ldst position add --code ${input.code} --cost ${input.cost} --qty ${input.qty}`
   }
@@ -503,8 +520,8 @@ function PositionForm({
             <code className="ldst-num mt-1 block break-all rounded bg-sunken px-2 py-1 text-text">
               {cliHint(initial ? 'edit' : 'add', initial, {
                 code: initial?.code ?? code.trim(),
-                cost: Number(cost) || 0,
-                qty: Number(qty) || 0,
+                cost: numericOrPlaceholder(cost, '<成本>'),
+                qty: numericOrPlaceholder(qty, '<数量>'),
               })}
             </code>
           </p>
@@ -633,10 +650,15 @@ export default function PositionsScreen() {
   const header = (
     <PageHeader
       title="我的持仓"
-      subtitle={`${payload?.as_of ?? MISSING} · ${payload?.position_count ?? 0} 只 · 价格来源 ${
+      subtitle={`${payload?.as_of ?? MISSING} · ${formatInt(payload?.position_count)} 只 · 价格来源 ${
         payload?.price_source || MISSING
       }`}
-      badge={<DemoStateBadge state={forced} />}
+      badge={
+        <div className="flex flex-wrap items-center gap-2">
+          <DemoStateBadge state={forced} />
+          {payload && <SourceStatusBadge status={payload.data_source_status} />}
+        </div>
+      }
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <input

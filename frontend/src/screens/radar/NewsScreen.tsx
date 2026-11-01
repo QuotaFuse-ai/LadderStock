@@ -27,6 +27,7 @@ import { formatTime, localDateIso, MISSING } from '../../lib/format'
 import { DEMO_NEWS_DATE } from './demo'
 import { useDemoEnabled, useNewsView } from './useRadarView'
 import { withParams } from '../industry/links'
+import { SourceStatusBadge } from '../industry/sourceBadges'
 
 /**
  * P-R10-01 资讯雷达（`/news`）。
@@ -436,7 +437,12 @@ export default function NewsScreen() {
       subtitle={`窗口 ${payload?.window.start ?? date} → ${payload?.window.end ?? until ?? date} · 共 ${
         payload?.items.length ?? 0
       } 条 · 已抽取事件 ${payload?.events.length ?? 0}`}
-      badge={<DemoStateBadge state={forced} />}
+      badge={
+        <div className="flex flex-wrap items-center gap-2">
+          <DemoStateBadge state={forced} />
+          {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
+        </div>
+      }
       actions={
         <Button
           variant="primary"
