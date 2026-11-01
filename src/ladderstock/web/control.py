@@ -54,7 +54,7 @@ from pydantic import BaseModel, Field
 
 from ladderstock.ai import checkpoint
 from ladderstock.cli.paths import config_dir, project_root
-from ladderstock.core.boundary import PEER_CONTROL, PeerControl
+from ladderstock.core.boundary import PEER_DIR_ENV, PeerControl, resolve_peer_control
 from ladderstock.core.fsguard import (
     AclError,
     harden_file_acl,
@@ -1247,7 +1247,7 @@ class ControlPlane:
         harden_acl: Callable[[Path], None] | None = None,
     ) -> None:
         self.data_root = Path(data_root)
-        self.peers: dict[str, PeerControl] = dict(peers or PEER_CONTROL)
+        self.peers: dict[str, PeerControl] = dict(peers or resolve_peer_control())
         # 启动即校验 peer 目录（QUOT-194 P1-3）：共享盘上的 peer 等于把执行权
         # 交给别人，命中即抛 SharedPeerDirectoryError，不进入任何动作。
         require_local_peer_directories(
@@ -1484,7 +1484,9 @@ class ControlPlane:
         foreign_ports: list[int] | None = None,
     ) -> tuple[str, str]:
         if not dir_exists:
-            return STATUS_UNCONFIGURED, f"目录不存在：{self.peers[key].directory}"
+            hint = PEER_DIR_ENV.get(key)
+            suffix = f"（把仓库放到 LadderStock 同级目录，或设置 {hint}）" if hint else ""
+            return STATUS_UNCONFIGURED, f"目录不存在：{self.peers[key].directory}{suffix}"
         if not registered:
             return STATUS_UNCONFIGURED, "未在 config/sources.yaml 的 peers 登记"
 
