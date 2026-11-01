@@ -25,6 +25,7 @@ import {
 import { cn } from '../../lib/cn'
 import { localDateIso, MISSING } from '../../lib/format'
 import { withParams } from '../industry/links'
+import { SourceStatusBadge } from '../industry/sourceBadges'
 import { DEMO_MONTH } from './demo'
 import { useCalendarView, useDemoEnabled } from './useRadarView'
 
@@ -374,7 +375,12 @@ export default function CalendarScreen() {
       subtitle={`${month} · ${payload?.sections.filter((section) => section.status === 'sourced').length ?? 0} / ${
         payload?.sections.length ?? CALENDAR_SECTION_ORDER.length
       } 个小节有源 · 规则抽取 ${payload?.extracted_events.length ?? 0} 条`}
-      badge={<DemoStateBadge state={forced} />}
+      badge={
+        <div className="flex flex-wrap items-center gap-2">
+          <DemoStateBadge state={forced} />
+          {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
+        </div>
+      }
       actions={
         <div className="flex items-center gap-2">
           <IconButton

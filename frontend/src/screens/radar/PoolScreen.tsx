@@ -24,8 +24,9 @@ import {
   MetricCard,
   type Column,
 } from '../../components/ui'
-import { formatBoards, formatMoney, formatOneDecimal, localDateIso, MISSING } from '../../lib/format'
+import { formatBoards, formatInt, formatMoney, formatOneDecimal, localDateIso, MISSING } from '../../lib/format'
 import { withParams } from '../industry/links'
+import { SourceStatusBadge } from '../industry/sourceBadges'
 import { DEMO_POOL_DATE } from './demo'
 import { useDemoEnabled, usePoolView } from './useRadarView'
 
@@ -43,6 +44,11 @@ function compareNumber(a: number | null, b: number | null): number {
   if (a === null) return 1
   if (b === null) return -1
   return a - b
+}
+
+/** 权重缺失显示 `—`，不显示 `0.0%`——缺失不是零（UI-SPEC §8）。 */
+function weightPct(value: number | null | undefined): string {
+  return value === null || value === undefined ? MISSING : `${formatOneDecimal(value * 100)}%`
 }
 
 function PartCell({ value, compact = false }: { value: number | null; compact?: boolean }) {
@@ -110,7 +116,11 @@ function BreakdownDrawer({
   payload: CandidatePoolPayload
   onClose: () => void
 }) {
-  const weightSum = POOL_PART_ORDER.reduce((sum, part) => sum + (payload.weights[part] ?? 0), 0)
+  /** 任一分项权重没给，合计就只是部分之和——写 `—`，不把缺数加总成真实量级。 */
+  const weightValues = POOL_PART_ORDER.map((part) => payload.weights[part] ?? null)
+  const weightSum = weightValues.every((value): value is number => value !== null)
+    ? weightValues.reduce((sum, value) => sum + value, 0)
+    : null
   return (
     <Drawer
       open={candidate !== null}
@@ -153,7 +163,7 @@ function BreakdownDrawer({
                       </span>
                     </td>
                     <td className="ldst-num px-3 py-2 text-right text-text-secondary">
-                      {formatOneDecimal((payload.weights[part] ?? 0) * 100)}%
+                      {weightPct(payload.weights[part])}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <PartCell value={candidate.parts[part]} />
@@ -166,7 +176,7 @@ function BreakdownDrawer({
                 <tr className="border-t border-border bg-surface-2">
                   <td className="px-3 py-2 font-medium text-text">合计</td>
                   <td className="ldst-num px-3 py-2 text-right text-text">
-                    {formatOneDecimal(weightSum * 100)}%
+                    {weightPct(weightSum)}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <span className="ldst-num font-semibold text-text">
@@ -286,10 +296,15 @@ export default function PoolScreen() {
   const header = (
     <PageHeader
       title="候选池"
-      subtitle={`${date} · 高度 ${formatBoards(payload?.height)} · ${payload?.candidate_count ?? 0} 只候选 · 来源 ${
+      subtitle={`${date} · 高度 ${formatBoards(payload?.height)} · ${formatInt(payload?.candidate_count)} 只候选 · 来源 ${
         payload?.source_detail || MISSING
       }`}
-      badge={<DemoStateBadge state={forced} />}
+      badge={
+        <div className="flex flex-wrap items-center gap-2">
+          <DemoStateBadge state={forced} />
+          {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
+        </div>
+      }
       actions={
         <div className="flex items-center gap-2">
           {payload && payload.available && <DownloadButton payload={payload} />}

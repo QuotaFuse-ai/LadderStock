@@ -31,6 +31,7 @@ import { ProvenanceDrawer } from '../../components/research/ProvenanceDrawer'
 import { StageRail } from '../../components/research/StageRail'
 import { LinkButton } from '../../components/research/bits'
 import { artifactMarkdown } from './facts'
+import { asSourceBadgeStatus, SourceStatusBadge } from '../industry/sourceBadges'
 import { detailHref } from './links'
 import { useResearchRun } from './useResearchRun'
 import { useResearchView } from './useResearchView'
@@ -172,6 +173,14 @@ export default function ResearchReportScreen() {
             </Badge>
           )}
           <DemoStateBadge state={view.forced} />
+          {view.status && (
+            <SourceStatusBadge
+              status={
+                asSourceBadgeStatus(view.status.data_source_status) ?? view.status.source_status
+              }
+              detail={view.status.reason}
+            />
+          )}
         </div>
       }
       meta={<span className="text-caption text-text-secondary">{summary}</span>}
