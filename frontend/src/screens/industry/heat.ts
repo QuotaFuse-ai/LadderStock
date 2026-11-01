@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react'
 /**
  * 热力图色阶（DEC-028）：只按「同列相对位置」上色，不产生新指标、不判断好坏。
  *
- * - 数值列：`--ldst-accent` 按 rank 比例混入 `--ldst-surface`（4%–52%）；
+ * - 数值列：`--ldst-accent` 按 rank 比例混入 `--ldst-surface`（4%–52% 强调层）；
  * - 带正负号的列：红涨绿跌用 `--ldst-up-soft` / `--ldst-down-soft`，不做深浅分级；
  * - 颜色全部由令牌经 `color-mix()` 生成，业务代码不出现色值。
  */
@@ -25,7 +25,12 @@ export function rankRatio(values: ReadonlyArray<number | null>, value: number | 
   return rank / (finite.length - 1)
 }
 
-/** 数值列底色：rank 0→4%，1→52%（最低值也有一点底色，便于识别「有数」）。 */
+/** 数值列底色：rank 0→4%，1→52%（最低值也有一点底色，便于识别「有数」）。
+ *
+ * 混色基址固定 `--ldst-surface`（§3.12 与 `tests/industry-heat.test.ts` 都按这条判）；
+ * 代价是 hover 行底色 `bg-surface-3` 被色块盖住——色块要跟随行高亮必须由 C-09 提供
+ * 「整格底色列」能力（`Column.className` 落在 td 上），不是屏侧改混色基址能解决的。
+ */
 export function levelHeatStyle(ratio: number | null): CSSProperties | undefined {
   if (ratio === null || !Number.isFinite(ratio)) return undefined
   const clamped = Math.min(1, Math.max(0, ratio))

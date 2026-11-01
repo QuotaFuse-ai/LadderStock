@@ -5,12 +5,11 @@ import {
   DIMENSION_TITLE,
   INDUSTRY_DIMENSIONS,
   type ConstituentRow,
-  type DataSourceStatus,
   type IndustryDetailPayload,
   type IndustryDimension,
   type RelatedItem,
 } from '../../api/industry'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
   Badge,
   Banner,
@@ -21,11 +20,23 @@ import {
   EmptyState,
   ErrorBlock,
   SectionCard,
+  Skeleton,
+  SkeletonRows,
   Sparkline,
+  SourceStatusBadge,
   type Column,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
-import { MISSING, formatChangePct, formatInt, formatMoney, formatTime, isFiniteNumber } from '../../lib/format'
+import {
+  MISSING,
+  formatChangePct,
+  formatDate,
+  formatInt,
+  formatMoney,
+  formatTime,
+  isFiniteNumber,
+  shortDate,
+} from '../../lib/format'
 import {
   compareMetric,
   DIMENSION_HEADLINE,
@@ -35,6 +46,8 @@ import {
   percentileValue,
 } from './metrics'
 import { MISSING_CELL_TITLE } from './heat'
+import { LINK_BUTTON_CLASS, LINK_TEXT_CLASS, dimensionTitleOf } from './labels'
+import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
 import { withParams } from './links'
 import { useIndustryDetailView } from './useIndustryView'
 
@@ -45,18 +58,16 @@ import { useIndustryDetailView } from './useIndustryView'
  * 相关研报/资讯（R6 `news_stream`，未交付前是带出口的空态）+ 口径与溯源。
  *
  * 数值一律来自 R5 快照；缺失显示「无数据（未核实）」并给原因，不补 0。
+ * 「数据完整度」的标签与色序不在本屏定义，一律走同源徽标 `components/ui/SourceBadges`（§5.5）；
+ * 演示水印归 `PageShell.tsx` 的 `DemoStateBadge`（R-18 / QUOT-320）。
  */
 
-const STATUS_LABEL: Record<DataSourceStatus, string> = {
-  ok: '数据完整',
-  partial: '部分缺失',
-  missing: '无数据',
-}
-
-const STATUS_TONE: Record<DataSourceStatus, 'ok' | 'warn' | 'danger'> = {
-  ok: 'ok',
-  partial: 'warn',
-  missing: 'danger',
+/** §5.2：`partial` 的悬浮必须列出缺失项，只给总数不算达标。 */
+function missingSummaryOf(payload: IndustryDetailPayload): string | null {
+  if (payload.reason) return payload.reason
+  if (payload.missing.length === 0) return null
+  const head = payload.missing.slice(0, 6).join('、')
+  return `缺 ${formatInt(payload.missing.length)} 个字段：${head}${payload.missing.length > 6 ? '…' : ''}`
 }
 
 const HISTORY_KEY: Record<IndustryDimension, 'pe_percentile' | 'pb_percentile' | 'turnover_percentile' | 'change_pct_20d' | null> = {
@@ -67,14 +78,14 @@ const HISTORY_KEY: Record<IndustryDimension, 'pe_percentile' | 'pb_percentile' |
   crowding: 'turnover_percentile',
 }
 
+/** 分位条指针：用 `-translate-x-1/2` 居中到百分比处，不需要半个指针半径的魔法数。 */
+const GAUGE_POINTER_CLASS =
+  'absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-pill border border-accent bg-surface'
+
 function PercentileGauge({ value, label }: { value: number | null; label: string }) {
   const ratio = percentileValue(value)
   if (ratio === null) {
-    return (
-      <p className="text-caption text-text-muted" title={MISSING_CELL_TITLE}>
-        无数据（未核实）
-      </p>
-    )
+    return <MissingNote label={label} reason="分位需要窗口内有可比样本" />
   }
   const percent = Math.round(ratio * 100)
   return (
@@ -89,10 +100,7 @@ function PercentileGauge({ value, label }: { value: number | null; label: string
     >
       <div className="relative h-2 rounded-pill bg-surface-3">
         <span className="absolute inset-y-0 left-0 rounded-pill bg-accent" style={{ width: `${percent}%` }} />
-        <span
-          className="absolute top-1/2 size-2 -translate-y-1/2 rounded-pill border border-accent bg-surface"
-          style={{ left: `calc(${percent}% - 4px)` }}
-        />
+        <span className={GAUGE_POINTER_CLASS} style={{ left: `${percent}%` }} />
       </div>
       <div className="ldst-num flex justify-between text-caption text-text-muted">
         <span>0%</span>
@@ -140,7 +148,7 @@ function DimensionCard({
         }
       />
       <div className="flex flex-1 flex-col gap-3 p-4">
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-half">
           <p className="text-caption text-text-secondary">{headlineSpec.label}</p>
           <p
             className={cn(
@@ -150,27 +158,38 @@ function DimensionCard({
           >
             {formatted.missing ? MISSING : formatted.text}
           </p>
-          {formatted.missing && !isPercentile && (
-            <p className="text-caption text-text-muted" title={MISSING_CELL_TITLE}>
-              无数据（未核实）
-            </p>
-          )}
+          {formatted.missing && !isPercentile && <MissingNote label={headlineSpec.label} />}
         </div>
 
         {isPercentile && <PercentileGauge value={headlineValue} label={`${headlineSpec.label}分位`} />}
 
-        {historyKey && series.length >= 2 && (
-          <div className="flex items-center justify-between gap-2">
-            <Sparkline
-              values={series.map((point) => point.value)}
-              tone={changeTone}
-              ariaLabel={`${DIMENSION_TITLE[dimension]}历史序列，${series.length} 个点，${series[0].date} 至 ${series[series.length - 1].date}`}
-              width={120}
-            />
-            <span className="ldst-num shrink-0 text-caption text-text-muted">
-              {series[series.length - 1].date}
-            </span>
-          </div>
+        {historyKey ? (
+          series.length >= 2 ? (
+            <div className="flex items-center justify-between gap-2">
+              <Sparkline
+                values={series.map((point) => point.value)}
+                tone={changeTone}
+                ariaLabel={`${DIMENSION_TITLE[dimension]}历史序列，${series.length} 个点，${formatDate(series[0].date)} 至 ${
+                  formatDate(series[series.length - 1].date)
+                }`}
+                width={120}
+              />
+              <span
+                className="ldst-num shrink-0 text-caption text-text-muted"
+                title={`末点 ${formatDate(series[series.length - 1].date)}`}
+              >
+                {shortDate(series[series.length - 1].date)}
+              </span>
+            </div>
+          ) : (
+            <p className="text-caption text-text-muted" title={MISSING_CELL_TITLE}>
+              历史序列{MISSING}（窗口内不足 2 个可比样本）
+            </p>
+          )
+        ) : (
+          <p className="text-caption text-text-muted" title="R5 快照未对该维度提供历史序列，非取数失败">
+            本维度不提供历史序列（R5 未接入）
+          </p>
         )}
 
         <dl className="mt-auto flex flex-col gap-1 border-t border-border pt-2">
@@ -179,12 +198,12 @@ function DimensionCard({
             const toneClass =
               item.tone === 'up' ? 'text-up' : item.tone === 'down' ? 'text-down' : 'text-text'
             return (
-              <div key={spec.path} className="flex items-baseline justify-between gap-2">
-                <dt className="min-w-0 truncate text-caption text-text-secondary" title={spec.path}>
+              <div key={spec.path} className="flex min-w-0 items-baseline justify-between gap-2">
+                <dt className="min-w-0 shrink-0 text-caption text-text-secondary" title={spec.path}>
                   {spec.label}
                 </dt>
                 <dd
-                  className={cn('ldst-num shrink-0 text-caption', item.missing ? 'text-text-muted' : toneClass)}
+                  className={cn('ldst-num min-w-0 shrink truncate text-caption', item.missing ? 'text-text-muted' : toneClass)}
                   title={item.missing ? MISSING_CELL_TITLE : spec.path}
                 >
                   {item.missing ? MISSING : item.text}
@@ -227,12 +246,14 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
   {
     key: 'stock',
     header: '标的',
-    width: '168px',
+    width: '176px',
     sort: (a, b) => a.code.localeCompare(b.code),
     render: (row) => (
       <span className="flex min-w-0 flex-col leading-tight">
-        <span className="truncate text-text">{row.name ?? '名称未知'}</span>
-        <span className="ldst-num truncate text-caption text-text-muted">{row.code}</span>
+        <span className="min-w-0 truncate text-text" title={row.name ?? '名称无数据'}>{row.name ?? '名称无数据'}</span>
+        <span className="ldst-num min-w-0 truncate text-caption text-text-muted" title={`代码 ${row.code}`}>
+          {row.code}
+        </span>
       </span>
     ),
   },
@@ -240,7 +261,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'pe',
     header: 'PE(TTM)',
     align: 'right',
-    width: '96px',
+    width: '112px',
     sort: (a, b) => compareMetric(a.pe_ttm, b.pe_ttm),
     render: (row) => (
       <span className={cn('ldst-num', row.pe_ttm === null ? 'text-text-muted' : 'text-text')}>
@@ -264,7 +285,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'turnover',
     header: '换手率',
     align: 'right',
-    width: '92px',
+    width: '88px',
     sort: (a, b) => compareMetric(a.turnover_rate, b.turnover_rate),
     render: (row) => (
       <span className={cn('ldst-num', row.turnover_rate === null ? 'text-text-muted' : 'text-text-secondary')}>
@@ -276,7 +297,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'revenue',
     header: '营收同比',
     align: 'right',
-    width: '104px',
+    width: '112px',
     sort: (a, b) => compareMetric(a.revenue_yoy, b.revenue_yoy),
     render: (row) => <PctCell value={row.revenue_yoy} />,
   },
@@ -284,7 +305,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'profit',
     header: '净利同比',
     align: 'right',
-    width: '104px',
+    width: '112px',
     sort: (a, b) => compareMetric(a.profit_yoy, b.profit_yoy),
     render: (row) => <PctCell value={row.profit_yoy} />,
   },
@@ -292,7 +313,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'mainNet',
     header: '主力净流入(5日)',
     align: 'right',
-    width: '148px',
+    width: '144px',
     sort: (a, b) => compareMetric(a.main_net_nd, b.main_net_nd),
     render: (row) => (
       <span
@@ -308,6 +329,13 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
 ]
 
 function RelatedRow({ item }: { item: RelatedItem }) {
+  const shown = item.related_codes.slice(0, 4)
+  const hidden = item.related_codes.length - shown.length
+  const title = (
+    <p className="line-clamp-2 text-body leading-body text-text" title={item.title}>
+      {item.title}
+    </p>
+  )
   return (
     <li className="flex flex-col gap-1 py-2 first:pt-0 last:pb-0">
       <div className="flex items-center justify-between gap-2">
@@ -319,16 +347,18 @@ function RelatedRow({ item }: { item: RelatedItem }) {
           href={item.url}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-body leading-body text-text underline-offset-2 hover:text-accent-hover hover:underline"
+          className="leading-body text-text underline-offset-2 transition-colors duration-fast ease-ldst hover:text-accent-hover hover:underline"
+          title={item.title}
         >
-          {item.title}
+          {title}
         </a>
       ) : (
-        <p className="text-body leading-body text-text">{item.title}</p>
+        title
       )}
-      <p className="text-caption text-text-muted">
-        {item.source ?? '来源未知'}
-        {item.related_codes.length > 0 && ` · 关联 ${item.related_codes.slice(0, 4).join('、')}`}
+      <p className="min-w-0 truncate text-caption text-text-muted" title={item.related_codes.join('、') || undefined}>
+        {item.source ?? '来源无数据'}
+        {item.related_codes.length > 0 &&
+          ` · 关联 ${shown.join('、')}${hidden > 0 ? `（另有 ${formatInt(hidden)} 个代码）` : ''}`}
       </p>
     </li>
   )
@@ -352,7 +382,11 @@ function DetailEmpty({
           icon={<Database aria-hidden="true" />}
           title="行业名不合法"
           description="行业名不能为空，且不超过 40 个字符。"
-          action={<Link to="/industry" className="text-body text-accent hover:underline">返回产业矩阵</Link>}
+          action={
+            <Link to={withParams('/industry', { demo: demo ? '1' : null })} className={LINK_TEXT_CLASS}>
+              返回产业矩阵
+            </Link>
+          }
         />
       </Card>
     )
@@ -370,7 +404,7 @@ function DetailEmpty({
                 <Link
                   key={candidate}
                   to={withParams(`/industry/${encodeURIComponent(candidate)}`, { demo: demo ? '1' : null })}
-                  className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
+                  className={LINK_BUTTON_CLASS}
                 >
                   {candidate}
                 </Link>
@@ -390,8 +424,8 @@ function DetailEmpty({
           title="五维均无数据（未核实）"
           description={
             <>
-              {payload.reason ?? '六个输入数据集没有可用记录，字段全部显式 null'}
-              。{dims.length > 0 && `缺失维度：${dims.map((dimension) => DIMENSION_TITLE[dimension]).join('、')}。`}
+              {payload.reason ?? '六个输入数据集没有可用记录，字段全部显式 null。'}
+              {dims.length > 0 && ` 缺失维度：${dims.map((dimension) => DIMENSION_TITLE[dimension]).join('、')}。`}
               先运行 <code className="ldst-num">ldst industry show {payload.meta.name}</code> 检查本地缓存。
             </>
           }
@@ -401,19 +435,58 @@ function DetailEmpty({
     )
   }
   return (
-    <Card>
-      <EmptyState
-        icon={<Database aria-hidden="true" />}
-        title="接口未接入"
-        description={
-          <>
-            页面已按 <code className="ldst-num">GET /api/industry/&#123;name&#125;</code> 契约实现；
-            后端提供该只读接口后自动接入，当前不伪造快照。
-          </>
-        }
-        action={<Button variant="secondary" onClick={reload}>重试</Button>}
-      />
-    </Card>
+    <EndpointMissingEmpty
+      endpoint={'GET /api/industry/{name}'}
+      onReload={reload}
+      extra={
+        <Link to={withParams('/industry', { demo: demo ? '1' : null })} className={LINK_BUTTON_CLASS}>
+          返回产业矩阵
+        </Link>
+      }
+    />
+  )
+}
+
+/**
+ * 加载骨架：复刻正文两栏（左：2 列 × 5 张维度卡 + 成分股表；右：3 张侧栏卡）。
+ *
+ * `ScreenSkeleton` 的卡阵写死在 `PageShell.tsx:84`，表达不了左右分栏（清单 M-9，
+ * 需要它补 `layout` 插槽）；这里先用组件层 C-18 的 `Skeleton` / `SkeletonRows` 拼同构骨架。
+ */
+function DetailSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-4 desk:grid-cols-12" aria-busy="true" aria-live="polite">
+      <span className="sr-only">正在加载行业快照…</span>
+      <div className="flex flex-col gap-4 desk:col-span-8">
+        <div className="grid grid-cols-2 gap-3">
+          {INDUSTRY_DIMENSIONS.map((dimension) => (
+            <div key={dimension} className="flex flex-col gap-3 rounded border border-border bg-surface p-4">
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-7 w-28" />
+              <SkeletonRows rows={2} slots={['34%', '28%']} className="border-t border-border pt-2" />
+            </div>
+          ))}
+        </div>
+        <div className="rounded border border-border bg-surface">
+          <div className="flex h-row items-center gap-3 border-b border-border bg-surface-2 px-3">
+            <Skeleton className="w-32" />
+            <Skeleton className="w-16" />
+            <Skeleton className="w-14" />
+            <Skeleton className="w-16" />
+            <Skeleton className="w-20" />
+          </div>
+          <SkeletonRows rows={6} slots={['24%', '12%', '10%', '12%', '14%', '14%']} />
+        </div>
+      </div>
+      <aside className="flex flex-col gap-4 desk:col-span-4">
+        {[0, 1, 2].map((index) => (
+          <div key={index} className="flex flex-col gap-3 rounded border border-border bg-surface p-4">
+            <Skeleton className="h-4 w-24" />
+            <SkeletonRows rows={index === 1 ? 5 : 3} slots={['28%', '46%']} />
+          </div>
+        ))}
+      </aside>
+    </div>
   )
 }
 
@@ -430,23 +503,27 @@ export default function IndustryDetailScreen() {
     <PageHeader
       title={payload?.meta.name ?? name ?? '行业详情'}
       subtitle={
-        payload
-          ? `${payload.meta.l1_code ?? '未绑定'} · 成分股 ${payload.membership.constituent_count ?? MISSING} 只 · ${STATUS_LABEL[payload.data_source_status]}`
-          : '单行业五维快照'
+        payload ? (
+          <span>
+            <span className="ldst-num">{payload.meta.l1_code ?? '未绑定申万一级'}</span> · 成分股{' '}
+            <span className="ldst-num">{formatInt(payload.membership.constituent_count)}</span> 只
+          </span>
+        ) : (
+          '单行业五维快照'
+        )
       }
       badge={
         <>
           <DemoStateBadge state={forced} />
-          {payload && <Badge tone={STATUS_TONE[payload.data_source_status]}>{STATUS_LABEL[payload.data_source_status]}</Badge>}
+          {payload && (
+            <SourceStatusBadge status={payload.data_source_status} detail={missingSummaryOf(payload)} />
+          )}
           {payload && !payload.meta.bound && <Badge tone="neutral">未绑定</Badge>}
         </>
       }
       actions={
         <>
-          <Link
-            to={backLink}
-            className="inline-flex h-control items-center gap-1 rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
-          >
+          <Link to={backLink} className={LINK_BUTTON_CLASS}>
             <ArrowLeft className="size-3.5" aria-hidden="true" />
             产业矩阵
           </Link>
@@ -467,7 +544,7 @@ export default function IndustryDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ScreenSkeleton metrics={5} rows={6} />
+        <DetailSkeleton />
       </div>
     )
   }
@@ -522,7 +599,7 @@ export default function IndustryDetailScreen() {
       {unavailable.length > 0 && (
         <Banner tone="warn" title="部分维度无数据（未核实）">
           {unavailable.map((dimension) => DIMENSION_TITLE[dimension]).join('、')} 缺少本地缓存：
-          {payload.dimensions[unavailable[0]].reason ?? '接口未给出原因'}。其余维度照常展示，缺失字段不补 0。
+          {payload.dimensions[unavailable[0]].reason ?? '接口未给出原因。'}其余维度照常展示，缺失字段不补 0。
         </Banner>
       )}
 
@@ -537,11 +614,20 @@ export default function IndustryDetailScreen() {
           <SectionCard
             title="成分股"
             subtitle={
-              payload.membership.constituent_count === null
-                ? '成分数量未知'
-                : `申万成分 ${payload.membership.constituent_count} 只 · 分类时点 ${payload.membership.as_of ?? MISSING}`
+              payload.membership.constituent_count === null ? (
+                <MissingNote label="成分数量" />
+              ) : (
+                <span>
+                  申万成分 <span className="ldst-num">{formatInt(payload.membership.constituent_count)}</span> 只 ·
+                  分类时点 <span className="ldst-num">{payload.membership.as_of ?? MISSING}</span>
+                </span>
+              )
             }
-            actions={<Badge tone={payload.constituents.length > 0 ? 'info' : 'warn'}>{payload.constituents.length} 行</Badge>}
+            actions={
+              <Badge tone={payload.constituents.length > 0 ? 'info' : 'warn'}>
+                {formatInt(payload.constituents.length)} 行
+              </Badge>
+            }
             bodyClassName="p-0"
           >
             <DataTable<ConstituentRow>
@@ -549,7 +635,7 @@ export default function IndustryDetailScreen() {
               rows={payload.constituents}
               rowKey={(row) => row.code}
               caption="逐股快照来自 R5 成分缓存；缺失单元格为「无数据（未核实）」，不按 0 处理"
-              density="compact"
+              density="default"
               maxHeight="360px"
               initialSort={{ key: 'mainNet', dir: 'desc' }}
               empty={
@@ -559,6 +645,11 @@ export default function IndustryDetailScreen() {
                   description={
                     payload.membership.reason ??
                     'R5 快照未返回 constituents；接口提供后自动出表，前端不自行拼股票池。'
+                  }
+                  action={
+                    <Button variant="secondary" onClick={reload}>
+                      重新取数
+                    </Button>
                   }
                 />
               }
@@ -570,8 +661,8 @@ export default function IndustryDetailScreen() {
           <SectionCard
             title="相关研报与资讯"
             subtitle="R6 news_stream 关联到本行业"
-            actions={<Badge tone={relatedEmpty ? 'neutral' : 'info'}>{payload.related.length} 条</Badge>}
-            bodyClassName={relatedEmpty ? 'p-0' : 'px-4 py-2'}
+            actions={<Badge tone={relatedEmpty ? 'neutral' : 'info'}>{formatInt(payload.related.length)} 条</Badge>}
+            bodyClassName={relatedEmpty ? 'p-0' : undefined}
           >
             {relatedEmpty ? (
               <EmptyState
@@ -579,6 +670,11 @@ export default function IndustryDetailScreen() {
                 icon={<Newspaper aria-hidden="true" />}
                 title="暂无关联资讯"
                 description="R6 news_stream 尚未交付；接口上线后这里展示该行业研报与资讯。前端不抓取外部内容（DEC-006）。"
+                action={
+                  <Button variant="secondary" onClick={reload}>
+                    重新取数
+                  </Button>
+                }
               />
             ) : (
               <ul className="divide-y divide-border">
@@ -590,55 +686,73 @@ export default function IndustryDetailScreen() {
           </SectionCard>
 
           <SectionCard title="口径与成分" subtitle="来自 R5 快照，不在此页重算">
-            <dl className="flex flex-col gap-1.5 text-caption leading-body">
-              <div className="flex justify-between gap-3">
-                <dt className="text-text-secondary">申万一级代码</dt>
-                <dd className="ldst-num text-text">{payload.meta.l1_code ?? '未绑定'}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-text-secondary">口径</dt>
-                <dd className="text-text">{payload.meta.caliber ?? MISSING}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-text-secondary">成分股 / 分类代码</dt>
-                <dd className="ldst-num text-text">
-                  {formatInt(payload.membership.constituent_count)} / {formatInt(payload.membership.classified_codes)}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-text-secondary">板块口径</dt>
-                <dd className="text-right text-text">{payload.meta.board_name ?? '未配置（同名≠同成分）'}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-text-secondary">锚点</dt>
-                <dd className="text-right text-text">{payload.meta.anchors.length > 0 ? payload.meta.anchors.join('、') : MISSING}</dd>
-              </div>
-            </dl>
-            {payload.membership.reason && (
-              <p className="mt-2 border-t border-border pt-2 text-caption leading-body text-text-muted">
-                {payload.membership.reason}
-              </p>
-            )}
+            <KeyValueList
+              items={[
+                {
+                  key: 'l1',
+                  label: '申万一级代码',
+                  value: payload.meta.l1_code ?? '未绑定',
+                  title: payload.meta.l1_code ?? '该行业未绑定申万一级代码',
+                },
+                { key: 'caliber', label: '口径', numeric: false, value: payload.meta.caliber ?? MISSING, title: payload.meta.caliber ?? MISSING_CELL_TITLE },
+                {
+                  key: 'count',
+                  label: '成分股 / 分类代码',
+                  value: `${formatInt(payload.membership.constituent_count)} / ${formatInt(payload.membership.classified_codes)}`,
+                },
+                {
+                  key: 'board',
+                  label: '板块口径',
+                  numeric: false,
+                  value: payload.meta.board_name ?? '未配置（同名≠同成分）',
+                  title: payload.meta.board_name ?? '未配置板块口径：同名板块不等于同成分',
+                },
+                {
+                  key: 'anchors',
+                  label: '锚点',
+                  numeric: false,
+                  value: payload.meta.anchors.length > 0 ? payload.meta.anchors.join('、') : MISSING,
+                  title: payload.meta.anchors.length > 0 ? payload.meta.anchors.join('、') : MISSING_CELL_TITLE,
+                },
+              ]}
+            />
+            {payload.membership.reason && <CardNote>{payload.membership.reason}</CardNote>}
           </SectionCard>
 
           <SectionCard
             title="溯源与缺口"
-            subtitle={`${payload.provenance.sources.length} 个数据源 · ${payload.missing.length} 个字段无数据`}
-            tone={payload.data_source_status === 'ok' ? 'ok' : payload.data_source_status === 'partial' ? 'warn' : 'danger'}
+            subtitle={
+              <span>
+                <span className="ldst-num">{formatInt(payload.provenance.sources.length)}</span> 个数据源 ·{' '}
+                <span className="ldst-num">{formatInt(payload.missing.length)}</span> 个字段无数据
+              </span>
+            }
+            tone={payload.data_source_status === 'ok' ? 'ok' : 'danger'}
           >
-            <ul className="flex flex-col gap-1.5 text-caption leading-body">
-              {payload.provenance.sources.map((source) => (
-                <li key={source.id} className="flex items-baseline justify-between gap-2">
-                  <span className="ldst-num truncate text-text-secondary" title={source.id}>
-                    {source.dataset}
-                  </span>
-                  <span className="ldst-num shrink-0 text-text-muted">{formatTime(source.retrieved_at)}</span>
-                </li>
-              ))}
-              {payload.provenance.sources.length === 0 && (
-                <li className="text-text-muted">未返回数据源清单（不可视为已核实）</li>
-              )}
-            </ul>
+            {payload.provenance.sources.length === 0 ? (
+              <EmptyState
+                compact
+                icon={<Database aria-hidden="true" />}
+                title="本维度无数据源"
+                description="R5 快照没有返回任何来源清单；下面的缺口徽标只按后端给的完整度字段画，不代表已核实。"
+              />
+            ) : (
+              <ul className="flex min-w-0 flex-col gap-1 text-caption leading-body">
+                {payload.provenance.sources.map((source) => (
+                  <li key={source.id} className="flex min-w-0 items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate text-text-secondary" title={`数据源 id：${source.id}`}>
+                      {source.dataset}
+                    </span>
+                    <span
+                      className="ldst-num shrink-0 text-text-muted"
+                      title={`取数时间 ${formatDate(source.retrieved_at)}`}
+                    >
+                      {formatTime(source.retrieved_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="mt-2 flex flex-wrap gap-1 border-t border-border pt-2">
               {INDUSTRY_DIMENSIONS.map((dimension) => (
                 <Badge
@@ -653,15 +767,13 @@ export default function IndustryDetailScreen() {
             {Object.keys(payload.formulas).length > 0 && (
               <div className="mt-2 flex flex-col gap-1 border-t border-border pt-2 text-caption leading-body text-text-muted">
                 {Object.entries(payload.formulas).map(([dimension, formula]) => (
-                  <p key={dimension}>
-                    <span className="text-text-secondary">{dimension}</span>：{formula}
+                  <p key={dimension} className="line-clamp-2" title={`${dimension}：${formula}`}>
+                    <span className="text-text-secondary">{dimensionTitleOf(dimension)}</span>：{formula}
                   </p>
                 ))}
               </div>
             )}
-            {payload.source_detail && (
-              <p className="mt-2 text-caption leading-body text-text-muted">{payload.source_detail}</p>
-            )}
+            {payload.source_detail && <CardNote>{payload.source_detail}</CardNote>}
           </SectionCard>
         </aside>
       </div>

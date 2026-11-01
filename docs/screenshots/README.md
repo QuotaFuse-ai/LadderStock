@@ -58,3 +58,19 @@ node scripts/visual-shot.mjs --routes settings --query "tab=ports&state=offline"
 `frontend/scripts/visual-shot.mjs` 的路由表写死不带查询串，这一组用同一份脚本的临时副本拍摄
 （路由带日期 + 抽屉先点击「展开」+ `--settle 6000`），当时 `visual-shot.mjs` 还没有 `--query`。
 
+## industry 2 屏 + limit-up 精修对比（QUOT-311，2026-11-01 夜）
+
+`<route>-<before|after>-311-<demo|partial>-<dark|light>.png` 是 QUOT-306 阶段二（industry 矩阵 /
+industry 详情 / limit-up 三屏精修）的对比组，**不覆盖**阶段一与 QUOT-312 / QUOT-320 的证据。
+`before` 拍在合并基线 `5e2314c`（三屏改动前），`after` 拍在本轨分支，同一台机、同一份
+`vite.shot.config.ts`、同一查询串，只差代码：
+
+```bash
+cd frontend && npm run dev -- --config vite.shot.config.ts   # http://127.0.0.1:5199
+node scripts/visual-shot.mjs --routes industry,industry-name,limit-up --query "demo=1"                  --suffix after-311-demo
+node scripts/visual-shot.mjs --routes industry,limit-up              --query "demo=1&state=partial"     --suffix after-311-partial
+```
+
+本机没有 `ldst run`（行情数据集为空），所以这一组取的是 `?demo=1` 演示源，`?demo=1` 与 `?state=partial`
+两枚标识都由 `PageShell` 的 `DemoStateBadge` 自动上屏（QUOT-320 / R-18）。`--suffix before-311-*` 的两组
+在 `git checkout 5e2314c` 之后重拍，用来做同口径对比。

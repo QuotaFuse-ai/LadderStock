@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useMemo, type ReactNode } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Database, RefreshCw, Search } from 'lucide-react'
 
 import {
@@ -10,7 +10,7 @@ import {
   type IndustrySummaryRow,
   type IndustryListPayload,
 } from '../../api/industry'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
   Badge,
   Banner,
@@ -25,13 +25,18 @@ import {
   Input,
   Segmented,
   Select,
+  Skeleton,
+  SkeletonRows,
+  SourceStatusBadge,
   type Column,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { formatInt, MISSING } from '../../lib/format'
 import { compareMetric, compactMetric, DIMENSION_METRICS, formatMetric, type MetricKind } from './metrics'
-import { levelHeatStyle, rankRatio, signedHeatStyle, MISSING_CELL_TITLE } from './heat'
-import { industryHref } from './links'
+import { HEAT_MAX_PERCENT, HEAT_MIN_PERCENT, levelHeatStyle, rankRatio, signedHeatStyle, MISSING_CELL_TITLE } from './heat'
+import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
+import { LINK_BUTTON_CLASS } from './labels'
+import { industryHref, withParams } from './links'
 import { useIndustryListView } from './useIndustryView'
 
 /**
@@ -42,6 +47,9 @@ import { useIndustryListView } from './useIndustryView'
  *
  * 五态：`?state=loading|empty|error|partial|offline`；`?demo=1` 为显式演示源。
  * 接口未接入（HTTP 404）→ 空态「接口未接入」，不是整屏报错。
+ *
+ * 状态列一律走组件层 `components/ui/SourceBadges` 的同源徽标（§5.5 只允许一份实现，屏侧不得自带 label map）；
+ * 演示水印归 `PageShell.tsx` 的 `DemoStateBadge`（R-18 / QUOT-320），本屏不重复画。
  */
 
 type IndustryFilter = 'all' | 'data' | 'unbound'
@@ -57,16 +65,11 @@ const FILTER_OPTIONS: ReadonlyArray<{ value: IndustryFilter; label: string }> = 
   { value: 'unbound', label: '未绑定' },
 ]
 
-const STATUS_LABEL: Record<IndustrySummaryRow['data_source_status'], string> = {
-  ok: '完整',
-  partial: '部分',
-  missing: '缺失',
-}
-
-const STATUS_TONE: Record<IndustrySummaryRow['data_source_status'], 'ok' | 'warn' | 'danger'> = {
-  ok: 'ok',
-  partial: 'warn',
-  missing: 'danger',
+/** 状态列的悬浮说明：只解释本屏口径，标签与色序由同源徽标给出。 */
+const STATUS_HINT: Record<IndustrySummaryRow['data_source_status'], string> = {
+  ok: '本维度承诺指标全部有值',
+  partial: '本维度部分指标无数据，缺失格不上色',
+  missing: '本维度全部指标无数据',
 }
 
 function isDimension(value: string | null): value is IndustryDimension {
@@ -79,7 +82,7 @@ function asFilter(value: string | null): IndustryFilter {
 
 function HeatSwatches() {
   return (
-    <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+    <span className="inline-flex items-center gap-half" aria-hidden="true">
       {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
         <span
           key={ratio}
@@ -108,15 +111,7 @@ function MetricCell({
 }) {
   const value = row.metrics[path] ?? null
   if (value === null) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 text-caption text-text-muted"
-        title={`${label}：${MISSING_CELL_TITLE}${asOf ? `（数据时点 ${asOf}）` : ''}`}
-      >
-        <span aria-hidden="true">{MISSING}</span>
-        <span>{MISSING_CELL_TITLE}</span>
-      </span>
-    )
+    return <MissingNote label={label} reason={asOf ? `数据时点 ${asOf}` : undefined} />
   }
   const formatted = formatMetric({ path, label, kind }, value)
   const toneClass =
@@ -127,7 +122,7 @@ function MetricCell({
       : levelHeatStyle(rankRatio(columnValues, value))
   return (
     <span
-      className={cn('ldst-num inline-flex w-full items-center justify-end rounded-xs px-2 py-1', toneClass)}
+      className={cn('ldst-num inline-flex w-full items-center justify-end py-2', toneClass)}
       style={style}
       aria-label={`${label} ${formatted.text}${asOf ? `，数据时点 ${asOf}` : ''}；底色为同列相对位置`}
       title={`${label} · ${compactMetric({ path, label, kind }, value)}${asOf ? ` · 数据时点 ${asOf}` : ''}`}
@@ -141,48 +136,77 @@ function MatrixEmpty({
   payload,
   demo,
   endpointMissing,
+  demoHref,
   reload,
 }: {
   payload: IndustryListPayload | null
   demo: boolean
   endpointMissing: boolean
+  demoHref: string
   reload: () => void
 }) {
+  const demoEntry = !demo && (
+    <Link to={demoHref} className={LINK_BUTTON_CLASS}>
+      查看演示数据
+    </Link>
+  )
+  if (endpointMissing) {
+    return <EndpointMissingEmpty endpoint="GET /api/industry" onReload={reload} extra={demoEntry} />
+  }
   return (
     <Card>
       <EmptyState
         icon={<Database aria-hidden="true" />}
-        title={endpointMissing ? '接口未接入' : '本机暂无产业数据'}
+        title="本机暂无产业数据"
         description={
-          endpointMissing ? (
-            <>
-              页面已按 <code className="ldst-num">GET /api/industry</code> 契约实现；后端提供该只读接口后自动接入，
-              当前不伪造任何行业行。
-            </>
-          ) : (
-            <>
-              {payload?.reason ?? '六个输入数据集在本机缓存里都没有可用记录，矩阵不出伪行。'}
-              。先运行 <code className="ldst-num">ldst industry list</code> 生成本地快照，再点「刷新」。
-            </>
-          )
+          <>
+            {payload?.reason ?? '六个输入数据集在本机缓存里都没有可用记录，矩阵不出伪行。'}
+            先运行 <code className="ldst-num">ldst industry list</code> 生成本地快照，再点「刷新」。
+          </>
         }
         action={
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Button variant="secondary" onClick={reload}>
               刷新
             </Button>
-            {!demo && (
-              <a
-                href="/industry?demo=1"
-                className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
-              >
-                查看演示数据
-              </a>
-            )}
+            {demoEntry}
           </div>
         }
       />
     </Card>
+  )
+}
+
+/**
+ * 加载骨架：复刻正文三段（工具栏行 → 矩阵表 → 图例卡），不排不存在的指标卡。
+ *
+ * `ScreenSkeleton` 的卡阵写死在 `PageShell.tsx:84`，无法表达本屏结构（清单 M-9，
+ * 需要它补 `layout` 插槽）。这里先用组件层 C-18 的 `Skeleton` / `SkeletonRows` 拼同构骨架，
+ * M-9 落地后可换回公共件。
+ */
+function MatrixSkeleton() {
+  const slots = ['w-44', 'w-24', 'w-28', 'w-24', 'w-20', 'w-16']
+  return (
+    <div className="flex flex-col gap-5" aria-busy="true" aria-live="polite">
+      <span className="sr-only">正在加载产业矩阵…</span>
+      <div className="flex flex-wrap items-center gap-3">
+        <Skeleton className="h-control w-72" />
+        <Skeleton className="h-control w-32" />
+        <Skeleton className="h-control w-56" />
+      </div>
+      <div className="rounded border border-border bg-surface">
+        <div className="flex h-row items-center gap-3 border-b border-border bg-surface-2 px-3">
+          {slots.map((width, index) => (
+            <Skeleton key={index} className={width} />
+          ))}
+        </div>
+        <SkeletonRows rows={8} slots={['34%', '16%', '16%', '16%', '12%', '6%']} />
+      </div>
+      <div className="rounded border border-border bg-surface p-4">
+        <Skeleton className="mb-3 h-4 w-40" />
+        <SkeletonRows rows={3} slots={['18%', '44%', '12%']} />
+      </div>
+    </div>
   )
 }
 
@@ -235,9 +259,21 @@ export default function IndustryMatrixScreen() {
         sort: (a, b) => a.name.localeCompare(b.name, 'zh-CN'),
         render: (row) => (
           <span className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate font-medium text-text">{row.name}</span>
-            <span className="ldst-num truncate text-caption text-text-muted">
-              {row.l1_code ?? '未绑定'} · {row.constituent_count === null ? '成分未知' : `${row.constituent_count} 只`}
+            <Link
+              to={industryHref(row.name, { demo, state: forced })}
+              className="min-w-0 truncate font-medium text-text transition-colors duration-fast ease-ldst hover:text-accent focus-visible:text-accent"
+              title={row.name}
+            >
+              {row.name}
+            </Link>
+            <span
+              className="ldst-num min-w-0 truncate text-caption text-text-muted"
+              title={`${row.l1_code ?? '未绑定申万一级代码'} · ${
+                row.constituent_count === null ? '成分数量无数据' : `${formatInt(row.constituent_count)} 只成分股`
+              }`}
+            >
+              {row.l1_code ?? '未绑定'} ·{' '}
+              {row.constituent_count === null ? '成分无数据' : `${formatInt(row.constituent_count)} 只`}
             </span>
           </span>
         ),
@@ -245,11 +281,13 @@ export default function IndustryMatrixScreen() {
       ...DIMENSION_METRICS[dimension].map((spec) => ({
         key: spec.path,
         align: 'right' as const,
-        width: spec.kind === 'money' ? '136px' : '110px',
+        width: spec.kind === 'money' ? '144px' : '112px',
         header: (
           <span className="flex flex-col items-end leading-tight">
             <span>{spec.label}</span>
-            <span className="text-caption font-normal text-text-muted">{asOf ?? '时点未知'}</span>
+            <span className="ldst-num text-caption font-normal text-text-muted" title={`${spec.label}的数据时点`}>
+              {asOf ?? MISSING}
+            </span>
           </span>
         ),
         sort: (a: IndustrySummaryRow, b: IndustrySummaryRow) =>
@@ -269,23 +307,53 @@ export default function IndustryMatrixScreen() {
         key: 'status',
         header: '状态',
         align: 'center',
-        width: '96px',
+        width: '88px',
         render: (row) => (
-          <span className="inline-flex flex-col items-center gap-0.5">
-            <Badge tone={STATUS_TONE[row.data_source_status]}>{STATUS_LABEL[row.data_source_status]}</Badge>
-            {!row.bound && <span className="text-caption text-text-muted">未绑定</span>}
+          <span className="inline-flex flex-col items-center gap-half">
+            <SourceStatusBadge status={row.data_source_status} detail={STATUS_HINT[row.data_source_status]} />
+            {!row.bound && (
+              <Badge tone="neutral" title="未绑定申万一级代码，与板块口径不同名同成分">
+                未绑定
+              </Badge>
+            )}
           </span>
         ),
       },
     ]
-  }, [dimension, payload, columnValues])
+  }, [dimension, payload, columnValues, demo, forced])
 
   const partialRows = rows.filter((row) => row.data_source_status !== 'ok')
+  /** §5.2：`partial` 必须同时列出缺的是哪一档、几个，不能只给一个总数。 */
+  const partialBreakdown: ReactNode[] = []
+  for (const status of ['partial', 'missing'] as const) {
+    const count = partialRows.filter((row) => row.data_source_status === status).length
+    if (count === 0) continue
+    partialBreakdown.push(
+      <span key={status} className="inline-flex items-center gap-half">
+        <SourceStatusBadge status={status} />
+        <span className="ldst-num">{formatInt(count)} 个</span>
+      </span>,
+    )
+  }
+
+  /** 演示态跳转保留当前维度 / 筛选 / 搜索 / 强制态，刷新后可恢复（§1 原则 2）。 */
+  const demoHref = withParams('/industry', {
+    demo: true,
+    dim: dimension,
+    filter: filter === 'all' ? null : filter,
+    q: query || null,
+    state: forced,
+  })
 
   const header = (
     <PageHeader
       title="产业研究"
-      subtitle={`SW 一级 · ${formatInt(rowCount)} 个行业 · 数据时间 ${payload?.data_as_of ?? MISSING}`}
+      subtitle={
+        <span>
+          SW 一级 · <span className="ldst-num">{`${formatInt(rowCount)} 个行业`}</span> · 数据时间{' '}
+          <span className="ldst-num">{payload?.data_as_of ?? MISSING}</span>
+        </span>
+      }
       badge={<DemoStateBadge state={forced} />}
       actions={
         <Button
@@ -304,7 +372,7 @@ export default function IndustryMatrixScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ScreenSkeleton metrics={5} rows={8} />
+        <MatrixSkeleton />
       </div>
     )
   }
@@ -348,6 +416,7 @@ export default function IndustryMatrixScreen() {
           payload={payload}
           demo={demo}
           endpointMissing={payload === null && isIndustryEndpointMissing(error)}
+          demoHref={demoHref}
           reload={reload}
         />
       </div>
@@ -359,9 +428,9 @@ export default function IndustryMatrixScreen() {
       {header}
 
       {state === 'partial' && (
-        <Banner tone="warn" title="部分行业维度缺失">
-          {partialRows.length} 个行业的维度不完整（如未绑定申万代码、缓存为空）。缺失单元格显示「无数据（未核实）」，
-          不按 0 参与比较，也不从别的口径补位。
+        <Banner tone="danger" title="部分行业维度缺失">
+          <span className="mb-1 flex flex-wrap items-center gap-2">{partialBreakdown}</span>
+          缺失单元格显示「{MISSING_CELL_TITLE}」，不按 0 参与比较，也不从别的口径补位。
         </Banner>
       )}
 
@@ -395,8 +464,8 @@ export default function IndustryMatrixScreen() {
           />
         </Field>
         <div className="grow" />
-        <span className="text-caption text-text-muted">
-          {visible.length} / {rows.length} 个行业 · 点击行进入详情
+        <span className="ldst-num text-caption text-text-muted">
+          {formatInt(visible.length)} / {formatInt(rows.length)} 个行业 · 点击行或行业名进入详情
         </span>
       </div>
 
@@ -404,8 +473,8 @@ export default function IndustryMatrixScreen() {
         columns={columns}
         rows={visible}
         rowKey={(row) => row.name}
-        caption={`${DIMENSION_TITLE[dimension]}维度矩阵（${visible.length} 个行业）；底色为当前列相对位置，仅用于比较`}
-        density="compact"
+        caption={`${DIMENSION_TITLE[dimension]}维度矩阵（${formatInt(visible.length)} 个行业）；底色为当前列相对位置，仅用于比较`}
+        density="default"
         maxHeight="calc(100vh - 280px)"
         onRowClick={(row) => navigate(industryHref(row.name, { demo, state: forced }))}
         empty={
@@ -420,33 +489,43 @@ export default function IndustryMatrixScreen() {
       <Card>
         <CardHeader title="读图与口径" subtitle="底色只做同列比较，不改变数值，也不作为交易信号" />
         <CardBody className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-caption leading-body text-text-secondary">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-caption leading-body text-text-secondary">
             <span className="inline-flex items-center gap-2">
               <HeatSwatches />
-              单列由低到高（4% → 52% 强调色）
+              单列由低到高（{HEAT_MIN_PERCENT}% → {HEAT_MAX_PERCENT}% 强调色）
             </span>
-            <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-half">
               <span className="inline-block size-4 rounded-xs" style={signedHeatStyle(1)} aria-hidden="true" />
               <span className="inline-block size-4 rounded-xs" style={signedHeatStyle(-1)} aria-hidden="true" />
-              红涨绿跌列（金额 / 涨跌 / 同比）
+              <span className="ml-1">红涨绿跌列（金额 / 涨跌 / 同比）</span>
             </span>
             <span>
-              缺失单元格固定「{MISSING_CELL_TITLE}」，不补 0；分位为窗口内经验分位（0–100%），不插值。
+              缺失单元格固定「{MISSING_CELL_TITLE}」，不上色、不补 0；分位是同列经验分位，并列取并列组的中位位置，
+              全等取 0.5，空列为「{MISSING}」。
             </span>
           </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-text-muted">
-            {INDUSTRY_DIMENSIONS.map((name) => (
-              <span key={name} className="ldst-num">
-                {DIMENSION_TITLE[name]} 时点 {payload?.as_of[name] ?? MISSING}
-              </span>
-            ))}
-            <span className="ldst-num">
-              窗口 资金 {payload?.windows.fund_days ?? MISSING} 日 · 估值 {payload?.windows.valuation_lookback_days ?? MISSING} 日 ·
-              换手 {payload?.windows.turnover_lookback_days ?? MISSING} 日 · 动量 {(payload?.windows.momentum_windows ?? []).join('/') || MISSING} 日
-            </span>
-          </div>
+          <KeyValueList
+            items={[
+              ...INDUSTRY_DIMENSIONS.map((name) => ({
+                key: name,
+                label: `${DIMENSION_TITLE[name]} 时点`,
+                value: payload?.as_of[name] ?? MISSING,
+                title: `${DIMENSION_TITLE[name]} 的数据时点；${MISSING_CELL_TITLE}用「${MISSING}」`,
+              })),
+              {
+                key: 'window',
+                label: '计算窗口',
+                numeric: false,
+                value: `资金 ${formatInt(payload?.windows.fund_days)} 日 · 估值 ${formatInt(
+                  payload?.windows.valuation_lookback_days,
+                )} 日 · 换手 ${formatInt(payload?.windows.turnover_lookback_days)} 日 · 动量 ${
+                  (payload?.windows.momentum_windows ?? []).join('/') || MISSING
+                } 日`,
+              },
+            ]}
+          />
           {payload?.source_detail && (
-            <p className="text-caption leading-body text-text-muted">来源：{payload.source_detail}</p>
+            <CardNote>来源：{payload.source_detail}</CardNote>
           )}
         </CardBody>
       </Card>
