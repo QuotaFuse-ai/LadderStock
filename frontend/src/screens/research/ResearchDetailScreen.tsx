@@ -38,6 +38,7 @@ import { StageRail } from '../../components/research/StageRail'
 import { LinkButton, PercentileBar } from '../../components/research/bits'
 import { ValuationBasisPanel } from '../../components/valuation/ValuationBasisPanel'
 import { createDemoValuationLoader } from './demo'
+import { asSourceBadgeStatus, SourceStatusBadge } from '../industry/sourceBadges'
 import {
   MONEY,
   formatFactValue,
@@ -536,6 +537,12 @@ export default function ResearchDetailScreen() {
             </Badge>
           )}
           <DemoStateBadge state={view.forced} />
+          {status && (
+            <SourceStatusBadge
+              status={asSourceBadgeStatus(status.data_source_status) ?? status.source_status}
+              detail={status.reason}
+            />
+          )}
         </div>
       }
       meta={<span className="text-caption text-text-secondary">{summary}</span>}

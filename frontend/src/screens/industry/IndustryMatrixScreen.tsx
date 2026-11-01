@@ -28,7 +28,7 @@ import {
   type Column,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
-import { MISSING } from '../../lib/format'
+import { formatInt, MISSING } from '../../lib/format'
 import { compareMetric, compactMetric, DIMENSION_METRICS, formatMetric, type MetricKind } from './metrics'
 import { levelHeatStyle, rankRatio, signedHeatStyle, MISSING_CELL_TITLE } from './heat'
 import { industryHref } from './links'
@@ -204,6 +204,8 @@ export default function IndustryMatrixScreen() {
   }
 
   const rows = payload?.industries ?? []
+  /** 「没取到」不等于「市场上没有行业」：payload 缺失时行业数写 `—`（UI-SPEC §8）。 */
+  const rowCount: number | null = payload === null ? null : rows.length
 
   const visible = useMemo(() => {
     const term = query.trim()
@@ -283,7 +285,7 @@ export default function IndustryMatrixScreen() {
   const header = (
     <PageHeader
       title="产业研究"
-      subtitle={`SW 一级 · ${rows.length} 个行业 · 数据时间 ${payload?.data_as_of ?? MISSING}`}
+      subtitle={`SW 一级 · ${formatInt(rowCount)} 个行业 · 数据时间 ${payload?.data_as_of ?? MISSING}`}
       badge={<DemoStateBadge state={forced} />}
       actions={
         <Button

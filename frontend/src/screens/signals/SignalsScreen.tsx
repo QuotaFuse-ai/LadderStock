@@ -20,7 +20,7 @@ import {
   type Column,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
-import { MISSING } from '../../lib/format'
+import { formatInt, MISSING } from '../../lib/format'
 import { formatEvidenceValue } from '../industry/metrics'
 import { withParams } from '../industry/links'
 import { useSignalsView } from '../industry/useIndustryView'
@@ -234,7 +234,7 @@ export default function SignalsScreen() {
   const header = (
     <PageHeader
       title="产业信号"
-      subtitle={`规则判定基于 R5 指标 · 数据时点 ${payload?.as_of ?? MISSING} · 命中 ${payload?.counts.total ?? 0} 条`}
+      subtitle={`规则判定基于 R5 指标 · 数据时点 ${payload?.as_of ?? MISSING} · 命中 ${formatInt(payload?.counts.total)} 条`}
       badge={<DemoStateBadge state={forced} />}
       actions={
         <Button
