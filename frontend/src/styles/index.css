@@ -77,8 +77,9 @@
     );
     background-size: 200% 100%;
     background-repeat: no-repeat;
-    animation: ldst-shine var(--ldst-duration-base) linear infinite;
-    animation-duration: 1200ms;
+    /* 扫光是环境类动画，不进交互过渡预算（§7.3 例外清单之外），所以不挂 duration 档位；
+       reduced-motion 下由下方 media query 统一压到 0.001ms。 */
+    animation: ldst-shine 1200ms linear infinite;
     border-radius: var(--ldst-radius-xs);
   }
 
