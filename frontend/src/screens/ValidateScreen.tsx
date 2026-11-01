@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Check, CircleSlash, ClipboardCheck, Plus, Save, Trash2, X } from 'lucide-react'
+import { Check, CircleSlash, ClipboardCheck, Lock, Plus, Save, Trash2, X } from 'lucide-react'
 
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import { MISSING, formatInt, formatTime } from '../lib/format'
@@ -22,16 +22,19 @@ import {
   EmptyState,
   ErrorBlock,
   Field,
+  FreshnessBadge,
   IconButton,
   Input,
   SectionCard,
   Segmented,
+  SourceStatusBadge,
   Textarea,
   Toasts,
   useToasts,
 } from '../components/ui'
 import { useValidationDraft } from '../../stores/validationDraft'
 import { useValidationSource, type ValidationSource } from '../../stores/validationMode'
+import { useValidateView } from './validate/useValidateView'
 
 /**
  * 明日验证（P-06 / DESIGN-SPEC §4.7 · UI-SPEC §3.3）。
@@ -84,6 +87,23 @@ const VERDICT: Record<Verdict, { label: string; tone: 'ok' | 'danger' | 'flat' |
   missing: { label: '数据缺失', tone: 'warn' },
 }
 
+/**
+ * `reconcile.results[].metric` 是后端 key（`core/validation.py:build_conditions()` 用的是
+ * `core/sentiment.py` 的字段名），§11.0「后端 key 不直显」要求这里翻成人话。
+ * 只登记程序会写进条件的四个指标；查不到的一律显示「—」并给原始 key 的 title，不猜中文名。
+ */
+const METRIC_LABEL: Record<string, string> = {
+  temperature: '情绪温度',
+  promotion_rate: '晋级率',
+  seal_rate: '封板率',
+  max_board: '最高板',
+}
+
+function metricLabel(metric: string | null): string {
+  if (!metric) return MISSING
+  return METRIC_LABEL[metric] ?? MISSING
+}
+
 interface ReconcileResult {
   key: string
   text: string
@@ -98,6 +118,7 @@ interface ReconcileView {
   status: string | null
   reason: string | null
   nextSession: string | null
+  generatedAt: string | null
   checked: number | null
   passed: number | null
   failed: number | null
@@ -147,6 +168,7 @@ function parseReconcile(raw: unknown): ReconcileView | null {
     status: toText(node.status),
     reason: toText(node.reason),
     nextSession: toText(node.next_session),
+    generatedAt: toText(node.generated_at),
     checked: toNumber(node.checked),
     passed: toNumber(node.passed),
     failed: toNumber(node.failed),
@@ -171,6 +193,12 @@ function signatureOf(rows: Array<{ code: string; trigger: string }>): string {
 /** 列宽走 §7.3 的 {56, 88} 档；长文本列吃剩余宽度。 */
 const ROW_GRID =
   'grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_5.5rem_5.5rem_5.5rem]'
+
+/**
+ * 首屏密度目标（UI-SPEC §11.0 + PRD §5.2）：1440×900 下第一屏要同时看到 ≥12 行。
+ * 骨架用它占位，避免「骨架 6 行 / 真实 12 行」这种形状不同构（§11.0 最后一条）。
+ */
+const FIRST_SCREEN_ROWS = 12
 
 export default function ValidateScreen() {
   const forced = useForcedState()
@@ -218,22 +246,26 @@ export default function ValidateScreen() {
   // 草稿里没有交易日时按「今天」取——和 `ldst validate` 的默认口径一致。
   const conditionsDate = tradeDate ?? new Date().toISOString().slice(0, 10)
 
+  // 演示源与真实源的唯一分岔（`demo ? 演示 : 真实`，见 `validate/useValidateView.ts`）。
+  const { demo, source: validationSource } = useValidateView()
+
   // 读后端条件：两种来源都取（冲突检测要求「进入页面时同时探测两边」）
   const backend = useAsync<LadderEnvelope<ValidationPayload>>(
-    (signal) => api.validation(conditionsDate, signal),
-    [conditionsDate],
+    (signal) => validationSource.load(conditionsDate, signal),
+    [validationSource, conditionsDate],
     { enabled: viewMode === 'conditions' },
   )
 
-  // 写通道是否就绪（QUOT-197）：GET 探针，404 = 未合入/控制面关闭，405 = 路由在
+  // 写通道是否就绪（QUOT-197）：GET 探针，404 = 未合入/控制面关闭，405 = 路由在。
+  // 演示态不探：探针答的是**这台机器真实控制面**的状态，和夹具没有关系。
   const probe = useAsync((signal) => api.control.validationWriteProbe(signal), [], {
-    enabled: viewMode === 'conditions',
+    enabled: viewMode === 'conditions' && !demo,
   })
   const writeChannelMissing = probe.status === 'ready' && probe.data?.ready === false
 
   // 环境徽标的 hover 里才用 `data_dir`（B 条：不占主视觉）
   const health = useAsync((signal) => api.health(signal), [], {
-    enabled: viewMode === 'conditions',
+    enabled: viewMode === 'conditions' && !demo,
   })
   const dataDir = health.data?.data_dir ?? null
 
@@ -258,16 +290,25 @@ export default function ValidateScreen() {
     setBackendDraft(backend.status === 'ready' ? backendRows : null)
   }, [backendRows, backend.status, backendDirty])
 
-  // 后端写通道没就绪时不假装能存：退回本地，并说明原因
-  const effectiveSource: ValidationSource =
-    source === 'backend' && writeChannelMissing ? 'local' : source
+  // 后端写通道没就绪时不假装能存：退回本地，并说明原因。
+  // 演示态固定走「后端」那一栏的**只读**渲染：夹具的形状就是 `/api/validation` 的返回形状，
+  // 而「本地」栏读写的是用户自己的 IndexedDB 草稿——演示不允许碰它。
+  const effectiveSource: ValidationSource = demo
+    ? 'backend'
+    : source === 'backend' && writeChannelMissing
+      ? 'local'
+      : source
   const rows = effectiveSource === 'local' ? localRows : (backendDraft ?? backendRows)
-  const readOnly = effectiveSource === 'backend' && (backend.status === 'error' || probe.status === 'error')
+  const readOnly = demo || (effectiveSource === 'backend' && (backend.status === 'error' || probe.status === 'error'))
+  /** 写入类动作为什么禁用：演示态与离线的理由不同，必须给看得见的文案（§4.8）。 */
+  const writeDisabledReason = demo
+    ? '演示态不写控制面，也不落本机草稿'
+    : '离线时后端条件只读'
 
   // ---- 收盘对账 ----
   const reconcile = useAsync<LadderEnvelope<ValidationPayload>>(
-    (signal) => api.validation(conditionsDate, signal),
-    [conditionsDate],
+    (signal) => validationSource.load(conditionsDate, signal),
+    [validationSource, conditionsDate],
     { enabled: viewMode === 'reconcile' },
   )
   const reconcileView = useMemo(
@@ -317,8 +358,11 @@ export default function ValidateScreen() {
   const state = resolveState(forced, derived)
 
   // ---- 冲突（两边都有数据且不同）：只提示，不自动合并 ----
+  // 演示态不参与：冲突条的两个按钮都是真实写入（覆盖后端 / 覆盖本地草稿），
+  // 拿夹具去「覆盖」用户写在后端的条件是有害的。
   const conflict =
     viewMode === 'conditions' &&
+    !demo &&
     backend.status === 'ready' &&
     !backendMissing &&
     localRows.length > 0 &&
@@ -437,8 +481,12 @@ export default function ValidateScreen() {
         ? '本地服务未连接（草稿不依赖行情服务，仍可编辑）'
         : state === 'error'
           ? '对账结果读取失败'
-          : `交易日 ${conditionsDate} · 命中率见下方对账卡`
-      : effectiveSource === 'local'
+          : demo
+            ? `演示样本 · 交易日 ${conditionsDate} · 下一交易日的对账结论见下方对账卡`
+            : `交易日 ${conditionsDate} · 命中率见下方对账卡`
+      : demo
+        ? `演示样本 · 交易日 ${conditionsDate} · 条件 ${formatInt(rows.length)} 条 · 只读，不写控制面`
+        : effectiveSource === 'local'
         ? `交易日 ${conditionsDate} · 本地草稿 ${formatInt(localRows.length)} 条 · 待确认 ${formatInt(pending)} 条${
             updatedAt ? ` · 最后写入 ${formatTime(updatedAt)}` : ''
           }`
@@ -461,7 +509,7 @@ export default function ValidateScreen() {
             variant="primary"
             onClick={handleAdd}
             disabled={readOnly}
-            disabledReason={readOnly ? '离线时后端条件只读' : undefined}
+            disabledReason={readOnly ? writeDisabledReason : undefined}
             leadingIcon={<Plus className="size-3.5" aria-hidden="true" />}
           >
             新增条件
@@ -482,9 +530,7 @@ export default function ValidateScreen() {
               onClick={handleSaveBackend}
               loading={saving}
               disabled={!backendDirty || readOnly}
-              disabledReason={
-                readOnly ? '离线时无法写入后端' : !backendDirty ? '没有未保存的改动' : undefined
-              }
+              disabledReason={readOnly ? writeDisabledReason : !backendDirty ? '没有未保存的改动' : undefined}
               leadingIcon={<Save className="size-3.5" aria-hidden="true" />}
             >
               保存到后端
@@ -497,7 +543,13 @@ export default function ValidateScreen() {
 
   // ---- 环境徽标（B 条） ----
   const hostname = typeof window === 'undefined' ? '' : window.location.hostname
-  const envBadge = (
+  const envBadge = demo ? (
+    // 演示态不探 `GET /api/health`：那个 `data_dir` 是这台机器真实的数据目录，
+    // 把它挂在一个讲夹具的徽标上只会让人以为这份条件真存在那里。
+    <Badge tone="neutral" title="演示态不探测本机环境与控制面写通道">
+      演示样本 · 未探测本机
+    </Badge>
+  ) : (
     <Badge
       tone={environment === 'local' ? 'neutral' : 'info'}
       title={
@@ -527,8 +579,8 @@ export default function ValidateScreen() {
           <span className="text-caption text-text-secondary">条件存放</span>
           <Segmented
             options={[
-              { value: 'local' as const, label: '本地' },
-              { value: 'backend' as const, label: '后端', disabled: writeChannelMissing },
+              { value: 'local' as const, label: '本地', disabled: demo },
+              { value: 'backend' as const, label: '后端', disabled: writeChannelMissing || demo },
             ]}
             value={effectiveSource}
             onChange={(next) => {
@@ -538,6 +590,9 @@ export default function ValidateScreen() {
             ariaLabel="条件存放位置"
             size="sm"
           />
+          {/* 置灰必须给看得见的理由（§4.8）：演示态两个存放位置都写不了。按钮上还有完整理由，这里只留短句，
+              免得工具条折行把首屏的第 12 行顶下去。 */}
+          {demo && <span className="text-caption text-text-muted">演示态只读</span>}
           {writeChannelMissing && (
             <Badge tone="warn" title={probe.data?.detail}>
               后端写通道未就绪
@@ -554,15 +609,31 @@ export default function ValidateScreen() {
       ) : null}
       {viewMode === 'conditions' && effectiveSource === 'backend' && (
         <>
+          {backend.data && (
+            <>
+              {/* §5.1 / §5.2：文字 + ●/◐/○ + 色调三项齐备，数据新与数据全分开。 */}
+              <FreshnessBadge
+                freshness={backend.data.freshness}
+                asOf={backend.data.data_as_of}
+                sourceDetail={backend.data.source_detail}
+              />
+              <SourceStatusBadge
+                status={backend.data.source_status}
+                detail={backend.data.source_detail}
+              />
+            </>
+          )}
           <Badge tone={backendDirty ? 'warn' : 'ok'}>
             {backendDirty ? '有未保存改动' : `后端 ${formatInt(backendRows.length)} 条`}
           </Badge>
           {backend.data && (
-            <span className="text-caption text-text-muted">读取于 {formatTime(backend.data.fetched_at)}</span>
+            <span className="text-caption text-text-muted">
+              读取于 <span className="ldst-num">{formatTime(backend.data.fetched_at)}</span>
+            </span>
           )}
         </>
       )}
-      {viewMode === 'conditions' && !explicit && (
+      {viewMode === 'conditions' && !explicit && !demo && (
         <span className="text-caption text-text-muted">
           默认按{environment === 'local' ? '本机' : '服务器'}环境选「{source === 'local' ? '本地' : '后端'}」
         </span>
@@ -577,11 +648,22 @@ export default function ValidateScreen() {
       <SectionCard
         title={isLocal ? '条件草稿' : '后端条件'}
         subtitle={
-          isLocal
-            ? '每条都是一次可复核的承诺：代码、触发、失效、仓位写清楚，次日收盘才能对账'
-            : '这一份存在后端 validation 缓存里；改动先落在本页缓冲，点「保存到后端」才落盘'
+          demo
+            ? '演示样本：这份条件不是写在后端的，也不来自你的本机草稿；全部只读，写入入口已禁用'
+            : isLocal
+              ? '每条都是一次可复核的承诺：代码、触发、失效、仓位写清楚，次日收盘才能对账'
+              : '这一份存在后端 validation 缓存里；改动先落在本页缓冲，点「保存到后端」才落盘'
         }
-        actions={<Badge tone="neutral">{formatInt(items.length)} 条</Badge>}
+        actions={
+          <>
+            {demo && (
+              <Badge tone="neutral" icon={<Lock className="size-3" aria-hidden="true" />}>
+                只读
+              </Badge>
+            )}
+            <Badge tone="neutral">{formatInt(items.length)} 条</Badge>
+          </>
+        }
       >
         <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           <div className="min-w-table-min">
@@ -602,8 +684,10 @@ export default function ValidateScreen() {
               const isOpen = expanded === row.key
               return (
                 <div key={row.key} className="border-b border-border last:border-b-0">
+                  {/* §11.3 行高就是 h-row（38px）token：`py-2` 会让操作按钮把行撑到 44px，
+                      12 行多出 72px 正好把首屏最后一行推到折叠线以下。 */}
                   <div
-                    className={`relative grid min-h-row ${ROW_GRID} items-center gap-3 px-3 py-2 transition-colors duration-fast ease-ldst hover:bg-surface-3`}
+                    className={`relative grid min-h-row ${ROW_GRID} items-center gap-3 px-3 py-1 transition-colors duration-fast ease-ldst hover:bg-surface-3`}
                     aria-describedby={row.confirmed === false ? `${fieldId}-pending` : undefined}
                   >
                     <span
@@ -623,7 +707,13 @@ export default function ValidateScreen() {
                     <span className="min-w-0 truncate text-body text-text-secondary" title={row.trigger || undefined}>
                       {row.trigger || MISSING}
                     </span>
-                    <span className="min-w-0 truncate text-body text-text-secondary" title={row.note || undefined}>
+                    <span
+                      className="min-w-0 truncate text-body text-text-secondary"
+                      title={
+                        row.note ??
+                        '后端读投影不给自由文本备注（server.py:_validation_conditions 只把对账结论写进这一列）'
+                      }
+                    >
                       {row.note || MISSING}
                     </span>
                     <span
@@ -772,7 +862,9 @@ export default function ValidateScreen() {
 
   // ---- 条件区主体 ----
   const renderConditions = (): ReactNode => {
-    if (state === 'loading') return <ScreenSkeleton metrics={3} rows={5} />
+    // 骨架与真实内容同构（§11.0 最后一条）：本屏 L0 没有指标卡，只有 7 列条件表，
+    // 所以 `metrics={0}`、行数按真实首屏的 12 条条件给。
+    if (state === 'loading') return <ScreenSkeleton metrics={0} rows={FIRST_SCREEN_ROWS} />
 
     if (state === 'error') {
       const described = describeApiError(backend.error)
@@ -811,20 +903,24 @@ export default function ValidateScreen() {
             icon={<CircleSlash className="size-8" aria-hidden="true" />}
             title={backendMissing ? '后端还没有这一天的条件' : '后端条件为空'}
             description={
-              backendMissing
-                ? `${backend.data?.source_detail ?? '后端 validation 缓存不存在'}。可以先在这里写下条件并「保存到后端」，或在「本地」模式里写草稿。`
-                : '这一天有缓存文件，但里面没有条件。写一条并保存，次日收盘才能对账。'
+              demo
+                ? '演示样本的这一档就是「这一天没有 validation 缓存」：接口如实回 missing，页面不补一条夹具条件。看真实条件请关掉「设置 → 虚拟数据」。'
+                : backendMissing
+                  ? `${backend.data?.source_detail ?? '后端 validation 缓存不存在'}。可以先在这里写下条件并「保存到后端」，或在「本地」模式里写草稿。`
+                  : '这一天有缓存文件，但里面没有条件。写一条并保存，次日收盘才能对账。'
             }
             action={
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <Button
                   variant="primary"
                   onClick={handleAdd}
+                  disabled={readOnly}
+                  disabledReason={readOnly ? writeDisabledReason : undefined}
                   leadingIcon={<Plus className="size-3.5" aria-hidden="true" />}
                 >
                   新增第一条
                 </Button>
-                {localRows.length > 0 && (
+                {!demo && localRows.length > 0 && (
                   <Button variant="secondary" onClick={handlePushLocal} loading={saving}>
                     把本地 {formatInt(localRows.length)} 条推到后端
                   </Button>
@@ -868,7 +964,8 @@ export default function ValidateScreen() {
 
   // ---- 对账区（保持原有口径） ----
   const renderReconcile = (): ReactNode => {
-    if (reconcile.status === 'loading') return <ScreenSkeleton metrics={3} rows={5} />
+    // 对账表的行数 = 当日有阈值的条件数（`build_conditions()` 上限 5 条），骨架按 5 行占位。
+    if (reconcile.status === 'loading') return <ScreenSkeleton metrics={0} rows={5} />
 
     if (reconcile.status === 'error') {
       const described = describeApiError(reconcile.error)
@@ -907,15 +1004,22 @@ export default function ValidateScreen() {
 
     return (
       <div className="flex flex-col gap-4">
-        {state === 'partial' && (
-          <Banner tone="warn" title="部分数据缺失">
-            对账结论里有无法判定的条目（行情缺数据），结论仅供参考；缺失的条目判为「数据缺失」而不是「未命中」。
-          </Banner>
-        )}
-
-        {rowsOfReconcile.length === 0 && reconcileView.reason && (
-          <Banner tone="warn" title="本次没有生成逐条判定">
-            {reconcileView.reason}
+        {/* §11.3：`ldst validate reconcile` 退出码 8 = `reconcile.status=partial`。
+            黄条只转述后端给的原因与 `source_detail`（缺的是哪个数据集），不下结论式断言。 */}
+        {(state === 'partial' || (reconcileView.results.length === 0 && reconcileView.reason !== null)) && (
+          <Banner tone="warn" title={reconcileView.results.length === 0 ? '本次没有生成逐条判定' : '部分数据缺失'}>
+            <div className="flex flex-col gap-1">
+              <span>
+                {reconcileView.reason ??
+                  '对账结论里有无法判定的条目（当日指标取不到），结论仅供参考；缺失的条目判为「数据缺失」，不是「未命中」。'}
+              </span>
+              {reconcile.data?.source_detail && (
+                <span className="text-caption text-text-muted">{reconcile.data.source_detail}</span>
+              )}
+              <span className="text-caption text-text-muted">
+                本页不补算、不猜阈值，也不把「没数据」写成「没达成」。
+              </span>
+            </div>
           </Banner>
         )}
 
@@ -926,25 +1030,45 @@ export default function ValidateScreen() {
               命中 <span className="ldst-num text-text">{formatInt(hit)}</span>/
               <span className="ldst-num text-text">{formatInt(total)}</span>
               {reconcileView.nextSession ? ` · 下一交易日 ${reconcileView.nextSession}` : ''}
+              {demo ? ' · 演示样本，不是你写下的条件' : ''}
             </>
           }
           actions={
             <>
+              {/* §5.1 / §5.2 两枚并排：数据新（缓存回放）与数据全（对账是否完整）是两条事实。 */}
+              {reconcile.data && (
+                <>
+                  <FreshnessBadge
+                    freshness={reconcile.data.freshness}
+                    asOf={reconcile.data.data_as_of}
+                    sourceDetail={reconcile.data.source_detail}
+                  />
+                  <SourceStatusBadge
+                    status={reconcileView.status === 'partial' ? 'partial' : reconcile.data.source_status}
+                    detail={reconcile.data.source_detail}
+                  />
+                </>
+              )}
               {reconcileView.status && (
                 <Badge tone={reconcileView.status === 'ok' ? 'ok' : 'warn'}>
                   {reconcileView.status === 'ok' ? '对账完成' : '部分缺失'}
                 </Badge>
               )}
+              <Button variant="secondary" onClick={reconcile.reload}>
+                重新读取
+              </Button>
+              {/* §11.3：15:00 前禁用且原因可见。网页侧永远不触发对账（`ldst validate` 的活，
+                  DEC-006 闸门 5），所以 15:00 之后的理由如实写「本屏只读」。 */}
               <Button
                 variant="secondary"
                 disabled
                 disabledReason={
                   beforeGate
-                    ? '15:00 后可对账'
-                    : '对账由收盘任务写入，本轮只读；人工复核待 ldst validate 接入'
+                    ? '15:00 前不可对账：收盘行情还没定版'
+                    : '对账由 ldst validate 写入本机缓存，本屏只读'
                 }
               >
-                人工复核
+                运行收盘对账
               </Button>
             </>
           }
@@ -987,7 +1111,12 @@ export default function ValidateScreen() {
                 key: 'metric',
                 header: '指标',
                 width: '112px',
-                render: (row) => <span className="text-caption text-text-secondary">{row.metric ?? MISSING}</span>,
+                // §11.0「后端 key 不直显」：`temperature` / `seal_rate` 这类字段名只进 hover。
+                render: (row) => (
+                  <span className="text-caption text-text-secondary" title={row.metric ?? undefined}>
+                    {metricLabel(row.metric)}
+                  </span>
+                ),
               },
               {
                 key: 'target',
@@ -1014,10 +1143,20 @@ export default function ValidateScreen() {
           />
         </SectionCard>
 
+        {/* §11.0：页脚说明 `text-caption`，其中每个数字（含判定时间）都在 `.ldst-num` 里。 */}
         <p className="text-caption text-text-muted">
-          对账 {formatInt(reconcileView.checked)} 条 · 通过 {formatInt(reconcileView.passed)} · 未通过{' '}
-          {formatInt(reconcileView.failed)} · 无法判定 {formatInt(reconcileView.unknown)}。本屏不做收益预测，
-          也不提供自动交易。
+          对账 <span className="ldst-num">{formatInt(reconcileView.checked)}</span> 条 · 通过{' '}
+          <span className="ldst-num">{formatInt(reconcileView.passed)}</span> · 未通过{' '}
+          <span className="ldst-num">{formatInt(reconcileView.failed)}</span> · 无法判定{' '}
+          <span className="ldst-num">{formatInt(reconcileView.unknown)}</span>
+          {reconcileView.generatedAt ? (
+            <>
+              {' · '}判定生成于 <span className="ldst-num">{formatTime(reconcileView.generatedAt)}</span>
+            </>
+          ) : (
+            ' · 本轮没有写出判定时间'
+          )}
+          。本屏不做收益预测，也不提供自动交易。
         </p>
       </div>
     )
@@ -1025,7 +1164,12 @@ export default function ValidateScreen() {
 
   const privacyBanner =
     viewMode === 'conditions' && state !== 'loading' && state !== 'error' && state !== 'offline' ? (
-      effectiveSource === 'local' ? (
+      demo ? (
+        <Banner tone="warn" title="演示样本 · 本页条件不是你写的">
+          固定夹具，与这台机器的 <code>state/validation/</code> 缓存和 IndexedDB 草稿无关：新增 / 删除 / 标记确认 /
+          保存到后端全部禁用。关掉「设置 → 虚拟数据」即回到你自己的条件。
+        </Banner>
+      ) : effectiveSource === 'local' ? (
         <Banner tone="info" title="存在这台机器的浏览器里">
           条件草稿写进这台机器的浏览器（IndexedDB），换台电脑、清掉站点数据就没了；不上传、不进 AI、不被 MCP
           读取。提交对账由 <code>ldst validate</code> 负责。
