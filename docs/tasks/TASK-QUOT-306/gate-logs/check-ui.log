@@ -1,0 +1,14 @@
+(node:15144) [DEP0174] DeprecationWarning: Calling promisify on a function that returns a Promise is likely a mistake.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+> ladderstock-frontend@0.1.0 check:ui
+> node scripts/check-ui-consistency.mjs
+
+PASS  bare-table   裸 <table> 仅允许出现在 components/ui/Table.tsx
+PASS  hex          颜色只能来自 --ldst-* 变量
+PASS  arbitrary    新刻度先进 tailwind.config.ts / token，不写 p-[13px]
+PASS  numeric      DataTable 的 numeric 列在组件内统一套 .ldst-num
+PASS  datatable    15 张屏引用：src/screens/HomeScreen.tsx, src/screens/industry/IndustryDetailScreen.tsx, src/screens/industry/IndustryMatrixScreen.tsx, src/screens/intraday/IntradayScreen.tsx, src/screens/JournalScreen.tsx, src/screens/limitup/LimitUpScreen.tsx, src/screens/MarketScreen.tsx, src/screens/radar/PoolScreen.tsx, src/screens/radar/PositionsScreen.tsx, src/screens/research/ResearchDetailScreen.tsx, src/screens/SettingsScreen.tsx, src/screens/signals/SignalsScreen.tsx, src/screens/ValidateScreen.tsx, src/screens/WatchScreen.tsx, src/screens/WeeklyScreen.tsx
+PASS  durations    hover/press/展开用 duration-fast；抽屉/Toast 的 duration-base 是登记例外
+
+6/6 项通过
