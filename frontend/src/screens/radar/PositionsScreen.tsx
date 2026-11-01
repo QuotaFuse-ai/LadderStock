@@ -88,7 +88,7 @@ function PrivacyNotice() {
       aria-label="隐私说明"
       className="flex items-start gap-3 rounded border border-accent bg-accent-soft px-3 py-2"
     >
-      <Lock className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden="true" />
+      <Lock className="mt-half size-4 shrink-0 text-accent" aria-hidden="true" />
       <div className="min-w-0 text-body leading-body">
         <p className="font-semibold text-text">数据只在本机，不上传、不进 AI</p>
         <p className="text-text-secondary">
@@ -107,7 +107,7 @@ function ValuationCards({ payload }: { payload: PositionsPayload }) {
   const basisLabel = concentration.basis === 'market_value' ? '市值' : '成本'
 
   return (
-    <div className="grid grid-cols-2 gap-3 desk:grid-cols-5">
+    <div className="grid grid-cols-2 gap-4 min-[1024px]:grid-cols-3 desk:grid-cols-5">
       <MetricCard
         label="持仓数"
         hero
@@ -256,7 +256,9 @@ function buildColumns(
       width: '88px',
       render: (row) =>
         row.industry ? (
-          <span className="truncate text-text-secondary">{row.industry}</span>
+          <span className="block truncate text-text-secondary" title={row.industry}>
+            {row.industry}
+          </span>
         ) : (
           <span className="text-caption text-text-muted">未标注</span>
         ),
@@ -836,7 +838,7 @@ export default function PositionsScreen() {
                 {!demo && (
                   <a
                     href={withParams('/positions', { demo: '1', state: forced })}
-                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
+                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
                   >
                     查看演示数据
                   </a>
