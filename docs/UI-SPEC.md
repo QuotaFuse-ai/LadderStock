@@ -16,6 +16,7 @@
 | v1.1 | 2026-11-01 | 覆盖 4 屏 → **18 屏**（QUOT-308，决策 DEC-040）。§0 逐屏清单 + §2 外壳/断点/标题层级按 `components/Layout.tsx:64-119`、`tailwind.config.ts:40-44` 校正（删除从未实现的「<1024 顶部横向导航」「<720 表格转卡片」，最低支持视口定为 1024）；§3.5–§3.18 补 14 屏信息架构；§5 增加溯源徽标唯一实现、演示态水印、`freshness` 缺省态；§6 组件清单按实际文件重写（v1.0 登记的 `kit/Badge.tsx` 等 11 个文件不存在）；§7 token 表按 `tokens.json` v2 全量校正（圆角收敛 8/4/999，字号 12/14/16/20/28/36，补 accent-solid / chart / skeleton / scrim 族）；§7.5 按 DEC-040 裁定 120ms / 180ms 分工；§8 补缺失值、时间格式、计数与后端 key 直显规则；§10 扩到 18 屏；§11 由「四屏清单」改为「逐屏清单」；§12.4 规范变更与理由，§12.5 整改清单 R-01…R-26。 ；同版补「盯盘·竞价与盘中」（`/intraday`，QUOT-301 / QUOT-302 / SPEC-INTRADAY-READ）：§0 与 §10 记为第 19 屏。 |
 | v1.2 | 2026-11-02 | 导航信息架构更新（QUOT-304，决策 DEC-044）：新增一级组「我的股票」（我的持仓 `/positions` + 事件日历 `/calendar`），从「日志」「市场」移出，顺序为 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖；自选、提醒无已交付页面，登记为范围外，不建占位入口。§2「导航顺序」与导航可达性段落同步改写；路由零变更。 |
 | v1.3 | 2026-11-02 | QUOT-306 / QUOT-317 收口：一致性口径脚本化（`frontend/scripts/check-ui-consistency.mjs` + `npm run check:ui`，六项：裸表 / hex / 任意值 / 数值基线 / DataTable 引用 / 过渡时长）；`DataTable` 补整行 `summaryRow`（列级 `summary` 保留，二者互斥）；四处任意值收口为 `min-h-calendar-cell` / `min-w-table-min` 与 `truncate` 列；§0 表格「事件日历 / 我的持仓」的侧栏分组同步为「我的股票」（v1.2 遗漏）；编号与变更记录合并规则见 DEC-045。 |
+| v1.3.1 | 2026-11-02 | 外壳层 §2 逐条走查落地（QUOT-316，只动 `components/Layout.tsx` / `PageShell.tsx` / `PersistenceBanner.tsx`，`NAV_SECTIONS` 结构零变更）：① §2 提示条「同类最多 2 条 + 另有 N 条提示」此前无实现，`PersistenceBanner` 现按 tone 各截 2 条、余量并成一行且逐个列出分片名（折叠不丢信息），顶内距 `pt-3`→`pt-5` 与 `main` 的 `py-5` 对齐；② §11.0「数字必 `.ldst-num`」在页头不可达——`PageHeader` 的 subtitle / meta 由外壳统一挂 `.ldst-num`（只加可继承的 `font-variant-numeric`，字号与颜色仍归各屏），19 屏一次生效；页头换行纵向间距 12px→4px；③ §2 侧栏二级缩进 8px→16px（导引线落在一级图标正下方），`rail:` 档展平后加组间 1px 分隔线，否则 19 行同形图标无分组可读性；④ §2 阅读型内容度量：外壳自有的 `OfflineBanner` 说明段挂 `max-w-measure`（`--ldst-measure: 52ch`）；⑤ `Layout.tsx` 头注释的 `DESIGN-SPEC §3.1/§4.1` 假引用（M-9）改引 `UI-SPEC §2`；⑥ R-21 实测更正为「非缺陷」，见 §12.5。规范条文本身未放宽：以上都是代码向 §2 / §11.0 收敛。 |
 
 ## 0. 范围与非目标
 
@@ -729,7 +730,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 
 - 正文对比度 ≥ 4.5:1，大字号 ≥ 3:1；`--ldst-text-muted` 在 `--ldst-surface` 上已按此校验；`--ldst-border-strong` 承担交互件边界识别，≥3:1（`tokens.css:22`）。深浅两主题都要过检。
 - 状态不只靠颜色：`freshness` 用 ●/◐/○ + 文字；涨跌用 ↑↓ + 正负号 + 颜色。
-- 焦点永远可见（`--ldst-focus-ring`），禁止无替代的 `outline: none`；「跳到主内容」在首焦点可见（`Layout.tsx:191`）。**v1.1 实测违规**：`main` 上挂着 `focus:outline-none`（`Layout.tsx:328`），skip-link 落地后无可见焦点 → R-21。
+- 焦点永远可见（`--ldst-focus-ring`），禁止无替代的 `outline: none`；「跳到主内容」在首焦点可见（`Layout.tsx` 首个 `<a href="#main">`）。~~v1.1 曾登记 `main` 上的 `focus:outline-none` 为违规（R-21）~~ **QUOT-316 实测更正**：该类只压 `outline`，压不住 base 层 `:where([tabindex]):focus-visible` 的 `box-shadow: var(--ldst-focus-ring)`；真实键盘事件（Tab → Enter）下 `#main` 命中 `:focus-visible` 且焦点环已绘制，R-21 不成立（证据见 §12.5 与 QUOT-316 回执）。
 - 表格必须有 `caption` 与 `scope="col"`，数字列右对齐（C-09 承担；`Table.tsx:160` 起的表体）；行内可点击必须可键盘到达。
 - 图标按钮必须有 `aria-label`；纯装饰图标 `aria-hidden="true"`。
 - 模态（C-16）与抽屉（C-15）：焦点陷阱 + `Esc` 取消 + 关闭后焦点回到触发元素（`Overlay.tsx:10-13`）。
@@ -990,7 +991,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | R-18 | `?demo=1` 无演示徽标（7 屏），水印只认 `?state=` | `PageShell.tsx:47-54` | §5.6 | 二（P0） |
 | R-19 | `duration-base` 三处口径不实：扫光死引用、抽屉/Toast 零过渡 | `styles/index.css:80-81`、`ui/Overlay.tsx`、`ui/Feedback.tsx` | §7.5 | 二 |
 | R-20 | 同屏两套 Toast 栈 | `SettingsScreen.tsx:773,934,1473` | §3.18 | 二 |
-| R-21 | skip-link 目标无可见焦点（`focus:outline-none`） | `Layout.tsx:328` | §9 | 二 |
+| R-21 | ~~skip-link 目标无可见焦点（`focus:outline-none`）~~ **实测不成立**：`focus:outline-none` 只压 `outline`，压不住 base 层 `:where([tabindex]):focus-visible` 的 `box-shadow: var(--ldst-focus-ring)`；真实键盘事件（Tab → Enter）下 `#main` 命中 `:focus-visible` 且环已绘制（QUOT-316 取证）。`main` 上的类**保留**，它挡的是非键盘 focus 时的 UA 默认描边 | `Layout.tsx` `main#main`、`styles/index.css:30` | §9 | 已结案（非缺陷） |
 | R-22 | `freshness` 缺省静默不渲染 | `HomeScreen.tsx:70`、`WeeklyScreen.tsx` | §5.7 | 二 |
 | R-23 | 折线线宽 2px，token 注释口径 1.5px | `charts/Chart.tsx:61` vs `tokens.css:54` | §3.6 | 二 |
 | R-24 | 叙述正文无度量上限（`flex-1` 卡内行长不可控） | `MarkdownView.tsx:130`、`ResearchReportScreen.tsx:329` | §2 | 三 |
