@@ -1,6 +1,6 @@
 # 看板信息架构与视觉规范（19 屏）
 
-- 版本：v1.3
+- 版本：v1.4
 - 日期：2026-11-02
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
@@ -17,6 +17,7 @@
 | v1.2 | 2026-11-02 | 导航信息架构更新（QUOT-304，决策 DEC-044）：新增一级组「我的股票」（我的持仓 `/positions` + 事件日历 `/calendar`），从「日志」「市场」移出，顺序为 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖；自选、提醒无已交付页面，登记为范围外，不建占位入口。§2「导航顺序」与导航可达性段落同步改写；路由零变更。 |
 | v1.3 | 2026-11-02 | QUOT-306 / QUOT-317 收口：一致性口径脚本化（`frontend/scripts/check-ui-consistency.mjs` + `npm run check:ui`，六项：裸表 / hex / 任意值 / 数值基线 / DataTable 引用 / 过渡时长）；`DataTable` 补整行 `summaryRow`（列级 `summary` 保留，二者互斥）；四处任意值收口为 `min-h-calendar-cell` / `min-w-table-min` 与 `truncate` 列；§0 表格「事件日历 / 我的持仓」的侧栏分组同步为「我的股票」（v1.2 遗漏）；编号与变更记录合并规则见 DEC-045。 |
 | v1.3.1 | 2026-11-02 | 外壳层 §2 逐条走查落地（QUOT-316，只动 `components/Layout.tsx` / `PageShell.tsx` / `PersistenceBanner.tsx`，`NAV_SECTIONS` 结构零变更）：① §2 提示条「同类最多 2 条 + 另有 N 条提示」此前无实现，`PersistenceBanner` 现按 tone 各截 2 条、余量并成一行且逐个列出分片名（折叠不丢信息），顶内距 `pt-3`→`pt-5` 与 `main` 的 `py-5` 对齐；② §11.0「数字必 `.ldst-num`」在页头不可达——`PageHeader` 的 subtitle / meta 由外壳统一挂 `.ldst-num`（只加可继承的 `font-variant-numeric`，字号与颜色仍归各屏），19 屏一次生效；页头换行纵向间距 12px→4px；③ §2 侧栏二级缩进 8px→16px（导引线落在一级图标正下方），`rail:` 档展平后加组间 1px 分隔线，否则 19 行同形图标无分组可读性；④ §2 阅读型内容度量：外壳自有的 `OfflineBanner` 说明段挂 `max-w-measure`（`--ldst-measure: 52ch`）；⑤ `Layout.tsx` 头注释的 `DESIGN-SPEC §3.1/§4.1` 假引用（M-9）改引 `UI-SPEC §2`；⑥ R-21 实测更正为「非缺陷」，见 §12.5。规范条文本身未放宽：以上都是代码向 §2 / §11.0 收敛。 |
+| v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
 
 ## 0. 范围与非目标
 
@@ -539,6 +540,8 @@
 ### 5.6 演示数据必须上屏（v1.1 新增，硬约束）
 
 - 任何由 `?demo=1`（`industry/limitup/research/radar` 的 `demo.ts`）渲染的数据，页面必须显示**演示徽标**，文案「演示数据」+ `tone="warn"`，位置在 `PageHeader` 的 badge 槽。
+- v1.4 起演示源有两个等价入口：URL `?demo=1`（一次性深链）与设置页「数据来源 → 虚拟数据（演示）」开关（`localStorage['ldst.demo-data']`）。判定唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`（URL 或偏好任一为真）；各屏与徽标不得各写一套。
+- 徽标按来源写文案：URL 开启为「演示数据 · ?demo=1」，设置开关开启为「演示数据 · 设置开关」。关闭开关时设置页同时摘掉当前 URL 的 `demo`，保证「关 = 真实数据」；真实请求失败仍不得回落 `demo.ts`。
 - `DemoStateBadge`（`PageShell.tsx:47-54`）只反映 `?state=`，`state===null` 直接 `return null`——这是 P0 根因，必须扩成同时反映 `demo`（R-18）。
 - 13 张假行业、8 只假成分（含贵州茅台）、假信号在没有 `?state=` 时**目前零标识**（`industry/demo.ts:63-324,526,876-908` 由 `useIndustryView.ts:33-37` 注入），页脚 12px 小字「演示数据：…」不算达标。
 - 禁止在真实请求失败（404 / 离线）时自动回落 `demo.ts`（现状合格：`industry/demo.ts:8-9`、`useLimitUpView.ts:20`）。
@@ -779,6 +782,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 数字（含序号、代码、时间、百分比、计数）全部 `.ldst-num`；缺失值全部「—」，无 `0` / `0.00` / `?` / 假定默认值冒充。
 - [ ] 后端 key 不直显；状态标签与 §5.1/§5.2 标签表逐字一致。
 - [ ] `?demo=1` 有「演示数据」徽标；`?state=` 有 `DemoStateBadge`。
+- [ ] 设置页「虚拟数据（演示）」开启后，URL 不带 `demo` 也出示「演示数据 · 设置开关」徽标；关闭后回到真实通道。
 - [ ] 交互过渡只有 `duration-fast`（120ms）；无 >160ms 的 hover/press/展开过渡；`prefers-reduced-motion` 下无动画。
 - [ ] 表体只有一处（C-09）；本屏无裸 `<table>`。
 - [ ] 单行截断处均有 `title` 或 Tooltip；`min-w-0` 与 `truncate` 成对出现。

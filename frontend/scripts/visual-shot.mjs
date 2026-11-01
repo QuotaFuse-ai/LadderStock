@@ -21,6 +21,7 @@
  *   --routes <a,b>     只拍指定 slug，逗号分隔
  *   --query <str>      追加到每个路由的查询串（`demo=1` / `demo=1&variant=partial` / `tab=ports`），
  *                      配合 `--suffix after-demo` 这类后缀拍演示态与缺失态
+ *   --demo-pref        用设置页的同款偏好开启演示源（写 `ldst.demo-data=1`），不依赖 URL 参数
  *   --settle <ms>      load 之后额外等待（默认 1500，留给 React 渲染 + 图表重绘）
  *   --chrome <path>    浏览器可执行文件（默认自动找 Chrome/Edge，或读环境变量 LDST_CHROME）
  *   --width <px>       视口宽（默认 1440；验收 1280 零横向溢出时传 1280）
@@ -76,6 +77,7 @@ function parseArgs(argv) {
     themes: ['dark', 'light'],
     routes: null,
     query: null,
+    demoPref: false,
     settle: 1500,
     chrome: process.env.LDST_CHROME ?? null,
     port: 9333,
@@ -91,6 +93,7 @@ function parseArgs(argv) {
     else if (flag === '--themes') options.themes = next().split(',').filter(Boolean)
     else if (flag === '--routes') options.routes = next().split(',').filter(Boolean)
     else if (flag === '--query') options.query = next()
+    else if (flag === '--demo-pref') options.demoPref = true
     else if (flag === '--settle') options.settle = Number(next())
     else if (flag === '--chrome') options.chrome = next()
     else if (flag === '--port') options.port = Number(next())
@@ -240,6 +243,11 @@ async function shoot(cdp, base, route, theme, options) {
         source: `try {
           localStorage.setItem('ldst.theme', ${JSON.stringify(theme)});
           localStorage.removeItem('ldst.density');
+          ${
+            options.demoPref
+              ? "localStorage.setItem('ldst.demo-data', '1');"
+              : "localStorage.removeItem('ldst.demo-data');"
+          }
         } catch (e) {}`,
       },
       sessionId,
