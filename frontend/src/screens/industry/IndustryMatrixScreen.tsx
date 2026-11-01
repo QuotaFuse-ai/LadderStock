@@ -27,6 +27,7 @@ import {
   Select,
   Skeleton,
   SkeletonRows,
+  SourceStatusBadge,
   type Column,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -35,7 +36,6 @@ import { compareMetric, compactMetric, DIMENSION_METRICS, formatMetric, type Met
 import { HEAT_MAX_PERCENT, HEAT_MIN_PERCENT, levelHeatStyle, rankRatio, signedHeatStyle, MISSING_CELL_TITLE } from './heat'
 import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
 import { LINK_BUTTON_CLASS } from './labels'
-import { SourceStatusBadge } from './sourceBadges'
 import { industryHref, withParams } from './links'
 import { useIndustryListView } from './useIndustryView'
 
@@ -48,7 +48,7 @@ import { useIndustryListView } from './useIndustryView'
  * 五态：`?state=loading|empty|error|partial|offline`；`?demo=1` 为显式演示源。
  * 接口未接入（HTTP 404）→ 空态「接口未接入」，不是整屏报错。
  *
- * 状态列一律走 `./sourceBadges` 的同源徽标（§5.5 只允许一份实现，屏侧不得自带 label map）；
+ * 状态列一律走组件层 `components/ui/SourceBadges` 的同源徽标（§5.5 只允许一份实现，屏侧不得自带 label map）；
  * 演示水印归 `PageShell.tsx` 的 `DemoStateBadge`（R-18 / QUOT-320），本屏不重复画。
  */
 

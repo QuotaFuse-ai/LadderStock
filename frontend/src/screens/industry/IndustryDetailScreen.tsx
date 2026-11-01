@@ -23,6 +23,7 @@ import {
   Skeleton,
   SkeletonRows,
   Sparkline,
+  SourceStatusBadge,
   type Column,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -46,7 +47,6 @@ import {
 } from './metrics'
 import { MISSING_CELL_TITLE } from './heat'
 import { LINK_BUTTON_CLASS, LINK_TEXT_CLASS, dimensionTitleOf } from './labels'
-import { SourceStatusBadge } from './sourceBadges'
 import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
 import { withParams } from './links'
 import { useIndustryDetailView } from './useIndustryView'
@@ -58,7 +58,7 @@ import { useIndustryDetailView } from './useIndustryView'
  * 相关研报/资讯（R6 `news_stream`，未交付前是带出口的空态）+ 口径与溯源。
  *
  * 数值一律来自 R5 快照；缺失显示「无数据（未核实）」并给原因，不补 0。
- * 「数据完整度」的标签与色序不在本屏定义，一律走同源徽标 `./sourceBadges`（§5.5）；
+ * 「数据完整度」的标签与色序不在本屏定义，一律走同源徽标 `components/ui/SourceBadges`（§5.5）；
  * 演示水印归 `PageShell.tsx` 的 `DemoStateBadge`（R-18 / QUOT-320）。
  */
 

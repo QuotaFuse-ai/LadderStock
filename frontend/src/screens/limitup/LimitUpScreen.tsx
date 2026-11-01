@@ -13,10 +13,10 @@ import {
   ErrorBlock,
   Skeleton,
   SkeletonRows,
+  SourceStatusBadge,
   type Column,
 } from '../../components/ui'
 import { formatBoards, formatInt, formatSealTime, localDateIso, MISSING } from '../../lib/format'
-import { SourceStatusBadge } from '../industry/sourceBadges'
 import { DEMO_LIMIT_POOL_DATE } from './demo'
 import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
 
@@ -27,7 +27,7 @@ import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
  * - 连板数默认降序，点击表头可切换；
  * - 缺失值显示 `—` + 悬浮原因，不补 0；
  * - 封板时间按 §8 把后端裸 `HHMMSS` 格式化成 `HH:mm:ss`，不换算时区、不猜；
- * - 完整度一律走同源徽标 `../industry/sourceBadges`（§5.5），演示水印归 `PageShell`（R-18 / QUOT-320）。
+ * - 完整度一律走同源徽标 `components/ui/SourceBadges`（§5.5），演示水印归 `PageShell`（R-18 / QUOT-320）。
  */
 
 function MissingCell({ reason }: { reason: string }) {
