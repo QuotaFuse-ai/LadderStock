@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "shots": "node scripts/visual-shot.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
