@@ -52,7 +52,7 @@ export function Banner({ tone = 'info', title, children, action, className, id }
         className,
       )}
     >
-      <span className="mt-0.5 shrink-0">{config.icon}</span>
+      <span className="mt-half shrink-0">{config.icon}</span>
       <div className="min-w-0 flex-1">
         {title && <p className="font-medium">{title}</p>}
         {children && <div className="text-text-secondary">{children}</div>}
@@ -112,7 +112,7 @@ export function ErrorBlock({
   const body = (
     <>
       <div className="flex items-start gap-2">
-        <XCircle className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden="true" />
+        <XCircle className="mt-half size-4 shrink-0 text-danger" aria-hidden="true" />
         <div className="min-w-0">
           <p className="text-body font-medium text-text">{title}</p>
           {detail && <p className="text-caption leading-body text-text-secondary">{detail}</p>}

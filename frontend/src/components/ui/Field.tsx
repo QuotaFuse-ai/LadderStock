@@ -34,7 +34,7 @@ export function Field({ label, htmlFor, hint, error, required, className, childr
       <label htmlFor={htmlFor} className="text-caption text-text-secondary">
         {label}
         {required && (
-          <span className="ml-0.5 text-danger" aria-hidden="true">
+          <span className="ml-half text-danger" aria-hidden="true">
             *
           </span>
         )}
