@@ -347,7 +347,7 @@ function SnapshotBody({
         width: '88px',
         render: (row) => (
           <span className="ldst-num text-body text-text">
-            {row.yesterday_streak === null ? '未知' : formatInt(row.yesterday_streak)}
+            {row.yesterday_streak === null ? MISSING : formatInt(row.yesterday_streak)}
           </span>
         ),
       },
@@ -383,12 +383,12 @@ function SnapshotBody({
               {MISSING}
             </span>
           ) : (
-            <span className="ldst-num text-caption text-text-secondary">{row.at_limit_up ? '封板' : '未封板'}</span>
+            <span className="text-caption text-text-secondary">{row.at_limit_up ? '封板' : '未封板'}</span>
           ),
       },
       {
         key: 'fresh',
-        header: '读数',
+        header: '读数来源',
         align: 'center',
         width: '96px',
         render: (row) =>
@@ -614,7 +614,7 @@ export default function IntradayScreen() {
             ? `${payload.snapshot_count}/${payload.slot_count} 个时点有快照 · 来源 ${
                 payload.slots.length > 0 ? 'status.json' : MISSING
               }`
-            : '读取当日 6 时点快照'}
+            : '读取当日各时点快照'}
         </>
       }
       badge={<DemoStateBadge state={view.forced} />}
@@ -670,6 +670,8 @@ export default function IntradayScreen() {
   if (state === 'empty') {
     const endpointMissing = payload === null
     const showRail = payload !== null && !payload.available && payload.slots.length > 0
+    // `?state=empty` 强制出来的空态不能反过来否认已经取到的数据
+    const forcedDemo = !endpointMissing && payload?.available === true
     return (
       <div className="flex flex-col gap-5">
         {header}
@@ -683,11 +685,19 @@ export default function IntradayScreen() {
                   页面已按 <code className="ldst-num">GET /api/intraday</code> 契约实现；接口提供后自动接入，
                   当前不伪造时点。
                 </>
+              ) : forcedDemo ? (
+                <>
+                  演示态：这一天实际有 {payload?.snapshot_count}/{payload?.slot_count} 个时点落盘，
+                  <code className="ldst-num">?state=empty</code> 只把空态的样子摆出来，不改真实数据。
+                </>
               ) : (
                 <>
                   {payload?.reason ?? '本机没有该日的快照记录。'}
                   <span className="mt-1 block text-text-secondary">
-                    快照只在窗口内当场落盘，窗口外不补跑（DEC-035 §2.3）；{payload?.has_status_file === false ? '这一天调度器没有跑过。' : 'status.json 存在，但 6 个时点都没有快照文件。'}
+                    快照只在窗口内当场落盘，窗口外不补跑（DEC-035 §2.3）；
+                    {payload?.has_status_file === false
+                      ? '这一天调度器没有跑过。'
+                      : `status.json 存在，但 ${payload?.slot_count ?? MISSING} 个时点都没有快照文件。`}
                   </span>
                 </>
               )
@@ -711,8 +721,8 @@ export default function IntradayScreen() {
             .filter((row) => !row.available)
             .map((row) => `${row.slot} ${slotVisual(row).label}`)
             .join('、')}
-          。这些时点显示「未取到」而不是 0；<code className="ldst-num">skipped</code> 的时点是窗口外不补跑，
-          不算取数失败。
+          。这些时点按各自状态显示，不显示 0；<code className="ldst-num">skipped</code>
+          的时点是窗口外不补跑，不算取数失败。
         </Banner>
       )}
 
