@@ -26,6 +26,7 @@ import {
   Input,
   MetricCard,
   SectionCard,
+  SourceStatusBadge,
   Textarea,
   type Column,
 } from '../../components/ui'
@@ -39,7 +40,6 @@ import {
   MISSING,
 } from '../../lib/format'
 import { withParams } from '../industry/links'
-import { SourceStatusBadge } from '../industry/sourceBadges'
 import { useDemoEnabled, usePositionsView } from './useRadarView'
 
 /**

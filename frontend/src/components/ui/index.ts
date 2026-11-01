@@ -35,6 +35,7 @@ export {
 export { HBarList, Sparkline, type HBarItem, type HBarListProps, type SparklineProps } from './MiniChart'
 export { ConfirmDialog, Drawer, type ConfirmDialogProps, type DrawerProps } from './Overlay'
 export {
+  asSourceBadgeStatus,
   FRESHNESS_LABEL,
   FreshnessBadge,
   SOURCE_SEVERITY,
@@ -47,6 +48,7 @@ export {
   type SourceBadgeMeta,
   type SourceSeverity,
   type SourceStatusBadgeProps,
+  type SourceStatusExtension,
   type SourceStatusLike,
   type SourceTone,
 } from './SourceBadges'

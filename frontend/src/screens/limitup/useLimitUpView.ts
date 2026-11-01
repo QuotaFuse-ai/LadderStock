@@ -8,7 +8,7 @@ import {
   type LimitPoolPayload,
   type LimitPoolSource,
 } from '../../api/limitPool'
-import { resolveState, useForcedState, type PageState } from '../../lib/pageState'
+import { resolveState, useDemoEnabled, useForcedState, type PageState } from '../../lib/pageState'
 import { useAsync } from '../../lib/useAsync'
 import { demoLimitPoolSource, type LimitPoolDemoVariant } from './demo'
 
@@ -26,10 +26,9 @@ function isDemoVariant(value: unknown): value is LimitPoolDemoVariant {
   return typeof value === 'string' && (VARIANTS as readonly string[]).includes(value)
 }
 
+/** §5.6 的演示开关判定只有一处真源（`lib/pageState.ts`）；这里保留屏侧惯用名。 */
 export function useLimitPoolDemoEnabled(): boolean {
-  const [params] = useSearchParams()
-  const raw = params.get('demo')
-  return raw === '1' || raw === 'true'
+  return useDemoEnabled()
 }
 
 function useDemoVariant(): LimitPoolDemoVariant {

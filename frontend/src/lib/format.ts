@@ -58,6 +58,14 @@ export function formatInt(value: number | null | undefined): string {
   return String(Math.round(value))
 }
 
+/**
+ * 计数缺失口径（§8 / QUOT-320 缺口 4）：`null` / `undefined` / 非有限数 → `—`。
+ * `0` 是真实读数，不能和「没取到」显示成同一个东西，屏侧也不许再写 `count ?? 0`。
+ */
+export function countOrMissing(value: number | null | undefined): string {
+  return isFiniteNumber(value) ? String(value) : MISSING
+}
+
 /** 一位小数（晋级率、题材强度） */
 export function formatOneDecimal(value: number | null | undefined): string {
   if (!isFiniteNumber(value)) return MISSING

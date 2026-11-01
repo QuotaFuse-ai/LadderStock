@@ -1,4 +1,5 @@
 import { cn } from '../../lib/cn'
+import { MISSING } from '../../lib/format'
 
 /**
  * CH-03 题材强度横向条 + C-20 Sparkline（DESIGN-SPEC §6）。
@@ -9,7 +10,11 @@ import { cn } from '../../lib/cn'
 
 export interface HBarItem {
   label: string
-  value: number
+  /**
+   * `null` = 没取到（§8：缺失一律 `—`，不许用 0 冒充）。
+   * 旧实现只有 `number`，屏侧只能写 `count ?? 0`，于是缺数被画成一根实心最短条。
+   */
+  value: number | null
   hint?: string
 }
 
@@ -23,26 +28,33 @@ export interface HBarListProps {
 }
 
 export function HBarList({ items, unit = '', className, emphasizeFirst = true, format }: HBarListProps) {
-  const max = Math.max(...items.map((item) => item.value), 1)
+  const values = items.map((item) => item.value).filter((value): value is number => value !== null)
+  const max = Math.max(...values, 1)
   return (
     <ol className={cn('flex flex-col gap-2', className)}>
       {items.map((item, index) => {
-        const width = Math.max(2, Math.round((item.value / max) * 100))
+        const value = item.value
+        const width = value === null ? 0 : Math.max(2, Math.round((value / max) * 100))
         const strong = !emphasizeFirst || index === 0
         return (
           <li key={`${item.label}-${index}`} className="flex items-center gap-2">
             <span className="w-24 shrink-0 truncate text-body text-text" title={item.label}>
               {item.label}
             </span>
-            <span className="relative h-2 flex-1 overflow-hidden rounded-xs bg-surface-3">
-              <span
-                className={cn('absolute inset-y-0 left-0 rounded-xs bg-accent', !strong && 'opacity-60')}
-                style={{ width: `${width}%` }}
-              />
+            <span
+              className="relative h-2 flex-1 overflow-hidden rounded-xs bg-surface-3"
+              title={value === null ? '未取到，不画条' : item.hint}
+            >
+              {value !== null && (
+                <span
+                  className={cn('absolute inset-y-0 left-0 rounded-xs bg-accent', !strong && 'opacity-60')}
+                  style={{ width: `${width}%` }}
+                />
+              )}
             </span>
             <span className="ldst-num w-16 shrink-0 text-right text-body text-text-secondary">
-              {format ? format(item.value) : item.value}
-              {unit && <span className="ml-half text-caption text-text-muted">{unit}</span>}
+              {value === null ? MISSING : format ? format(value) : value}
+              {value !== null && unit && <span className="ml-half text-caption text-text-muted">{unit}</span>}
             </span>
           </li>
         )

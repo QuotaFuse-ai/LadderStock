@@ -22,11 +22,11 @@ import {
   EmptyState,
   ErrorBlock,
   MetricCard,
+  SourceStatusBadge,
   type Column,
 } from '../../components/ui'
 import { formatBoards, formatInt, formatMoney, formatOneDecimal, localDateIso, MISSING } from '../../lib/format'
 import { withParams } from '../industry/links'
-import { SourceStatusBadge } from '../industry/sourceBadges'
 import { DEMO_POOL_DATE } from './demo'
 import { useDemoEnabled, usePoolView } from './useRadarView'
 

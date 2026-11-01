@@ -19,6 +19,7 @@ import { MISSING, formatTime } from '../../lib/format'
 import { cn } from '../../lib/cn'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
 import {
+  asSourceBadgeStatus,
   Badge,
   Banner,
   Button,
@@ -30,6 +31,7 @@ import {
   ErrorBlock,
   MetricCard,
   SectionCard,
+  SourceStatusBadge,
   Sparkline,
 } from '../../components/ui'
 import { MarkdownView } from '../../components/research/MarkdownView'
@@ -38,7 +40,6 @@ import { StageRail } from '../../components/research/StageRail'
 import { LinkButton, PercentileBar } from '../../components/research/bits'
 import { ValuationBasisPanel } from '../../components/valuation/ValuationBasisPanel'
 import { createDemoValuationLoader } from './demo'
-import { asSourceBadgeStatus, SourceStatusBadge } from '../industry/sourceBadges'
 import {
   MONEY,
   formatFactValue,
@@ -531,11 +532,6 @@ export default function ResearchDetailScreen() {
       subtitle={view.code ? `${view.code} · ${view.date} · 个股深挖` : '个股深挖'}
       badge={
         <div className="flex flex-wrap items-center gap-2">
-          {view.demo && (
-            <Badge tone="info" title="演示数据：不是真实研究产物">
-              演示数据（?demo=1）
-            </Badge>
-          )}
           <DemoStateBadge state={view.forced} />
           {status && (
             <SourceStatusBadge

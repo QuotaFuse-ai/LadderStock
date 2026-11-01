@@ -30,3 +30,18 @@ cd frontend && node scripts/visual-shot.mjs             # 或 npm run shots
 本机私有数据（日志 / 持仓 / 候选池）也为空。因此 before 图拍到的是各屏真实的「未同步 / 空 / 降级」态，
 不是设计稿、也不是 `?demo=1` 演示态（演示态带水印，不代表用户实际所见）。
 后续若要拍到有数据的 before/after，先跑 `ldst sync --date <交易日>` 再重新执行上面的命令。
+
+## QUOT-320 共享层 after（`--query`，2026-11-01 夜）
+
+`visual-shot.mjs` 加了 `--query <str>`：把查询串追加到路由上，配合 `--suffix` 拍演示态与缺失态
+（文件名仍是 `<route>-<suffix>-<theme>.png`）。
+
+```bash
+cd frontend && npm run dev -- --port 5173     # 另开终端
+node scripts/visual-shot.mjs --routes news     --query "demo=1"                    --suffix after-320-demo    # 水印上屏
+node scripts/visual-shot.mjs --routes news     --query "demo=1&variant=partial"    --suffix after-320-missing # 部分缺失=danger 橙红
+node scripts/visual-shot.mjs --routes settings --query "tab=ports&state=offline"   --suffix after-320-ports   # 端口未取到=—
+```
+
+`after-320-*` 六张（暗 + 亮）证明三件事：`?demo=1` 单独出现时水印也上屏、
+`source_status` 的色序按 §5.2（`partial` 橙红、`degraded` 黄）、离线时端口列写 `—` 而不是默认 5950/5951。

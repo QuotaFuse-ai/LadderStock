@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Building2, Radio, Search } from 'lucide-react'
 
 import { normalizeResearchCode } from '../../api/research'
-import { PageHeader } from '../../components/PageShell'
+import { DemoStateBadge, PageHeader } from '../../components/PageShell'
 import { LinkButton } from '../../components/research/bits'
 import { Button, Card, CardBody, CardHeader, Field, Input } from '../../components/ui'
 
@@ -45,11 +45,7 @@ export default function ResearchEntryScreen() {
       <PageHeader
         title="个股深挖"
         subtitle="输入证券代码，进入六段研究产物与研究报告"
-        badge={
-          params.get('demo') === '1' ? (
-            <span className="text-caption text-text-muted">演示源 · ?demo=1</span>
-          ) : null
-        }
+        badge={<DemoStateBadge state={null} />}
       />
 
       <Card className="max-w-content">

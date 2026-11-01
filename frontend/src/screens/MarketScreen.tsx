@@ -44,6 +44,7 @@ import {
   MetricCard,
   SectionCard,
   Segmented,
+  SourceBadges,
   type Column,
 } from '../components/ui'
 
@@ -90,32 +91,10 @@ const DEMO_ERROR = {
   code: null,
 } as const
 
-const FRESHNESS_LABEL: Record<LadderEnvelope<unknown>['freshness'], string> = {
-  realtime: '实时',
-  cached: '缓存',
-  archive: '归档',
-}
-
 type EnvelopeMeta = Pick<
   LadderEnvelope<unknown>,
   'freshness' | 'source_status' | 'source_detail' | 'data_as_of' | 'fetched_at'
 >
-
-/** 指标卡 / 卡片右上角溯源徽标：freshness · source_status，hover 出明细。 */
-function SourceBadge({ envelope }: { envelope: EnvelopeMeta | null }) {
-  if (!envelope) return null
-  const tone = envelope.source_status === 'ok' ? 'ok' : envelope.source_status === 'partial' ? 'warn' : 'danger'
-  const title = [
-    `来源：${envelope.source_detail}`,
-    `数据时间：${envelope.data_as_of ?? '未知'}`,
-    `取数：${formatTime(envelope.fetched_at)}`,
-  ].join('\n')
-  return (
-    <Badge tone={tone} title={title}>
-      {FRESHNESS_LABEL[envelope.freshness]}
-    </Badge>
-  )
-}
 
 /** 卡片底部的一行来源与口径（§4.2 L2）。 */
 function SourceLine({ envelope, extra }: { envelope: EnvelopeMeta | null; extra: string }) {
@@ -530,7 +509,7 @@ export default function MarketScreen() {
                 <MetricCard
                   label="情绪温度"
                   hero
-                  badge={<SourceBadge envelope={usable ? sentiment.data : null} />}
+                  badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
                   value={currentTemperature === null ? MISSING : formatInt(currentTemperature)}
                   note={
                     currentTemperature === null
@@ -540,7 +519,7 @@ export default function MarketScreen() {
                 />
                 <MetricCard
                   label="晋级率"
-                  badge={<SourceBadge envelope={usable ? sentiment.data : null} />}
+                  badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
                   value={formatRatePct(usable ? sent?.promotion_rate : null).text}
                   note={
                     usable && isFiniteNumber(sent?.promotion_rate)
@@ -550,7 +529,7 @@ export default function MarketScreen() {
                 />
                 <MetricCard
                   label="梯队断层"
-                  badge={<SourceBadge envelope={usable ? sentiment.data : null} />}
+                  badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
                   value={gapLevels === null ? MISSING : formatInt(gapLevels.length)}
                   unit={gapLevels === null ? undefined : '档'}
                   note={
@@ -567,7 +546,7 @@ export default function MarketScreen() {
                 tone={linePoints.length > 0 ? 'ok' : 'neutral'}
                 actions={
                   <>
-                    <SourceBadge envelope={usable ? (history.data ?? sentiment.data) : null} />
+                    <SourceBadges envelope={usable ? (history.data ?? sentiment.data) : null} />
                     <Badge tone={hasHistory ? 'info' : 'warn'}>{hasHistory ? `近 ${formatInt(historyRows.length)} 日` : '单点'}</Badge>
                   </>
                 }
@@ -620,7 +599,7 @@ export default function MarketScreen() {
               tone={levels.length > 0 ? 'ok' : 'neutral'}
               actions={
                 <>
-                  <SourceBadge envelope={usable ? ladder.data : null} />
+                  <SourceBadges envelope={usable ? ladder.data : null} />
                   {levels.length > 0 && <Badge tone="info">最高 {formatInt(ladderResult?.height)} 板</Badge>}
                 </>
               }
@@ -658,7 +637,7 @@ export default function MarketScreen() {
               title="题材轮动（CH-03）"
               subtitle={`强度降序，横条只画前 ${THEME_TOP} 条，其余进表格`}
               tone={themes.length > 0 ? 'ok' : 'neutral'}
-              actions={<SourceBadge envelope={usable ? theme.data : null} />}
+              actions={<SourceBadges envelope={usable ? theme.data : null} />}
             >
               {themes.length === 0 ? (
                 <NotSynced
