@@ -135,7 +135,7 @@ GET /api/market/theme?date=2026-10-23
 | 字段 | 类型 | 口径 |
 | --- | --- | --- |
 | `payload.themes[]` | array | **按 `strength` 降序**，无强度的排最后，最多 **20** 条；每行只有五个键 |
-| `theme` | string | 题材名（记录里没有题材名的行**直接丢弃**，不并入「未知题材」） |
+| `theme` | string | 题材名（别名按优先级：`theme` / `theme_name` / **`topic`** / `name` / `sector` / 题材 / 板块；记录里没有题材名的行**直接丢弃**，不并入「未知题材」）。`topic` 是 Wire `TopicDigest` 的**赛道 slug**（`ai` / `semiconductor`…，QUOT-328 实测），中文名要不要映射由前端决定，后端不复制一份会漂移的注册表 |
 | `strength` | float\|null | 记录自带的强度分（别名：`strength` / `score` / `heat` / `intensity` / 强度 / 热度）；同题材多条取**最大**；没有就是 `null`，**不折算、不猜** |
 | `limit_up_count` | int\|null | 题材内涨停家数（`limit_up_count` / `limit_up_cnt` / 涨停家数 / 涨停数），取最大；没有 → `null` |
 | `leader` | string\|null | 龙头（`leader` / `leader_name` / 龙头 / 龙头股），否则用 `leader_code` + `龙头名称` 拼成 `300001 某某科技`；都取不到 → `null` |
@@ -162,11 +162,15 @@ GET /api/market/theme?date=2026-10-23
 
 ## 4. 已知边界（如实，不留到线上才发现）
 
-1. **CH-03 上线即为空态**：接入 QuotaFuse Wire（`qfw`）是配置 / 账号动作，需要人类批准，
-   不在 QUOT-199 范围内。真实 `theme_news` 的字段名以接入后第一条数据为准复核——
-   本文件的别名表按 `wire_get_digest` 的常见形状列，`strength` 是否真给、给的是什么量纲，
-   接入前无法证实。若 Wire 不提供任何数值强度，本接口就长期只出 `theme` / `limit_up_count`，
-   「题材强度」这一段要么等上游、要么改口径（届时更新本文件并记录变更）。
+1. **CH-03 的数据面已接通，但强度列是结构性缺口**（QUOT-328 / DEC-043 实测复核）：
+   接入 Wire 后 `theme` 有值（2026-11-01 的 12 个赛道 slug 全部落库，接口 `available=true`），
+   而 **Wire 的 `TopicDigest` 只有 `topic` / `summary` / `key_points` / `items`，
+   没有任何数值强度、涨停家数、龙头字段** —— 所以 `strength` / `limit_up_count` /
+   `leader` / `delta` 今天**恒为 `null`**，前端按 UI-SPEC §5.6 显示 `—` + 出处徽标，
+   **不许补 0、不许折算**。要让「题材强度」这一段真有数，得等 Wire 侧提供或改口径
+   （改口径需更新本文件并记录变更）；这不阻塞 QUOT-311 / QUOT-313 用题材名 + 指标列。
+   另注：`limit_up_count` 的另一种可行来源是本地 `concept_board` / `limit_pool`，
+   那是**指标口径**不是 Wire 叙事，归屏轨 owner 决定，本接口不混着报。
 2. **序列长度受缓存限制**：`days=60` 不等于一定有 60 个点。
 3. **窗口成本**：每个点是一次 `compute_sentiment`（三张池快照 + 天梯），60 日最坏情况
    约 180 次缓存读；只读、无并发写，回环独占，不给远端调用。
@@ -182,3 +186,9 @@ GET /api/market/theme?date=2026-10-23
 - v0.2（2026-11-01）：实机冒烟（真 uvicorn + 真 HTTP）后发现「未接入」文案里
   「后端 none 在 … 没有记录」读起来像故障，改为「缓存后端 none，… 没有 theme_news 记录」，
   §2 的示例同步。字段、状态码、`no-store` 均未变。
+- v0.3（2026-11-01，QUOT-328）：接入真实 Wire 后复核 §2 别名表与 §4.1。
+  只做两处文档修正，**没有改字段、状态码或白名单**：
+  ① `theme` 的别名补上实测的 `topic`（Wire 的赛道 slug），此前 12 个赛道的行全被判
+  「没有题材名」丢弃，接口永远 `available=false`；
+  ② §4.1 由「接入前无法证实」改为实测结论——Wire 不提供任何强度类字段，
+  四列指标长期 `null`（缺数显示 `—`，不冒 0）。理由与链路侧修正见 DEC-043。

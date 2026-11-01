@@ -175,7 +175,17 @@ MARKET_THEME_MAX_ROWS = 20
 
 #: `theme_news`（QuotaFuse Wire）记录的字段别名：Wire 的摘要工具没有固定 schema，
 #: 按优先级取第一个能解析的值；都取不到就如实给 `null`（同 `core/ladder.py` 的字段容忍）。
-THEME_NAME_KEYS: tuple[str, ...] = ("theme", "theme_name", "name", "sector", "题材", "板块")
+#: `topic` 是 Wire `TopicDigest` 的**赛道 slug**（`ai` / `semiconductor` …，QUOT-328），
+#: 是它唯一的题材名——排在 `theme` 之后，是因为若上游哪天同时给中文名，中文名更适合直接展示。
+THEME_NAME_KEYS: tuple[str, ...] = (
+    "theme",
+    "theme_name",
+    "topic",
+    "name",
+    "sector",
+    "题材",
+    "板块",
+)
 THEME_STRENGTH_KEYS: tuple[str, ...] = ("strength", "score", "heat", "intensity", "强度", "热度")
 THEME_LIMIT_KEYS: tuple[str, ...] = ("limit_up_count", "limit_up_cnt", "涨停家数", "涨停数")
 THEME_LEADER_KEYS: tuple[str, ...] = ("leader", "leader_name", "龙头", "龙头股")
