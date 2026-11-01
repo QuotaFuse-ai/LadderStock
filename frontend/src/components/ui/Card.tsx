@@ -122,7 +122,7 @@ export interface MetricCardProps {
   badge?: ReactNode
 }
 
-/** 首页 / 复盘用的指标卡：96px 固定高，缺失值显示 `—` + 原因（不补 0）。 */
+/** 首页 / 复盘用的指标卡：最小 96px、有 note 时可长高，缺失值显示 `—` + 原因（不补 0）。 */
 export function MetricCard({
   label,
   value,
@@ -134,7 +134,7 @@ export function MetricCard({
   badge,
 }: MetricCardProps) {
   return (
-    <div className="flex h-metric flex-col justify-between rounded border border-border bg-surface p-4 shadow-card">
+    <div className="flex min-h-metric flex-col justify-between gap-1 rounded border border-border bg-surface p-4 shadow-card">
       <div className="flex items-center gap-1.5 text-caption text-text-secondary">
         {icon}
         <span className="truncate">{label}</span>

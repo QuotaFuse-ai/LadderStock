@@ -335,12 +335,11 @@ function buildColumns(
     {
       key: 'note',
       header: '备注',
-      width: '140px',
+      truncate: true,
+      cellTitle: (row) => row.note ?? '—',
       render: (row) =>
         row.note ? (
-          <span className="block max-w-[140px] truncate text-caption text-text-secondary" title={row.note}>
-            {row.note}
-          </span>
+          <span className="text-caption text-text-secondary">{row.note}</span>
         ) : (
           <span className="text-caption text-text-muted">—</span>
         ),

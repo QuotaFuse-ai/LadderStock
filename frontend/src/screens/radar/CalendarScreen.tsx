@@ -133,7 +133,7 @@ function MonthGrid({
         <div className="grid grid-cols-7 gap-1" role="group" aria-label={`${month} 月历`}>
           {days.map((cell, index) => {
             if (!cell.date || cell.day === null) {
-              return <div key={`empty-${index}`} className="min-h-[76px] rounded border border-transparent" />
+              return <div key={`empty-${index}`} className="min-h-calendar-cell rounded border border-transparent" />
             }
             const data = byDay.get(cell.date)
             const count = (data?.entries.length ?? 0) + (data?.events.length ?? 0)
@@ -151,7 +151,7 @@ function MonthGrid({
                 aria-label={`${cell.date}${count > 0 ? `，${count} 个条目` : '，没有已知事件'}`}
                 onClick={() => onSelect(cell.date as string)}
                 className={cn(
-                  'flex min-h-[76px] flex-col items-start gap-1 rounded border p-1 text-left transition-colors duration-fast ease-ldst',
+                  'flex min-h-calendar-cell flex-col items-start gap-1 rounded border p-1 text-left transition-colors duration-fast ease-ldst',
                   active
                     ? 'border-accent bg-accent-soft'
                     : 'border-border bg-surface hover:bg-surface-3',

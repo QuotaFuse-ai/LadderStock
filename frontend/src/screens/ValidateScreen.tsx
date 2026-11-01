@@ -584,7 +584,7 @@ export default function ValidateScreen() {
         actions={<Badge tone="neutral">{formatInt(items.length)} 条</Badge>}
       >
         <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
-          <div className="min-w-[960px]">
+          <div className="min-w-table-min">
             <div
               className={`sticky top-0 z-sticky grid h-control ${ROW_GRID} items-center gap-3 border-b border-border bg-surface-2 px-3 text-caption font-medium text-text-secondary`}
             >
@@ -959,6 +959,12 @@ export default function ValidateScreen() {
                 没有逐条判定——{reconcileView.reason ?? '当日没有可对账的条件'}。
               </span>
             }
+            summaryRow={() => (
+              <span className="text-caption text-text-secondary">
+                本轮命中 <span className="ldst-num text-text">{formatInt(hit)}</span> /{' '}
+                <span className="ldst-num text-text">{formatInt(total)}</span> 条
+              </span>
+            )}
             columns={[
               {
                 key: 'verdict',
