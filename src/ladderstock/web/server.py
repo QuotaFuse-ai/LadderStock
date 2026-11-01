@@ -43,6 +43,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ladderstock import __version__
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir, project_root
+from ladderstock.core import intraday
 from ladderstock.core.ladder import compute_ladder, dataset_snapshot, pick
 from ladderstock.core.limit_pool import compute_limit_pool
 from ladderstock.core.listener import LOOPBACK_HOSTS, TokenGuardMiddleware
@@ -280,19 +281,27 @@ def _parse_deviation(raw: str | None) -> float:
     return value
 
 
-def _journal_guard(request: Request) -> None:
-    """`/api/journal/*` 的回环独占闸门（DEC-015 §3.1 / §3.2）。
+def _loopback_only(request: Request, denied_detail: str) -> None:
+    """回环独占闸门的本体：来源非回环、或 `Host` 不在白名单 → 403。
 
-    只复用控制面的「来源回环 + `Host` 白名单」（后者挡 DNS rebinding），**不挂**
-    `control_enabled()`：`LDST_CONTROL_ENABLED=0` 关的是写面，不该连带关掉只读统计。
+    只复用控制面的两道判定（`DEC-015` §3.1 / §3.2，后者挡 DNS rebinding），**不挂**
+    `control_enabled()`：`LDST_CONTROL_ENABLED=0` 关的是写面，不该连带关掉只读数据。
     即使开了 `LDST_WEB_ALLOW_REMOTE=1` + `LDST_WEB_TOKEN`，非回环来源一律 403——
     Token 管「谁连得进来」，不管「数据该不该出去」。
     """
-    denied = HTTPException(status_code=403, detail="日志只接受回环来源")
     if not is_loopback_host(client_host(request.client)):
-        raise denied
+        raise HTTPException(status_code=403, detail=denied_detail)
     if not host_header_allowed(request):
-        raise denied
+        raise HTTPException(status_code=403, detail=denied_detail)
+
+
+def _journal_guard(request: Request) -> None:
+    """`/api/journal/*` 的回环独占闸门（DEC-015 §3.1 / §3.2）。
+
+    即使开了 `LDST_WEB_ALLOW_REMOTE=1` + `LDST_WEB_TOKEN`，非回环来源一律 403——
+    Token 管「谁连得进来」，不管「数据该不该出去」。
+    """
+    _loopback_only(request, "日志只接受回环来源")
 
 
 def _drop_forbidden_fields(value: Any) -> Any:
@@ -811,6 +820,95 @@ def _market_envelope(
     return envelope
 
 
+# --------------------------------------------------------------------------- #
+# 盘中 6 时点读面（QUOT-301）：只投影 `data/intraday/`，不算任何指标
+# --------------------------------------------------------------------------- #
+
+#: `slot` 只接受 6 个时点名；顺带认落盘文件名的紧凑写法 `0925`（同 `_parse_day`
+#: 认 `20261030` 的容忍度），其余一律 400——它要拼进文件名，先过正则再拼路径。
+_SLOT_PATTERN = re.compile(r"^(\d{2}):?(\d{2})$")
+
+#: `status.json` 里逐时点落盘、原样透出的字段。**不做默认值兜底**（DEC-028）：
+#: 记录里没有就是 `null`，前端据此显示「未知」，不显示 0。
+#: （`detail` 另走 `_as_text` 归一，`file` 以磁盘为准，都不在这一列里。）
+INTRADAY_ENTRY_FIELDS: tuple[str, ...] = ("price_field", "stocks", "fresh", "at")
+
+#: 这三种状态意味着「该时点落过盘」；`skipped` / `missing` / `failed` 只写 status.json
+_INTRADAY_STORED: frozenset[str] = frozenset(
+    {intraday.STATUS_OK, intraday.STATUS_DEGRADED, intraday.STATUS_ALREADY}
+)
+
+
+def _as_text(value: Any) -> str | None:
+    """非空字符串原样透出，其余（缺字段、空串、非字符串）一律 `None`。"""
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _parse_slot(value: str | None) -> str:
+    """`slot=HH:MM`（也认 `HHMM`）；不在 6 个时点里 → 400，中文 `detail` 列出可选值。"""
+    text = (value or "").strip()
+    options = "、".join(intraday.SLOTS)
+    if not text:
+        raise HTTPException(status_code=400, detail=f"缺少 slot（HH:MM，可选：{options}）")
+    matched = _SLOT_PATTERN.match(text)
+    detail = f"未知快照时点 {value!r}；可选：{options}"
+    if matched is None:
+        raise HTTPException(status_code=400, detail=detail)
+    normalized = f"{matched.group(1)}:{matched.group(2)}"
+    if normalized not in intraday.SLOTS:
+        raise HTTPException(status_code=400, detail=detail)
+    return normalized
+
+
+def _intraday_slot_row(slot: str, day: date, entry: Any, root: Path) -> dict[str, Any]:
+    """`status.json` 里的一条时点记录 → 出站的时点行（只投影，不重算）。
+
+    两个正交的口径，别混：
+
+    - `recorded`：`status.json` 里有没有这个时点的记录。没有记录（调度器当天没跑到这一
+      点）与「跑过但没抓到读数」（`missing`）是两件事，前端要用 `recorded` 区分文案，
+      所以没有记录时 `status` 仍给 `missing`（这个时点确实没有读数），但 `recorded=false`；
+    - `available`：**磁盘上此刻到底有没有快照文件**。status.json 说 `ok` 而文件不见了
+      （手工删过 / 换过 `data_dir`）也不谎报，`file` 随之给 `null`。
+    """
+    recorded = isinstance(entry, Mapping)
+    fields = entry if recorded else {}
+    status = _as_text(fields.get("status"))
+    if status is None:
+        status = intraday.STATUS_MISSING
+    stored = status in _INTRADAY_STORED
+    path = intraday.snapshot_path(slot, day, root)
+    available = stored and path.is_file()
+
+    detail = _as_text(fields.get("detail"))
+    if available:
+        reason = None
+    elif not recorded:
+        reason = (
+            f"status.json 里没有 {slot} 的记录：该时点没跑过，或没落进有效窗口 "
+            f"{intraday.window_text(slot)}（不补跑，见 DEC-035 §2.3）"
+        )
+    elif stored:
+        reason = f"status.json 记着 {status}，但快照文件不存在：{path.name}"
+    else:
+        reason = detail or f"该时点状态为 {status}，没有快照文件"
+
+    row: dict[str, Any] = {
+        "slot": slot,
+        "status": status,
+        "recorded": recorded,
+        "available": available,
+        "reason": reason,
+        "file": path.name if available else None,
+    }
+    for key in INTRADAY_ENTRY_FIELDS:
+        row[key] = fields.get(key) if recorded else None
+    row["detail"] = detail
+    return row
+
+
 def default_dist_dir() -> Path:
     """前端构建产物目录：`frontend/dist`（Vite 默认 outDir）。"""
     return project_root() / "frontend" / "dist"
@@ -1011,6 +1109,139 @@ def create_app(
             result,
             available=available,
             source_detail=str(result.get("source_detail") or ""),
+        )
+
+    @app.get("/api/intraday")
+    def intraday_status(
+        request: Request,
+        date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
+    ) -> dict[str, Any]:
+        """盘中 6 时点快照的状态汇总（QUOT-301）：读 `data/intraday/<date>/status.json`。
+
+        外壳与空态口径同 `/api/limit-pool`：`LadderEnvelope` + `payload.data_source_status`，
+        缺文件 / 结构不合法一律 200 + `available=false` + 中文 `reason`，不 404、不 500、
+        不补 0。6 个时点**固定全给**（包括没有记录的），前端不用自己拼时点表。
+        `core/intraday.py` 的窗口与「不补跑」语义不在这里碰：本接口只读落盘结果。
+
+        **回环独占**（同 `/api/journal/stats` / `/api/market/*`，不受
+        `LDST_CONTROL_ENABLED` 影响）：快照逐时点记着这台机器当天在看哪些票的盘面，
+        这是「这台机器在做什么」的信号，比公开的涨停池更私密。只读、只 GET、不写文件。
+        """
+        _loopback_only(request, "盘中快照只接受回环来源")
+        target = _parse_day(date_str)
+        document = intraday.read_status(target, root=root)
+        raw_slots = document.get("slots")
+        slots = raw_slots if isinstance(raw_slots, Mapping) else {}
+        rows = [_intraday_slot_row(slot, target, slots.get(slot), root) for slot in intraday.SLOTS]
+        held = sum(1 for row in rows if row["available"])
+        available = held > 0
+        status_file = intraday.status_path(target, root)
+
+        if available:
+            reason = None
+        elif not status_file.is_file():
+            reason = (
+                f"{status_file.name} 不存在：这台机器上没有 {target} 的快照记录"
+                "（调度器未运行过这一天，或 data_dir 不是这个）"
+            )
+        else:
+            listed = "、".join(f"{row['slot']} {row['status']}" for row in rows)
+            reason = f"6 个时点都没有快照文件：{listed}"
+
+        return _envelope(
+            "sentiment",
+            "intraday",
+            target,
+            {
+                "date": target.isoformat(),
+                "available": available,
+                "reason": reason,
+                "has_status_file": status_file.is_file(),
+                "slot_count": len(intraday.SLOTS),
+                "snapshot_count": held,
+                "status_updated_at": _as_text(document.get("updated_at")),
+                "slots": rows,
+            },
+            available=available,
+            source_detail=(
+                f"local intraday dir: {status_file.parent.name}/（{held}/6 个时点有快照）"
+            ),
+        )
+
+    @app.get("/api/intraday/snapshot")
+    def intraday_snapshot_slot(
+        request: Request,
+        date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
+        slot_raw: Annotated[str | None, Query(alias="slot", description="HH:MM")] = None,
+    ) -> dict[str, Any]:
+        """单个时点的快照原文（QUOT-301）：读 `data/intraday/<date>/<HHMM>.json`。
+
+        **一个指标都不重算**：文件里有什么就出什么（`yesterday_limit_up` / `sentiment` /
+        `price_field` / `source`），套进 `payload.snapshot` 一层——与 `/api/review`
+        (`payload.review`)、`/api/weekly` (`payload.weekly`) 同一形状。唯一的加工是
+        `strip_private()` 这道全局出口兜底。闸门同 `/api/intraday`。
+        """
+        _loopback_only(request, "盘中快照只接受回环来源")
+        target = _parse_day(date_str)
+        slot = _parse_slot(slot_raw)
+        path = intraday.snapshot_path(slot, target, root)
+        payload: dict[str, Any] = {
+            "date": target.isoformat(),
+            "slot": slot,
+            "available": False,
+            "reason": None,
+            "snapshot": None,
+        }
+
+        if not path.is_file():
+            payload["reason"] = (
+                f"{path.name} 不存在：{target} 的 {slot} 没有落盘快照"
+                f"（逐时点状态见 GET /api/intraday?date={target.isoformat()}）"
+            )
+            return _envelope(
+                "sentiment",
+                "intraday_snapshot",
+                target,
+                payload,
+                available=False,
+                source_detail=f"local intraday dir: {path.parent.name}/{path.name} 不存在",
+            )
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            payload["reason"] = f"{path.name} 不可读：{exc}"
+            return _envelope(
+                "sentiment",
+                "intraday_snapshot",
+                target,
+                payload,
+                available=False,
+                source_detail=f"local intraday cache: {path.name} 解析失败",
+            )
+        clean = strip_private(parsed)
+        if not isinstance(clean, Mapping):
+            payload["reason"] = f"{path.name} 结构不合法：顶层不是对象"
+            return _envelope(
+                "sentiment",
+                "intraday_snapshot",
+                target,
+                payload,
+                available=False,
+                source_detail=f"local intraday cache: {path.name} 结构不合法",
+            )
+
+        payload["available"] = True
+        payload["reason"] = None
+        payload["snapshot"] = dict(clean)
+        source = clean.get("source")
+        detail = _as_text(source.get("source_detail")) if isinstance(source, Mapping) else None
+        return _envelope(
+            "sentiment",
+            "intraday_snapshot",
+            target,
+            payload,
+            available=True,
+            source_detail=detail or f"local intraday cache: {path.name}",
         )
 
     @app.get("/api/watch/snapshot")

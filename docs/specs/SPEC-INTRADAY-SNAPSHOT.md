@@ -1,6 +1,8 @@
 # 盘中 6 时点快照（QUOT-286）
 
 - 状态：已实现（2026-11-01）
+- 读面：已实现（2026-11-01，QUOT-301）——本文件只写**采集与落盘**口径，
+  两条只读 HTTP 接口的契约在 `SPEC-INTRADAY-READ`（DEC-039）
 - 关联：DEC-006（生态边界）、DEC-007（同步与缓存）、`docs/SOURCES.md` §2
 - 实现：`src/ladderstock/core/intraday.py`、`src/ladderstock/cli/schedule.py`
 - 一句话：**当天当场**把盘面读数存成一个 JSON；不补跑、不覆盖、不用今天的价格回填过去。
@@ -160,3 +162,16 @@ schema：`config/schema/schedule.schema.json` 的 `kind` 枚举加入 `snapshot`
 - 9:15–9:20 集合竞价过程：上游没有这个源，不摆占位字段；
 - 新增直连行情站点或采集通道（DEC-006）；
 - 对个股做排序 / 评分 / 推荐——快照只存客观读数。
+
+## 9. 读面（QUOT-301 / DEC-039，2026-11-01 追加）
+
+本文件管采集与落盘；把这两份文件开成 HTTP 的是 `SPEC-INTRADAY-READ`：
+
+| 接口 | 读什么 |
+|---|---|
+| `GET /api/intraday?date=YYYY-MM-DD` | `status.json` → 6 个时点的状态行（`recorded` 说有没有跑过，`available` 说文件在不在） |
+| `GET /api/intraday/snapshot?date&slot=HH:MM` | 单个 `<HHMM>.json` 原文，嵌在 `payload.snapshot` 里 |
+
+读面**不回写、不补跑、不重算**：窗口语义（§2、§5）全部留在 `core/intraday.py`，
+接口只是把已经落盘的东西投影出去。回环独占（非回环 403），与 `/api/limit-pool` 那条
+「公开数据面不加闸门」有意不同，理由见 DEC-039 §2.4。
