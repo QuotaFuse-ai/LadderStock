@@ -168,8 +168,9 @@ function signatureOf(rows: Array<{ code: string; trigger: string }>): string {
     .join('\n')
 }
 
+/** 列宽走 §7.3 的 {56, 88} 档；长文本列吃剩余宽度。 */
 const ROW_GRID =
-  'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_5.5rem_5.5rem_6.5rem]'
+  'grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_5.5rem_5.5rem_5.5rem]'
 
 export default function ValidateScreen() {
   const forced = useForcedState()
@@ -582,10 +583,10 @@ export default function ValidateScreen() {
         }
         actions={<Badge tone="neutral">{formatInt(items.length)} 条</Badge>}
       >
-        <div className="overflow-x-auto">
+        <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           <div className="min-w-[960px]">
             <div
-              className={`grid h-control ${ROW_GRID} items-center gap-3 border-b border-border px-3 text-caption text-text-secondary`}
+              className={`sticky top-0 z-sticky grid h-control ${ROW_GRID} items-center gap-3 border-b border-border bg-surface-2 px-3 text-caption font-medium text-text-secondary`}
             >
               <span>序号</span>
               <span>代码 · 名称</span>
@@ -602,27 +603,27 @@ export default function ValidateScreen() {
               return (
                 <div key={row.key} className="border-b border-border last:border-b-0">
                   <div
-                    className={`relative grid min-h-row ${ROW_GRID} items-center gap-3 px-3 py-2`}
+                    className={`relative grid min-h-row ${ROW_GRID} items-center gap-3 px-3 py-2 transition-colors duration-fast ease-ldst hover:bg-surface-3`}
                     aria-describedby={row.confirmed === false ? `${fieldId}-pending` : undefined}
                   >
                     <span
                       aria-hidden="true"
-                      className={`absolute inset-y-0 left-0 w-[3px] ${
+                      className={`absolute inset-y-0 left-0 w-status-bar ${
                         row.confirmed === null ? 'bg-border-strong' : row.confirmed ? 'bg-ok' : 'bg-warn'
                       }`}
                     />
                     <span className="ldst-num text-caption text-text-muted">{index + 1}</span>
-                    <span className="truncate text-body text-text">
+                    <span className="min-w-0 truncate text-body text-text" title={row.code || '未填代码'}>
                       {row.code ? (
                         <span className="ldst-num">{row.code}</span>
                       ) : (
                         <span className="text-text-muted">未填代码</span>
                       )}
                     </span>
-                    <span className="truncate text-body text-text-secondary" title={row.trigger || undefined}>
+                    <span className="min-w-0 truncate text-body text-text-secondary" title={row.trigger || undefined}>
                       {row.trigger || MISSING}
                     </span>
-                    <span className="truncate text-body text-text-secondary" title={row.note || undefined}>
+                    <span className="min-w-0 truncate text-body text-text-secondary" title={row.note || undefined}>
                       {row.note || MISSING}
                     </span>
                     <span
@@ -680,9 +681,9 @@ export default function ValidateScreen() {
                   {isOpen && (
                     <div
                       id={`${fieldId}-editor`}
-                      className="grid gap-4 border-t border-border bg-sunken p-4 min-[1100px]:grid-cols-[1fr_1fr_2fr]"
+                      className="grid gap-4 border-t border-border bg-sunken p-4 desk:grid-cols-12"
                     >
-                      <Field label="代码 / 标的" htmlFor={`${fieldId}-code`} hint="六位代码或简称，可留空（纯情绪条件）。">
+                      <Field label="代码 / 标的" htmlFor={`${fieldId}-code`} className="desk:col-span-3" hint="六位代码或简称，可留空（纯情绪条件）。">
                         <Input
                           id={`${fieldId}-code`}
                           type="text"
@@ -692,7 +693,7 @@ export default function ValidateScreen() {
                           onChange={(event) => updateRow(row, { code: event.target.value })}
                         />
                       </Field>
-                      <Field label="触发条件" htmlFor={`${fieldId}-trigger`} hint="价格 / 量比 / 时间窗口；后端不接受空条件。">
+                      <Field label="触发条件" htmlFor={`${fieldId}-trigger`} className="desk:col-span-3" hint="价格 / 量比 / 时间窗口；后端不接受空条件。">
                         <Input
                           id={`${fieldId}-trigger`}
                           type="text"
@@ -706,6 +707,7 @@ export default function ValidateScreen() {
                       <Field
                         label="失效条件 · 备注"
                         htmlFor={`${fieldId}-note`}
+                        className="desk:col-span-6"
                         hint={
                           isLocal
                             ? '失效条件、仓位上限、备选标的…草稿结构只有这一个自由文本字段。'
@@ -961,7 +963,7 @@ export default function ValidateScreen() {
               {
                 key: 'verdict',
                 header: '判定',
-                width: '6rem',
+                width: '88px',
                 render: (row) => (
                   <Badge tone={VERDICT[row.verdict].tone}>{VERDICT[row.verdict].label}</Badge>
                 ),
@@ -970,7 +972,7 @@ export default function ValidateScreen() {
                 key: 'text',
                 header: '条件',
                 render: (row) => (
-                  <span className="block truncate text-body text-text" title={row.text}>
+                  <span className="block min-w-0 truncate text-body text-text" title={row.text}>
                     {row.text}
                   </span>
                 ),
@@ -978,13 +980,13 @@ export default function ValidateScreen() {
               {
                 key: 'metric',
                 header: '指标',
-                width: '7rem',
+                width: '112px',
                 render: (row) => <span className="text-caption text-text-secondary">{row.metric ?? MISSING}</span>,
               },
               {
                 key: 'target',
                 header: '目标',
-                width: '6rem',
+                width: '88px',
                 align: 'right',
                 render: (row) => (
                   <span className="ldst-num text-body text-text-secondary">
@@ -996,7 +998,7 @@ export default function ValidateScreen() {
               {
                 key: 'actual',
                 header: '实际值',
-                width: '6rem',
+                width: '88px',
                 align: 'right',
                 render: (row) => (
                   <span className="ldst-num text-body text-text">{formatMetricValue(row.actual)}</span>
