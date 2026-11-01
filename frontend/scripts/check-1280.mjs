@@ -72,7 +72,7 @@ const KNOWN_BARE_ZERO = {
   // R-07：`SignalsScreen.tsx:237,347` 命中数列直显 0
   'signals|empty': 4,
   // R-07 存量债（v1.3 由本巡检量出、已登记进 §12.5，非本轮导航改动引入）：
-  // `limitup/LimitUpScreen.tsx:152` header 计数 `formatInt(payload.count)`，空态应为「—」
+  // `limitup/LimitUpScreen.tsx:153` header 计数 `formatInt(payload.count)`，空态应为「—」（行号按 `b92d5d9` 复核）
   'limit-up|empty': 1,
   // `industry/IndustryDetailScreen.tsx:508` 成分股数 `formatInt(constituent_count)`，未绑定时应为「—」
   'industry-name|empty': 1,
