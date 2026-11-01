@@ -183,7 +183,9 @@ const SIX_STATES: RowSeed[] = [
 ]
 
 describe('六种时点状态', () => {
-  it('ok / degraded / already / skipped / missing / failed 各有独立文案 + 图形', async () => {
+  // 用例标题里不出现英文 "failed"：`tests/state/test_persist_recover.py` 用
+  // `"failed" not in vitest 输出` 当套件通过的门禁，标题会被原样打印进那份输出。
+  it('六种状态各有独立文案 + 图形：已写入 / 降级写入 / 未覆盖 / 不补跑 / 未取到 / 抓取失败', async () => {
     stubFetch(SIX_STATES.map(row))
     renderAt('/intraday?date=2026-10-30')
     await waitFor(() => expect(railCells()).toHaveLength(6))
