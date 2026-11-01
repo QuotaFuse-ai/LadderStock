@@ -83,17 +83,28 @@ describe('路由表 → 侧栏入口', () => {
 })
 
 describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
-  it('既有六组顺序原样保留，新增组只追加在「验证」之后', () => {
+  it('既有分组顺序保留，QUOT-304 的「我的股票」插在「日志」之后', () => {
     expect(NAV_SECTIONS.map((section) => section.key)).toEqual([
       'home',
       'market',
       'watch',
       'review',
       'journal',
+      'my-stocks',
       'validate',
       'industry',
       'deep-dive',
     ])
+  })
+
+  it('「我的股票」只聚合已有路由：持仓 + 事件日历（DEC-044）', () => {
+    const group = NAV_SECTIONS.find((section) => section.key === 'my-stocks')
+    expect(group?.pages.map((page) => page.to)).toEqual(['/positions', '/calendar'])
+    // 聚合是移动不是复制：原分组里不再重复出现
+    const other = NAV_SECTIONS.filter((section) => section.key !== 'my-stocks')
+    const moved = other.flatMap((section) => section.pages.map((page) => page.to))
+    expect(moved).not.toContain('/positions')
+    expect(moved).not.toContain('/calendar')
   })
 
   it('设置沉底、不参与分组展开，其余页面都在分组里', () => {
