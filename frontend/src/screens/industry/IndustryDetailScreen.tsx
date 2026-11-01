@@ -45,13 +45,8 @@ import {
   percentileValue,
 } from './metrics'
 import { MISSING_CELL_TITLE } from './heat'
-import {
-  DATA_SOURCE_STATUS_LABEL,
-  DATA_SOURCE_STATUS_TONE,
-  LINK_BUTTON_CLASS,
-  LINK_TEXT_CLASS,
-  dimensionTitleOf,
-} from './labels'
+import { LINK_BUTTON_CLASS, LINK_TEXT_CLASS, dimensionTitleOf } from './labels'
+import { SourceStatusBadge } from './sourceBadges'
 import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
 import { withParams } from './links'
 import { useIndustryDetailView } from './useIndustryView'
@@ -63,17 +58,16 @@ import { useIndustryDetailView } from './useIndustryView'
  * 相关研报/资讯（R6 `news_stream`，未交付前是带出口的空态）+ 口径与溯源。
  *
  * 数值一律来自 R5 快照；缺失显示「无数据（未核实）」并给原因，不补 0。
+ * 「数据完整度」的标签与色序不在本屏定义，一律走同源徽标 `./sourceBadges`（§5.5）；
+ * 演示水印归 `PageShell.tsx` 的 `DemoStateBadge`（R-18 / QUOT-320）。
  */
 
-/**
- * 演示源水印（清单 §1-A / M-11 的屏侧止血）。
- *
- * 根因在 `components/PageShell.tsx:47` 的 `DemoStateBadge` 只认 `?state=`，`?demo=1` 无标识；
- * 本轨不许改 PageShell（S3c 负责），所以三屏各挂一枚同写法的 C-13 徽标。
- * M-11 落进 PageShell 后，这三处一并删除。
- */
-function DemoWatermark() {
-  return <Badge tone="info" title="本页数据来自内置演示源，不是本机真实行情">演示数据 · ?demo=1</Badge>
+/** §5.2：`partial` 的悬浮必须列出缺失项，只给总数不算达标。 */
+function missingSummaryOf(payload: IndustryDetailPayload): string | null {
+  if (payload.reason) return payload.reason
+  if (payload.missing.length === 0) return null
+  const head = payload.missing.slice(0, 6).join('、')
+  return `缺 ${formatInt(payload.missing.length)} 个字段：${head}${payload.missing.length > 6 ? '…' : ''}`
 }
 
 const HISTORY_KEY: Record<IndustryDimension, 'pe_percentile' | 'pb_percentile' | 'turnover_percentile' | 'change_pct_20d' | null> = {
@@ -252,12 +246,12 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
   {
     key: 'stock',
     header: '标的',
-    width: '168px',
+    width: '176px',
     sort: (a, b) => a.code.localeCompare(b.code),
     render: (row) => (
       <span className="flex min-w-0 flex-col leading-tight">
-        <span className="truncate text-text" title={row.name ?? '名称无数据'}>{row.name ?? '名称无数据'}</span>
-        <span className="ldst-num truncate text-caption text-text-muted" title={`代码 ${row.code}`}>
+        <span className="min-w-0 truncate text-text" title={row.name ?? '名称无数据'}>{row.name ?? '名称无数据'}</span>
+        <span className="ldst-num min-w-0 truncate text-caption text-text-muted" title={`代码 ${row.code}`}>
           {row.code}
         </span>
       </span>
@@ -267,7 +261,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'pe',
     header: 'PE(TTM)',
     align: 'right',
-    width: '96px',
+    width: '112px',
     sort: (a, b) => compareMetric(a.pe_ttm, b.pe_ttm),
     render: (row) => (
       <span className={cn('ldst-num', row.pe_ttm === null ? 'text-text-muted' : 'text-text')}>
@@ -291,7 +285,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'turnover',
     header: '换手率',
     align: 'right',
-    width: '92px',
+    width: '88px',
     sort: (a, b) => compareMetric(a.turnover_rate, b.turnover_rate),
     render: (row) => (
       <span className={cn('ldst-num', row.turnover_rate === null ? 'text-text-muted' : 'text-text-secondary')}>
@@ -303,7 +297,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'revenue',
     header: '营收同比',
     align: 'right',
-    width: '104px',
+    width: '112px',
     sort: (a, b) => compareMetric(a.revenue_yoy, b.revenue_yoy),
     render: (row) => <PctCell value={row.revenue_yoy} />,
   },
@@ -311,7 +305,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'profit',
     header: '净利同比',
     align: 'right',
-    width: '104px',
+    width: '112px',
     sort: (a, b) => compareMetric(a.profit_yoy, b.profit_yoy),
     render: (row) => <PctCell value={row.profit_yoy} />,
   },
@@ -319,7 +313,7 @@ const CONSTITUENT_COLUMNS: Array<Column<ConstituentRow>> = [
     key: 'mainNet',
     header: '主力净流入(5日)',
     align: 'right',
-    width: '148px',
+    width: '144px',
     sort: (a, b) => compareMetric(a.main_net_nd, b.main_net_nd),
     render: (row) => (
       <span
@@ -361,7 +355,7 @@ function RelatedRow({ item }: { item: RelatedItem }) {
       ) : (
         title
       )}
-      <p className="truncate text-caption text-text-muted" title={item.related_codes.join('、') || undefined}>
+      <p className="min-w-0 truncate text-caption text-text-muted" title={item.related_codes.join('、') || undefined}>
         {item.source ?? '来源无数据'}
         {item.related_codes.length > 0 &&
           ` · 关联 ${shown.join('、')}${hidden > 0 ? `（另有 ${formatInt(hidden)} 个代码）` : ''}`}
@@ -521,11 +515,8 @@ export default function IndustryDetailScreen() {
       badge={
         <>
           <DemoStateBadge state={forced} />
-          {demo && <DemoWatermark />}
           {payload && (
-            <Badge tone={DATA_SOURCE_STATUS_TONE[payload.data_source_status]}>
-              {DATA_SOURCE_STATUS_LABEL[payload.data_source_status]}
-            </Badge>
+            <SourceStatusBadge status={payload.data_source_status} detail={missingSummaryOf(payload)} />
           )}
           {payload && !payload.meta.bound && <Badge tone="neutral">未绑定</Badge>}
         </>
@@ -736,23 +727,32 @@ export default function IndustryDetailScreen() {
                 <span className="ldst-num">{formatInt(payload.missing.length)}</span> 个字段无数据
               </span>
             }
-            tone={DATA_SOURCE_STATUS_TONE[payload.data_source_status]}
+            tone={payload.data_source_status === 'ok' ? 'ok' : 'danger'}
           >
-            <ul className="flex min-w-0 flex-col gap-1 text-caption leading-body">
-              {payload.provenance.sources.map((source) => (
-                <li key={source.id} className="flex min-w-0 items-baseline justify-between gap-2">
-                  <span className="min-w-0 truncate text-text-secondary" title={`数据源 id：${source.id}`}>
-                    {source.dataset}
-                  </span>
-                  <span className="ldst-num shrink-0 text-text-muted" title={`取数时间 ${formatDate(source.retrieved_at)}`}>
-                    {formatTime(source.retrieved_at)}
-                  </span>
-                </li>
-              ))}
-              {payload.provenance.sources.length === 0 && (
-                <li className="text-text-muted">未返回数据源清单（不可视为已核实）</li>
-              )}
-            </ul>
+            {payload.provenance.sources.length === 0 ? (
+              <EmptyState
+                compact
+                icon={<Database aria-hidden="true" />}
+                title="本维度无数据源"
+                description="R5 快照没有返回任何来源清单；下面的缺口徽标只按后端给的完整度字段画，不代表已核实。"
+              />
+            ) : (
+              <ul className="flex min-w-0 flex-col gap-1 text-caption leading-body">
+                {payload.provenance.sources.map((source) => (
+                  <li key={source.id} className="flex min-w-0 items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate text-text-secondary" title={`数据源 id：${source.id}`}>
+                      {source.dataset}
+                    </span>
+                    <span
+                      className="ldst-num shrink-0 text-text-muted"
+                      title={`取数时间 ${formatDate(source.retrieved_at)}`}
+                    >
+                      {formatTime(source.retrieved_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="mt-2 flex flex-wrap gap-1 border-t border-border pt-2">
               {INDUSTRY_DIMENSIONS.map((dimension) => (
                 <Badge

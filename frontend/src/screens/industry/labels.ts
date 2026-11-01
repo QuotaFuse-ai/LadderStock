@@ -1,29 +1,13 @@
-import { DIMENSION_TITLE, isIndustryDimension, type DataSourceStatus } from '../../api/industry'
+import { DIMENSION_TITLE, isIndustryDimension } from '../../api/industry'
 
 /**
- * 产业两屏（`/industry` 与 `/industry/:name`）共用的枚举词表与跳转件类名。
+ * 产业两屏（`/industry` 与 `/industry/:name`）共用的跳转件类名与维度键翻译。
  *
- * 词表只有一份：同一枚「数据完整度」徽标在矩阵与详情里必须是同样的四个字，
- * 以前两屏各写一套（完整/部分/缺失 vs 数据完整/部分缺失/无数据）就是「粗糙」的来源。
- *
- * `data_source_status` 的契约枚举是 `ok|partial|missing`（`api/industry.ts`），
- * 与 UI-SPEC §5.2 的 `ok|degraded|partial` 不同轨：产业侧没有「已降级」这一态，
- * `missing`（输入数据集无可用记录）取最重色 danger。该词表差异已作为规范缺口上报 S1b。
+ * 「数据完整度」徽标不在这里：标签表 / 色序 / 图形只允许一份实现，
+ * 同源件是 `./sourceBadges`（屏侧临时件，真源 `components/ui/SourceBadges.tsx` 已落 main，
+ * 差异只在产业与 radar 家族的 `data_source_status` 多一个 `missing` 档）。
+ * 本屏一度自带 `完整/部分/缺失` 三个字的私有词表，与 §5.2 标签表逐字不一致，已删。
  */
-
-export type IndustryStatus = DataSourceStatus
-
-export const DATA_SOURCE_STATUS_LABEL: Record<IndustryStatus, string> = {
-  ok: '完整',
-  partial: '部分',
-  missing: '缺失',
-}
-
-export const DATA_SOURCE_STATUS_TONE: Record<IndustryStatus, 'ok' | 'warn' | 'danger'> = {
-  ok: 'ok',
-  partial: 'warn',
-  missing: 'danger',
-}
 
 /**
  * 「长得像按钮的链接」必须与 C-01 `Button` 的 `secondary` 同手感：

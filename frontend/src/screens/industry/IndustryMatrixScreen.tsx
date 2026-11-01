@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Database, RefreshCw, Search } from 'lucide-react'
 
@@ -34,7 +34,8 @@ import { formatInt, MISSING } from '../../lib/format'
 import { compareMetric, compactMetric, DIMENSION_METRICS, formatMetric, type MetricKind } from './metrics'
 import { HEAT_MAX_PERCENT, HEAT_MIN_PERCENT, levelHeatStyle, rankRatio, signedHeatStyle, MISSING_CELL_TITLE } from './heat'
 import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
-import { DATA_SOURCE_STATUS_LABEL, DATA_SOURCE_STATUS_TONE, LINK_BUTTON_CLASS } from './labels'
+import { LINK_BUTTON_CLASS } from './labels'
+import { SourceStatusBadge } from './sourceBadges'
 import { industryHref, withParams } from './links'
 import { useIndustryListView } from './useIndustryView'
 
@@ -46,6 +47,9 @@ import { useIndustryListView } from './useIndustryView'
  *
  * 五态：`?state=loading|empty|error|partial|offline`；`?demo=1` 为显式演示源。
  * 接口未接入（HTTP 404）→ 空态「接口未接入」，不是整屏报错。
+ *
+ * 状态列一律走 `./sourceBadges` 的同源徽标（§5.5 只允许一份实现，屏侧不得自带 label map）；
+ * 演示水印归 `PageShell.tsx` 的 `DemoStateBadge`（R-18 / QUOT-320），本屏不重复画。
  */
 
 type IndustryFilter = 'all' | 'data' | 'unbound'
@@ -61,15 +65,11 @@ const FILTER_OPTIONS: ReadonlyArray<{ value: IndustryFilter; label: string }> = 
   { value: 'unbound', label: '未绑定' },
 ]
 
-/**
- * 演示源水印（清单 §1-A / M-11 的屏侧止血）。
- *
- * 根因在 `components/PageShell.tsx:47` 的 `DemoStateBadge` 只认 `?state=`，`?demo=1` 无标识；
- * 本轨不许改 PageShell（S3c 负责），所以三屏各挂一枚同写法的 C-13 徽标。
- * M-11 落进 PageShell 后，这三处一并删除。
- */
-function DemoWatermark() {
-  return <Badge tone="info" title="本页数据来自内置演示源，不是本机真实行情">演示数据 · ?demo=1</Badge>
+/** 状态列的悬浮说明：只解释本屏口径，标签与色序由同源徽标给出。 */
+const STATUS_HINT: Record<IndustrySummaryRow['data_source_status'], string> = {
+  ok: '本维度承诺指标全部有值',
+  partial: '本维度部分指标无数据，缺失格不上色',
+  missing: '本维度全部指标无数据',
 }
 
 function isDimension(value: string | null): value is IndustryDimension {
@@ -261,13 +261,13 @@ export default function IndustryMatrixScreen() {
           <span className="flex min-w-0 flex-col leading-tight">
             <Link
               to={industryHref(row.name, { demo, state: forced })}
-              className="truncate font-medium text-text transition-colors duration-fast ease-ldst hover:text-accent focus-visible:text-accent"
+              className="min-w-0 truncate font-medium text-text transition-colors duration-fast ease-ldst hover:text-accent focus-visible:text-accent"
               title={row.name}
             >
               {row.name}
             </Link>
             <span
-              className="ldst-num truncate text-caption text-text-muted"
+              className="ldst-num min-w-0 truncate text-caption text-text-muted"
               title={`${row.l1_code ?? '未绑定申万一级代码'} · ${
                 row.constituent_count === null ? '成分数量无数据' : `${formatInt(row.constituent_count)} 只成分股`
               }`}
@@ -281,7 +281,7 @@ export default function IndustryMatrixScreen() {
       ...DIMENSION_METRICS[dimension].map((spec) => ({
         key: spec.path,
         align: 'right' as const,
-        width: spec.kind === 'money' ? '136px' : '112px',
+        width: spec.kind === 'money' ? '144px' : '112px',
         header: (
           <span className="flex flex-col items-end leading-tight">
             <span>{spec.label}</span>
@@ -307,22 +307,15 @@ export default function IndustryMatrixScreen() {
         key: 'status',
         header: '状态',
         align: 'center',
-        width: '96px',
+        width: '88px',
         render: (row) => (
           <span className="inline-flex flex-col items-center gap-half">
-            <Badge
-              tone={DATA_SOURCE_STATUS_TONE[row.data_source_status]}
-              title={
-                row.data_source_status === 'ok'
-                  ? '本维度指标完整'
-                  : row.data_source_status === 'partial'
-                    ? '部分指标无数据'
-                    : '本维度全部指标无数据'
-              }
-            >
-              {DATA_SOURCE_STATUS_LABEL[row.data_source_status]}
-            </Badge>
-            {!row.bound && <Badge tone="neutral">未绑定</Badge>}
+            <SourceStatusBadge status={row.data_source_status} detail={STATUS_HINT[row.data_source_status]} />
+            {!row.bound && (
+              <Badge tone="neutral" title="未绑定申万一级代码，与板块口径不同名同成分">
+                未绑定
+              </Badge>
+            )}
           </span>
         ),
       },
@@ -330,15 +323,18 @@ export default function IndustryMatrixScreen() {
   }, [dimension, payload, columnValues, demo, forced])
 
   const partialRows = rows.filter((row) => row.data_source_status !== 'ok')
-  /** §5.2：`partial` 必须同时列出缺失项，不能只给一个总数。 */
-  const partialBreakdown = (['partial', 'missing'] as const)
-    .map((status) => {
-      const count = partialRows.filter((row) => row.data_source_status === status).length
-      return count > 0 ? `${DATA_SOURCE_STATUS_LABEL[status]} ${formatInt(count)} 个` : null
-    })
-    .filter(Boolean)
-    .join(' · ')
-  const partialCount = partialRows.length
+  /** §5.2：`partial` 必须同时列出缺的是哪一档、几个，不能只给一个总数。 */
+  const partialBreakdown: ReactNode[] = []
+  for (const status of ['partial', 'missing'] as const) {
+    const count = partialRows.filter((row) => row.data_source_status === status).length
+    if (count === 0) continue
+    partialBreakdown.push(
+      <span key={status} className="inline-flex items-center gap-half">
+        <SourceStatusBadge status={status} />
+        <span className="ldst-num">{formatInt(count)} 个</span>
+      </span>,
+    )
+  }
 
   /** 演示态跳转保留当前维度 / 筛选 / 搜索 / 强制态，刷新后可恢复（§1 原则 2）。 */
   const demoHref = withParams('/industry', {
@@ -432,9 +428,9 @@ export default function IndustryMatrixScreen() {
       {header}
 
       {state === 'partial' && (
-        <Banner tone="warn" title="部分行业维度缺失">
-          {formatInt(partialCount)} 个行业不完整（{partialBreakdown}）。缺失单元格显示「{MISSING_CELL_TITLE}」，
-          不按 0 参与比较，也不从别的口径补位。
+        <Banner tone="danger" title={`${formatInt(partialRows.length)} 个行业本维度不完整`}>
+          <span className="mb-1 flex flex-wrap items-center gap-2">{partialBreakdown}</span>
+          缺失单元格显示「{MISSING_CELL_TITLE}」，不按 0 参与比较，也不从别的口径补位。
         </Banner>
       )}
 
@@ -504,7 +500,8 @@ export default function IndustryMatrixScreen() {
               <span className="ml-1">红涨绿跌列（金额 / 涨跌 / 同比）</span>
             </span>
             <span>
-              缺失单元格固定「{MISSING_CELL_TITLE}」，不补 0；分位为窗口内经验分位（0–100%），不插值。
+              缺失单元格固定「{MISSING_CELL_TITLE}」，不上色、不补 0；分位是同列经验分位，并列取并列组的中位位置，
+              全等取 0.5，空列为「{MISSING}」。
             </span>
           </div>
           <KeyValueList

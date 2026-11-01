@@ -5,7 +5,6 @@ import { Database, RefreshCw } from 'lucide-react'
 import { isLimitPoolEndpointMissing, type LimitPoolRow } from '../../api/limitPool'
 import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
-  Badge,
   Banner,
   Button,
   Card,
@@ -16,7 +15,8 @@ import {
   SkeletonRows,
   type Column,
 } from '../../components/ui'
-import { formatInt, localDateIso, MISSING } from '../../lib/format'
+import { formatBoards, formatInt, formatSealTime, localDateIso, MISSING } from '../../lib/format'
+import { SourceStatusBadge } from '../industry/sourceBadges'
 import { DEMO_LIMIT_POOL_DATE } from './demo'
 import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
 
@@ -26,19 +26,9 @@ import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
  * 只读 `GET /api/limit-pool`，页面不重算任何指标：
  * - 连板数默认降序，点击表头可切换；
  * - 缺失值显示 `—` + 悬浮原因，不补 0；
- * - 封板时间按后端给的 HHMMSS 原样展示，不换算时区。
+ * - 封板时间按 §8 把后端裸 `HHMMSS` 格式化成 `HH:mm:ss`，不换算时区、不猜；
+ * - 完整度一律走同源徽标 `../industry/sourceBadges`（§5.5），演示水印归 `PageShell`（R-18 / QUOT-320）。
  */
-
-/**
- * 演示源水印（清单 §1-A / M-11 的屏侧止血）。
- *
- * 根因在 `components/PageShell.tsx:47` 的 `DemoStateBadge` 只认 `?state=`，`?demo=1` 无标识；
- * 本轨不许改 PageShell（S3c 负责），所以三屏各挂一枚同写法的 C-13 徽标。
- * M-11 落进 PageShell 后，这三处一并删除。
- */
-function DemoWatermark() {
-  return <Badge tone="info" title="本页数据来自内置演示源，不是本机真实行情">演示数据 · ?demo=1</Badge>
-}
 
 function MissingCell({ reason }: { reason: string }) {
   return (
@@ -93,67 +83,60 @@ export default function LimitUpScreen() {
         key: 'code',
         header: '代码',
         width: '88px',
-        render: (row) => <span className="ldst-num text-body text-text">{row.code}</span>,
+        numeric: true,
+        render: (row) => row.code,
       },
       {
         key: 'name',
         header: '名称',
-        width: '112px',
-        render: (row) =>
-          row.name === null ? (
-            <MissingCell reason="后端未提供名称" />
-          ) : (
-            <span className="truncate text-body text-text" title={row.name}>
-              {row.name}
-            </span>
-          ),
+        width: '176px',
+        truncate: true,
+        cellTitle: (row) => row.name ?? '后端未提供名称',
+        render: (row) => (row.name === null ? <MissingCell reason="后端未提供名称" /> : row.name),
       },
       {
         key: 'streak',
         header: '连板数',
         align: 'right',
         width: '88px',
+        numeric: true,
         sort: compareStreak,
         render: (row) =>
-          row.streak === null ? (
-            <MissingCell reason="后端未提供连板数" />
-          ) : (
-            <span className="ldst-num text-body text-text">{row.streak}</span>
-          ),
+          row.streak === null ? <MissingCell reason="后端未提供连板数" /> : formatBoards(row.streak),
       },
       {
         key: 'first_seal_time',
         header: '首次封板',
         align: 'right',
-        width: '96px',
+        width: '144px',
+        numeric: true,
         render: (row) =>
           row.first_seal_time === null ? (
             <MissingCell reason="后端未提供首次封板时间" />
           ) : (
-            <span className="ldst-num text-body text-text">{row.first_seal_time}</span>
+            formatSealTime(row.first_seal_time)
           ),
       },
       {
         key: 'last_seal_time',
         header: '末次封板',
         align: 'right',
-        width: '96px',
+        width: '144px',
+        numeric: true,
         render: (row) =>
           row.last_seal_time === null ? (
             <MissingCell reason="后端未提供末次封板时间" />
           ) : (
-            <span className="ldst-num text-body text-text">{row.last_seal_time}</span>
+            formatSealTime(row.last_seal_time)
           ),
       },
       {
         key: 'reason',
         header: '涨停原因',
+        truncate: true,
+        cellTitle: (row) => row.reason ?? '后端未提供涨停原因',
         render: (row) =>
-          row.reason === null ? (
-            <MissingCell reason="后端未提供涨停原因" />
-          ) : (
-            <span className="text-body text-text-secondary">{row.reason}</span>
-          ),
+          row.reason === null ? <MissingCell reason="后端未提供涨停原因" /> : row.reason,
       },
     ],
     [],
@@ -175,7 +158,7 @@ export default function LimitUpScreen() {
       badge={
         <>
           <DemoStateBadge state={forced} />
-          {demo && <DemoWatermark />}
+          {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
         </>
       }
       actions={
@@ -273,8 +256,8 @@ export default function LimitUpScreen() {
       {header}
 
       {state === 'partial' && (
-        <Banner tone="warn" title="部分涨停池数据缺失">
-          {payload.reason ?? '部分记录缺少字段'}。缺失值显示「—」，不补 0；页面不重算任何指标。
+        <Banner tone="danger" title="部分涨停池字段无数据">
+          {payload.reason ?? '部分记录缺少字段'}。缺失值显示「{MISSING}」，不补 0；页面不重算任何指标。
         </Banner>
       )}
 
@@ -284,7 +267,7 @@ export default function LimitUpScreen() {
         rowKey={(row) => row.code}
         caption={`${payload.date || date} 涨停样本（${formatInt(payload.count)} 只）；连板数默认降序，点击表头切换`}
         density="compact"
-        maxHeight="calc(100vh - 320px)"
+        maxHeight="calc(100vh - 280px)"
         initialSort={{ key: 'streak', dir: 'desc' }}
         sortToggle="flip"
         empty={
@@ -302,7 +285,8 @@ export default function LimitUpScreen() {
       />
 
       <p className="text-caption leading-body text-text-muted">
-        封板时间为后端原始 HHMMSS，不做时区换算；「—」表示后端未提供该字段，不补 0。
+        封板时间是后端裸 <code className="ldst-num">HHMMSS</code>，本页按 §8 格式化为{' '}
+        <span className="ldst-num">HH:mm:ss</span>，不做时区换算；「{MISSING}」表示后端未提供该字段，不补 0。
         数据只读展示，页面不重算任何指标。
       </p>
     </div>
