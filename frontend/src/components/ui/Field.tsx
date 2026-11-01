@@ -9,8 +9,13 @@ import { cn } from '../../lib/cn'
  * 错误态用 `border-danger` + 文字说明，不只靠颜色。
  */
 
+/**
+ * 焦点环由全局 `:focus-visible`（`styles/index.css` + `--ldst-focus-ring`）提供，组件这边
+ * 只用 `focus-visible:` 提亮边框：写 `focus:` 会让鼠标点击也进入「聚焦」观感，
+ * 用户分不清自己是在编辑还是只是点过一下。
+ */
 const CONTROL =
-  'w-full rounded border border-border-strong bg-sunken px-2 text-body text-text placeholder:text-text-muted transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50 focus:border-accent'
+  'w-full rounded border border-border-strong bg-sunken px-2 text-body text-text placeholder:text-text-muted transition-colors duration-fast ease-ldst disabled:cursor-not-allowed disabled:opacity-50 focus-visible:border-accent'
 
 export interface FieldProps {
   label: ReactNode
@@ -88,7 +93,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
     return (
       <textarea
         ref={ref}
-        className={cn(CONTROL, 'min-h-[96px] resize-y py-2 leading-body', className)}
+        className={cn(CONTROL, 'min-h-textarea resize-y py-2 leading-body', className)}
         {...rest}
       />
     )
@@ -144,15 +149,16 @@ export function Switch({ checked, onChange, label, description, disabled, id }: 
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={cn(
-          'relative inline-flex h-5 w-10 shrink-0 items-center rounded-pill border p-[2px] transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50',
+          'relative inline-flex h-5 w-10 shrink-0 items-center rounded-pill border p-half transition-colors duration-fast ease-ldst disabled:cursor-not-allowed disabled:opacity-50',
           checked ? 'border-accent-solid bg-accent-solid' : 'border-border-strong bg-sunken',
         )}
       >
+        {/* 位移走 translate：auto 外边距不可插值，滑块原本是从左端瞬移到右端的 */}
         <span
           aria-hidden="true"
           className={cn(
-            'inline-block size-4 rounded-pill bg-surface shadow-card transition-[margin] duration-fast',
-            checked ? 'ml-auto' : '',
+            'inline-block size-4 rounded-pill bg-surface shadow-card transition-transform duration-fast ease-ldst',
+            checked && 'translate-x-switch-knob',
           )}
         />
       </button>

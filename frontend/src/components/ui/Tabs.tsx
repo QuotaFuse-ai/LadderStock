@@ -56,7 +56,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, ariaLabel, class
             onClick={() => onChange(tab.value)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              '-mb-px inline-flex h-control items-center gap-1.5 border-b-2 px-3 text-body transition-colors duration-fast',
+              '-mb-px inline-flex h-control items-center gap-1.5 border-b-2 px-3 text-body transition-colors duration-fast ease-ldst',
               selected
                 ? 'border-accent font-medium text-text'
                 : 'border-transparent text-text-secondary hover:text-text',

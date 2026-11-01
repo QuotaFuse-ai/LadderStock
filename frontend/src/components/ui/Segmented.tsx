@@ -59,7 +59,7 @@ export function Segmented<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'inline-flex items-center gap-0 rounded-pill border border-border-strong bg-sunken p-[2px]',
+        'inline-flex items-center gap-0 rounded-pill border border-border-strong bg-sunken p-half',
         className,
       )}
     >
@@ -79,7 +79,7 @@ export function Segmented<T extends string>({
             onClick={() => onChange(option.value)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              'rounded-pill font-medium transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50',
+              'rounded-pill font-medium transition-colors duration-fast ease-ldst disabled:cursor-not-allowed disabled:opacity-50',
               size === 'sm' ? 'h-6 px-2 text-caption' : 'h-7 px-3 text-caption',
               selected
                 ? 'bg-surface text-text shadow-card'
