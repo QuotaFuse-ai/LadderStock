@@ -3,17 +3,20 @@ import { useSearchParams } from 'react-router-dom'
 import { Database, RefreshCw } from 'lucide-react'
 
 import { isLimitPoolEndpointMissing, type LimitPoolRow } from '../../api/limitPool'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
+  Badge,
   Banner,
   Button,
   Card,
   DataTable,
   EmptyState,
   ErrorBlock,
+  Skeleton,
+  SkeletonRows,
   type Column,
 } from '../../components/ui'
-import { localDateIso, MISSING } from '../../lib/format'
+import { formatInt, localDateIso, MISSING } from '../../lib/format'
 import { DEMO_LIMIT_POOL_DATE } from './demo'
 import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
 
@@ -25,6 +28,17 @@ import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
  * - 缺失值显示 `—` + 悬浮原因，不补 0；
  * - 封板时间按后端给的 HHMMSS 原样展示，不换算时区。
  */
+
+/**
+ * 演示源水印（清单 §1-A / M-11 的屏侧止血）。
+ *
+ * 根因在 `components/PageShell.tsx:47` 的 `DemoStateBadge` 只认 `?state=`，`?demo=1` 无标识；
+ * 本轨不许改 PageShell（S3c 负责），所以三屏各挂一枚同写法的 C-13 徽标。
+ * M-11 落进 PageShell 后，这三处一并删除。
+ */
+function DemoWatermark() {
+  return <Badge tone="info" title="本页数据来自内置演示源，不是本机真实行情">演示数据 · ?demo=1</Badge>
+}
 
 function MissingCell({ reason }: { reason: string }) {
   return (
@@ -38,6 +52,32 @@ function MissingCell({ reason }: { reason: string }) {
 /** 连板数排序：缺失值按最小值参与排序，默认降序时落在末尾。 */
 function compareStreak(a: LimitPoolRow, b: LimitPoolRow): number {
   return (a.streak ?? Number.NEGATIVE_INFINITY) - (b.streak ?? Number.NEGATIVE_INFINITY)
+}
+
+/**
+ * 加载骨架：本屏正文只有一张表 + 一行说明，没有指标卡。
+ *
+ * `ScreenSkeleton` 的卡阵写死在 `PageShell.tsx:84`，会先排 2 张不存在的卡再跳成宽表
+ * （清单 M-9，需要它补 `layout` 插槽）；这里用组件层 C-18 的件拼同构骨架。
+ */
+function TableSkeleton() {
+  return (
+    <div className="flex flex-col gap-5" aria-busy="true" aria-live="polite">
+      <span className="sr-only">正在加载涨停样本…</span>
+      <div className="rounded border border-border bg-surface">
+        <div className="flex h-row items-center gap-3 border-b border-border bg-surface-2 px-3">
+          <Skeleton className="w-20" />
+          <Skeleton className="w-24" />
+          <Skeleton className="w-14" />
+          <Skeleton className="w-16" />
+          <Skeleton className="w-16" />
+          <Skeleton className="w-36" />
+        </div>
+        <SkeletonRows rows={8} slots={['14%', '18%', '8%', '10%', '10%', '30%']} />
+      </div>
+      <Skeleton className="h-3 w-2/3" />
+    </div>
+  )
 }
 
 export default function LimitUpScreen() {
@@ -63,7 +103,9 @@ export default function LimitUpScreen() {
           row.name === null ? (
             <MissingCell reason="后端未提供名称" />
           ) : (
-            <span className="truncate text-body text-text">{row.name}</span>
+            <span className="truncate text-body text-text" title={row.name}>
+              {row.name}
+            </span>
           ),
       },
       {
@@ -121,11 +163,21 @@ export default function LimitUpScreen() {
     <PageHeader
       title="涨停样本"
       subtitle={
-        payload
-          ? `${payload.date || date} · ${payload.count} 只 · 来源 ${payload.source_detail || MISSING}`
-          : date
+        payload ? (
+          <span>
+            <span className="ldst-num">{payload.date || date}</span> · <span className="ldst-num">{formatInt(payload.count)}</span>{' '}
+            只 · 来源 {payload.source_detail || MISSING}
+          </span>
+        ) : (
+          <span className="ldst-num">{date}</span>
+        )
       }
-      badge={<DemoStateBadge state={forced} />}
+      badge={
+        <>
+          <DemoStateBadge state={forced} />
+          {demo && <DemoWatermark />}
+        </>
+      }
       actions={
         <Button
           variant="primary"
@@ -143,7 +195,7 @@ export default function LimitUpScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ScreenSkeleton metrics={2} rows={8} />
+        <TableSkeleton />
       </div>
     )
   }
@@ -230,7 +282,7 @@ export default function LimitUpScreen() {
         columns={columns}
         rows={payload.rows}
         rowKey={(row) => row.code}
-        caption={`${payload.date || date} 涨停样本（${payload.count} 只）；连板数默认降序，点击表头切换`}
+        caption={`${payload.date || date} 涨停样本（${formatInt(payload.count)} 只）；连板数默认降序，点击表头切换`}
         density="compact"
         maxHeight="calc(100vh - 320px)"
         initialSort={{ key: 'streak', dir: 'desc' }}
@@ -240,6 +292,11 @@ export default function LimitUpScreen() {
             compact
             title="当日涨停池未同步"
             description="先执行 ldst sync 再回来。"
+            action={
+              <Button variant="secondary" onClick={reload}>
+                刷新
+              </Button>
+            }
           />
         }
       />

@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react'
 /**
  * 热力图色阶（DEC-028）：只按「同列相对位置」上色，不产生新指标、不判断好坏。
  *
- * - 数值列：`--ldst-accent` 按 rank 比例混入 `--ldst-surface`（4%–52%）；
+ * - 数值列：`--ldst-accent` 按 rank 比例混入 `transparent`（4%–52% 半透明强调层）；
  * - 带正负号的列：红涨绿跌用 `--ldst-up-soft` / `--ldst-down-soft`，不做深浅分级；
  * - 颜色全部由令牌经 `color-mix()` 生成，业务代码不出现色值。
  */
@@ -25,13 +25,18 @@ export function rankRatio(values: ReadonlyArray<number | null>, value: number | 
   return rank / (finite.length - 1)
 }
 
-/** 数值列底色：rank 0→4%，1→52%（最低值也有一点底色，便于识别「有数」）。 */
+/** 数值列底色：rank 0→4%，1→52%（最低值也有一点底色，便于识别「有数」）。
+ *
+ * 混色基址用 `transparent` 而不是 `--ldst-surface`：色块是「行底色之上的半透明强调层」，
+ * 行 hover（`bg-surface-3`）与选中态才能从热力带下面透出来，否则高亮行被色块切断（DEC-028
+ * 底色只表相对位置，不该盖掉行交互反馈）。
+ */
 export function levelHeatStyle(ratio: number | null): CSSProperties | undefined {
   if (ratio === null || !Number.isFinite(ratio)) return undefined
   const clamped = Math.min(1, Math.max(0, ratio))
   const percent = Math.round(HEAT_MIN_PERCENT + clamped * (HEAT_MAX_PERCENT - HEAT_MIN_PERCENT))
   return {
-    backgroundColor: `color-mix(in srgb, var(--ldst-accent) ${percent}%, var(--ldst-surface))`,
+    backgroundColor: `color-mix(in srgb, var(--ldst-accent) ${percent}%, transparent)`,
   }
 }
 
