@@ -13,8 +13,13 @@ import { cn } from '../../lib/cn'
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'md' | 'lg'
 
+/**
+ * `transition-all`：底色之外还要动 `translate`，而 `transition-colors` 覆盖不到 transform。
+ * `active:translate-y-px` 是按压反馈的主通道——靠底色深浅表达 press 在浅色主题下几乎
+ * 看不出来（surface-3 `#edf1f7` 与 sunken `#e9eef4` 只差一档），位移两个主题都可见。
+ */
 const BASE =
-  'inline-flex select-none items-center justify-center gap-1 rounded font-medium transition-colors duration-fast ease-ldst disabled:cursor-not-allowed disabled:opacity-50'
+  'inline-flex select-none items-center justify-center gap-1 rounded font-medium transition-all duration-fast ease-ldst active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50'
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary: 'bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover active:bg-accent-solid-hover',
@@ -98,7 +103,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       aria-label={label}
       title={label}
       className={cn(
-        'inline-flex size-8 shrink-0 items-center justify-center rounded transition-colors duration-fast ease-ldst disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex size-8 shrink-0 items-center justify-center rounded transition-all duration-fast ease-ldst active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50',
         variant === 'ghost'
           ? 'text-text-secondary hover:bg-surface-3 hover:text-text'
           : 'border border-border-strong bg-surface text-text hover:bg-surface-3',

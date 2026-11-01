@@ -42,7 +42,7 @@ export function HBarList({ items, unit = '', className, emphasizeFirst = true, f
             </span>
             <span className="ldst-num w-16 shrink-0 text-right text-body text-text-secondary">
               {format ? format(item.value) : item.value}
-              {unit && <span className="ml-0.5 text-caption text-text-muted">{unit}</span>}
+              {unit && <span className="ml-half text-caption text-text-muted">{unit}</span>}
             </span>
           </li>
         )

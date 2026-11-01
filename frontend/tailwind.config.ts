@@ -101,6 +101,15 @@ export default {
         drawer: '480px',
         'drawer-wide': '640px',
         dialog: '420px',
+        /* QUOT-310：状态条与表格展开列走 token，不再用 w-[3px] 这类任意值 */
+        'status-bar': cssVar(tokens.layout.statusBar.cssVar),
+        'expander-col': cssVar(tokens.layout.expanderCol.cssVar),
+      },
+      inset: {
+        'expander-col': cssVar(tokens.layout.expanderCol.cssVar),
+      },
+      translate: {
+        'switch-knob': cssVar(tokens.layout.switchKnobTravel.cssVar),
       },
       height: {
         topbar: cssVar(tokens.layout.topbar.cssVar),
@@ -117,6 +126,7 @@ export default {
         control: cssVar(tokens.layout.control.cssVar),
         row: cssVar(tokens.layout.row.cssVar),
         empty: '200px',
+        textarea: cssVar(tokens.layout.textareaMin.cssVar),
       },
       minWidth: {
         icon: cssVar(tokens.layout.iconButton.cssVar),
@@ -124,8 +134,12 @@ export default {
       maxWidth: {
         content: cssVar(tokens.layout.contentMax.cssVar),
         table: cssVar(tokens.layout.tableMax.cssVar),
+        measure: cssVar(tokens.layout.measure.cssVar),
       },
       zIndex: {
+        /* 表格 sticky 首列 / 首列×表头交叉格：介于 base 0 与 sticky 10 之间，见 tokens.css 注释 */
+        'sticky-col': `${tokens.layout.zStickyCol.value}`,
+        'sticky-col-head': `${tokens.layout.zStickyColHead.value}`,
         sticky: `${tokens.layout.zSticky.value}`,
         banner: `${tokens.layout.zBanner.value}`,
         overlay: `${tokens.layout.zOverlay.value}`,

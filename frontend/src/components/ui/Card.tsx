@@ -99,7 +99,7 @@ export function SectionCard({
     >
       <span
         aria-hidden="true"
-        className={cn('absolute inset-y-0 left-0 w-[3px]', SECTION_BAR[tone])}
+        className={cn('absolute inset-y-0 left-0 w-status-bar', SECTION_BAR[tone])}
       />
       <CardHeader title={title} subtitle={subtitle} actions={actions} />
       <div className={cn('p-4', bodyClassName)}>{children}</div>
