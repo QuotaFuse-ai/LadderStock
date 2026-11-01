@@ -605,6 +605,32 @@ function LogsDrawer({ peer, onClose }: { peer: PeerSnapshot | null; onClose: () 
   )
 }
 
+/** §11.0「后端 key 不直显」：已知配置键给中文名，未知键原样保留（不藏内容），键名退到 hint。 */
+const CONFIG_KEY_LABEL: Record<string, string> = {
+  MCP_HTTP_PORT: 'MCP HTTP 端口',
+  ADMIN_PORT: '管理端端口',
+  ADMIN_HTTP_PORT: '管理端 HTTP 端口（预留）',
+  TICKHUB_CN_LOG_LEVEL: '日志级别（当前不生效）',
+  TICKHUB_US_ALLOW_TIER_B_SOURCES: '允许 B 级数据源',
+  SEC_CONTACT: '安全联系方式',
+  POLYGON_API_KEY: 'Polygon API Key',
+  QF_WIRE_HOST: '监听地址',
+  QF_WIRE_PORT: 'HTTP 端口',
+  QF_WIRE_MCP_PORT: 'MCP 端口',
+  QF_WIRE_DIGEST_PROVIDER: '摘要提供方',
+  QF_WIRE_API_BASE: 'API Base URL',
+  QF_WIRE_DIGEST_MODEL: '摘要模型',
+  QF_WIRE_API_KEY: 'Wire API Key',
+  llm_provider: 'LLM 提供方',
+  deep_think_llm: '深度思考模型',
+  quick_think_llm: '快速思考模型',
+  MINIMAX_API_KEY: 'MiniMax API Key',
+}
+
+function configKeyLabel(key: string): string {
+  return CONFIG_KEY_LABEL[key] ?? key
+}
+
 function ConfigDrawer({
   peer,
   onClose,
@@ -715,9 +741,9 @@ function ConfigDrawer({
               return (
                 <div key={key} className="flex flex-col gap-2 rounded border border-border p-2">
                   <Field
-                    label={key}
+                    label={configKeyLabel(key)}
                     htmlFor={`cfg-${key}`}
-                    hint={`密钥只写不读回 · 当前 ${entry.set ? entry.preview ?? '已配置' : '未配置'} · 留空表示不修改`}
+                    hint={`密钥只写不读回 · 配置键 ${key} · 当前 ${entry.set ? entry.preview ?? '已配置' : '未配置'} · 留空表示不修改`}
                   >
                     <Input
                       id={`cfg-${key}`}
@@ -737,7 +763,7 @@ function ConfigDrawer({
               )
             }
             return (
-              <Field key={key} label={key} htmlFor={`cfg-${key}`} hint={`当前值 ${entry.value ?? MISSING}（可覆盖）`}>
+              <Field key={key} label={configKeyLabel(key)} htmlFor={`cfg-${key}`} hint={`配置键 ${key} · 当前值 ${entry.value ?? MISSING}（可覆盖）`}>
                 <Input
                   id={`cfg-${key}`}
                   spellCheck={false}
