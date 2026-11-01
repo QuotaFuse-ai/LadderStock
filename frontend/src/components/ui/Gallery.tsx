@@ -8,6 +8,13 @@ import { Banner, StatePanel } from './Feedback'
 import { HBarList, Sparkline } from './MiniChart'
 import { Drawer } from './Overlay'
 import { Segmented } from './Segmented'
+import {
+  FreshnessBadge,
+  SourceBadges,
+  SourceStatusBadge,
+  type SourceBadgeMeta,
+  worstSourceTone,
+} from './SourceBadges'
 import { Tabs } from './Tabs'
 import { DataTable, type Column, type Expandable } from './Table'
 
@@ -15,11 +22,18 @@ import { DataTable, type Column, type Expandable } from './Table'
  * 组件层能力自证页（DESIGN-SPEC §6「组装示例」）。
  *
  * 入口：`npm run dev` 后访问 `/ui-kit.html`（`?theme=light` 换浅色，`?drawer=1` 以打开态渲染抽屉）。
- * 这一页不属于任何屏幕，也不从
- * `index.ts` 导出（不进 App 的依赖图、不进生产包），它只干一件事——把 QUOT-310
- * 收口的四件事（列宽与截断 / 数字基线 / sticky / `summary` 与展开行 / `StatePanel`
- * 四态 / 过渡档位）在一张页面上演示到位，屏幕子单照着抄即可。
+ * 这一页不属于任何屏幕，也不从 `index.ts` 导出（不进 App 的依赖图、不进生产包），它只干一件事——
+ * 把 QUOT-310 收口的几件事（列宽与截断 / 数字基线 / sticky / `summary` 与展开行 / `StatePanel`
+ * 四态 / 过渡档位 / 溯源徽标同源）在一张页面上演示到位，屏幕子单照着抄即可。
  */
+
+/** 溯源徽标只用到 envelope 的公共字段，这里给一份「缓存 + 部分缺失」的演示值。 */
+const ENVELOPE_META: SourceBadgeMeta = {
+  freshness: 'cached',
+  source_status: 'partial',
+  source_detail: 'TiData · 主工具未回传，走 peer 缓存',
+  data_as_of: '2026-10-30T15:00:00+08:00',
+}
 
 interface PoolRow {
   code: string
@@ -293,6 +307,37 @@ export function Gallery({ initialDrawerOpen = false }: { initialDrawerOpen?: boo
               />
               <Sparkline values={[2, 3, 5, 4, 6, 8, 7, 9]} tone="up" ariaLabel="连板高度近八日" />
             </div>
+          </SectionCard>
+
+          <SectionCard
+            title="溯源徽标：一份 label map"
+            subtitle="§5.1 文字+●/◐/○、§5.2 三态均有文字、§5.3 两枚并排不合并"
+          >
+            <div className="flex flex-wrap items-center gap-1">
+              <FreshnessBadge freshness="realtime" asOf="2026-10-30 15:00" />
+              <FreshnessBadge freshness="cached" asOf="2026-10-30 10:24" />
+              <FreshnessBadge freshness="archive" asOf="2026-09-30 15:00" />
+              <FreshnessBadge freshness="daily" />
+            </div>
+            <div className="flex flex-wrap items-center gap-1 pt-2">
+              <SourceStatusBadge status="ok" />
+              <SourceStatusBadge status="degraded" detail="同 peer 备工具回放" />
+              <SourceStatusBadge status="partial" detail="缺 3 只封单" />
+            </div>
+            <div className="pt-3">
+              <SourceBadges envelope={ENVELOPE_META} />
+            </div>
+            <div className="pt-3">
+              <Banner
+                tone={worstSourceTone(ENVELOPE_META.freshness, ENVELOPE_META.source_status)}
+                title="提示条取二者最严重者"
+              >
+                同一份排序（partial &gt; degraded &gt; cached &gt; realtime）既驱动徽标，也驱动提示条色档。
+              </Banner>
+            </div>
+            <p className="text-caption text-text-muted">
+              第 4 枚是未登记的 freshness（radar 的 <code className="ldst-num">daily</code>）：后端 key 不直显，退到「未知」，原值只进悬浮说明。
+            </p>
           </SectionCard>
         </div>
       </Section>

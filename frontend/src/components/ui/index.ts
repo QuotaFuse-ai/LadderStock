@@ -34,6 +34,22 @@ export {
 } from './Feedback'
 export { HBarList, Sparkline, type HBarItem, type HBarListProps, type SparklineProps } from './MiniChart'
 export { ConfirmDialog, Drawer, type ConfirmDialogProps, type DrawerProps } from './Overlay'
+export {
+  FRESHNESS_LABEL,
+  FreshnessBadge,
+  SOURCE_SEVERITY,
+  SOURCE_STATUS_LABEL,
+  SourceBadges,
+  SourceStatusBadge,
+  worstSourceTone,
+  type FreshnessBadgeProps,
+  type FreshnessLike,
+  type SourceBadgeMeta,
+  type SourceSeverity,
+  type SourceStatusBadgeProps,
+  type SourceStatusLike,
+  type SourceTone,
+} from './SourceBadges'
 export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmented'
 export { Tabs, type TabOption, type TabsProps } from './Tabs'
 export {
