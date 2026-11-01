@@ -5,6 +5,7 @@ import Layout from './components/Layout'
 import HomeScreen from './screens/HomeScreen'
 import IndustryDetailScreen from './screens/industry/IndustryDetailScreen'
 import IndustryMatrixScreen from './screens/industry/IndustryMatrixScreen'
+import IntradayScreen from './screens/intraday/IntradayScreen'
 import LimitUpScreen from './screens/limitup/LimitUpScreen'
 import JournalScreen from './screens/JournalScreen'
 import MarketScreen from './screens/MarketScreen'
@@ -58,6 +59,8 @@ const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/': <HomeScreen />,
   '/market': <MarketScreen />,
   '/watch': <WatchScreen />,
+  // 盯盘第二页：竞价与盘中 6 时点快照（QUOT-302 / DEC-035 §5），`?date=` + `?slot=` 深链
+  '/intraday': <IntradayScreen />,
   '/review': <ReviewScreen />,
   // R11 周度复盘（QUOT-149）：`?week=YYYY-Www`，缺省本周
   '/weekly': <WeeklyScreen />,
