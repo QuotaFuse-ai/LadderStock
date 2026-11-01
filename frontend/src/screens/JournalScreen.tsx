@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Copy, Lock, NotebookPen, RefreshCw } from 'lucide-react'
 
-import { api, describeApiError, isApiError, isEndpointMissing, type JournalStatsPayload } from '../api'
-import { KV_STORE, idbGet, idbSet } from '../../persist/indexeddb'
-import { useAsync } from '../lib/useAsync'
-import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { describeApiError, type JournalStatsPayload } from '../api'
+import { useForcedState } from '../lib/pageState'
 import {
   MISSING,
   formatInt,
@@ -21,11 +19,14 @@ import {
   DataTable,
   EmptyState,
   ErrorBlock,
+  FreshnessBadge,
   MetricCard,
   SectionCard,
   SignedNumber,
+  SourceStatusBadge,
   type Column,
 } from '../components/ui'
+import { useJournalView, EMPTY_STATS } from './journal/useJournalView'
 
 /**
  * 交易日志（P-05 / DESIGN-SPEC §4.6 / UI-SPEC §3.4）。
@@ -35,8 +36,9 @@ import {
  * 逐笔明细端点（DEC-015 Tier 2）决策为「不开」，所以本屏不展示单笔记录，
  * 也不编造示例行；明细只在终端 `ldst journal list` 可见。
  *
- * 离线回放：最近一次成功取到的聚合统计写入 IndexedDB（只含数字，不含任何
- * 自由文本），断连时只读展示并标明统计时间。
+ * 取数与状态推导收在 `journal/useJournalView.ts`（演示源 / IndexedDB 离线回放都在那里），
+ * 本文件只管 DOM。演示态的数据是**夹具样本**，与用户自己的成交无关：页头有「演示数据」徽标，
+ * 正文再有一条「演示样本」提示条，且演示态不读写本机 IndexedDB、不提供任何导出入口。
  */
 
 const EXAMPLE_COMMAND =
@@ -45,55 +47,11 @@ const EXAMPLE_COMMAND =
 /** 纪律统计的最小样本：少于 5 个闭环不计算胜率 / 盈亏比（DESIGN-SPEC §4.6）。 */
 const MIN_SAMPLE = 5
 
-/** IndexedDB 缓存 key：只存 `/api/journal/stats` 的聚合投影，不登记为 Zustand 分片。 */
-const CACHE_KEY = 'journal_stats_cache_v1'
-const CACHE_SCHEMA = 1
-
-interface JournalCache {
-  schema: typeof CACHE_SCHEMA
-  fetchedAt: string
-  payload: JournalStatsPayload
-}
-
-/** 空态下用于渲染的零值结构：无交易时后端返回同样的零值 + `data_source_status=missing`。 */
-const EMPTY_STATS: JournalStatsPayload = {
-  local_only: true,
-  store: 'local_sqlite',
-  data_source_status: 'missing',
-  range: { from: null, to: null },
-  total_trades: 0,
-  buy_count: 0,
-  sell_count: 0,
-  closed_rounds: 0,
-  wins: 0,
-  losses: 0,
-  flats: 0,
-  win_rate: null,
-  avg_win: null,
-  avg_loss: null,
-  profit_loss_ratio: null,
-  realized_pnl: 0,
-  unmatched_sell_qty: 0,
-  deviation_review: { threshold_pct: 1, count: 0 },
-}
-
 interface AggregateRow {
   key: string
   label: string
   value: string
   basis: string
-}
-
-function isJournalCache(value: unknown): value is JournalCache {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Partial<JournalCache>
-  const payload = item.payload as Partial<JournalStatsPayload> | undefined
-  return (
-    item.schema === CACHE_SCHEMA &&
-    typeof item.fetchedAt === 'string' &&
-    !!payload &&
-    typeof payload.total_trades === 'number'
-  )
 }
 
 /** 数量（股）可能带小数：最多 4 位，不补 0。 */
@@ -134,6 +92,12 @@ function buildAggregateRows(stats: JournalStatsPayload): AggregateRow[] {
       basis: '请求的 from / to 边界；不传即全部时间',
     },
     {
+      key: 'total',
+      label: '成交笔数',
+      value: formatInt(stats.total_trades),
+      basis: '买入 + 卖出之和：一行 = 一笔委托成交',
+    },
+    {
       key: 'buy',
       label: '买入笔数',
       value: formatInt(stats.buy_count),
@@ -155,7 +119,13 @@ function buildAggregateRows(stats: JournalStatsPayload): AggregateRow[] {
       key: 'outcome',
       label: '盈 / 亏 / 平',
       value: `${formatInt(stats.wins)} / ${formatInt(stats.losses)} / ${formatInt(stats.flats)}`,
-      basis: '按闭环的已实现盈亏划分',
+      basis: '按闭环的已实现盈亏划分，三项之和 = 闭环笔数',
+    },
+    {
+      key: 'win-rate',
+      label: '胜率',
+      value: stats.win_rate === null ? MISSING : formatRatePct(stats.win_rate).text,
+      basis: '盈利闭环 ÷ 闭环笔数（样本口径见上方指标卡）',
     },
     {
       key: 'avg-win',
@@ -174,6 +144,12 @@ function buildAggregateRows(stats: JournalStatsPayload): AggregateRow[] {
       label: '盈亏比',
       value: stats.profit_loss_ratio === null ? MISSING : stats.profit_loss_ratio.toFixed(2),
       basis: '平均盈利 ÷ 平均亏损；没有亏损样本时为空',
+    },
+    {
+      key: 'pnl',
+      label: '已实现盈亏',
+      value: formatMoney(stats.realized_pnl),
+      basis: '逐闭环累加：盈利合计 − 亏损合计（平录不计）',
     },
     {
       key: 'unmatched',
@@ -201,8 +177,9 @@ const AGGREGATE_COLUMNS: Array<Column<AggregateRow>> = [
     key: 'value',
     header: '数值',
     align: 'right',
-    width: '176px',
-    render: (row) => <span className="ldst-num">{row.value}</span>,
+    // 176px 会把「2026-10-01 ~ 2026-10-30」折成两行，一行多出的高度正好吃掉首屏的第 12 行。
+    width: '208px',
+    render: (row) => <span className="ldst-num whitespace-nowrap">{row.value}</span>,
   },
   {
     key: 'basis',
@@ -211,71 +188,23 @@ const AGGREGATE_COLUMNS: Array<Column<AggregateRow>> = [
   },
 ]
 
-export default function JournalScreen() {
-  const forced = useForcedState()
-  const request = useAsync((signal) => api.journalStats({}, signal), [])
+/** 加载骨架与真实表体同构（§11.0「骨架与真实内容形状同构」）：行数取聚合明细的行数。 */
+const AGGREGATE_ROWS_COUNT = buildAggregateRows(EMPTY_STATS).length
 
-  const [cached, setCached] = useState<JournalCache | null>(null)
+export default function JournalScreen() {
+  const view = useJournalView()
+  const { demo, state, stats: viewStats, cached, error, endpointMissing, reload } = view
+  const forced = useForcedState()
+
   const [copied, setCopied] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
-  // 离线回放：只读取本机 IndexedDB 里的聚合缓存（不含任何自由文本）
-  useEffect(() => {
-    let alive = true
-    idbGet<unknown>(KV_STORE, CACHE_KEY)
-      .then((value) => {
-        if (alive && isJournalCache(value)) setCached(value)
-      })
-      .catch(() => {
-        /* 无缓存 / IndexedDB 不可用：离线态如实显示「没有可回放的缓存」 */
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
-
-  useEffect(() => {
-    if (request.status !== 'ready' || !request.data) return
-    const entry: JournalCache = {
-      schema: CACHE_SCHEMA,
-      fetchedAt: new Date().toISOString(),
-      payload: request.data,
-    }
-    setCached(entry)
-    void idbSet(KV_STORE, CACHE_KEY, entry).catch(() => {
-      /* 写缓存失败不影响当前展示，下次成功取数再写 */
-    })
-  }, [request.status, request.data])
-
-  const endpointMissing = isEndpointMissing(request.error)
-  const cachedStats = cached?.payload ?? null
-
-  const derived = useMemo<PageState>(() => {
-    if (request.status === 'loading') return 'loading'
-    if (request.status === 'error') {
-      if (isApiError(request.error) && request.error.kind === 'not-connected') return 'offline'
-      if (isEndpointMissing(request.error)) return 'partial'
-      return cachedStats ? 'partial' : 'error'
-    }
-    if (!request.data) return 'error'
-    return request.data.total_trades === 0 ? 'empty' : 'normal'
-  }, [request.status, request.error, request.data, cachedStats])
-
-  const state = resolveState(forced, derived)
-
-  // 强制态一律按「无数据」处理：只有 normal / partial 用实时结果，offline 用缓存，
-  // empty 用零值结构，loading / error 不展示任何数字。
-  const viewStats = useMemo<JournalStatsPayload | null>(() => {
-    if (state === 'empty') return EMPTY_STATS
-    if (state === 'normal') return request.data
-    if (state === 'partial') return request.data ?? cachedStats
-    if (state === 'offline') return cachedStats
-    return null
-  }, [state, request.data, cachedStats])
+  /** `error !== null` 只在真实请求失败时为真（`useAsync` 成功 / 加载中都不带 error）。 */
+  const requestFailed = error !== null
 
   const noDataNote =
     state === 'offline'
-      ? cachedStats
+      ? cached
         ? '离线 · 缓存回放'
         : '本地服务未连接'
       : state === 'partial'
@@ -288,21 +217,22 @@ export default function JournalScreen() {
 
   const partialDetail = endpointMissing
     ? '统计接口未接入：当前后端没有 GET /api/journal/stats（旧版后端），本屏不编造任何数字。'
-    : request.status === 'error'
-      ? `${describeApiError(request.error).detail}${
-          cachedStats && cached
-            ? `；以下为 IndexedDB 缓存（统计时间 ${formatTime(cached.fetchedAt)}）`
-            : ''
+    : requestFailed
+      ? `${describeApiError(error).detail}${
+          cached ? `；以下为 IndexedDB 缓存（统计时间 ${formatTime(cached.fetchedAt)}）` : ''
         }`
-      : '逐笔明细通道未开放（DEC-015 Tier 2 决策为「不开」）：聚合统计可用，单笔记录不在本屏展示。'
+      : demo
+        ? // 演示夹具的唯一降级项：闭环样本少于 MIN_SAMPLE，纪律指标一律「样本不足」。
+          `演示样本的闭环只有 ${formatInt(viewStats?.closed_rounds ?? 0)} 笔，少于 ${MIN_SAMPLE} 笔：胜率与盈亏比按「样本不足」显示，不是 0%。`
+        : '逐笔明细通道未开放（DEC-015 Tier 2 决策为「不开」）：聚合统计可用，单笔记录不在本屏展示。'
 
   const errorInfo =
-    request.status === 'error'
-      ? describeApiError(request.error)
+    error !== null && state === 'error'
+      ? describeApiError(error)
       : {
           title: '本地日志统计无法读取',
           detail: '本机只读接口没有返回统计数据。恢复可用后点「重试取数」；本屏不编造任何数字。',
-          code: 'DEMO · ?state=error',
+          code: null,
         }
 
   const summary =
@@ -319,8 +249,10 @@ export default function JournalScreen() {
               ? `本机私有 · 共 ${formatInt(viewStats.total_trades)} 笔 · 部分数据源不可用`
               : '本机私有 · 统计接口不可用'
             : state === 'empty'
-              ? '本机私有 · 还没有交易记录'
-              : `本机私有 · 共 ${formatInt(viewStats?.total_trades ?? 0)} 笔 · 买入 ${formatInt(
+              ? demo
+                ? '演示样本 · 本机日志为空'
+                : '本机私有 · 还没有交易记录'
+              : `${demo ? '演示样本' : '本机私有'} · 共 ${formatInt(viewStats?.total_trades ?? 0)} 笔 · 买入 ${formatInt(
                   viewStats?.buy_count ?? 0,
                 )} / 卖出 ${formatInt(viewStats?.sell_count ?? 0)} · ${rangeLabel(viewStats)}`
 
@@ -348,8 +280,8 @@ export default function JournalScreen() {
         <>
           <Button
             variant="primary"
-            onClick={request.reload}
-            loading={request.status === 'loading'}
+            onClick={reload}
+            loading={state === 'loading'}
             leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
           >
             刷新
@@ -371,7 +303,7 @@ export default function JournalScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ScreenSkeleton metrics={4} rows={6} />
+        <ScreenSkeleton metrics={4} rows={AGGREGATE_ROWS_COUNT} />
       </div>
     )
   }
@@ -380,7 +312,7 @@ export default function JournalScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <ErrorBlock {...errorInfo} onRetry={request.reload} retryLabel="重试取数" />
+        <ErrorBlock {...errorInfo} onRetry={reload} retryLabel="重试取数" />
       </div>
     )
   }
@@ -407,7 +339,7 @@ export default function JournalScreen() {
     <div className="flex flex-col gap-5">
       {header}
 
-      {state === 'offline' && <OfflineBanner onRetry={request.reload} />}
+      {state === 'offline' && <OfflineBanner onRetry={reload} />}
       {state === 'offline' && cached && (
         <Banner tone="warn" title="缓存回放（只读）">
           本机服务未连接，以下为本机 IndexedDB 缓存的聚合统计 · 统计时间 {formatTime(cached.fetchedAt)}。
@@ -424,14 +356,17 @@ export default function JournalScreen() {
           variant="banner"
           title="部分数据源不可用"
           detail={partialDetail}
-          onRetry={request.reload}
+          onRetry={reload}
           retryLabel="重试取数"
         />
       )}
 
-      <Banner tone="info" title="本机私有">
-        交易日志、持仓、自选只写入本机 SQLite，不上传、不进 AI 上下文、不被 MCP 读取。
-        网页接口只回聚合数字，逐笔理由与备注永不出站。
+      {/* §3.4 隐私信息条常驻；演示样本的说明并进同一条（两条并排会把 12 行表顶出首屏）。
+          演示态用 warn 底色：这条屏上的数字不是你的成交。 */}
+      <Banner tone={demo ? 'warn' : 'info'} title={demo ? '本机私有 · 当前是演示样本' : '本机私有'}>
+        {demo
+          ? '数字来自演示夹具，与这台机器的 data/journal.sqlite 无关：演示态不读写本机 IndexedDB，也没有导出真实数据的入口。关掉「设置 → 虚拟数据」即回到本机统计。'
+          : '交易日志、持仓、自选只写入本机 SQLite，不上传、不进 AI 上下文、不被 MCP 读取。网页接口只回聚合数字，逐笔理由与备注永不出站。'}
       </Banner>
 
       {notice && (
@@ -541,7 +476,19 @@ export default function JournalScreen() {
               : '统计接口没有可用数字'
           }
           bodyClassName="p-0"
-          actions={<Badge tone="neutral">只读</Badge>}
+          actions={
+            <>
+              {/* §5.7：`/api/journal/stats` 是扁平静态 JSON，响应里没有 `freshness`，
+                  所以新鲜度只能出「未知」；`data_source_status` 是这条契约自带的完整性字段。 */}
+              <FreshnessBadge
+                freshness={null}
+                asOf={viewStats?.range.to ?? null}
+                sourceDetail="GET /api/journal/stats 为扁平响应，未携带 freshness"
+              />
+              <SourceStatusBadge status={viewStats?.data_source_status ?? null} />
+              <Badge tone="neutral">只读</Badge>
+            </>
+          }
         >
           <DataTable<AggregateRow>
             columns={AGGREGATE_COLUMNS}
@@ -549,7 +496,9 @@ export default function JournalScreen() {
             rowKey={(row) => row.key}
             caption="交易日志聚合统计（不含标的清单、逐笔明细与备注）"
             density="compact"
-            maxHeight="420px"
+            // 首屏要同时看到 ≥12 行（§11.0 + PRD §5.2）：13 行 × 36px + 表头 ≈ 500px，
+            // 固定 420px 会把最后两行藏进滚动区，所以按视口给高度。
+            maxHeight="calc(100vh - 320px)"
             empty={
               <EmptyState
                 compact
@@ -560,7 +509,7 @@ export default function JournalScreen() {
                     : '统计接口当前不可用；本屏不补 0、不编造任何数值。'
                 }
                 action={
-                  <Button variant="secondary" onClick={request.reload}>
+                  <Button variant="secondary" onClick={reload}>
                     刷新
                   </Button>
                 }
