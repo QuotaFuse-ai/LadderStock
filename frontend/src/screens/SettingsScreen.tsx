@@ -28,7 +28,7 @@ import {
   type StateConfigPayload,
 } from '../api'
 import { useAsync, type AsyncResult } from '../lib/useAsync'
-import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { setDemoPref, useDemoEnabled, useForcedState, resolveState, type PageState } from '../lib/pageState'
 import { MISSING, countOrMissing } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
@@ -48,6 +48,7 @@ import {
   Segmented,
   SkeletonText,
   StatusDot,
+  Switch,
   Toasts,
   useToasts,
   type Column,
@@ -1079,6 +1080,8 @@ function AboutSection({
 }) {
   const theme = useThemeChoice()
   const density = useDensity()
+  const demo = useDemoEnabled()
+  const [params, setParams] = useSearchParams()
   const info = health.data
   const config = stateConfig.data
   // 每段自己的 loading / error 原因（§11.18）：失败时给真实标题，不写死「本地服务未连接」
@@ -1108,6 +1111,16 @@ function AboutSection({
     },
   ]
 
+  const changeDemo = (next: boolean) => {
+    setDemoPref(next)
+    // 关掉时连 URL 里的深链参数一起摘掉，否则「?demo=1」会把开关立刻顶回去
+    if (!next && params.has('demo')) {
+      const copy = new URLSearchParams(params)
+      copy.delete('demo')
+      setParams(copy, { replace: true })
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <SectionCard title="版本与环境" subtitle="只读，来自 /api/health 与 /api/state/config">
@@ -1129,6 +1142,20 @@ function AboutSection({
           本应用不采集数据，只消费子模块。看板只读取本机文件与回环接口（127.0.0.1），不联网、不上传、不做多用户与远程访问；
           子模块的抓取、清洗与远程调用由各自项目负责。
         </p>
+      </SectionCard>
+
+      <SectionCard title="数据来源" subtitle="虚拟数据只用于预览，不写入本机、不代表行情">
+        <div className="flex flex-col gap-3">
+          <Switch
+            checked={demo}
+            onChange={changeDemo}
+            label="虚拟数据（演示）"
+            description="开启后各页面用内置演示数据填充；关闭后只显示本机真实数据。"
+          />
+          <p className="text-caption text-text-muted">
+            URL 里带 <code className="ldst-num">?demo=1</code> 也会临时开启演示源，等同于这里的开关。
+          </p>
+        </div>
       </SectionCard>
 
       <SectionCard title="外观" subtitle="与侧栏底部同一状态，切换不重载页面">

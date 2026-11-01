@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { WifiOff } from 'lucide-react'
 
 import { cn } from '../lib/cn'
-import { useDemoEnabled, type PageState } from '../lib/pageState'
+import { useDemoEnabled, useDemoUrlEnabled, type PageState } from '../lib/pageState'
 import { Badge, Banner, Skeleton } from './ui'
 
 /**
@@ -51,7 +51,8 @@ export const DEMO_STATE_LABEL: Record<Exclude<PageState, 'normal'>, string> = {
  * 演示水印的唯一真源（UI-SPEC §5.6 / 整改项 R-18）。
  *
  * 两件事分别标识，互不替代：
- * - `?demo=1` → 演示徽标「演示数据 · ?demo=1」（§5.6 硬约束，`tone="warn"`）；
+ * - 演示源 → 演示徽标（§5.6 硬约束，`tone="warn"`）：URL 开启写「演示数据 · ?demo=1」，
+ *   设置页开关开启写「演示数据 · 设置开关」；
  * - `?state=` → 强制态水印 `演示态：…（?state=…）`。
  *
  * `state` 为 null 且无 `?demo=1` 时才不渲染——旧实现只认 `?state=`，
@@ -60,13 +61,14 @@ export const DEMO_STATE_LABEL: Record<Exclude<PageState, 'normal'>, string> = {
  */
 export function DemoStateBadge({ state }: { state: PageState | null }) {
   const demo = useDemoEnabled()
+  const urlDemo = useDemoUrlEnabled()
   const forced = state && state !== 'normal' ? state : null
   if (!demo && !forced) return null
   return (
     <>
       {demo && (
         <Badge tone="warn" title="本页数据来自 demo.ts 演示源，不是真实行情">
-          演示数据 · ?demo=1
+          {urlDemo ? '演示数据 · ?demo=1' : '演示数据 · 设置开关'}
         </Badge>
       )}
       {forced && (
