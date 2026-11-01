@@ -59,6 +59,15 @@ const SECTION_STATUS: Record<string, { label: string; tone: SectionTone; badge: 
   failed: { label: '失败', tone: 'danger', badge: 'danger' },
 }
 
+/**
+ * §5.4「可重试」列：`truncated` 原样重试必然再截断、`internal` 未归类，两档都不给「重试」主按钮。
+ * 与 `kit/AiErrorNotice.tsx` 的 `META[kind].retryable` 同口径；该表目前没对外导出，
+ * 已作为规范缺口提给共享层（屏侧不应各自维护一份重试性判定）。
+ */
+const NON_RETRYABLE_KINDS: readonly string[] = ['truncated', 'internal']
+
+const isRetryableFailure = (kind: string): boolean => !NON_RETRYABLE_KINDS.includes(kind)
+
 /** 页面级汇总用的短名（UI-SPEC §5.4「5 段中 2 段失败（网络 / 截断）」）。 */
 const FAILURE_KIND_LABEL: Record<string, string> = {
   network: '网络',
@@ -116,8 +125,29 @@ function summariseFailureKinds(failures: ReviewAiFailure[]): string {
   )
 }
 
-/** 草稿分片键 → 复盘 payload 的段名（payload 用 `dragon_tiger`）。 */
-const SECTION_PAYLOAD_NAME: Record<ReviewSectionKey, string> = {
+/** §4.1 草稿时间口径：当日 `HH:mm`，跨日 `MM-DD HH:mm`（不是 `formatTime` 的秒级）。 */
+function formatDraftTime(iso: string | null): string {
+  if (!iso) return MISSING
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  const today = new Date()
+  const sameDay =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  return sameDay
+    ? clock
+    : `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}`
+}
+
+/** §4.1 字数口径：去空白后四舍五入到个位、千分位。 */
+function formatCharCount(value: number): string {
+  return Math.round(value).toLocaleString('zh-CN')
+}
+
+/** 草稿分片键 → 复盘 payload 的段名（payload 用 `dragon_tiger`）。 */const SECTION_PAYLOAD_NAME: Record<ReviewSectionKey, string> = {
   sentiment: 'sentiment',
   capital: 'capital',
   theme: 'theme',
@@ -274,7 +304,16 @@ export default function ReviewScreen() {
   // 首帧快照：区分「本机恢复的草稿」与「本次新写的笔记」
   const [restored] = useState(() => {
     const state = useReviewDraft.getState()
-    return { chars: draftCharCount(state), updatedAt: state.updatedAt }
+    return {
+      chars: draftCharCount(state),
+      updatedAt: state.updatedAt,
+      labels: REVIEW_SECTIONS.filter((section) => state.sections[section.key].trim().length > 0).map(
+        (section) => section.label,
+      ),
+      firstKey: REVIEW_SECTIONS.map((section) => section.key).find(
+        (key) => state.sections[key].trim().length > 0,
+      ),
+    }
   })
 
   const total = useMemo(
@@ -463,7 +502,11 @@ export default function ReviewScreen() {
             }
             onClick={() => void startAi('generate')}
           >
-            {aiBusy ? 'AI 生成中…' : viewFailures.length > 0 ? '重试失败段' : '重新生成'}
+            {aiBusy
+              ? 'AI 生成中…'
+              : viewFailures.some((failure) => isRetryableFailure(failure.kind))
+                ? '重试失败段'
+                : '重新生成'}
           </Button>
         </>
       }
@@ -574,8 +617,27 @@ export default function ReviewScreen() {
       </div>
 
       {restored.chars > 0 && (
-        <Banner tone="info" title="已从本机恢复草稿">
-          {formatInt(restored.chars)} 字正文（最后写入 {formatTime(restored.updatedAt)}）。刷新、崩溃、升级后都会原样回填。
+        <Banner
+          tone="info"
+          title={`已恢复 ${formatDraftTime(restored.updatedAt)} 的草稿`}
+          action={
+            <>
+              {restored.firstKey && (
+                <Button
+                  variant="secondary"
+                  onClick={() => focusSection(SECTION_PAYLOAD_NAME[restored.firstKey!])}
+                >
+                  查看改动
+                </Button>
+              )}
+              <Button variant="secondary" onClick={() => setConfirmReset(true)}>
+                清空草稿
+              </Button>
+            </>
+          }
+        >
+          {restored.labels.join(' / ')} {formatCharCount(restored.labels.length)} 段，共{' '}
+          <span className="ldst-num">{formatCharCount(restored.chars)}</span> 字。刷新、崩溃、升级后都会原样回填。
         </Banner>
       )}
       {notice && (
@@ -609,7 +671,7 @@ export default function ReviewScreen() {
             title={`${tradeDate} 尚未生成复盘`}
             description="在终端运行下面这条命令生成五段复盘（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），落盘后回到本页点「重新检查」。未配置模型凭据时，五段会以「降级完成」落盘，程序指标照常保留。"
             action={
-              <div className="flex w-full max-w-[720px] flex-col items-center gap-2">
+              <div className="flex w-full max-w-measure flex-col items-center gap-2">
                 <code className="ldst-num w-full break-all rounded border border-border bg-surface-3 px-3 py-2 text-left text-caption text-text-secondary">
                   {reviewCommand}
                 </code>
@@ -712,7 +774,7 @@ export default function ReviewScreen() {
                 <>
                   <Badge tone={meta.badge}>{meta.label}</Badge>
                   {payload?.degraded && <Badge tone="warn">降级</Badge>}
-                  {status === 'failed' && (
+                  {status === 'failed' && (!failure || isRetryableFailure(failure.kind)) && (
                     <Button
                       variant="secondary"
                       onClick={() => void startAi('retry', payloadName)}
@@ -734,9 +796,9 @@ export default function ReviewScreen() {
             >
               <div className="grid gap-4 desk:grid-cols-[2fr_3fr]">
                 <div className="rounded border border-border bg-surface-2 p-3">
-                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-caption font-medium text-text-secondary">AI 叙述</span>
-                    <span className="truncate text-caption text-text-muted">
+                    <span className="min-w-0 truncate text-caption text-text-muted" title={`模型 ${payload?.model ?? '未启用'}`}>
                       模型 {payload?.model ?? '未启用'}
                     </span>
                   </div>
@@ -762,7 +824,7 @@ export default function ReviewScreen() {
                         onOpenStatus={() => navigate('/settings?tab=ai')}
                       />
                       {payload && payload.narrative.length > 0 && (
-                        <div className="flex flex-col gap-1.5">
+                        <div className="flex flex-col gap-2">
                           {payload.narrative.map((line) => (
                             <p key={line} className="text-body leading-body text-text-secondary">
                               {line}
@@ -789,7 +851,7 @@ export default function ReviewScreen() {
                       </p>
                     </div>
                   ) : payload && payload.narrative.length > 0 ? (
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-2">
                       {payload.narrative.map((line) => (
                         <p key={line} className="text-body leading-body text-text-secondary">
                           {line}

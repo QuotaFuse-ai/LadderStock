@@ -74,3 +74,22 @@ node scripts/visual-shot.mjs --routes industry,limit-up              --query "de
 本机没有 `ldst run`（行情数据集为空），所以这一组取的是 `?demo=1` 演示源，`?demo=1` 与 `?state=partial`
 两枚标识都由 `PageShell` 的 `DemoStateBadge` 自动上屏（QUOT-320 / R-18）。`--suffix before-311-*` 的两组
 在 `git checkout 5e2314c` 之后重拍，用来做同口径对比。
+
+## 原四屏 §11 走查对比（QUOT-315，2026-11-01 深夜 → 11-02）
+
+`<route>-<before|after>-315-<dark|light>.png` 与 `<route>-<before|after>-315-offline-<dark|light>.png`
+是 QUOT-306 阶段三（复盘 / 盯盘 / 验证 / 日志 四屏按 `docs/UI-SPEC.md` §11 v1.1 逐条走查后落地）的对比组，
+**不覆盖**阶段一、QUOT-312 / QUOT-320 / QUOT-311 的证据。`before` 拍在合并基线 `44dcb7b`（四屏改动前），
+`after` 拍在本轨分支，同一台机、同一个 dev server、同一份脚本，只差代码：
+
+```bash
+cd frontend && npm run dev -- --host 127.0.0.1 --port 5173      # 无 ldst run，后端 5950 未起
+node scripts/visual-shot.mjs --routes review,watch,validate,journal --suffix after-315 --out <dir> --settle 1800
+node scripts/visual-shot.mjs --routes review,watch,validate,journal --suffix after-315-offline --query state=offline --out <dir> --settle 1800
+```
+
+本机没有 `ldst run`（5950 无监听），所以这一组拍的是各屏**真实的「未同步 / 空 / 降级」态**（第一组）与
+`?state=offline` 强制态（第二组，能同时看到 `DemoStateBadge` 的「演示态：离线」水印、§4.2 旧值隐藏条、
+页脚溯源行与 `—` 缺失纪律）。**没有用 `?demo=1`**：本轮改动里有三项（盯盘徽标同源、§4.2 四类原因文案、
+剩余 TTL 的 `—`）只在「无信封 / 无快照」路径上才判定得出来，演示源会把它们一并遮掉；且 §5.6 要求演示源
+与真源不混拍。逐条判定与证据见 `docs/tasks/TASK-QUOT-306/ui-spec-11-walkthrough-315.md`。

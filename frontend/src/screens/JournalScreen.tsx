@@ -201,7 +201,7 @@ const AGGREGATE_COLUMNS: Array<Column<AggregateRow>> = [
     key: 'value',
     header: '数值',
     align: 'right',
-    width: '168px',
+    width: '176px',
     render: (row) => <span className="ldst-num">{row.value}</span>,
   },
   {
@@ -517,7 +517,7 @@ export default function JournalScreen() {
             title="还没有交易记录"
             description="在终端运行下面这条命令记一笔（代码 / 方向 / 价格 / 数量换成你的），再回来点「刷新」。日志写入只走本机命令行，网页不提供写入口。"
             action={
-              <div className="flex w-full max-w-[720px] flex-col items-center gap-2">
+              <div className="flex w-full max-w-measure flex-col items-center gap-2">
                 <code className="ldst-num w-full break-all rounded border border-border bg-surface-3 px-3 py-2 text-left text-caption text-text-secondary">
                   {EXAMPLE_COMMAND}
                 </code>
@@ -549,7 +549,7 @@ export default function JournalScreen() {
             rowKey={(row) => row.key}
             caption="交易日志聚合统计（不含标的清单、逐笔明细与备注）"
             density="compact"
-            maxHeight="480px"
+            maxHeight="420px"
             empty={
               <EmptyState
                 compact
