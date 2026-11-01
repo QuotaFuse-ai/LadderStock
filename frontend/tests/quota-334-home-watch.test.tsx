@@ -176,6 +176,18 @@ describe('盯盘演示源', () => {
     expect(unnamedRow?.textContent).toContain('—')
   })
 
+  /**
+   * 表高口径（UI-SPEC §7.3）：具名值 `calc(100vh - 280px)`，不是 `420px` 字面量。
+   * jsdom 不排版，所以这里锁的是口径本身——14 行是否真进首屏由 1440×900 取证图与探针实测负责。
+   */
+  it('信号流表高走 §7.3 具名档位，不回落 420px 字面量', async () => {
+    renderAt('/watch?demo=1')
+    await waitFor(() => expect(dataRowCount()).toBeGreaterThanOrEqual(12))
+
+    const scroller = document.querySelector('table')?.closest('.overflow-auto') as HTMLElement | null
+    expect(scroller?.style.maxHeight).toBe('calc(100vh - 280px)')
+  })
+
   it('演示态本机没有回放缓存：剩余 TTL 如实「—」，且不写 watch_snapshot 分片', async () => {
     renderAt('/watch?demo=1')
     await waitFor(() => expect(dataRowCount()).toBeGreaterThanOrEqual(12))

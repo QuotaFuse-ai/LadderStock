@@ -494,7 +494,7 @@ export default function WatchScreen() {
               rowKey={(row) => row.code}
               caption={`盘中信号流（${tradeDateLabel(viewTradeDate, now)}），按最近一次事件合并，每股一行`}
               density="compact"
-              maxHeight="420px"
+              maxHeight="calc(100vh - 280px)"
               empty={
                 <EmptyState
                   compact
