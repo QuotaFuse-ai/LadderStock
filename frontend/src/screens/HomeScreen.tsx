@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 
 import {
@@ -32,11 +32,13 @@ import {
   MetricCard,
   SectionCard,
   SignedNumber,
-  StatusDot,
   SourceBadges,
-  type SourceBadgeMeta,
+  SourceStatusBadge,
+  StatusDot,
   type Column,
+  type SourceBadgeMeta,
 } from '../components/ui'
+import { useDensity } from '../lib/prefs'
 import { useReviewDraft } from '../../stores/reviewDraft'
 import { useValidationDraft } from '../../stores/validationDraft'
 
@@ -67,7 +69,7 @@ const BAND_STEPS = [
 function TemperatureBar({ value, label }: { value: number | null; label: string }) {
   const pct = value === null ? null : Math.min(100, Math.max(0, value))
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1">
       <div
         role="img"
         aria-label={value === null ? `情绪温度缺失（${label}）` : `情绪温度 ${value}，0 到 100，50 为中性`}
@@ -81,7 +83,7 @@ function TemperatureBar({ value, label }: { value: number | null; label: string 
         {pct !== null && (
           <span
             aria-hidden="true"
-            className="absolute inset-y-0 w-[2px] -translate-x-1/2 rounded-pill bg-text"
+            className="absolute inset-y-0 w-half -translate-x-1/2 rounded-pill bg-text transition-all duration-fast ease-ldst"
             style={{ left: `${pct}%` }}
           />
         )}
@@ -116,24 +118,24 @@ const LADDER_COLUMNS: Array<Column<LadderRow>> = [
   {
     key: 'code',
     header: '代码',
-    width: '92px',
+    width: '88px',
     render: (row) => <span className="ldst-num text-text-secondary">{row.code || MISSING}</span>,
   },
-  { key: 'name', header: '名称', render: (row) => <span className="truncate font-medium">{row.name || MISSING}</span> },
+  { key: 'name', header: '名称', truncate: true, render: (row) => <span className="font-medium">{row.name || MISSING}</span> },
   {
     key: 'boards',
     header: '连板',
-    align: 'right',
     width: '88px',
+    numeric: true,
     sort: (a, b) => a.boards - b.boards,
-    render: (row) => <span className="ldst-num font-semibold text-up">{formatBoards(row.boards)}</span>,
+    render: (row) => <span className="font-semibold text-up">{formatBoards(row.boards)}</span>,
   },
   {
     key: 'seal',
     header: '首封',
-    align: 'right',
-    width: '96px',
-    render: (row) => <span className="ldst-num text-text-secondary">{formatSeal(row.firstSeal)}</span>,
+    width: '144px',
+    numeric: true,
+    render: (row) => <span className="text-text-secondary">{formatSeal(row.firstSeal)}</span>,
   },
 ]
 
@@ -147,6 +149,10 @@ interface Todo {
 
 export default function HomeScreen() {
   const forced = useForcedState()
+  const navigate = useNavigate()
+  // 行高档位只由用户的密度偏好决定（§11.18「密度只改行高」）：屏内不写死，
+  // 否则「设置 → 表格密度」在这张屏上会是静默失效的。
+  const density = useDensity()
   const [params] = useSearchParams()
   const tradeDate = params.get('date') || localDateIso()
 
@@ -247,11 +253,15 @@ export default function HomeScreen() {
     .pop()
 
   const summary =
-    state === 'offline'
-      ? '本地服务未连接'
-      : state === 'error'
-        ? '取数失败'
-        : `${degraded.length > 0 ? '部分数据降级' : '数据完整'} · 更新于 ${formatTime(latestFetch ?? null)}`
+    state === 'loading'
+      ? '读取中…'
+      : state === 'offline'
+        ? '本地服务未连接'
+        : state === 'error'
+          ? '取数失败'
+          : state === 'empty'
+            ? `${tradeDate} · 今日无数据`
+            : `${degraded.length > 0 ? '部分数据降级' : '数据完整'} · 更新于 ${formatTime(latestFetch ?? null)}`
 
   const todos = useMemo<Todo[]>(() => {
     const list: Todo[] = []
@@ -333,6 +343,34 @@ export default function HomeScreen() {
     )
   }
 
+  if (state === 'empty') {
+    // §11.5：空态是「今日无数据 + 引导」，不是把整屏渲染成一组「—」
+    return (
+      <div className="flex flex-col gap-5">
+        {header}
+        <EmptyState
+          title={`${tradeDate} 没有可用数据`}
+          description="情绪温度、连板天梯、盯盘快照、验证条件四路都是空的。先启动本机服务，再同步当日涨停池。"
+          action={
+            <div className="flex flex-col items-center gap-2">
+              <code className="ldst-num rounded border border-border bg-surface-2 px-2 py-1 text-caption text-text-secondary">
+                ldst sync --date {tradeDate}
+              </code>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button variant="secondary" onClick={reloadAll} leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}>
+                  重新检查
+                </Button>
+                <Button variant="ghost" onClick={() => navigate('/settings?tab=peers')}>
+                  看数据源
+                </Button>
+              </div>
+            </div>
+          }
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-5">
       {header}
@@ -359,9 +397,13 @@ export default function HomeScreen() {
           badge={<SourceBadges envelope={sentiment.data} />}
           value={formatInt(temperature)}
           note={
-            temperature !== null
-              ? `50 为中性 · 涨停 ${formatInt(viewSent?.limit_up_count)} 家`
-              : viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无情绪数据')
+            temperature !== null ? (
+              <>
+                50 为中性 · 涨停 <span className="ldst-num">{formatInt(viewSent?.limit_up_count)}</span> 家
+              </>
+            ) : (
+              (viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无情绪数据'))
+            )
           }
         />
         <MetricCard
@@ -369,54 +411,70 @@ export default function HomeScreen() {
           badge={<SourceBadges envelope={sentiment.data ?? ladder.data} />}
           value={formatBoards(maxBoard)}
           note={
-            maxBoard !== null
-              ? `断层 ${formatInt(viewLadder?.gap_levels.length ?? viewSent?.gap_levels.length)} 档`
-              : viewLadder?.reason ?? viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无连板数据')
+            maxBoard !== null ? (
+              <>
+                断层 <span className="ldst-num">{formatInt(viewLadder?.gap_levels.length ?? viewSent?.gap_levels.length)}</span>{' '}
+                档
+              </>
+            ) : (
+              (viewLadder?.reason ?? viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无连板数据'))
+            )
           }
         />
         <MetricCard
           label="主线题材"
+          badge={<SourceStatusBadge status="missing" detail="本屏没有题材 / 板块数据源" />}
           value={MISSING}
           note="本地无板块/题材数据（先运行 ldst sync）"
         />
         <MetricCard
           label="盯盘异动"
           badge={<SourceBadges envelope={watch.data} />}
-          value={viewWatch.length > 0 ? `${formatInt(viewWatch.length)} 条` : MISSING}
+          value={viewWatch.length > 0 ? <>{formatInt(viewWatch.length)} 条</> : MISSING}
           note={
-            viewWatch.length > 0
-              ? `快照 ${formatTime(watch.data?.fetched_at)}`
-              : offline
-                ? '本地服务未连接'
-                : '本机没有可用快照'
+            viewWatch.length > 0 ? (
+              <>
+                快照 <span className="ldst-num">{formatTime(watch.data?.fetched_at)}</span>
+              </>
+            ) : offline ? (
+              '本地服务未连接'
+            ) : (
+              '本机没有可用快照'
+            )
           }
         />
         <MetricCard
           label="待验证"
           badge={<SourceBadges envelope={validation.data} />}
-          value={viewConditions.length > 0 ? `${formatInt(viewConditions.length)} 项` : MISSING}
+          value={viewConditions.length > 0 ? <>{formatInt(viewConditions.length)} 项</> : MISSING}
           note={
-            viewConditions.length > 0
-              ? `${formatInt(confirmedCount)} 项已确认`
-              : offline
-                ? '本地服务未连接'
-                : '还没有验证条件'
+            viewConditions.length > 0 ? (
+              <>
+                <span className="ldst-num">{formatInt(confirmedCount)}</span> 项已确认
+              </>
+            ) : offline ? (
+              '本地服务未连接'
+            ) : (
+              '还没有验证条件'
+            )
           }
         />
       </div>
 
       {todos.length > 0 && (
         <Card>
-          <CardHeader title="待办" subtitle={`${todos.length} 条需要处理`} />
+          <CardHeader title="待办" subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>} />
           <ul>
             {todos.map((todo) => (
               <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
                 <Link
                   to={todo.to}
-                  className="flex min-h-control items-center gap-3 px-4 py-2 transition-colors duration-fast hover:bg-surface-3"
+                  className="flex min-h-control items-center gap-3 px-4 py-2 transition-colors duration-fast ease-ldst hover:bg-surface-3"
                 >
                   <StatusDot tone={todo.tone}>{todo.tag}</StatusDot>
-                  <span className="min-w-0 flex-1 truncate text-body text-text">{todo.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-body text-text" title={todo.title}>
+                    {todo.title}
+                  </span>
                   <span className="shrink-0 text-caption text-text-secondary">{todo.action} →</span>
                 </Link>
               </li>
@@ -430,9 +488,17 @@ export default function HomeScreen() {
           className="desk:col-span-8"
           title="今日连板梯队 Top 10"
           subtitle={
-            viewLadder?.available
-              ? `${tradeDate} · 高度 ${formatBoards(viewLadder.height)} · 共 ${formatInt(viewLadder.count)} 只`
-              : `交易日 ${tradeDate}`
+            viewLadder?.available ? (
+              <>
+                <span className="ldst-num">{tradeDate}</span> · 高度{' '}
+                <span className="ldst-num">{formatBoards(viewLadder.height)}</span> · 共{' '}
+                <span className="ldst-num">{formatInt(viewLadder.count)}</span> 只
+              </>
+            ) : (
+              <>
+                交易日 <span className="ldst-num">{tradeDate}</span>
+              </>
+            )
           }
           bodyClassName="p-0"
         >
@@ -441,6 +507,7 @@ export default function HomeScreen() {
             rows={ladderRows}
             rowKey={(row) => `${row.code}-${row.boards}`}
             caption={`连板梯队（${tradeDate}），按板数降序取前 10`}
+            density={density}
             maxHeight="420px"
             empty={
               <EmptyState
@@ -472,13 +539,16 @@ export default function HomeScreen() {
             {movers.length === 0 ? (
               <EmptyState compact title="还没有异动信号" description="盯盘快照为空或已过期，去盯盘页取数。" />
             ) : (
-              <ul className="flex flex-col gap-2">
+              <ul className="flex flex-col gap-1">
                 {movers.map((row) => {
                   const change = formatChangePct(row.change_pct)
                   return (
-                    <li key={row.code} className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate text-body text-text">
-                        <span className="ldst-num mr-1.5 text-caption text-text-muted">{row.code}</span>
+                    <li
+                      key={row.code}
+                      className="flex min-h-row items-center justify-between gap-2 rounded-xs px-1"
+                    >
+                      <span className="min-w-0 truncate text-body text-text" title={`${row.code} ${row.name}`}>
+                        <span className="ldst-num mr-2 text-caption text-text-muted">{row.code}</span>
                         {row.name}
                       </span>
                       <SignedNumber text={change.text} tone={change.tone} arrow={change.arrow} className="text-body" />
@@ -494,8 +564,9 @@ export default function HomeScreen() {
         </div>
       </div>
 
-      <p className="text-caption text-text-muted">
-        指标口径：情绪温度 0–100（50 中性）；晋级率 {formatRatePct(viewSent?.promotion_rate).text}；一线源见各卡右上徽标。
+      <p className="text-caption leading-body text-text-muted">
+        指标口径：情绪温度 0–100（50 中性）；晋级率{' '}
+        <span className="ldst-num">{formatRatePct(viewSent?.promotion_rate).text}</span>；一线源见各卡右上徽标。
       </p>
     </div>
   )

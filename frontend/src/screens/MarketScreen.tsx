@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Database, RefreshCw } from 'lucide-react'
 
@@ -47,6 +47,7 @@ import {
   SourceBadges,
   type Column,
 } from '../components/ui'
+import { useDensity } from '../lib/prefs'
 
 /**
  * 市场（P-02 / DESIGN-SPEC §4.3「分段，不是三个子页」）。
@@ -54,10 +55,10 @@ import {
  * 三段共用**一个交易日选择器**：情绪温度（CH-01）/ 连板梯队（CH-02）/ 题材轮动（CH-03），
  * 用 `?tab=sentiment|ladder|theme` 深链，切换分段只换内容、不动交易日。
  *
- * 数据口径（QUOT-198 契约）：
- * - CH-01 ← `/api/sentiment`（当日单点）+ `/api/market/history`（近 N 日序列，**后端缺口 Q172-8**）；
+ * 数据口径（QUOT-198 契约 / QUOT-199 上线）：
+ * - CH-01 ← `/api/sentiment`（当日单点）+ `/api/market/history`（近 N 日序列，已上线）；
  * - CH-02 ← `/api/ladder`（已上线）；
- * - CH-03 ← `/api/market/theme`（**后端缺口 Q172-8**）。
+ * - CH-03 ← `/api/market/theme`（已上线；本机未接 QuotaFuse Wire 时为 `available=false` 空态）。
  *
  * 三条硬规则：没有数据就显示「数据未同步」并给下一步（`ldst sync --date …`），
  * **不补 0、不画假线、不出现 NaN / undefined**；404 只代表「该段暂未接入」，不是页面故障。
@@ -96,14 +97,31 @@ type EnvelopeMeta = Pick<
   'freshness' | 'source_status' | 'source_detail' | 'data_as_of' | 'fetched_at'
 >
 
-/** 卡片底部的一行来源与口径（§4.2 L2）。 */
+/** 正文里的数字一律等宽基线（§7.2）：计数、天数、板数都用它包一层。 */
+function Num({ children }: { children: ReactNode }) {
+  return <span className="ldst-num">{children}</span>
+}
+
+/** 右栏「三段数据接入」的一行：ready=有可读数据，missing=端点本身没接入（404）。 */
+interface Segment {
+  key: MarketTab
+  ready: boolean
+  missing: boolean
+  missingLabel: string
+  label: ReactNode
+  reason: string | null
+}
+
+/** 卡片底部的一行来源与口径（§4.2 L2）。日期 / 时间一律 `.ldst-num`（§11.6）。 */
 function SourceLine({ envelope, extra }: { envelope: EnvelopeMeta | null; extra: string }) {
   if (!envelope) {
     return <p className="text-caption leading-body text-text-muted">{extra}</p>
   }
   return (
     <p className="text-caption leading-body text-text-muted">
-      来源 {envelope.source_detail} · 数据时间 {envelope.data_as_of ?? '未知'} · 取数 {formatTime(envelope.fetched_at)} · {extra}
+      来源 {envelope.source_detail} · 数据时间{' '}
+      <span className="ldst-num">{envelope.data_as_of ?? MISSING}</span> · 取数{' '}
+      <span className="ldst-num">{formatTime(envelope.fetched_at)}</span> · {extra}
     </p>
   )
 }
@@ -152,37 +170,33 @@ const LADDER_COLUMNS: Array<Column<LadderLevel>> = [
     key: 'boards',
     header: '板数',
     width: '88px',
+    numeric: true,
     sort: (a, b) => a.boards - b.boards,
-    render: (row) => <span className="ldst-num text-text">{formatInt(row.boards)}</span>,
+    render: (row) => formatInt(row.boards),
   },
   {
     key: 'count',
     header: '家数',
-    align: 'right',
-    width: '80px',
+    width: '88px',
+    numeric: true,
     sort: (a, b) => a.count - b.count,
-    render: (row) => <span className="ldst-num text-text">{formatInt(row.count)}</span>,
+    render: (row) => formatInt(row.count),
   },
   {
     key: 'stocks',
     header: '代表股',
-    render: (row) => (
-      <span className="block truncate text-text-secondary" title={row.stocks.map((stock) => stock.name).join('、')}>
-        {row.stocks.length > 0 ? row.stocks.slice(0, 3).map((stock) => stock.name).join('、') : MISSING}
-      </span>
-    ),
+    truncate: true,
+    cellTitle: (row) => (row.stocks.length > 0 ? row.stocks.map((stock) => stock.name).join('、') : MISSING),
+    render: (row) => (row.stocks.length > 0 ? row.stocks.slice(0, 3).map((stock) => stock.name).join('、') : MISSING),
   },
   {
     key: 'promotion',
     header: '晋级率',
-    align: 'right',
-    width: '96px',
+    width: '112px',
+    numeric: true,
     // 后端 `/api/ladder` 只给按板位的家数，没有「该板位明日晋级」的统计口径，一律 `—` 并说明原因
-    render: () => (
-      <span className="ldst-num text-text-muted" title="后端未提供按板位的晋级率，不臆测">
-        {MISSING}
-      </span>
-    ),
+    cellTitle: () => '后端未提供按板位的晋级率，不臆测',
+    render: () => MISSING,
   },
 ]
 
@@ -196,13 +210,9 @@ const HISTORY_COLUMNS: Array<Column<MarketHistoryPoint>> = [
   {
     key: 'temperature',
     header: '情绪温度',
-    align: 'right',
-    width: '96px',
-    render: (row) => (
-      <span className="ldst-num text-text">
-        {isFiniteNumber(row.temperature) ? formatInt(row.temperature) : MISSING}
-      </span>
-    ),
+    width: '112px',
+    numeric: true,
+    render: (row) => (isFiniteNumber(row.temperature) ? formatInt(row.temperature) : MISSING),
   },
 ]
 
@@ -211,49 +221,39 @@ function ThemeColumns(): Array<Column<MarketThemeRow>> {
     {
       key: 'theme',
       header: '题材',
-      render: (row) => <span className="truncate font-medium text-text">{row.theme}</span>,
+      truncate: true,
+      render: (row) => <span className="font-medium">{row.theme}</span>,
     },
     {
       key: 'strength',
       header: '强度',
-      align: 'right',
       width: '88px',
+      numeric: true,
       sort: (a, b) => a.strength - b.strength,
-      render: (row) => (
-        <span className="ldst-num text-text">
-          {isFiniteNumber(row.strength) ? formatOneDecimal(row.strength) : MISSING}
-        </span>
-      ),
+      render: (row) => (isFiniteNumber(row.strength) ? formatOneDecimal(row.strength) : MISSING),
     },
     {
       key: 'limitUp',
       header: '涨停家数',
-      align: 'right',
-      width: '96px',
-      render: (row) => (
-        <span className="ldst-num text-text-secondary">
-          {row.limit_up_count === null ? MISSING : formatInt(row.limit_up_count)}
-        </span>
-      ),
+      width: '112px',
+      numeric: true,
+      render: (row) => (row.limit_up_count === null ? MISSING : formatInt(row.limit_up_count)),
     },
     {
       key: 'leader',
       header: '龙头',
-      width: '128px',
-      render: (row) => <span className="truncate text-text-secondary">{row.leader ?? MISSING}</span>,
+      width: '176px',
+      truncate: true,
+      render: (row) => row.leader ?? MISSING,
     },
     {
       key: 'delta',
       header: '较前日',
-      align: 'right',
-      width: '96px',
+      width: '112px',
+      numeric: true,
       render: (row) => {
         const delta = formatSignedInt(row.delta)
-        return (
-          <span className={delta.missing ? 'ldst-num text-text-muted' : 'ldst-num text-text-secondary'}>
-            {delta.text}
-          </span>
-        )
+        return <span className={delta.missing ? 'text-text-muted' : 'text-text-secondary'}>{delta.text}</span>
       },
     },
   ]
@@ -262,6 +262,8 @@ function ThemeColumns(): Array<Column<MarketThemeRow>> {
 export default function MarketScreen() {
   const forced = useForcedState()
   const [params, setParams] = useSearchParams()
+  // 三张表的行高只跟随「设置 → 表格密度」，屏内不写死（§11.18）
+  const density = useDensity()
 
   const tradeDate = params.get('date') ?? localDateIso()
   const tabParam = params.get('tab')
@@ -340,6 +342,9 @@ export default function MarketScreen() {
 
   const currentTemperature = usable ? (sent?.temperature ?? null) : null
   const hasHistory = historyRows.length > 0
+  // 404 被吞成 null：请求成功但没有信封 = 该端点未接入，必须在页面上说出来，不能算「数据未同步」（§11.6）
+  const historyMissing = history.status === 'ready' && history.data === null
+  const themeMissing = theme.status === 'ready' && theme.data === null
   const linePoints = useMemo<LinePoint[]>(() => {
     if (hasHistory) {
       return historyRows.map((point) => ({
@@ -373,12 +378,14 @@ export default function MarketScreen() {
   const themeColumns = useMemo(() => ThemeColumns(), [])
 
   // 三段的「有没有数据 + 为什么没有」，右栏与当前段共用同一份结论
-  const segments = useMemo(
+  const segments = useMemo<Segment[]>(
     () => [
       {
         key: 'sentiment' as MarketTab,
         ready: linePoints.length > 0,
-        label: hasHistory ? `近 ${formatInt(historyRows.length)} 日序列` : linePoints.length > 0 ? '仅当日单点' : null,
+        missing: historyMissing && !hasHistory,
+        missingLabel: '序列接口未接入（404）',
+        label: hasHistory ? <>近 <Num>{formatInt(historyRows.length)}</Num> 日序列</> : linePoints.length > 0 ? '仅当日单点' : null,
         reason:
           linePoints.length > 0
             ? null
@@ -391,7 +398,9 @@ export default function MarketScreen() {
       {
         key: 'ladder' as MarketTab,
         ready: levels.length > 0,
-        label: levels.length > 0 ? `${formatInt(levels.length)} 档` : null,
+        missing: false,
+        missingLabel: '接口未接入（404）',
+        label: levels.length > 0 ? <><Num>{formatInt(levels.length)}</Num> 档</> : null,
         reason:
           levels.length > 0
             ? null
@@ -404,7 +413,9 @@ export default function MarketScreen() {
       {
         key: 'theme' as MarketTab,
         ready: themes.length > 0,
-        label: themes.length > 0 ? `前 ${formatInt(Math.min(themes.length, THEME_TOP))} 条` : null,
+        missing: themeMissing,
+        missingLabel: '接口未接入（404）',
+        label: themes.length > 0 ? <>前 <Num>{formatInt(Math.min(themes.length, THEME_TOP))}</Num> 条</> : null,
         reason:
           themes.length > 0
             ? null
@@ -413,11 +424,11 @@ export default function MarketScreen() {
                 ? '本地服务未连接'
                 : '数据未同步'
               : themePayload === null
-                ? '后端暂无 /api/market/theme（Q172-8 未上线）'
+                ? '/api/market/theme 返回 404：该端点未接入'
                 : (themePayload.reason ?? '题材轮动数据未同步'),
       },
     ],
-    [hasHistory, historyRows.length, linePoints.length, levels.length, themes.length, usable, sent, ladderResult, themePayload, forced],
+    [hasHistory, historyRows.length, linePoints.length, levels.length, themes.length, usable, sent, ladderResult, themePayload, historyMissing, themeMissing, forced],
   )
 
   const gapLevels = usable ? (sent?.gap_levels ?? null) : null
@@ -471,19 +482,24 @@ export default function MarketScreen() {
         <ErrorBlock
           variant="banner"
           title="部分数据源不可用"
-          detail={`${requests.filter((request) => request.status === 'error').length} 个数据源取数失败；能取到的分段照常展示，缺失分段以「数据未同步」标注并给出同步入口。`}
+          detail={
+            <>
+              <span className="ldst-num">{requests.filter((request) => request.status === 'error').length}</span>{' '}
+              个数据源取数失败；能取到的分段照常展示，缺失分段以「数据未同步」标注并给出同步入口。
+            </>
+          }
           onRetry={reloadAll}
           retryLabel="重试"
         />
       )}
-      {state === 'empty' && tab !== 'theme' && (
+      {state === 'empty' && (
         <Banner tone="info" title={`${tradeDate} 尚未同步行情数据`}>
           先执行 <code className="ldst-num">ldst sync --date {tradeDate}</code> 生成涨停池，再点「刷新」；本页不会用 0 或假数据填空。
         </Banner>
       )}
 
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="交易日" htmlFor="market-date" className="w-44">
+        <Field label="交易日" htmlFor="market-date" className="w-menu">
           <Input
             id="market-date"
             type="date"
@@ -505,16 +521,21 @@ export default function MarketScreen() {
         <div className="flex flex-col gap-4 desk:col-span-8">
           {tab === 'sentiment' && (
             <>
-              <div className="grid grid-cols-1 gap-3 min-[640px]:grid-cols-3">
+              <div className="grid grid-cols-3 gap-3">
                 <MetricCard
                   label="情绪温度"
                   hero
                   badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
                   value={currentTemperature === null ? MISSING : formatInt(currentTemperature)}
                   note={
-                    currentTemperature === null
-                      ? (usable ? (sent?.reason ?? '未生成') : '数据未同步')
-                      : `50 为中性 · 涨停 ${formatInt(sent?.limit_up_count)} 家`
+                    currentTemperature === null ? (
+                      usable ? (sent?.reason ?? '未生成') : '数据未同步'
+                    ) : (
+                      <>
+                        <span className="ldst-num">50</span> 为中性 · 涨停{' '}
+                        <span className="ldst-num">{formatInt(sent?.limit_up_count)}</span> 家
+                      </>
+                    )
                   }
                 />
                 <MetricCard
@@ -522,9 +543,13 @@ export default function MarketScreen() {
                   badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
                   value={formatRatePct(usable ? sent?.promotion_rate : null).text}
                   note={
-                    usable && isFiniteNumber(sent?.promotion_rate)
-                      ? `昨日涨停 ${formatInt(sent?.yesterday_limit_up_count)} 家`
-                      : '数据未同步'
+                    usable && isFiniteNumber(sent?.promotion_rate) ? (
+                      <>
+                        昨日涨停 <span className="ldst-num">{formatInt(sent?.yesterday_limit_up_count)}</span> 家
+                      </>
+                    ) : (
+                      '数据未同步'
+                    )
                   }
                 />
                 <MetricCard
@@ -533,9 +558,14 @@ export default function MarketScreen() {
                   value={gapLevels === null ? MISSING : formatInt(gapLevels.length)}
                   unit={gapLevels === null ? undefined : '档'}
                   note={
-                    gapLevels === null
-                      ? '数据未同步'
-                      : `最高 ${formatInt(sent?.max_board)} 板 · ${sent?.gap ? '存在断层' : '无断层'}`
+                    gapLevels === null ? (
+                      '数据未同步'
+                    ) : (
+                      <>
+                        最高 <span className="ldst-num">{formatInt(sent?.max_board)}</span> 板 ·{' '}
+                        {sent?.gap ? '存在断层' : '无断层'}
+                      </>
+                    )
                   }
                 />
               </div>
@@ -547,7 +577,15 @@ export default function MarketScreen() {
                 actions={
                   <>
                     <SourceBadges envelope={usable ? (history.data ?? sentiment.data) : null} />
-                    <Badge tone={hasHistory ? 'info' : 'warn'}>{hasHistory ? `近 ${formatInt(historyRows.length)} 日` : '单点'}</Badge>
+                    <Badge tone={hasHistory ? 'info' : 'warn'}>
+                      {hasHistory ? (
+                        <>
+                          近 <Num>{formatInt(historyRows.length)}</Num> 日
+                        </>
+                      ) : (
+                        '单点'
+                      )}
+                    </Badge>
                   </>
                 }
               >
@@ -561,8 +599,17 @@ export default function MarketScreen() {
                 ) : (
                   <div className="flex flex-col gap-3">
                     {!hasHistory && (
-                      <Banner tone="info" title="近 20 日序列未同步">
-                        后端暂无 <code className="ldst-num">/api/market/history</code>（Q172-8 未上线），先展示当日单点；序列上线后自动改画折线。
+                      <Banner tone={historyMissing ? 'warn' : 'info'} title={historyMissing ? '序列接口未接入（404）' : '近 20 日序列未同步'}>
+                        {historyMissing ? (
+                          <>
+                            <code className="ldst-num">/api/market/history</code> 返回 404：该端点未接入，本段只画当日单点。
+                          </>
+                        ) : (
+                          <>
+                            <code className="ldst-num">/api/market/history</code> 已接入但本机没有序列数据（先跑{' '}
+                            <code className="ldst-num">ldst sync</code>），本段先展示当日单点；序列可用后自动改画折线。
+                          </>
+                        )}
                       </Banner>
                     )}
                     <LineChart
@@ -577,13 +624,27 @@ export default function MarketScreen() {
                       rows={hasHistory ? historyRows : []}
                       rowKey={(row) => row.date}
                       caption={
-                        hasHistory
-                          ? `情绪温度近 ${historyRows.length} 日序列（按日期升序）`
-                          : '情绪温度当日单点（历史序列未同步）'
+                        hasHistory ? (
+                          <>
+                            情绪温度近 <Num>{historyRows.length}</Num> 日序列（按日期升序）
+                          </>
+                        ) : (
+                          '情绪温度当日单点（历史序列未同步）'
+                        )
                       }
-                      density="compact"
+                      density={density}
                       maxHeight="240px"
-                      empty={<p className="text-caption text-text-muted">历史序列未同步，只有当日单点，故不出表。</p>}
+                      empty={
+                        <EmptyState
+                          compact
+                          title="历史序列没有可用行"
+                          description={
+                            historyMissing
+                              ? '/api/market/history 未接入（404），本段只有当日单点，故不出表。'
+                              : '近 20 日序列还没同步到本机；同步后自动补上表格。'
+                          }
+                        />
+                      }
                     />
                     <SourceLine envelope={history.data ?? sentiment.data} extra="情绪温度 = 涨停/炸板/晋级等程序指标合成，非模型生成" />
                   </div>
@@ -600,7 +661,11 @@ export default function MarketScreen() {
               actions={
                 <>
                   <SourceBadges envelope={usable ? ladder.data : null} />
-                  {levels.length > 0 && <Badge tone="info">最高 {formatInt(ladderResult?.height)} 板</Badge>}
+                  {levels.length > 0 && (
+                    <Badge tone="info">
+                      最高 <Num>{formatInt(ladderResult?.height)}</Num> 板
+                    </Badge>
+                  )}
                 </>
               }
             >
@@ -622,8 +687,13 @@ export default function MarketScreen() {
                     columns={LADDER_COLUMNS}
                     rows={levels}
                     rowKey={(row) => String(row.boards)}
-                    caption={`连板梯队明细（${tradeDate}），按板数升序；晋级率口径后端未提供，显示 ${MISSING}`}
-                    density="compact"
+                    caption={
+                      <>
+                        连板梯队明细（<Num>{tradeDate}</Num>），按板数升序；晋级率口径后端未提供，显示{' '}
+                        <Num>{MISSING}</Num>
+                      </>
+                    }
+                    density={density}
                     initialSort={{ key: 'boards', dir: 'asc' }}
                   />
                   <SourceLine envelope={ladder.data} extra="板数由涨停池逐日累计；未知板位单列在后端未知项" />
@@ -635,7 +705,11 @@ export default function MarketScreen() {
           {tab === 'theme' && (
             <SectionCard
               title="题材轮动（CH-03）"
-              subtitle={`强度降序，横条只画前 ${THEME_TOP} 条，其余进表格`}
+              subtitle={
+                <>
+                  强度降序，横条只画前 <Num>{THEME_TOP}</Num> 条，其余进表格
+                </>
+              }
               tone={themes.length > 0 ? 'ok' : 'neutral'}
               actions={<SourceBadges envelope={usable ? theme.data : null} />}
             >
@@ -645,7 +719,7 @@ export default function MarketScreen() {
                   reason={
                     usable
                       ? themePayload === null
-                        ? '后端暂无 /api/market/theme（Q172-8 未上线），题材强度暂无可信来源'
+                        ? '/api/market/theme 未接入（404），题材强度暂无可信来源'
                         : (themePayload.reason ?? '题材轮动数据未同步')
                       : '数据未同步'
                   }
@@ -662,8 +736,12 @@ export default function MarketScreen() {
                     columns={themeColumns}
                     rows={themes}
                     rowKey={(row) => row.theme}
-                    caption={`题材强度明细（${tradeDate}），按强度降序`}
-                    density="compact"
+                    caption={
+                      <>
+                        题材强度明细（<Num>{tradeDate}</Num>），按强度降序
+                      </>
+                    }
+                    density={density}
                     maxHeight="320px"
                     initialSort={{ key: 'strength', dir: 'desc' }}
                   />
@@ -686,13 +764,15 @@ export default function MarketScreen() {
                       aria-current={segment.key === tab ? 'true' : undefined}
                       className={
                         segment.key === tab
-                          ? 'rounded-xs text-body font-medium text-text underline underline-offset-2'
-                          : 'rounded-xs text-body text-text-secondary hover:text-text hover:underline hover:underline-offset-2'
+                          ? 'rounded-xs text-body font-medium text-text underline underline-offset-2 transition-colors duration-fast ease-ldst'
+                          : 'rounded-xs text-body text-text-secondary transition-colors duration-fast ease-ldst hover:text-text hover:underline hover:underline-offset-2'
                       }
                     >
                       {TAB_LABEL[segment.key]}
                     </button>
-                    <Badge tone={segment.ready ? 'ok' : 'warn'}>{segment.ready ? '已同步' : '数据未同步'}</Badge>
+                    <Badge tone={segment.missing ? 'danger' : segment.ready ? 'ok' : 'warn'}>
+                      {segment.missing ? segment.missingLabel : segment.ready ? '已同步' : '数据未同步'}
+                    </Badge>
                   </div>
                   <p className="text-caption leading-body text-text-muted">
                     {segment.ready ? segment.label : segment.reason}
@@ -706,7 +786,7 @@ export default function MarketScreen() {
             <div className="flex flex-col gap-3 text-caption leading-body text-text-secondary">
               <p>
                 统一同步入口：
-                <code className="ldst-num ml-1 rounded border border-border bg-surface-2 px-1.5 py-0.5">
+                <code className="ldst-num ml-1 rounded border border-border bg-surface-2 px-2 py-1">
                   ldst sync --date {tradeDate}
                 </code>
               </p>
@@ -716,7 +796,7 @@ export default function MarketScreen() {
                 <li>
                   题材强度为当日相对分（0–100），只同日可比；数据源 QuotaFuse Wire，接口
                   <code className="ldst-num mx-1">/api/market/theme</code>
-                  未上线前该段固定「数据未同步」。
+                  已上线：本机未接 Wire 时是「数据未同步」空态，只有 404 才标「接口未接入（404）」，两者不混为一谈。
                 </li>
                 <li>缺失一律 {MISSING} + 原因，绝不补 0、不画假线。</li>
               </ul>

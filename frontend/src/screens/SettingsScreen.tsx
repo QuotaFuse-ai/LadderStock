@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
-  CheckCircle2,
   Download,
   ExternalLink,
   FileText,
@@ -12,7 +11,6 @@ import {
   Sliders,
   Square,
   Terminal,
-  XCircle,
 } from 'lucide-react'
 
 import {
@@ -35,6 +33,7 @@ import { MISSING, countOrMissing } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
   Badge,
+  Banner,
   Button,
   Checkbox,
   ConfirmDialog,
@@ -47,6 +46,7 @@ import {
   Input,
   SectionCard,
   Segmented,
+  SkeletonText,
   StatusDot,
   Toasts,
   useToasts,
@@ -221,7 +221,8 @@ function uptimeLabel(startedAt: string | null): string | null {
 
 function ownerText(owner: { pid: number | null; process: string | null } | undefined | null): string {
   if (!owner) return MISSING
-  const pid = owner.pid === null ? '?' : String(owner.pid)
+  // PID 缺失是「没有这个事实」，显示 `—` 而不是假定值 `?`（§11.18）
+  const pid = owner.pid === null ? MISSING : String(owner.pid)
   return `${owner.process ?? '未知进程'} · PID ${pid}`
 }
 
@@ -305,8 +306,8 @@ function PeerCard({
         {peer.port_conflicts.length > 0 && (
           <ul className="flex flex-col gap-1">
             {peer.port_conflicts.map((conflict) => (
-              <li key={conflict.port} className="flex items-start gap-1.5 text-caption text-warn">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <li key={conflict.port} className="flex items-start gap-1 text-caption text-warn">
+                <AlertTriangle className="mt-half size-3.5 shrink-0" aria-hidden="true" />
                 <span>
                   端口 <span className="ldst-num">{conflict.port}</span> {conflict.note}
                   {conflict.pid !== null && (
@@ -322,7 +323,7 @@ function PeerCard({
         )}
 
         {job && (
-          <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-surface-2 px-2 py-1.5">
+          <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-surface-2 px-2 py-2">
             <Badge tone={job.status === 'failed' ? 'danger' : job.status === 'ok' ? 'ok' : 'info'}>
               {ACTION_LABEL[job.action] ?? job.action} · {JOB_LABEL[job.status]}
             </Badge>
@@ -337,7 +338,7 @@ function PeerCard({
                 className="h-1 w-24 overflow-hidden rounded-pill bg-surface-3"
               >
                 <span
-                  className="block h-full rounded-pill bg-accent transition-[width] duration-base"
+                  className="block h-full rounded-pill bg-accent transition-all duration-base"
                   style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }}
                 />
               </span>
@@ -390,7 +391,7 @@ function PeerCard({
               href={peer.open_url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex min-h-control items-center gap-1.5 rounded px-2 text-body text-text-secondary transition-colors duration-fast hover:bg-surface-3 hover:text-text"
+              className="inline-flex min-h-control items-center gap-1 rounded px-2 text-body text-text-secondary transition-colors duration-fast hover:bg-surface-3 hover:text-text"
             >
               打开
               <ExternalLink className="size-3.5" aria-hidden="true" />
@@ -431,9 +432,14 @@ function StaticPeerCard({ peer, reason }: { peer: StaticPeer; reason: string }) 
             <p className="mt-1 text-caption text-text-secondary">{peer.role}</p>
           </div>
         </div>
+        {/* §11.18：控制面未接入时端口不是已知事实，不能把登记基线当探测值展示 */}
         <p className="text-caption text-text-secondary">
-          MCP <span className="ldst-num">{peer.mcp}</span> · {peer.webLabel}{' '}
-          <span className="ldst-num">{peer.web}</span> · 安装状态 {MISSING} · 运行状态 {MISSING}
+          MCP <span className="ldst-num">{MISSING}</span> · {peer.webLabel}{' '}
+          <span className="ldst-num">{MISSING}</span> · 安装状态 {MISSING} · 运行状态 {MISSING}（控制面未接入）
+        </p>
+        <p className="text-caption text-text-muted">
+          登记基线 <span className="ldst-num">{peer.mcp}</span> /{' '}
+          <span className="ldst-num">{peer.web}</span>（来自 config/sources.yaml，非探测值）
         </p>
         <p className="truncate text-caption text-text-muted" title={peer.directory}>
           目录 <span className="ldst-num">{peer.directory}</span>
@@ -468,11 +474,12 @@ interface PortRow {
   note: string
 }
 
+/* 状态标签一律「文字 + 色调」，不混用表情符号（§5.3：每档都要有文字与图形，图形由 Badge 承担） */
 const PORT_STATE: Record<PortState, { tone: 'ok' | 'warn' | 'danger' | 'info' | 'flat'; label: string }> = {
-  ok: { tone: 'ok', label: '✅ 空闲' },
-  busy: { tone: 'warn', label: '⚠️ 被占用' },
+  ok: { tone: 'ok', label: '空闲' },
+  busy: { tone: 'warn', label: '被占用' },
   self: { tone: 'info', label: '监听中' },
-  out: { tone: 'danger', label: '❌ 越界' },
+  out: { tone: 'danger', label: '越界' },
   unknown: { tone: 'flat', label: `${MISSING} 未探测` },
 }
 
@@ -480,30 +487,28 @@ const PORT_COLUMNS: Array<Column<PortRow>> = [
   {
     key: 'port',
     header: '端口',
-    align: 'right',
     width: '88px',
-    render: (row) => (
-      <span className="ldst-num font-medium text-text">{row.port === null ? MISSING : row.port}</span>
-    ),
+    numeric: true,
+    render: (row) => <span className="font-medium">{row.port === null ? MISSING : row.port}</span>,
   },
-  { key: 'usage', header: '用途', render: (row) => <span className="text-text">{row.usage}</span> },
+  { key: 'usage', header: '用途', truncate: true, render: (row) => row.usage },
   {
     key: 'state',
     header: '状态',
-    width: '120px',
-    render: (row) => (
-      <Badge tone={PORT_STATE[row.state].tone}>{PORT_STATE[row.state].label}</Badge>
-    ),
+    width: '144px',
+    render: (row) => <Badge tone={PORT_STATE[row.state].tone}>{PORT_STATE[row.state].label}</Badge>,
   },
   {
     key: 'owner',
     header: '占用进程',
-    width: '200px',
+    width: '208px',
+    truncate: true,
     render: (row) => <span className="ldst-num text-caption text-text-secondary">{row.owner}</span>,
   },
   {
     key: 'note',
     header: '说明',
+    truncate: true,
     render: (row) => <span className="text-caption text-text-muted">{row.note}</span>,
   },
 ]
@@ -580,7 +585,7 @@ function LogsDrawer({ peer, onClose }: { peer: PeerSnapshot | null; onClose: () 
       title={peer ? `${peer.product} · 日志尾部` : '日志'}
       subtitle={logs.data?.path ? `来源 ${logs.data.path}（已脱敏）` : '最近 200 行，密钥不会出现在日志里'}
     >
-      {logs.status === 'loading' && <p className="text-body text-text-secondary">正在读取日志…</p>}
+      {logs.status === 'loading' && <SkeletonText lines={4} />}
       {logs.status === 'error' && (
         <ErrorBlock {...describeApiError(logs.error)} variant="inline" onRetry={logs.reload} />
       )}
@@ -598,6 +603,32 @@ function LogsDrawer({ peer, onClose }: { peer: PeerSnapshot | null; onClose: () 
       )}
     </Drawer>
   )
+}
+
+/** §11.0「后端 key 不直显」：已知配置键给中文名，未知键原样保留（不藏内容），键名退到 hint。 */
+const CONFIG_KEY_LABEL: Record<string, string> = {
+  MCP_HTTP_PORT: 'MCP HTTP 端口',
+  ADMIN_PORT: '管理端端口',
+  ADMIN_HTTP_PORT: '管理端 HTTP 端口（预留）',
+  TICKHUB_CN_LOG_LEVEL: '日志级别（当前不生效）',
+  TICKHUB_US_ALLOW_TIER_B_SOURCES: '允许 B 级数据源',
+  SEC_CONTACT: '安全联系方式',
+  POLYGON_API_KEY: 'Polygon API Key',
+  QF_WIRE_HOST: '监听地址',
+  QF_WIRE_PORT: 'HTTP 端口',
+  QF_WIRE_MCP_PORT: 'MCP 端口',
+  QF_WIRE_DIGEST_PROVIDER: '摘要提供方',
+  QF_WIRE_API_BASE: 'API Base URL',
+  QF_WIRE_DIGEST_MODEL: '摘要模型',
+  QF_WIRE_API_KEY: 'Wire API Key',
+  llm_provider: 'LLM 提供方',
+  deep_think_llm: '深度思考模型',
+  quick_think_llm: '快速思考模型',
+  MINIMAX_API_KEY: 'MiniMax API Key',
+}
+
+function configKeyLabel(key: string): string {
+  return CONFIG_KEY_LABEL[key] ?? key
 }
 
 function ConfigDrawer({
@@ -710,9 +741,9 @@ function ConfigDrawer({
               return (
                 <div key={key} className="flex flex-col gap-2 rounded border border-border p-2">
                   <Field
-                    label={key}
+                    label={configKeyLabel(key)}
                     htmlFor={`cfg-${key}`}
-                    hint={`密钥只写不读回 · 当前 ${entry.set ? entry.preview ?? '已配置' : '未配置'} · 留空表示不修改`}
+                    hint={`密钥只写不读回 · 配置键 ${key} · 当前 ${entry.set ? entry.preview ?? '已配置' : '未配置'} · 留空表示不修改`}
                   >
                     <Input
                       id={`cfg-${key}`}
@@ -732,7 +763,7 @@ function ConfigDrawer({
               )
             }
             return (
-              <Field key={key} label={key} htmlFor={`cfg-${key}`} hint={`当前值 ${entry.value ?? MISSING}（可覆盖）`}>
+              <Field key={key} label={configKeyLabel(key)} htmlFor={`cfg-${key}`} hint={`配置键 ${key} · 当前值 ${entry.value ?? MISSING}（可覆盖）`}>
                 <Input
                   id={`cfg-${key}`}
                   spellCheck={false}
@@ -743,7 +774,12 @@ function ConfigDrawer({
               </Field>
             )
           })}
-          {saveError && <p className="text-caption text-danger">保存失败：{saveError}</p>}
+          {saveError && (
+            // C-19 Banner danger：失败原因置顶可见，表单内容保持可编辑（§11.18）
+            <Banner tone="danger" title="保存失败">
+              {saveError}
+            </Banner>
+          )}
           <p className="text-caption text-text-muted">
             白名单以外的键不可写；密钥落盘 0600，页面永远不会回显明文。
           </p>
@@ -775,15 +811,26 @@ const AI_TARGETS: readonly AiTarget[] = [
   },
 ]
 
-function AiSection({ controlReady }: { controlReady: boolean }) {
-  const { items, push, dismiss } = useToasts()
+function AiSection({
+  controlReady,
+  push,
+}: {
+  controlReady: boolean
+  push: (message: string, tone?: ToastItem['tone']) => void
+}) {
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [selected, setSelected] = useState<string[]>(['wire'])
   const [testing, setTesting] = useState(false)
   const [applying, setApplying] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; latency_ms: number; model_seen: string | null; error: string | null } | null>(null)
+  // `latency_ms === null` = 没测出结果（失败路径），不能显示「耗时 0ms」（§11.18）
+  const [result, setResult] = useState<{
+    ok: boolean
+    latency_ms: number | null
+    model_seen: string | null
+    error: string | null
+  } | null>(null)
 
   const toggle = (id: string, next: boolean): void => {
     setSelected((current) => (next ? [...current, id] : current.filter((item) => item !== id)))
@@ -807,7 +854,7 @@ function AiSection({ controlReady }: { controlReady: boolean }) {
       setResult(outcome)
     } catch (error) {
       const info = describeApiError(error)
-      setResult({ ok: false, latency_ms: 0, model_seen: null, error: `${info.title}：${info.detail}` })
+      setResult({ ok: false, latency_ms: null, model_seen: null, error: `${info.title}：${info.detail}` })
     } finally {
       setTesting(false)
     }
@@ -911,33 +958,100 @@ function AiSection({ controlReady }: { controlReady: boolean }) {
           </div>
 
           {result && (
-            <div
-              className={cn(
-                'flex items-start gap-2 rounded border px-3 py-2 text-body',
-                result.ok ? 'border-ok text-ok' : 'border-danger text-danger',
-              )}
-              role="status"
-            >
-              {result.ok ? (
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <Banner tone={result.ok ? 'ok' : 'danger'} title={result.ok ? '连通' : '不通'}>
+              {result.latency_ms !== null ? (
+                <>
+                  耗时 <span className="ldst-num">{result.latency_ms}ms</span>
+                </>
               ) : (
-                <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                '本次没有取到耗时'
               )}
-              <span>
-                {result.ok ? '连通' : '不通'} · 耗时 <span className="ldst-num">{result.latency_ms}ms</span>
-                {result.model_seen && (
-                  <>
-                    {' · 返回模型 '}
-                    <span className="ldst-num">{result.model_seen}</span>
-                  </>
-                )}
-                {result.error && <span> · {result.error}</span>}
-              </span>
-            </div>
+              {result.model_seen && (
+                <>
+                  {' · 返回模型 '}
+                  <span className="ldst-num">{result.model_seen}</span>
+                </>
+              )}
+              {result.error && <span> · {result.error}</span>}
+            </Banner>
           )}
         </div>
       </SectionCard>
-      <Toasts items={items} onDismiss={dismiss} />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------- 分区三：端口与目录
+
+/**
+ * `?tab=ports` 的内容。控制面未启用时也要渲染本段（§11.18「每段有自身
+ * loading/empty/error」），端口取不到就逐行 `—`，不显示假定默认值。
+ */
+function PortsSection({
+  board,
+  portRows,
+  stateConfig,
+}: {
+  board: AsyncResult<BoardPayload>
+  portRows: PortRow[]
+  stateConfig: AsyncResult<StateConfigPayload>
+}) {
+  const density = useDensity()
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionCard
+        title="端口占用"
+        subtitle={
+          <>
+            看板 <span className="ldst-num">{countOrMissing(board.data?.ports.board)}</span> / MCP{' '}
+            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 四个模块
+          </>
+        }
+        bodyClassName="p-0"
+        actions={
+          <Button variant="secondary" disabled disabledReason="本轮无体检接口，请运行 ldst doctor">
+            一键体检
+          </Button>
+        }
+      >
+        <DataTable<PortRow>
+          columns={PORT_COLUMNS}
+          rows={portRows}
+          rowKey={(row) => `${row.port}-${row.usage}`}
+          caption="端口占用表：空闲 / 被占用（PID + 进程）/ 越界"
+          density={density}
+          loading={board.status === 'loading'}
+          empty={<EmptyState compact title="后端没有返回任何端口" description="端口清单来自 /api/control/board；控制面未接入时本表没有行可展示。" />}
+        />
+      </SectionCard>
+
+      <SectionCard title="配置与数据目录" subtitle="来自 /api/state/config">
+        {stateConfig.status === 'ready' && stateConfig.data ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-caption text-text-secondary">
+              配置目录 <span className="ldst-num break-all">{stateConfig.data.config_dir}</span>
+            </p>
+            <p className="text-caption text-text-secondary">
+              数据目录 <span className="ldst-num break-all">{stateConfig.data.data_dir}</span>
+            </p>
+            <ul className="mt-half flex flex-wrap gap-2">
+              {stateConfig.data.files.map((file) => (
+                <li key={file.file}>
+                  <Badge tone={file.present ? 'ok' : 'warn'}>
+                    {file.present ? '有' : '缺'} <span className="ldst-num">{file.file}</span>
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : stateConfig.status === 'error' ? (
+          <ErrorBlock {...describeApiError(stateConfig.error)} variant="inline" onRetry={stateConfig.reload} />
+        ) : stateConfig.status === 'loading' ? (
+          <SkeletonText lines={2} />
+        ) : (
+          <EmptyState compact title="没有读到配置目录" description="/api/state/config 返回为空；确认本机已跑过一次 ldst run。" />
+        )}
+      </SectionCard>
     </div>
   )
 }
@@ -967,21 +1081,24 @@ function AboutSection({
   const density = useDensity()
   const info = health.data
   const config = stateConfig.data
+  // 每段自己的 loading / error 原因（§11.18）：失败时给真实标题，不写死「本地服务未连接」
+  const healthNote = health.status === 'error' ? describeApiError(health.error).title : '读取中…'
+  const configNote = stateConfig.status === 'error' ? describeApiError(stateConfig.error).title : '读取中…'
 
   const rows: Array<{ label: string; value: string; note?: string }> = [
     {
       label: '后端版本',
       value: info ? info.version : MISSING,
-      note: info ? undefined : health.status === 'error' ? '本地服务未连接' : '读取中…',
+      note: info ? undefined : healthNote,
     },
     { label: '构建时间', value: MISSING, note: '前端未注入构建时间戳（构建时未生成）' },
     { label: 'ldst 版本', value: MISSING, note: '数据面未暴露 CLI 版本' },
     {
       label: '数据目录',
       value: config?.data_dir ?? info?.data_dir ?? MISSING,
-      note: config || info ? undefined : '本地服务未连接',
+      note: config || info ? undefined : healthNote,
     },
-    { label: '配置目录', value: config?.config_dir ?? MISSING, note: config ? undefined : '本地服务未连接' },
+    { label: '配置目录', value: config?.config_dir ?? MISSING, note: config ? undefined : configNote },
     {
       label: '状态库 schema',
       value: config?.state_schema_version === null || config?.state_schema_version === undefined
@@ -1059,8 +1176,6 @@ export default function SettingsScreen() {
   const health = useAsync((signal) => api.health(signal), [])
 
   const { items, push, dismiss } = useToasts()
-  // 行密度偏好（关于分区可切换），端口表跟着变；hook 只能在顶层调用
-  const density = useDensity()
 
   const [jobs, setJobs] = useState<Record<string, JobView>>({})
   const [installPeer, setInstallPeer] = useState<PeerSnapshot | null>(null)
@@ -1224,7 +1339,7 @@ export default function SettingsScreen() {
                 aria-current={active ? 'page' : undefined}
                 onClick={() => changeSection(item.value)}
                 className={cn(
-                  'flex w-full flex-col items-start gap-0.5 rounded px-3 py-2 text-left transition-colors duration-fast',
+                  'flex w-full flex-col items-start gap-1 rounded px-3 py-2 text-left transition-colors duration-fast',
                   active ? 'bg-surface-3 text-text' : 'text-text-secondary hover:bg-surface-3 hover:text-text',
                 )}
               >
@@ -1246,40 +1361,53 @@ export default function SettingsScreen() {
   if (state === 'loading') {
     body = <ScreenSkeleton metrics={4} rows={4} />
   } else if (state === 'error') {
-    body = <ErrorBlock {...describeApiError(controlError)} onRetry={board.reload} />
+    // 控制面失败只影响「子模块 / 端口」；AI 与关于的数据源独立，本段照常可看（§11.18）
+    body = (
+      <div className="flex flex-col gap-4">
+        <ErrorBlock {...describeApiError(controlError)} onRetry={board.reload} />
+        {section === 'ai' && <AiSection controlReady={false} push={push} />}
+        {section === 'ports' && <PortsSection board={board} portRows={portRows} stateConfig={stateConfig} />}
+        {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
+      </div>
+    )
   } else if (controlOff || (httpStatus === 404 && state !== 'offline')) {
     body = (
-      <div className="flex flex-col gap-3">
-        <div className="rounded border border-danger-soft bg-danger-soft p-3" role="alert">
-          <p className="text-body font-medium text-danger">控制面未启用（LDST_CONTROL_ENABLED=0）</p>
-          <p className="mt-1 text-caption text-text-secondary">
-            设置页的安装 / 启动 / 停止全部不可用；数据面（首页、盯盘、复盘、验证）不受影响。
-            以 <span className="ldst-num">LDST_CONTROL_ENABLED=1</span> 重启 <span className="ldst-num">ldst run</span> 后恢复。
-          </p>
-        </div>
-        <ul className="flex flex-col gap-3">
-          {STATIC_PEERS.map((peer) => (
-            <StaticPeerCard key={peer.id} peer={peer} reason="控制面未启用：模块状态无法探测。" />
-          ))}
-        </ul>
+      <div className="flex flex-col gap-4">
+        <Banner tone="danger" title="控制面未启用（LDST_CONTROL_ENABLED=0）">
+          <>
+            设置页的安装 / 启动 / 停止全部不可用；数据面（首页、盯盘、复盘、验证）不受影响。以{' '}
+            <span className="ldst-num">LDST_CONTROL_ENABLED=1</span> 重启 <span className="ldst-num">ldst run</span> 后恢复。
+          </>
+        </Banner>
+        {section === 'peers' && (
+          <ul className="flex flex-col gap-3">
+            {STATIC_PEERS.map((peer) => (
+              <StaticPeerCard key={peer.id} peer={peer} reason="控制面未启用：模块状态无法探测。" />
+            ))}
+          </ul>
+        )}
+        {section === 'ai' && <AiSection controlReady={false} push={push} />}
+        {section === 'ports' && <PortsSection board={board} portRows={portRows} stateConfig={stateConfig} />}
+        {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
     )
   } else {
     body = (
       <div className="flex flex-col gap-4">
         {state === 'offline' && <OfflineBanner onRetry={board.reload} />}
-        {state === 'partial' || failedPeers.length > 0 ? (
-          <div className="rounded border border-warn-soft bg-warn-soft p-3" role="status">
-            <p className="text-body font-medium text-warn">
-              {failedPeers.length > 0 ? `${failedPeers.length} 个模块异常` : '部分模块状态不可用'}
-            </p>
-            <p className="mt-1 text-caption text-text-secondary">
-              {failedPeers.length > 0
-                ? `${failedPeers.map((peer) => peer.product).join('、')} 启动后端口无监听或 health 连续失败；逐卡「查看日志」看最后 20 行。`
-                : '其余分区仍可正常查看。'}
-            </p>
-          </div>
-        ) : null}
+        {(state === 'partial' || failedPeers.length > 0) && (
+          <Banner tone="warn" title={failedPeers.length > 0 ? (
+            <>
+              <span className="ldst-num">{failedPeers.length}</span> 个模块异常
+            </>
+          ) : (
+            '部分模块状态不可用'
+          )}>
+            {failedPeers.length > 0
+              ? `${failedPeers.map((peer) => peer.product).join('、')} 启动后端口无监听或 health 连续失败；逐卡「查看日志」看最后 20 行。`
+              : '其余分区仍可正常查看。'}
+          </Banner>
+        )}
 
         {section === 'peers' && (
           <>
@@ -1343,58 +1471,9 @@ export default function SettingsScreen() {
           </>
         )}
 
-        {section === 'ai' && <AiSection controlReady={controlReady} />}
+        {section === 'ai' && <AiSection controlReady={controlReady} push={push} />}
 
-        {section === 'ports' && (
-          <div className="flex flex-col gap-4">
-            <SectionCard
-              title="端口占用"
-              subtitle={`看板 ${countOrMissing(board.data?.ports.board)} / MCP ${countOrMissing(board.data?.ports.mcp)} · 四个模块`}
-              bodyClassName="p-0"
-              actions={
-                <div className="flex items-center gap-2">
-                  <Button variant="secondary" disabled disabledReason="本轮无体检接口，请运行 ldst doctor">
-                    一键体检
-                  </Button>
-                </div>
-              }
-            >
-              <DataTable<PortRow>
-                columns={PORT_COLUMNS}
-                rows={portRows}
-                rowKey={(row) => `${row.port}-${row.usage}`}
-                caption="端口占用表：✅ 空闲 / ⚠️ 被占用（PID + 进程）/ ❌ 越界"
-                density={density}
-              />
-            </SectionCard>
-
-            <SectionCard title="配置与数据目录" subtitle="来自 /api/state/config">
-              {stateConfig.status === 'ready' && stateConfig.data ? (
-                <div className="flex flex-col gap-2">
-                  <p className="text-caption text-text-secondary">
-                    配置目录 <span className="ldst-num break-all">{stateConfig.data.config_dir}</span>
-                  </p>
-                  <p className="text-caption text-text-secondary">
-                    数据目录 <span className="ldst-num break-all">{stateConfig.data.data_dir}</span>
-                  </p>
-                  <ul className="mt-1 flex flex-wrap gap-2">
-                    {stateConfig.data.files.map((file) => (
-                      <li key={file.file}>
-                        <Badge tone={file.present ? 'ok' : 'warn'}>
-                          {file.present ? '有' : '缺'} {file.file}
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : stateConfig.status === 'error' ? (
-                <ErrorBlock {...describeApiError(stateConfig.error)} variant="inline" onRetry={stateConfig.reload} />
-              ) : (
-                <p className="text-body text-text-secondary">读取中…</p>
-              )}
-            </SectionCard>
-          </div>
-        )}
+        {section === 'ports' && <PortsSection board={board} portRows={portRows} stateConfig={stateConfig} />}
 
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
@@ -1425,14 +1504,14 @@ export default function SettingsScreen() {
       >
         {installPeer && (
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-1.5 text-caption text-text-secondary">
+            <div className="flex items-center gap-1 text-caption text-text-secondary">
               <Terminal className="size-3.5" aria-hidden="true" />
               将执行的命令
             </div>
             <pre className="ldst-num overflow-auto whitespace-pre-wrap break-all rounded border border-border bg-sunken p-3 text-caption leading-relaxed text-text">
               {installCommands(installPeer).join('\n')}
             </pre>
-            {installError && <p className="text-caption text-danger">安装任务创建失败：{installError}</p>}
+            {installError && <Banner tone="danger" title="安装任务创建失败">{installError}</Banner>}
           </div>
         )}
       </ConfirmDialog>
