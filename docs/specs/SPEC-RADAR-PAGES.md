@@ -1,13 +1,14 @@
 # SPEC-RADAR-PAGES 资讯雷达 / 事件日历 / 候选池 / 我的持仓（前端）
 
-- 版本：v0.1（首版：四页路由 + 四个接口契约 + 导航挂载方案 + 缺口清单）
+- 版本：v0.2（2026-11-01：§6.1 载荷多出 `realized` 块，口径见 `SPEC-MY-POSITION` §4.1 / DEC-038；
+  前端不动。v0.1 首版：四页路由 + 四个接口契约 + 导航挂载方案 + 缺口清单）
 - 日期：2026-10-31
 - 归属：前端架构（R10 / QUOT-148）
 - 实现：`frontend/src/screens/radar/`、`frontend/src/api/radar.ts`
 - 数据口径（**本文件不改口径**）：`SPEC-NEWS-RADAR`（R6）、`SPEC-CANDIDATE-POOL`（R7 候选池）、
   `SPEC-MY-POSITION`（R7 持仓）；视觉与五态：`docs/UI-SPEC.md`
 - 关联决策：DEC-006（数据只落本机）、DEC-014（看板=控制面）、DEC-020（隐私库 v2 与持仓边界）、
-  DEC-019（资讯来源与日历缺口）
+  DEC-019（资讯来源与日历缺口）、DEC-033（持仓写面）、DEC-038（已实现盈亏口径）
 
 ## 1. 路由与导航挂载
 
@@ -177,10 +178,17 @@
   "valuation": { "total_cost": 22000.0, "market_value": null, "priced_cost": 20000.0,
                  "unpriced_cost": 2000.0, "coverage_pct": 90.9,
                  "unrealized_pnl": 0.0, "unrealized_pnl_pct": 0.0 },
+  "realized": { "method": "moving_weighted_average", "fee_included": false,
+                "status": "ok", "reason": null,
+                "buy_count": 2, "sell_count": 2,
+                "matched_sell_qty": 500.0, "unmatched_sell_qty": 0.0,
+                "total_pnl": 1400.0, "held_pnl": 800.0, "unheld_pnl": 600.0,
+                "unheld_codes": ["300750"] },
   "items": [
     { "code": "600000", "cost": 10.0, "qty": 1000.0, "entry_date": "2026-10-01",
       "industry": "银行", "note": "", "latest_price": 11.0,
-      "market_value": 11000.0, "unrealized_pnl": 1000.0, "unrealized_pnl_pct": 10.0 }
+      "market_value": 11000.0, "unrealized_pnl": 1000.0, "unrealized_pnl_pct": 10.0,
+      "realized_pnl": 800.0 }
   ],
   "concentration": { "available": true, "reason": null, "basis": "cost",
                      "top1_pct": 45.5, "top3_pct": 100.0, "hhi": 0.4215,
@@ -194,6 +202,13 @@
 - `market_value=null` 表示「有人没取到价 → 整体退回成本口径」，页面必须显示口径 `basis`
   与 `coverage_pct`，不得把 `null` 当 0；`latest_price=null` 的行显示 `—` + 原因。
 - 空持仓：`data_source_status="missing"`、`position_count=0`，页面空态（不是错误）。
+- **`realized` 是同一份计算的另一个出口**（DEC-038）：`ldst position list` 与本接口调的是
+  同一个 `compute_metrics()`，字段逐一对应，不许页面侧再算一遍已实现盈亏（护栏
+  `test_positions_cli_and_api_return_the_same_fields`）。口径要点：
+  `held_pnl + unheld_pnl = total_pnl`（已清仓的票不在 `positions` 里，得失由 `unheld_codes` 交代）；
+  `fee_included=false` 是**毛额**，展示时必须带这个前提；
+  `total_pnl=null` 表示本机没有成交流水（**不是 0**），`items[i].realized_pnl=null` 表示这只票一笔流水都没有。
+  本轮前端不动——`parsePositions()` 是白名单投影，未知顶层键忽略即可。
 
 ### 6.2 写：`POST /api/positions`（upsert）、`POST /api/positions/{code}/delete`
 

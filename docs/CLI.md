@@ -215,13 +215,23 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 |---|---|---|---|---|
 | 37 | `ldst pool` | 当日候选池打分：强度 / 换手 / 地位 / 资金 / 题材五个分项 + 加权总分 | `--date`（缺省今天）、`--limit 30`、`--output` | `LadderEnvelope`（`topic=candidate_pool`），`payload` 平铺打分结果；**只读本机缓存**，涨停池为空 / 无可解析候选时 stdout 仍给完整结果且 `available=false` → **6**；`--limit <= 0` 或日期非法 → 2 |
 | 38 | `ldst position add` | 记一条持仓（成本价、数量、建仓日、行业标注、备注） | `--code`、`--cost`、`--qty`、`--date`、`--industry`、`--note` | **仅写本机 `data/journal.sqlite`**；重复 code 提示改用 `update` → 2 |
-| 39 | `ldst position list` | 持仓 + 本地计算：浮动盈亏、集中度（top1/top3/HHI）、行业分布 | `--code`、`--date`（行情日期）、`--export <path>`、`--output` | 仅本地，载荷带 `local_only=true` 与 `price_lookup` 溯源；现价取不到 → 相应字段 `null` + stderr 说明（仍 0）；**不加 `--export` 不产生任何文件**；导出目标不可写 → 3 |
+| 39 | `ldst position list` | 持仓 + 本地计算：浮动盈亏、**已实现盈亏（移动加权，离线复算流水）**、集中度（top1/top3/HHI）、行业分布 | `--code`、`--date`（行情日期）、`--export <path>`、`--output` | 仅本地，载荷带 `local_only=true` 与 `price_lookup` 溯源；现价取不到 → 相应字段 `null` + stderr 说明（仍 0）；流水为空 → `realized.total_pnl=null`（**不给 0**，DEC-038）；**不加 `--export` 不产生任何文件**；导出目标不可写 → 3 |
 | 40 | `ldst position update` | 改一条持仓（只改显式传入的字段） | `--code` + `--cost/--qty/--date/--industry/--note` | 一个字段都没给 → 2；code 不在库里 → **6** |
 | 41 | `ldst position remove` | 删一条持仓（只删本机记录，不产生文件） | `--code` | code 不在库里 → **6** |
 
 `position` 与 `journal` 同为**本地命令，可打印，不经 MCP**：持仓数据不进 `LadderEnvelope`、
 不进 MCP 工具清单、不进 AI 上下文（`docs/MCP_TOOLS.md` §2）。候选池与持仓**互不引用**——
 持仓不参与打分，隐私数据不可能经打分结果外溢（护栏见 `tests/integration/test_position_privacy.py`）。
+
+`position list` 的**已实现盈亏**（DEC-038）读的是 `journal` 那份成交流水，口径是**移动加权平均成本**
+（券商对账单口径），与 `journal stats` 的 FIFO **不承诺同数**：全部清仓的票逐分不差，
+未平仓的票差额 = 两种方法的剩余成本基础之差。它只读、不写回 `positions`，
+`--export` 之外不产生任何文件。对账：
+
+```bash
+ldst journal stats --from <日> --to <日> --output json   # FIFO realized_pnl
+ldst position list --output json                         # realized.total_pnl（移动加权）
+```
 
 ## D‴. 产业研究（R5 增量，2）
 
