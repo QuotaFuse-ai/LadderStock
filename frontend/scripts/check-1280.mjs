@@ -71,6 +71,11 @@ const KNOWN_BARE_ZERO = {
   'journal|empty': 1,
   // R-07：`SignalsScreen.tsx:237,347` 命中数列直显 0
   'signals|empty': 4,
+  // R-07 存量债（v1.3 由本巡检量出、已登记进 §12.5，非本轮导航改动引入）：
+  // `limitup/LimitUpScreen.tsx:152` header 计数 `formatInt(payload.count)`，空态应为「—」
+  'limit-up|empty': 1,
+  // `industry/IndustryDetailScreen.tsx:508` 成分股数 `formatInt(constituent_count)`，未绑定时应为「—」
+  'industry-name|empty': 1,
 }
 
 /** 侧栏结构断言（DEC-044 之后：9 组，「我的股票」在日志之后）。 */
