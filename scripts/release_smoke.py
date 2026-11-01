@@ -201,7 +201,9 @@ def main() -> int:
         triggers = [job.get("trigger") for job in payload.get("jobs") or []]
         report.check(
             "schedule list 默认任务表",
-            result.exit_code == 0 and triggers == ["09:05", "15:05"],
+            result.exit_code == 0
+            and triggers
+            == ["09:05", "09:25", "09:35", "10:00", "11:30", "14:00", "15:00", "15:05"],
             f"jobs={triggers or _stderr_tail(result)}",
             ms,
         )
