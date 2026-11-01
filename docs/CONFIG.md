@@ -21,6 +21,7 @@
 |---|---|
 | `LDST_CONFIG_DIR` / `LDST_DATA_DIR` | 覆盖配置 / 数据目录 |
 | `LDST_LLM_BASE_URL` / `LDST_LLM_API_KEY` | 默认 `openai` 兼容后端（旧配置也读这两个） |
+| `LDST_LLM_MODEL` | 覆盖首个 `openai` 后端的模型；设置后 `ai.yaml` 里的占位回退档位会收敛到同一模型 |
 | `LDST_LLM_ANTHROPIC_BASE_URL` / `LDST_LLM_ANTHROPIC_API_KEY` | `anthropic` Messages 后端 |
 | `LDST_LEGACY_CONFIG_DIR` | 显式指定旧版配置文件（`vibe-research.config.json`）所在路径 |
 | `LDST_LEGACY_DATA_DIR` | 显式指定旧版数据目录（`data.js`、`review/`），迁移时只读复制 |
@@ -31,6 +32,21 @@
 
 密钥只走环境变量（如 provider token），**不落配置文件、不进日志**——
 `scripts/check_privacy.py` 的 `config-secrets` 组会扫描 `config/*.yaml` 里的明文凭据。
+
+### 2.1 `config/ai.env`（设置页写入）
+
+看板自己的 AI 凭据可以由「接入 AI」（侧栏或设置 → AI 接入）写入
+`<配置目录>/ai.env`，无需改 `ai.yaml`、无需重启：
+
+- 只认白名单键：`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY` /
+  `LDST_LLM_ANTHROPIC_BASE_URL` / `LDST_LLM_ANTHROPIC_API_KEY`；
+- **进程环境变量优先**，文件只补空缺（CI / 部署侧显式注入的凭据不会被文件覆盖）；
+- 写入走与 peer env 相同的原子替换 + DACL 收口，文件已在 `.gitignore`；接口只回
+  `api_key_set: true`，不回明文；
+- `LDST_LLM_MODEL` 设置后，`ai.yaml` 里指向首个后端的占位模型（如 `model-a`）会
+  收敛到该模型，避免「换模型后必然失败」的假回退。
+
+`ldst ai status` 会显示每个凭据来自 `process` 还是 `file`。
 
 ## 3. 配置文件清单
 

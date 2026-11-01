@@ -708,6 +708,39 @@ export interface AiTestResult {
   error: string | null
 }
 
+/** 看板自己（`ldst review`）的模型配置；密钥只回 `api_key_set`，不回明文。 */
+export interface SelfAiBackend {
+  id: string
+  type: string
+  base_url_env: string
+  base_url: string | null
+  base_url_source: 'process' | 'file' | null
+  api_key_env: string
+  api_key_set: boolean
+  api_key_source: 'process' | 'file' | null
+  models: string[]
+  configured: boolean
+}
+
+export interface SelfAiStatus {
+  configured: boolean
+  default_model: string
+  fallback_chain: string[]
+  models: string[]
+  backends: SelfAiBackend[]
+  model_override: string | null
+  env_file: string | null
+  env_file_exists: boolean
+  config_path: string | null
+  sections: string[]
+  missing_env: string[]
+  hint: string
+  writable_keys: string[]
+  subscription_cli: boolean
+  updated?: string[]
+  cleared?: string[]
+}
+
 export interface PeerLogs {
   peer: string
   path: string
@@ -809,6 +842,21 @@ export const api = {
       }),
     aiTest: (body: { peer: string; base_url: string; model: string; api_key?: string }) =>
       request<AiTestResult>('/control/ai/test', {
+        method: 'POST',
+        body,
+        timeoutMs: 20000,
+      }),
+    /** 看板自己的模型配置（`config/ai.env`）；与上面的 peer 目标分开。 */
+    selfAi: (signal?: AbortSignal) =>
+      request<SelfAiStatus>('/control/self-ai', { signal, timeoutMs: CONTROL_TIMEOUT_MS }),
+    saveSelfAi: (values: Record<string, string>, clear: string[] = []) =>
+      request<SelfAiStatus>('/control/self-ai', {
+        method: 'PUT',
+        body: { values, clear },
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    testSelfAi: (body: { base_url: string; model: string; api_key?: string }) =>
+      request<AiTestResult>('/control/self-ai/test', {
         method: 'POST',
         body,
         timeoutMs: 20000,

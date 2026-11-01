@@ -22,6 +22,7 @@ import {
   type PeerLogs,
   type PeerSnapshot,
   type PeerStatus,
+  type SelfAiStatus,
   type HealthPayload,
   type PortConflict,
   type PortOwner,
@@ -55,6 +56,7 @@ import {
   type DotTone,
   type ToastItem,
 } from '../components/ui'
+import AiConnectDialog from '../components/AiConnectDialog'
 import { setDensityPref, setTheme, useDensity, useThemeChoice } from '../lib/prefs'
 import type { Density, ThemeChoice } from '../lib/theme'
 import { cn } from '../lib/cn'
@@ -825,6 +827,8 @@ function AiSection({
   const [selected, setSelected] = useState<string[]>(['wire'])
   const [testing, setTesting] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [connectOpen, setConnectOpen] = useState(false)
+  const selfAi = useAsync((signal) => api.control.selfAi(signal), [], { enabled: controlReady })
   // `latency_ms === null` = 没测出结果（失败路径），不能显示「耗时 0ms」（§11.18）
   const [result, setResult] = useState<{
     ok: boolean
@@ -887,8 +891,41 @@ function AiSection({
 
   const chosen = AI_TARGETS.filter((target) => selected.includes(target.id))
 
+  const selfStatus: SelfAiStatus | null = selfAi.data
+  const selfError = selfAi.status === 'error' ? describeApiError(selfAi.error) : null
+
   return (
     <div className="flex flex-col gap-4">
+      <SectionCard
+        title="看板自己的 AI"
+        subtitle="复盘生成读取 config/ai.env；一次配置，生成复盘立即生效"
+      >
+        {selfAi.status === 'loading' && <SkeletonText lines={2} />}
+        {selfError && (
+          <Banner tone="danger" title="读不到看板 AI 配置">
+            {selfError.detail}
+          </Banner>
+        )}
+        {selfStatus && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge tone={selfStatus.configured ? 'ok' : 'warn'}>
+              {selfStatus.configured ? '已配置' : '未配置'}
+            </Badge>
+            {selfStatus.model_override && (
+              <span className="text-body text-text-secondary">
+                模型 <span className="ldst-num text-text">{selfStatus.model_override}</span>
+              </span>
+            )}
+            <span className="text-caption text-text-muted">
+              {selfStatus.configured ? '复盘生成会真实调用该模型' : '未配置时只能走纯文本降级'}
+            </span>
+            <Button variant="secondary" onClick={() => setConnectOpen(true)} className="ml-auto">
+              打开接入向导
+            </Button>
+          </div>
+        )}
+      </SectionCard>
+
       <SectionCard
         title="统一 AI 配置"
         subtitle="网络端点 / 模型 / 密钥写入各模块自己的 env；密钥只写不读回"
@@ -978,6 +1015,12 @@ function AiSection({
           )}
         </div>
       </SectionCard>
+
+      <AiConnectDialog
+        open={connectOpen}
+        onClose={() => setConnectOpen(false)}
+        onSaved={() => selfAi.reload()}
+      />
     </div>
   )
 }
