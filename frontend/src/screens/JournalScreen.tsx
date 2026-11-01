@@ -496,9 +496,9 @@ export default function JournalScreen() {
             rowKey={(row) => row.key}
             caption="交易日志聚合统计（不含标的清单、逐笔明细与备注）"
             density="compact"
-            // 首屏要同时看到 ≥12 行（§11.0 + PRD §5.2）：13 行 × 36px + 表头 ≈ 500px，
-            // 固定 420px 会把最后两行藏进滚动区，所以按视口给高度。
-            maxHeight="calc(100vh - 320px)"
+            // 首屏要同时看到 ≥12 行（§11.0）：13 行 × 36px + 表头 + 表说明 ≈ 580px，
+            // 原来的 420px 会把最后四行藏进滚动区。§7.3 只允许一个具名 calc 表高，就用它。
+            maxHeight="calc(100vh - 280px)"
             empty={
               <EmptyState
                 compact
