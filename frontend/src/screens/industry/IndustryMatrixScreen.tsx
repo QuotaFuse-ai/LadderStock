@@ -350,7 +350,7 @@ export default function IndustryMatrixScreen() {
       title="产业研究"
       subtitle={
         <span>
-          SW 一级 · <span className="ldst-num">{formatInt(rowCount)}</span> 个行业 · 数据时间{' '}
+          SW 一级 · <span className="ldst-num">{`${formatInt(rowCount)} 个行业`}</span> · 数据时间{' '}
           <span className="ldst-num">{payload?.data_as_of ?? MISSING}</span>
         </span>
       }
@@ -428,7 +428,7 @@ export default function IndustryMatrixScreen() {
       {header}
 
       {state === 'partial' && (
-        <Banner tone="danger" title={`${formatInt(partialRows.length)} 个行业本维度不完整`}>
+        <Banner tone="danger" title="部分行业维度缺失">
           <span className="mb-1 flex flex-wrap items-center gap-2">{partialBreakdown}</span>
           缺失单元格显示「{MISSING_CELL_TITLE}」，不按 0 参与比较，也不从别的口径补位。
         </Banner>

@@ -91,7 +91,7 @@ export default function LimitUpScreen() {
         header: '名称',
         width: '176px',
         truncate: true,
-        cellTitle: (row) => row.name ?? '后端未提供名称',
+        cellTitle: (row) => row.name ?? '',
         render: (row) => (row.name === null ? <MissingCell reason="后端未提供名称" /> : row.name),
       },
       {
@@ -134,7 +134,7 @@ export default function LimitUpScreen() {
         key: 'reason',
         header: '涨停原因',
         truncate: true,
-        cellTitle: (row) => row.reason ?? '后端未提供涨停原因',
+        cellTitle: (row) => row.reason ?? '',
         render: (row) =>
           row.reason === null ? <MissingCell reason="后端未提供涨停原因" /> : row.reason,
       },
@@ -256,7 +256,7 @@ export default function LimitUpScreen() {
       {header}
 
       {state === 'partial' && (
-        <Banner tone="danger" title="部分涨停池字段无数据">
+        <Banner tone="danger" title="部分涨停池数据缺失">
           {payload.reason ?? '部分记录缺少字段'}。缺失值显示「{MISSING}」，不补 0；页面不重算任何指标。
         </Banner>
       )}
