@@ -730,7 +730,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 
 - 正文对比度 ≥ 4.5:1，大字号 ≥ 3:1；`--ldst-text-muted` 在 `--ldst-surface` 上已按此校验；`--ldst-border-strong` 承担交互件边界识别，≥3:1（`tokens.css:22`）。深浅两主题都要过检。
 - 状态不只靠颜色：`freshness` 用 ●/◐/○ + 文字；涨跌用 ↑↓ + 正负号 + 颜色。
-- 焦点永远可见（`--ldst-focus-ring`），禁止无替代的 `outline: none`；「跳到主内容」在首焦点可见（`Layout.tsx:191`）。**v1.1 实测违规**：`main` 上挂着 `focus:outline-none`（`Layout.tsx:328`），skip-link 落地后无可见焦点 → R-21。
+- 焦点永远可见（`--ldst-focus-ring`），禁止无替代的 `outline: none`；「跳到主内容」在首焦点可见（`Layout.tsx` 首个 `<a href="#main">`）。~~v1.1 曾登记 `main` 上的 `focus:outline-none` 为违规（R-21）~~ **QUOT-316 实测更正**：该类只压 `outline`，压不住 base 层 `:where([tabindex]):focus-visible` 的 `box-shadow: var(--ldst-focus-ring)`；真实键盘事件（Tab → Enter）下 `#main` 命中 `:focus-visible` 且焦点环已绘制，R-21 不成立（证据见 §12.5 与 QUOT-316 回执）。
 - 表格必须有 `caption` 与 `scope="col"`，数字列右对齐（C-09 承担；`Table.tsx:160` 起的表体）；行内可点击必须可键盘到达。
 - 图标按钮必须有 `aria-label`；纯装饰图标 `aria-hidden="true"`。
 - 模态（C-16）与抽屉（C-15）：焦点陷阱 + `Esc` 取消 + 关闭后焦点回到触发元素（`Overlay.tsx:10-13`）。
