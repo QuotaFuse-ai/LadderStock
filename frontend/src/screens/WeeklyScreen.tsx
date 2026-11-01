@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useCallback, useMemo, type ReactNode } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 
 import {
@@ -28,6 +28,7 @@ import {
   Banner,
   Button,
   DataTable,
+  EmptyState,
   ErrorBlock,
   HBarList,
   MetricCard,
@@ -37,6 +38,7 @@ import {
   type Column,
   type SectionTone,
 } from '../components/ui'
+import { useDensity } from '../lib/prefs'
 
 /**
  * 周度复盘 `/weekly`（R11 / QUOT-149）：复用收盘复盘的报告式版式。
@@ -58,6 +60,17 @@ const MODE_LABEL: Record<string, string> = {
   parsed: '解析式输出',
   text: '纯文本降级',
   template: '模板降级',
+}
+
+/** `facts.caliber` 的后端 key → 中文指标名（§11.0「后端 key 不直显」；未知 key 不展示）。 */
+const CALIBER_LABEL: Record<string, string> = {
+  temperature: '情绪温度',
+  promotion_rate: '晋级率',
+  ladder_height: '连板高度',
+  breadth: '涨跌分布',
+  theme_streak: '主线题材',
+  validation: '待验证项',
+  ai_coverage: '复盘完成度',
 }
 
 // ------------------------------------------------------------------ ISO 周标签
@@ -155,13 +168,23 @@ function asSections(value: unknown): Section[] {
   })
 }
 
-/** 趋势值 + 变化箭头：`62.8（52.5 → 45.8，−6.7）`，缺失分项写 `—`。 */
-function trendNote(trend: WeeklyTrend | undefined, unit = ''): string {
+/** 趋势值 + 变化箭头：`62.8（52.5 → 45.8，−6.7）`，缺失分项写 `—`；数字一律 `.ldst-num`（§7.2）。 */
+function trendNote(trend: WeeklyTrend | undefined, unit = ''): ReactNode {
   const value = trend ?? EMPTY_TREND
-  const first = value.first === null ? MISSING : `${value.first}${unit}`
-  const last = value.last === null ? MISSING : `${value.last}${unit}`
-  const change = value.change === null ? MISSING : `${value.change > 0 ? '+' : ''}${value.change}${unit}`
-  return `周内 ${first} → ${last} · 变化 ${change} · ${value.samples} 天有读数`
+  const num = (item: number | null): ReactNode =>
+    item === null ? MISSING : <span className="ldst-num">{`${item}${unit}`}</span>
+  const change: ReactNode =
+    value.change === null ? (
+      MISSING
+    ) : (
+      <span className="ldst-num">{`${value.change > 0 ? '+' : ''}${value.change}${unit}`}</span>
+    )
+  return (
+    <>
+      周内 {num(value.first)} → {num(value.last)} · 变化 {change} ·{' '}
+      <span className="ldst-num">{value.samples}</span> 天有读数
+    </>
+  )
 }
 
 interface SentimentDayRow {
@@ -176,10 +199,28 @@ interface SentimentDayRow {
   source: string | null
 }
 
+/**
+ * 「这一段没有读数」：结论 + 原因，走 C-17 EmptyState 而不是手写小字（§11.7）。
+ * 不补 0、不编造榜单。
+ */
+function NoReading({
+  title = '本段没有可用读数',
+  reason,
+  compact = false,
+}: {
+  title?: string
+  reason: string
+  compact?: boolean
+}) {
+  return <EmptyState compact={compact} title={title} description={reason} />
+}
+
 export default function WeeklyScreen() {
   const forced = useForcedState()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
+  // 行高档位只由用户的密度偏好决定（§11.18「密度只改行高」），屏内不写死
+  const density = useDensity()
 
   const week = (() => {
     const raw = params.get('week')
@@ -301,6 +342,55 @@ export default function WeeklyScreen() {
     )
   }
 
+  /**
+   * 指标卡阵（§11.7：empty 分支也要出卡阵，与其它屏同构，不得只剩标题 + 一条横幅）。
+   * `usable` 为假时数值一律 `—` + 空因，不补 0。
+   */
+  const metricGrid = (
+    <div className="grid grid-cols-2 gap-4 desk:grid-cols-4">
+      <MetricCard
+        label="周情绪温度均值"
+        hero
+        badge={<SourceBadges envelope={usable ? envelope : null} />}
+        value={formatOneDecimal(usable ? number(sentiment?.temperature?.avg) : null)}
+        note={usable ? trendNote(sentiment?.temperature) : '数据未生成'}
+        icon={
+          temperatureSeries.length > 1 ? (
+            <Sparkline values={temperatureSeries} ariaLabel={`${week} 每日情绪温度走势`} />
+          ) : undefined
+        }
+      />
+      <MetricCard
+        label="周晋级率均值"
+        badge={<SourceBadges envelope={usable ? envelope : null} />}
+        value={usable ? formatRatePct(number(sentiment?.promotion_rate?.avg)).text : MISSING}
+        note={usable ? trendNote(sentiment?.promotion_rate, '%') : '数据未生成'}
+      />
+      <MetricCard
+        label="周封板率均值"
+        badge={<SourceBadges envelope={usable ? envelope : null} />}
+        value={usable ? formatRatePct(number(sentiment?.seal_rate?.avg)).text : MISSING}
+        note={
+          usable ? (
+            <>
+              涨停合计 <span className="ldst-num">{formatInt(number(sentiment?.limit_up_total))}</span> · 炸板{' '}
+              <span className="ldst-num">{formatInt(number(sentiment?.broken_total))}</span> · 断层{' '}
+              <span className="ldst-num">{formatInt(number(sentiment?.gap_days))}</span> 天
+            </>
+          ) : (
+            '数据未生成'
+          )
+        }
+      />
+      <MetricCard
+        label="连板高度"
+        badge={<SourceBadges envelope={usable ? envelope : null} />}
+        value={usable ? formatBoards(number(ladder?.peak_height)) : MISSING}
+        note={usable ? trendNote(ladder?.height) : '数据未生成'}
+      />
+    </div>
+  )
+
   if (state === 'offline' || state === 'empty') {
     return (
       <div className="flex flex-col gap-5">
@@ -318,38 +408,54 @@ export default function WeeklyScreen() {
             retryLabel="重新检查"
           />
         )}
+        {metricGrid}
       </div>
     )
   }
 
   const sentimentColumns: Array<Column<SentimentDayRow>> = [
-    { key: 'date', header: '日期', render: (row) => shortDate(row.date) },
+    {
+      key: 'date',
+      header: '日期',
+      width: '88px',
+      render: (row) => <span className="ldst-num">{shortDate(row.date)}</span>,
+    },
     {
       key: 'temperature',
       header: '温度',
-      align: 'right',
+      width: '88px',
+      numeric: true,
       render: (row) => formatOneDecimal(row.temperature),
       sort: (a, b) => (a.temperature ?? -1) - (b.temperature ?? -1),
     },
     {
       key: 'promotion',
       header: '晋级率',
-      align: 'right',
+      width: '112px',
+      numeric: true,
       render: (row) => formatRatePct(row.promotion_rate).text,
     },
-    { key: 'seal', header: '封板率', align: 'right', render: (row) => formatRatePct(row.seal_rate).text },
-    { key: 'limit', header: '涨停', align: 'right', render: (row) => formatInt(row.limit_up_count) },
-    { key: 'broken', header: '炸板', align: 'right', render: (row) => formatInt(row.broken_count) },
-    { key: 'board', header: '最高板', align: 'right', render: (row) => formatBoards(row.max_board) },
+    {
+      key: 'seal',
+      header: '封板率',
+      width: '112px',
+      numeric: true,
+      render: (row) => formatRatePct(row.seal_rate).text,
+    },
+    { key: 'limit', header: '涨停', width: '88px', numeric: true, render: (row) => formatInt(row.limit_up_count) },
+    { key: 'broken', header: '炸板', width: '88px', numeric: true, render: (row) => formatInt(row.broken_count) },
+    { key: 'board', header: '最高板', width: '88px', numeric: true, render: (row) => formatBoards(row.max_board) },
     {
       key: 'gap',
       header: '断层',
-      align: 'right',
+      width: '112px',
+      numeric: true,
       render: (row) => (row.gap_levels.length ? row.gap_levels.join('、') : MISSING),
     },
     {
       key: 'source',
       header: '来源',
+      width: '112px',
       render: (row) => (row.source === 'artifact' ? '当日复盘' : row.source === 'recomputed' ? '补算' : MISSING),
     },
   ]
@@ -364,45 +470,15 @@ export default function WeeklyScreen() {
         </Banner>
       )}
 
-      <div className="grid grid-cols-1 gap-4 min-[1024px]:grid-cols-4">
-        <MetricCard
-          label="周情绪温度均值"
-          hero
-          badge={<SourceBadges envelope={envelope} />}
-          value={formatOneDecimal(number(sentiment?.temperature?.avg))}
-          note={trendNote(sentiment?.temperature)}
-          icon={
-            temperatureSeries.length > 1 ? (
-              <Sparkline values={temperatureSeries} ariaLabel={`${week} 每日情绪温度走势`} />
-            ) : undefined
-          }
-        />
-        <MetricCard
-          label="周晋级率均值"
-          badge={<SourceBadges envelope={envelope} />}
-          value={formatRatePct(number(sentiment?.promotion_rate?.avg)).text}
-          note={trendNote(sentiment?.promotion_rate, '%')}
-        />
-        <MetricCard
-          label="周封板率均值"
-          badge={<SourceBadges envelope={envelope} />}
-          value={formatRatePct(number(sentiment?.seal_rate?.avg)).text}
-          note={`涨停合计 ${formatInt(number(sentiment?.limit_up_total))} · 炸板 ${formatInt(number(sentiment?.broken_total))} · 断层 ${formatInt(number(sentiment?.gap_days))} 天`}
-        />
-        <MetricCard
-          label="连板高度"
-          badge={<SourceBadges envelope={envelope} />}
-          value={formatBoards(number(ladder?.peak_height))}
-          note={trendNote(ladder?.height)}
-        />
-      </div>
+      {metricGrid}
 
       {headline.length > 0 && (
         <section className="rounded border border-border bg-surface-2 px-4 py-3" aria-label="周报概览">
           <div className="mb-1 flex items-center gap-2">
             <Badge tone="info">程序直出概览</Badge>
             <span className="text-caption text-text-muted">
-              模型 {report?.ai?.model ?? '未启用'} · 生成于 {formatTime(text(report?.generated_at))}
+              模型 {report?.ai?.model ?? '未启用'} · 生成于{' '}
+              <span className="ldst-num">{formatTime(text(report?.generated_at))}</span>
             </span>
           </div>
           <ul className="flex flex-col gap-1">
@@ -484,19 +560,30 @@ export default function WeeklyScreen() {
           columns={sentimentColumns}
           rows={rows}
           rowKey={(row) => row.date}
-          density="compact"
-          empty={<>本周没有可用单日指标。</>}
+          density={density}
+          empty={
+            <EmptyState
+              compact
+              title="本周没有可用单日指标"
+              description="事实包里 `sentiment.series` 为空：该周的每日复盘产物缺失，先跑 ldst sync 再重跑 ldst weekly。"
+            />
+          }
         />
       </SectionCard>
 
-      <div className="grid gap-4 min-[1100px]:grid-cols-2">
+      <div className="grid gap-4 desk:grid-cols-2">
         <SectionCard
           title="涨跌分布"
           tone="neutral"
           subtitle={
-            breadth?.available
-              ? `样本 ${formatInt(number(breadth.samples))} · 上涨占比 ${formatRatePct(number(breadth.up_share_pct)).text}`
-              : (text(breadth?.reason) ?? '无读数')
+            breadth?.available ? (
+              <>
+                样本 <span className="ldst-num">{formatInt(number(breadth.samples))}</span> · 上涨占比{' '}
+                <span className="ldst-num">{formatRatePct(number(breadth.up_share_pct)).text}</span>
+              </>
+            ) : (
+              (text(breadth?.reason) ?? '无读数')
+            )
           }
         >
           {breadth?.available ? (
@@ -509,7 +596,7 @@ export default function WeeklyScreen() {
               unit=" 只"
             />
           ) : (
-            <p className="text-body leading-body text-text-muted">{text(breadth?.reason) ?? MISSING}</p>
+            <NoReading reason={text(breadth?.reason) ?? '涨跌分布需要当日全市场逐笔涨幅，事实包里没有该段读数。'} />
           )}
         </SectionCard>
 
@@ -517,9 +604,14 @@ export default function WeeklyScreen() {
           title="主线题材持续天数"
           tone="neutral"
           subtitle={
-            themes?.available
-              ? `每日涨幅前 ${formatInt(number(themes.window))} 名为一个窗口 · 观察 ${formatInt(number(themes.observed))} 个题材`
-              : (text(themes?.reason) ?? '无读数')
+            themes?.available ? (
+              <>
+                每日涨幅前 <span className="ldst-num">{formatInt(number(themes.window))}</span> 名为一个窗口 · 观察{' '}
+                <span className="ldst-num">{formatInt(number(themes.observed))}</span> 个题材
+              </>
+            ) : (
+              (text(themes?.reason) ?? '无读数')
+            )
           }
         >
           {themes?.available ? (
@@ -532,27 +624,46 @@ export default function WeeklyScreen() {
               unit=" 天"
             />
           ) : (
-            <p className="text-body leading-body text-text-muted">{text(themes?.reason) ?? MISSING}</p>
+            <NoReading reason={text(themes?.reason) ?? '题材轮动数据源（QuotaFuse Wire theme_news）未接入，本页不编造榜单。'} />
           )}
         </SectionCard>
       </div>
 
-      <div className="grid gap-4 min-[1100px]:grid-cols-2">
+      <div className="grid gap-4 desk:grid-cols-2">
         <SectionCard title="本周龙头（当日最高板合并）" tone="neutral">
-          <ul className="flex flex-col gap-1.5">
-            {(ladder?.leaders ?? []).map((leader) => (
-              <li key={`${leader.code}-${leader.date}`} className="flex items-baseline justify-between gap-2">
-                <span className="text-body text-text">
-                  <span className="ldst-num mr-2 text-caption text-text-muted">{leader.code}</span>
-                  {leader.name ?? MISSING}
-                </span>
-                <span className="ldst-num text-body text-text-secondary">
-                  {formatBoards(number(leader.boards))} · {shortDate(leader.date)}
-                </span>
-              </li>
-            ))}
+          <ul className="flex flex-col gap-1">
+            {(ladder?.leaders ?? []).map((leader) => {
+              const detail = `${leader.code} ${leader.name ?? MISSING} · ${formatBoards(number(leader.boards))} · ${shortDate(leader.date)}`
+              const row = (
+                <>
+                  <span className="min-w-0 truncate text-body text-text" title={detail}>
+                    <span className="ldst-num mr-2 text-caption text-text-muted">{leader.code}</span>
+                    {leader.name ?? MISSING}
+                  </span>
+                  <span className="ldst-num shrink-0 text-caption text-text-secondary">
+                    {formatBoards(number(leader.boards))} · {shortDate(leader.date)}
+                  </span>
+                </>
+              )
+              return leader.code ? (
+                <li key={`${leader.code}-${leader.date}`}>
+                  <Link
+                    to={`/research/${leader.code}`}
+                    className="flex min-h-row items-center justify-between gap-2 rounded-xs px-1 transition-colors duration-fast ease-ldst hover:bg-surface-3 hover:text-text"
+                  >
+                    {row}
+                  </Link>
+                </li>
+              ) : (
+                <li key={`${leader.name}-${leader.date}`} className="flex min-h-row items-center justify-between gap-2 px-1">
+                  {row}
+                </li>
+              )
+            })}
             {(ladder?.leaders ?? []).length === 0 && (
-              <li className="text-body text-text-muted">涨停池里没有可解析的连板数据。</li>
+              <li>
+                <NoReading compact title="涨停池里没有可解析的连板数据" reason="连板高度来自当日涨停池；未同步时这一段为空。" />
+              </li>
             )}
           </ul>
         </SectionCard>
@@ -561,37 +672,76 @@ export default function WeeklyScreen() {
           title="待验证项结算"
           tone="neutral"
           subtitle={
-            validation?.available
-              ? `条件 ${formatInt(number(validation.conditions))} 条 · 已结算 ${formatInt(number(validation.settled))}` +
-                `（通过 ${formatInt(number(validation.passed))} / 未通过 ${formatInt(number(validation.failed))}` +
-                ` / 判定不出 ${formatInt(number(validation.unknown))}）· 待结算 ${formatInt(number(validation.pending))}` +
-                ` · 通过率 ${formatRatePct(number(validation.pass_rate)).text}`
-              : (text(validation?.reason) ?? '无')
+            validation?.available ? (
+              <>
+                条件 <span className="ldst-num">{formatInt(number(validation.conditions))}</span> 条 · 已结算{' '}
+                <span className="ldst-num">{formatInt(number(validation.settled))}</span>（通过{' '}
+                <span className="ldst-num">{formatInt(number(validation.passed))}</span> / 未通过{' '}
+                <span className="ldst-num">{formatInt(number(validation.failed))}</span> / 判定不出{' '}
+                <span className="ldst-num">{formatInt(number(validation.unknown))}</span>）· 待结算{' '}
+                <span className="ldst-num">{formatInt(number(validation.pending))}</span> · 通过率{' '}
+                <span className="ldst-num">{formatRatePct(number(validation.pass_rate)).text}</span>
+              </>
+            ) : (
+              (text(validation?.reason) ?? '无')
+            )
           }
         >
-          <ul className="flex flex-col gap-1.5">
+          <ul className="flex flex-col gap-1">
             {(validation?.items ?? []).slice(0, 8).map((item) => (
-              <li key={`${item.generated_date}-${item.id ?? item.text}`} className="text-caption text-text-secondary">
-                <span className="ldst-num mr-2 text-text-muted">{shortDate(item.generated_date)}</span>
-                {item.text ?? MISSING} → {item.settled ? (item.passed === true ? '通过' : item.passed === false ? '未通过' : '判定不出') : '未结算'}
+              <li
+                key={`${item.generated_date}-${item.id ?? item.text}`}
+                className="flex min-h-row items-baseline gap-2 text-caption text-text-secondary"
+              >
+                <span className="ldst-num shrink-0 text-text-muted">{shortDate(item.generated_date)}</span>
+                <span className="min-w-0 flex-1 truncate" title={item.text ?? MISSING}>
+                  {item.text ?? MISSING} →{' '}
+                  {item.settled
+                    ? item.passed === true
+                      ? '通过'
+                      : item.passed === false
+                        ? '未通过'
+                        : '判定不出'
+                    : '未结算'}
+                </span>
               </li>
             ))}
             {(validation?.items ?? []).length === 0 && (
-              <li className="text-body text-text-muted">{text(validation?.reason) ?? MISSING}</li>
+              <li>
+                <NoReading compact title="本周没有待结算的验证条件" reason={text(validation?.reason) ?? '验证草稿为空时该段没有读数。'} />
+              </li>
             )}
           </ul>
         </SectionCard>
       </div>
 
       <p className="text-caption text-text-muted">
-        指标口径：{Object.entries(facts?.caliber ?? {}).slice(0, 3).map(([key, value]) => `${key}：${value}`).join(' · ') || MISSING}
+        指标口径：
+        {(() => {
+          // 后端 key 不直显（§11.0 / §11.7）：已知 key 用中文指标名，未知 key 只保留口径正文，不藏内容
+          const lines = Object.entries(facts?.caliber ?? {})
+            .map(([key, value]) => (CALIBER_LABEL[key] ? `${CALIBER_LABEL[key]}：${value}` : `${value}`))
+            .slice(0, 3)
+          return lines.length > 0 ? lines.join(' · ') : MISSING
+        })()}
       </p>
       <p className="text-caption text-text-muted">
-        数据来源：{facts?.source_detail || MISSING}
-        {coverage && coverage.days_with_checkpoint
-          ? ` · 每日复盘 AI 完成度 ${formatInt(number(coverage.sections_done))}/${formatInt(number(coverage.sections_expected))}（降级 ${formatInt(number(coverage.sections_degraded))}、失败 ${formatInt(number(coverage.sections_failed))}）`
-          : ''}
-        {` · checkpoint：${text(report?.checkpoint) ?? MISSING}`}
+        数据来源：<span className="break-all">{facts?.source_detail || MISSING}</span>
+        {coverage && coverage.days_with_checkpoint ? (
+          <>
+            {' '}
+            · 每日复盘 AI 完成度{' '}
+            <span className="ldst-num">
+              {formatInt(number(coverage.sections_done))}/{formatInt(number(coverage.sections_expected))}
+            </span>
+            （降级 <span className="ldst-num">{formatInt(number(coverage.sections_degraded))}</span>、失败{' '}
+            <span className="ldst-num">{formatInt(number(coverage.sections_failed))}</span>）
+          </>
+        ) : (
+          ''
+        )}
+        {' '}
+        · 校验点：<span className="ldst-num">{text(report?.checkpoint) ?? MISSING}</span>
       </p>
     </div>
   )
