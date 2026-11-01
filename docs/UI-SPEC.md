@@ -1,6 +1,6 @@
 # 看板信息架构与视觉规范（19 屏）
 
-- 版本：v1.4
+- 版本：v1.5
 - 日期：2026-11-02
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
@@ -17,6 +17,7 @@
 | v1.2 | 2026-11-02 | 导航信息架构更新（QUOT-304，决策 DEC-044）：新增一级组「我的股票」（我的持仓 `/positions` + 事件日历 `/calendar`），从「日志」「市场」移出，顺序为 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖；自选、提醒无已交付页面，登记为范围外，不建占位入口。§2「导航顺序」与导航可达性段落同步改写；路由零变更。 |
 | v1.3 | 2026-11-02 | QUOT-306 / QUOT-317 收口：一致性口径脚本化（`frontend/scripts/check-ui-consistency.mjs` + `npm run check:ui`，六项：裸表 / hex / 任意值 / 数值基线 / DataTable 引用 / 过渡时长）；`DataTable` 补整行 `summaryRow`（列级 `summary` 保留，二者互斥）；四处任意值收口为 `min-h-calendar-cell` / `min-w-table-min` 与 `truncate` 列；§0 表格「事件日历 / 我的持仓」的侧栏分组同步为「我的股票」（v1.2 遗漏）；编号与变更记录合并规则见 DEC-045。 |
 | v1.3.1 | 2026-11-02 | 外壳层 §2 逐条走查落地（QUOT-316，只动 `components/Layout.tsx` / `PageShell.tsx` / `PersistenceBanner.tsx`，`NAV_SECTIONS` 结构零变更）：① §2 提示条「同类最多 2 条 + 另有 N 条提示」此前无实现，`PersistenceBanner` 现按 tone 各截 2 条、余量并成一行且逐个列出分片名（折叠不丢信息），顶内距 `pt-3`→`pt-5` 与 `main` 的 `py-5` 对齐；② §11.0「数字必 `.ldst-num`」在页头不可达——`PageHeader` 的 subtitle / meta 由外壳统一挂 `.ldst-num`（只加可继承的 `font-variant-numeric`，字号与颜色仍归各屏），19 屏一次生效；页头换行纵向间距 12px→4px；③ §2 侧栏二级缩进 8px→16px（导引线落在一级图标正下方），`rail:` 档展平后加组间 1px 分隔线，否则 19 行同形图标无分组可读性；④ §2 阅读型内容度量：外壳自有的 `OfflineBanner` 说明段挂 `max-w-measure`（`--ldst-measure: 52ch`）；⑤ `Layout.tsx` 头注释的 `DESIGN-SPEC §3.1/§4.1` 假引用（M-9）改引 `UI-SPEC §2`；⑥ R-21 实测更正为「非缺陷」，见 §12.5。规范条文本身未放宽：以上都是代码向 §2 / §11.0 收敛。 |
+| v1.5 | 2026-11-02 | 新增「接入 AI」一等入口（QUOT-200）：侧栏底部（主题与设置之间）按钮 + 设置 → AI 接入顶部状态卡，打开右侧向导抽屉（`AiConnectDialog`）；提供 DeepSeek / 通义千问 / Kimi / MiniMax / 本机 Ollama / 自定义预置，测试连通性后写入 `config/ai.env`（`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY`），密钥只写不读回。订阅版 CLI（Codex / Claude Code / WorkBuddy）当前后端未实现，不放入口。`?ai=1` 可直接打开抽屉（截图/排障）。 |
 | v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
 
 ## 0. 范围与非目标
@@ -104,7 +105,7 @@
 | 键盘 | 首元素「跳到主内容」（`Layout.tsx:191`）；Tab 顺序与视觉顺序一致；`main` 可聚焦（`tabIndex=-1`） | `Layout.tsx:191,328` |
 | 焦点可见 | `:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible` 走 `--ldst-focus-ring` | `styles/index.css:30` |
 | 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx:327`），页面级 `Banner` 在 `PageHeader` 之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
-| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（情绪 / 周度 / 候选池）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件与设置固定在侧栏底部（QUOT-304 / DEC-044） | `Layout.tsx` `NAV_SECTIONS` |
+| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（情绪 / 周度 / 候选池）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件、「接入 AI」动作与设置固定在侧栏底部（QUOT-304 / DEC-044；接入 AI 见 v1.5） | `Layout.tsx` `NAV_SECTIONS` |
 | 侧栏本机说明 | 「仅监听本机回环 · 草稿只存本机 IndexedDB」常驻 | `Layout.tsx:320-322` |
 
 **19 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
@@ -410,7 +411,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏底部固定项（不进 `NAV_SECTIONS`）；四段 peers / ai / ports / about 走 `?tab=`，切段用 `replace` | `Layout.tsx:316-319`、`SettingsScreen.tsx:74,82-91,1068-1078,1075` |
+| 入口 | 侧栏底部固定项（不进 `NAV_SECTIONS`），其上是「接入 AI」动作按钮；四段 peers / ai / ports / about 走 `?tab=`，切段用 `replace`。AI 段顶部是「看板自己的 AI」状态卡（`/api/control/self-ai`）+「打开接入向导」；向导抽屉也可用 `?ai=1` 深链打开 | `Layout.tsx`、`SettingsScreen.tsx`、`components/AiConnectDialog.tsx` |
 | 工具栏 | 标题「设置」；subtitle 随状态切换（离线 / 控制面未启用 / `N 个模块 · 运行中 M` / 读取中）；右侧主操作「刷新状态」 | `SettingsScreen.tsx:1178-1207` |
 | 主区 | 左 176px 竖排二级导航（`w-menu`，手写 `nav`，**不用** C-08 Tabs）+ 右 `min-w-0 flex-1`：peers 为 `SectionCard bodyClassName="p-0"` 内 `ul gap-3 p-4` 的 `PeerCard`；ai 为表单卡；ports 为 `DataTable`（5 列）+ 配置目录卡（`Badge` chips）；about 为两列 `dl`（`desk:grid-cols-2 gap-x-5`）+ 边界声明 + 外观 `Segmented` | `SettingsScreen.tsx:1399-1405,1280-1389,991-1039` |
 | 六态 | 整屏 5 态齐全（`?state=` 支持）；**缺段级状态**：`health`/`stateConfig` 的 loading 不 gate about（行显示 `—`+注）；AI 段无自身 loading/empty；「一键体检」永久禁用；抽屉保存错误只有行内文本 | `SettingsScreen.tsx:965-986,740,1350` |
