@@ -30,3 +30,16 @@ cd frontend && node scripts/visual-shot.mjs             # 或 npm run shots
 本机私有数据（日志 / 持仓 / 候选池）也为空。因此 before 图拍到的是各屏真实的「未同步 / 空 / 降级」态，
 不是设计稿、也不是 `?demo=1` 演示态（演示态带水印，不代表用户实际所见）。
 后续若要拍到有数据的 before/after，先跑 `ldst sync --date <交易日>` 再重新执行上面的命令。
+
+## radar 四屏阶段二对比（QUOT-312，2026-11-01）
+
+`<route>-<before|after>-s2-<dark|light>.png` 是 QUOT-306 阶段二（radar 4 屏精修）的对比组，
+**不覆盖**上面阶段一的 `before` / `after` 证据。与阶段一不同，这一组拍的是**本机真实数据态**：
+`ldst run`（5950）+ `vite.shot.config.ts` 代理，取数窗为 `/pool?date=2026-10-30`（47 只候选 / ok）、
+`/news?date=2026-10-30&until=2026-10-30`（59 条 / partial）、`/calendar?month=2026-10&day=2026-10-15`
+（业绩预告小节 113 条 / 其余四节 `no_source`）、`/positions`（本机 SQLite 为空 → 诚实空态，不伪造持仓）。
+`pool-*` 两张是点开第一行「展开」后的分项抽屉——被精修的裸表落在这里，主屏截图看不到。
+
+`frontend/scripts/visual-shot.mjs` 的路由表写死不带查询串，这一组用同一份脚本的临时副本拍摄
+（路由带日期 + 抽屉先点击「展开」+ `--settle 6000`），脚本本身未改动。
+

@@ -125,7 +125,7 @@ function MonthGrid({
       <div className="p-3">
         <div className="grid grid-cols-7 gap-1" aria-hidden="true">
           {WEEKDAYS.map((label) => (
-            <div key={label} className="pb-1 text-center text-caption text-text-muted">
+            <div key={label} className="pb-1 pl-1 text-left text-caption text-text-muted">
               {label}
             </div>
           ))}
@@ -151,7 +151,7 @@ function MonthGrid({
                 aria-label={`${cell.date}${count > 0 ? `，${count} 个条目` : '，没有已知事件'}`}
                 onClick={() => onSelect(cell.date as string)}
                 className={cn(
-                  'flex min-h-[76px] flex-col items-start gap-1 rounded border p-1.5 text-left transition-colors duration-fast',
+                  'flex min-h-[76px] flex-col items-start gap-1 rounded border p-1 text-left transition-colors duration-fast ease-ldst',
                   active
                     ? 'border-accent bg-accent-soft'
                     : 'border-border bg-surface hover:bg-surface-3',
@@ -165,7 +165,7 @@ function MonthGrid({
                   )}
                 </span>
                 {unique.length > 0 && (
-                  <span className="flex flex-wrap gap-0.5">
+                  <span className="flex flex-wrap gap-half">
                     {unique.slice(0, 2).map((label) => (
                       <span
                         key={label}
@@ -220,7 +220,7 @@ function DayPanel({
         actions={
           <Link
             to={newsHref}
-            className="inline-flex h-control items-center gap-1 rounded border border-border-strong bg-surface px-2 text-body text-text hover:bg-surface-3"
+            className="inline-flex h-control items-center gap-1 rounded border border-border-strong bg-surface px-2 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
           >
             当日资讯
             <ArrowRight className="size-3.5" aria-hidden="true" />
@@ -233,6 +233,15 @@ function DayPanel({
             compact
             title="这一天没有已知事件"
             description="日历只收录有数据源的条目；没有数据的日期不估算、不用相邻日期填充。"
+            action={
+              <Link
+                to={newsHref}
+                className="inline-flex h-control items-center gap-1 rounded border border-border-strong bg-surface px-2 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
+              >
+                当日资讯
+                <ArrowRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            }
           />
         ) : (
           <>
@@ -243,13 +252,17 @@ function DayPanel({
                 </h3>
                 <ul className="flex flex-col gap-1">
                   {rows.map((entry) => (
-                    <li key={entry.id} className="rounded border border-border bg-surface-2 px-2 py-1.5">
+                    <li key={entry.id} className="rounded border border-border bg-surface-2 p-2">
                       <p className="flex flex-wrap items-center gap-2 text-body text-text">
-                        {entry.code && <span className="ldst-num text-text-secondary">{entry.code}</span>}
-                        <span>{entry.label || '日历条目'}</span>
+                        {entry.code && <span className="ldst-num shrink-0 text-text-secondary">{entry.code}</span>}
+                        <span className="min-w-0 flex-1 truncate" title={entry.label || '日历条目'}>
+                          {entry.label || '日历条目'}
+                        </span>
                       </p>
                       {entry.detail && (
-                        <p className="text-caption leading-body text-text-secondary">{entry.detail}</p>
+                        <p className="line-clamp-2 text-caption leading-body text-text-secondary" title={entry.detail}>
+                          {entry.detail}
+                        </p>
                       )}
                       <p className="text-caption text-text-muted">
                         数据集 <code className="ldst-num">{entry.source || MISSING}</code>
@@ -268,17 +281,24 @@ function DayPanel({
                 </h3>
                 <ul className="flex flex-col gap-1">
                   {events.map((event) => (
-                    <li key={event.id} className="rounded border border-border bg-surface-2 px-2 py-1.5">
+                    <li key={event.id} className="rounded border border-border bg-surface-2 p-2">
                       <p className="flex flex-wrap items-center gap-2 text-body text-text">
                         <Badge tone="neutral">{event.label || event.type}</Badge>
                         {event.codes.map((code) => (
-                          <span key={code} className="ldst-num text-text-secondary">
+                          <span key={code} className="ldst-num shrink-0 text-text-secondary">
                             {code}
                           </span>
                         ))}
-                        <span>{event.title}</span>
+                        <span className="min-w-0 flex-1 truncate" title={event.title}>
+                          {event.title}
+                        </span>
                       </p>
-                      <p className="text-caption leading-body text-text-secondary">证据：{event.evidence.snippet || MISSING}</p>
+                      <p
+                        className="line-clamp-2 text-caption leading-body text-text-secondary"
+                        title={event.evidence.snippet || MISSING}
+                      >
+                        证据：{event.evidence.snippet || MISSING}
+                      </p>
                       <p className="text-caption text-text-muted">
                         {event.note || '规则从正文抽取，非日历数据源'} · 依据 {event.date_basis || MISSING}
                       </p>
@@ -292,7 +312,7 @@ function DayPanel({
 
         <Link
           to={newsHref}
-          className="mt-1 inline-flex items-center gap-1 self-start text-caption font-medium text-accent underline underline-offset-2"
+          className="mt-1 inline-flex items-center gap-1 self-start text-caption font-medium text-accent underline underline-offset-2 transition-colors duration-fast ease-ldst hover:text-accent-solid-hover"
         >
           在资讯雷达里查看 {day} 的资讯
           <ArrowRight className="size-3" aria-hidden="true" />
@@ -374,7 +394,9 @@ export default function CalendarScreen() {
       title="事件日历"
       subtitle={`${month} · ${payload?.sections.filter((section) => section.status === 'sourced').length ?? 0} / ${
         payload?.sections.length ?? CALENDAR_SECTION_ORDER.length
-      } 个小节有源 · 规则抽取 ${payload?.extracted_events.length ?? 0} 条`}
+      } 个小节有源 · 规则抽取 ${payload?.extracted_events.length ?? 0} 条 · 数据时点 ${
+        payload?.data_as_of ?? MISSING
+      }`}
       badge={
         <div className="flex flex-wrap items-center gap-2">
           <DemoStateBadge state={forced} />
@@ -487,7 +509,7 @@ export default function CalendarScreen() {
                 {!demo && (
                   <a
                     href={withParams('/calendar', { demo: '1', state: forced })}
-                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
+                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
                   >
                     查看演示数据
                   </a>

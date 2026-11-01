@@ -20,6 +20,7 @@ import {
   EmptyState,
   ErrorBlock,
   Field,
+  FreshnessBadge,
   Input,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -152,27 +153,37 @@ function SourceColumn({
           </Field>
         </div>
 
-        <fieldset className="flex flex-col gap-1.5">
+        <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-caption text-text-secondary">资讯栏目</legend>
           {payload.sources_status.length === 0 ? (
             <p className="text-caption text-text-muted">窗口内没有栏目账本。</p>
           ) : (
             payload.sources_status.map((row) => (
-              <div key={row.dataset} className="flex items-start justify-between gap-2">
-                <Checkbox
-                  checked={selected.size === 0 || selected.has(row.dataset)}
-                  onChange={(next) => onToggle(row.dataset, next)}
-                >
-                  {sourceLabel(row.dataset)}
-                </Checkbox>
+              <div key={row.dataset} className="flex min-w-0 flex-col gap-1">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <Checkbox
+                    checked={selected.size === 0 || selected.has(row.dataset)}
+                    onChange={(next) => onToggle(row.dataset, next)}
+                  >
+                    {sourceLabel(row.dataset)}
+                  </Checkbox>
+                  <span className="ldst-num shrink-0 text-caption text-text-secondary">{row.items}</span>
+                </div>
+                {/* 降级与新鲜度是两条独立事实：计数不再被降级吞掉，档位不再只靠颜色 */}
                 <span
-                  className={cn(
-                    'ldst-num shrink-0 text-caption',
-                    row.status === 'ok' && !row.degraded ? 'text-text-muted' : 'text-warn',
-                  )}
-                  title={row.detail || row.source_detail}
+                  className="flex min-w-0 flex-wrap items-center gap-1"
+                  title={
+                    [
+                      row.detail || row.source_detail,
+                      `新鲜度 ${row.freshness || MISSING}`,
+                      `来源 ${row.source || MISSING}`,
+                    ]
+                      .filter(Boolean)
+                      .join('\n')
+                  }
                 >
-                  {row.status === 'ok' && !row.degraded ? row.items : '降级'}
+                  <FreshnessBadge freshness={row.freshness} asOf={payload.data_as_of} />
+                  {(row.status !== 'ok' || row.degraded) && <Badge tone="warn">降级</Badge>}
                 </span>
               </div>
             ))
@@ -218,7 +229,7 @@ function TimelineColumn({
                     aria-current={active ? 'true' : undefined}
                     onClick={() => onSelect(item.id)}
                     className={cn(
-                      'flex w-full flex-col gap-1 px-3 py-2 text-left transition-colors duration-fast hover:bg-surface-3',
+                      'flex w-full flex-col gap-1 px-3 py-2 text-left transition-colors duration-fast ease-ldst hover:bg-surface-3',
                       active && 'bg-surface-2',
                     )}
                   >
@@ -230,26 +241,30 @@ function TimelineColumn({
                           已抽取事件
                         </Badge>
                       )}
-                      {item.related_codes.length > 0 && (
-                        <span className="ldst-num ml-auto text-text-secondary">
-                          {item.related_codes.join(' / ')}
-                        </span>
-                      )}
                     </span>
                     <span
                       className={cn(
-                        'text-body leading-body',
+                        'truncate text-body leading-body',
                         active ? 'font-medium text-text' : 'text-text',
                       )}
+                      title={item.title}
                     >
                       {item.title}
                     </span>
+                    {item.related_codes.length > 0 && (
+                      <span
+                        className="ldst-num block truncate text-caption leading-body text-text-secondary"
+                        title={item.related_codes.join(' / ')}
+                      >
+                        {item.related_codes.join(' / ')}
+                      </span>
+                    )}
                     {item.industries.length > 0 && (
                       <span className="flex flex-wrap gap-1">
                         {item.industries.map((industry) => (
                           <span
                             key={industry}
-                            className="rounded-xs border border-border px-1.5 text-caption text-text-secondary"
+                            className="rounded-xs border border-border px-1 text-caption text-text-secondary"
                           >
                             {industry}
                           </span>
@@ -291,12 +306,12 @@ function DetailColumn({
               <span className="ldst-num">{formatTime(item.published_at)}</span>
               <span>{sourceLabel(item.source)}</span>
               {item.related_codes.map((code) => (
-                <span key={code} className="ldst-num rounded-xs border border-border px-1.5 text-text-secondary">
+                <span key={code} className="ldst-num rounded-xs border border-border px-1 text-text-secondary">
                   {code}
                 </span>
               ))}
               {item.industries.map((industry) => (
-                <span key={industry} className="rounded-xs border border-border px-1.5 text-text-secondary">
+                <span key={industry} className="rounded-xs border border-border px-1 text-text-secondary">
                   {industry}
                 </span>
               ))}
@@ -313,9 +328,16 @@ function DetailColumn({
                   <div key={event.id} className="flex flex-col gap-1">
                     <p className="flex flex-wrap items-center gap-2 text-body text-text">
                       <Badge tone="info">{event.label || event.type}</Badge>
-                      <span>{event.title}</span>
+                      <span className="min-w-0 flex-1 truncate" title={event.title}>
+                        {event.title}
+                      </span>
                     </p>
-                    <p className="text-caption leading-body text-text-secondary">证据：{event.evidence.snippet || MISSING}</p>
+                    <p
+                      className="line-clamp-2 text-caption leading-body text-text-secondary"
+                      title={event.evidence.snippet || MISSING}
+                    >
+                      证据：{event.evidence.snippet || MISSING}
+                    </p>
                     <p className="text-caption text-text-muted">
                       来源 {event.evidence.dataset || MISSING} · 日期依据 {event.date_basis || MISSING} · 抽取器{' '}
                       <code className="ldst-num">{event.extractor || MISSING}</code>
@@ -357,7 +379,7 @@ function DetailColumn({
                   href={item.url}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="inline-flex h-control items-center justify-center gap-1 rounded bg-accent-solid px-3 text-body font-medium text-accent-contrast hover:bg-accent-solid-hover"
+                  className="inline-flex h-control items-center justify-center gap-1 rounded bg-accent-solid px-3 text-body font-medium text-accent-contrast transition-colors duration-fast ease-ldst hover:bg-accent-solid-hover"
                 >
                   原文链接
                   <ExternalLink className="size-3.5" aria-hidden="true" />
@@ -524,7 +546,7 @@ export default function NewsScreen() {
                 {!demo && (
                   <a
                     href={withParams('/news', { demo: '1', state: forced })}
-                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
+                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
                   >
                     查看演示数据
                   </a>
