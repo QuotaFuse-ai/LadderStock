@@ -1,11 +1,12 @@
 # 看板信息架构与视觉规范（18 屏）
 
-- 版本：v1.1
-- 日期：2026-11-01
+- 版本：v1.3
+- 日期：2026-11-02
 - 归属：UI/UX
-- 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
+- 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实；v1.2 改导航信息架构（DEC-044）；v1.3 只把 §0/§3 的侧栏事实补齐到 DEC-044 之后的真实结构，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
 - 代码事实基准：`origin/main` @ `270caf8`。本文所有 `文件:行号`（省略 `frontend/src/` 前缀）都在该 revision 上核对过。
+  **例外**：§0「侧栏入口」列、§2「导航顺序」与「20 屏导航可达性」两行、§3 各屏「入口」行的 `Layout.tsx:N`，按 v1.3 在 DEC-044 合入后的 main（`6b331c5`）上重新核对；其余条款（含 §2 的侧栏宽 / `main#main` / skip-link 等外壳行号）仍指 `270caf8`。这一层一致性由 `scripts/audit-nav-citations.py` 机器校验，不靠人眼（v1.2 就是靠人眼漏了 13 处，见 §12.7）。
 - 唯一真源：`frontend/tokens.json`（v2.0.0）→ 由 `frontend/scripts/gen-tokens.mjs` 生成 `styles/tokens.css` 与 `tailwind.config.ts` 的 `theme.extend`。本文与生成物冲突时**以生成物为准并回改本文**（v1.1 就是这样做的，理由见 §12.4）。
 
 ## 变更记录
@@ -15,10 +16,11 @@
 | v1.0 | 2026-10-28 | 首版：四屏 IA、状态恢复、降级与溯源、AI 四类错误、视觉 token、组件清单 |
 | v1.1 | 2026-11-01 | 覆盖 4 屏 → **18 屏**（QUOT-308，决策 DEC-040）。§0 逐屏清单 + §2 外壳/断点/标题层级按 `components/Layout.tsx:64-119`、`tailwind.config.ts:40-44` 校正（删除从未实现的「<1024 顶部横向导航」「<720 表格转卡片」，最低支持视口定为 1024）；§3.5–§3.18 补 14 屏信息架构；§5 增加溯源徽标唯一实现、演示态水印、`freshness` 缺省态；§6 组件清单按实际文件重写（v1.0 登记的 `kit/Badge.tsx` 等 11 个文件不存在）；§7 token 表按 `tokens.json` v2 全量校正（圆角收敛 8/4/999，字号 12/14/16/20/28/36，补 accent-solid / chart / skeleton / scrim 族）；§7.5 按 DEC-040 裁定 120ms / 180ms 分工；§8 补缺失值、时间格式、计数与后端 key 直显规则；§10 扩到 18 屏；§11 由「四屏清单」改为「逐屏清单」；§12.4 规范变更与理由，§12.5 整改清单 R-01…R-26。 ；同版补「盯盘·竞价与盘中」（`/intraday`，QUOT-301 / QUOT-302 / SPEC-INTRADAY-READ）：§0 与 §10 记为第 19 屏。 |
 | v1.2 | 2026-11-02 | 导航信息架构更新（QUOT-304，决策 DEC-044）：新增一级组「我的股票」（我的持仓 `/positions` + 事件日历 `/calendar`），从「日志」「市场」移出，顺序为 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖；自选、提醒无已交付页面，登记为范围外，不建占位入口。§2「导航顺序」与导航可达性段落同步改写；路由零变更。 |
+| v1.3 | 2026-11-02 | **只补事实，不改结构**（QUOT-304 收尾）：v1.2 只改了 §2，§0 的「侧栏入口」列与 §3 各屏「入口」行仍是 DEC-044 之前的旧分组与旧行号——`scripts/audit-nav-citations.py` 在 main `6b331c5` 上量到 **13 处** 文档 ↔ 侧栏不一致，本版逐条改齐（事件日历 / 我的持仓 → 我的股票；`/industry` `/signals` 由「无侧栏入口」改为「产业研究 · …」（QUOT-300 已补，文档没跟）；补登记 `/research` 落地页第 20 行；§3 的 12 处 `Layout.tsx:N` 引用重核）。§2「导航顺序」行补回被 v1.2 丢掉的两条规范：**顺序对应一天的工作流、不按字母不按频率**，以及**二级导航只在 `pages.length > 1` 时展开**；并把「`NAV_SECTIONS` 结构不由本文改」的 QUOT-306 边界改写为「结构已由 DEC-044 定稿，306/316 只做视觉层」。R-05 关闭。另登记全文遗留的「18 屏」口径（实际 20 屏，留给下次 §11 走查收，见 §12.7）。新增两份可重跑证据：`scripts/audit-nav-citations.py`（文档 ↔ 侧栏）、`frontend/scripts/check-1280.mjs`（20 条路由 × 五态的 1280px 溢出 / console / 侧栏结构 / 三条视觉不变量）。 |
 
 ## 0. 范围与非目标
 
-**覆盖（19 屏）**——路由以 `App.tsx:54-76` 为准（v1.1 的 18 屏 + QUOT-302 新增的 `/intraday`），侧栏入口以 `components/Layout.tsx:64-119` 为准。
+**覆盖（20 屏）**——路由以 `App.tsx:58-88` 为准（v1.1 的 18 屏 + QUOT-302 的 `/intraday` + v1.3 补登记的 `/research` 落地页），侧栏入口以 `components/Layout.tsx:75-162` 为准（DEC-044 之后为 9 组 + 底部固定「设置」）。
 
 | # | 屏 | 路由 | 侧栏入口（分组 · 标签） | 契约码 | v1.0 |
 |---|---|---|---|---|---|
@@ -30,19 +32,20 @@
 | 6 | 市场 | `/market?tab=sentiment\|ladder\|theme` | 市场 · 情绪温度 / 连板梯队 / 题材轮动（3 个入口同屏） | P-02 | 新增 |
 | 7 | 周度复盘 | `/weekly` | 复盘 · 周度复盘 | — | 新增 |
 | 8 | 资讯雷达 | `/news`（**不是** `/radar`） | 市场 · 资讯雷达 | — | 新增 |
-| 9 | 事件日历 | `/calendar` | 市场 · 事件日历 | — | 新增 |
+| 9 | 事件日历 | `/calendar` | 我的股票 · 事件日历（v1.2 由 市场 迁入） | — | 新增 |
 | 10 | 候选池 | `/pool` | 复盘 · 候选池 | — | 新增 |
-| 11 | 我的持仓 | `/positions` | 日志 · 我的持仓 | — | 新增 |
-| 12 | 产业矩阵 | `/industry` | 无侧栏入口（深链） | — | 新增 |
+| 11 | 我的持仓 | `/positions` | 我的股票 · 我的持仓（v1.2 由 日志 迁入） | — | 新增 |
+| 12 | 产业矩阵 | `/industry` | 产业研究 · 产业研究（QUOT-300 补入口，v1.3 校正） | — | 新增 |
 | 13 | 行业详情 | `/industry/:name` | 无侧栏入口（矩阵下钻） | — | 新增 |
-| 14 | 产业信号 | `/signals` | 无侧栏入口（深链） | — | 新增 |
+| 14 | 产业信号 | `/signals` | 产业研究 · 产业信号（QUOT-300 补入口，v1.3 校正） | — | 新增 |
 | 15 | 涨停样本 | `/limit-up` | 验证 · 涨停样本 | — | 新增 |
-| 16 | 个股深挖 | `/research/:code` | 无侧栏入口（深链） | — | 新增 |
+| 16 | 个股深挖 | `/research/:code` | 无侧栏入口（由 20 落地页跳入） | — | 新增 |
 | 17 | 研究报告 | `/research/:code/report` | 无侧栏入口（深挖页跳转） | — | 新增 |
 | 18 | 设置 | `/settings` | 侧栏底部固定项 | P-07 | 新增 |
 | 19 | 盯盘·竞价与盘中 | `/intraday`（QUOT-302 新增） | 盯盘 · 竞价与盘中 | — | 新增 |
+| 20 | 个股深挖落地页 | `/research`（QUOT-146 交付、QUOT-300 补入口；v1.3 才登记进本表） | 个股深挖 · 个股深挖（单页分组） | — | 新增 |
 
-> 任务书里的 `/radar`、`/radar/pool` 等路由在代码里不存在：雷达家族的实际路由是 `/news` `/calendar` `/pool` `/positions`（`App.tsx:65-68`）。本规范一律按代码写。
+> 任务书里的 `/radar`、`/radar/pool` 等路由在代码里不存在：雷达家族的实际路由是 `/news` `/calendar` `/pool` `/positions`（`App.tsx:72-75`）。本规范一律按代码写。
 
 **不覆盖（明确不做）**：
 
@@ -51,7 +54,8 @@
 - 买卖建议、目标价、收益预测（产品边界：复盘辅助，不输出交易信号）。
 - 新增数据源或"某个 peer 挂了就换一家"的降级（只允许同 peer 备工具 → 缓存回放）。
 - **视口 < 1024px**：v1.0 §2 写的「<1024 侧栏折叠为顶部横向导航」「<720 表格转卡片列表」在 `270caf8` 上没有任何实现（`Layout.tsx:194` 只有 `w-sidebar` / `rail:w-sidebar-rail` 两档，`rail` = `max-width:1279px`）。v1.1 把最低支持视口正式定为 `--ldst-bp-min: 1024px`，窄屏适配移出规范（DEC-040 §3，理由见 §12.4-B）。
-- `NAV_SECTIONS` 的分组结构本身（QUOT-306 边界：QUOT-300 / QUOT-304 正在改同一文件）。§2 只登记**现状**并约束视觉层，不改导航信息架构。
+- `NAV_SECTIONS` 的**视觉层**（图标尺寸、分组标题字号、二级缩进、展开动效）——QUOT-306 阶段三（QUOT-316）负责。分组**结构**已由 DEC-044（QUOT-304）定稿，§2「导航顺序」即规范值；再要改分组或顺序，先在 `docs/decisions/` 立一条 DEC（只增不改），再同步本文，参照 v1.2 / v1.3 的做法。
+- **「自选」与「提醒 / inbox」不在 DEC-044 范围内**：看板侧没有这两屏，路由表、`docs/specs/`、读接口里都没有对应实体（DEC-044 §2.4）。**「候选池」不等于自选**——它是复盘程序生成的候选集，不是用户手工关注的清单，DEC-044 §3 已就此否决「改名并入本组」。将来真要落地，需要独立的需求 + SPEC + 后端契约，另立决策。
 
 ## 1. 设计原则
 
@@ -101,10 +105,10 @@
 | 键盘 | 首元素「跳到主内容」（`Layout.tsx:191`）；Tab 顺序与视觉顺序一致；`main` 可聚焦（`tabIndex=-1`） | `Layout.tsx:191,328` |
 | 焦点可见 | `:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible` 走 `--ldst-focus-ring` | `styles/index.css:30` |
 | 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx:327`），页面级 `Banner` 在 `PageHeader` 之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
-| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（情绪 / 周度 / 候选池）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件与设置固定在侧栏底部（QUOT-304 / DEC-044） | `Layout.tsx` `NAV_SECTIONS` |
+| 导航顺序 | **9 组 + 底部固定「设置」**（DEC-044）：首页 → 市场（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（情绪复盘 / 周度复盘 / 候选池）→ 日志（交易日志）→ **我的股票（我的持仓 / 事件日历）** → 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件与设置固定在侧栏底部。**顺序对应一天的工作流**（看市场 → 盯盘 → 复盘 → 记日志 → 落到我自己持有的东西 → 验证 → 往外看产业与个股），**不按字母、不按访问频率**（v1.0 §2 的这条原则在 v1.1 重写时丢了，v1.3 补回；DEC-044 的新组是插入，既有组的相对次序不变）。注意 §0 表 1–4 行的「复盘 → 盯盘 → 验证 → 日志」是**文档叙述顺序**（v1.0 的四屏），不是侧栏顺序。二级导航只在 `pages.length > 1` 时展开（数据驱动；日志组移出持仓后自动收成单页一级项，不做特例） | `Layout.tsx:75-162,252,357-365` |
 | 侧栏本机说明 | 「仅监听本机回环 · 草稿只存本机 IndexedDB」常驻 | `Layout.tsx:320-322` |
 
-**19 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
+**20 屏导航可达性**（v1.3 复核）：QUOT-300 补上 `/industry` `/signals` `/research` 三条入口、DEC-044 补齐「我的股票」组后，侧栏 19 条入口覆盖 17 条路由；**只剩 3 条下钻深链没有独立侧栏项**，且都由有入口的页面链入——`/industry/:name`（产业矩阵行点击）、`/research/:code`（`/research` 落地页跳入）、`/research/:code/report`（深挖页「研究报告」按钮）。`/market?tab=` 三条入口同路径，靠 `?tab=` 判高亮。§3 的「入口」列必须写明用户实际怎么走到那里，写不出路径的按 R-05 处理。两层机器校验守住这件事：`frontend/tests/nav-routes.test.tsx`（侧栏 ↔ 路由表双向断言）与 `scripts/audit-nav-citations.py`（本文 §0/§3 ↔ 侧栏分组、条目、行号三项断言）。
 
 ## 3. 逐屏信息架构
 
@@ -241,7 +245,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏首项「首页」；`/index.html` 与旧根路径重定向到此 | `App.tsx:54,78`、`Layout.tsx:66-70` |
+| 入口 | 侧栏首项「首页」；`/index.html` 与旧根路径重定向到此 | `App.tsx:59,86`、`Layout.tsx:80` |
 | 工具栏 | `PageHeader` 标题「首页」；subtitle = 一句话可信摘要（`数据完整 · 更新于…` / `部分数据降级 · …` / `本地服务未连接` / `取数失败`）；badge = `DemoStateBadge`；右侧唯一主操作「刷新全部」 | `HomeScreen.tsx:270-275,318-335` |
 | L0 | 摘要 + `TemperatureBar`（情绪温度条）+ 5 张指标卡（`grid-cols-2 gap-4 rail:grid-cols-3 desk:grid-cols-5`） | `HomeScreen.tsx:372-427` |
 | L1 | 「待办」卡（手写 `ul`/`Link` 行，`min-h-control px-4 py-2`）→ 跳转 `/validate` `/review` `/settings` | `HomeScreen.tsx:429-447` |
@@ -255,7 +259,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「市场」下 3 个入口指向同屏不同 tab；高亮跟随 `?tab=`（默认 `sentiment`） | `Layout.tsx:72-78,153-159` |
+| 入口 | 侧栏「市场」下 3 个入口指向同屏不同 tab；高亮跟随 `?tab=`（默认 `sentiment`） | `Layout.tsx:87-89,194-200` |
 | tab 同步 | 状态只存 URL：`params.get('tab') ?? 'sentiment'`；切 tab 走 `push`，改日期走 `replace` | `MarketScreen.tsx:288-302` |
 | 工具栏 | `PageHeader` 标题「市场」+ subtitle 摘要 + `DemoStateBadge`；右侧唯一「刷新」 | `MarketScreen.tsx:446-471` |
 | 选择器 | 一行 `flex flex-wrap items-end gap-3`：日期 `Field`（`w-44`）+ `Segmented`（**不是** C-08 Tabs）+ 说明「三段共用同一个交易日」 | `MarketScreen.tsx:506-522` |
@@ -272,7 +276,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「复盘」分组第二项 | `Layout.tsx:91-100` |
+| 入口 | 侧栏「复盘」分组「周度复盘」（复盘组的第二项） | `Layout.tsx:111`、`App.tsx:66` |
 | 工具栏 | `PageHeader` 标题「周度复盘」；subtitle `${week} · start ~ end · N 个交易日有数据`；右侧 `上周 / 下周 / 刷新` 三键（次操作在左，主操作「刷新」在最右） | `WeeklyScreen.tsx:259-298` |
 | 主区 | 4 指标卡（首卡 `hero` + `Sparkline`）→ 程序直出概览卡（手写 `section` + `Badge`）→ 缺日 `Banner info` → 五段 AI `SectionCard`（编号标题 + 状态徽标 + `降级` + `AiErrorNotice`）→ 失败汇总 `Banner danger` → 每日序列 `DataTable`（compact）→ 两列 `min-[1100px]:grid-cols-2`（涨跌分布 / 主线题材 `HBarList`）→ 本周龙头 / 待验证结算 | `WeeklyScreen.tsx:371-610` |
 | 六态 | loading/error/offline 齐全；**empty 只出头部 + 一条横幅**，不保留指标卡阵（与其它屏不对称，R-15）；每日序列表的空态是**裸文本**不是 C-17（`WeeklyScreen.tsx:502`，R-16） | `WeeklyScreen.tsx:300-337,502` |
@@ -284,7 +288,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「市场」分组「资讯雷达」 | `Layout.tsx:79` |
+| 入口 | 侧栏「市场」分组「资讯雷达」 | `Layout.tsx:90`、`App.tsx:72` |
 | 工具栏 | 标题「资讯雷达」；subtitle `窗口 …→… · 共 N 条 · 已抽取事件 N`；右侧「刷新」 | `NewsScreen.tsx:433-451` |
 | 主区 | `grid-cols-[184px_minmax(0,1fr)_340px] gap-4 desk:grid-cols-[200px_minmax(0,1fr)_400px]` 三列：来源列 / 时间线列（手写 `ul`/`li`/`button`）/ 详情列（`article`） | `NewsScreen.tsx:555,101-360` |
 | 六态 | 整屏 5 态齐全（loading `ScreenSkeleton metrics=3 rows=7` / offline / error / empty 含"接口未接入"分支 / partial）；列级只有空态，**无列级 loading/error** | `NewsScreen.tsx:457-547,206,285` |
@@ -296,7 +300,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「市场」分组「事件日历」 | `Layout.tsx:80` |
+| 入口 | 侧栏「我的股票」分组「事件日历」（DEC-044 由「市场」迁入，路径不变） | `Layout.tsx:130`、`App.tsx:73` |
 | 工具栏 | 标题「事件日历」；subtitle `${month} · N/N 小节有源 · 规则抽取 N 条`；右侧 `‹ 本月 › 刷新` | `CalendarScreen.tsx:371-414` |
 | 主区 | `grid-cols-[minmax(0,1fr)_360px] desk:grid-cols-[…_400px]`：月格（`grid-cols-7 gap-1`，格 `min-h-[76px] p-1.5`）+ 当日面板；下方「小节状态」卡（`gap-3 p-4 desk:grid-cols-2`） | `CalendarScreen.tsx:508,125-178,308` |
 | 六态 | 整屏 5 态齐全；**月格无自身 loading/empty/error**，空白天只渲染空白块 | `CalendarScreen.tsx:420-506,135` |
@@ -308,7 +312,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「复盘」分组「候选池」 | `Layout.tsx:99` |
+| 入口 | 侧栏「复盘」分组「候选池」（DEC-044 留在复盘：候选池是复盘产出，不等于「自选」，见 §0 不覆盖与 DEC-044 §3） | `Layout.tsx:112`、`App.tsx:74` |
 | 工具栏 | 标题「候选池」；subtitle `${date} · 高度 … · N 只候选 · 来源 …`；右侧条件性「导出」+「刷新」 | `PoolScreen.tsx:286-307` |
 | 主区 | 3 指标卡（`grid-cols-3 gap-3`）→ `DataTable density=compact maxHeight=calc(100vh - 360px) onRowClick` → 页脚口径 → 行详情 `Drawer width="lg"` | `PoolScreen.tsx:404-442` |
 | 表体 | **抽屉内的分项表必须是第二份手写 `table`**——这是全仓唯一真违规裸表，根因是 C-09 缺 `summaryRow` | `PoolScreen.tsx:125-183`、`ui/Table.tsx` |
@@ -321,7 +325,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「日志」分组「我的持仓」（与交易日志同组，同为 `本机私有`） | `Layout.tsx:109` |
+| 入口 | 侧栏「我的股票」分组「我的持仓」（DEC-044 由「日志」迁入；与交易日志同属本机私有数据，但不再同组——隐私说明常驻本屏） | `Layout.tsx:129`、`App.tsx:75` |
 | 工具栏 | 标题「我的持仓」；subtitle `${as_of} · N 只 · 价格来源 …`；右侧 `导入本地 JSON / 刷新 / 新增持仓`（主操作最右） | `PositionsScreen.tsx:633-682` |
 | 主区顺序 | 隐私条与消息区 → 5 估值卡（`grid-cols-2 gap-3 desk:grid-cols-5`）→ 明细 `Card`+`CardBody p-0`+`DataTable` → 集中度 2 张 `SectionCard`（`HBarList`）→ 页脚 → `Drawer`/`ConfirmDialog` | `PositionsScreen.tsx:684-871,109-224` |
 | 六态 | 整屏 5 态齐全 + 表内空态 + 集中度/行业空态；**估值卡无卡级 empty/loading**；导入视图直接跳过估值卡与集中度 | `PositionsScreen.tsx:740-841,109-157,843` |
@@ -333,7 +337,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | **无侧栏入口**，深链进入；需从首页/市场补跨链（R-05） | `App.tsx:70`、`Layout.tsx:64-119` |
+| 入口 | 侧栏「产业研究」分组「产业研究」（QUOT-300 补的侧栏一级入口，v1.3 校正本行——此前写的是「无侧栏入口」） | `App.tsx:77`、`Layout.tsx:148` |
 | 工具栏 | 标题「产业研究」；subtitle `SW 一级 · N 个行业 · 数据时间 …`；右侧「刷新」 | `IndustryMatrixScreen.tsx:286-300` |
 | 主区 | partial 条 → 筛选行（`flex-wrap gap-3`：`Segmented` + `Select w-32` + `Input w-56` + 计数）→ `DataTable density=compact maxHeight=calc(100vh - 280px)` → 图例卡「读图与口径」 | `IndustryMatrixScreen.tsx:360-451` |
 | 六态 | 5 态齐全（含 `MatrixEmpty`）+ 表内 filtered-empty | `IndustryMatrixScreen.tsx:302-354,410` |
@@ -346,7 +350,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 矩阵行点击下钻；`/industry/:name` 也可深链 | `App.tsx:71` |
+| 入口 | 矩阵行点击下钻；`/industry/:name` 也可深链 | `App.tsx:78` |
 | 工具栏 | 标题 = 行业名（回退「行业详情」）；subtitle = 代码 · 成分数 · 状态；badge 组 = `DemoStateBadge` + 状态 + `未绑定`；右侧「产业矩阵」返回 + 「刷新」 | `IndustryDetailScreen.tsx:430-462` |
 | 主区 | `grid-cols-1 gap-4 desk:grid-cols-12`：左 8 列 = 五维卡阵（`grid-cols-2 gap-3`）+ 成分股 `DataTable maxHeight=360px`；右 4 列 = 相关研报/资讯、口径与成分、溯源与缺口 | `IndustryDetailScreen.tsx:529-665` |
 | 六态 | 整屏 5 态齐全；`DetailEmpty` 细分四种空因（非法名 / 无匹配候选 / 五维全 null / 接口未接入）；成分与相关有子空态；**溯源卡无条件常渲**（无自身空态） | `IndustryDetailScreen.tsx:466-513,337-418,555,576,624` |
@@ -358,7 +362,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | **无侧栏入口**，深链 / 从行业页跳转（R-05） | `App.tsx:72` |
+| 入口 | 侧栏「产业研究」分组「产业信号」（QUOT-300 补的侧栏一级入口；行业页跳转仍在） | `App.tsx:79`、`Layout.tsx:149` |
 | 工具栏 | 标题「产业信号」；subtitle `规则判定基于 R5 指标 · 数据时点 … · 命中 N 条`；右侧「刷新」 | `SignalsScreen.tsx:235-247` |
 | 主区 | 3 指标卡（`grid-cols-3 gap-3`）→ 筛选行（`Segmented` + `Select w-56` + `Select w-40` + 计数）→ `desk:grid-cols-12`：左 8 列 `DataTable maxHeight=calc(100vh - 380px)`、右 4 列规则卡 → 证据 `Drawer width="lg"` | `SignalsScreen.tsx:343-423` |
 | 六态 | 5 态齐全；空态区分「接口未接入」与「没有命中」；表内 filtered-empty；规则卡有空态 | `SignalsScreen.tsx:252-331,299-311,409,501` |
@@ -370,7 +374,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「验证」分组「涨停样本」；支持 `?date=` 深链 | `Layout.tsx:113-119`、`App.tsx:63` |
+| 入口 | 侧栏「验证」分组「涨停样本」；支持 `?date=` 深链 | `Layout.tsx:139`、`App.tsx:70` |
 | 工具栏 | 标题「涨停样本」；subtitle `date · count 只 · 来源 source_detail`；右侧「刷新」 | `LimitUpScreen.tsx:122-137` |
 | 主区 | partial 条 → 单张 `DataTable density=compact maxHeight=calc(100vh - 320px) initialSort=streak desc` → 页脚口径；无卡片 | `LimitUpScreen.tsx:223-250` |
 | 六态 | 5 态齐全；「当日涨停池未同步」空态与表内空态分别存在 | `LimitUpScreen.tsx:142-217,238` |
@@ -381,7 +385,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | **无侧栏入口**；`/research/:code`（`App.tsx:75`）；站内入口由本屏自产的链接提供（R-05） | `research/links.ts:27` |
+| 入口 | 本屏无独立侧栏项；`/research/:code`（`App.tsx:83`）由 `/research` 落地页链入——侧栏「个股深挖」分组「个股深挖」（`Layout.tsx:157`）指向落地页 | `research/links.ts:27`、`Layout.tsx:157` |
 | 工具栏 | 标题 = 名称 ?? 代码 ??「个股深挖」；subtitle `code · date · 个股深挖`；meta「六段齐备 · 更新于…」/「部分段落未完成…」；badge = 演示 `Badge` + `DemoStateBadge`；右侧「刷新」+ 主操作「研究报告」 | `ResearchDetailScreen.tsx:507-560` |
 | 主区 | `flex flex-col gap-5`；三行 `grid gap-4 desk:grid-cols-12`，每行 7/5 两卡：公司画像 + 盈利预期 / 财务趋势 + 风险清单 / 估值基准面板 + 估值分位与六段状态；底部 `ProvenanceDrawer` | `ResearchDetailScreen.tsx:648-720` |
 | 六态 | 整屏 5 态齐全；段内无 artifact → `StageProblem`（含 CLI 提示 + 去报告页）；预测降级 → 内嵌 `Banner warn`；序列/风险/分位各有空态；**分位为空时是裸 `<p>`** | `ResearchDetailScreen.tsx:562-637,162-192,348,457-460` |
@@ -394,7 +398,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 深挖页「研究报告」按钮 / 段内跳转 / 深链；`?stage=` 选段（默认第一个失败段，否则 `report`） | `App.tsx:76`、`ResearchReportScreen.tsx:117-120` |
+| 入口 | 深挖页「研究报告」按钮 / 段内跳转 / 深链；`?stage=` 选段（默认第一个失败段，否则 `report`） | `App.tsx:84`、`ResearchReportScreen.tsx:117-120` |
 | 工具栏 | `PageHeader` subtitle `code · date · 研究报告`；meta「N 段失败 · N 段待跑」；右侧「刷新」+「个股深挖」（左箭头） | `ResearchReportScreen.tsx:152-199` |
 | 主区 | `flex flex-col gap-4 desk:flex-row`：左 sticky 段轨卡（`desk:w-[208px] desk:top-4`，`CardBody p-2`，`StageRail`）+ 右 `Card flex-1`（标题 `${ordinal}. ${stage.title}`，副标题复合串「第 N 段 · 状态 · 降级 · mode=… · 模型=…」）→ 正文 `MarkdownView` → 页脚计数 | `ResearchReportScreen.tsx:271-330,427-448` |
 | 六态 + 运行态 | 整屏 5 态；段级四分支：`running` → `RunProgress`（`role="status"` + `role="progressbar"` + `aria-valuenow`）、`failed` → `ErrorBlock` + 失败类别 + 「重试本段」+ 等价命令 + 不可重试说明、`pending` → `EmptyState` +「运行本段」+ 等价命令、`ok` → 降级条 + 正文；`run.error` → `Banner danger` +「再试一次」；轮询 1s 至终态 | `ResearchReportScreen.tsx:55-84,330-424`、`useResearchRun.ts:11,56-84` |
@@ -407,7 +411,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏底部固定项（不进 `NAV_SECTIONS`）；四段 peers / ai / ports / about 走 `?tab=`，切段用 `replace` | `Layout.tsx:316-319`、`SettingsScreen.tsx:74,82-91,1068-1078,1075` |
+| 入口 | 侧栏底部固定项（不进 `NAV_SECTIONS`）；四段 peers / ai / ports / about 走 `?tab=`，切段用 `replace` | `Layout.tsx:162,357-365`、`SettingsScreen.tsx:74,82-91,1068-1078,1075` |
 | 工具栏 | 标题「设置」；subtitle 随状态切换（离线 / 控制面未启用 / `N 个模块 · 运行中 M` / 读取中）；右侧主操作「刷新状态」 | `SettingsScreen.tsx:1178-1207` |
 | 主区 | 左 176px 竖排二级导航（`w-menu`，手写 `nav`，**不用** C-08 Tabs）+ 右 `min-w-0 flex-1`：peers 为 `SectionCard bodyClassName="p-0"` 内 `ul gap-3 p-4` 的 `PeerCard`；ai 为表单卡；ports 为 `DataTable`（5 列）+ 配置目录卡（`Badge` chips）；about 为两列 `dl`（`desk:grid-cols-2 gap-x-5`）+ 边界声明 + 外观 `Segmented` | `SettingsScreen.tsx:1399-1405,1280-1389,991-1039` |
 | 六态 | 整屏 5 态齐全（`?state=` 支持）；**缺段级状态**：`health`/`stateConfig` 的 loading 不 gate about（行显示 `—`+注）；AI 段无自身 loading/empty；「一键体检」永久禁用；抽屉保存错误只有行内文本 | `SettingsScreen.tsx:965-986,740,1350` |
@@ -973,7 +977,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | R-02 | 任意值与默认泄漏：**63** 处 `width:'Npx'` 列宽、**4** 处 `calc(100vh - Npx)` 表高、**4** 处 `maxHeight="Npx"`、**19** 处 `[...]` 任意值 utility、**48** 处 Tailwind 默认 `.5` 间距 | 各屏（示例：`PoolScreen.tsx:224-270,431`、`PositionsScreen.tsx:248-336`、`CalendarScreen.tsx:135-167`、`ui/Card.tsx:102` 的 `w-[3px]`、`WeeklyScreen.tsx:381`） | §7.3、§11.0 | 二 |
 | R-03 | C-09 缺 `summaryRow` / `expandable`，导致裸表与手写网格 | `PoolScreen.tsx:125`、`ValidateScreen.tsx:585-595` | §6.2、§6.3 | 二 |
 | R-04 | `min-[1024px]`×6、`min-[1100px]`×3、`min-[640px]`×1 绕过 `rail:`/`desk:`；`tokens.json` 的 `breakpointMin` 未注册档名 | `WeeklyScreen.tsx:381,506,554`、`MarketScreen.tsx:529`、`ResearchDetailScreen.tsx:94,262,394` | §2、§7.3 | 二 |
-| R-05 | 5 屏无导航可达路径（只能改地址栏） | `/industry` `/industry/:name` `/signals` `/research/:code` `/research/:code/report` | §2 | 二 |
+| R-05 | 5 屏无导航可达路径（只能改地址栏） | **已关闭（v1.3）**：`/industry` `/signals` `/research` 由 QUOT-300 补上侧栏入口，`/positions` `/calendar` 由 DEC-044 归入「我的股票」；余下 `/industry/:name` `/research/:code` `/research/:code/report` 是**下钻页**，入口路径成立（§2「20 屏导航可达性」），不再算缺陷 | §2 | 二 |
 | R-06 | 后端 key 直显 | `WeeklyScreen.tsx:176`（`realtime`/`archive`） | §5.8、§8 | 二 |
 | R-07 | 用 `0` / 假定值冒充缺失 | `SignalsScreen.tsx:237,347`、`NewsScreen.tsx:437`、`CalendarScreen.tsx:374`、`PoolScreen.tsx:156,289`、`PositionsScreen.tsx:636`、`WeeklyScreen.tsx:520,543`、`SettingsScreen.tsx:541,804,1346` | §8 | 二 |
 | R-08 | 数字未套 `.ldst-num` | `PoolScreen.tsx:161-163`、`HomeScreen.tsx:519`、`WeeklyScreen.tsx:339-369`、`MarketScreen.tsx:538-571`、`ResearchDetailScreen.tsx:96,209`、`PositionsScreen.tsx:179,205` | §7.2 | 二 |
@@ -1007,6 +1011,9 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 
 - QUOT-307（视觉巡检最小版 + 18 屏 before 截图）：§11 的截图证据依赖它，分支 `agent/agent/c2e06ff2f397`。
 - QUOT-309（逐屏粗糙点清单，315 条）：与本文件**互补**——它按"屏 × 维度"枚举证据，本文件按"条款"给规范。§12.5 的 R 编号是本文件的整改面，不与 QUOT-309 的 M 编号合并。
-- QUOT-300 / QUOT-304（导航补入口与分组）：QUOT-304 已按 DEC-044 完成「我的股票」分组，本规范 §2 同步到新结构；后续再动 `NAV_SECTIONS` 必须先改决策与本节。
+- QUOT-300（补已交付路由入口，已合入 main `edb339b`）/ QUOT-304（「我的股票」分组，DEC-044，本文件 v1.2 + v1.3 补齐事实）：`NAV_SECTIONS` 结构已定稿为 9 组，§2「导航顺序」是**规范值**而不是现状登记。
+- QUOT-316（QUOT-306 阶段三，侧栏视觉精排）：只动视觉层（图标、间距、分组标题、展开动效），**不再改分组与顺序**；要改结构必须先在 `docs/decisions/` 立一条 DEC（只增不改），再同步本文 §2 与 §0。已知待精排的结构性事实：9 组全展开时侧栏内容在 900px 视口下纵向超出约 321px，靠 `nav` 的 `overflow-y-auto` 滚动（不是缺陷，但值得在 316 里用「默认收起非活跃组」或行高收一档解决）。
+- 本文与侧栏的一致性**不再靠人眼**：`python scripts/audit-nav-citations.py`（仓库根目录跑，非 0 退出即不一致）。v1.2 那版就是人眼漏改，量出 13 处。
+- **登记的遗留计数**：标题「（18 屏）」与 §1/§6/§10 里的「全 18 屏」是 v1.1 写作时的口径，实际覆盖自 `/intraday` 起就是 19 屏、v1.3 补登记 `/research` 落地页后是 20 屏。本版只把与侧栏直接相关的 §0/§2/§3 改齐（那是 DEC-044 的影响面），其余「18 屏」出现在组件适用列与契约映射标题里，改它们要逐条判断「是不是真的 20 屏都适用」，属 §11 逐屏走查的工作量，不由一次导航改动顺手动——留给 QUOT-316 或下一次 §11 走查一并收。
 - `docs/specs/SPEC-RESEARCH-PAGES.md` / `SPEC-RESEARCH-PROVENANCE.md`：§3.16–§3.17 与其口径一致，冲突时以这两个 spec 的**后端契约**为准、以本文件的**视觉 token** 为准。
 - 交付位置说明：本文件与 `docs/decisions/DEC-040-*.md` 都在受版本管理的目录内；`docs/tasks/` 被 `.gitignore:48` 排除（DEC-0026），故本次产出不放 `docs/tasks/`。
