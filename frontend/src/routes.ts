@@ -14,6 +14,8 @@ export const ROUTE_PATHS = [
   '/',
   '/market',
   '/watch',
+  // 盯盘第二页：竞价与盘中 6 时点快照（QUOT-302 / DEC-035 §5），`?date=` + `?slot=` 深链
+  '/intraday',
   '/review',
   '/weekly',
   '/journal',

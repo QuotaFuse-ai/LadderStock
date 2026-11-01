@@ -20,6 +20,7 @@ import {
   Radar,
   ScrollText,
   Settings,
+  Timer,
   TrendingUp,
   Wallet,
   type LucideIcon,
@@ -41,8 +42,8 @@ import type { ThemeChoice } from '../lib/theme'
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
  * - 市场 5 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达 / 事件日历）都已实现 → 展开为二级；
  * - 复盘 2 段（情绪复盘 / 候选池）、日志 2 段（交易日志 / 我的持仓）同样展开；
- * - 盯盘的「竞价与盘中」缺 6 时点快照 → 本轮不展开，直接是链接：
- *   宁可少一层，也不给空壳入口（R10 遵守「不新增一级导航」）。
+ * - 盯盘 2 段（盘中信号 / 竞价与盘中）都已实现 → 展开为二级；
+ *   「竞价与盘中」由 QUOT-302 补上，前置是 QUOT-286（6 时点快照落盘）+ QUOT-301（读接口）。
  * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
  *
  * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进）。
@@ -93,8 +94,11 @@ export const NAV_SECTIONS: NavSection[] = [
     key: 'watch',
     label: '盯盘',
     icon: Radar,
-    // 「竞价与盘中」缺 6 时点快照（就绪表 ❌），本轮不建入口
-    pages: [{ to: '/watch', label: '盘中信号', icon: Radar }],
+    // 实时动态（阈值信号）+ 竞价与盘中（当日 6 时点快照，QUOT-302 / DEC-035 §5）
+    pages: [
+      { to: '/watch', label: '盘中信号', icon: Radar },
+      { to: '/intraday', label: '竞价与盘中', icon: Timer },
+    ],
   },
   {
     key: 'review',
