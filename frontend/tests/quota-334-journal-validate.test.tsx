@@ -148,8 +148,8 @@ describe('明日验证演示源', () => {
     expect(within(table).getByText('晋级率')).toBeTruthy()
     // §11.0「后端 key 不直显」：`temperature` / `seal_rate` 只出现在 hover 的 title 里。
     expect(within(table).queryByText('temperature')).toBeNull()
-    expect(within(table).getAllByText('命中')).toHaveLength(3)
-    expect(within(table).getAllByText('未命中')).toHaveLength(1)
+    expect(within(table).getAllByText('命中')).toHaveLength(4)
+    expect(within(table).queryAllByText('未命中')).toHaveLength(0)
     expect(document.body.textContent).toContain('下一交易日 2026-11-02')
     expect(urls).toHaveLength(0)
   })

@@ -34,16 +34,22 @@ const TEMPERATURE_FORMULA =
   '温度 = 0.45×晋级率 + 0.35×封板率 + 0.20×min(1, 最高板/6)，缺失分项按可用权重重新归一'
 
 /**
- * 2026-10-30 的连板天梯：{5,3,2,1} 四档 15 只，4 板整档缺失 → `gap_levels=[4]`。
- * 板数 / 封板时间与 `limitup/demo.ts` 同值，`600519 贵州茅台` 取不到板数，
- * 落进 `unknown_board` 而不是被编成 1 板。
+ * 2026-10-30 的连板天梯：1 板 32 / 2 板 8 / 3 板 4 / 4 板 2 / 5 板 1，合计 47 只、最高 5 板、无断层。
+ * 与复盘 / 周报 / 验证屏共用同一份市场事实（QUOT-334 基线）；板数列与 `limitup/demo.ts` 同源，
+ * `600519 贵州茅台` 取不到板数，落进 `unknown_board` 而不是被编成 1 板。
  */
 const LADDER_LEVELS: Array<{ boards: number; stocks: LadderStock[] }> = [
   {
     boards: 5,
     stocks: [
       { code: '002230', name: '科大讯飞', boards: 5, first_seal_time: '092500', seal_time: '092500' },
-      { code: '603501', name: '韦尔股份', boards: 5, first_seal_time: '093000', seal_time: '113000' },
+    ],
+  },
+  {
+    boards: 4,
+    stocks: [
+      { code: '002229', name: '鸿博股份', boards: 4, first_seal_time: '093300', seal_time: '110218' },
+      { code: '603083', name: '剑桥科技', boards: 4, first_seal_time: '094800', seal_time: '141500' },
     ],
   },
   {
@@ -61,6 +67,11 @@ const LADDER_LEVELS: Array<{ boards: number; stocks: LadderStock[] }> = [
       { code: '600000', name: '浦发银行', boards: 2, first_seal_time: '093015', seal_time: '142500' },
       { code: '000001', name: '平安银行', boards: 2, first_seal_time: '092945', seal_time: null },
       { code: '601127', name: '赛力斯', boards: 2, first_seal_time: '133500', seal_time: '133500' },
+      { code: '600050', name: '中国联通', boards: 2, first_seal_time: '094500', seal_time: '140200' },
+      { code: '002475', name: '立讯精密', boards: 2, first_seal_time: '100100', seal_time: null },
+      { code: '002241', name: '歌尔股份', boards: 2, first_seal_time: '101500', seal_time: '144000' },
+      { code: '600031', name: '三一重工', boards: 2, first_seal_time: '102800', seal_time: '143500' },
+      { code: '601318', name: '中国平安', boards: 2, first_seal_time: '110200', seal_time: null },
     ],
   },
   {
@@ -72,34 +83,59 @@ const LADDER_LEVELS: Array<{ boards: number; stocks: LadderStock[] }> = [
       { code: '600585', name: '海螺水泥', boards: 1, first_seal_time: '095500', seal_time: '095500' },
       { code: '000651', name: '格力电器', boards: 1, first_seal_time: null, seal_time: null },
       { code: '601899', name: '紫金矿业', boards: 1, first_seal_time: '144500', seal_time: '144500' },
+      { code: '000333', name: '美的集团', boards: 1, first_seal_time: '093800', seal_time: '093800' },
+      { code: '000858', name: '五粮液', boards: 1, first_seal_time: '100400', seal_time: null },
+      { code: '000568', name: '泸州老窖', boards: 1, first_seal_time: '101800', seal_time: '140800' },
+      { code: '600887', name: '伊利股份', boards: 1, first_seal_time: '094100', seal_time: '094100' },
+      { code: '600309', name: '万华化学', boards: 1, first_seal_time: '102200', seal_time: null },
+      { code: '600900', name: '长江电力', boards: 1, first_seal_time: '103500', seal_time: '103500' },
+      { code: '601088', name: '中国神华', boards: 1, first_seal_time: '104800', seal_time: '142000' },
+      { code: '601816', name: '京沪高铁', boards: 1, first_seal_time: '110100', seal_time: null },
+      { code: '600030', name: '中信证券', boards: 1, first_seal_time: '111500', seal_time: '141000' },
+      { code: '601688', name: '华泰证券', boards: 1, first_seal_time: '130100', seal_time: null },
+      { code: '600438', name: '通威股份', boards: 1, first_seal_time: '131500', seal_time: '143200' },
+      { code: '300274', name: '阳光电源', boards: 1, first_seal_time: '132800', seal_time: null },
+      { code: '300014', name: '亿纬锂能', boards: 1, first_seal_time: '134200', seal_time: '144200' },
+      { code: '002466', name: '天齐锂业', boards: 1, first_seal_time: '135500', seal_time: null },
+      { code: '600111', name: '北方稀土', boards: 1, first_seal_time: '140800', seal_time: '140800' },
+      { code: '600150', name: '中国船舶', boards: 1, first_seal_time: '142100', seal_time: null },
+      { code: '600760', name: '中航沈飞', boards: 1, first_seal_time: '143400', seal_time: '143400' },
+      { code: '600276', name: '恒瑞医药', boards: 1, first_seal_time: '090500', seal_time: '090500' },
+      { code: '603259', name: '药明康德', boards: 1, first_seal_time: '091800', seal_time: null },
+      { code: '601888', name: '中国中免', boards: 1, first_seal_time: '093200', seal_time: '093200' },
+      { code: '600104', name: '上汽集团', boards: 1, first_seal_time: '094600', seal_time: null },
+      { code: '601633', name: '长城汽车', boards: 1, first_seal_time: '100000', seal_time: '142800' },
+      { code: '000338', name: '潍柴动力', boards: 1, first_seal_time: '101300', seal_time: null },
+      { code: '601668', name: '中国建筑', boards: 1, first_seal_time: '102600', seal_time: '143800' },
+      { code: '600028', name: '中国石化', boards: 1, first_seal_time: '103900', seal_time: null },
+      { code: '601857', name: '中国石油', boards: 1, first_seal_time: '105200', seal_time: '144600' },
     ],
   },
 ]
 
 const LADDER_COUNT = LADDER_LEVELS.reduce((total, level) => total + level.stocks.length, 0)
 
-/** 涨停池原始记录数：15 只能解析板数 + 1 条取不到板数（`600519`）→ `unknown_board`。 */
+/** 涨停池原始记录数：47 只能解析板数 + 1 条取不到板数（`600519`）→ `unknown_board`。 */
 const LIMIT_POOL_RECORDS = LADDER_COUNT + 1
 
 /**
- * 情绪指标由 `compute_sentiment` 的同一套算式得来，逐项能反推：
- * 封板率 15/(15+4)=78.9% · 晋级率 8/26=30.8% · 高度项 min(1,5/6)=83.3
- * → 温度 = 0.45×30.8 + 0.35×78.9 + 0.20×83.3 = **58.1**。
+ * 情绪指标与复盘 / 周报 / 验证屏同一份市场事实：温度 68、涨停 47 家、炸板 8 家、
+ * 昨日涨停 46 家今日晋级 15 家（32.6%）、封板率 85.5%、最高 5 板且梯队无断层。
  */
 const SENTIMENT_BASE: SentimentResult = {
   date: DEMO_TRADE_DATE,
   available: true,
   reason: null,
-  temperature: 58.1,
-  promotion_rate: 30.8,
-  seal_rate: 78.9,
+  temperature: 68,
+  promotion_rate: 32.6,
+  seal_rate: 85.5,
   limit_up_count: LADDER_COUNT,
-  broken_count: 4,
-  yesterday_limit_up_count: 26,
-  promoted_count: 8,
+  broken_count: 8,
+  yesterday_limit_up_count: 46,
+  promoted_count: 15,
   max_board: 5,
-  gap: true,
-  gap_levels: [4],
+  gap: false,
+  gap_levels: [],
   missing: [],
   formula: TEMPERATURE_FORMULA,
   source_detail: 'limit_pool: duckdb; broken_board: duckdb; yesterday_limit_up: duckdb',
@@ -117,8 +153,8 @@ const LADDER_BASE: LadderResult = {
     count: level.stocks.length,
     stocks: level.stocks,
   })),
-  gap: true,
-  gap_levels: [4],
+  gap: false,
+  gap_levels: [],
   leader_candidates: LADDER_LEVELS[0].stocks.map((stock) => ({ ...stock })),
   unknown_board: 1,
 }
@@ -233,7 +269,7 @@ function ladderPayload(variant: HomeDemoVariant): LadderEnvelope<LadderBody> {
                 stocks: level.stocks.map((stock) => ({ ...stock, first_seal_time: null })),
               }))
             : [],
-          gap_levels: degraded ? [4] : [],
+          gap_levels: [],
           leader_candidates: degraded ? LADDER_BASE.leader_candidates : [],
           unknown_board: degraded ? 1 : 0,
           data_source_status: degraded ? 'ok' : 'missing',
@@ -243,7 +279,7 @@ function ladderPayload(variant: HomeDemoVariant): LadderEnvelope<LadderBody> {
         available: degraded,
         degraded,
         sourceDetail: degraded
-          ? 'limit_pool: duckdb（16 条，5 条缺少封板时间）'
+          ? 'limit_pool: duckdb（48 条，5 条缺少封板时间）'
           : 'limit_pool: missing（0 条）',
       },
     )
