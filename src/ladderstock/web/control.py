@@ -52,9 +52,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from ladderstock.ai import checkpoint
+from ladderstock.ai import checkpoint, fallback
 from ladderstock.cli.paths import config_dir, project_root
-from ladderstock.core.boundary import PEER_DIR_ENV, PeerControl, resolve_peer_control
+from ladderstock.core.boundary import (
+    PEER_DIR_ENV,
+    BoundaryViolation,
+    PeerControl,
+    resolve_peer_control,
+)
 from ladderstock.core.fsguard import (
     AclError,
     harden_file_acl,
@@ -1245,8 +1250,11 @@ class ControlPlane:
         process_started: Callable[[int], datetime | None] | None = None,
         resolve: Callable[[str], list[str]] | None = None,
         harden_acl: Callable[[Path], None] | None = None,
+        config_root: Path | None = None,
     ) -> None:
         self.data_root = Path(data_root)
+        # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
+        self.config_root = Path(config_root) if config_root is not None else config_dir()
         self.peers: dict[str, PeerControl] = dict(peers or resolve_peer_control())
         # 启动即校验 peer 目录（QUOT-194 P1-3）：共享盘上的 peer 等于把执行权
         # 交给别人，命中即抛 SharedPeerDirectoryError，不进入任何动作。
@@ -2165,20 +2173,10 @@ class ControlPlane:
     ) -> dict[str, Any]:
         if peer not in self.peers:
             raise HTTPException(status_code=400, detail=f"未知 peer：{peer}")
-        base = (base_url or "").strip().rstrip("/")
-        parsed_url = urllib.parse.urlsplit(base)
-        if parsed_url.scheme not in {"http", "https"}:
-            raise HTTPException(status_code=400, detail="base_url 必须是 http(s) 地址")
-        target_host = (parsed_url.hostname or "").strip()
-        if not target_host:
-            raise HTTPException(status_code=400, detail="base_url 缺少主机名")
-        if not (model or "").strip():
-            raise HTTPException(status_code=400, detail="model 不能为空")
-
-        ctl = self.peers[peer]
         key = (api_key or "").strip()
         if not key:
             # 已存密钥只在白名单主机上回落，否则要求显式提供（QUOT-123 C10）
+            ctl = self.peers[peer]
             try:
                 stored = read_env_file(Path(ctl.directory) / ctl.env_filename, strict=True)
             except EnvFileUnreadable as exc:
@@ -2190,6 +2188,8 @@ class ControlPlane:
                 (stored[name] for name in ctl.secret_keys if stored.get(name)), ""
             )
             if stored_key:
+                parsed = urllib.parse.urlsplit((base_url or "").strip())
+                target_host = (parsed.hostname or "").strip()
                 allowed = ai_allowed_hosts()
                 if not host_in_allowlist(target_host, allowed):
                     raise HTTPException(
@@ -2200,6 +2200,21 @@ class ControlPlane:
                         ),
                     )
                 key = stored_key
+        return self._probe_chat(base_url=base_url, model=model, api_key=key)
+
+    def _probe_chat(self, *, base_url: str, model: str, api_key: str = "") -> dict[str, Any]:
+        """OpenAI 兼容端点的最小连通性探测（SSRF 判据 + 8 token ping）。"""
+        base = (base_url or "").strip().rstrip("/")
+        parsed_url = urllib.parse.urlsplit(base)
+        if parsed_url.scheme not in {"http", "https"}:
+            raise HTTPException(status_code=400, detail="base_url 必须是 http(s) 地址")
+        target_host = (parsed_url.hostname or "").strip()
+        if not target_host:
+            raise HTTPException(status_code=400, detail="base_url 缺少主机名")
+        if not (model or "").strip():
+            raise HTTPException(status_code=400, detail="model 不能为空")
+
+        key = (api_key or "").strip()
 
         # SSRF 判据：解析后的每一个地址都必须是公网（QUOT-123 C10）。
         # 唯一例外是「不带任何凭据」时探测本机 provider（Ollama 等）——此时没有
@@ -2276,6 +2291,101 @@ class ControlPlane:
             "model_seen": seen,
             "error": mask_secrets(error, [key]) if error else None,
         }
+
+    # ------------------------------------------------------------ 看板自身 AI
+    #
+    # 与 peer 配置分开：这里写的是看板自己 `ldst review` 用的 `config/ai.env`。
+    # 进程环境变量优先（部署/CI 显式注入永远覆盖文件），文件只补空缺，
+    # 这样设置页保存后不用重启服务。
+
+    def _self_ai_env_path(self) -> Path:
+        return fallback.env_file_path(self.config_root)
+
+    def self_ai_status(self) -> dict[str, Any]:
+        try:
+            document = fallback.status_document(fallback.load_config(self.config_root))
+        except BoundaryViolation as exc:
+            raise HTTPException(status_code=400, detail=f"读取 AI 配置失败：{exc}") from None
+        document["env_file"] = str(self._self_ai_env_path())
+        document["writable_keys"] = list(fallback.AI_ENV_KEYS)
+        # 当前后端只实现 HTTP API（OpenAI 兼容 / Anthropic Messages）。
+        # 订阅版 CLI 登录（Codex / Claude Code / WorkBuddy）没有实现，UI 不显示假入口。
+        document["subscription_cli"] = False
+        return document
+
+    def self_ai_update(
+        self, values: Mapping[str, str], clear: Iterable[str]
+    ) -> dict[str, Any]:
+        allowed = set(fallback.AI_ENV_KEYS)
+        unknown = sorted(set(values) - allowed)
+        unknown += sorted(set(clear) - allowed)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"不允许的配置键：{', '.join(sorted(set(unknown)))}"
+                    f"（白名单：{', '.join(fallback.AI_ENV_KEYS)}）"
+                ),
+            )
+        updates: dict[str, str] = {}
+        for name, value in values.items():
+            text = "" if value is None else str(value).strip()
+            if text == "":
+                continue
+            if "\n" in text or "\r" in text:
+                raise HTTPException(status_code=400, detail=f"{name} 不允许包含换行")
+            if name.endswith("_URL"):
+                parsed = urllib.parse.urlsplit(text)
+                if parsed.scheme not in {"http", "https"} or not (parsed.hostname or "").strip():
+                    raise HTTPException(
+                        status_code=400, detail=f"{name} 必须是 http(s) 地址"
+                    )
+            updates[name] = text
+        removals = [name for name in clear if name not in updates]
+
+        path = self._self_ai_env_path()
+        try:
+            write_env_file(path, updates, removals, harden=self._harden_acl)
+        except EnvFileUnreadable as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from None
+        except (AclError, OSError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"写入 {path.name} 失败或收紧 DACL 失败：{exc}；已中止，未留下半成品文件",
+            ) from None
+        payload = self.self_ai_status()
+        payload["updated"] = sorted(updates)
+        payload["cleared"] = sorted(removals)
+        return payload
+
+    def self_ai_test(
+        self, *, base_url: str, model: str, api_key: str | None = None
+    ) -> dict[str, Any]:
+        """探测看板自己的模型端点；留空密钥时只在同一端点内复用已存密钥。"""
+        key = (api_key or "").strip()
+        if not key:
+            try:
+                stored = read_env_file(self._self_ai_env_path(), strict=True)
+            except EnvFileUnreadable as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"{exc}；无法确认是否已存密钥，为避免退化成无鉴权请求，已中止",
+                ) from None
+            stored_base = (
+                stored.get("LDST_LLM_BASE_URL", "").strip()
+                or os.environ.get("LDST_LLM_BASE_URL", "").strip()
+            )
+            stored_key = (
+                stored.get("LDST_LLM_API_KEY", "").strip()
+                or os.environ.get("LDST_LLM_API_KEY", "").strip()
+            )
+            same_endpoint = (
+                stored_base
+                and stored_base.rstrip("/") == (base_url or "").strip().rstrip("/")
+            )
+            if stored_key and same_endpoint:
+                key = stored_key
+        return self._probe_chat(base_url=base_url, model=model, api_key=key)
 
     # ---------------------------------------------------------------- 日志
 
@@ -2425,6 +2535,12 @@ class AiTestRequest(BaseModel):
     api_key: str | None = None
 
 
+class SelfAiTestRequest(BaseModel):
+    base_url: str
+    model: str
+    api_key: str | None = None
+
+
 class AiGenerateRequest(BaseModel):
     date: str
     force: bool = False
@@ -2519,6 +2635,23 @@ def build_router(plane: ControlPlane) -> APIRouter:
         _peer_or_404(body.peer)
         return plane.ai_test(
             peer=body.peer,
+            base_url=body.base_url,
+            model=body.model,
+            api_key=body.api_key,
+        )
+
+    @router.get("/self-ai")
+    def self_ai_status() -> dict[str, Any]:
+        """看板自己（`ldst review`）的模型配置状态；密钥只回 `set`，不回明文。"""
+        return plane.self_ai_status()
+
+    @router.put("/self-ai")
+    def self_ai_update(body: ConfigUpdate) -> dict[str, Any]:
+        return plane.self_ai_update(body.values, body.clear)
+
+    @router.post("/self-ai/test")
+    def self_ai_test(body: SelfAiTestRequest) -> dict[str, Any]:
+        return plane.self_ai_test(
             base_url=body.base_url,
             model=body.model,
             api_key=body.api_key,

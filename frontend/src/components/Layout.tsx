@@ -20,12 +20,14 @@ import {
   Radar,
   ScrollText,
   Settings,
+  Sparkles,
   Timer,
   TrendingUp,
   Wallet,
   type LucideIcon,
 } from 'lucide-react'
 
+import AiConnectDialog from './AiConnectDialog'
 import PersistenceBanner from './PersistenceBanner'
 import { Segmented } from './ui'
 import { cn } from '../lib/cn'
@@ -221,6 +223,8 @@ export default function Layout() {
   const theme = useThemeChoice()
   const location = useLocation()
   const [expanded, setExpanded] = useState<string[]>(readExpanded)
+  // `?ai=1` 是深链（截图与排障用）；首次渲染读取一次，不跟后续导航反复弹窗
+  const [aiOpen, setAiOpen] = useState(() => new URLSearchParams(location.search).get('ai') === '1')
 
   const toggleGroup = (key: string) => {
     setExpanded((current) => {
@@ -363,6 +367,17 @@ export default function Layout() {
               className="w-full justify-between"
             />
           </div>
+          {/* 接入 AI 是动作而不是页面：不占路由、不参与导航一致性断言，放在设置上方。 */}
+          <button
+            type="button"
+            onClick={() => setAiOpen(true)}
+            title="接入 AI"
+            aria-haspopup="dialog"
+            className={navClass(false, true)}
+          >
+            <Sparkles className="size-4 shrink-0 text-accent" strokeWidth={1.75} aria-hidden="true" />
+            <span className="truncate rail:hidden">接入 AI</span>
+          </button>
           {PINNED_NAV.map((page) => (
             <NavLink key={page.to} to={page.to} title={page.label} className={({ isActive }) => navClass(isActive, true)}>
               <page.icon className="size-4 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
@@ -381,6 +396,8 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      <AiConnectDialog open={aiOpen} onClose={() => setAiOpen(false)} />
     </div>
   )
 }
