@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Trash2 } from 'lucide-react'
 
-import { api, describeApiError, isApiError } from '../api'
+import { describeApiError, isApiError, type WatchSnapshotRow } from '../api'
 import {
   WATCH_SNAPSHOT_TTL_SEC,
   useWatchSnapshot,
@@ -43,6 +43,7 @@ import {
   Switch,
   type Column,
 } from '../components/ui'
+import { useWatchSource } from './watch/useWatchSource'
 
 /**
  * 盯盘（P-03 / DESIGN-SPEC §4.4）。
@@ -52,6 +53,11 @@ import {
  *
  * 阈值是用户偏好（DEC-037）：落在 `watch_settings` 分片，刷新 / 重启 / 多窗口共用；
  * 越界输入仍然拒绝保存，不会因为持久化放过非法值。
+ *
+ * **演示源与本机回放是两件事**（UI-SPEC §11.2）：`?demo=1` / 「设置 → 虚拟数据」的信号
+ * 行不写 `watch_snapshot` 分片，也不参与 TTL / 交易日 / 时钟漂移判定 —— 演示态下本机
+ * 没有缓存，剩余 TTL 因此如实显示「—」。真实请求 404 / 断连只进空态 / 离线态，
+ * **绝不回落到 `watch/demo.ts`**。
  */
 
 const SCAN_WINDOW_LABEL = '3 分钟（固定）'
@@ -62,6 +68,17 @@ const LEVEL_BAR: Record<LevelTone, string> = {
   danger: 'bg-danger',
   warn: 'bg-warn',
   flat: 'bg-border-strong',
+}
+
+/** 契约行（下划线）→ 屏侧行（小驼峰）：演示行与真实行共用这一份映射，不写第二套。 */
+function toSnapshotRows(rows: WatchSnapshotRow[]): SnapshotRow[] {
+  return rows.map((row) => ({
+    code: row.code,
+    name: row.name,
+    limitUpCount: row.limit_up_count,
+    changePct: row.change_pct,
+    status: row.status,
+  }))
 }
 
 /** 秒 → 「8 分 12 秒」/「12 秒」（§4.2 文案里的时长口径，不写 `492s`）。 */
@@ -117,12 +134,13 @@ function buildColumns(thresholdPct: number): Array<Column<SnapshotRow>> {
     {
       key: 'level',
       header: '级别',
-      width: '88px',
+      /** 112px + 不换行：级别标签折成两行会把行高翻倍，一屏就只剩 8 行（§5.2 一屏 ≥12 行） */
+      width: '112px',
       render: (row) => {
         const level = levelOf(row, thresholdPct)
         return (
-          <span className="inline-flex items-center gap-2">
-            <span aria-hidden="true" className={`inline-block h-4 w-status-bar rounded-pill ${LEVEL_BAR[level.tone]}`} />
+          <span className="inline-flex items-center gap-2 whitespace-nowrap">
+            <span aria-hidden="true" className={`inline-block h-4 w-status-bar shrink-0 rounded-pill ${LEVEL_BAR[level.tone]}`} />
             <span className="text-caption text-text-secondary">{level.label}</span>
           </span>
         )
@@ -156,7 +174,15 @@ function buildColumns(thresholdPct: number): Array<Column<SnapshotRow>> {
       sort: (a, b) => (a.changePct ?? 0) - (b.changePct ?? 0),
       render: (row) => {
         const change = formatChangePct(row.changePct)
-        return <SignedNumber text={change.text} tone={change.tone} arrow={change.arrow} />
+        // 箭头不跟数字换行：换行会把行高从 compact 档位抬上去，一屏少掉四行（§5.2 一屏 ≥12 行）
+        return (
+          <SignedNumber
+            text={change.text}
+            tone={change.tone}
+            arrow={change.arrow}
+            className="whitespace-nowrap"
+          />
+        )
       },
     },
     {
@@ -182,6 +208,7 @@ function buildColumns(thresholdPct: number): Array<Column<SnapshotRow>> {
 
 export default function WatchScreen() {
   const forced = useForcedState()
+  const { demo, source } = useWatchSource()
 
   const storeTradeDate = useWatchSnapshot((state) => state.tradeDate)
   const storeFetchedAt = useWatchSnapshot((state) => state.fetchedAt)
@@ -197,26 +224,21 @@ export default function WatchScreen() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const request = useAsync((signal) => api.watchSnapshot(signal), [])
+  const request = useAsync((signal) => source.snapshot(signal), [source])
   const envelope = request.data
 
-  // 只把「可用」的快照写回本机；不可用时保留旧缓存，由 TTL 判定是否可展示
+  // 只把「可用」的快照写回本机；不可用时保留旧缓存，由 TTL 判定是否可展示。
+  // 演示行不写分片：§11.2 的回放口径（TTL / 交易日 / 时钟漂移）只属于真实快照。
   useEffect(() => {
-    if (!envelope) return
+    if (demo || !envelope) return
     if (envelope.payload.rows.length === 0) return
     setSnapshot({
       tradeDate: envelope.payload.trade_date,
       fetchedAt: envelope.fetched_at,
       sourceDetail: envelope.source_detail,
-      rows: envelope.payload.rows.map((row) => ({
-        code: row.code,
-        name: row.name,
-        limitUpCount: row.limit_up_count,
-        changePct: row.change_pct,
-        status: row.status,
-      })),
+      rows: toSnapshotRows(envelope.payload.rows),
     })
-  }, [envelope, setSnapshot])
+  }, [demo, envelope, setSnapshot])
 
   const freshness = evaluateSnapshotFreshness(
     { fetchedAt: storeFetchedAt, tradeDate: storeTradeDate },
@@ -224,6 +246,15 @@ export default function WatchScreen() {
     now,
   )
   const trustedRows = freshness.needsRefetch ? [] : storeRows
+
+  /**
+   * 展示用的行：演示态用当次演示信封里的行，真实态用本机回放行（受 TTL / 交易日 / 时钟漂移约束）。
+   * 两条通道互斥，`needsRefetch` 时真实行仍然一条都不出（§11.2「零旧值」）。
+   */
+  const displayRows = demo ? toSnapshotRows(envelope?.payload.rows ?? []) : trustedRows
+  /** L0 卡的交易日与取数时间描述「正在看的这份快照」：演示态取演示信封，真实态取本机回放。 */
+  const viewTradeDate = demo ? (envelope?.payload.trade_date ?? null) : storeTradeDate
+  const viewFetchedAt = demo ? (envelope?.fetched_at ?? null) : storeFetchedAt
 
   // ---- 阈值设置（watch_settings：刷新 / 重启 / 多窗口共用） ----
   const thresholdPct = useWatchSettings((state) => state.thresholdPct)
@@ -248,23 +279,23 @@ export default function WatchScreen() {
   const [confirmClear, setConfirmClear] = useState(false)
 
   const sourceStatus = envelope?.source_status ?? null
+  const degradedSource = sourceStatus !== null && sourceStatus !== 'ok'
   const unavailableDetail =
     envelope && envelope.payload.rows.length === 0 ? envelope.source_detail : null
   /** 后端明确回答「没有状态文件 / 不可用」：`available=false` 会被后端折成 `missing`（server.py:_envelope） */
   const backendMissing = envelope?.payload.data_source_status === 'missing'
 
   const derived = useMemo<PageState>(() => {
-    if (request.status === 'loading' && storeRows.length === 0) return 'loading'
+    if (request.status === 'loading' && displayRows.length === 0) return 'loading'
     if (request.status === 'error') {
       return isApiError(request.error) && request.error.kind === 'not-connected' ? 'offline' : 'error'
     }
-    if (request.status === 'ready' && sourceStatus !== null && sourceStatus !== 'ok' && trustedRows.length === 0) {
-      return 'partial'
-    }
-    if (trustedRows.length === 0) return 'empty'
-    if (sourceStatus !== null && sourceStatus !== 'ok') return 'partial'
+    if (request.status === 'ready' && degradedSource && displayRows.length === 0) return 'partial'
+    if (displayRows.length === 0) return 'empty'
+    // 演示态的降级由 L0 卡的「已降级」徽标 + 页脚来源说明承担，不出「快照不可用」提示条
+    if (degradedSource && !demo) return 'partial'
     return 'normal'
-  }, [request.status, request.error, sourceStatus, storeRows.length, trustedRows.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [request.status, request.error, degradedSource, demo, displayRows.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const state = resolveState(forced, derived)
 
@@ -275,18 +306,26 @@ export default function WatchScreen() {
   const refetchCopy = refetchCopyOf(freshness, storeTradeDate)
 
   // 真实原因优先用后端结论：本地没有任何快照时也说不出「为什么没有」，后端能
-  const subtitle = backendMissing
-    ? '快照不可用 · 后端没有可用的盯盘状态文件'
-    : freshness.needsRefetch
-      ? `快照不可用 · ${describeFreshness(freshness)}`
-      : `快照有效（剩余 ${formatInt(remainingSec)}s）· 交易日 ${storeTradeDate ?? MISSING}`
+  const subtitle = demo
+    ? `演示快照 · 交易日 ${viewTradeDate ?? MISSING} · 不落本机缓存，剩余 TTL 为 —`
+    : backendMissing
+      ? '快照不可用 · 后端没有可用的盯盘状态文件'
+      : freshness.needsRefetch
+        ? `快照不可用 · ${describeFreshness(freshness)}`
+        : `快照有效（剩余 ${formatInt(remainingSec)}s）· 交易日 ${storeTradeDate ?? MISSING}`
 
   // 表体空态的文案必须与「后端到底有没有数据」一致，不能假设盯盘守护进程在跑。
   // offline 优先：没连上后端时无从谈「后端有没有状态文件」，只能讲本机回放。
   // §3.2：空流不等于空态，文案要带最近一次扫描时间，证明盯盘在跑。
   const lastScanLabel = `最近一次扫描 ${formatTime(storeFetchedAt, now)}，暂无信号`
   const emptyHint =
-    state === 'offline'
+    demo
+      ? {
+          title: '演示数据 · 空态快照',
+          description:
+            '演示源的 empty 变体：后端没有盯盘状态文件，本机也没有可回放的快照，所以取数时间与剩余 TTL 都是「—」。',
+        }
+      : state === 'offline'
       ? {
           title: '离线 · 本机没有可回放的信号',
           description: `本地服务未连接，本机 IndexedDB 里也没有有效期内的盯盘快照。${lastScanLabel}。恢复连接后点「立即取数」。`,
@@ -360,7 +399,7 @@ export default function WatchScreen() {
       {header}
 
       {state === 'offline' && <OfflineBanner onRetry={request.reload} />}
-      {(state === 'offline' || backendMissing) && trustedRows.length > 0 && (
+      {!demo && (state === 'offline' || backendMissing) && trustedRows.length > 0 && (
         <Badge tone="warn" title="本机缓存快照，可能不是实时数据">
           缓存回放（只读）· 数据时间 {formatTime(storeFetchedAt)}
         </Badge>
@@ -397,11 +436,11 @@ export default function WatchScreen() {
           </div>
           <div className="flex flex-col gap-1 p-4">
             <dt className="text-caption text-text-secondary">交易日</dt>
-            <dd className="ldst-num text-body text-text">{storeTradeDate ?? MISSING}</dd>
+            <dd className="ldst-num text-body text-text">{viewTradeDate ?? MISSING}</dd>
           </div>
           <div className="flex flex-col gap-1 p-4">
             <dt className="text-caption text-text-secondary">取数时间</dt>
-            <dd className="ldst-num text-body text-text">{formatTime(storeFetchedAt, now)}</dd>
+            <dd className="ldst-num text-body text-text">{formatTime(viewFetchedAt, now)}</dd>
           </div>
           <div className="flex flex-col gap-1 p-4">
             <dt className="text-caption text-text-secondary">剩余 TTL</dt>
@@ -414,7 +453,7 @@ export default function WatchScreen() {
         </dl>
       </Card>
 
-      {freshness.needsRefetch && state !== 'partial' && (
+      {!demo && freshness.needsRefetch && state !== 'partial' && (
         <ErrorBlock
           variant="inline"
           title="旧值已隐藏"
@@ -429,8 +468,8 @@ export default function WatchScreen() {
           className="desk:col-span-8"
           title="信号流"
           subtitle={
-            showRows && trustedRows.length > 0
-              ? `${tradeDateLabel(storeTradeDate, now)} · ${formatInt(trustedRows.length)} 条 · 最新在上`
+            showRows && displayRows.length > 0
+              ? `${tradeDateLabel(viewTradeDate, now)} · ${formatInt(displayRows.length)} 条 · 最新在上`
               : '暂无可用信号'
           }
           bodyClassName="p-0"
@@ -451,11 +490,11 @@ export default function WatchScreen() {
           ) : (
             <DataTable<SnapshotRow>
               columns={columns}
-              rows={showRows ? trustedRows : []}
+              rows={showRows ? displayRows : []}
               rowKey={(row) => row.code}
-              caption={`盘中信号流（${tradeDateLabel(storeTradeDate, now)}），按最近一次事件合并，每股一行`}
+              caption={`盘中信号流（${tradeDateLabel(viewTradeDate, now)}），按最近一次事件合并，每股一行`}
               density="compact"
-              maxHeight="420px"
+              maxHeight="calc(100vh - 280px)"
               empty={
                 <EmptyState
                   compact
