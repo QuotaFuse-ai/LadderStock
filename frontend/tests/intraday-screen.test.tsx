@@ -214,7 +214,9 @@ describe('六种时点状态', () => {
     renderAt('/intraday?date=2026-10-30&slot=11:30')
     await waitFor(() => expect(railCells()).toHaveLength(6))
     expect(screen.getByRole('button', { name: '11:30 已过窗口，不补跑' })).toBeTruthy()
-    expect(await screen.findByText(/窗口外不补跑/)).toBeTruthy()
+    // 「窗口外不补跑」在顶部 Banner 与 11:30 详情两处都出现，唯一匹配会随两处渲染时序偶发多命中；
+    // 带冒号的这条只属于详情，且它出现即说明详情已落定，不是还在 loading。
+    expect(await screen.findByText(/窗口外不补跑：/)).toBeTruthy()
     expect(screen.queryByText('快照取数失败')).toBeNull()
     expect(screen.queryByText('盘中快照取数失败')).toBeNull()
     // 也不是整屏空数据：只有「部分时点没有落盘」这一条提示
