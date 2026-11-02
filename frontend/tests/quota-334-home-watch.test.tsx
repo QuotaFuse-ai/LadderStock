@@ -101,9 +101,9 @@ describe('首页演示源', () => {
     expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
     // 先等四路取数落定（骨架里没有表格），再断言读数
     await waitFor(() => expect(dataRowCount()).toBe(10))
-    expect(screen.getByText('58')).toBeTruthy()
+    expect(screen.getByText('68')).toBeTruthy()
     expect(screen.getAllByText('2026-10-30').length).toBeGreaterThan(0)
-    // 梯队表填满：§3.5 首页表容量是 Top 10，演示源给 15 只保证填满
+    // 梯队表填满：§3.5 首页表容量是 Top 10，演示源给 47 只保证填满
     expect(screen.getAllByText('比亚迪').length).toBeGreaterThan(0)
     // 演示态根本不碰网络：fetch 全程是断连桩，首屏照样有内容
     expect(fetch).not.toHaveBeenCalled()
@@ -115,7 +115,7 @@ describe('首页演示源', () => {
 
     expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
     await waitFor(() => expect(dataRowCount()).toBe(10))
-    expect(screen.getByText('58')).toBeTruthy()
+    expect(screen.getByText('68')).toBeTruthy()
   })
 
   it('五张指标卡都带溯源徽标（含「主线题材」，§11.5）', async () => {

@@ -46,18 +46,18 @@ const TEMPERATURE_FORMULA =
 
 // ---------------------------------------------------------------- 当日事实（三段共用一套数）
 //
-// 涨停 58 家 / 炸板 21 家 → 封板率 73.4%；昨日涨停 62 家、今日晋级 24 家 → 晋级率 38.7%；
-// 最高 5 板 → 温度 = 0.45×38.7 + 0.35×73.4 + 0.20×(5/6)×100 = **59.8**，
-// 与折线末点 `HISTORY_POINTS` 最后一天同值，指标卡与主图不会互相打脸。
+// 与首页 / 复盘 / 周报 / 验证屏同一份市场事实（QUOT-334 基线）：
+// 涨停 47 家 / 炸板 8 家 → 封板率 85.5%；昨日涨停 46 家、今日晋级 15 家 → 晋级率 32.6%；
+// 温度 68、最高 5 板，与折线末点 `HISTORY_POINTS` 最后一天同值，指标卡与主图不会互相打脸。
 
-const LIMIT_UP_COUNT = 58
-const BROKEN_COUNT = 21
-const YESTERDAY_LIMIT_UP_COUNT = 62
-const PROMOTED_COUNT = 24
+const LIMIT_UP_COUNT = 47
+const BROKEN_COUNT = 8
+const YESTERDAY_LIMIT_UP_COUNT = 46
+const PROMOTED_COUNT = 15
 const MAX_BOARD = 5
-const PROMOTION_RATE = 38.7
-const SEAL_RATE = 73.4
-const TEMPERATURE = 59.8
+const PROMOTION_RATE = 32.6
+const SEAL_RATE = 85.5
+const TEMPERATURE = 68
 
 const STOCKS: Record<string, LadderStock> = {
   byd: { code: '002594', name: '比亚迪', boards: 3, first_seal_time: '101205', seal_time: '143001' },
@@ -69,19 +69,19 @@ const STOCKS: Record<string, LadderStock> = {
   hongbo: { code: '002229', name: '鸿博股份', boards: 5, first_seal_time: '092500', seal_time: '092500' },
 }
 
-/** 板位 → 家数：`1 板 42 → 5 板 1`，合计 58 家与 `LIMIT_UP_COUNT` 对齐。 */
+/** 板位 → 家数：`1 板 32 / 2 板 8 / 3 板 4 / 4 板 2 / 5 板 1`，合计 47 家与 `LIMIT_UP_COUNT` 对齐。 */
 const LEVELS: LadderLevel[] = [
   { boards: 5, count: 1, stocks: [STOCKS.hongbo] },
   { boards: 4, count: 2, stocks: [STOCKS.iflytek] },
   { boards: 3, count: 4, stocks: [STOCKS.byd] },
-  { boards: 2, count: 9, stocks: [STOCKS.spdb, STOCKS.pab] },
-  { boards: 1, count: 42, stocks: [STOCKS.catl, STOCKS.smic] },
+  { boards: 2, count: 8, stocks: [STOCKS.spdb, STOCKS.pab] },
+  { boards: 1, count: 32, stocks: [STOCKS.catl, STOCKS.smic] },
 ]
 
 /**
  * 近 20 个交易日的情绪温度（CH-01 折线）。
  * 日期都是真实工作日、跳过国庆长假，形状「有起伏」：先回落到 39.8 的坑，再爬到 69.5 的高点，
- * 收尾在 59.8，全程穿过 40–60 区间带与 50 中性线。
+ * 收尾在 68，全程穿过 40–60 区间带与 50 中性线。
  */
 const HISTORY_SERIES: Array<[string, number]> = [
   ['2026-09-28', 47.8],
@@ -111,18 +111,18 @@ const HISTORY_POINTS: MarketHistoryPoint[] = HISTORY_SERIES.map(([date, temperat
   temperature,
 }))
 
-/** 题材强度（CH-03）：10 条、降序，覆盖 `limit_up_count` / `leader` / `delta` 三种「—」。 */
+/** 题材强度（CH-03）：10 条、降序；前 8 名与 QUOT-334 基线一致（82/74/66/58/51/47/39/31）。 */
 const THEMES: MarketThemeRow[] = [
-  { theme: '人工智能', strength: 88.6, limit_up_count: 12, leader: '鸿博股份', delta: 6.3 },
-  { theme: '半导体', strength: 81.2, limit_up_count: 9, leader: '中芯国际', delta: 2.1 },
-  { theme: '机器人', strength: 74.9, limit_up_count: 8, leader: '科大讯飞', delta: -3.4 },
-  { theme: '固态电池', strength: 66.3, limit_up_count: 6, leader: '宁德时代', delta: 8.7 },
-  { theme: '军工', strength: 58.1, limit_up_count: 5, leader: null, delta: 1.2 },
-  { theme: '医药', strength: 51.7, limit_up_count: 4, leader: '恒瑞医药', delta: null },
-  { theme: '券商', strength: 45.2, limit_up_count: 3, leader: '东方财富', delta: -1.5 },
-  { theme: '光伏', strength: 37.8, limit_up_count: 2, leader: '隆基绿能', delta: -5.6 },
-  { theme: '地产', strength: 29.4, limit_up_count: null, leader: null, delta: -1.8 },
-  { theme: '稀土', strength: 21.5, limit_up_count: 1, leader: '北方稀土', delta: 0.9 },
+  { theme: '人工智能', strength: 82.0, limit_up_count: 12, leader: '鸿博股份', delta: 6.3 },
+  { theme: '机器人', strength: 74.0, limit_up_count: 9, leader: '科大讯飞', delta: -3.4 },
+  { theme: '半导体', strength: 66.0, limit_up_count: 8, leader: '中芯国际', delta: 2.1 },
+  { theme: '军工', strength: 58.0, limit_up_count: 5, leader: null, delta: 1.2 },
+  { theme: '医药', strength: 51.0, limit_up_count: 4, leader: '恒瑞医药', delta: null },
+  { theme: '新能源', strength: 47.0, limit_up_count: 3, leader: '宁德时代', delta: 8.7 },
+  { theme: '消费', strength: 39.0, limit_up_count: 2, leader: '五粮液', delta: -1.5 },
+  { theme: '金融', strength: 31.0, limit_up_count: 1, leader: '东方财富', delta: -5.6 },
+  { theme: '地产', strength: 24.0, limit_up_count: null, leader: null, delta: -1.8 },
+  { theme: '稀土', strength: 18.0, limit_up_count: 1, leader: '北方稀土', delta: 0.9 },
 ]
 
 /** 未接 QuotaFuse Wire 时后端给出的原题文案（`server.py:_theme_status`），演示态照抄。 */

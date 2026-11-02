@@ -162,7 +162,7 @@ describe('市场屏演示源', () => {
     // CH-03：题材强度横向条（真实 DOM 组件）画前 8 条，其余只进明细表
     fireEvent.click(screen.getByRole('radio', { name: '题材轮动' }))
     expect(screen.getAllByText('人工智能')).toHaveLength(2)
-    expect(screen.getAllByText('光伏')).toHaveLength(2)
+    expect(screen.getAllByText('新能源')).toHaveLength(2)
     expect(screen.getAllByText('地产')).toHaveLength(1)
     expect(screen.getByText('稀土')).toBeTruthy()
   })
