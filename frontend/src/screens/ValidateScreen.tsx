@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Check, CircleSlash, ClipboardCheck, Lock, Plus, Save, Trash2, X } from 'lucide-react'
+import { Check, CircleSlash, Lock, Plus, Save, Trash2, X } from 'lucide-react'
 
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import { MISSING, formatInt, formatTime } from '../lib/format'
@@ -189,10 +189,6 @@ function signatureOf(rows: Array<{ code: string; trigger: string }>): string {
     .sort()
     .join('\n')
 }
-
-/** 列宽走 §7.3 的 {56, 88} 档；长文本列吃剩余宽度。 */
-const ROW_GRID =
-  'grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_5.5rem_5.5rem_5.5rem]'
 
 /**
  * 首屏密度目标（UI-SPEC §11.0 + PRD §5.2）：1440×900 下第一屏要同时看到 ≥12 行。
@@ -644,6 +640,8 @@ export default function ValidateScreen() {
   // ---- 条件表 ----
   const renderTable = (items: ConditionRow[], sourceOfRows: ValidationSource, locked: boolean) => {
     const isLocal = sourceOfRows === 'local'
+    // 本表没有可排序列，`rows` 的展示顺序就是 items 的顺序，序号按它算。
+    const orderOf = new Map(items.map((row, index) => [row.key, index + 1]))
     return (
       <SectionCard
         title={isLocal ? '条件草稿' : '后端条件'}
@@ -665,160 +663,195 @@ export default function ValidateScreen() {
           </>
         }
       >
-        <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
-          <div className="min-w-table-min">
-            <div
-              className={`sticky top-0 z-sticky grid h-control ${ROW_GRID} items-center gap-3 border-b border-border bg-surface-2 px-3 text-caption font-medium text-text-secondary`}
-            >
-              <span>序号</span>
-              <span>代码 · 名称</span>
-              <span>触发条件</span>
-              <span>失效条件 · 备注</span>
-              <span>仓位上限</span>
-              <span>确认状态</span>
-              <span className="text-right">操作</span>
-            </div>
-
-            {items.map((row, index) => {
+        {/* 行内编辑的唯一开关是屏侧的 `expanded`：新增即展开、切存放位置或删掉正在编辑的那条即收起。
+            C-09 的展开态是组件内部 state，`defaultExpanded` 只在挂载时生效，所以外部改动靠 `key` 重挂；
+            点行首箭头走的是内部态，不会重挂，滚动位置与过渡都不被打断。 */}
+        <DataTable<ConditionRow>
+          key={`${sourceOfRows}-${expanded ?? ''}`}
+          rows={items}
+          rowKey={(row) => row.key}
+          caption="一行一条条件：点行首的展开按钮编辑代码、触发条件与失效备注。"
+          maxHeight="calc(100vh - 280px)"
+          expandable={{
+            label: '编辑该条条件',
+            defaultExpanded: expanded ? [expanded] : [],
+            render: (row) => {
               const fieldId = `condition-${row.key}`
-              const isOpen = expanded === row.key
               return (
-                <div key={row.key} className="border-b border-border last:border-b-0">
-                  {/* §11.3 行高就是 h-row（38px）token：`py-2` 会让操作按钮把行撑到 44px，
-                      12 行多出 72px 正好把首屏最后一行推到折叠线以下。 */}
-                  <div
-                    className={`relative grid min-h-row ${ROW_GRID} items-center gap-3 px-3 py-1 transition-colors duration-fast ease-ldst hover:bg-surface-3`}
-                    aria-describedby={row.confirmed === false ? `${fieldId}-pending` : undefined}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={`absolute inset-y-0 left-0 w-status-bar ${
-                        row.confirmed === null ? 'bg-border-strong' : row.confirmed ? 'bg-ok' : 'bg-warn'
-                      }`}
+                <div className="grid gap-4 desk:grid-cols-12">
+                  <Field label="代码 / 标的" htmlFor={`${fieldId}-code`} className="desk:col-span-3" hint="六位代码或简称，可留空（纯情绪条件）。">
+                    <Input
+                      id={`${fieldId}-code`}
+                      type="text"
+                      value={row.code}
+                      placeholder="如 000001"
+                      disabled={locked}
+                      onChange={(event) => updateRow(row, { code: event.target.value })}
                     />
-                    <span className="ldst-num text-caption text-text-muted">{index + 1}</span>
-                    <span className="min-w-0 truncate text-body text-text" title={row.code || '未填代码'}>
-                      {row.code ? (
-                        <span className="ldst-num">{row.code}</span>
-                      ) : (
-                        <span className="text-text-muted">未填代码</span>
-                      )}
-                    </span>
-                    <span className="min-w-0 truncate text-body text-text-secondary" title={row.trigger || undefined}>
-                      {row.trigger || MISSING}
-                    </span>
-                    <span
-                      className="min-w-0 truncate text-body text-text-secondary"
-                      title={
-                        row.note ??
-                        '后端读投影不给自由文本备注（server.py:_validation_conditions 只把对账结论写进这一列）'
-                      }
-                    >
-                      {row.note || MISSING}
-                    </span>
-                    <span
-                      className="text-body text-text-muted"
-                      title="草稿结构（stores/validationDraft.ts）不记录仓位上限，用备注承载"
-                    >
-                      {MISSING}
-                    </span>
-                    <span>
-                      {row.confirmed === null ? (
-                        <span className="text-caption text-text-muted" title="后端条件不记录确认状态">
-                          {MISSING}
-                        </span>
-                      ) : row.confirmed ? (
-                        <Badge tone="ok">已确认</Badge>
-                      ) : (
-                        <Badge tone="warn">
-                          <span id={`${fieldId}-pending`}>待确认</span>
-                        </Badge>
-                      )}
-                    </span>
-                    <span className="flex items-center justify-end gap-1">
-                      <IconButton
-                        label={isOpen ? '收起编辑' : '编辑该条'}
-                        aria-expanded={isOpen}
-                        aria-controls={`${fieldId}-editor`}
-                        disabled={locked}
-                        onClick={() => setExpanded(isOpen ? null : row.key)}
-                        icon={<ClipboardCheck className="size-4" aria-hidden="true" />}
-                      />
-                      {isLocal && (
-                        <IconButton
-                          label={row.confirmed ? '取消确认' : '标记确认'}
-                          aria-pressed={row.confirmed === true}
-                          disabled={locked}
-                          onClick={() => toggleConfirmed(row.key)}
-                          icon={
-                            row.confirmed ? (
-                              <X className="size-4" aria-hidden="true" />
-                            ) : (
-                              <Check className="size-4" aria-hidden="true" />
-                            )
-                          }
-                        />
-                      )}
-                      <IconButton
-                        label="删除该条条件"
-                        disabled={locked}
-                        onClick={() => deleteRow(row)}
-                        icon={<Trash2 className="size-4" aria-hidden="true" />}
-                      />
-                    </span>
-                  </div>
-
-                  {isOpen && (
-                    <div
-                      id={`${fieldId}-editor`}
-                      className="grid gap-4 border-t border-border bg-sunken p-4 desk:grid-cols-12"
-                    >
-                      <Field label="代码 / 标的" htmlFor={`${fieldId}-code`} className="desk:col-span-3" hint="六位代码或简称，可留空（纯情绪条件）。">
-                        <Input
-                          id={`${fieldId}-code`}
-                          type="text"
-                          value={row.code}
-                          placeholder="如 000001"
-                          disabled={locked}
-                          onChange={(event) => updateRow(row, { code: event.target.value })}
-                        />
-                      </Field>
-                      <Field label="触发条件" htmlFor={`${fieldId}-trigger`} className="desk:col-span-3" hint="价格 / 量比 / 时间窗口；后端不接受空条件。">
-                        <Input
-                          id={`${fieldId}-trigger`}
-                          type="text"
-                          value={row.trigger}
-                          placeholder="如 竞价高开 3% 以上且量比 > 2"
-                          disabled={locked}
-                          invalid={!row.trigger.trim()}
-                          onChange={(event) => updateRow(row, { trigger: event.target.value })}
-                        />
-                      </Field>
-                      <Field
-                        label="失效条件 · 备注"
-                        htmlFor={`${fieldId}-note`}
-                        className="desk:col-span-6"
-                        hint={
-                          isLocal
-                            ? '失效条件、仓位上限、备选标的…草稿结构只有这一个自由文本字段。'
-                            : '后端 GET 不回备注（server.py:_validation_conditions 只投影 code / trigger），保存后读回看不到，但会写进文件。'
-                        }
-                      >
-                        <Textarea
-                          id={`${fieldId}-note`}
-                          value={row.note}
-                          placeholder="如 跌破昨收 3% 即失效；仓位不超过 2 成"
-                          disabled={locked}
-                          onChange={(event) => updateRow(row, { note: event.target.value })}
-                        />
-                      </Field>
-                    </div>
-                  )}
+                  </Field>
+                  <Field label="触发条件" htmlFor={`${fieldId}-trigger`} className="desk:col-span-3" hint="价格 / 量比 / 时间窗口；后端不接受空条件。">
+                    <Input
+                      id={`${fieldId}-trigger`}
+                      type="text"
+                      value={row.trigger}
+                      placeholder="如 竞价高开 3% 以上且量比 > 2"
+                      disabled={locked}
+                      invalid={!row.trigger.trim()}
+                      onChange={(event) => updateRow(row, { trigger: event.target.value })}
+                    />
+                  </Field>
+                  <Field
+                    label="失效条件 · 备注"
+                    htmlFor={`${fieldId}-note`}
+                    className="desk:col-span-6"
+                    hint={
+                      isLocal
+                        ? '失效条件、仓位上限、备选标的…草稿结构只有这一个自由文本字段。'
+                        : '后端 GET 不回备注（server.py:_validation_conditions 只投影 code / trigger），保存后读回看不到，但会写进文件。'
+                    }
+                  >
+                    <Textarea
+                      id={`${fieldId}-note`}
+                      value={row.note}
+                      placeholder="如 跌破昨收 3% 即失效；仓位不超过 2 成"
+                      disabled={locked}
+                      onChange={(event) => updateRow(row, { note: event.target.value })}
+                    />
+                  </Field>
                 </div>
               )
-            })}
-          </div>
-        </div>
+            },
+          }}
+          summaryRow={(all) =>
+            isLocal ? (
+              <span className="text-caption text-text-secondary">
+                合计 <span className="ldst-num text-text">{formatInt(all.length)}</span> 条 · 待确认{' '}
+                <span className="ldst-num text-text">
+                  {formatInt(all.filter((row) => row.confirmed === false).length)}
+                </span>{' '}
+                条 · 已确认{' '}
+                <span className="ldst-num text-text">
+                  {formatInt(all.filter((row) => row.confirmed === true).length)}
+                </span>{' '}
+                条
+              </span>
+            ) : (
+              <span className="text-caption text-text-secondary">
+                合计 <span className="ldst-num text-text">{formatInt(all.length)}</span> 条 ·
+                后端条件不记录确认状态，「待确认」只对本地草稿成立
+              </span>
+            )
+          }
+          columns={[
+            {
+              key: 'index',
+              header: '序号',
+              width: '56px',
+              numeric: true,
+              align: 'left',
+              // §3.3 的「左侧竖条标未确认」：C-09 没有行内条插槽，画在第一个数据格左沿（展开列之后）。
+              className: 'relative',
+              render: (row) => (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className={`absolute inset-y-0 left-0 w-status-bar ${
+                      row.confirmed === null ? 'bg-border-strong' : row.confirmed ? 'bg-ok' : 'bg-warn'
+                    }`}
+                  />
+                  <span className="text-caption text-text-muted">{orderOf.get(row.key)}</span>
+                </>
+              ),
+            },
+            {
+              key: 'code',
+              header: '代码 · 名称',
+              // §7.3：代码档 88 装不下「未填代码」的说明文案，取名称档 176。
+              width: '176px',
+              numeric: true,
+              align: 'left',
+              truncate: true,
+              cellTitle: (row) => row.code || '未填代码',
+              render: (row) => (row.code ? row.code : <span className="text-text-muted">未填代码</span>),
+            },
+            {
+              key: 'trigger',
+              header: '触发条件',
+              truncate: true,
+              cellTitle: (row) => row.trigger,
+              render: (row) => row.trigger || MISSING,
+            },
+            {
+              key: 'note',
+              header: '失效条件 · 备注',
+              // §7.3 最大档：备注是自由文本，给固定 208 后由「触发条件」吃剩余宽度（它是本屏主内容）。
+              width: '208px',
+              truncate: true,
+              cellTitle: (row) =>
+                row.note ||
+                '后端读投影不给自由文本备注（server.py:_validation_conditions 只把对账结论写进这一列）',
+              render: (row) => row.note || MISSING,
+            },
+            {
+              key: 'position',
+              header: '仓位上限',
+              width: '112px',
+              numeric: true,
+              align: 'left',
+              render: () => (
+                <span className="text-text-muted" title="草稿结构（stores/validationDraft.ts）不记录仓位上限，用备注承载">
+                  {MISSING}
+                </span>
+              ),
+            },
+            {
+              key: 'confirmed',
+              header: '确认状态',
+              width: '88px',
+              render: (row) =>
+                row.confirmed === null ? (
+                  <span className="text-caption text-text-muted" title="后端条件不记录确认状态">
+                    {MISSING}
+                  </span>
+                ) : row.confirmed ? (
+                  <Badge tone="ok">已确认</Badge>
+                ) : (
+                  <Badge tone="warn">待确认</Badge>
+                ),
+            },
+            {
+              key: 'actions',
+              header: '操作',
+              width: '88px',
+              align: 'right',
+              render: (row) => (
+                <span className="flex items-center justify-end gap-1">
+                  {isLocal && (
+                    <IconButton
+                      label={row.confirmed ? '取消确认' : '标记确认'}
+                      aria-pressed={row.confirmed === true}
+                      disabled={locked}
+                      onClick={() => toggleConfirmed(row.key)}
+                      icon={
+                        row.confirmed ? (
+                          <X className="size-4" aria-hidden="true" />
+                        ) : (
+                          <Check className="size-4" aria-hidden="true" />
+                        )
+                      }
+                    />
+                  )}
+                  <IconButton
+                    label="删除该条条件"
+                    disabled={locked}
+                    onClick={() => deleteRow(row)}
+                    icon={<Trash2 className="size-4" aria-hidden="true" />}
+                  />
+                </span>
+              ),
+            },
+          ]}
+        />
 
         <p className="mt-3 text-caption text-text-muted">
           「仓位上限」列显示 {MISSING}：两种来源的结构都不记录该字段（本轮不改 store），需要时写进「失效条件 · 备注」。
