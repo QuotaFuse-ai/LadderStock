@@ -116,8 +116,11 @@ data/intraday/<YYYY-MM-DD>/
 
 口径：
 
-- 昨日连板数读 `y_streak`（**不是** `limit_up_days`——后者在该工具里含今日封板数）；
-  上游没给就记 `未知`，不拿别的字段顶替；
+- 昨日连板数读 `y_streak`（**不是** `limit_up_days`——后者在该工具里是东财 `zttj.days`
+  「n天m板」的 n，统计窗口天数，不是连板数）；上游没给就记 `未知`，不拿别的字段顶替；
+- 1进2 今日侧读 `limit_pool` 的连板数，走 `ladder.BOARD_KEYS`，该序列把 `streak`
+  排在 `limit_up_days` 之前（DEC-046：2026-11-02 09:36 实测两值不等，旧顺序取到
+  `limit_up_days`，`today_second_board` 直接归零）；
 - `at_limit_up` 只在报价同时给出 `limit_up` 时才是布尔值，否则 `null`（不拿涨幅阈值猜）；
 - `by_board` 只给聚合（`首板/二板/三板及以上/未知`），空分组不输出；
 - `09:25` 的 `reading` 取 `open`、`reading_field="open"`，涨跌幅按开盘价重算；

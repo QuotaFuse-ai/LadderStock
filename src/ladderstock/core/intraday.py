@@ -44,9 +44,10 @@ from ladderstock.core.ladder import BOARD_KEYS, CODE_KEYS, NAME_KEYS, as_float, 
 
 SLOTS: tuple[str, ...] = ("09:25", "09:35", "10:00", "11:30", "14:00", "15:00")
 
-#: 昨日涨停池里的**昨日**连板数。不能复用 `ladder.BOARD_KEYS`：该工具的
-#: `limit_up_days` 是今天（含今日封板）的连板数，排在 `y_streak` 前面会被先取到，
-#: 分板位与 1进2 都会整体错一档。上游没给 `y_streak` 就记未知，不拿别的字段顶替。
+#: 昨日涨停池里的**昨日**连板数。不能复用 `ladder.BOARD_KEYS`：该工具同时返回
+#: `limit_up_days`（东财 `zttj.days`，「n天m板」的统计窗口天数，QUOT-290 实测
+#: 纯连板时恰好等于连板数，非纯连板时明显偏大），只有 `y_streak` 是昨日连板数。
+#: 上游没给 `y_streak` 就记未知，不拿别的字段顶替。
 YESTERDAY_STREAK_KEYS: tuple[str, ...] = (
     "y_streak",
     "yesterday_streak",

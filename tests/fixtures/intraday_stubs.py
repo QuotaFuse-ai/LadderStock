@@ -106,11 +106,36 @@ def sentiment_records(day: date = date(2026, 10, 30)) -> dict[str, Any]:
 
 
 def limit_pool_records(day: date = date(2026, 10, 30)) -> list[dict[str, Any]]:
-    """今日涨停池（适配器展开后的行形状，`streak` 为今日连板数）。"""
+    """今日涨停池（真实东财行形状）：`streak`=`lbc` 连板数，`limit_up_days`=`zttj.days`。
+
+    两值故意不等（2026-11-02 09:36 实测：002086 streak=3 / limit_up_days=9）。此前只给
+    `streak`，取错键的用例照样通过，1进2 的真实缺陷因此没被抓到（QUOT-290 / DEC-046）。
+    """
     return [
-        {"code": "603703", "name": "盛洋科技", "streak": 2, "trade_date": day.isoformat()},
-        {"code": "600261", "name": "阳光照明", "streak": 2, "trade_date": day.isoformat()},
-        {"code": "603131", "name": "上海沪工", "streak": 3, "trade_date": day.isoformat()},
+        {
+            "code": "603703",
+            "name": "盛洋科技",
+            "streak": 2,
+            "limit_up_days": 5,
+            "limit_up_count": 2,
+            "trade_date": day.isoformat(),
+        },
+        {
+            "code": "600261",
+            "name": "阳光照明",
+            "streak": 2,
+            "limit_up_days": 8,
+            "limit_up_count": 2,
+            "trade_date": day.isoformat(),
+        },
+        {
+            "code": "603131",
+            "name": "上海沪工",
+            "streak": 3,
+            "limit_up_days": 9,
+            "limit_up_count": 3,
+            "trade_date": day.isoformat(),
+        },
     ]
 
 
