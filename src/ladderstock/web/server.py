@@ -932,6 +932,13 @@ def _static_dir() -> Path:
 # 应用
 # --------------------------------------------------------------------------- #
 
+#: `index.html` 引用的 bundle 名带内容哈希，但浏览器对没有 `Cache-Control` 的
+#: HTML 会做启发式缓存，换 bundle 后仍可能回放旧页（表现为「导航还是老版」）。
+#: 让入口页每次回源校验，带哈希的 `assets/*` 才允许长期缓存。
+INDEX_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+ASSET_CACHE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
 def create_app(
     *,
     data_root: Path | None = None,
@@ -1558,7 +1565,7 @@ def create_app(
     def index() -> Any:
         page = dist / "index.html"
         if page.is_file():
-            return FileResponse(page)
+            return FileResponse(page, headers=INDEX_CACHE_HEADERS)
         return HTMLResponse(_hint_page(), status_code=200)
 
     @app.get("/{full_path:path}", include_in_schema=False)
@@ -1572,10 +1579,11 @@ def create_app(
             except ValueError:
                 raise HTTPException(status_code=404, detail="Not Found") from None
             if candidate.is_file():
-                return FileResponse(candidate)
+                headers = ASSET_CACHE_HEADERS if full_path.startswith("assets/") else INDEX_CACHE_HEADERS
+                return FileResponse(candidate, headers=headers)
             index_page = dist / "index.html"
             if index_page.is_file():
-                return FileResponse(index_page)  # SPA 路由回退
+                return FileResponse(index_page, headers=INDEX_CACHE_HEADERS)  # SPA 路由回退
         return HTMLResponse(_hint_page(), status_code=200)
 
     return app
