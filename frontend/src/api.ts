@@ -637,6 +637,7 @@ export interface PortConflict {
   process: string | null
   note: string
   foreign?: boolean
+  severity?: 'conflict' | 'info'
 }
 
 export interface JobView {

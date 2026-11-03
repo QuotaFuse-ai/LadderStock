@@ -144,7 +144,7 @@ interface StaticPeer {
   role: string
   directory: string
   mcp: number
-  web: number
+  web: number | null
   webLabel: string
 }
 
@@ -164,8 +164,8 @@ const STATIC_PEERS: readonly StaticPeer[] = [
     role: '数据底座 · 美股',
     directory: '[local-path]\\TickHub-US',
     mcp: 8002,
-    web: 8789,
-    webLabel: '管理端',
+    web: null,
+    webLabel: '管理端（本构建未提供）',
   },
   {
     id: 'wire',
@@ -182,7 +182,7 @@ const STATIC_PEERS: readonly StaticPeer[] = [
     role: '合议层',
     directory: '[local-path]\\StockSenate',
     mcp: 8765,
-    web: 8788,
+    web: 8786,
     webLabel: 'WebUI',
   },
 ]
@@ -308,20 +308,30 @@ function PeerCard({
 
         {peer.port_conflicts.length > 0 && (
           <ul className="flex flex-col gap-1">
-            {peer.port_conflicts.map((conflict) => (
-              <li key={conflict.port} className="flex items-start gap-1 text-caption text-warn">
-                <AlertTriangle className="mt-half size-3.5 shrink-0" aria-hidden="true" />
-                <span>
-                  端口 <span className="ldst-num">{conflict.port}</span> {conflict.note}
-                  {conflict.pid !== null && (
-                    <>
-                      （PID <span className="ldst-num">{conflict.pid}</span>
-                      {conflict.process ? ` · ${conflict.process}` : ''}）
-                    </>
+            {peer.port_conflicts.map((conflict) => {
+              const info = conflict.severity === 'info'
+              return (
+                <li
+                  key={conflict.port}
+                  className={`flex items-start gap-1 text-caption ${info ? 'text-text-muted' : 'text-warn'}`}
+                >
+                  {info ? (
+                    <Info className="mt-half size-3.5 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <AlertTriangle className="mt-half size-3.5 shrink-0" aria-hidden="true" />
                   )}
-                </span>
-              </li>
-            ))}
+                  <span>
+                    端口 <span className="ldst-num">{conflict.port}</span> {conflict.note}
+                    {conflict.pid !== null && (
+                      <>
+                        （PID <span className="ldst-num">{conflict.pid}</span>
+                        {conflict.process ? ` · ${conflict.process}` : ''}）
+                      </>
+                    )}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         )}
 
@@ -442,7 +452,7 @@ function StaticPeerCard({ peer, reason }: { peer: StaticPeer; reason: string }) 
         </p>
         <p className="text-caption text-text-muted">
           登记基线 <span className="ldst-num">{peer.mcp}</span> /{' '}
-          <span className="ldst-num">{peer.web}</span>（来自 config/sources.yaml，非探测值）
+          <span className="ldst-num">{peer.web ?? MISSING}</span>（来自 config/sources.yaml，非探测值）
         </p>
         <p className="truncate text-caption text-text-muted" title={peer.directory}>
           目录 <span className="ldst-num">{peer.directory}</span>
@@ -532,10 +542,12 @@ function buildPortRows(board: BoardPayload | null, probed: boolean): PortRow[] {
     }
     const conflict = conflicts.get(port)
     if (conflict) {
+      // severity=info：模块已在服务、只是不是控制面启动的 → 不是冲突
+      const info = conflict.severity === 'info'
       rows.push({
         port,
         usage,
-        state: 'busy',
+        state: info ? 'self' : 'busy',
         owner: ownerText(conflict),
         note: conflict.note || (conflict.foreign ? '外部进程占用' : '已被占用'),
       })
@@ -1535,8 +1547,9 @@ export default function SettingsScreen() {
             </SectionCard>
 
             <p className="text-caption text-text-muted">
-              端口冲突由后端预检给出：8001 被外部进程占用时 TickHub-US 用 8002；admin 8787 与 CN 冲突时 US 用 8789。
-              前端只展示，不自动改端口。
+              端口由后端预检给出：8001 被 WSL 转发占用时 TickHub-US 用 8002；US 本机构建没有管理端，不再占 8789；
+              8788/8789 归 ProxyFleet，Senate WebUI 用 8786。前端只展示，不自动改端口。
+              「非控制面启动」是归属提示，不是冲突。
             </p>
           </>
         )}

@@ -167,7 +167,6 @@ CONTROL_STATE_FILE = "peer_state.json"
 KNOWN_AVOIDED_PORTS: dict[str, tuple[tuple[int, str], ...]] = {
     "tickhub_us": (
         (8001, "TickHub-US 默认 MCP 端口：被 WSL 转发服务占用，改用 8002"),
-        (8787, "TickHub-US 默认管理端端口：与 TickHub-CN 撞车，改用 8789"),
     ),
 }
 
@@ -1427,6 +1426,19 @@ class ControlPlane:
             foreign_ports=[c["port"] for c in conflicts if c.get("foreign")],
         )
 
+        # 模块已在正常服务、占用的又是它自己的声明端口：这不是冲突，只是「控制面没
+        # 亲手拉起它」（手动启动很常见，如 CN 要先加载代理 env）。降级成归属提示，
+        # 保留 PID/进程名与「不接管」的事实，避免整页全红。
+        if status == STATUS_RUNNING:
+            own_ports = {ctl.mcp_port, ctl.web_port}
+            for conflict in conflicts:
+                if conflict.get("foreign") and conflict["port"] in own_ports:
+                    conflict["severity"] = "info"
+                    conflict["note"] = (
+                        "端口由控制面之外的进程监听（手动启动）；"
+                        "控制面不接管启停，也不会终止它"
+                    )
+
         last_job = self._last_job.get(key)
         running_with_web = status == STATUS_RUNNING and bool(ctl.web_port)
         open_url = f"http://127.0.0.1:{ctl.web_port}" if running_with_web else None
@@ -1548,7 +1560,13 @@ class ControlPlane:
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
             for owner in self._port_probe(port):
                 conflicts.append(
-                    {"port": port, "pid": owner.pid, "process": owner.process, "note": note}
+                    {
+                        "port": port,
+                        "pid": owner.pid,
+                        "process": owner.process,
+                        "note": note,
+                        "severity": "conflict",
+                    }
                 )
         for bound_port, owners in ((ctl.mcp_port, mcp_owners), (ctl.web_port, web_owners)):
             if not bound_port:
@@ -1563,6 +1581,7 @@ class ControlPlane:
                         "process": owner.process,
                         "note": "端口已被其他进程占用（不自动换端口，DEC-004）",
                         "foreign": True,
+                        "severity": "conflict",
                     }
                 )
         return conflicts

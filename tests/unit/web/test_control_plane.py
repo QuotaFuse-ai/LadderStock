@@ -238,6 +238,8 @@ def test_status_running_requires_port_and_health(
     snapshot = plane.snapshot("alpha")
     assert snapshot["status"] == control.STATUS_RUNNING
     assert snapshot["open_url"] == "http://127.0.0.1:8789"
+    # 自己的声明端口被控制面之外的进程监听，且模块在正常服务：归属提示，不是冲突
+    assert snapshot["port_conflicts"][0]["severity"] == "info"
 
 
 def test_status_failed_when_health_down(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
@@ -304,8 +306,8 @@ def test_port_conflicts_reported_for_known_avoided_ports(
     )
     snapshot = real.snapshot("tickhub_us")
     reported = {item["port"]: item for item in snapshot["port_conflicts"]}
+    assert set(reported) == {8001}  # 8787 不再是 US 的端口（DEC-047），不该再报
     assert reported[8001]["pid"] == 777
-    assert reported[8787]["process"] == "wslhost.exe"
     assert "8002" in reported[8001]["note"]
 
 
@@ -348,6 +350,7 @@ def test_foreign_occupier_marks_failed_without_killing(
     assert "不会终止占用者" in snapshot["detail"]
     conflict = snapshot["port_conflicts"][0]
     assert conflict["pid"] == 321 and conflict["foreign"] is True
+    assert conflict["severity"] == "conflict"  # 健康检查没过，仍是真冲突
     assert runtime.calls == []  # 看一眼而已，没执行任何子进程
 
 
@@ -703,7 +706,7 @@ def test_logs_endpoint_masks_stored_secret(
 def test_tickhub_us_metadata_matches_dec013() -> None:
     us = PEER_CONTROL["tickhub_us"]
     assert us.mcp_port == 8002
-    assert us.web_port == 8789
+    assert us.web_port is None  # 本机构建没有 admin API，不占 8789（DEC-047）
     assert us.has_wheel_dist is False  # 无 dist/*.whl，只能 -e
     assert us.import_package == "tickhub_us"
     assert {"MCP_HTTP_PORT", "ADMIN_HTTP_PORT", "POLYGON_API_KEY"} <= set(us.config_keys)

@@ -102,8 +102,9 @@ PEERS: dict[str, Peer] = {
 # 能改哪些键」。这些**同样是白名单**：控制面只认这张表，URL/请求参数永远落不到
 # 自由字符串上（DEC-014 硬约束 2）。
 #
-# 端口口径以 DEC-013 为准（TickHub-US 的 8001 被 WSL 转发占用 → 8002；
-# admin 8787 与 CN 撞车 → 8789）。`import_package` 是 `.venv` 里真正可 import
+# 端口口径以 DEC-013 / DEC-047 为准（TickHub-US 的 8001 被 WSL 转发占用 → 8002；
+# 本机构建没有 US admin API → 不分配管理端端口；8788/8789 归 ProxyFleet 网关，
+# Senate WebUI 改用 8786）。`import_package` 是 `.venv` 里真正可 import
 # 的名字，与分发名 `package`（带连字符）不是一回事。
 
 #: 控制面默认只写这一个文件（DEC-014 硬约束 4：凭据只进 env、0600）。
@@ -163,8 +164,9 @@ PEER_CONTROL: dict[str, PeerControl] = {
         directory=r"[local-path]\TickHub-US",
         import_package="tickhub_us",
         mcp_port=8002,
-        web_port=8789,
-        web_port_label="管理端（DEC-013 预留）",
+        # 本机构建没有 admin API：给一个端口只会把 ProxyFleet 的 8789 探成「本模块」
+        web_port=None,
+        web_port_label="管理端（本构建未提供）",
         health_path="/healthz",
         # 无 dist/*.whl：只能 `pip install -e .`（PRD §2 已知冲突 3）
         start_commands=(
@@ -183,8 +185,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         env_filename=".env",
         config_notes=(
             "US 的 MCP HTTP 自带匿名 /healthz（mcp/security.py:28），健康检查打 8002。",
-            "本机 TickHub-US 构建没有 admin API，8789 只是 DEC-013 预留；"
-            "ADMIN_HTTP_PORT 目前无处读取（按 PRD §5 保留）。",
+            "本机 TickHub-US 构建没有 admin API，ADMIN_HTTP_PORT 无处读取（按 PRD §5 保留）；"
+            "控制面因此不探测管理端，也不把 8789 展示成 US 的端口（DEC-047）。",
         ),
     ),
     "wire": PeerControl(
@@ -217,18 +219,19 @@ PEER_CONTROL: dict[str, PeerControl] = {
         directory=r"[local-path]\StockSenate",
         import_package="stock_senate",
         mcp_port=8765,
-        web_port=8788,
+        web_port=8786,
         web_port_label="WebUI",
         health_path="/healthz",
         start_commands=(
             ("ssenate", "mcp", "http", "--host", "127.0.0.1", "--port", "8765"),
-            ("ssenate", "webui", "--host", "127.0.0.1", "--port", "8788"),
+            ("ssenate", "webui", "--host", "127.0.0.1", "--port", "8786"),
         ),
         config_keys=("llm_provider", "deep_think_llm", "quick_think_llm", "MINIMAX_API_KEY"),
         secret_keys=("MINIMAX_API_KEY",),
         env_filename=".env",
         config_notes=(
-            "Senate 的 /healthz 在 WebUI 8788（webui/auth.py:34），且强制鉴权例外仅此路径。",
+            "Senate 的 /healthz 在 WebUI（webui/auth.py:34），且强制鉴权例外仅此路径；"
+            "8788 本机归 ProxyFleet REST/管理台，WebUI 改用 8786（DEC-047）。",
             "llm_provider / deep_think_llm / quick_think_llm 实际是 config/llm_config.toml 的键，"
             "写 env 不生效（PRD §5 注明「映射到 llm_config.toml」，待 P4 落地）。",
         ),
