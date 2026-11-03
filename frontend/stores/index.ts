@@ -3,8 +3,14 @@
 export { useWatchSnapshot, selectFreshness, selectTrustedRows } from './watchSnapshot'
 export type { SnapshotRow, WatchSnapshotState } from './watchSnapshot'
 
-export { useReviewDraft, REVIEW_SECTIONS, EMPTY_SECTIONS, draftCharCount } from './reviewDraft'
-export type { ReviewDraftState, ReviewSectionKey, ReviewSections } from './reviewDraft'
+export {
+  useReviewDraft,
+  REVIEW_SECTIONS,
+  EMPTY_SECTIONS,
+  draftCharCount,
+  selectSlot,
+} from './reviewDraft'
+export type { ReviewDraftSlot, ReviewDraftState, ReviewSectionKey, ReviewSections } from './reviewDraft'
 
 export {
   useValidationDraft,

@@ -45,16 +45,16 @@ import {
 } from './review/parse'
 
 /**
- * AI复盘（模型面，`/review/ai`，QUOT-344-S2 / DEC-047）。
+ * AI复盘（模型面，`/review/ai`，QUOT-344-S2 / DEC-049）。
  *
  * 只放模型产物：五段 `review.sections[].narrative` + 段级 `status` + `ai_failures[]` +
  * `ai.model` / `ai.degraded`，以及控制面动作 `POST /control/ai/generate` 与按段
  * `/control/ai/retry`（含 `control.job` 轮询）。
  *
  * 这一屏**没有程序指标卡**、没有逐段 `metrics`、「我的判断」也不可编辑——
- * 数据面与草稿在每日复盘 `/review`（DEC-047 §2/§3 裁定的边界，两屏读同一份 `/api/review`）。
+ * 数据面与草稿在每日复盘 `/review`（DEC-049 §2/§3 裁定的边界，两屏读同一份 `/api/review`）。
  *
- * 三种「没有 AI 正文」必须分开显示，不允许把「模型未配」显示成「数据缺失」（DEC-047 §4）：
+ * 三种「没有 AI 正文」必须分开显示，不允许把「模型未配」显示成「数据缺失」（DEC-049 §4）：
  * 1. `no-artifact`：当天复盘产物本身不存在 → 引导先跑 `ldst review`；
  * 2. `model-unconfigured`：产物在、程序指标都在，但没有一段跑过模型 → 引导「接入 AI」；
  * 3. `has-narrative` 里的段级失败：逐段标注 + 按段重试。
@@ -505,7 +505,7 @@ export default function AiReviewScreen() {
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-caption font-medium text-text-secondary">AI 叙述</span>
-                    {/* 模型名只在本屏出现：数据面不显示任何模型信息（DEC-047 §2） */}
+                    {/* 模型名只在本屏出现：数据面不显示任何模型信息（DEC-049 §2） */}
                     <span
                       className="min-w-0 truncate text-caption text-text-muted"
                       title={`模型 ${payload?.model ?? '未启用'}`}

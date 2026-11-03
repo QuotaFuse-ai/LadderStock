@@ -39,7 +39,7 @@ import {
   type SourceBadgeMeta,
 } from '../components/ui'
 import { useDensity } from '../lib/prefs'
-import { useReviewDraft } from '../../stores/reviewDraft'
+import { draftCharCount, selectSlot, useReviewDraft } from '../../stores/reviewDraft'
 import { useValidationDraft } from '../../stores/validationDraft'
 import { DEMO_TRADE_DATE } from './home/demo'
 import { HomeSearch } from './home/HomeSearch'
@@ -179,9 +179,9 @@ export default function HomeScreen() {
   const reconcile = validation.data?.payload.reconcile ?? null
 
   const draftConditions = useValidationDraft((state) => state.conditions)
-  const reviewSections = useReviewDraft((state) => state.sections)
+  const reviewSections = useReviewDraft((state) => selectSlot(state, tradeDate).sections)
   const reviewChars = useMemo(
-    () => Object.values(reviewSections).reduce((total, text) => total + text.trim().length, 0),
+    () => draftCharCount(reviewSections),
     [reviewSections],
   )
 

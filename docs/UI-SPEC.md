@@ -1,7 +1,7 @@
 # 看板信息架构与视觉规范（20 屏）
 
-- 版本：v1.6
-- 日期：2026-11-03
+- 版本：v1.7
+- 日期：2026-11-04
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -18,6 +18,7 @@
 | v1.3 | 2026-11-02 | QUOT-306 / QUOT-317 收口：一致性口径脚本化（`frontend/scripts/check-ui-consistency.mjs` + `npm run check:ui`，六项：裸表 / hex / 任意值 / 数值基线 / DataTable 引用 / 过渡时长）；`DataTable` 补整行 `summaryRow`（列级 `summary` 保留，二者互斥）；四处任意值收口为 `min-h-calendar-cell` / `min-w-table-min` 与 `truncate` 列；§0 表格「事件日历 / 我的持仓」的侧栏分组同步为「我的股票」（v1.2 遗漏）；编号与变更记录合并规则见 DEC-045。 |
 | v1.3.1 | 2026-11-02 | 外壳层 §2 逐条走查落地（QUOT-316，只动 `components/Layout.tsx` / `PageShell.tsx` / `PersistenceBanner.tsx`，`NAV_SECTIONS` 结构零变更）：① §2 提示条「同类最多 2 条 + 另有 N 条提示」此前无实现，`PersistenceBanner` 现按 tone 各截 2 条、余量并成一行且逐个列出分片名（折叠不丢信息），顶内距 `pt-3`→`pt-5` 与 `main` 的 `py-5` 对齐；② §11.0「数字必 `.ldst-num`」在页头不可达——`PageHeader` 的 subtitle / meta 由外壳统一挂 `.ldst-num`（只加可继承的 `font-variant-numeric`，字号与颜色仍归各屏），19 屏一次生效；页头换行纵向间距 12px→4px；③ §2 侧栏二级缩进 8px→16px（导引线落在一级图标正下方），`rail:` 档展平后加组间 1px 分隔线，否则 19 行同形图标无分组可读性；④ §2 阅读型内容度量：外壳自有的 `OfflineBanner` 说明段挂 `max-w-measure`（`--ldst-measure: 52ch`）；⑤ `Layout.tsx` 头注释的 `DESIGN-SPEC §3.1/§4.1` 假引用（M-9）改引 `UI-SPEC §2`；⑥ R-21 实测更正为「非缺陷」，见 §12.5。规范条文本身未放宽：以上都是代码向 §2 / §11.0 收敛。 |
 | v1.5 | 2026-11-02 | 新增「接入 AI」一等入口（QUOT-200）：侧栏底部（主题与设置之间）按钮 + 设置 → AI 接入顶部状态卡，打开右侧向导抽屉（`AiConnectDialog`）；提供 DeepSeek / 通义千问 / Kimi / MiniMax / 本机 Ollama / 自定义预置，测试连通性后写入 `config/ai.env`（`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY`），密钥只写不读回。订阅版 CLI（Codex / Claude Code / WorkBuddy）当前后端未实现，不放入口。`?ai=1` 可直接打开抽屉（截图/排障）。 |
+| v1.7 | 2026-11-04 | QUOT-354 走查 7 项缺陷收口（QUOT-353 修复轮，只改口径不加新功能，DEC-049 §3 落地细则补充）。**BUG-A**：`/weekly` 屏内 h1 由「周度复盘」改为**「AI周报」**，与 v1.6 侧栏改名对齐（当时只改了导航，屏内文案挂账到 S2）。**BUG-B/BUG-C**（BUG-B 是 P1，会串日）：交易日**只认 URL**，`review_draft` 分片删除 `tradeDate` 字段并按交易日分槽 `slots[date]`——`?date=` 深链不再被本机草稿日期反向覆盖，切日期不互相覆盖笔记，「清空草稿」改名**「清空当日草稿」**且只清当前一天；旧单槽分片在读取时归入它自己记录的日期（`sanitize` 归一，不升 `SCHEMA_VERSION`，避免同时动 `stores/manifest.json` 与 `tests/unit/test_state_contract.py` 的三处版本约定）。**BUG-D**：缺数兜底文案点名的按钮真叫「重试取数」（`ErrorBlock retryLabel`）。**BUG-E**：`/weekly` 每日序列 `available:false` 整行按缺失走 `—`，后端给计数补的 0 不再被读成「0 家涨停」，真实 0 照旧显示。**BUG-F**：行数口径改为**按来源后端判定**——`review/pipeline._row_count` 只在 `parquet`/`duckdb`（确实读到过数据源）时返回行数，`none` 返回 `None`；缺数据的原因复用已有的「数据来源」行，不新增契约字段。**BUG-G**：拆屏决策的注释引用统一改为 `DEC-049`（走查报 17 处，按 `grep -rn "DEC-047" frontend/` 复核为 15 处命中，现已**归零**；`src/ladderstock/core/boundary.py` 与 `tests/unit/web/test_control_plane.py` 里的 `DEC-047` 是端口归属那一份决策，编号正确，不改）。规范落点：§8 新增「整行无读数」「分源行数」「文案点名的按钮」三条口径；§3.1 新增「交易日与草稿的归属」；§3.7 / §11.7 随 BUG-A 改名并补断言；§10 每日复盘与 AI周报两行映射更新；§11.1 补 4 条走查项。证据：`tests/quota-354-defects.test.tsx`（BUG-B/C/D 行为断言 + BUG-F 屏侧口径）+ `tests/weekly-screen.test.tsx`（BUG-A/E）+ `tests/persistence.test.ts`·`tests/migrate.test.ts`（分槽与旧分片归一往返）+ `tests/unit/review/test_row_count_caliber.py`（BUG-F 两种后端）+ `docs/screenshots/review-{before,after}-353fix-bugb-dark.png`·`docs/screenshots/weekly-{before,after}-353fix-buge-{dark,light}.png`（5950 实机，前端 5199 代理）；`typecheck` / `test`（43 files / 434 例）/ `check:ui`（6/6）全绿。 |
 | v1.6 | 2026-11-03 | 复盘组拆三独立入口（QUOT-344，决策 DEC-046；本链 S1+S2 合并成这一行，按 DEC-045 §4）。导航：`复盘` 组由「情绪复盘 / 周度复盘 / 候选池」改为 **每日复盘 `/review` · AI复盘 `/review/ai` · AI周报 `/weekly` · 候选池 `/pool`**——三屏同源不合并，`/weekly` 只改文案不改路由。路由新增 `/review/ai`（与 `/review` 同族前缀，不用 `/ai-review`）；`frontend/tests/nav-routes.test.tsx` 加三入口互不相同、各自深链可达、`/review` 与 `/review/ai` 不同组件的断言；`visual-shot.mjs` 记为第 20 屏。AI复盘的导航图标取 `Bot`，不复用底部「接入 AI」动作的 `Sparkles`——`rail:` 档只剩图标可辨，两个 Sparkles 分不开。**分工**：每日复盘 = 当日五段数据（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），AI复盘 = AI 生成段落 + 降级/失败段，AI周报 = 按周聚合叙述。S2（QUOT-353，决策 DEC-049）补齐内容面：**`/review` = 数据面、`/review/ai` = 模型面，两屏读同一份 `review/<date>.json` 各取一半，互不重叠**。数据面新增此前不存在的正文层 `screens/review/SectionMetrics.tsx`（五段 `sections[].metrics` 走 key 登记表，未登记不上屏）；「我的判断」裁定归数据面且全仓只有一份 `review_draft` 存储，模型面不写第二份、交易日只跟 `?date=`（DEC-049 §3）。模型面从占位壳变为可用屏：五段 `narrative` + 段级 `status` + `ai_failures[]` + `ai.model` + 控制面 `generate`/按段 `retry` + 1.5s 轮询 `jobs/{id}` 全在这一屏，「重新生成 / 重试失败段」从 `/review` 移除（不是并存）。**三种「没有 AI 正文」分开显示**（`review/parse.ts:classifyAiCase`，只读契约字段不解析文案）：产物不存在 → 引导 `ldst review`；产物在但模型未配 → 「模型未接入：五段都没有跑过模型」+「接入 AI」，且必须写「缺的是模型，不是数据」；段级失败 → 逐段标注 + 按段重跑。同源修正三处口径：`headline` 是 `pipeline._headline()` 的程序直出，此前挂着「AI 摘要」+ 模型名属错标，现改标「程序直出 · 当日摘要」并留在数据面（DEC-049 §6）；段级缺数横幅按 §5.2 取 `danger`，收口 R-12（复盘两份本地溯源徽标一并收进 `SourceBadges`，R-01 计数 4→3）；演示态永不触发控制面、永不预填「我的判断」、离线回放缓存仍只有一个键（`review_snapshot_cache_v1`）。规范落点：§0 表行 1/20 标注两屏分工、§3.1 重写为数据面、新增 §3.19（模型面）、§10 两行映射落定、§11.1 重写 + 新增 §11.20、§12.5 补 R-27（复盘页面导出从未实现）。证据：`tests/review-split.test.tsx`（两屏同挂对照重叠检查）+ `tests/quota-334-review-weekly.test.tsx`（按拆屏后口径重写）+ `docs/screenshots/{review,review-ai}-after-344s2[-1024|-noartifact|-demo|-demo-partial][-tall]-{dark,light}.png`；`typecheck` / `test`（399 例）/ `check:ui`（6/6）全绿。 |
 | v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
 
@@ -137,7 +138,19 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | L1 | 「当日摘要」卡：**程序直出**（`pipeline._headline()` 用情绪温度与天梯拼的，不是模型产物；此前挂着「AI 摘要」+ 模型名，DEC-049 §6 纠正为错标） |
 | L1 | 五段结果：情绪 → 资金 → 题材 → 龙虎榜 → 龙头（顺序固定）；每段左栏「程序指标 · 不可编辑」、右栏「我的判断」（可编辑，自动存本机） |
 | L2 | 段内 `数据来源 <source_detail>` 脚注、段级数据态徽标（`程序直出` / `缺数` / `待生成`）、段级缺失原因行、页脚指标口径 + AI复盘出口 |
-| L3 | 刷新、清空草稿（§4.3 二次确认）、跳 AI复盘 |
+| L3 | 刷新、清空当日草稿（§4.3 二次确认，只清当前交易日）、跳 AI复盘 |
+
+**交易日与草稿的归属（QUOT-354 BUG-B / BUG-C，DEC-049 §3 的落地口径）**
+
+- **交易日只有一个来源：URL `?date=`**。深链优先于一切本机状态；页内「交易日」选择器改的是查询串
+  （`setSearchParams(..., { replace: true })`，保留 `demo` / `state` 等其它参数），不是本机 store。
+  `review_draft` 分片**不再存 `tradeDate`**——把「当前看哪天」写进持久化状态，就会让 11-03 的深链
+  被 11-02 的草稿反向覆盖，人照着写判断直接串到另一天上（P1）。
+- **草稿按交易日分槽**：`slots[<YYYY-MM-DD>] = { sections, updatedAt }`，切日期只换这一天的五段正文；
+  「清空当日草稿」只删当前槽，其它日期的笔记留着。旧版单槽分片（`tradeDate` + `sections`）在恢复时
+  一次性归到它自己记录的那天（`stores/reviewDraft.ts:normalizePersistedSlots`，走 `sanitize` 读取归一，
+  不动全局 `SCHEMA_VERSION`），不让人丢笔记。
+- 「已恢复 … 的草稿」横幅、`草稿 N 字`、`最后写入` 三处**都按当前交易日算**，不是全片合计；换日期后重新快照。
 
 **段内程序指标**（`frontend/src/screens/review/SectionMetrics.tsx`）：key 走登记表
 （`temperature` → 情绪温度、`seal_rate` → 封板率、`leader_candidates` → 龙头候选 …），
@@ -291,12 +304,12 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 
 **图表口径**：网格 `width:1`、轴标签 `12px`、轴线尺寸 44/36、容器 padding `[8,8,0,0]`、隐藏 legend、`minWidth 240` + ResizeObserver。**折线线宽必须是 1.5px**（token 注释口径），当前实现为 2 → R-23。
 
-### 3.7 周度复盘（`/weekly`）— 主任务：一周一次，把五段结论回看成趋势
+### 3.7 AI周报（`/weekly`）— 主任务：一周一次，把五段结论回看成趋势
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「复盘」分组第三项，标签「AI周报」（QUOT-344 / DEC-046 只改导航文案；屏内 `h1` 仍是「周度复盘」，改文案归 S2） | `Layout.tsx` `NAV_SECTIONS` |
-| 工具栏 | `PageHeader` 标题「周度复盘」；subtitle `${week} · start ~ end · N 个交易日有数据`；右侧 `上周 / 下周 / 刷新` 三键（次操作在左，主操作「刷新」在最右） | `WeeklyScreen.tsx:259-298` |
+| 入口 | 侧栏「复盘」分组第三项，标签「AI周报」（QUOT-344 / DEC-046 改导航文案）。**屏内 `h1` 与侧栏同名**：`PageHeader title="AI周报"`——此前导航改了而屏内仍挂「周度复盘」，同一屏两个名字（QUOT-354 BUG-A 收口；路由 `/weekly` 不变） | `Layout.tsx` `NAV_SECTIONS`、`WeeklyScreen.tsx:296` |
+| 工具栏 | `PageHeader` 标题「AI周报」；subtitle `${week} · start ~ end · N 个交易日有数据`；右侧 `上周 / 下周 / 刷新` 三键（次操作在左，主操作「刷新」在最右） | `WeeklyScreen.tsx:288-320` |
 | 主区 | 4 指标卡（首卡 `hero` + `Sparkline`）→ 程序直出概览卡（手写 `section` + `Badge`）→ 缺日 `Banner info` → 五段 AI `SectionCard`（编号标题 + 状态徽标 + `降级` + `AiErrorNotice`）→ 失败汇总 `Banner danger` → 每日序列 `DataTable`（compact）→ 两列 `min-[1100px]:grid-cols-2`（涨跌分布 / 主线题材 `HBarList`）→ 本周龙头 / 待验证结算 | `WeeklyScreen.tsx:371-610` |
 | 六态 | loading/error/offline 齐全；**empty 只出头部 + 一条横幅**，不保留指标卡阵（与其它屏不对称，R-15）；每日序列表的空态是**裸文本**不是 C-17（`WeeklyScreen.tsx:502`，R-16） | `WeeklyScreen.tsx:300-337,502` |
 | 溯源 | 屏内第四份 `SourceBadge`，直接把信封原值渲染：`freshness==='cached'?'缓存':envelope.freshness` → `realtime` / `archive` **上屏英文 key**（R-06）；AI 降级走 `Banner warn` + `Badge 降级` + `AiErrorNotice kind="degraded"` | `WeeklyScreen.tsx:166-179,376,457-468` |
@@ -757,10 +770,13 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | 金额 | 两位小数 + 千分位 + 单位（万 / 亿） | `1,234.56 万` |
 | **缺失值** | 一律「—」（`lib/format.ts:10`），并在悬浮或旁注说明原因；**不得显示 0 / 0.00 / ? / 假定默认值** | `—（未取到涨停池）` |
 | 计数类 | 无数据时显示「—」而不是 `0`；计数为 0 且语义上真是 0（如"今日 0 只涨停"）才显示 `0`，且必须与空态分支一致 | `共 — 条` vs `共 0 条` |
+| **整行无读数** | 一条按日/按标的的读数行，若该天整体没有读数（`available === false`），**整行所有指标都走 `—`**，包括后端为占位补出来的 `0`。补 0 不是读数，把它显示成 `0` 等于把「今天没数据」读成「今天 0 家涨停」（QUOT-354 BUG-E，`WeeklyScreen.tsx:262-274`） | `10-28 · — · — · —` |
+| **分源行数** | 段内多数据源各自的行数（`industry_rows` / `concept_rows` / `news_rows` / `board_rows` / `seat_rows`）：该源本机当天**没有产物**（`data/archive.py:snapshot` 的 `backend === 'none'`）时给 `null` → 屏上 `—`；只有真读到该源（`parquet` / `duckdb`）且当天 0 行才是真实的 `0`。原因不新造字段——`source_detail` 逐源写着 `theme_news: none`，屏底「数据来源」行原样出示（QUOT-354 BUG-F，`review/pipeline.py:_row_count`） | `题材资讯行数 —`（来源行 `theme_news: none`） |
 | 分位 / 占比 | 一位小数 + `%`；热力分位无数据时**不上色**并 title 说明 | `62.5%`、`无数据（未核实）` |
 | 时间 | 当日 `HH:mm:ss`，跨日 `MM-DD HH:mm`；全站本地时区；**后端裸值必须格式化**（`HHMMSS`、ISO） | `10:32:15` |
 | 日期 | `YYYY-MM-DD`；周 `YYYY-Www` | `2026-10-28`、`2026-W44` |
 | 按钮文案 | 动词开头，2–4 字；破坏性动作用「清除/删除/重置」 | `立即取数`、`重试该段`、`清除草稿` |
+| **文案点名的按钮** | 说明文字里出现「点『X』」时，页面上必须真有一个名为 X 的按钮——按钮的默认标签必须显式传，不能用 kit 默认值凑（QUOT-354 BUG-D：兜底文案写「重试取数」而按钮是 kit 默认的「重试」） | `恢复后点「重试取数」` + `retryLabel="重试取数"` |
 | 状态文案 | 先结论后原因 | 「需重新取数：快照已超过 TTL」 |
 | 禁用原因 | 禁用按钮必须有可见原因（旁注或悬浮），走 C-01 `disabledReason` | 「15:00 后可对账」「没有修改」 |
 | 后端 key | 不得直显；一律映射成中文标签（`realtime`→实时、`cached`→缓存、`archive`→存档、`degraded`→已降级、`partial`→部分缺失） | `缓存 · 已降级` |
@@ -785,7 +801,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 
 | 屏 | 路由 | 主要端点 / 数据来源 | 持久化 | 可信规则 |
 |---|---|---|---|---|
-| 每日复盘（数据面） | `/review` | `/api/review`（只取 `sections[].metrics` 与 `headline`）、`/api/sentiment`（三张指标卡）；**不发控制面请求** | `review_draft`（「我的判断」全仓唯一存储）+ `review_snapshot_cache_v1`（离线回放） | 指标永远只读；段级缺数 `—` 不补 0；真实取数失败不回落 `demo.ts` |
+| 每日复盘（数据面） | `/review`（**交易日只跟 `?date=`**） | `/api/review`（只取 `sections[].metrics` 与 `headline`）、`/api/sentiment`（三张指标卡）；**不发控制面请求** | `review_draft`（「我的判断」全仓唯一存储，**按交易日分槽** `slots[date]`，不存 `tradeDate`）+ `review_snapshot_cache_v1`（离线回放） | 指标永远只读；段级缺数 `—` 不补 0；真实取数失败不回落 `demo.ts` |
 | AI复盘（模型面） | `/review/ai` | `/api/review`（同一份产物的 `narrative` / `status` / `ai_failures[]` / `ai`）、`/api/control/ai/generate`、`/api/control/ai/retry`、轮询 `/api/control/jobs/{id}` | 无（**不写第二份草稿**，DEC-049 §3；交易日只跟 `?date=`） | 段落状态与降级只信后端字段，三-case 判定不解析提示文案；缺失显示「—」，不补 0、不编造；演示态禁用全部控制面 |
 | 盯盘 | `/watch` | `/api/watch/snapshot` | `watch_snapshot`（TTL 300s）、`watch_settings`（DEC-037） | 过期即不渲染旧值 |
 | 盯盘·竞价与盘中 | `/intraday` | `/api/intraday`、`/api/intraday/snapshot`（回环独占） | 无（快照走 `data/intraday/`，不进分片） | 逐时点状态只信 `status.json`；文件不在就写「没有快照」，不补 0（SPEC-INTRADAY-READ） |
@@ -793,7 +809,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | 日志 | `/journal` | `/api/journal/stats`（本机 SQLite） | 本机库 | 不出本机、不进 AI |
 | 首页 | `/` | `/api/sentiment`、`/api/ladder`、`/api/validation`、`/api/watch/snapshot` | 无 | 只读聚合，不自算 |
 | 市场 | `/market?tab=` | `/api/sentiment`、`/api/market/history?window=`、`/api/ladder`、`/api/market/theme` | 无 | 三段共用同一交易日；404 不得吞成 null（R-14） |
-| 周度复盘 | `/weekly` | `/api/weekly?week=` | 无 | 五段 AI + 事实包；降级可见 |
+| AI周报 | `/weekly` | `/api/weekly?week=` | 无 | 五段 AI + 事实包；降级可见；`available: false` 的那天整行走 `—`（补出来的 0 不上屏） |
 | 资讯雷达 | `/news` | `/api/news?date=&until=&source=&code=&limit=`（DEC-030） | 无 | 事件由后端规则抽取，页面不二次判定 |
 | 事件日历 | `/calendar` | `/api/events?month=&code=`（DEC-030） | 无 | 小节是否有源由后端 |
 | 候选池 | `/pool` | `/api/pool?date=&limit=`（DEC-030） | 无 | 分项缺失必须列明 |
@@ -839,6 +855,10 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 空态文案给出 `ldst review --date=YYYY-MM-DD` + 复制命令 + 重新检查，并写明「没有配置模型凭据只影响 AI复盘屏，不影响本屏」。
 - [ ] 「当日摘要」卡挂 `程序直出` 标签且不带模型名（DEC-049 §6 对错标的纠正）。
 - [ ] 刷新后草稿恢复出现 §4.1 提示条；清空草稿走 §4.3 二次确认。
+- [ ] **`?date=` 深链优先**：本机草稿记着 11-02 时打开 `?date=11-03`，日期选择器与取数请求都必须是 11-03，且 11-02 的正文一个字都不出现（QUOT-354 BUG-B，`tests/quota-354-defects.test.tsx`）。
+- [ ] 页内「交易日」选择器改的是 URL（`?date=` 跟着变、可分享），不是本机状态；`review_draft` 分片里没有 `tradeDate` 字段。
+- [ ] **草稿按交易日分槽**：11-03 写下的判断不会覆盖 11-02；「清空当日草稿」只清当前那一天，恢复横幅 / 字数 / 最后写入三处都只算当天（QUOT-354 BUG-C）。
+- [ ] 兜底文案里点名的按钮（「重试取数」）在页面上真同名存在，不是 kit 默认的「重试」（QUOT-354 BUG-D，§8「文案点名的按钮」）。
 - [ ] 指标卡与段内指标无任何可编辑入口；「我的判断」是本屏唯一写入面。
 - [ ] `?demo=1`：徽标出现、「我的判断」只读且为空、不写 IndexedDB 草稿，也不写离线回放缓存。
 
@@ -881,7 +901,10 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 每段有 `SourceLine`（来源 / 数据时间 / 取数）；段级 404 必须有可见降级，不许静默变 null。
 - [ ] 指标卡 note 中的数字（含 `—`）走 `.ldst-num`。
 
-### 11.7 周度复盘 `/weekly`
+### 11.7 AI周报 `/weekly`
+
+- [ ] 屏内 `h1` 与侧栏标签同为「AI周报」，页面上没有第二处「周度复盘」标题（QUOT-354 BUG-A；路由与后端契约仍写 `/weekly`，不改文案以外的东西）。
+- [ ] 每日序列表里 `available: false` 的那天**整行 `—`**（温度 / 晋级率 / 封板率 / 涨停 / 炸板 / 最高板 / 断层 / 来源），后端补出来的 `0` 不得上屏；有读数那天的真实 `0` 必须照显示（QUOT-354 BUG-E，§8「整行无读数」）。
 
 - [ ] `min-[1024px]` / `min-[1100px]` 清零。
 - [ ] `SourceBadge` 使用统一标签表：`realtime` 显示「实时」、`archive` 显示「存档」，页面上**不出现英文 key**。

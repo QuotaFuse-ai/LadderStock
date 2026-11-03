@@ -7,14 +7,14 @@ import AiReviewScreen from '../src/screens/AiReviewScreen'
 import ReviewScreen from '../src/screens/ReviewScreen'
 
 /**
- * QUOT-344-S2 / DEC-047：复盘**数据面**与**模型面**的边界（验收项「三屏内容互不重叠」+
+ * QUOT-344-S2 / DEC-049：复盘**数据面**与**模型面**的边界（验收项「三屏内容互不重叠」+
  * 「不允许把模型未配显示成数据缺失」）。
  *
  * 两屏读同一份 `/api/review` 产物，各取一半：
  * - `/review`：三张指标卡 + 五段 `sections[].metrics` +「我的判断」草稿；无叙述、无模型名、无生成入口；
  * - `/review/ai`：五段 `narrative` + 段级 `status` + `ai_failures[]` + `ai.model` + 控制面入口；无指标卡、无草稿。
  *
- * 「没有 AI 正文」有三种成因，必须分开显示（DEC-047 §4）：产物不存在 → 引导 `ldst review`；
+ * 「没有 AI 正文」有三种成因，必须分开显示（DEC-049 §4）：产物不存在 → 引导 `ldst review`；
  * 产物在但模型未接入 → 引导「接入 AI」；段级失败 → 逐段标注 + 按段重试。
  */
 
@@ -164,7 +164,7 @@ function metricRow(testId: string, sectionName: string, label: string): string {
   return dd.textContent ?? ''
 }
 
-describe('复盘两屏边界（DEC-047）', () => {
+describe('复盘两屏边界（DEC-049）', () => {
   it('同一份演示产物：叙述只在模型面，指标与草稿只在数据面', async () => {
     renderPair('/review?demo=1&date=2026-10-30')
     await screen.findByRole('heading', { level: 1, name: 'AI复盘' })

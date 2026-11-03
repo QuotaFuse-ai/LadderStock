@@ -131,3 +131,29 @@ S1 收尾还留下两处口径没定义，S2 动手前必须一次性裁定，�
   （五段 `status:'degraded'` + 逐段 `model:null` + `ai.model:null` + `ai_failures:[]` + `metrics` 齐）桩出响应，
   断言模型面出现 case 2 横幅与「接入 AI」、且全页不出现「数据缺失 / 还没有复盘产物 / 待生成」，数据面同刻仍显示指标读数。
 - 闸门：`npm run typecheck` / `npm run test`（399 例）/ `npm run check:ui`（6/6）
+
+## 补记（2026-11-04，QUOT-354 走查回流）
+
+> 本节不编号：本文的 `§n` 引用一律指 §2 决定里的第 n 条，编号会撞车。
+
+决策本体不变（数据面/模型面的边界、三种「没有 AI 正文」分开显示、`headline` 属程序直出）。
+本补记只落走查发现的三处**执行细节**，因为它们改变了 §2 第 3 条的口径表述，而原文不能改（DEC-045 §2 只增不改）：
+
+1. **交易日只有一个来源 = URL**（BUG-B，P1）。§2 第 3 条原写「交易日只跟 `?date=`」，但 S2 的实现是
+   `draftTradeDate ?? params.get('date') ?? local`——草稿里存了一份「当前交易日」且优先级更高，
+   于是 `?date=11-03` 深链会显示 11-02 的正文，两屏（数据面/模型面）还会显示不同日期，
+   「同日对照」这个拆屏理由直接失效。现修正为：`review_draft` 分片**不存日期**，
+   页内日期选择器改的是查询串（可分享、可复现），本机状态不参与日期解析。
+2. **草稿按交易日分槽 `slots[date]`**（BUG-C，P2）。单槽 `sections` 让跨日期的笔记互相覆盖，
+   与「每日复盘是**当日**的判断」这一屏定义冲突。旧单槽分片在读取时归入它自己记录的日期
+   （`sanitize` 归一，不升 `SCHEMA_VERSION`——版本号同时被 `stores/manifest.json` 与
+   `tests/unit/test_state_contract.py` 交叉校验，升号会把改动面扩到契约测试）；
+   「清空草稿」相应改名为**「清空当日草稿」**，作用域只到当前这一天。
+3. **行数类指标按来源后端判定，不按 `len()`**（BUG-F）。段级 `available` 是段级别的，
+   一段里多个数据源时会出现「板块读到了、资讯源当天没产物」的混合形态；此时
+   `len(records) == 0` 不是读数而是缺数，写成 0 会被读成「今天没有资讯」。
+   口径：后端 ∈ {`parquet`, `duckdb`}（确实读到过数据源，`parquet` 含「分区存在但当天 0 行」）
+   才是行数，否则给 `None`，屏侧按 UI-SPEC §8 显示 `—`。缺数原因复用已有的「数据来源」行，不新增契约字段。
+
+证据：`frontend/tests/quota-354-defects.test.tsx`、`tests/unit/review/test_row_count_caliber.py`、
+`docs/screenshots/review-{before,after}-353fix-bugb-dark.png`；闸门 `typecheck` / `test`（43 files / 434 例）/ `check:ui`（6/6）。

@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { KV_STORE, META_STORE, closeStateDatabase, idbDelete, idbGet, idbSet } from '../persist/indexeddb'
 import { clearMigrationLog, readMigrationLog } from '../persist/migrate'
-import { EMPTY_SECTIONS, useReviewDraft } from '../stores/reviewDraft'
+import { EMPTY_SECTIONS, selectSlot, useReviewDraft } from '../stores/reviewDraft'
 import { useWatchSnapshot } from '../stores/watchSnapshot'
 
 interface Persisted<T> {
@@ -44,7 +44,7 @@ beforeEach(async () => {
 })
 
 describe('reviewDraft v1 → v2', () => {
-  it('把单块正文迁到「情绪」段，其余四段留空', async () => {
+  it('把单块正文迁到「情绪」段，并归到它记录的交易日槽位', async () => {
     await writeShard(
       'review_draft',
       { date: '2026-10-27', text: '情绪冰点，空间板 3 进 4 失败。' },
@@ -54,12 +54,12 @@ describe('reviewDraft v1 → v2', () => {
     await useReviewDraft.persist.rehydrate()
 
     const state = useReviewDraft.getState()
-    expect(state.tradeDate).toBe('2026-10-27')
-    expect(state.sections.sentiment).toBe('情绪冰点，空间板 3 进 4 失败。')
-    expect(state.sections.capital).toBe('')
-    expect(state.sections.theme).toBe('')
-    expect(state.sections.dragonTiger).toBe('')
-    expect(state.sections.leader).toBe('')
+    const slot = selectSlot(state, '2026-10-27')
+    expect(slot.sections.sentiment).toBe('情绪冰点，空间板 3 进 4 失败。')
+    expect(slot.sections.capital).toBe('')
+    expect(slot.sections.theme).toBe('')
+    expect(slot.sections.dragonTiger).toBe('')
+    expect(slot.sections.leader).toBe('')
     expect(state.activeSection).toBe('sentiment')
 
     const log = await readMigrationLog()
@@ -71,7 +71,7 @@ describe('reviewDraft v1 → v2', () => {
     await useReviewDraft.persist.rehydrate()
     await settle()
     // 触发一次写入，让 persist 用当前版本覆盖分片
-    useReviewDraft.getState().setSection('theme', '主线：算力')
+    useReviewDraft.getState().setSection('2026-10-27', 'theme', '主线：算力')
     await new Promise((resolve) => setTimeout(resolve, 50))
 
     const shard = await readShard<Record<string, unknown>>('review_draft')
@@ -81,14 +81,14 @@ describe('reviewDraft v1 → v2', () => {
 
 describe('丢弃语义', () => {
   it('分片版本高于前端时丢弃，并回到空草稿，不阻塞启动', async () => {
-    await writeShard('review_draft', { sections: { sentiment: '未来数据' } }, 99)
+    await writeShard('review_draft', { slots: { '2026-10-27': { sections: { sentiment: '未来数据' } } } }, 99)
 
     await expect(useReviewDraft.persist.rehydrate()).resolves.toBeUndefined()
     await settle()
 
-    expect(useReviewDraft.getState().sections).toEqual(EMPTY_SECTIONS)
+    expect(selectSlot(useReviewDraft.getState(), '2026-10-27').sections).toEqual(EMPTY_SECTIONS)
     // 坏分片已被丢弃，落库内容被当前版本的空状态覆盖，旧正文不留残影
-    const shard = await readShard<{ sections: Record<string, string> }>('review_draft')
+    const shard = await readShard<{ slots: Record<string, string> }>('review_draft')
     expect(shard?.version).toBe(2)
     expect(JSON.stringify(shard).includes('未来数据')).toBe(false)
 

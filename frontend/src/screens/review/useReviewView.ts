@@ -14,7 +14,7 @@ import { demoReviewSource, type ReviewDemoVariant } from './demo'
 /**
  * 复盘两屏的取数 / 状态推导（与页面 DOM 解耦，便于测试）。
  *
- * QUOT-344-S2 / DEC-047 把复盘拆成数据面与模型面两个屏，两屏共用这一层：
+ * QUOT-344-S2 / DEC-049 把复盘拆成数据面与模型面两个屏，两屏共用这一层：
  * - `useReviewView` → 每日复盘 `/review`：`/api/review`（程序指标）+ `/api/sentiment`（三张指标卡）
  * - `useAiReviewView` → AI复盘 `/review/ai`：只有 `/api/review`（AI 段落与逐段状态）
  *

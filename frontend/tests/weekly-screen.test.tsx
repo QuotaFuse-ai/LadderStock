@@ -254,7 +254,7 @@ describe('周度复盘 /weekly', () => {
     const urls = stubFetch(envelope(weeklyReport()))
     renderAt()
 
-    expect(await screen.findByRole('heading', { name: '周度复盘' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'AI周报' })).toBeTruthy()
     expect(screen.getByText('2026-W44 · 2026-10-26 ~ 2026-11-01 · 3 个交易日有数据')).toBeTruthy()
     expect(urls[0]).toContain(`/weekly?week=${WEEK}`)
 
@@ -271,6 +271,51 @@ describe('周度复盘 /weekly', () => {
     expect(screen.getByText('AI算力')).toBeTruthy()
     expect(screen.getByText('600001')).toBeTruthy()
     expect(screen.getAllByText(/temperature >= 60/).length).toBeGreaterThan(0)
+  })
+
+  it('屏内标题与侧栏一致：AI周报（QUOT-354 BUG-A）', async () => {
+    stubFetch(envelope(weeklyReport()))
+    renderAt()
+
+    const h1 = await screen.findByRole('heading', { level: 1 })
+    expect(h1.textContent).toBe('AI周报')
+    expect(screen.queryByRole('heading', { name: '周度复盘' })).toBeNull()
+  })
+
+  it('当天没有读数时整行走 —：后端补的 0 不冒充「0 家涨停」（QUOT-354 BUG-E）', async () => {
+    const report = weeklyReport()
+    const series = report.facts.sentiment.series as Array<Record<string, unknown>>
+    // 后端对 `available:false` 的那天仍给计数补了 0（QUOT-354 BUG-E 的原始形态）
+    series[2] = {
+      ...series[2],
+      available: false,
+      reason: '涨停池为空，无法计算情绪指标（先运行 ldst sync）',
+      temperature: null,
+      promotion_rate: null,
+      seal_rate: null,
+      limit_up_count: 0,
+      broken_count: 0,
+      max_board: 0,
+      gap_levels: [],
+      source: null,
+    }
+    stubFetch(envelope(report))
+    renderAt()
+
+    await screen.findByText('每日序列（程序聚合，非模型输出）')
+    const table = Array.from(document.querySelectorAll('table')).find((node) =>
+      node.textContent?.includes('炸板'),
+    )
+    if (!table) throw new Error('每日读数表没有渲染')
+    const rows = Array.from(table.querySelectorAll('tbody tr'))
+    const cellsOf = (row: Element) =>
+      Array.from(row.querySelectorAll('td')).map((td) => td.textContent?.trim())
+
+    // 有读数的日子照常显示 0 与数字：缺数不能顺手把真实的 0 也吃掉
+    expect(cellsOf(rows[0]).slice(0, 2)).toEqual(['10-26', '52.5'])
+    expect(cellsOf(rows[1])).toContain('0') // 10-27 炸板 0 家，是读数
+    // 没读数的那一行：除日期外整行 `—`
+    expect(cellsOf(rows[2])).toEqual(['10-28', '—', '—', '—', '—', '—', '—', '—', '—'])
   })
 
   it('模板降级段给出可读说明，并把 AI 摘要徽标切成 warn', async () => {
