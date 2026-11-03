@@ -66,7 +66,8 @@ import { cn } from '../lib/cn'
  * 设置页（P-07 / DESIGN-SPEC §4.8 + PRD-SETTINGS-CONTROL-PLANE）。
  *
  * 四个分区（左侧 176px 二级菜单，`?tab=` 深链）：
- *   子模块   —— 四张 peer 状态卡；状态**只**取后端 `status` / `status_label`，前端不推断。
+ *   子模块   —— 五张模块卡（4 个数据 peer + ProxyFleet 代理模块）；状态**只**取后端
+ *              `status` / `status_label`，前端不推断。
  *   AI 接入  —— 端点 / 模型 / 密钥；密钥只写不读回（只显示 `set` + `preview`）。
  *   数据与端口 —— 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
  *   关于     —— 版本、数据目录、DEC-006 边界、主题与密度（与侧栏同一状态）。
@@ -84,7 +85,7 @@ interface SectionMeta {
 }
 
 const SECTIONS: readonly SectionMeta[] = [
-  { value: 'peers', label: '子模块', hint: '四个数据 / 资讯 / 合议模块 + 工具组件' },
+  { value: 'peers', label: '子模块', hint: '五个模块：数据 / 资讯 / 合议 / 代理' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
   { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
@@ -185,6 +186,15 @@ const STATIC_PEERS: readonly StaticPeer[] = [
     mcp: 8765,
     web: 8786,
     webLabel: 'WebUI',
+  },
+  {
+    id: 'proxyfleet',
+    product: 'ProxyFleet',
+    role: '代理池：出口节点 / 网关 / 拨测',
+    directory: '[local-path]\\ProxyFleet',
+    mcp: 8789,
+    web: 8788,
+    webLabel: '控制台',
   },
 ]
 
@@ -445,7 +455,7 @@ function ComponentCard({ component }: { component: ComponentSnapshot }) {
                 {statusLabel}
               </StatusDot>
               <h3 className="truncate text-subtitle font-semibold text-text">{component.product}</h3>
-              <Badge tone="info">工具组件</Badge>
+              <Badge tone="info">代理模块</Badge>
             </div>
             <p className="mt-1 text-caption text-text-secondary">{component.role}</p>
           </div>
@@ -1121,7 +1131,7 @@ function PortsSection({
         subtitle={
           <>
             看板 <span className="ldst-num">{countOrMissing(board.data?.ports.board)}</span> / MCP{' '}
-            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 四个模块
+            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 五个模块
           </>
         }
         bodyClassName="p-0"
@@ -1449,10 +1459,9 @@ export default function SettingsScreen() {
           : controlOff
             ? '控制面未启用（LDST_CONTROL_ENABLED=0）'
             : board.data
-              ? `${peers.length} 个模块 · 运行中 ${peers.filter((peer) => peer.status === 'running').length}${
-                  components.length > 0
-                    ? ` · 组件 ${components.filter((item) => item.status === 'running').length}/${components.length}`
-                    : ''
+              ? `${peers.length + components.length} 个模块 · 运行中 ${
+                  peers.filter((peer) => peer.status === 'running').length +
+                  components.filter((item) => item.status === 'running').length
                 }`
               : '读取模块状态…'
       }
@@ -1569,7 +1578,7 @@ export default function SettingsScreen() {
                   <li>
                     <EmptyState
                       title="后端没有返回任何子模块"
-                      description="确认 `/api/control/peers` 返回四个 peer（tickhub / tickhub-us / wire / senate），或检查 config/sources.yaml 是否登记。"
+                      description="确认 `/api/control/peers` 返回数据模块（tickhub / tickhub_us / wire / senate）与代理模块（proxyfleet），或检查 config/sources.yaml 是否登记。"
                       action={
                         <Button variant="secondary" onClick={board.reload}>
                           重新读取
@@ -1583,7 +1592,7 @@ export default function SettingsScreen() {
                     <EmptyState
                       compact
                       title="控制面不可用"
-                      description="本地服务未连接或控制面被禁用，四个模块的目录与端口以静态基线展示。"
+                      description="本地服务未连接或控制面被禁用，五个模块的目录与端口以静态基线展示。"
                     />
                   </li>
                 )}
@@ -1605,26 +1614,15 @@ export default function SettingsScreen() {
                     onMeta={() => setMetaPeer(peer)}
                   />
                 ))}
+                {components.map((component) => (
+                  <ComponentCard key={component.id} component={component} />
+                ))}
                 {(state === 'offline' || peers.length === 0) &&
                   STATIC_PEERS.map((peer) => (
                     <StaticPeerCard key={peer.id} peer={peer} reason={CONTROL_ABSENT_NOTE} />
                   ))}
               </ul>
             </SectionCard>
-
-            {components.length > 0 && (
-              <SectionCard
-                title="工具组件"
-                subtitle="公共基础设施，只读观测；启停由各自的守护进程 / 计划任务负责"
-                bodyClassName="p-0"
-              >
-                <ul className="flex flex-col gap-3 p-4">
-                  {components.map((component) => (
-                    <ComponentCard key={component.id} component={component} />
-                  ))}
-                </ul>
-              </SectionCard>
-            )}
 
             <p className="text-caption text-text-muted">
               端口由后端预检给出：8001 被 WSL 转发占用时 TickHub-US 用 8002；US 本机构建没有管理端，不再占 8789；

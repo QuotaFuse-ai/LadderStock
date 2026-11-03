@@ -1697,7 +1697,7 @@ class ControlPlane:
         }
 
     def board(self) -> dict[str, Any]:
-        """四个 peer + 工具组件 + 端口占用汇总（`GET /api/control/peers`）。"""
+        """五个模块（4 个数据 peer + ProxyFleet 组件）+ 端口占用汇总。"""
         snapshots = [self.snapshot(key) for key in self.peers]
         conflicts: list[dict[str, Any]] = []
         for snapshot in snapshots:
