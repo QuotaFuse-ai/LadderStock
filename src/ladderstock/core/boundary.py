@@ -21,8 +21,10 @@ LadderStock 是生态第 4 层（短线复盘与纪律执行），**不采集、
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Literal
 
 Mode = Literal["append", "replace"]
@@ -232,6 +234,41 @@ PEER_CONTROL: dict[str, PeerControl] = {
         ),
     ),
 }
+
+
+#: 控制面 peer 目录的覆盖入口：固定键，不接受任意字符串（DEC-014 白名单约束）。
+PEER_DIR_ENV: dict[str, str] = {
+    "tickhub": "LDST_PEER_DIR_TICKHUB",
+    "tickhub_us": "LDST_PEER_DIR_TICKHUB_US",
+    "wire": "LDST_PEER_DIR_WIRE",
+    "senate": "LDST_PEER_DIR_SENATE",
+}
+
+#: 默认按同级目录探测：把 peer 仓库 clone 到 LadderStock 旁边即可直接安装。
+PEER_SIBLING_DIRS: dict[str, str] = {
+    "tickhub": "TickHub-CN",
+    "tickhub_us": "TickHub-US",
+    "wire": "quotafuse-wire",
+    "senate": "StockSenate",
+}
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, PeerControl]:
+    """解析 peer 目录：环境变量 > LadderStock 同级目录 > 占位符。
+
+    占位符目录不存在时控制面仍只读展示该 peer，只是不出安装按钮。
+    """
+    values = os.environ if env is None else env
+    resolved: dict[str, PeerControl] = {}
+    for key, ctl in PEER_CONTROL.items():
+        directory = (values.get(PEER_DIR_ENV[key]) or "").strip()
+        if not directory:
+            sibling = _REPO_ROOT.parent / PEER_SIBLING_DIRS[key]
+            directory = str(sibling) if sibling.is_dir() else ctl.directory
+        resolved[key] = ctl if directory == ctl.directory else replace(ctl, directory=directory)
+    return resolved
 
 
 # --------------------------------------------------------------------------- #

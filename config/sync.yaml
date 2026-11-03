@@ -190,12 +190,33 @@ sync:
       optional: true
 
     # 可选：未安装 Wire 时整段跳过，题材段降级为纯指标叙述
+    #
+    # `topics` 是**赛道池**（QUOT-328）：`wire_get_digest` 的 `topic` 必填、只认 Wire 的
+    # 赛道 slug（`config/topics.yaml` 的 `id`），一次调用只覆盖一个赛道，所以逐个取数。
+    # 中文赛道名（`半导体`）上游直接判「未知赛道」，别往这里写。
+    # `fallback: []` 是**显式声明**「这条链只有主源」，不是漏写：`chain()` 认显式空值，
+    # 不会回填 `sources.yaml` 的 fallback。那里 `wire_timeline` 仍作为同 peer 备源登记着
+    # （DEC-006 合规），但它要的是 `event_id`（单事件下钻），按日摘要没有事件维度，
+    # 挂进链路等于备源永远和主源一起报错——所以挡在链路外、留给按事件调用（DEC-043）。
     theme_news:
       primary: wire_digest
-      fallback: [wire_timeline]
+      fallback: []
       watermark_field: data_as_of
       mode: replace
       optional: true
+      topics:
+        - ai
+        - semiconductor
+        - robotics
+        - automotive
+        - energy
+        - biotech
+        - aerospace
+        - cybersecurity
+        - tech
+        - consumer
+        - macro
+        - science
 
     # 可选：只读拉取 Senate 已有报告，不发起合议
     council_memo:

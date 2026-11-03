@@ -3,7 +3,26 @@ import { Link } from 'react-router-dom'
 
 import { cn } from '../../lib/cn'
 
-/** 页面内跳转保持与 Button 同形（真锚点，保留右键/新窗口）。 */
+/**
+ * 编号方块（QUOT-313 精致度 · 维度 1）。
+ *
+ * 正文角标 `[n]`、来源抽屉里的 `[n]`、风险清单序号原本是三套尺寸（h-4 / h-5 / h-5 w-5），
+ * 同一页上「方括号里的数字」有三种视觉重量，读起来像三种东西。这里定一档：
+ * 16px 高、4px 圆角、等宽数字、内容居中，色调由调用方给（info=角标 / warn=未核实 / surface=编号）。
+ *
+ * 不给 `min-w`：`[1]` 与 `[11]` 的宽度本来就该随位数走，强行等宽会让两位数撑破行高。
+ */
+export const NUMBER_CHIP =
+  'inline-flex h-4 shrink-0 items-center justify-center whitespace-nowrap rounded-xs px-1 text-caption leading-none font-medium'
+
+/**
+ * 页面内跳转保持与 Button 同形（真锚点，保留右键/新窗口）。
+ *
+ * 类名逐条对齐 `Button` 的 BASE / VARIANTS / SIZES：`transition-all`（不是 `transition-colors`，
+ * 因为 `active:translate-y-px` 的位移不在 colors 的过渡范围内）、`ease-ldst`、按压位移。
+ * `Button` 本身没有 `asChild`（在 `components/ui/**`，本轨不改），所以锚点版只能在这里同形；
+ * 等 ui 侧补上 `asChild` 后本函数应直接删掉。
+ */
 export function LinkButton({
   to,
   children,
@@ -21,9 +40,9 @@ export function LinkButton({
     <Link
       to={to}
       className={cn(
-        'inline-flex h-control select-none items-center justify-center gap-1 rounded px-3 text-body font-medium transition-colors duration-fast',
+        'inline-flex h-control select-none items-center justify-center gap-1 rounded px-3 text-body font-medium transition-all duration-fast ease-ldst active:translate-y-px',
         variant === 'primary'
-          ? 'bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover'
+          ? 'bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover active:bg-accent-solid-hover'
           : 'border border-border-strong bg-surface text-text hover:bg-surface-3',
         className,
       )}
@@ -63,7 +82,7 @@ export function PercentileBar({
         />
         <span
           aria-hidden="true"
-          className="absolute inset-y-0 w-0.5 -translate-x-1/2 rounded-pill bg-text"
+          className="absolute inset-y-0 w-half -translate-x-1/2 rounded-pill bg-text"
           style={{ left: `${pct}%` }}
         />
       </div>

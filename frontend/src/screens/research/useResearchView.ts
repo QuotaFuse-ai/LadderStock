@@ -10,7 +10,7 @@ import {
   type ResearchStatus,
 } from '../../api/research'
 import { localDateIso } from '../../lib/format'
-import { resolveState, useForcedState, type PageState } from '../../lib/pageState'
+import { resolveState, useDemoEnabled, useForcedState, type PageState } from '../../lib/pageState'
 import { useAsync } from '../../lib/useAsync'
 import { DEMO_DATE, createDemoResearchSource, type DemoVariant } from './demo'
 
@@ -56,7 +56,7 @@ export function useResearchView(): ResearchView {
 
   const rawCode = (routeCode ?? '').trim()
   const code = normalizeResearchCode(rawCode)
-  const demo = params.get('demo') === '1'
+  const demo = useDemoEnabled()
   const variantParam = params.get('variant')
   const verify = params.get('verify')
   const variant: DemoVariant = isVariant(variantParam)

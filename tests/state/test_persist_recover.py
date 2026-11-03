@@ -137,10 +137,18 @@ def test_stale_snapshot_rows_are_hidden_not_rendered() -> None:
 # --------------------------------------------------------------------------- #
 
 
+#: v2 之后才引入的分片：不存在 v1 数据，不写 v1→v2 迁移（watch_settings，DEC-037）。
+POST_V2_STORES = {"watchSettings"}
+
+
 def test_every_persisted_shard_has_a_v1_upgrade_step() -> None:
     declared = {store["id"] for store in _manifest()["stores"]}
-    assert declared <= _migration_table(), (
-        f"这些分片没有 v1→v2 迁移步骤：{sorted(declared - _migration_table())}"
+    assert POST_V2_STORES <= declared, (
+        f"豁免名单里的分片已不在 manifest：{sorted(POST_V2_STORES - declared)}"
+    )
+    legacy = declared - POST_V2_STORES
+    assert legacy <= _migration_table(), (
+        f"这些分片没有 v1→v2 迁移步骤：{sorted(legacy - _migration_table())}"
     )
 
 

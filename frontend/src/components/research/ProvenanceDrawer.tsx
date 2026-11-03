@@ -5,6 +5,7 @@ import { sourceLocator, unverifiedReason, type CitationIndex } from '../../lib/c
 import { cn } from '../../lib/cn'
 import { MISSING, formatTime } from '../../lib/format'
 import { Badge, Drawer, EmptyState } from '../ui'
+import { NUMBER_CHIP } from './bits'
 
 /**
  * 来源抽屉：`来源 · endpoint · as_of · url` 四件套（验收原文）。
@@ -26,12 +27,16 @@ function safeHref(value: string | null | undefined): string | null {
   return value && /^https?:\/\//i.test(value) ? value : null
 }
 
+/**
+ * 一行一条元数据。原来是 `grid-cols-[64px_minmax(0,1fr)]` 的任意值列宽，
+ * 改成标签列走间距刻度（`w-16` = 64px，正好是原值），值列 `min-w-0` 吃剩余宽度。
+ */
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <>
-      <dt className="text-text-muted">{label}</dt>
+    <div className="flex gap-2 text-caption">
+      <dt className="w-16 shrink-0 text-text-muted">{label}</dt>
       <dd className="min-w-0 break-all text-text-secondary">{children}</dd>
-    </>
+    </div>
   )
 }
 
@@ -54,9 +59,7 @@ function SourceItem({
       aria-current={selected ? 'true' : undefined}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="ldst-num inline-flex h-5 min-w-5 items-center justify-center rounded-xs bg-surface-3 px-1 text-caption font-medium text-text">
-          [{number}]
-        </span>
+        <span className={cn(NUMBER_CHIP, 'ldst-num bg-surface-3 text-text')}>[{number}]</span>
         <span className="text-body font-medium text-text">{source.dataset}</span>
         {source.verified ? (
           <Badge tone="ok">已核实</Badge>
@@ -66,7 +69,7 @@ function SourceItem({
           </Badge>
         )}
       </div>
-      <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-2 gap-y-1 text-caption">
+      <dl className="flex flex-col gap-1">
         <Row label="endpoint">
           <span className="ldst-num">{sourceLocator(source) ?? MISSING}</span>
         </Row>

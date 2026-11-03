@@ -30,6 +30,13 @@
                 "items": { "type": "string", "pattern": "^[0-9A-Za-z.]{1,12}$" },
                 "maxItems": 100,
                 "default": []
+              },
+              "topics": {
+                "type": "array",
+                "description": "赛道池（QUOT-328）：Wire 的 wire_get_digest 的 topic 必填且只认赛道 slug（semiconductor，不是「半导体」），逐赛道取数。为空则该数据集判 skipped（optional 时）且不发起调用。",
+                "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{1,31}$" },
+                "maxItems": 100,
+                "default": []
               }
             }
           }

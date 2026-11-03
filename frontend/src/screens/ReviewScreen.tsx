@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Copy, FileText, RefreshCw, Trash2 } from 'lucide-react'
 
@@ -8,13 +8,11 @@ import {
   isApiError,
   parseAiFailures,
   type JobView,
-  type LadderEnvelope,
   type ReviewAiFailure,
   type SentimentResult,
 } from '../api'
 import { AiErrorNotice } from '../components/kit'
-import { useAsync } from '../lib/useAsync'
-import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { resolveState, type PageState } from '../lib/pageState'
 import { MISSING, formatInt, formatRatePct, formatTime, localDateIso } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
@@ -29,6 +27,7 @@ import {
   MetricCard,
   SectionCard,
   SkeletonText,
+  SourceBadges,
   Textarea,
   type SectionTone,
 } from '../components/ui'
@@ -39,6 +38,8 @@ import {
   useReviewDraft,
   type ReviewSectionKey,
 } from '../../stores/reviewDraft'
+import { useReviewDemoEnabled, useReviewView } from './review/useReviewView'
+import { DEMO_REVIEW_DATE } from './review/demo'
 
 /**
  * 收盘复盘（P-04 / DESIGN-SPEC §4.5 / UI-SPEC §3.1）。
@@ -48,6 +49,10 @@ import {
  * 「重新生成」走控制面 `POST /api/control/ai/generate`（后台任务 + 轮询 `/jobs/{id}`），
  * 单段失败的重试走 `/ai/retry`；失败原因统一用 QUOT-235 的 `AiErrorNotice` 展示。
  * 任何缺失值显示 `—` + 原因，不补 0、不编造。
+ *
+ * 演示源（`?demo=1` 或设置页「虚拟数据」）只替换两条读接口，且**关掉写入口**：
+ * 「重新生成 / 重试失败段」在演示态禁用（不会打真实控制面），「我的判断」也不写入本机草稿、
+ * 不由演示数据预填——隐私内容不能靠演示数据冒充。真实请求失败绝不回落到 `review/demo.ts`。
  */
 
 /** 段状态 → 左侧 3px 竖条 + 文字徽标双重编码（§4.5）。 */
@@ -58,6 +63,15 @@ const SECTION_STATUS: Record<string, { label: string; tone: SectionTone; badge: 
   degraded: { label: '降级完成', tone: 'warn', badge: 'warn' },
   failed: { label: '失败', tone: 'danger', badge: 'danger' },
 }
+
+/**
+ * §5.4「可重试」列：`truncated` 原样重试必然再截断、`internal` 未归类，两档都不给「重试」主按钮。
+ * 与 `kit/AiErrorNotice.tsx` 的 `META[kind].retryable` 同口径；该表目前没对外导出，
+ * 已作为规范缺口提给共享层（屏侧不应各自维护一份重试性判定）。
+ */
+const NON_RETRYABLE_KINDS: readonly string[] = ['truncated', 'internal']
+
+const isRetryableFailure = (kind: string): boolean => !NON_RETRYABLE_KINDS.includes(kind)
 
 /** 页面级汇总用的短名（UI-SPEC §5.4「5 段中 2 段失败（网络 / 截断）」）。 */
 const FAILURE_KIND_LABEL: Record<string, string> = {
@@ -116,8 +130,29 @@ function summariseFailureKinds(failures: ReviewAiFailure[]): string {
   )
 }
 
-/** 草稿分片键 → 复盘 payload 的段名（payload 用 `dragon_tiger`）。 */
-const SECTION_PAYLOAD_NAME: Record<ReviewSectionKey, string> = {
+/** §4.1 草稿时间口径：当日 `HH:mm`，跨日 `MM-DD HH:mm`（不是 `formatTime` 的秒级）。 */
+function formatDraftTime(iso: string | null): string {
+  if (!iso) return MISSING
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  const today = new Date()
+  const sameDay =
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  return sameDay
+    ? clock
+    : `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${clock}`
+}
+
+/** §4.1 字数口径：去空白后四舍五入到个位、千分位。 */
+function formatCharCount(value: number): string {
+  return Math.round(value).toLocaleString('zh-CN')
+}
+
+/** 草稿分片键 → 复盘 payload 的段名（payload 用 `dragon_tiger`）。 */const SECTION_PAYLOAD_NAME: Record<ReviewSectionKey, string> = {
   sentiment: 'sentiment',
   capital: 'capital',
   theme: 'theme',
@@ -180,36 +215,7 @@ function parseHeader(review: Record<string, unknown> | null): ReviewHeader {
   }
 }
 
-const FRESHNESS_LABEL: Record<LadderEnvelope<unknown>['freshness'], string> = {
-  realtime: '实时',
-  cached: '缓存',
-  archive: '归档',
-}
-
-/** 溯源徽标只用到这几条公共字段，任何 envelope 的 payload 类型都能传。 */
-type EnvelopeMeta = Pick<
-  LadderEnvelope<unknown>,
-  'freshness' | 'source_status' | 'source_detail' | 'data_as_of' | 'fetched_at'
->
-
-/** 指标卡右上角溯源徽标（§4.2 L2）：freshness · source_status，hover 出明细。 */
-function SourceBadge({ envelope }: { envelope: EnvelopeMeta | null }) {
-  if (!envelope) return null
-  const tone = envelope.source_status === 'ok' ? 'ok' : envelope.source_status === 'partial' ? 'warn' : 'danger'
-  const title = [
-    `来源：${envelope.source_detail}`,
-    `数据时间：${envelope.data_as_of ?? '未知'}`,
-    `取数：${formatTime(envelope.fetched_at)}`,
-  ].join('\n')
-  return (
-    <Badge tone={tone} title={title}>
-      {FRESHNESS_LABEL[envelope.freshness]}
-    </Badge>
-  )
-}
-
 export default function ReviewScreen() {
-  const forced = useForcedState()
   const [params] = useSearchParams()
   const navigate = useNavigate()
 
@@ -221,15 +227,17 @@ export default function ReviewScreen() {
   const setActiveSection = useReviewDraft((state) => state.setActiveSection)
   const reset = useReviewDraft((state) => state.reset)
 
-  const tradeDate = draftTradeDate ?? params.get('date') ?? localDateIso()
+  const demo = useReviewDemoEnabled()
+  // 演示态默认落在事实基线的交易日（同 `limitup` 屏口径），避免出现「日期 11-02 / 正文 10-30」的错位
+  const tradeDate =
+    draftTradeDate ?? params.get('date') ?? (demo ? DEMO_REVIEW_DATE : localDateIso())
 
-  const review = useAsync((signal) => api.review(tradeDate, signal), [tradeDate])
-  const sentiment = useAsync((signal) => api.sentiment(tradeDate, signal), [tradeDate])
+  const view = useReviewView({ date: tradeDate })
+  const forced = view.forced
+  const review = view.review
+  const sentiment = view.sentiment
   const requests = [review, sentiment]
-  const reloadAll = useCallback(() => {
-    review.reload()
-    sentiment.reload()
-  }, [review.reload, sentiment.reload]) // eslint-disable-line react-hooks/exhaustive-deps
+  const reloadAll = view.reloadAll
   const busy = requests.some((request) => request.status === 'loading')
 
   // AI 生成 / 重试任务：POST 建任务 → 轮询 `/control/jobs/{id}` 直到 ok / failed
@@ -238,6 +246,11 @@ export default function ReviewScreen() {
   const aiBusy = aiJob !== null
 
   const startAi = async (mode: 'generate' | 'retry', section?: string) => {
+    // 演示态不触发任何写 / 任务入口：控制面是真实后端，不能让演示数据冒充生成结果
+    if (demo) {
+      setAiJobError('演示态不触发 AI 生成：本页数据来自 demo.ts，控制面不在演示链路上。')
+      return
+    }
     setAiJobError(null)
     setNotice(null)
     try {
@@ -302,7 +315,16 @@ export default function ReviewScreen() {
   // 首帧快照：区分「本机恢复的草稿」与「本次新写的笔记」
   const [restored] = useState(() => {
     const state = useReviewDraft.getState()
-    return { chars: draftCharCount(state), updatedAt: state.updatedAt }
+    return {
+      chars: draftCharCount(state),
+      updatedAt: state.updatedAt,
+      labels: REVIEW_SECTIONS.filter((section) => state.sections[section.key].trim().length > 0).map(
+        (section) => section.label,
+      ),
+      firstKey: REVIEW_SECTIONS.map((section) => section.key).find(
+        (key) => state.sections[key].trim().length > 0,
+      ),
+    }
   })
 
   const total = useMemo(
@@ -331,7 +353,8 @@ export default function ReviewScreen() {
   }, [])
 
   useEffect(() => {
-    if (review.status !== 'ready') return
+    // 演示数据不写本机离线回放缓存：否则断网时会把 demo.ts 当成真实快照回放
+    if (demo || review.status !== 'ready') return
     const report = review.data?.payload.review ?? null
     if (!report) return
     const entry: ReviewCache = {
@@ -345,7 +368,7 @@ export default function ReviewScreen() {
     void idbSet(KV_STORE, CACHE_KEY, entry).catch(() => {
       /* 写缓存失败不影响当前展示，下次成功取数再写 */
     })
-  }, [review.status, review.data, sentiment.status, sentiment.data, tradeDate])
+  }, [demo, review.status, review.data, sentiment.status, sentiment.data, tradeDate])
 
   const reviewData = review.data?.payload.review ?? null
   const aiSections = useMemo(() => parseSections(reviewData), [reviewData])
@@ -372,8 +395,13 @@ export default function ReviewScreen() {
 
   const state = resolveState(forced, derived)
   const usable = state === 'normal' || state === 'partial'
-  // 生成 / 重试需要本机控制面可达；offline 只读回放，不假装能跑
-  const canRunAi = usable || state === 'empty'
+  // 生成 / 重试需要本机控制面可达；offline 只读回放，不假装能跑；演示态根本不接控制面
+  const canRunAi = !demo && (usable || state === 'empty')
+  const runAiDisabledReason = demo
+    ? '演示态不触发 AI 生成：本页数据来自 demo.ts，不写后端也不建任务'
+    : state === 'offline'
+      ? '本地服务未连接，无法触发生成'
+      : '取数未完成，暂不能触发生成'
 
   // 离线回放：只用本机 IndexedDB 快照，日期不符就不冒充当天数据
   const replay = state === 'offline' && cached && cached.date === tradeDate ? cached : null
@@ -428,8 +456,9 @@ export default function ReviewScreen() {
       if (failedLabels.length > 0) return `${tradeDate} · 部分数据源不可用`
       return `${tradeDate} · 五段中 ${formatInt(viewTally.failed)} 段失败 / ${formatInt(viewTally.degraded)} 段降级`
     }
+    if (demo) return `${tradeDate} · 演示数据（非真实行情）· 不写本机草稿、不触发生成`
     return `${tradeDate} · 草稿 ${formatInt(total)} 字 · 最后写入 ${formatTime(updatedAt)}`
-  }, [state, tradeDate, total, updatedAt, failedLabels.length, viewTally.failed, viewTally.degraded, replay, reviewCommand])
+  }, [state, tradeDate, total, updatedAt, failedLabels.length, viewTally.failed, viewTally.degraded, replay, reviewCommand, demo])
 
   const handleReset = () => {
     reset()
@@ -482,16 +511,14 @@ export default function ReviewScreen() {
             variant="primary"
             loading={aiBusy}
             disabled={!canRunAi}
-            disabledReason={
-              canRunAi
-                ? undefined
-                : state === 'offline'
-                  ? '本地服务未连接，无法触发生成'
-                  : '取数未完成，暂不能触发生成'
-            }
+            disabledReason={canRunAi ? undefined : runAiDisabledReason}
             onClick={() => void startAi('generate')}
           >
-            {aiBusy ? 'AI 生成中…' : viewFailures.length > 0 ? '重试失败段' : '重新生成'}
+            {aiBusy
+              ? 'AI 生成中…'
+              : viewFailures.some((failure) => isRetryableFailure(failure.kind))
+                ? '重试失败段'
+                : '重新生成'}
           </Button>
         </>
       }
@@ -602,8 +629,27 @@ export default function ReviewScreen() {
       </div>
 
       {restored.chars > 0 && (
-        <Banner tone="info" title="已从本机恢复草稿">
-          {formatInt(restored.chars)} 字正文（最后写入 {formatTime(restored.updatedAt)}）。刷新、崩溃、升级后都会原样回填。
+        <Banner
+          tone="info"
+          title={`已恢复 ${formatDraftTime(restored.updatedAt)} 的草稿`}
+          action={
+            <>
+              {restored.firstKey && (
+                <Button
+                  variant="secondary"
+                  onClick={() => focusSection(SECTION_PAYLOAD_NAME[restored.firstKey!])}
+                >
+                  查看改动
+                </Button>
+              )}
+              <Button variant="secondary" onClick={() => setConfirmReset(true)}>
+                清空草稿
+              </Button>
+            </>
+          }
+        >
+          {restored.labels.join(' / ')} {formatCharCount(restored.labels.length)} 段，共{' '}
+          <span className="ldst-num">{formatCharCount(restored.chars)}</span> 字。刷新、崩溃、升级后都会原样回填。
         </Banner>
       )}
       {notice && (
@@ -637,7 +683,7 @@ export default function ReviewScreen() {
             title={`${tradeDate} 尚未生成复盘`}
             description="在终端运行下面这条命令生成五段复盘（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），落盘后回到本页点「重新检查」。未配置模型凭据时，五段会以「降级完成」落盘，程序指标照常保留。"
             action={
-              <div className="flex w-full max-w-[720px] flex-col items-center gap-2">
+              <div className="flex w-full max-w-measure flex-col items-center gap-2">
                 <code className="ldst-num w-full break-all rounded border border-border bg-surface-3 px-3 py-2 text-left text-caption text-text-secondary">
                   {reviewCommand}
                 </code>
@@ -667,7 +713,7 @@ export default function ReviewScreen() {
         <MetricCard
           label="情绪温度"
           hero
-          badge={<SourceBadge envelope={sentiment.data} />}
+          badge={<SourceBadges envelope={sentiment.data} />}
           value={temperature === null ? MISSING : formatInt(temperature)}
           note={
             temperature === null
@@ -677,7 +723,7 @@ export default function ReviewScreen() {
         />
         <MetricCard
           label="晋级率"
-          badge={<SourceBadge envelope={sentiment.data} />}
+          badge={<SourceBadges envelope={sentiment.data} />}
           value={formatRatePct(promotionRate).text}
           note={
             promotionRate === null
@@ -687,7 +733,7 @@ export default function ReviewScreen() {
         />
         <MetricCard
           label="梯队断层"
-          badge={<SourceBadge envelope={sentiment.data} />}
+          badge={<SourceBadges envelope={sentiment.data} />}
           value={gapLevels === null ? MISSING : formatInt(gapLevels.length)}
           unit={gapLevels === null ? undefined : '档'}
           note={
@@ -740,7 +786,7 @@ export default function ReviewScreen() {
                 <>
                   <Badge tone={meta.badge}>{meta.label}</Badge>
                   {payload?.degraded && <Badge tone="warn">降级</Badge>}
-                  {status === 'failed' && (
+                  {status === 'failed' && (!failure || isRetryableFailure(failure.kind)) && (
                     <Button
                       variant="secondary"
                       onClick={() => void startAi('retry', payloadName)}
@@ -749,9 +795,11 @@ export default function ReviewScreen() {
                       disabledReason={
                         canRunAi
                           ? undefined
-                          : state === 'offline'
-                            ? '本地服务未连接，无法重跑'
-                            : '取数未完成，暂不能重跑'
+                          : demo
+                            ? '演示态不触发 AI 生成：本页数据来自 demo.ts，不写后端也不建任务'
+                            : state === 'offline'
+                              ? '本地服务未连接，无法重跑'
+                              : '取数未完成，暂不能重跑'
                       }
                     >
                       {aiBusy ? '重跑中…' : '重跑该段'}
@@ -762,9 +810,9 @@ export default function ReviewScreen() {
             >
               <div className="grid gap-4 desk:grid-cols-[2fr_3fr]">
                 <div className="rounded border border-border bg-surface-2 p-3">
-                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-caption font-medium text-text-secondary">AI 叙述</span>
-                    <span className="truncate text-caption text-text-muted">
+                    <span className="min-w-0 truncate text-caption text-text-muted" title={`模型 ${payload?.model ?? '未启用'}`}>
                       模型 {payload?.model ?? '未启用'}
                     </span>
                   </div>
@@ -786,11 +834,11 @@ export default function ReviewScreen() {
                         action={failure.action}
                         keptPrevious={(payload?.narrative.length ?? 0) > 0}
                         retryLabel={aiBusy ? 'AI 生成中…' : '重试该段'}
-                        onRetry={() => void startAi('retry', failure.section)}
+                        onRetry={canRunAi ? () => void startAi('retry', failure.section) : undefined}
                         onOpenStatus={() => navigate('/settings?tab=ai')}
                       />
                       {payload && payload.narrative.length > 0 && (
-                        <div className="flex flex-col gap-1.5">
+                        <div className="flex flex-col gap-2">
                           {payload.narrative.map((line) => (
                             <p key={line} className="text-body leading-body text-text-secondary">
                               {line}
@@ -817,7 +865,7 @@ export default function ReviewScreen() {
                       </p>
                     </div>
                   ) : payload && payload.narrative.length > 0 ? (
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-col gap-2">
                       {payload.narrative.map((line) => (
                         <p key={line} className="text-body leading-body text-text-secondary">
                           {line}
@@ -841,17 +889,28 @@ export default function ReviewScreen() {
                   <Field
                     label={`我的判断 · ${section.label}`}
                     htmlFor={textareaId}
-                    hint="自动存本机（IndexedDB），刷新、崩溃、升级后原样回填；不联网、不上传。"
+                    hint={
+                      demo
+                        ? '演示态只读：演示数据不写入本机草稿，也不冒充你的判断。关开关后恢复可写。'
+                        : '自动存本机（IndexedDB），刷新、崩溃、升级后原样回填；不联网、不上传。'
+                    }
                   >
                     <Textarea
                       id={textareaId}
-                      value={draftText}
-                      placeholder={`写今天的${section.label}判断…`}
-                      onChange={(event) => setSection(section.key, event.target.value)}
+                      value={demo ? '' : draftText}
+                      readOnly={demo}
+                      aria-readonly={demo}
+                      placeholder={demo ? '演示态不填写判断（内容不会落本机）' : `写今天的${section.label}判断…`}
+                      onChange={(event) => {
+                        if (demo) return
+                        setSection(section.key, event.target.value)
+                      }}
                       onFocus={() => setActiveSection(section.key)}
                     />
                   </Field>
-                  <p className="self-end text-caption text-text-muted">{formatInt(draftText.trim().length)} 字</p>
+                  <p className="self-end text-caption text-text-muted">
+                    {formatInt(demo ? 0 : draftText.trim().length)} 字
+                  </p>
                 </div>
               </div>
             </SectionCard>

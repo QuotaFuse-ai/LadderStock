@@ -258,8 +258,13 @@ def test_pool_does_not_import_privacy_store() -> None:
 
 
 def test_position_does_not_import_market_or_ai() -> None:
-    """持仓侧只依赖隐私库与错误码：不 import 行情、AI、MCP，也就能独立测试。"""
-    allowed_prefixes = ("ladderstock.data", "ladderstock.errors")
+    """持仓侧只依赖隐私库与错误码：不 import 行情、AI、MCP，也就能独立测试。
+
+    `ladderstock.journal.` 放开的是**同一侧的隐私库**：`journal.log`（成交流水，
+    QUOT-292 的已实现盈亏复算要用）与 `journal.realized`（纯算法，只吃数据不读库）。
+    它们和 `data.sqlite_store` 一样只在本地，不引入任何网络面；行情 / AI / MCP 仍然一个都不许出现。
+    """
+    allowed_prefixes = ("ladderstock.data", "ladderstock.errors", "ladderstock.journal.")
     for rel in ("journal/position.py",):
         ladder = {m for m in _imports(rel) if m.startswith("ladderstock.")}
         assert ladder, rel

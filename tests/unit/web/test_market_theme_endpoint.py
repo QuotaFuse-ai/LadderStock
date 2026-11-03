@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -155,6 +156,41 @@ def test_themes_without_strength_sort_last(tmp_path: Path) -> None:
     themes = _body(tmp_path)["payload"]["themes"]
 
     assert [row["theme"] for row in themes] == ["有强度", "无强度乙", "无强度甲"]
+
+
+def test_real_wire_digest_row_yields_name_and_null_metrics(tmp_path: Path) -> None:
+    """真实 Wire 落库的行（QUOT-328）：赛道名在 `topic`（**slug**），没有强度类字段。
+
+    钉两件事：① `topic` 要认得出题材名，否则 12 个赛道全被丢弃、接口永远 `unavailable`；
+    ② 强度/涨停家数/龙头/变化**如实 `null`**，界面据此画 `—`，不许冒 0。
+    """
+    _seed_theme_news(
+        tmp_path,
+        [
+            {
+                "topic": topic,
+                "date": STAMP,
+                "summary": "共采集 12 条资讯；模型当前不可用，未生成要点。",
+                "key_points": [],
+                "items": [{"title": "某资讯", "url": LEAKY_URL}],
+                "status": "partial",
+                "trade_date": STAMP,
+            }
+            for topic in ("ai", "semiconductor")
+        ],
+    )
+    body = _body(tmp_path)
+    themes = body["payload"]["themes"]
+
+    assert body["payload"]["available"] is True
+    assert body["payload"]["data_source_status"] == "ok"
+    assert sorted(row["theme"] for row in themes) == ["ai", "semiconductor"]
+    for row in themes:
+        assert row["strength"] is None
+        assert row["limit_up_count"] is None
+        assert row["leader"] is None
+        assert row["delta"] is None
+    assert LEAKY_URL not in json.dumps(body, ensure_ascii=False)
 
 
 def test_same_theme_rows_aggregate_into_one(tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ import {
   type IndustrySource,
   type SignalsPayload,
 } from '../../api/industry'
-import { resolveState, useForcedState, type PageState } from '../../lib/pageState'
+import { resolveState, useDemoEnabled, useForcedState, type PageState } from '../../lib/pageState'
 import { useAsync } from '../../lib/useAsync'
 import { demoIndustryDetail, demoIndustryList, demoSignals, type DemoVariant } from './demo'
 
@@ -30,11 +30,8 @@ function isDemoVariant(value: unknown): value is DemoVariant {
   return typeof value === 'string' && (VARIANTS as readonly string[]).includes(value)
 }
 
-export function useDemoEnabled(): boolean {
-  const [params] = useSearchParams()
-  const raw = params.get('demo')
-  return raw === '1' || raw === 'true'
-}
+/** §5.6 的演示开关判定只有一处真源（`lib/pageState.ts`），这里转发给各屏导入。 */
+export { useDemoEnabled }
 
 /** 显式 `?variant=` 优先；否则由强制态推导（partial/empty 各自演示不同降级）。 */
 export function useDemoVariant(): DemoVariant {

@@ -10,6 +10,7 @@
  */
 
 import { ApiError, isApiError, isEndpointMissing } from '../api'
+import { envelopeMetaOf, type FreshnessKey, type SourceStatusKey } from './envelope'
 
 const READ_TIMEOUT_MS = 8000
 
@@ -37,6 +38,14 @@ export interface LimitPoolPayload {
   count: number
   data_source_status: LimitPoolStatus
   rows: LimitPoolRow[]
+  /**
+   * envelope 外壳的溯源四字段（§5.1 / §5.2），后端没给的就是 `null`。
+   * `data_source_status` 是载荷级的四档（多一个 `missing`），比外壳的三档细，两者都保留。
+   */
+  freshness: FreshnessKey | null
+  source_status: SourceStatusKey | null
+  data_as_of: string | null
+  fetched_at: string | null
 }
 
 export interface LimitPoolQuery {
@@ -85,7 +94,11 @@ function parseStatus(value: unknown, fallback: LimitPoolStatus): LimitPoolStatus
   return value === 'ok' || value === 'partial' || value === 'missing' ? value : fallback
 }
 
-/** envelope 的 `payload`；也接受直接返回载荷的平面接口（容错但不猜结构）。 */
+/**
+ * envelope 的 `payload`；也接受直接返回载荷的平面接口（容错但不猜结构）。
+ * 外壳上的 `freshness` / `source_status` / `data_as_of` / `fetched_at` 不在这里取，
+ * 由 `envelopeMetaOf()` 单独读出（QUOT-331）。
+ */
 function payloadOf(raw: unknown): Record<string, unknown> {
   const root = record(raw)
   if (!root) throw new ApiError('parse', '涨停样本响应不是对象')
@@ -110,6 +123,7 @@ function parseRow(value: unknown): LimitPoolRow | null {
 
 export function parseLimitPool(raw: unknown): LimitPoolPayload {
   const payload = payloadOf(raw)
+  const meta = envelopeMetaOf(raw)
   const rows = list(payload.rows)
     .map(parseRow)
     .filter((row): row is LimitPoolRow => row !== null)
@@ -123,6 +137,10 @@ export function parseLimitPool(raw: unknown): LimitPoolPayload {
     count: numberOrNull(payload.count) ?? rows.length,
     data_source_status: parseStatus(payload.data_source_status, available ? 'ok' : 'missing'),
     rows,
+    freshness: meta.freshness,
+    source_status: meta.source_status,
+    data_as_of: meta.data_as_of,
+    fetched_at: meta.fetched_at,
   }
 }
 

@@ -22,9 +22,10 @@ import {
   EmptyState,
   ErrorBlock,
   MetricCard,
+  SourceStatusBadge,
   type Column,
 } from '../../components/ui'
-import { formatBoards, formatMoney, formatOneDecimal, localDateIso, MISSING } from '../../lib/format'
+import { formatBoards, formatInt, formatMoney, formatOneDecimal, localDateIso, MISSING } from '../../lib/format'
 import { withParams } from '../industry/links'
 import { DEMO_POOL_DATE } from './demo'
 import { useDemoEnabled, usePoolView } from './useRadarView'
@@ -43,6 +44,11 @@ function compareNumber(a: number | null, b: number | null): number {
   if (a === null) return 1
   if (b === null) return -1
   return a - b
+}
+
+/** 权重缺失显示 `—`，不显示 `0.0%`——缺失不是零（UI-SPEC §8）。 */
+function weightPct(value: number | null | undefined): string {
+  return value === null || value === undefined ? MISSING : `${formatOneDecimal(value * 100)}%`
 }
 
 function PartCell({ value, compact = false }: { value: number | null; compact?: boolean }) {
@@ -101,6 +107,68 @@ function DownloadButton({ payload }: { payload: CandidatePoolPayload }) {
   )
 }
 
+function partColumns(
+  payload: CandidatePoolPayload,
+  candidate: PoolCandidate,
+  weightSum: number | null,
+): Array<Column<PoolPart>> {
+  return [
+    {
+      key: 'part',
+      header: '分项',
+      // 不给 width：吃掉剩余宽度，超长分项名走省略号
+      truncate: true,
+      cellTitle: (part) => `${POOL_PART_LABEL[part]}（${POOL_PART_WEIGHT_LABEL[part]}）`,
+      render: (part) => (
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-text">{POOL_PART_LABEL[part]}</span>
+          <span className="truncate text-caption text-text-muted">{POOL_PART_WEIGHT_LABEL[part]}</span>
+        </span>
+      ),
+      summary: () => <span className="font-medium text-text">合计</span>,
+    },
+    {
+      key: 'weight',
+      header: '权重',
+      numeric: true,
+      width: '88px',
+      render: (part) => <span className={payload.weights[part] == null ? 'text-text-muted' : undefined}>{weightPct(payload.weights[part])}</span>,
+      summary: () => weightPct(weightSum),
+    },
+    {
+      key: 'score',
+      header: '得分',
+      numeric: true,
+      width: '88px',
+      render: (part) => <PartCell value={candidate.parts[part]} compact />,
+      summary: () =>
+        candidate.score === null ? (
+          <span className="text-text-muted">{MISSING}</span>
+        ) : (
+          <span className="font-semibold">{formatOneDecimal(candidate.score)}</span>
+        ),
+    },
+    {
+      key: 'raw',
+      header: '原始输入',
+      numeric: true,
+      // 内容是「换手率 12.3%」「相对高度 3 / 8」这类混合文本，缺失走 MISSING
+      truncate: true,
+      cellTitle: (part) => rawFor(part, candidate, payload.height),
+      render: (part) => (
+        <span className="text-caption leading-body text-text-secondary">{rawFor(part, candidate, payload.height)}</span>
+      ),
+      summary: () => (
+        <span className="text-caption text-text-muted">
+          {candidate.absent_parts.length > 0
+            ? `缺 ${candidate.absent_parts.map((part) => POOL_PART_LABEL[part] ?? part).join('、')}，不计入分母`
+            : '五个分项齐全'}
+        </span>
+      ),
+    },
+  ]
+}
+
 function BreakdownDrawer({
   candidate,
   payload,
@@ -110,7 +178,11 @@ function BreakdownDrawer({
   payload: CandidatePoolPayload
   onClose: () => void
 }) {
-  const weightSum = POOL_PART_ORDER.reduce((sum, part) => sum + (payload.weights[part] ?? 0), 0)
+  /** 任一分项权重没给，合计就只是部分之和——写 `—`，不把缺数加总成真实量级。 */
+  const weightValues = POOL_PART_ORDER.map((part) => payload.weights[part] ?? null)
+  const weightSum = weightValues.every((value): value is number => value !== null)
+    ? weightValues.reduce((sum, value) => sum + value, 0)
+    : null
   return (
     <Drawer
       open={candidate !== null}
@@ -121,67 +193,14 @@ function BreakdownDrawer({
     >
       {candidate && (
         <div className="flex flex-col gap-4">
-          <div className="overflow-hidden rounded border border-border">
-            <table className="w-full border-collapse text-body">
-              <caption className="px-3 py-2 text-left text-caption text-text-secondary">
-                分项得分与权重（后端载荷原值，页面不重算）
-              </caption>
-              <thead>
-                <tr className="bg-surface-2">
-                  {['分项', '权重', '得分', '原始输入'].map((header, index) => (
-                    <th
-                      key={header}
-                      scope="col"
-                      className={
-                        index === 0
-                          ? 'px-3 py-2 text-left text-caption font-medium text-text-secondary'
-                          : 'px-3 py-2 text-right text-caption font-medium text-text-secondary'
-                      }
-                    >
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {POOL_PART_ORDER.map((part) => (
-                  <tr key={part} className="border-t border-border">
-                    <td className="px-3 py-2">
-                      <span className="flex flex-col leading-tight">
-                        <span className="text-text">{POOL_PART_LABEL[part]}</span>
-                        <span className="text-caption text-text-muted">{POOL_PART_WEIGHT_LABEL[part]}</span>
-                      </span>
-                    </td>
-                    <td className="ldst-num px-3 py-2 text-right text-text-secondary">
-                      {formatOneDecimal((payload.weights[part] ?? 0) * 100)}%
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <PartCell value={candidate.parts[part]} />
-                    </td>
-                    <td className="px-3 py-2 text-right text-caption leading-body text-text-secondary">
-                      {rawFor(part, candidate, payload.height)}
-                    </td>
-                  </tr>
-                ))}
-                <tr className="border-t border-border bg-surface-2">
-                  <td className="px-3 py-2 font-medium text-text">合计</td>
-                  <td className="ldst-num px-3 py-2 text-right text-text">
-                    {formatOneDecimal(weightSum * 100)}%
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className="ldst-num font-semibold text-text">
-                      {candidate.score === null ? MISSING : formatOneDecimal(candidate.score)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right text-caption text-text-muted">
-                    {candidate.absent_parts.length > 0
-                      ? `缺 ${candidate.absent_parts.map((part) => POOL_PART_LABEL[part] ?? part).join('、')}，不计入分母`
-                      : '五个分项齐全'}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={partColumns(payload, candidate, weightSum)}
+            rows={[...POOL_PART_ORDER]}
+            rowKey={(part) => part}
+            caption="分项得分与权重（后端载荷原值，页面不重算）"
+            density="compact"
+            stickyFirstColumn={false}
+          />
 
           {candidate.absent_parts.length > 0 && (
             <Banner tone="warn" title="有分项没有数据">
@@ -286,10 +305,15 @@ export default function PoolScreen() {
   const header = (
     <PageHeader
       title="候选池"
-      subtitle={`${date} · 高度 ${formatBoards(payload?.height)} · ${payload?.candidate_count ?? 0} 只候选 · 来源 ${
+      subtitle={`${date} · 高度 ${formatBoards(payload?.height)} · ${formatInt(payload?.candidate_count)} 只候选 · 来源 ${
         payload?.source_detail || MISSING
-      }`}
-      badge={<DemoStateBadge state={forced} />}
+      } · 数据时点 ${payload?.data_as_of ?? MISSING}`}
+      badge={
+        <div className="flex flex-wrap items-center gap-2">
+          <DemoStateBadge state={forced} />
+          {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
+        </div>
+      }
       actions={
         <div className="flex items-center gap-2">
           {payload && payload.available && <DownloadButton payload={payload} />}
@@ -377,7 +401,7 @@ export default function PoolScreen() {
                 {!demo && (
                   <a
                     href={withParams('/pool', { demo: '1', state: forced })}
-                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text hover:bg-surface-3"
+                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
                   >
                     查看演示数据
                   </a>
@@ -401,7 +425,7 @@ export default function PoolScreen() {
         </Banner>
       )}
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-4">
         <MetricCard
           label="候选数"
           hero

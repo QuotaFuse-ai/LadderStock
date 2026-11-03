@@ -1,18 +1,21 @@
 # SPEC-MY-POSITION 我的持仓（本地私有库）
 
-- 日期：2026-10-30
+- 日期：2026-10-30（2026-11-01 增补「已实现盈亏」：§3 import 规则、§4.1、§5.5、§7，DEC-038）
 - 归属：数据面 R7
-- 实现：`src/ladderstock/journal/position.py`（读写 + 本地计算）、`src/ladderstock/cli/position.py`（命令体）、
+- 实现：`src/ladderstock/journal/position.py`（读写 + 本地计算）、`src/ladderstock/journal/realized.py`
+  （已实现盈亏引擎：纯函数，只吃流水不进库）、`src/ladderstock/cli/position.py`（命令体）、
   `src/ladderstock/data/sqlite_store.py`（`positions` 表，schema v2）
 - 测试：`tests/unit/journal/test_position.py`（字段口径 / CRUD / 手算对照）、
+  `tests/unit/journal/test_realized.py`（移动加权手算对照）、
+  `tests/integration/test_realized_reconciliation.py`（与 `journal stats` 同源对账）、
   `tests/integration/test_position_privacy.py`（四个出口的隐私断言）
 - 相关：生态边界、隐私库只读数据面边界、本文的 schema v2 与边界决策、
-  `docs/MCP_TOOLS.md` §2（禁止字段名）
+  `docs/MCP_TOOLS.md` §2（禁止字段名）、DEC-033（持仓写面）、DEC-038（已实现盈亏口径）
 
 ## 0. 一句话
 
 持仓是**只进不出本机**的私有数据：写 `data/journal.sqlite` 的 `positions` 表，
-盈亏 / 集中度 / 行业分布全部本地算，只在终端打印；
+盈亏（浮动 + 已实现离线复算）/ 集中度 / 行业分布全部本地算，只在终端打印；
 **不进 MCP 工具清单、不进 `LadderEnvelope`、不进 AI 上下文、不自动导出**。
 
 ## 1. 字段口径（schema v2）
@@ -47,15 +50,18 @@
 
 - 全部是**本地命令，可以打印**（`--output table` 直接在终端看），不经 MCP，也不构造 `LadderEnvelope`；
 - `list` 的输出是 `compute_metrics()` 的载荷 + 一个 `price_lookup` 溯源块，`emit()` 直出；
+  `GET /api/positions` 是**同一个函数的另一个出口**（§4.5），不是第二份实现；
 - `add` / `update` / `remove` 的输出固定带 `local_only: true` 与 `store: "local_sqlite"`，
   脚本据此判断「这条数据没出本机」。
 
-## 3. 现价从哪来（为什么不联网）
+## 3. 现价与流水从哪来（为什么不联网）
 
-`journal/position.py` **不读行情**——它的 import 只允许 `ladderstock.data.sqlite_store` 与
-`ladderstock.errors`（AST 级断言 `test_position_does_not_import_market_or_ai`）。
+`journal/position.py` **不读行情、不 import 接口层**——它的 import 只允许
+`ladderstock.data.*`、`ladderstock.errors` 与同侧的 `ladderstock.journal.*`
+（隐私库内部互相引用不算越界；AST 级断言 `test_position_does_not_import_market_or_ai`）。
 现价由 `cli/position.py::_price_map()` 从**本机 `daily_k` 缓存**读出来再注入
-`compute_metrics(rows, prices, as_of=…)`：
+`compute_metrics(rows, prices, as_of=…)`；成交流水由同模块的
+`list_journal_trades()`（薄封装 `journal.log.list_trades`）读出后注入同一个函数的 `trades` 参数：
 
 - 缺省取缓存里可用的最后一天（`archive.latest_day("daily_k")`），`--date` 可指定；
 - 收盘价容忍键：`close` / `close_price` / `latest_price` / `price` / `收盘`；
@@ -103,6 +109,42 @@ holdings[]    = {code, weight_pct, cost}，按 (权重降序, code 升序)
 空态：没有持仓 → `data_source_status="missing"`、`position_count=0`、
 `concentration.available=false`（`reason="本机没有持仓"`）、`sector_distribution.available=false`，
 退出码仍是 **0**（「你还没记」不是「对象不存在」，与 `journal list` 同口径）。
+成交流水为空时 `realized.status="missing"`、`total_pnl=null`，**持仓有但没卖过是 `0.0`**，两种空态不同。
+
+### 4.1 已实现盈亏（`realized` 块，DEC-038）
+
+只读复算，不写回任何表：**成本法 = 移动加权平均**（券商对账单口径，不是 FIFO），
+按 `journal.log.list_trades()` 的顺序（`(trade_date, id)` 升序、上限与 `journal stats` 一致）逐笔回放。
+
+```
+买入：  qty += n；cost_total += n × price     → 加权成本单价 u = cost_total / qty
+卖出：  已实现 += n × price − u × n；qty −= n；cost_total −= u × n
+        （剩余持仓的成本单价 u 不变 —— 这就是与 FIFO 的区别）
+```
+
+出口字段：
+
+```
+realized = { method: "moving_weighted_average", fee_included: false,
+             status, reason, buy_count, sell_count,
+             matched_sell_qty, unmatched_sell_qty,
+             total_pnl, held_pnl, unheld_pnl, unheld_codes }
+items[i].realized_pnl     # 没卖过 0.0；无流水 null；只按 code 匹配，与该行现价/成本无关
+```
+
+三条口径纪律：
+
+1. **`total_pnl == Σ items[].realized_pnl + unheld_pnl`**：全部清仓的票通常已从 `positions` 里删掉，
+   只按持仓行展示会把落袋的收益变没；只报合计又会出现「合计 ≠ Σ 明细」。
+   `unheld_codes` 说明差额来自哪几只（按 code 升序，**只是 code 列表，不带成本或明细**）；
+   单测 `test_realized_total_is_items_plus_unheld` 用「已清仓的票」与「未持仓但有流水」两种形状钉住这条；
+2. **卖出多于在手**：只结转在手部分，多出来的进 `unmatched_sell_qty`，**不编造成本价**；
+3. **不含手续费**：`trades` 表没有费用列，所以是毛额口径，`fee_included=false` 写在出口上，
+   不猜费率、不解析 `note`。
+
+与 `journal stats`（FIFO）「同源」的准确含义、以及未平仓时差额的恒等式，见 DEC-038 §2.2；
+两种口径不承诺同数，但全清仓的那只票必须逐分不差（集成测试钉着）。
+舍入依旧只在出口做一次（金额 2 位、数量 4 位），引擎给原值。
 
 ## 5. 手算对照（与 `tests/unit/journal/test_position.py` 一致）
 
@@ -156,6 +198,29 @@ holdings 前 3 = 300750 → 600000 → 600519（同权重按 code 升序）
 
 成本额 2000（银行）/ 1000（未标注）：`银行 66.7` / `未标注 33.3`，`labeled_count=1`、`unlabeled_count=1`。
 
+### 5.5 已实现盈亏（`tests/unit/journal/test_realized.py` 与 `test_position.py` §5 一致）
+
+持仓 `600000`（成本 10 × 1000）、`600519`（成本 100 × 100），流水：
+
+```
+600000：买 1000@10 → 卖 400@12          (12−10)×400 = +800，剩余单价仍是 10
+300750：买 100@30 → 卖 100@36（已清仓）  (36−30)×100 = +600
+
+total_pnl  = 1400      held_pnl = 800（600000 还在持仓表）
+unheld_pnl = 600       unheld_codes = ["300750"]
+items[600000].realized_pnl = 800.0；items[600519].realized_pnl = null（一笔流水都没有）
+```
+
+另外三条锚点：
+
+- **不拿 `positions.cost` 当基础**：持仓填 12、流水是 买 1000@10 → 卖 500@14，
+  已实现 `+2000`（按流水单价 10），不是 `(14−12)×500 = +1000`；
+- **两种空态分开**：`trades=[]` → `total_pnl=null` + 「流水为空」；
+  `trades=None`（调用方没载入）→ `total_pnl=null` + 原因里写明 `trades=None`；
+  有买有卖但只买未卖 → `0.0`；
+- **卖出多于在手**：卖 200（前面没买）→ 不结转、进 `unmatched_sell_qty`；
+  买 100@10 后卖 150@12 → 结转 100 得 `+200`。合计 `matched_sell_qty=100`、`unmatched_sell_qty=250`。
+
 ## 6. 隐私边界（四条出口都要干净）
 
 | 出口 | 结论 | 护栏测试 |
@@ -173,11 +238,20 @@ holdings 前 3 = 300750 → 600000 → 600519（同权重按 code 升序）
 `--export` 写出的文件与 stdout 内容完全一致（`exported` 字段在序列化前写入），
 路径由用户指定，程序不选目录、不加时间戳、不覆盖同名文件的提醒之外的任何自作主张。
 
+已实现盈亏（§4.1）**不开新的隐私通路**：流水读取收在 `journal/position.py::list_journal_trades()`
+后面，接口层（`cli/position.py` / `web/radar.py`）不 import `journal.log` ——
+`scripts/check_privacy.py` 的 `JOURNAL_IMPORT_ALLOWLIST` 对 `web/radar.py` 只放开 `journal.position`。
+`realized` 块因此与 `items` 同进同出：进 `--export` 的文件，不进 MCP、不进信封、不进 AI 上下文。
+
 ## 7. 已知取舍
 
 - **`positions.code` 仍然 UNIQUE**：一条票只有一条记录，加仓走 `update` 改 `qty`/`cost`。
   要做「同一票多笔建仓」需要把主键改成 (code, entry_date) 并引入批次概念，属于新的表结构决策，不在 R7 范围。
-- **不做已实现盈亏**：`journal` 侧有成交流水与纪律统计（`journal stats`），持仓只算浮动盈亏，
-  两边不重复实现同一件事。
+- **已实现盈亏只读复算，不写回**（DEC-038 取代原来的「不做已实现盈亏」）：`positions` 仍是持仓唯一真相，
+  `trades` 流水只用来算 `realized`，两边不重复实现同一件事。
+  **两种结转法回答的是两个不同的问题，两个数都正确**：纪律复盘要逐笔配对，所以 `journal stats` 用 FIFO
+  （胜率 / 盈亏比按它算，契约不动）；账户对账要券商口径，所以持仓侧用移动加权平均。
+  两者**不承诺同数**，差额由恒等式解释（DEC-038 §2.2），不许为了对齐数字去改 stats。
+  **不含手续费**——`trades` 表没有费用列，出口用 `fee_included=false` 写明，不猜费率、不新增字段。
 - **`entry_date` 允许 NULL**：旧库升级来的行没有建仓日，如实给 `NULL`，
   不拿 `updated_at` 或今天冒充。

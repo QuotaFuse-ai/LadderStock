@@ -119,6 +119,10 @@
 ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，水位增量自动带 start
 ```
 
+**同库串行（QUOT-234）**：`ldst sync` 一进来先拿 `data/market.duckdb.lock` 这把进程级写锁，
+第二个 sync 排队而不是把第一个的 DuckDB 文件锁顶成崩溃。等待上限 `LDST_DB_LOCK_TIMEOUT`
+（秒，默认 30）；超时 **10**，一次取数都不发。`sync status` 只读水位文件，不参与排队。
+
 ## C. 盘中、提醒与交易日志（7）
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
@@ -211,13 +215,23 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 |---|---|---|---|---|
 | 37 | `ldst pool` | 当日候选池打分：强度 / 换手 / 地位 / 资金 / 题材五个分项 + 加权总分 | `--date`（缺省今天）、`--limit 30`、`--output` | `LadderEnvelope`（`topic=candidate_pool`），`payload` 平铺打分结果；**只读本机缓存**，涨停池为空 / 无可解析候选时 stdout 仍给完整结果且 `available=false` → **6**；`--limit <= 0` 或日期非法 → 2 |
 | 38 | `ldst position add` | 记一条持仓（成本价、数量、建仓日、行业标注、备注） | `--code`、`--cost`、`--qty`、`--date`、`--industry`、`--note` | **仅写本机 `data/journal.sqlite`**；重复 code 提示改用 `update` → 2 |
-| 39 | `ldst position list` | 持仓 + 本地计算：浮动盈亏、集中度（top1/top3/HHI）、行业分布 | `--code`、`--date`（行情日期）、`--export <path>`、`--output` | 仅本地，载荷带 `local_only=true` 与 `price_lookup` 溯源；现价取不到 → 相应字段 `null` + stderr 说明（仍 0）；**不加 `--export` 不产生任何文件**；导出目标不可写 → 3 |
+| 39 | `ldst position list` | 持仓 + 本地计算：浮动盈亏、**已实现盈亏（移动加权，离线复算流水）**、集中度（top1/top3/HHI）、行业分布 | `--code`、`--date`（行情日期）、`--export <path>`、`--output` | 仅本地，载荷带 `local_only=true` 与 `price_lookup` 溯源；现价取不到 → 相应字段 `null` + stderr 说明（仍 0）；流水为空 → `realized.total_pnl=null`（**不给 0**，DEC-038）；**不加 `--export` 不产生任何文件**；导出目标不可写 → 3 |
 | 40 | `ldst position update` | 改一条持仓（只改显式传入的字段） | `--code` + `--cost/--qty/--date/--industry/--note` | 一个字段都没给 → 2；code 不在库里 → **6** |
 | 41 | `ldst position remove` | 删一条持仓（只删本机记录，不产生文件） | `--code` | code 不在库里 → **6** |
 
 `position` 与 `journal` 同为**本地命令，可打印，不经 MCP**：持仓数据不进 `LadderEnvelope`、
 不进 MCP 工具清单、不进 AI 上下文（`docs/MCP_TOOLS.md` §2）。候选池与持仓**互不引用**——
 持仓不参与打分，隐私数据不可能经打分结果外溢（护栏见 `tests/integration/test_position_privacy.py`）。
+
+`position list` 的**已实现盈亏**（DEC-038）读的是 `journal` 那份成交流水，口径是**移动加权平均成本**
+（券商对账单口径），与 `journal stats` 的 FIFO **不承诺同数**：全部清仓的票逐分不差，
+未平仓的票差额 = 两种方法的剩余成本基础之差。它只读、不写回 `positions`，
+`--export` 之外不产生任何文件。对账：
+
+```bash
+ldst journal stats --from <日> --to <日> --output json   # FIFO realized_pnl
+ldst position list --output json                         # realized.total_pnl（移动加权）
+```
 
 ## D‴. 产业研究（R5 增量，2）
 
@@ -248,7 +262,8 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。
 - **输出格式**：全局 `--output json|table|csv`；默认 table（交互）/ json（管道）。
-- **退出码**：`0` 成功、`2` 参数错误、`3` 配置错误、`4` 数据源不可用、`6` 对象不存在 / 无结果（含 `sentiment show` / `ladder show` 的 `available=false`；含 `research --check` 的产物缺失；含 `weekly` 的整周没有可用单日指标——**6 优先于 9**，此时产物照写）、`8` 部分数据源失败（含 `research --check` 查出引用不合格的数字）、`9` AI 降级完成。
+- **退出码**：`0` 成功、`2` 参数错误、`3` 配置错误、`4` 数据源不可用、`6` 对象不存在 / 无结果（含 `sentiment show` / `ladder show` 的 `available=false`；含 `research --check` 的产物缺失；含 `weekly` 的整周没有可用单日指标——**6 优先于 9**，此时产物照写）、`8` 部分数据源失败（含 `research --check` 查出引用不合格的数字）、`9` AI 降级完成、`10` **本机历史库被别的进程占着**（`sync` 拿锁超时，或 `duckdb.connect()` 退避重试耗尽；QUOT-234）。
+  `10` 不属于对外契约的那 6 个码，也**不复用 4/8**——那两个码的主语是「生态 peer 数据源」，报它们会把排查方向引到换源、重试取数上；库锁争用是本机串行问题，判据见 `docs/decisions/DEC-036-duckdb-cross-process-writes.md`。
 - **端口**：看板 `5950`、MCP http `5951`，默认仅回环监听。**端口被占用直接报错（退出码 3）并提示 `--port`，绝不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会让 M1 状态恢复失效。旧版端口 `5940` / `8770` 仅打印迁移提示。
 - **监听鉴权（R-1，判据唯一份：`core/listener.py`）**：回环（`127.0.0.1` / `localhost` / `::1`）无需配置；非回环**必须同时**设置 `<前缀>_ALLOW_REMOTE=1` 与 `<前缀>_TOKEN`（≥16 字符），否则拒绝启动、退出码 3，绝不静默对外暴露。前缀：web `LDST_WEB_*`，MCP `LDST_MCP_*`。开启后 web 校验 `/api/*`、MCP 校验 `/mcp`，均要求 `Authorization: Bearer <token>`（web 兼容 `X-Web-Token`），`hmac.compare_digest` 常量时间比较，失败 401 且不回显服务端细节。
 - **不撞端口**：Council WebUI `8788` / MCP `8765`、TickHub Admin `8787` / MCP `8000`、TickHub-US MCP `8002` / Admin `8789`、Wire `8790` / `8791`。

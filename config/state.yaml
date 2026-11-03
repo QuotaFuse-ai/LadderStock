@@ -13,5 +13,8 @@ state:
       persist: true
     - name: validation_draft
       persist: true
+    # 用户偏好，无 TTL：刷新 / 重启 / 多窗口共用同一份（DEC-037）
+    - name: watch_settings
+      persist: true
     - name: journal_draft
       persist: true

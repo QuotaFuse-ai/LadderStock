@@ -1,0 +1,2 @@
+# the ops guard script is executed by bash directly; CRLF checkout would break it
+docs/ops/disk-guard.sh text eol=lf

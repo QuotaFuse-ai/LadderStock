@@ -192,3 +192,37 @@ export function artifactMarkdown(document: StageDocument, markdown: string): str
   }
   return lines.join('\n\n')
 }
+
+/* ------------------------------------------------------------------ *
+ * 后端英文枚举 → 中文（UI-SPEC §8「原始英文枚举须中文映射」）
+ *
+ * 两处直显英文 key 的旧写法（`mode=structured` / `失败：format`）把后端字段名当作用户文案。
+ * 词表不自己发明：`mode` 取 `ai/orchestrator.py` 实际写入的三个值，
+ * `kind` 逐条对齐 `ai/error_taxonomy.py:190` 后端自己那份中文 label，两边说法一致。
+ * 不在表里的值（后端新增或脏数据）原样显示 key，不猜翻译——和 `SourceBadges` 同一口径。
+ * ------------------------------------------------------------------ */
+
+const MODE_LABEL: Record<string, string> = {
+  structured: '结构化输出',
+  parsed: '叙述重组',
+  text: '纯文本兜底',
+}
+
+const FAILURE_KIND_LABEL: Record<string, string> = {
+  network: '网络请求失败',
+  quota: '额度或频率受限',
+  format: '结构化输出解析失败',
+  truncated: '输出被截断',
+  internal: 'AI 调用未归类失败',
+}
+
+/** 生成方式：`structured` → 「结构化输出」；未知值原样给 key。 */
+export function modeLabel(mode: string): string {
+  return MODE_LABEL[mode] ?? mode
+}
+
+/** 失败分类：给中文；`null` 表示后端没记分类，用 `—` 而不是 `unknown`。 */
+export function failureKindLabel(kind: string | null | undefined): string {
+  if (!kind) return MISSING
+  return FAILURE_KIND_LABEL[kind] ?? kind
+}

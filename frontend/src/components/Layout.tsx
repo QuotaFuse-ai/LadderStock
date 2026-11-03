@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
   BarChart3,
+  Bot,
+  Building2,
   CalendarDays,
   CalendarRange,
   CandlestickChart,
@@ -12,16 +14,21 @@ import {
   Home,
   Layers,
   ListChecks,
+  Microscope,
   Newspaper,
   NotebookPen,
+  Radio,
   Radar,
   ScrollText,
   Settings,
+  Sparkles,
+  Timer,
   TrendingUp,
   Wallet,
   type LucideIcon,
 } from 'lucide-react'
 
+import AiConnectDialog from './AiConnectDialog'
 import PersistenceBanner from './PersistenceBanner'
 import { Segmented } from './ui'
 import { cn } from '../lib/cn'
@@ -29,24 +36,29 @@ import { setTheme, useThemeChoice } from '../lib/prefs'
 import type { ThemeChoice } from '../lib/theme'
 
 /**
- * 应用外壳（DESIGN-SPEC §3.1 / §4.1）。
+ * 应用外壳（UI-SPEC §2「全局外壳」/ §7.3 结构尺寸）。
  *
- * 一级导航 6 组 + 底部固定的「设置」：
- * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 验证 ─┬─ 设置（弱化、沉底）。
+ * 一级导航 9 组 + 底部固定的「设置」：
+ * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
+ * 「我的股票」由 QUOT-304 从「市场 / 日志」抽出（DEC-044）：持仓与事件日历同属"我自己相关"，
+ * 聚成一组但不改路由、不新建页面；自选与提醒没有已交付页面，登记为范围外。
  *
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
- * - 市场 5 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达 / 事件日历）都已实现 → 展开为二级；
- * - 复盘 2 段（情绪复盘 / 候选池）、日志 2 段（交易日志 / 我的持仓）同样展开；
- * - 盯盘的「竞价与盘中」缺 6 时点快照 → 本轮不展开，直接是链接：
- *   宁可少一层，也不给空壳入口（R10 遵守「不新增一级导航」）。
+ * - 市场 4 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达）已实现 → 展开为二级；
+ * - 复盘 4 段（每日复盘 / AI复盘 / AI周报 / 候选池）、我的股票 2 段（持仓 / 事件日历）同样展开；
+ *   「AI复盘」由 QUOT-344（DEC-046）从复盘组拆出：三屏各自一条路由，高亮按 pathname 精确匹配，
+ *   `/review` 亮时 `/review/ai` 不跟着亮；
+ * - 盯盘 2 段（盘中信号 / 竞价与盘中）都已实现 → 展开为二级；
+ *   「竞价与盘中」由 QUOT-302 补上，前置是 QUOT-286（6 时点快照落盘）+ QUOT-301（读接口）。
  * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
  *
- * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进）。
- * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）。
+ * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进 16px）。
+ * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）；
+ *   展平后 20 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
  */
 
-interface NavPage {
+export interface NavPage {
   to: string
   label: string
   icon: LucideIcon
@@ -54,14 +66,19 @@ interface NavPage {
   tab?: string
 }
 
-interface NavSection {
+export interface NavSection {
   key: string
   label: string
   icon: LucideIcon
   pages: NavPage[]
 }
 
-const NAV_SECTIONS: NavSection[] = [
+/**
+ * 导出给导航一致性测试（`tests/nav-routes.test.ts`，QUOT-300）：
+ * 每条 `to` 必须在 `App.tsx` 的 `APP_ROUTES` 里命中，反之每条已交付路由也要有入口。
+ * 「做了页面忘接导航」已经发生过一次（产业研究 / 个股深挖四页），断言比人肉检查可靠。
+ */
+export const NAV_SECTIONS: NavSection[] = [
   {
     key: 'home',
     label: '首页',
@@ -77,25 +94,30 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/market?tab=ladder', label: '连板梯队', icon: BarChart3, tab: 'ladder' },
       { to: '/market?tab=theme', label: '题材轮动', icon: Layers, tab: 'theme' },
       { to: '/news', label: '资讯雷达', icon: Newspaper },
-      { to: '/calendar', label: '事件日历', icon: CalendarDays },
     ],
   },
   {
     key: 'watch',
     label: '盯盘',
     icon: Radar,
-    // 「竞价与盘中」缺 6 时点快照（就绪表 ❌），本轮不建入口
-    pages: [{ to: '/watch', label: '盘中信号', icon: Radar }],
+    // 实时动态（阈值信号）+ 竞价与盘中（当日 6 时点快照，QUOT-302 / DEC-035 §5）
+    pages: [
+      { to: '/watch', label: '盘中信号', icon: Radar },
+      { to: '/intraday', label: '竞价与盘中', icon: Timer },
+    ],
   },
   {
     key: 'review',
     label: '复盘',
     icon: NotebookPen,
-    // 「每日复盘」是 P1 留位（🟡），本轮不建入口；候选池是复盘的产出
+    // QUOT-344 / DEC-046：复盘拆成三个独立入口，各占一条路由，不再合成一屏
+    // 「每日复盘」= 当日五段数据；「AI复盘」= AI 段落与降级/失败态；「AI周报」= 按周聚合
+    // 候选池是复盘的产出，位置与文案不变
     pages: [
-      { to: '/review', label: '情绪复盘', icon: NotebookPen },
-      // R11 周度复盘（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
-      { to: '/weekly', label: '周度复盘', icon: CalendarRange },
+      { to: '/review', label: '每日复盘', icon: NotebookPen },
+      { to: '/review/ai', label: 'AI复盘', icon: Bot },
+      // R11（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
+      { to: '/weekly', label: 'AI周报', icon: CalendarRange },
       { to: '/pool', label: '候选池', icon: ListChecks },
     ],
   },
@@ -103,10 +125,18 @@ const NAV_SECTIONS: NavSection[] = [
     key: 'journal',
     label: '日志',
     icon: ScrollText,
-    // 交易日志与我的持仓同属本机私有数据
+    // 交易日志留在「日志」；我的持仓按 QUOT-304 移入「我的股票」
+    pages: [{ to: '/journal', label: '交易日志', icon: ScrollText }],
+  },
+  // QUOT-304 / DEC-044：把「我自己相关」的持仓与事件日历聚成一组。
+  // 自选、提醒没有已交付页面，登记为范围外，不建占位入口。
+  {
+    key: 'my-stocks',
+    label: '我的股票',
+    icon: Wallet,
     pages: [
-      { to: '/journal', label: '交易日志', icon: ScrollText },
       { to: '/positions', label: '我的持仓', icon: Wallet },
+      { to: '/calendar', label: '事件日历', icon: CalendarDays },
     ],
   },
   {
@@ -118,7 +148,27 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/limit-up', label: '涨停样本', icon: Flame },
     ],
   },
+  // QUOT-300：R9 产业研究两页已交付却进不去，补一级入口（新组排在验证之后、设置之前）
+  {
+    key: 'industry',
+    label: '产业研究',
+    icon: Building2,
+    pages: [
+      { to: '/industry', label: '产业研究', icon: Building2 },
+      { to: '/signals', label: '产业信号', icon: Radio },
+    ],
+  },
+  {
+    key: 'deep-dive',
+    label: '个股深挖',
+    icon: Microscope,
+    // 落地页收 6 位代码后才跳 `/research/:code`：侧栏本身没有代码可带
+    pages: [{ to: '/research', label: '个股深挖', icon: Microscope }],
+  },
 ]
+
+/** 侧栏底部固定项：不进 `NAV_SECTIONS`（不参与展开分组），但仍是一等入口，一致性测试要覆盖。 */
+export const PINNED_NAV: NavPage[] = [{ to: '/settings', label: '设置', icon: Settings }]
 
 const THEME_OPTIONS: ReadonlyArray<{ value: ThemeChoice; label: string }> = [
   { value: 'system', label: '系统' },
@@ -158,6 +208,12 @@ function pageActive(page: NavPage, location: Location): boolean {
   return current === page.tab
 }
 
+/**
+ * 图标栏（1024–1279）下的组间分隔：展平后 19 行图标同形同距，只靠这条 1px 线保留分组可读性。
+ * `ul` 本身已有 `gap-1`，所以这里只加线、不加内距，避免把溢出推得更长。
+ */
+const RAIL_GROUP = 'rail:border-t rail:border-border rail:first:border-t-0'
+
 function navClass(isActive: boolean, secondary = false): string {
   return cn(
     'group flex h-row items-center gap-2 rounded px-2 text-body transition-colors duration-fast rail:justify-center rail:px-0',
@@ -173,6 +229,8 @@ export default function Layout() {
   const theme = useThemeChoice()
   const location = useLocation()
   const [expanded, setExpanded] = useState<string[]>(readExpanded)
+  // `?ai=1` 是深链（截图与排障用）；首次渲染读取一次，不跟后续导航反复弹窗
+  const [aiOpen, setAiOpen] = useState(() => new URLSearchParams(location.search).get('ai') === '1')
 
   const toggleGroup = (key: string) => {
     setExpanded((current) => {
@@ -205,7 +263,7 @@ export default function Layout() {
           </div>
         </div>
 
-        <nav aria-label="主导航" className="min-h-0 flex-1 overflow-y-auto p-2">
+        <nav aria-label="主导航" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           <ul className="flex flex-col gap-1">
             {NAV_SECTIONS.map((section) => {
               const isGroup = section.pages.length > 1
@@ -215,7 +273,7 @@ export default function Layout() {
               if (!isGroup) {
                 const [page] = section.pages
                 return (
-                  <li key={section.key}>
+                  <li key={section.key} className={RAIL_GROUP}>
                     <NavLink
                       to={page.to}
                       end={page.to === '/'}
@@ -238,7 +296,7 @@ export default function Layout() {
               }
 
               return (
-                <li key={section.key}>
+                <li key={section.key} className={RAIL_GROUP}>
                   <button
                     type="button"
                     aria-expanded={isOpen}
@@ -265,11 +323,13 @@ export default function Layout() {
                     />
                   </button>
 
-                  {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标 */}
+                  {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标。
+                      完整侧栏下二级缩进 16px：导引线落在一级图标正下方（`ml-2`），线与文字
+                      仍留 8px 呼吸（`pl-2`）。原来总缩进只有 8px，分组标题与条目几乎同列。 */}
                   <ul
                     id={`nav-group-${section.key}`}
                     className={cn(
-                      'mt-1 flex flex-col gap-1 border-l border-border pl-2 rail:mt-0 rail:border-l-0 rail:pl-0',
+                      'mt-1 ml-2 flex flex-col gap-1 border-l border-border pl-2 rail:ml-0 rail:mt-0 rail:border-l-0 rail:pl-0',
                       !isOpen && 'hidden rail:flex',
                     )}
                   >
@@ -313,10 +373,23 @@ export default function Layout() {
               className="w-full justify-between"
             />
           </div>
-          <NavLink to="/settings" title="设置" className={({ isActive }) => navClass(isActive, true)}>
-            <Settings className="size-4 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
-            <span className="truncate rail:hidden">设置</span>
-          </NavLink>
+          {/* 接入 AI 是动作而不是页面：不占路由、不参与导航一致性断言，放在设置上方。 */}
+          <button
+            type="button"
+            onClick={() => setAiOpen(true)}
+            title="接入 AI"
+            aria-haspopup="dialog"
+            className={navClass(false, true)}
+          >
+            <Sparkles className="size-4 shrink-0 text-accent" strokeWidth={1.75} aria-hidden="true" />
+            <span className="truncate rail:hidden">接入 AI</span>
+          </button>
+          {PINNED_NAV.map((page) => (
+            <NavLink key={page.to} to={page.to} title={page.label} className={({ isActive }) => navClass(isActive, true)}>
+              <page.icon className="size-4 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
+              <span className="truncate rail:hidden">{page.label}</span>
+            </NavLink>
+          ))}
           <p className="px-2 text-caption leading-body text-text-muted rail:hidden">
             仅监听本机回环 · 草稿只存本机 IndexedDB
           </p>
@@ -329,6 +402,8 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      <AiConnectDialog open={aiOpen} onClose={() => setAiOpen(false)} />
     </div>
   )
 }

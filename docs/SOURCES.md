@@ -58,7 +58,7 @@ TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 
 | `valuation_history` | tickhub | `baostock_valuation_history` | — | append | `trade_date` |
 | `industry_fund_flow` | tickhub | `board_fund_flow` | — | replace | `trade_date` |
 | `hot_rank` | tickhub | `ths_hot_rank` | `eastmoney_hot_rank` | replace | `trade_date` |
-| `theme_news` | wire | `wire_get_digest` | `wire_timeline` | replace | `data_as_of` |
+| `theme_news` | wire | `wire_get_digest` | `wire_timeline`（仅登记，**不进按日链路**，DEC-043） | replace | `data_as_of` |
 | `council_memo` | senate | `report_query` | — | replace | `data_as_of` |
 
 `theme_news` / `council_memo` 在 `sync.yaml` 里标了 `optional: true`：peer 不可用时
@@ -183,6 +183,31 @@ R5 的三只默认 `codes: []`：申万成分表是**懒缓存**，只同步用�
   不写进假设。
 - 单只失败不拖垮整轮：成功的照常落库，状态记 `degraded`，`detail` 只报**只数**。
 - 隐私：代码要发给本机 peer 才能取行情，但日志与对外输出只出现数量，不出现自选内容。
+
+### 2.3b 赛道池数据集：`topic` 必填的那个（QUOT-328，DEC-043）
+
+`theme_news` 与代码池同构，只是必填参数换成 Wire 的**赛道 slug**：
+`wire_get_digest(topic, date=None)` 的 `topic` 必填，**没有「空参 = 取全部赛道」的形状**
+（空参实测回 `topic Field required`；中文赛道名 `半导体` 实测回 `未知赛道: 半导体（可用: ai、…）`）。
+所以一次同步 = 逐个 slug 各调一次，合并成一个事务落库（`mode=replace`，同一天多赛道各留一行）。
+
+- 池子只有 `config/sync.yaml` 的 `sync.datasets.theme_news.topics`（schema 与 `codes` 同样
+  限 100 个）；**代码里不留赛道名常量表、不硬编码中文名**——合法取值以 Wire 的
+  `config/topics.yaml` 与它的报错回包为准，LadderStock 不复制一份会漂移的影子注册表。
+- 池子为空：**一次调用都不发**，`theme_news` 标了 `optional` → 记 `skipped`。
+- 扇出**不吃 source 冷却**（`fetch(ignore_cooldown=True)`）：冷却是跨轮闸门，扇出里一次失败
+  常常只是某个入参被拒。实测 1 个坏 slug + 2 个好 slug，改前报「全部失败」且好 slug
+  一次都没发出去，改后 `degraded / 成功 2 个 / 失败 1 个`。peer 真不健康时由
+  `FANOUT_FAILURE_STOP = 3` 连续失败止损兜住，剩余项如实报「未发起调用」。
+- 备源 `wire_timeline`（`wire_get_timeline`）**不进这条链路**：它要 `event_id`（单事件下钻），
+  按日摘要没有事件维度。它在 `sources.yaml` 仍作为同 peer 备源登记在册（DEC-008 校验照旧），
+  `sync.yaml` 写 `fallback: []` 把它挡在链路外——为此 `chain()` 的口径改为「写了 `fallback`
+  键（哪怕是 `[]`）就以 sync.yaml 为准，只有完全不写才回填 sources.yaml」。
+  链路守卫另有硬检查：按日链路里出现非 slug 工具 → 配置错误（退出码 3），不留到运行时。
+- 真实返回是 `{"structuredContent": {"result": "<JSON 字符串>"}}`（Wire 工具回
+  `envelope.model_dump_json()`）：`_unwrap_mcp_result` 必须拆掉这层字符串壳，
+  否则参数修对了落库仍是一行空壳——**这是同一个事故的两个缺陷，只修其一验证仍会失败**。
+
 ### 2.4 资讯雷达数据集（R6，按需取数，不进 `sync.yaml`）
 
 唯一真源仍是 `core.boundary.DATASET_CATALOG`；分组口径是两个集合：

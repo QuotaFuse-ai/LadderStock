@@ -3,6 +3,7 @@ import { Fragment } from 'react'
 import type { CitationIndex } from '../../lib/citation'
 import { parseInline, parseMarkdown, type InlineToken } from '../../lib/citation'
 import { cn } from '../../lib/cn'
+import { NUMBER_CHIP } from './bits'
 
 /**
  * 研究报告正文渲染（SPEC-RESEARCH-PROVENANCE §3）。
@@ -10,6 +11,16 @@ import { cn } from '../../lib/cn'
  * 只认后端渲染器会写的语法；`[n]` 角标渲染成按钮并打开来源抽屉。
  * `〔未核实〕` 用 warn 语义色（不是新色板），并带文字说明，不靠颜色单独表达。
  */
+
+/**
+ * 行内标记的统一外壳（角标 / 〔未核实〕 / 无来源编号三兄弟共用）。
+ *
+ * 原来角标是 `align-super`：16px 高的方块压到基线以上，把 14px/1.6 的行盒顶到 ~31px，
+ * 同一段里「有角标的行」比「没角标的行」高出一截，正文节奏被打断。
+ * 现在贴着基线走（16px < 行盒上半部 15.2px + 下半部），行高不再随角标抖动，
+ * 层级靠「更小一号 + 底色方块」表达，不靠上标位移。
+ */
+const MARK = 'mx-half align-baseline'
 
 export interface MarkdownViewProps {
   markdown: string
@@ -51,7 +62,11 @@ function Inline({
           return (
             <span
               key={key}
-              className="mx-0.5 inline-flex items-center rounded-xs bg-warn-soft px-1 text-caption font-medium text-warn"
+              className={cn(
+                NUMBER_CHIP,
+                MARK,
+                'bg-warn-soft text-warn',
+              )}
               title="未核实：该数字没有可追溯来源，不作为审计依据"
             >
               〔未核实〕
@@ -61,7 +76,11 @@ function Inline({
         const source = index.byNumber.get(token.n)
         if (!source) {
           return (
-            <span key={key} className="ldst-num text-caption text-text-muted" title="该编号没有已核实的来源">
+            <span
+              key={key}
+              className={cn(NUMBER_CHIP, MARK, 'ldst-num text-text-muted')}
+              title="该编号没有已核实的来源"
+            >
               [{token.n}]
             </span>
           )
@@ -72,7 +91,11 @@ function Inline({
             type="button"
             onClick={() => onCitation(token.n)}
             aria-label={`查看来源 ${token.n}：${source.dataset}`}
-            className="ldst-num mx-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-xs bg-info-soft px-1 align-super text-caption font-medium text-info hover:underline"
+            className={cn(
+              NUMBER_CHIP,
+              MARK,
+              'ldst-num bg-info-soft text-info underline-offset-2 transition-colors duration-fast ease-ldst hover:underline',
+            )}
           >
             {token.n}
           </button>
@@ -104,9 +127,9 @@ export function MarkdownView({ markdown, index, onCitation, className }: Markdow
         }
         if (block.kind === 'list') {
           return (
-            <ul key={key} className="flex list-disc flex-col gap-1 pl-5 text-body leading-body text-text-secondary">
+            <ul key={key} className="flex max-w-measure list-disc flex-col gap-1 pl-5 text-body leading-body text-text-secondary">
               {block.items.map((item, itemIndex) => (
-                <li key={`${key}-${itemIndex}`}>
+                <li key={`${key}-${itemIndex}`} className="break-words">
                   <Inline text={item} index={index} onCitation={onCitation} />
                 </li>
               ))}
@@ -117,7 +140,7 @@ export function MarkdownView({ markdown, index, onCitation, className }: Markdow
           return (
             <blockquote
               key={key}
-              className="rounded border-l-2 border-warn bg-warn-soft px-3 py-2 text-body leading-body text-text-secondary"
+              className="max-w-measure rounded border-l-2 border-warn bg-warn-soft px-3 py-2 text-body leading-body text-text-secondary"
             >
               <Inline text={block.text} index={index} onCitation={onCitation} />
             </blockquote>
@@ -127,7 +150,7 @@ export function MarkdownView({ markdown, index, onCitation, className }: Markdow
           return <hr key={key} className="border-t border-border" />
         }
         return (
-          <p key={key} className="text-body leading-body text-text-secondary [overflow-wrap:anywhere]">
+          <p key={key} className="max-w-measure break-words text-body leading-body text-text-secondary">
             <Inline text={block.text} index={index} onCitation={onCitation} />
           </p>
         )

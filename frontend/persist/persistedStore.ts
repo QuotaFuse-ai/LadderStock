@@ -18,9 +18,18 @@ export interface PersistedShell {
   updatedAt: string | null
 }
 
+export interface PersistedStoreOptions<T extends PersistedShell> {
+  /**
+   * 恢复时校验落库内容：返回 null 表示整片不可信，按初始态启动。
+   * 持久化不等于信任——越界值不能靠「上次写进去的」绕过入口校验。
+   */
+  sanitize?: (persisted: unknown) => Partial<T> | null
+}
+
 export function createPersistedStore<T extends PersistedShell>(
   storeId: string,
   createState: StateCreator<T>,
+  options: PersistedStoreOptions<T> = {},
 ) {
   const meta = metaFor(storeId)
 
@@ -42,6 +51,11 @@ export function createPersistedStore<T extends PersistedShell>(
           // 丢弃分片时的初始态：用当前内存里的初始值，避免 undefined 破坏 merge
           fallback: fallbackState,
         }) as T,
+      merge: (persisted, current) => {
+        if (!options.sanitize) return { ...current, ...(persisted as T) }
+        const clean = options.sanitize(persisted)
+        return (clean ? { ...current, ...clean } : current) as T
+      },
     }),
   )
 

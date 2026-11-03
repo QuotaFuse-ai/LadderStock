@@ -5,6 +5,7 @@ import { X } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Button, IconButton } from './Button'
 import { Checkbox } from './Field'
+import { useEnter } from './useEnter'
 
 /**
  * C-15 Drawer / C-16 ConfirmDialog（DESIGN-SPEC §5）。
@@ -105,12 +106,18 @@ export function Drawer({
   }, [confirmClose, onClose])
 
   useModalChrome(open, requestClose, panelRef)
+  /** 抽屉是 `if (!open) return null` 的即时挂载，入场动画必须由 useEnter 提供起止两帧 */
+  const entered = useEnter(open)
 
   if (!open) return null
 
   return createPortal(
     <div className="fixed inset-0 z-overlay">
-      <div className="absolute inset-0 bg-scrim" aria-hidden="true" onClick={requestClose} />
+      <div
+        className={cn('absolute inset-0 bg-scrim transition-opacity duration-base ease-ldst', entered ? 'opacity-100' : 'opacity-0')}
+        aria-hidden="true"
+        onClick={requestClose}
+      />
       <div
         ref={panelRef}
         role="dialog"
@@ -118,6 +125,8 @@ export function Drawer({
         aria-labelledby="ldst-drawer-title"
         className={cn(
           'absolute inset-y-0 right-0 flex flex-col border-l border-border bg-surface shadow-overlay',
+          'transition-all duration-base ease-ldst',
+          entered ? 'translate-x-0' : 'translate-x-full',
           width === 'lg' ? 'w-drawer-wide' : 'w-drawer',
         )}
       >
@@ -181,19 +190,28 @@ export function ConfirmDialog({
   }, [loading, onCancel])
 
   useModalChrome(open, cancel, dialogRef)
+  const entered = useEnter(open)
 
   if (!open) return null
 
   return createPortal(
     <div className="fixed inset-0 z-dialog flex items-center justify-center p-5">
-      <div className="absolute inset-0 bg-scrim" aria-hidden="true" onClick={cancel} />
+      <div
+        className={cn('absolute inset-0 bg-scrim transition-opacity duration-base ease-ldst', entered ? 'opacity-100' : 'opacity-0')}
+        aria-hidden="true"
+        onClick={cancel}
+      />
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="ldst-confirm-title"
         aria-describedby={description ? 'ldst-confirm-desc' : undefined}
-        className="relative flex w-dialog max-w-full flex-col gap-3 rounded border border-border bg-surface p-4 shadow-dialog"
+        className={cn(
+          'relative flex w-dialog max-w-full flex-col gap-3 rounded border border-border bg-surface p-4 shadow-dialog',
+          'transition-all duration-base ease-ldst',
+          entered ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
+        )}
       >
         <h2 id="ldst-confirm-title" className="text-subtitle font-semibold text-text">
           {title}

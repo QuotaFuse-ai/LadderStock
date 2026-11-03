@@ -1,7 +1,7 @@
 # SPEC-RESEARCH-PAGES 个股深挖与六阶段研究报告（前端）
 
-- 版本：v0.1（定稿：页面骨架 + 只读接口契约 + 五态矩阵）
-- 日期：2026-10-31
+- 版本：v0.2（定稿：页面骨架 + 只读接口契约 + 五态矩阵；v0.2 补 `/research` 入口页与导航）
+- 日期：2026-11-01
 - 归属：前端架构
 - 实现：`frontend/src/screens/research/`、`frontend/src/components/research/`、
   `frontend/src/api/research.ts`、`frontend/src/lib/citation.ts`
@@ -12,8 +12,12 @@
 
 | 路由 | 页面 | 职责 |
 | --- | --- | --- |
+| `/research` | 个股深挖入口 | 收 6 位代码的落地页：格式校验后跳 `/research/<code>`，侧栏「个股深挖」指向这里 |
 | `/research/:code` | 个股深挖 | 公司画像、财务趋势、盈利预期、估值分位、风险清单；同时是六段的摘要入口 |
 | `/research/:code/report` | 六阶段研究报告 | 左段导航 + 右 Markdown 正文 + 来源抽屉 + 失败段续跑 |
+
+入口页只做格式校验、不取数：`demo` / `variant` / `date` / `state` 参数原样带到研究页，
+所以从侧栏进来的演示态与深链一致。
 
 `:code` 接受 6 位数字，可带 `.SH` / `.SZ` / `.BJ` 后缀；规范化口径与后端
 `research/checkpoint.normalize_code` 一致（`normalizeResearchCode`）。非法代码直接进错误态，
@@ -163,5 +167,8 @@
 
 ## 变更记录
 
+- v0.2（2026-11-01，QUOT-300）：新增 `/research` 入口页（`ResearchEntryScreen`）与侧栏「个股深挖」
+  一级入口。此前两页只有路由、没有任何入链，用户必须手打带代码的 URL 才能进；
+  导航与路由表的一致性由 `frontend/tests/nav-routes.test.tsx` 双向断言。
 - v0.1（2026-10-31）：两页路由、六段导航、来源抽屉、失败段续跑、五态矩阵与
   只读接口契约定稿；记录后端接口缺口与演示参数。

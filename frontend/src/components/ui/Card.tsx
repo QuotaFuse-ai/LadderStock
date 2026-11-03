@@ -99,7 +99,7 @@ export function SectionCard({
     >
       <span
         aria-hidden="true"
-        className={cn('absolute inset-y-0 left-0 w-[3px]', SECTION_BAR[tone])}
+        className={cn('absolute inset-y-0 left-0 w-status-bar', SECTION_BAR[tone])}
       />
       <CardHeader title={title} subtitle={subtitle} actions={actions} />
       <div className={cn('p-4', bodyClassName)}>{children}</div>
@@ -122,7 +122,7 @@ export interface MetricCardProps {
   badge?: ReactNode
 }
 
-/** 首页 / 复盘用的指标卡：96px 固定高，缺失值显示 `—` + 原因（不补 0）。 */
+/** 首页 / 复盘用的指标卡：最小 96px、有 note 时可长高，缺失值显示 `—` + 原因（不补 0）。 */
 export function MetricCard({
   label,
   value,
@@ -134,7 +134,7 @@ export function MetricCard({
   badge,
 }: MetricCardProps) {
   return (
-    <div className="flex h-metric flex-col justify-between rounded border border-border bg-surface p-4 shadow-card">
+    <div className="flex min-h-metric flex-col justify-between gap-1 rounded border border-border bg-surface p-4 shadow-card">
       <div className="flex items-center gap-1.5 text-caption text-text-secondary">
         {icon}
         <span className="truncate">{label}</span>

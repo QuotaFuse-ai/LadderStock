@@ -72,6 +72,7 @@ from ladderstock.errors import (
 from ladderstock.journal.position import (
     add_position,
     compute_metrics,
+    list_journal_trades,
     list_positions,
     remove_position,
 )
@@ -543,8 +544,12 @@ class RadarPlane:
     def positions_view(self, raw_date: str | None) -> dict[str, Any]:
         """平面 JSON（**不进 `LadderEnvelope`**）：载荷 = `ldst position list --output json`。
 
-        只读：`list_positions()` 用 `create=False`，本机没有持仓库时不会建空库。
-        现价取不到就是 `null`，原因随 `price_lookup.reason` 给出，不补 0、不猜价。
+        只读：`list_positions()` 与 `list_journal_trades()` 都用 `create=False`，
+        本机没有持仓库 / 没记过成交时不会建空库。现价取不到就是 `null`，
+        原因随 `price_lookup.reason` 给出，不补 0、不猜价。
+
+        已实现盈亏不在这儿另算一遍：流水取到之后交给 `compute_metrics()`，
+        与 CLI 走同一个函数、同一份数字（QUOT-292 / DEC-038）。
         """
         day = raw_date or None
         if day and day.strip():
@@ -554,7 +559,8 @@ class RadarPlane:
         rows = self._read(lambda: list_positions(root=self.data_root))
         codes = [str(row["code"]) for row in rows]
         prices, lookup = self._read(lambda: price_map(codes, day, root=self.data_root))
-        payload = compute_metrics(rows, prices, as_of=lookup["date"])
+        trades = self._read(lambda: list_journal_trades(root=self.data_root))
+        payload = compute_metrics(rows, prices, as_of=lookup["date"], trades=trades)
         payload["price_lookup"] = lookup
         return payload
 

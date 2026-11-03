@@ -91,6 +91,7 @@
   --ldst-space-5: 24px; /** 页面内边距、区块之间 */
   --ldst-space-6: 32px; /** 页面上下留白、图表区高度分隔 */
   --ldst-space-7: 48px; /** 空态上下留白、页脚分隔 */
+  --ldst-space-half: 2px; /** 4px 半步的一半：胶囊轨道内衬（Switch 滑块与轨道、Segmented 外壳） */
   --ldst-radius: 8px; /** 统一圆角：卡片、按钮、输入框、下拉、弹层、标签页、抽屉、Toast、图表容器。全站只此一档 */
   --ldst-radius-xs: 4px; /** 仅用于 8px 容器内部的嵌套元素：行内胶囊、进度条、迷你图容器、表格内徽标 */
   --ldst-radius-pill: 999px; /** 状态点、计数气泡、分段控件的外壳 */
@@ -104,7 +105,14 @@
   --ldst-control-h: 32px; /** 默认控件高度（按钮 md / 输入框 / 下拉） */
   --ldst-control-h-lg: 40px; /** 主操作按钮 lg / 搜索框 */
   --ldst-icon-btn: 32px; /** 图标按钮边长，点击区不小于 32×32 */
+  --ldst-status-bar: 3px; /** 区块卡左侧状态条宽度（§4.5）：只在有状态含义时出现，不做装饰 */
+  --ldst-expander-col-w: 32px; /** 表格展开列列宽：与图标按钮同宽，sticky 首列据此偏移 */
+  --ldst-textarea-min: 96px; /** 多行输入最小高度（≈4 行正文，C-06） */
+  --ldst-switch-knob-travel: 18px; /** Switch 滑块位移：轨道 40 − 边框 2 − 内衬 4 − 滑块 16 = 18（用 translate 而非 margin，auto 外边距不可插值，滑块才不会瞬移） */
+  --ldst-measure: 52ch; /** 说明与空态文案的最大行宽：超过 52ch 中文行难以扫读 */
   --ldst-z-sticky: 10;
+  --ldst-z-sticky-col: 1; /** 表格 sticky 首列单元格：压住随横向滚动平移的普通单元格（base 0），本身被 sticky 表头（10）压住 */
+  --ldst-z-sticky-col-head: 11; /** sticky 首列 × sticky 表头的交叉格：必须高于表头本身（10），否则横向滚动时表头盖住首列表头 */
   --ldst-z-banner: 20;
   --ldst-z-overlay: 40;
   --ldst-z-dialog: 50;
@@ -121,14 +129,21 @@
   --ldst-control-h: 32px; /** 默认控件高度（按钮 md / 输入框 / 下拉） */
   --ldst-control-h-lg: 40px; /** 主操作按钮 lg / 搜索框 */
   --ldst-icon-btn: 32px; /** 图标按钮边长，点击区不小于 32×32 */
+  --ldst-status-bar: 3px; /** 区块卡左侧状态条宽度（§4.5）：只在有状态含义时出现，不做装饰 */
+  --ldst-expander-col-w: 32px; /** 表格展开列列宽：与图标按钮同宽，sticky 首列据此偏移 */
+  --ldst-textarea-min: 96px; /** 多行输入最小高度（≈4 行正文，C-06） */
+  --ldst-switch-knob-travel: 18px; /** Switch 滑块位移：轨道 40 − 边框 2 − 内衬 4 − 滑块 16 = 18（用 translate 而非 margin，auto 外边距不可插值，滑块才不会瞬移） */
+  --ldst-measure: 52ch; /** 说明与空态文案的最大行宽：超过 52ch 中文行难以扫读 */
   --ldst-z-sticky: 10;
+  --ldst-z-sticky-col: 1; /** 表格 sticky 首列单元格：压住随横向滚动平移的普通单元格（base 0），本身被 sticky 表头（10）压住 */
+  --ldst-z-sticky-col-head: 11; /** sticky 首列 × sticky 表头的交叉格：必须高于表头本身（10），否则横向滚动时表头盖住首列表头 */
   --ldst-z-banner: 20;
   --ldst-z-overlay: 40;
   --ldst-z-dialog: 50;
   --ldst-z-toast: 60;
   --ldst-bp-base: 1280px; /** 设计基准宽度（1280 起设计） */
   --ldst-bp-min: 1024px; /** 1024–1279 为保底宽度：单栏、指标三列，允许内容下移但不横向溢出 */
-  --ldst-duration-fast: 120ms; /** hover / focus / 开关切换 */
+  --ldst-duration-fast: 120ms; /** hover / focus / press / 展开 / 行高亮（UI-SPEC §7.3 过渡唯一档） */
   --ldst-duration-base: 180ms; /** 抽屉滑入、Toast 进出 */
   --ldst-ease: cubic-bezier(0.2, 0, 0, 1);
 }

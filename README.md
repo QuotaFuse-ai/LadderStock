@@ -120,6 +120,30 @@ ldst run                   # 打开本地工作台 http://127.0.0.1:5950
 
 端口固定 `5950`（看板）/ `5951`（MCP http），默认只监听 `127.0.0.1`；**端口被占用时直接报错并提示 `--port`，不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会丢前端状态。
 
+### 本机子模块（peer）
+
+设置页的「安装 / 启动 / 停止」按钮只在后端探测到 peer 目录时出现。仓库默认按**同级目录**探测：
+
+```text
+<parent>/
+├── LadderStock/
+├── TickHub-CN/
+├── TickHub-US/
+├── quotafuse-wire/
+└── StockSenate/
+```
+
+仓库放在别处时，用固定环境变量覆盖（键是白名单，不接受任意字符串）：
+
+| peer | 环境变量 |
+|---|---|
+| TickHub-CN | `LDST_PEER_DIR_TICKHUB` |
+| TickHub-US | `LDST_PEER_DIR_TICKHUB_US` |
+| QuotaFuse Wire | `LDST_PEER_DIR_WIRE` |
+| StockSenate | `LDST_PEER_DIR_SENATE` |
+
+目录不存在时设置页只读展示该 peer，并给出对应变量名，不会出现「装了半天没按钮」。
+
 ## 命令行
 
 命令基线 **31 条，已全部定为 P0**（19 条文档明文 + 12 条补齐缺口），完整参数与退出码见 [docs/CLI.md](docs/CLI.md)，分层与数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，配置与旧版迁移见 [docs/CONFIG.md](docs/CONFIG.md)。

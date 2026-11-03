@@ -19,17 +19,44 @@ export {
   EmptyState,
   ErrorBlock,
   Skeleton,
+  SkeletonRows,
   SkeletonText,
+  StatePanel,
   Toasts,
   useToasts,
   type BannerProps,
   type BannerTone,
   type EmptyStateProps,
   type ErrorBlockProps,
+  type SkeletonRowsProps,
+  type StatePanelProps,
   type ToastItem,
 } from './Feedback'
 export { HBarList, Sparkline, type HBarItem, type HBarListProps, type SparklineProps } from './MiniChart'
 export { ConfirmDialog, Drawer, type ConfirmDialogProps, type DrawerProps } from './Overlay'
+export {
+  asSourceBadgeStatus,
+  FRESHNESS_LABEL,
+  FreshnessBadge,
+  SOURCE_SEVERITY,
+  SOURCE_STATUS_LABEL,
+  SourceBadges,
+  SourceStatusBadge,
+  worstSourceTone,
+  type FreshnessBadgeProps,
+  type FreshnessLike,
+  type SourceBadgeMeta,
+  type SourceSeverity,
+  type SourceStatusBadgeProps,
+  type SourceStatusExtension,
+  type SourceStatusLike,
+  type SourceTone,
+} from './SourceBadges'
 export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmented'
 export { Tabs, type TabOption, type TabsProps } from './Tabs'
-export { DataTable, type Column, type DataTableProps } from './Table'
+export {
+  DataTable,
+  type Column,
+  type DataTableProps,
+  type Expandable,
+} from './Table'

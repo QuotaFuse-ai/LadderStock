@@ -1,16 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw, Trash2 } from 'lucide-react'
 
-import { api, describeApiError, isApiError } from '../api'
+import { describeApiError, isApiError, type WatchSnapshotRow } from '../api'
 import {
   WATCH_SNAPSHOT_TTL_SEC,
   useWatchSnapshot,
   type SnapshotRow,
 } from '../../stores/watchSnapshot'
 import {
+  COOLDOWN_MAX_SEC,
+  COOLDOWN_MIN_SEC,
+  THRESHOLD_MAX,
+  THRESHOLD_MIN,
+  isValidCooldownSec,
+  isValidThresholdPct,
+  useWatchSettings,
+} from '../../stores/watchSettings'
+import {
   describeFreshness,
   evaluateSnapshotFreshness,
   localDateIso,
+  type Freshness,
 } from '../../persist/freshness'
 import { useAsync } from '../lib/useAsync'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
@@ -25,13 +35,15 @@ import {
   EmptyState,
   ErrorBlock,
   Field,
+  FreshnessBadge,
   Input,
   SectionCard,
   SignedNumber,
-  StatusDot,
+  SourceBadges,
   Switch,
   type Column,
 } from '../components/ui'
+import { useWatchSource } from './watch/useWatchSource'
 
 /**
  * 盯盘（P-03 / DESIGN-SPEC §4.4）。
@@ -39,13 +51,15 @@ import {
  * 只展示「可信」的快照：超过 TTL、交易日变更、本机时间异常时旧值一律不渲染，
  * 只说明原因并给重取入口 —— 宁可空着，也不让人按过期数据做决策。
  *
- * 阈值属于会话偏好（§3.2 遗留决策点）：本轮只存内存，卡上明示「本次会话有效」，
- * 不写 IndexedDB、不改 `config/state.yaml`。
+ * 阈值是用户偏好（DEC-037）：落在 `watch_settings` 分片，刷新 / 重启 / 多窗口共用；
+ * 越界输入仍然拒绝保存，不会因为持久化放过非法值。
+ *
+ * **演示源与本机回放是两件事**（UI-SPEC §11.2）：`?demo=1` / 「设置 → 虚拟数据」的信号
+ * 行不写 `watch_snapshot` 分片，也不参与 TTL / 交易日 / 时钟漂移判定 —— 演示态下本机
+ * 没有缓存，剩余 TTL 因此如实显示「—」。真实请求 404 / 断连只进空态 / 离线态，
+ * **绝不回落到 `watch/demo.ts`**。
  */
 
-const DEFAULT_THRESHOLD_PCT = 3.0
-const THRESHOLD_MIN = 1.0
-const THRESHOLD_MAX = 10.0
 const SCAN_WINDOW_LABEL = '3 分钟（固定）'
 
 type LevelTone = 'danger' | 'warn' | 'flat'
@@ -54,6 +68,53 @@ const LEVEL_BAR: Record<LevelTone, string> = {
   danger: 'bg-danger',
   warn: 'bg-warn',
   flat: 'bg-border-strong',
+}
+
+/** 契约行（下划线）→ 屏侧行（小驼峰）：演示行与真实行共用这一份映射，不写第二套。 */
+function toSnapshotRows(rows: WatchSnapshotRow[]): SnapshotRow[] {
+  return rows.map((row) => ({
+    code: row.code,
+    name: row.name,
+    limitUpCount: row.limit_up_count,
+    changePct: row.change_pct,
+    status: row.status,
+  }))
+}
+
+/** 秒 → 「8 分 12 秒」/「12 秒」（§4.2 文案里的时长口径，不写 `492s`）。 */
+function formatDurationSec(sec: number): string {
+  const total = Math.max(0, Math.round(sec))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  if (minutes === 0) return `${seconds} 秒`
+  return seconds === 0 ? `${minutes} 分` : `${minutes} 分 ${seconds} 秒`
+}
+
+/**
+ * §4.2 快照过期 / 需重取的四类原因文案，逐字对齐规范表（含操作列）。
+ * 时长与日期取本机判定值，拿不到时退回「—」，不编造。
+ */
+function refetchCopyOf(freshness: Freshness, tradeDate: string | null): { detail: string; action: string } {
+  const elapsed = Math.abs(freshness.ageSec ?? 0)
+  switch (freshness.reason) {
+    case 'ttl':
+      return {
+        detail: `快照已超过 TTL（${formatDurationSec(elapsed)}），旧值已隐藏`,
+        action: '立即取数',
+      }
+    case 'trade-date-changed':
+      return {
+        detail: `上次快照属于 ${tradeDate ?? MISSING}，与今日不符，需重新取数`,
+        action: '立即取数',
+      }
+    case 'clock-skew':
+      return {
+        detail: `本机时间比快照时间早 ${formatDurationSec(elapsed)}，请检查系统时间`,
+        action: '重新校准后取数',
+      }
+    default:
+      return { detail: '还没有可信快照', action: '立即取数' }
+  }
 }
 
 /**
@@ -73,12 +134,13 @@ function buildColumns(thresholdPct: number): Array<Column<SnapshotRow>> {
     {
       key: 'level',
       header: '级别',
-      width: '96px',
+      /** 112px + 不换行：级别标签折成两行会把行高翻倍，一屏就只剩 8 行（§5.2 一屏 ≥12 行） */
+      width: '112px',
       render: (row) => {
         const level = levelOf(row, thresholdPct)
         return (
-          <span className="inline-flex items-center gap-2">
-            <span aria-hidden="true" className={`inline-block h-4 w-[3px] rounded-pill ${LEVEL_BAR[level.tone]}`} />
+          <span className="inline-flex items-center gap-2 whitespace-nowrap">
+            <span aria-hidden="true" className={`inline-block h-4 w-status-bar shrink-0 rounded-pill ${LEVEL_BAR[level.tone]}`} />
             <span className="text-caption text-text-secondary">{level.label}</span>
           </span>
         )
@@ -87,43 +149,54 @@ function buildColumns(thresholdPct: number): Array<Column<SnapshotRow>> {
     {
       key: 'code',
       header: '代码',
-      width: '100px',
+      width: '88px',
       render: (row) => <span className="ldst-num text-text-secondary">{row.code || MISSING}</span>,
     },
     {
       key: 'name',
       header: '名称',
-      render: (row) => <span className="truncate font-medium">{row.name || MISSING}</span>,
+      /** `truncate` 交给 C-09：省略号 + 自动 `title`，屏侧不再自写截断 */
+      truncate: true,
+      render: (row) => <span className="font-medium">{row.name ?? MISSING}</span>,
     },
     {
       key: 'status',
       header: '信号类型',
-      width: '120px',
+      width: '112px',
+      truncate: true,
       render: (row) => <span className="text-text-secondary">{row.status ?? MISSING}</span>,
     },
     {
       key: 'change',
       header: '触发值',
       align: 'right',
-      width: '104px',
+      width: '112px',
       sort: (a, b) => (a.changePct ?? 0) - (b.changePct ?? 0),
       render: (row) => {
         const change = formatChangePct(row.changePct)
-        return <SignedNumber text={change.text} tone={change.tone} arrow={change.arrow} />
+        // 箭头不跟数字换行：换行会把行高从 compact 档位抬上去，一屏少掉四行（§5.2 一屏 ≥12 行）
+        return (
+          <SignedNumber
+            text={change.text}
+            tone={change.tone}
+            arrow={change.arrow}
+            className="whitespace-nowrap"
+          />
+        )
       },
     },
     {
       key: 'threshold',
       header: '阈值',
       align: 'right',
-      width: '84px',
+      width: '88px',
       render: () => <span className="ldst-num text-text-muted">{thresholdPct.toFixed(2)}%</span>,
     },
     {
       key: 'boards',
       header: '连板数',
       align: 'right',
-      width: '84px',
+      width: '88px',
       render: (row) => (
         <span className="ldst-num text-text-secondary">
           {row.limitUpCount === null ? MISSING : formatInt(row.limitUpCount)}
@@ -135,6 +208,7 @@ function buildColumns(thresholdPct: number): Array<Column<SnapshotRow>> {
 
 export default function WatchScreen() {
   const forced = useForcedState()
+  const { demo, source } = useWatchSource()
 
   const storeTradeDate = useWatchSnapshot((state) => state.tradeDate)
   const storeFetchedAt = useWatchSnapshot((state) => state.fetchedAt)
@@ -150,26 +224,21 @@ export default function WatchScreen() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const request = useAsync((signal) => api.watchSnapshot(signal), [])
+  const request = useAsync((signal) => source.snapshot(signal), [source])
   const envelope = request.data
 
-  // 只把「可用」的快照写回本机；不可用时保留旧缓存，由 TTL 判定是否可展示
+  // 只把「可用」的快照写回本机；不可用时保留旧缓存，由 TTL 判定是否可展示。
+  // 演示行不写分片：§11.2 的回放口径（TTL / 交易日 / 时钟漂移）只属于真实快照。
   useEffect(() => {
-    if (!envelope) return
+    if (demo || !envelope) return
     if (envelope.payload.rows.length === 0) return
     setSnapshot({
       tradeDate: envelope.payload.trade_date,
       fetchedAt: envelope.fetched_at,
       sourceDetail: envelope.source_detail,
-      rows: envelope.payload.rows.map((row) => ({
-        code: row.code,
-        name: row.name,
-        limitUpCount: row.limit_up_count,
-        changePct: row.change_pct,
-        status: row.status,
-      })),
+      rows: toSnapshotRows(envelope.payload.rows),
     })
-  }, [envelope, setSnapshot])
+  }, [demo, envelope, setSnapshot])
 
   const freshness = evaluateSnapshotFreshness(
     { fetchedAt: storeFetchedAt, tradeDate: storeTradeDate },
@@ -178,57 +247,88 @@ export default function WatchScreen() {
   )
   const trustedRows = freshness.needsRefetch ? [] : storeRows
 
-  // ---- 阈值（本次会话有效） ----
-  const [pctText, setPctText] = useState(DEFAULT_THRESHOLD_PCT.toFixed(1))
-  const [cooldownText, setCooldownText] = useState('60')
-  const [detectOpen, setDetectOpen] = useState(true)
+  /**
+   * 展示用的行：演示态用当次演示信封里的行，真实态用本机回放行（受 TTL / 交易日 / 时钟漂移约束）。
+   * 两条通道互斥，`needsRefetch` 时真实行仍然一条都不出（§11.2「零旧值」）。
+   */
+  const displayRows = demo ? toSnapshotRows(envelope?.payload.rows ?? []) : trustedRows
+  /** L0 卡的交易日与取数时间描述「正在看的这份快照」：演示态取演示信封，真实态取本机回放。 */
+  const viewTradeDate = demo ? (envelope?.payload.trade_date ?? null) : storeTradeDate
+  const viewFetchedAt = demo ? (envelope?.fetched_at ?? null) : storeFetchedAt
+
+  // ---- 阈值设置（watch_settings：刷新 / 重启 / 多窗口共用） ----
+  const thresholdPct = useWatchSettings((state) => state.thresholdPct)
+  const cooldownSec = useWatchSettings((state) => state.cooldownSec)
+  const detectOpen = useWatchSettings((state) => state.detectOpen)
+  const setThresholdPct = useWatchSettings((state) => state.setThresholdPct)
+  const setCooldownSec = useWatchSettings((state) => state.setCooldownSec)
+  const setDetectOpen = useWatchSettings((state) => state.setDetectOpen)
+
+  // 输入框保留用户原样文本（含中间态 / 非法值），只有通过校验才写分片；
+  // 失焦回到分片里的已保存值，避免「输入一半被改写」。
+  const [thresholdDraft, setThresholdDraft] = useState<string | null>(null)
+  const [cooldownDraft, setCooldownDraft] = useState<string | null>(null)
+  const pctText = thresholdDraft ?? thresholdPct.toFixed(1)
+  const cooldownText = cooldownDraft ?? String(cooldownSec)
   const parsedPct = Number(pctText)
-  const pctValid = Number.isFinite(parsedPct) && parsedPct >= THRESHOLD_MIN && parsedPct <= THRESHOLD_MAX
-  const thresholdPct = pctValid ? parsedPct : DEFAULT_THRESHOLD_PCT
+  const pctValid = pctText.trim() !== '' && isValidThresholdPct(parsedPct)
   const parsedCooldown = Number(cooldownText)
-  const cooldownValid = Number.isFinite(parsedCooldown) && parsedCooldown >= 0 && parsedCooldown <= 600
+  const cooldownValid = cooldownText.trim() !== '' && isValidCooldownSec(parsedCooldown)
   const columns = useMemo(() => buildColumns(thresholdPct), [thresholdPct])
 
   const [confirmClear, setConfirmClear] = useState(false)
 
   const sourceStatus = envelope?.source_status ?? null
+  const degradedSource = sourceStatus !== null && sourceStatus !== 'ok'
   const unavailableDetail =
     envelope && envelope.payload.rows.length === 0 ? envelope.source_detail : null
   /** 后端明确回答「没有状态文件 / 不可用」：`available=false` 会被后端折成 `missing`（server.py:_envelope） */
   const backendMissing = envelope?.payload.data_source_status === 'missing'
 
   const derived = useMemo<PageState>(() => {
-    if (request.status === 'loading' && storeRows.length === 0) return 'loading'
+    if (request.status === 'loading' && displayRows.length === 0) return 'loading'
     if (request.status === 'error') {
       return isApiError(request.error) && request.error.kind === 'not-connected' ? 'offline' : 'error'
     }
-    if (request.status === 'ready' && sourceStatus !== null && sourceStatus !== 'ok' && trustedRows.length === 0) {
-      return 'partial'
-    }
-    if (trustedRows.length === 0) return 'empty'
-    if (sourceStatus !== null && sourceStatus !== 'ok') return 'partial'
+    if (request.status === 'ready' && degradedSource && displayRows.length === 0) return 'partial'
+    if (displayRows.length === 0) return 'empty'
+    // 演示态的降级由 L0 卡的「已降级」徽标 + 页脚来源说明承担，不出「快照不可用」提示条
+    if (degradedSource && !demo) return 'partial'
     return 'normal'
-  }, [request.status, request.error, sourceStatus, storeRows.length, trustedRows.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [request.status, request.error, degradedSource, demo, displayRows.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const state = resolveState(forced, derived)
 
   const remainingSec =
     freshness.ageSec === null ? null : Math.max(0, WATCH_SNAPSHOT_TTL_SEC - freshness.ageSec)
 
+  /** §4.2 提示条正文与操作（四类原因逐字对齐规范表）。 */
+  const refetchCopy = refetchCopyOf(freshness, storeTradeDate)
+
   // 真实原因优先用后端结论：本地没有任何快照时也说不出「为什么没有」，后端能
-  const subtitle = backendMissing
-    ? '快照不可用 · 后端没有可用的盯盘状态文件'
-    : freshness.needsRefetch
-      ? `快照不可用 · ${describeFreshness(freshness)}`
-      : `快照有效（剩余 ${formatInt(remainingSec)}s）· 交易日 ${storeTradeDate ?? MISSING}`
+  const subtitle = demo
+    ? `演示快照 · 交易日 ${viewTradeDate ?? MISSING} · 不落本机缓存，剩余 TTL 为 —`
+    : backendMissing
+      ? '快照不可用 · 后端没有可用的盯盘状态文件'
+      : freshness.needsRefetch
+        ? `快照不可用 · ${describeFreshness(freshness)}`
+        : `快照有效（剩余 ${formatInt(remainingSec)}s）· 交易日 ${storeTradeDate ?? MISSING}`
 
   // 表体空态的文案必须与「后端到底有没有数据」一致，不能假设盯盘守护进程在跑。
   // offline 优先：没连上后端时无从谈「后端有没有状态文件」，只能讲本机回放。
+  // §3.2：空流不等于空态，文案要带最近一次扫描时间，证明盯盘在跑。
+  const lastScanLabel = `最近一次扫描 ${formatTime(storeFetchedAt, now)}，暂无信号`
   const emptyHint =
-    state === 'offline'
+    demo
+      ? {
+          title: '演示数据 · 空态快照',
+          description:
+            '演示源的 empty 变体：后端没有盯盘状态文件，本机也没有可回放的快照，所以取数时间与剩余 TTL 都是「—」。',
+        }
+      : state === 'offline'
       ? {
           title: '离线 · 本机没有可回放的信号',
-          description: '本地服务未连接，本机 IndexedDB 里也没有有效期内的盯盘快照。恢复连接后点「立即取数」。',
+          description: `本地服务未连接，本机 IndexedDB 里也没有有效期内的盯盘快照。${lastScanLabel}。恢复连接后点「立即取数」。`,
         }
       : backendMissing
         ? {
@@ -243,7 +343,7 @@ export default function WatchScreen() {
             }
           : {
               title: '暂无信号',
-              description: '最近一次扫描没有触发阈值；盯盘仍在运行，信号出现后这里会出现新行。',
+              description: `${lastScanLabel}；盯盘仍在运行，信号出现后这里会出现新行。`,
             }
 
   const header = (
@@ -299,7 +399,7 @@ export default function WatchScreen() {
       {header}
 
       {state === 'offline' && <OfflineBanner onRetry={request.reload} />}
-      {(state === 'offline' || backendMissing) && trustedRows.length > 0 && (
+      {!demo && (state === 'offline' || backendMissing) && trustedRows.length > 0 && (
         <Badge tone="warn" title="本机缓存快照，可能不是实时数据">
           缓存回放（只读）· 数据时间 {formatTime(storeFetchedAt)}
         </Badge>
@@ -321,37 +421,45 @@ export default function WatchScreen() {
         <dl className="grid grid-cols-2 divide-border desk:grid-cols-4 desk:divide-x">
           <div className="flex flex-col gap-1 p-4">
             <dt className="text-caption text-text-secondary">快照状态</dt>
-            <dd>
-              <StatusDot tone={freshness.needsRefetch ? 'warn' : 'ok'}>
-                {freshness.needsRefetch ? '需重新取数' : '有效期以内'}
-              </StatusDot>
+            <dd className="flex flex-wrap items-center gap-1">
+              {envelope ? (
+                /* §5.1 / §5.2 同源徽标：标签与 ●/◐/○ 只有一份实现（R-26） */
+                <SourceBadges envelope={envelope} />
+              ) : (
+                <FreshnessBadge
+                  freshness={freshness.needsRefetch ? 'archive' : 'cached'}
+                  asOf={formatTime(storeFetchedAt, now)}
+                  sourceDetail={storeSourceDetail}
+                />
+              )}
             </dd>
           </div>
           <div className="flex flex-col gap-1 p-4">
             <dt className="text-caption text-text-secondary">交易日</dt>
-            <dd className="ldst-num text-body text-text">{storeTradeDate ?? MISSING}</dd>
+            <dd className="ldst-num text-body text-text">{viewTradeDate ?? MISSING}</dd>
           </div>
           <div className="flex flex-col gap-1 p-4">
             <dt className="text-caption text-text-secondary">取数时间</dt>
-            <dd className="ldst-num text-body text-text">{formatTime(storeFetchedAt)}</dd>
+            <dd className="ldst-num text-body text-text">{formatTime(viewFetchedAt, now)}</dd>
           </div>
           <div className="flex flex-col gap-1 p-4">
             <dt className="text-caption text-text-secondary">剩余 TTL</dt>
+            {/* 缺失时只给「—」，不把单位 `s` 粘在占位符上冒充读数（§8） */}
             <dd className="ldst-num text-body text-text">
-              {formatInt(remainingSec)}s
+              {remainingSec === null ? MISSING : `${formatInt(remainingSec)}s`}
               <span className="ml-1 text-caption text-text-muted">/ {WATCH_SNAPSHOT_TTL_SEC}s</span>
             </dd>
           </div>
         </dl>
       </Card>
 
-      {freshness.needsRefetch && storeRows.length > 0 && (
+      {!demo && freshness.needsRefetch && state !== 'partial' && (
         <ErrorBlock
           variant="inline"
           title="旧值已隐藏"
-          detail={`${describeFreshness(freshness)}。本页不展示超过有效期的行情数值。`}
+          detail={`${refetchCopy.detail}。本页不展示超过有效期的行情数值。`}
           onRetry={request.reload}
-          retryLabel="重新取数"
+          retryLabel={refetchCopy.action}
         />
       )}
 
@@ -360,8 +468,8 @@ export default function WatchScreen() {
           className="desk:col-span-8"
           title="信号流"
           subtitle={
-            showRows && trustedRows.length > 0
-              ? `${tradeDateLabel(storeTradeDate, now)} · ${formatInt(trustedRows.length)} 条 · 最新在上`
+            showRows && displayRows.length > 0
+              ? `${tradeDateLabel(viewTradeDate, now)} · ${formatInt(displayRows.length)} 条 · 最新在上`
               : '暂无可用信号'
           }
           bodyClassName="p-0"
@@ -382,11 +490,11 @@ export default function WatchScreen() {
           ) : (
             <DataTable<SnapshotRow>
               columns={columns}
-              rows={showRows ? trustedRows : []}
+              rows={showRows ? displayRows : []}
               rowKey={(row) => row.code}
-              caption={`盘中信号流（${tradeDateLabel(storeTradeDate, now)}），按最近一次事件合并，每股一行`}
+              caption={`盘中信号流（${tradeDateLabel(viewTradeDate, now)}），按最近一次事件合并，每股一行`}
               density="compact"
-              maxHeight="520px"
+              maxHeight="calc(100vh - 280px)"
               empty={
                 <EmptyState
                   compact
@@ -406,15 +514,16 @@ export default function WatchScreen() {
         <SectionCard
           className="desk:col-span-4"
           title="阈值设置"
-          subtitle="改动即时用于本次会话"
-          actions={<Badge tone="info">本次会话有效</Badge>}
+          subtitle="改动即时保存到本机 · 刷新 / 重启 / 多窗口共用"
         >
           <div className="flex flex-col gap-3">
             <Field
               label="涨幅阈值（%）"
               htmlFor="watch-threshold"
               hint={`${THRESHOLD_MIN.toFixed(1)} – ${THRESHOLD_MAX.toFixed(1)}，步进 0.5`}
-              error={pctValid ? null : `阈值需在 ${THRESHOLD_MIN.toFixed(1)}–${THRESHOLD_MAX.toFixed(1)} 之间`}
+              error={
+                pctValid ? null : `阈值需在 ${THRESHOLD_MIN.toFixed(1)}–${THRESHOLD_MAX.toFixed(1)} 之间，步进 0.5`
+              }
             >
               <Input
                 id="watch-threshold"
@@ -425,7 +534,12 @@ export default function WatchScreen() {
                 max={THRESHOLD_MAX}
                 value={pctText}
                 invalid={!pctValid}
-                onChange={(event) => setPctText(event.target.value)}
+                onChange={(event) => {
+                  const text = event.target.value
+                  setThresholdDraft(text)
+                  if (text.trim() !== '') setThresholdPct(Number(text))
+                }}
+                onBlur={() => setThresholdDraft(null)}
               />
             </Field>
 
@@ -447,23 +561,28 @@ export default function WatchScreen() {
               label="同一标的冷却时间（秒）"
               htmlFor="watch-cooldown"
               hint="同一标的同类型信号在冷却期内合并为一条"
-              error={cooldownValid ? null : '冷却时间需在 0–600 秒之间'}
+              error={cooldownValid ? null : `冷却时间需在 ${COOLDOWN_MIN_SEC}–${COOLDOWN_MAX_SEC} 秒之间`}
             >
               <Input
                 id="watch-cooldown"
                 type="number"
                 inputMode="numeric"
                 step="30"
-                min={0}
-                max={600}
+                min={COOLDOWN_MIN_SEC}
+                max={COOLDOWN_MAX_SEC}
                 value={cooldownText}
                 invalid={!cooldownValid}
-                onChange={(event) => setCooldownText(event.target.value)}
+                onChange={(event) => {
+                  const text = event.target.value
+                  setCooldownDraft(text)
+                  if (text.trim() !== '') setCooldownSec(Number(text))
+                }}
+                onBlur={() => setCooldownDraft(null)}
               />
             </Field>
 
             <p className="border-t border-border pt-3 text-caption text-text-muted">
-              阈值不落盘：刷新后回到默认 3.0%。要跨刷新保留需新增 watch_settings 分片（另行决策，本轮不加）。
+              设置保存在本机 IndexedDB（watch_settings），刷新、重启与多窗口共用同一份；越界输入不会被保存。
             </p>
           </div>
         </SectionCard>
@@ -472,8 +591,10 @@ export default function WatchScreen() {
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2">
           <p className="text-caption text-text-muted">
-            快照来源：{envelope?.source_detail ?? storeSourceDetail ?? MISSING} · 扫描间隔由 ldst watch
-            守护进程决定 · 最近扫描 {formatTime(storeFetchedAt)} · 本机 {localDateIso(now)}
+            快照来源：<span className="ldst-num">{envelope?.source_detail ?? storeSourceDetail ?? MISSING}</span>
+            {' '}· 扫描间隔由 ldst watch 守护进程决定 · 最近扫描{' '}
+            <span className="ldst-num">{formatTime(storeFetchedAt, now)}</span> · 本机{' '}
+            <span className="ldst-num">{localDateIso(now)}</span>
           </p>
           <Button
             variant="ghost"

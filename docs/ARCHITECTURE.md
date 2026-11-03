@@ -71,6 +71,24 @@ flowchart TB
 前端状态（Zustand + IndexedDB）走 `config/state.yaml` 声明的分片；
 Python 侧**从不读 IndexedDB**，只迁移配置清单。
 
+### 跨进程写同一个 `market.duckdb`（QUOT-234）
+
+DuckDB 的库文件锁是**独占**的：同机两个进程同时开写连接，后到的直接
+`IOException`（QUOT-164 实测：3 进程并发 → 2 个 exit 1 + 裸 traceback）。
+口径分两层，谁都不用猜对方的存在：
+
+| 层 | 落点 | 行为 |
+|---|---|---|
+| 串行化 | `ldst sync` 入口的 `data/db_lock.py:writer_lock()` | 进程级 advisory lock（Windows `msvcrt.locking` / POSIX `flock`），锁文件 `data/market.duckdb.lock`；同库的多个 sync 排队。等待上限 `LDST_DB_LOCK_TIMEOUT`（秒，默认 30），超时退出码 **10** 并在报错里点名持有者 pid |
+| 兜底重试 | `data/duckdb_store.py:connect()` | 没走 sync 入口的读写（`ldst review`、归档回放、`validate reconcile`）遇到锁冲突按指数退避重试至多 6 次（约 1.25s），耗尽后转 `LadderStockError`：**10** = 被别的进程占用，**3** = 真打不开（损坏 / 无权限，不重试） |
+
+三条不变量：
+
+- `connect()` **不再往外抛裸 `_duckdb` 异常**，CLI 侧一律是一行可读报错 + 明确退出码；
+- 锁不用哨兵文件（`O_CREAT|O_EXCL` 崩溃后即死锁），advisory lock 由内核随进程退出释放；
+- 只有「被占用」才重试——按异常文案判定（中英 Windows 与 POSIX 四种形态都有测试钉住），
+  不靠重试掩盖数据目录配错。
+
 ## 3. 一次复盘请求的路径
 
 ```

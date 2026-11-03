@@ -86,7 +86,7 @@ describe('涨停样本表格', () => {
     expect(screen.getByRole('columnheader', { name: /连板数/ }).getAttribute('aria-sort')).toBe('ascending')
   })
 
-  it('缺失值显示「—」+ 原因，不补 0；封板时间原样展示', async () => {
+  it('缺失值显示「—」+ 原因，不补 0；封板时间格式化为 HH:mm:ss', async () => {
     renderAt('/limit-up?demo=1')
     await screen.findByRole('heading', { name: '涨停样本', level: 1 })
 
@@ -98,8 +98,9 @@ describe('涨停样本表格', () => {
     expect(screen.getAllByTitle('后端未提供末次封板时间')).toHaveLength(2)
     expect(screen.getByTitle('后端未提供涨停原因')).toBeTruthy()
 
-    expect(screen.getByText('093015')).toBeTruthy()
-    expect(screen.getByText('143001')).toBeTruthy()
+    // UI-SPEC v1.1 §8 / §3.15：后端裸 HHMMSS 必须格式化成 HH:mm:ss（同 §11.15 第一条）。
+    expect(screen.getByText('09:30:15')).toBeTruthy()
+    expect(screen.getByText('14:30:01')).toBeTruthy()
   })
 })
 

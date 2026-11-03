@@ -58,6 +58,14 @@ export function formatInt(value: number | null | undefined): string {
   return String(Math.round(value))
 }
 
+/**
+ * 计数缺失口径（§8 / QUOT-320 缺口 4）：`null` / `undefined` / 非有限数 → `—`。
+ * `0` 是真实读数，不能和「没取到」显示成同一个东西，屏侧也不许再写 `count ?? 0`。
+ */
+export function countOrMissing(value: number | null | undefined): string {
+  return isFiniteNumber(value) ? String(value) : MISSING
+}
+
 /** 一位小数（晋级率、题材强度） */
 export function formatOneDecimal(value: number | null | undefined): string {
   if (!isFiniteNumber(value)) return MISSING
@@ -100,6 +108,19 @@ export function formatTime(iso: string | null | undefined, now = new Date()): st
     date.getDate() === now.getDate()
   if (sameDay) return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/**
+ * 封板时间：后端裸值 `HHMMSS` / 数字 `93000` → `HH:mm:ss`；已是 `H:mm:ss` 原样返回，
+ * ISO 走 `formatTime`，其余不猜、不换算时区，一律 `—`（UI-SPEC §8「后端裸值必须格式化」）。
+ */
+export function formatSealTime(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return MISSING
+  const text = String(value).trim()
+  if (/^\d{6}$/.test(text)) return `${text.slice(0, 2)}:${text.slice(2, 4)}:${text.slice(4, 6)}`
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(text)) return text
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return formatTime(text)
+  return MISSING
 }
 
 /** 日期：`YYYY-MM-DD` */

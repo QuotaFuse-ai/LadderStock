@@ -9,6 +9,11 @@
 取不到价就是 `null`，不拿成本价冒充现价、不联网补数。同一个函数也是 `GET /api/positions`
 （QUOT-279）的取价路径——CLI 与页面共用一张价格字段容忍表，不会有两个口径。
 
+成交流水同理：由 `journal/position.py::list_journal_trades()` 读出来注入同一个
+`compute_metrics()`，用来离线复算已实现盈亏（QUOT-292 / DEC-038）。
+接口层不许 import `journal.log`（隐私白名单只放行 `journal.position`），
+所以两处出口拿到的是同一份数字，不是各算一遍。
+
 实现与注册分离：`cli/main.py` 只 import + 一行 `register_position(position_app)`。
 """
 
@@ -27,6 +32,7 @@ from ladderstock.errors import EXIT_CONFIG, EXIT_OK, EXIT_USAGE, LadderStockErro
 from ladderstock.journal.position import (
     add_position,
     compute_metrics,
+    list_journal_trades,
     list_positions,
     remove_position,
     update_position,
@@ -84,11 +90,12 @@ def position_list(
     ] = None,
     output: OutputOption = None,
 ) -> None:
-    """我的持仓 + 本地计算：浮动盈亏、集中度、行业分布（只读本机）。"""
+    """我的持仓 + 本地计算：浮动盈亏、已实现盈亏、集中度、行业分布（只读本机）。"""
     try:
         rows = list_positions(code=code)
         prices, status = price_map([str(row["code"]) for row in rows], price_date)
-        payload = compute_metrics(rows, prices, as_of=status["date"])
+        trades = list_journal_trades()
+        payload = compute_metrics(rows, prices, as_of=status["date"], trades=trades)
     except LadderStockError as exc:
         _fail(exc)
 

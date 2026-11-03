@@ -29,8 +29,8 @@ PERSISTED_STORE_PATH = FRONTEND / "persist" / "persistedStore.ts"
 
 runner = CliRunner()
 
-#: 前端三个已实现分片（journal_draft 仍只在配置里预留）。
-IMPLEMENTED_STORES = ("watch_snapshot", "review_draft", "validation_draft")
+#: 前端已实现分片（journal_draft 仍只在配置里预留）；顺序与 config/state.yaml 一致。
+IMPLEMENTED_STORES = ("watch_snapshot", "review_draft", "validation_draft", "watch_settings")
 
 
 def _state_config() -> dict[str, Any]:
@@ -86,7 +86,7 @@ def test_manifest_stores_are_declared_in_config() -> None:
             assert config[name].get("ttl_sec") == store["ttlSec"], f"{name} 的 ttl 两处不一致"
 
 
-def test_implemented_stores_cover_the_three_core_shards() -> None:
+def test_implemented_stores_cover_the_core_shards() -> None:
     manifest_keys = {store["persistKey"] for store in _manifest()["stores"]}
     assert set(IMPLEMENTED_STORES) <= manifest_keys
 
@@ -129,7 +129,9 @@ def test_inspect_without_index_reports_missing_without_inventing(data_dir: Path)
     assert report["index_present"] is False
     assert report["index_generated_at"] is None
     assert report["warnings"], "索引缺失必须给出提示"
-    assert [row["name"] for row in report["stores"]][:3] == list(IMPLEMENTED_STORES)
+    assert [row["name"] for row in report["stores"]][: len(IMPLEMENTED_STORES)] == list(
+        IMPLEMENTED_STORES
+    )
     for row in report["stores"]:
         assert row["source"] == "config-only"
         assert row["updated_at"] is None

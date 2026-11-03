@@ -7,8 +7,8 @@
 - 工具结果在 SSE 的 `data:` 帧里，长调用期间每 15s 一条 `: ping` 保活注释；
 - 会话过期回 404 `Session not found`，客户端要重新握手并重发一次。
 
-这里的回环桩按上述形态应答，不联外网；旧的回环桩（`FakeTransport`）不走本层，
-不受影响。
+这里的回环桩按上述形态应答，不联外网；旧的回环桩（`FakeTransport`）不走本层的
+HTTP/SSE，但 `tools/call` 的拆壳与 `_unwrap_mcp_result` 共用同一个函数（QUOT-328）。
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from ladderstock.data.provider_registry import (
     PeerEndpoint,
     SourceUnavailable,
     _sse_frames,
+    _unwrap_mcp_result,
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_streamable"
@@ -271,6 +272,22 @@ def test_tool_error_surfaces_peer_detail(
     message = str(excinfo.value)
     assert "tencent_kline" in message
     assert "validation error" in message and "Field required" in message
+
+
+def test_structured_content_string_result_is_unwrapped() -> None:
+    """真实 Wire 的四个工具回 `envelope.model_dump_json()`，FastMCP 把这串 JSON
+    放进 `structuredContent.result`（QUOT-328 实测形状）。
+
+    只认「`result` 是对象」这一种的话，`theme_news` 落库就是一行空壳：
+    参数修对了也照样没有叙事，屏上的题材字段还是空的。
+    """
+    envelope = {"data_as_of": "2026-11-01", "payload": {"topic": "ai", "summary": "情绪回暖"}}
+    result = _unwrap_mcp_result(
+        {"structuredContent": {"result": json.dumps(envelope, ensure_ascii=False)}}
+    )
+
+    assert result == envelope
+    assert result["payload"]["summary"] == "情绪回暖"
 
 
 def test_sse_frames_join_multiline_data_and_ignore_comments() -> None:

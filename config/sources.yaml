@@ -420,6 +420,13 @@ sources:
     weight: 1.0
 
   # ---------------- 题材叙事：QuotaFuse Wire（可选） ----------------
+  #
+  # 这里登记 `wire_timeline` 是**能力登记**（同 peer 备源，DEC-006 闸门 3 合规），
+  # 不等于它进日更链路：`config/sync.yaml` 的 `theme_news.fallback` 显式留空，
+  # `chain()` 会尊重这个显式空值（DEC-043）。理由是入参维度不匹配——
+  # `wire_get_digest(topic, date)` 要赛道 slug，`wire_get_timeline(event_id)` 要**单个事件**
+  # id，而按日同步没有事件维度，挂它当备源等于「主源失败后备源必然一起报错」，
+  # 白烧一次调用还污染降级轨迹。事件下钻留给日报/复盘按 event_id 单独调。
   - id: wire_digest
     dataset: theme_news
     via: wire
