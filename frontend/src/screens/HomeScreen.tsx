@@ -7,6 +7,8 @@ import {
   isApiError,
   isEndpointMissing,
   type IndicesPayload,
+  type MarketThemePayload,
+  type MarketThemeRow,
   type WatchlistPayload,
 } from '../api'
 import type { PositionsPayload } from '../api/radar'
@@ -84,9 +86,21 @@ export default function HomeScreen() {
   const positions = useAsync((signal) => source.positions(tradeDate, signal), [source, tradeDate])
   const watch = useAsync((signal) => source.watchSnapshot(signal), [source])
   const validation = useAsync((signal) => source.validation(tradeDate, signal), [source, tradeDate])
+  // 题材是补充块：404 吞成 null（「接口未接入」），available=false 只是降级，不参与整屏态推导。
+  const theme = useAsync(
+    (signal) =>
+      source.theme(tradeDate, signal).catch((error: unknown) => {
+        if (isEndpointMissing(error)) return null
+        throw error
+      }),
+    [source, tradeDate],
+  )
 
   const requests = [indices, watchlist, positions, watch, validation]
-  const reloadAll = () => requests.forEach((request) => request.reload())
+  const reloadAll = () => {
+    requests.forEach((request) => request.reload())
+    theme.reload()
+  }
 
   const indicesPayload: IndicesPayload | null = indices.data?.payload ?? null
   const watchlistPayload: WatchlistPayload | null = watchlist.data ?? null
@@ -94,6 +108,7 @@ export default function HomeScreen() {
   const watchRows = watch.data?.payload.rows ?? []
   const conditions = validation.data?.payload.conditions ?? []
   const reconcile = validation.data?.payload.reconcile ?? null
+  const themePayload: MarketThemePayload | null = theme.data?.payload ?? null
 
   const reviewSections = useReviewDraft((state) => state.sections)
   const reviewChars = useMemo(
@@ -138,7 +153,16 @@ export default function HomeScreen() {
   const state = resolveState(forced, derived)
   const usable = state === 'normal' || state === 'partial'
   const offline = state === 'offline'
-  const busy = requests.some((request) => request.status === 'loading')
+  const busy = requests.some((request) => request.status === 'loading') || theme.status === 'loading'
+
+  const topThemes = useMemo<MarketThemeRow[]>(() => {
+    if (!usable || !themePayload?.available) return []
+    const list = Array.isArray(themePayload.themes) ? themePayload.themes : []
+    return [...list]
+      .filter((row) => row && typeof row.theme === 'string' && typeof row.strength === 'number')
+      .sort((a, b) => b.strength - a.strength)
+      .slice(0, 5)
+  }, [usable, themePayload])
 
   // 强制态下数据一律按「不可用」处理，保证骨架之外的强制态不依赖后端。
   const viewWatchlist = usable ? watchlistPayload : null
@@ -426,6 +450,58 @@ export default function HomeScreen() {
           </p>
         </SectionCard>
       </div>
+
+      <SectionCard
+        title="题材强度 Top 5"
+        subtitle={
+          topThemes.length > 0
+            ? `${tradeDate} · 按强度降序`
+            : theme.status === 'ready' && theme.data === null
+              ? '题材接口未接入'
+              : '题材数据不可用'
+        }
+        bodyClassName="p-4"
+        actions={
+          <Link to="/market?tab=theme" className="text-caption text-accent hover:underline">
+            看全部题材 →
+          </Link>
+        }
+      >
+        {topThemes.length === 0 ? (
+          <EmptyState
+            compact
+            title="还没有题材数据"
+            description={
+              theme.status === 'ready' && theme.data === null
+                ? '本机服务没有 /api/market/theme 接口；情绪温度与连板天梯不受影响。'
+                : themePayload?.reason || '题材轮动需要先接入板块/概念行情（ldst sync --dataset theme_news）。'
+            }
+          />
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {topThemes.map((row) => {
+              const delta = formatChangePct(row.delta)
+              return (
+                <li key={row.theme} className="flex min-h-row items-center justify-between gap-2 rounded-xs px-1">
+                  <span className="min-w-0 flex-1 truncate text-body text-text" title={row.theme}>
+                    {row.theme}
+                    {row.leader && (
+                      <span className="ml-2 text-caption text-text-muted">领涨 {row.leader}</span>
+                    )}
+                  </span>
+                  <span className="ldst-num shrink-0 text-caption text-text-secondary">
+                    {row.limit_up_count === null ? MISSING : `${row.limit_up_count} 家涨停`}
+                  </span>
+                  <span className="ldst-num w-12 shrink-0 text-right text-body text-text">
+                    {row.strength.toFixed(0)}
+                  </span>
+                  <SignedNumber text={delta.text} tone={delta.tone} arrow={delta.arrow} className="w-16 text-right text-caption" />
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </SectionCard>
 
       <p className="text-caption leading-body text-text-muted">
         指数与自选为行情快照，不是逐笔实时；持仓口径见「我的持仓」页。

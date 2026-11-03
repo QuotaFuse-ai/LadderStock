@@ -534,10 +534,10 @@ const FOOD_CONSTITUENTS: ConstituentRow[] = [
 ]
 
 const GENERIC_CONSTITUENTS: ConstituentRow[] = [
-  { code: '600001', name: null, pe_ttm: 24.3, pb: 3.8, turnover_rate: 1.2, revenue_yoy: 7.4, profit_yoy: 8.9, main_net_nd: 86_000_000, as_of: '2026-10-30' },
-  { code: '600002', name: null, pe_ttm: 19.8, pb: 2.9, turnover_rate: 1.6, revenue_yoy: 4.2, profit_yoy: 6.1, main_net_nd: 54_000_000, as_of: '2026-10-30' },
-  { code: '600003', name: null, pe_ttm: 31.2, pb: 4.4, turnover_rate: 2.1, revenue_yoy: 12.6, profit_yoy: 15.3, main_net_nd: 132_000_000, as_of: '2026-10-30' },
-  { code: '600004', name: null, pe_ttm: 27.6, pb: 3.3, turnover_rate: 0.9, revenue_yoy: 3.1, profit_yoy: 2.2, main_net_nd: -18_000_000, as_of: '2026-10-30' },
+  { code: '600001', name: '甲科技', pe_ttm: 24.3, pb: 3.8, turnover_rate: 1.2, revenue_yoy: 7.4, profit_yoy: 8.9, main_net_nd: 86_000_000, as_of: '2026-10-30' },
+  { code: '600002', name: '乙材料', pe_ttm: 19.8, pb: 2.9, turnover_rate: 1.6, revenue_yoy: 4.2, profit_yoy: 6.1, main_net_nd: 54_000_000, as_of: '2026-10-30' },
+  { code: '600003', name: '丙智造', pe_ttm: 31.2, pb: 4.4, turnover_rate: 2.1, revenue_yoy: 12.6, profit_yoy: 15.3, main_net_nd: 132_000_000, as_of: '2026-10-30' },
+  { code: '600004', name: '丁电子', pe_ttm: 27.6, pb: 3.3, turnover_rate: 0.9, revenue_yoy: 3.1, profit_yoy: 2.2, main_net_nd: -18_000_000, as_of: '2026-10-30' },
 ]
 
 function demoRelated(name: string) {

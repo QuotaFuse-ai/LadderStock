@@ -141,6 +141,26 @@ describe('首页演示源', () => {
     expect(screen.queryByText('情绪温度')).toBeNull()
   })
 
+  it('题材 Top 5 与市场屏同源：演示态出 5 行，真实态不回落演示题材', async () => {
+    renderAt('/?demo=1')
+    await waitFor(() => expect(indexCells().length).toBe(8))
+    await waitFor(() => expect(document.body.textContent).toContain('人工智能'))
+    expect(screen.getByText('题材强度 Top 5')).toBeTruthy()
+    expect(screen.getByText('人工智能')).toBeTruthy()
+    expect(screen.getByText('机器人')).toBeTruthy()
+    expect(screen.getByText('半导体')).toBeTruthy()
+    expect(screen.getByText('军工')).toBeTruthy()
+    expect(screen.getByText('医药')).toBeTruthy()
+    expect(screen.queryByText('新能源')).toBeNull()
+
+    cleanup()
+    stub404()
+    renderAt('/')
+    expect(await screen.findByText('题材强度 Top 5')).toBeTruthy()
+    expect(await screen.findByText(/本机服务没有 \/api\/market\/theme 接口/)).toBeTruthy()
+    expect(document.body.textContent).not.toContain('人工智能')
+  })
+
   it('真实 404：各块说「接口未接入」，整屏不判失败、绝不回落演示数据', async () => {
     stub404()
     renderAt('/')
