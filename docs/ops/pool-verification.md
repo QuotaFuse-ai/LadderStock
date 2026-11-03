@@ -75,11 +75,16 @@ curl -s http://127.0.0.1:5950/api/state/config
 
 ### 2026-11-03 取证快照（非常态水位，勿当基线）
 
-| 数据集 | 11-03 parquet | 11-03 duckdb | 最近一个可用交易日 | 水位（`data/state/watermark.json`，11:46 更新） |
+| 数据集 | 11-03 parquet | 11-03 duckdb | 最近一个可用交易日 | 水位（`data/state/watermark.json`） |
 |---|---|---|---|---|
-| `limit_pool` | 52 行 | 52 行 | 11-02：125 行 | `2026-11-03` / 52 行 / `tickhub_limit_pool` / ok |
-| `concept_board` | 100 行 | 100 行 | 11-02：100 行 | `2026-11-03` / 100 行 / `tickhub_concept` / ok |
-| `fund_flow` | **无文件** | **0 行** | **11-02：30 行**（表内共 1806 行，逐日 30） | **`2026-11-02`** / 1800 行 / `tickhub_fund_flow` / ok |
+| `limit_pool` | 11:46 读为 52 行，**15:21:52 被再次 sync 重写为 48 行**（`source_detail` 同步变为「48 条」） | 与 parquet 同源 | 11-02：125 行 | `2026-11-03` / **48 行** / `tickhub_limit_pool` / ok（updated_at 15:21:52） |
+| `concept_board` | 100 行 | 100 行 | 11-02：100 行 | `2026-11-03` / 100 行 / `tickhub_concept` / ok（updated_at 11:46:08） |
+| `fund_flow` | **无文件** | **0 行** | **11-02：30 行**（表内共 1806 行，逐日 30） | **`2026-11-02`** / 1800 行 / `tickhub_fund_flow` / ok（updated_at 11:46:35） |
+
+⚠️ **当日行数不是基线，不能写进断言。** 同一个 `limit_pool` 当日分区在 11:46 是 52 行、15:21 是 48 行——
+盘中/盘后每跑一次 `ldst sync` 就会覆盖当日 parquet 并改写水位。取证时**同时记下 `source_detail` 原文和采集时刻**，
+要断言就断言 `available` / `data_source_status` / `parts.*` 的 null 状态，**不要断言行数**。
+（15:21 那次改写在中心 `logs/` 里没有任何对应记录，见 §5 第 8 条。）
 
 **当日 `fund_flow` 两条读法都没数。** 不是水位问题也不是代理问题——日线主力净额当日盘后才发布，
 而 15:35 那条导出链压根没进 `origin/main`（`git grep "15:35" origin/main` 0 命中），也没接进这台机器（见 §5）。
@@ -142,12 +147,12 @@ curl -s http://127.0.0.1:5950/api/health
 # 1) 打榜池取证（今日）
 curl -s "http://127.0.0.1:5950/api/pool?date=2026-11-03" | python -m json.tool
 
-# 期望看到：
+# 期望看到（行数以当次 source_detail 为准，勿写死，见 §2 警告）：
 #   payload.available = true
 #   payload.data_source_status = "ok"
-#   payload.source_detail 含 "limit_pool: parquet（52 条）"、"concept_board: parquet（100 条）"、
+#   payload.source_detail 含 "limit_pool: parquet（N 条）"、"concept_board: parquet（100 条）"、
 #                          改动前 "fund_flow: none（0 条）"
-#   payload.candidate_count = 30，counts.limit_pool_rows = 52
+#   payload.candidate_count = 30，counts.limit_pool_rows 与 source_detail 里的 N 一致
 #   改动前：每个 candidate 的 parts.capital / parts.theme = null，
 #           absent_parts = ["capital","theme"]，raw.net_inflow = null，raw.theme_tags = []，
 #           counts.theme_boards = 0
@@ -190,6 +195,43 @@ ldst sync --dataset fund_flow --codes <当日30只> --output json
 跑这些命令时必须带上 §2 那三个环境变量（`LDST_DATA_DIR` / `LDST_CONFIG_DIR` / `LDST_TICKHUB_MCP_URL`），
 否则读到的是 `cwd/data`，等于对着空库取证。
 
+### 入口可用性复测（2026-11-03 15:55 实测，非基线）
+
+第一次取证之后复跑一遍，确认「入口本身可用」这件事有可核对的原样输出。以下三段就是上面命令的实际返回，
+开发开工前照此对照，**对不上就是入口断了，不是上游没数**。
+
+```text
+GET http://127.0.0.1:5950/api/health
+{"ok":true,"name":"ladderstock","version":"0.1.0.dev0","time":"2026-11-03T07:55:43+00:00",
+ "data_dir":"D:\\QuotaFuseModules\\LadderStock\\data","read_only":true}
+
+GET http://127.0.0.1:5950/api/pool?date=2026-11-03
+data_as_of=2026-11-03  available=true  data_source_status=ok  height=18  candidate_count=30
+source_detail = "limit_pool: parquet（48 条）; concept_board: parquet（100 条）; fund_flow: none（0 条）"
+counts        = {limit_pool_rows:48, dropped_duplicates:0, unknown_code:0, theme_boards:0, fund_flow_rows:0}
+candidates[0] = 002696 百洋股份 score=100.0
+                parts={strength:100.0, turnover:100.0, standing:100.0, capital:null, theme:null}
+                absent_parts=["capital","theme"]
+                raw={boards:18, turnover_rate:24.26, height:18, net_inflow:null,
+                     theme_tags:[], theme_board_change_pct:null}
+```
+
+两个上游工具同批复测（走 `http://127.0.0.1:8000/mcp` 的 MCP 通道，无需自己注入代理；`isError=false`）：
+
+```text
+realtime_fund_flow("002696")   ok=true  cache_hit=false  meta.source=eastmoney
+  data keys: code,name,price,main_net,main_net_pct,super_large_net,large_net,medium_net,small_net
+  price=1236.0  main_net=3.0  main_net_pct=11.0132121781  super_large_net=null
+
+stock_concept_blocks("002696") ok=true  cache_hit=false  meta.source=eastmoney
+  data keys: code,total,boards,concept_tags
+  total=23  boards[0]={name:"农林牧渔", code:"BK0433", change_pct:1.2, lead_stock:"..."}
+```
+
+`meta.source` 仍是 `eastmoney` ⇒ §3 裁定的资金口径这次能取到数；`price` / `main_net` 的量级也和 §3 那张表一致，
+**别把它们当元 / 当万元用**。`boards[].change_pct` 会随盘中变化（11:46 读到 `BK0433 +1.75`，15:55 读到 `+1.2`），
+所以它同样不是取证基线。
+
 ## 5. 运维风险（本文只报告，未动任何配置）
 
 1. **`LadderStock UI 5950` 计划任务的 `<Triggers />` 是空的** —— 没有任何触发器，永远不会自己起；
@@ -206,13 +248,20 @@ ldst sync --dataset fund_flow --codes <当日30只> --output json
    处置方案（照 disk-guard 先例）：脚本迁到 `D:\QuotaFuseModules\LadderStock\ops\`（D 盘，不在 disk-guard 的
    C 盘回收范围内）+ 计划任务改指新路径 + **补上真实触发器**（开机触发 + 每 5 分钟端口巡检）。
    **属于服务器配置变更，等人点头，未执行。**
-3. **没有任何计划任务在写这台机器的 `archive/` 分区。** 11-03 的 52 / 100 行是 11:43–11:46 一次手工 `ldst sync` 的产物；
+3. **没有任何计划任务在写这台机器的 `archive/` 分区。** 11-03 的分区来自 11:43–11:46 一次手工 `ldst sync`（`limit_pool` 当时 52 行，后被 15:21 那次重写，见第 8 条）；
    部署态 `schedule.yaml` 里只有 09:05 提醒、6 个盘中快照、15:05 收盘对账，**没有 15:35 的日线导出**，
    且 `git grep "15:35" origin/main` 0 命中 —— 那条链没进 main，也没接进这台机器（转回 QUOT-347 验收意见处理）。
 4. `D:\QuotaFuseModules\LadderStock` 不是 git 仓库（只有 `config/ data/ logs/`），改这里**不会**进版本控制。
 5. `/api/state/config` 声明 `mcp=5951`，但 5951 未监听。
 6. 本机 Redis 在 WSL 的 docker 里，WSL 一停 TickHub 缓存层就退化；`th-cn doctor` 的 `cache_backend` 会立刻变红。
 7. 本文所有「当前值」（§2 快照、5950/8000 的 PID、水位日期）都是 2026-11-03 一次采集，会过期；复核一律先跑 §4 第 0 步。
+8. **中心 `data/` 目录有多个写入者，而且没有审计。** 15:21:52 那次 sync 重写了 `archive/2026/11/03/limit_pool.parquet`、
+   `market.duckdb`、`state/watermark.json`，把当日 `limit_pool` 从 52 行改成 48 行，但中心 `logs/` 里
+   （`ldst-5950.*.log` / `watch-scan.log`）**没有任何对应记录**，`schedule.yaml` 里也没有 15:21 这个时点——
+   说明它来自某个带 `LDST_DATA_DIR` 的临时 `ldst sync`（agent 工作区里的运行），而非计划任务。
+   5950 本身是 `read_only=true`，不会写。后果直接落在取证上：**你读到的当日行数取决于谁最后一次跑了 sync**。
+   处置建议（属配置变更，等人点头，未执行）：给 sync 加一行带 PID/调用者的落地日志，或把「取证前先看 `watermark.json` 的 `updated_at`」
+   写成硬性前置步骤。本文 §4 的复测段就是按这个口径记时刻的。
 
 ## 6. 清理
 
