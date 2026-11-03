@@ -6,7 +6,7 @@
  *   1. 起前端（推荐带后端代理的取证配置，`/api` 指向本机 `ldst run` 的 5950）：
  *        cd frontend && npm install && npm run dev -- --config vite.shot.config.ts   # http://127.0.0.1:5199
  *      没有 `ldst run` 时退回 `npm run dev`（http://127.0.0.1:5173），各屏会拍到「未接入 / 降级」态。
- *   2. 拍基线：`node scripts/visual-shot.mjs`            → 19 屏 × 暗/亮 = 38 张
+ *   2. 拍基线：`node scripts/visual-shot.mjs`            → 20 屏 × 暗/亮 = 40 张
  *   3. 改完之后拍 after：`node scripts/visual-shot.mjs --suffix after`
  *
  * 输出：`docs/screenshots/<route>-<before|after>-<dark|light>.png`，视口 1440×900，
@@ -45,7 +45,7 @@ const VIEWPORT = { width: 1440, height: 900 }
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..', '..')
 
-/** 19 屏，以 `src/App.tsx` 路由表为准（radar 四屏实际挂在 `/news` `/calendar` `/pool` `/positions`）。 */
+/** 20 屏，以 `src/App.tsx` 路由表为准（radar 四屏实际挂在 `/news` `/calendar` `/pool` `/positions`）。 */
 const ROUTES = [
   { slug: 'home', path: '/' },
   { slug: 'market', path: '/market' },
@@ -53,6 +53,8 @@ const ROUTES = [
   // QUOT-302 第 19 屏：竞价与盘中（此前漏在巡检脚本之外）
   { slug: 'intraday', path: '/intraday' },
   { slug: 'review', path: '/review' },
+  // QUOT-344 / DEC-046 第 20 屏：AI 复盘独立入口
+  { slug: 'review-ai', path: '/review/ai' },
   { slug: 'weekly', path: '/weekly' },
   { slug: 'journal', path: '/journal' },
   { slug: 'validate', path: '/validate' },

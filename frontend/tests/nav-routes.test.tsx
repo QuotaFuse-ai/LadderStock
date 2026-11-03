@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, matchRoutes } from 'react-router-dom'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import Layout, { NAV_SECTIONS, PINNED_NAV } from '../src/components/Layout'
 import { NON_PAGE_ROUTES, ROUTE_PATHS } from '../src/routes'
@@ -15,7 +15,8 @@ import { NON_PAGE_ROUTES, ROUTE_PATHS } from '../src/routes'
  * - 反向：路由表里每条已交付路由都在侧栏有入口，或由有入口的页面链入（防孤儿页）。
  *
  * 路由表本身少写组件编译不过（`App.tsx` 的 `Record<RoutePath, ReactElement>`），
- * 所以这里只比路径。
+ * 所以路径比对不碰组件；只有 DEC-046 那一条要区分「两条路径挂同一个屏」，
+ * 才动态 import 一次组件表（代价见 `stubMatchMedia`）。
  */
 
 /** 侧栏项里的 `?tab=` 只是高亮用的，路由匹配只看 path。 */
@@ -42,8 +43,23 @@ function matchedRoute(path: string): string | null {
   return matches && matches.length > 0 ? (matches[matches.length - 1].route.path ?? null) : null
 }
 
+/** uPlot 模块期就要 `matchMedia`，jsdom 不提供——动态 import `App.tsx` 之前必须先补这个桩。 */
+function stubMatchMedia(): void {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }))
+}
+
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
 })
 
 describe('侧栏入口 → 路由表', () => {
@@ -79,6 +95,40 @@ describe('路由表 → 侧栏入口', () => {
     // 两条二级深链由已有入口的页面内部链入，不重复挂侧栏
     expect(NAV_PATHS).toContain(staticPrefixOf('/industry/:name'))
     expect(NAV_PATHS).toContain(staticPrefixOf('/research/:code/report'))
+  })
+})
+
+/**
+ * 复盘三屏（QUOT-344 / DEC-046）：每日复盘 / AI复盘 / AI周报 各自一条路由、一个入口。
+ *
+ * 老板拍板不合并成单屏，那就得防住「拆了导航没拆屏」这条退路——只比路径的断言看不出
+ * 两条路径挂同一个组件，所以这里额外读一次 `App.tsx` 的组件表。
+ */
+const REVIEW_PAGES = NAV_SECTIONS.find((section) => section.key === 'review')?.pages ?? []
+
+describe('复盘组三独立入口（QUOT-344 / DEC-046）', () => {
+  it('复盘组是 每日复盘 / AI复盘 / AI周报 / 候选池 四项，顺序与文案在册', () => {
+    expect(REVIEW_PAGES.map((page) => [page.to, page.label])).toEqual([
+      ['/review', '每日复盘'],
+      ['/review/ai', 'AI复盘'],
+      ['/weekly', 'AI周报'],
+      ['/pool', '候选池'],
+    ])
+  })
+
+  it('三条复盘入口互不相同，且各自深链命中自己那条路由', () => {
+    const paths = REVIEW_PAGES.map((page) => pathOf(page.to)).filter((path) => path !== '/pool')
+    expect(new Set(paths).size).toBe(paths.length)
+    for (const path of paths) {
+      expect(matchedRoute(path)).toBe(path)
+    }
+  })
+
+  it('`/review` 与 `/review/ai` 挂的不是同一个组件', async () => {
+    stubMatchMedia()
+    const { ROUTE_ELEMENTS } = await import('../src/App')
+    expect(ROUTE_ELEMENTS['/review'].type).not.toBe(ROUTE_ELEMENTS['/review/ai'].type)
+    expect(ROUTE_ELEMENTS['/review/ai'].type).toBeTruthy()
   })
 })
 

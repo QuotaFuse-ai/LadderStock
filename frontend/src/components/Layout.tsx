@@ -44,14 +44,16 @@ import type { ThemeChoice } from '../lib/theme'
  *
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
  * - 市场 4 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达）已实现 → 展开为二级；
- * - 复盘 3 段（情绪复盘 / 周度复盘 / 候选池）、我的股票 2 段（持仓 / 事件日历）同样展开；
+ * - 复盘 4 段（每日复盘 / AI复盘 / AI周报 / 候选池）、我的股票 2 段（持仓 / 事件日历）同样展开；
+ *   「AI复盘」由 QUOT-344（DEC-046）从复盘组拆出：三屏各自一条路由，高亮按 pathname 精确匹配，
+ *   `/review` 亮时 `/review/ai` 不跟着亮；
  * - 盯盘 2 段（盘中信号 / 竞价与盘中）都已实现 → 展开为二级；
  *   「竞价与盘中」由 QUOT-302 补上，前置是 QUOT-286（6 时点快照落盘）+ QUOT-301（读接口）。
  * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
  *
  * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进 16px）。
  * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）；
- *   展平后 19 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
+ *   展平后 20 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
  */
 
@@ -107,11 +109,14 @@ export const NAV_SECTIONS: NavSection[] = [
     key: 'review',
     label: '复盘',
     icon: NotebookPen,
-    // 「每日复盘」是 P1 留位（🟡），本轮不建入口；候选池是复盘的产出
+    // QUOT-344 / DEC-046：复盘拆成三个独立入口，各占一条路由，不再合成一屏
+    // 「每日复盘」= 当日五段数据；「AI复盘」= AI 段落与降级/失败态；「AI周报」= 按周聚合
+    // 候选池是复盘的产出，位置与文案不变
     pages: [
-      { to: '/review', label: '情绪复盘', icon: NotebookPen },
-      // R11 周度复盘（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
-      { to: '/weekly', label: '周度复盘', icon: CalendarRange },
+      { to: '/review', label: '每日复盘', icon: NotebookPen },
+      { to: '/review/ai', label: 'AI复盘', icon: Sparkles },
+      // R11（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
+      { to: '/weekly', label: 'AI周报', icon: CalendarRange },
       { to: '/pool', label: '候选池', icon: ListChecks },
     ],
   },
