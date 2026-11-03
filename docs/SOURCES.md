@@ -263,7 +263,9 @@ sync.yaml 的 primary
 
 缓存回放（§2.5）读 `archive.snapshot()`：**Parquet 日分区优先 → DuckDB 兜底**。
 回放出的信封 `freshness=cached`、`source_status=degraded`、`confidence=low`，
-`source_detail` 里写清读的是哪个后端、哪一天。回放**不重写库、不推进水位**。
+`source_detail` 里写清读的是哪个后端、哪一天；限流导致的回放还会在
+`payload.stale` 里写明 `{as_of, requested_as_of, reason, cached_at}`（§4.1）。
+回放**不重写库、不推进水位**。
 
 ## 4. 运行期治理（§2.4）
 
@@ -275,6 +277,7 @@ sync.yaml 的 primary
 | 短窗缓存 | 成功结果按 `cold_hot.intraday_cache_ttl_sec` 内存缓存，命中标 `freshness=cached` | `DEFAULT_TTL_SEC = 60` |
 | 失败冷却 | 工具失败后按 `cooldown_sec` 冷却，冷却期内直接看备源 | 见 `sources.yaml` |
 | 并发上限 + 最小间隔 | 每 peer 独立信号量 + 调用间隔，防重试风暴 | 见下表 |
+| 限流退避 | 上游 `QFSD-7001` 按 `retry_after_s` 等待后重试，次数与单次时长都有上限 | `sync.rate_limit`（§4.1） |
 
 每 peer 限流常量（配置 schema 冻结，故写在代码里）：
 
@@ -287,6 +290,41 @@ sync.yaml 的 primary
 重试有界：`sources.yaml` 的 `retries` 是**额外重试次数**（总尝试 = `retries + 1`），
 用尽即降级，不做无界重试。传输层异常（超时 / 拒连）原样抛出，轨迹里据此区分
 `timeout` 与 `unreachable`；上游业务拒收记 `rejected`。
+
+### 4.1 上游限流（`QFSD-7001 rate_limited`）：退避 → 昨日池 → 整轮 degraded
+
+QUOT-349 / DEC-048。上游命中自身限流或熔断时回 `ok:false` + `error.detail.retry_after_s`，
+**语义是「等几秒再来拿同一批数据」**，与「这个源坏了」是两回事，所以单独一条路：
+
+1. **识别在适配器层**：`adapters/tickhub.py:classify_failure()` 把 `QFSD-7001`
+   （含早期别名 `QF-7001`）与 `error.name == "rate_limited"` 认成 `RateLimited`，
+   带上 `retry_after_s`；其它 `ok:false` 口径不变。`0 ≤ 秒数 ≤ 86400` 之外的值
+   （布尔、负数、字符串、荒谬值）一律当「上游没说」处理，不猜。
+2. **退避预算挂在一次取数上**（不是挂在工具上），`config/sync.yaml`：
+
+   ```yaml
+   sync:
+     rate_limit:
+       max_retries: 2          # 一次取数最多等几次（主备共用这份预算）
+       max_wait_sec: 15        # 单次最多等多久；上游说得更久就不等，直接降级
+       max_cooldown_sec: 900   # 冷却封顶：max(retry_after_s, cooldown_sec) 再取小
+   ```
+
+   单次取数最坏耗时 = `max_retries × max_wait_sec` = **30 秒，与链路里有几个工具无关**——
+   这是盘中高频轮询（30–60 秒节奏）能直接用这条路的前提。
+3. **等待不占 peer 并发闸门**：攥着信号量睡觉会把同 peer 的其它取数一起拖住；
+   退避成功后清掉该源的冷却（这一路刚证明自己通）。
+4. **等不起就直说等不起**：建议时长超过 `max_wait_sec` 或缺失 → 一次都不等、按失败降级，
+   但冷却时长按上游说的来（封顶 `max_cooldown_sec`）。
+5. **降级 = 回放本地昨日池**，并写明是限流造成的：`payload.stale = {as_of,
+   requested_as_of, reason: "rate_limited", cached_at}`，`source_detail` 是
+   「限流降级，回放本地昨日池（backend，数据日 X）」；不重写数据、不推进水位。
+6. **限流不是任务失败**：`ldst sync` 汇总仍是 `degraded`（`GOOD_STATUSES` 里，退出码 0，
+   只有 `failed` 才翻成 4/8）；盘中快照把昨日池的旧 cohort 记进 `source.pool_stale`
+   后照样出快照（报价仍是当天的），报价整批被挡时判 `degraded` 且**不写空快照**。
+7. **冷却期里的跳过也算 pacing**：`health.json` 的冷却条目带 `reason`，本轮若某源因
+   上一轮限流在冷却（一次调用都没发出去），仍按 `rate_limited` 判降级——否则一次
+   pacing 会伪装成「今天没有数据」。
 
 ## 5. 水位线
 
@@ -369,7 +407,7 @@ sync.yaml 的 primary
   "version": 1,
   "cooldowns": {"tickhub_kline": {"until": "2026-10-24T15:33:00+08:00",
                                    "reason": "timeout", "tool": "tencent_kline"}},
-  "events": [{"at": "...", "kind": "failure|fallback|cache_replay|skipped_cooldown",
+  "events": [{"at": "...", "kind": "failure|rate_limited|fallback|cache_replay|skipped_cooldown",
               "dataset": "daily_k", "source": "...", "tool": "...", "detail": "..."}]
 }
 ```
@@ -379,6 +417,10 @@ sync.yaml 的 primary
 - `ldst sources health` 输出 `state_file`、`active_cooldowns`、`events`、
   `sources_in_cooldown`、`peers`；
 - 健康事件是排障入口：`reason` 区分 `timeout` / `unreachable` / `unavailable` / `rejected`。
+- `kind=rate_limited` 与 `cooldowns.reason=rate_limited` 是**上游 pacing**（§4.1）：
+  detail 带 `QFSD-7001` 与建议时长，退避后成功那一路也记一条「退避 X 秒后重试」，
+  不然轨迹里只看到一路顺利、看不出这一轮慢在哪。冷却条目还在生效时，本轮即便
+  **一次调用都没发出去**也算 pacing（判降级，不判「源坏了 / 今天没数据」）。
 
 ### 7.1 控制面的健康与端口预检
 
@@ -433,7 +475,10 @@ sync.yaml 的 primary
 - 覆盖用例：`tests/unit/data/`（水位 / DuckDB 幂等 / 分区读回）、
   `tests/integration/test_provider_fallback.py`（主备切换、冷却、in-flight 合并、跨 peer 违规）、
   `tests/integration/test_sync_incremental.py`（增量 `since`、同日重跑不增长、`--full`、
-  断点续跑、退出码 4/8、缓存回放不推进水位）。
+  断点续跑、退出码 4/8、缓存回放不推进水位）、
+  `tests/integration/test_rate_limit_backoff.py`（限流退避与昨日池降级，QUOT-349；
+  等待由注入的 `sleeper` 记录，用例不真睡）、
+  `scripts/simulate_rate_limit.py`（仿真交易日端到端证据，同离线口径）。
 
 ## 10. 排障
 
@@ -441,6 +486,7 @@ sync.yaml 的 primary
 |---|---|---|
 | `sync` 退出 4 | `ldst sources health` 的 `reason` | peer 未启动 / 地址不对：查环境变量与 `th-cn mcp` |
 | 一直说「链路内工具均在冷却期」 | `sources health` 的 `cooldowns.until` | 等冷却到期，或确认故障已修复后清 `state/health.json` 里对应条目 |
+| 日志里出现「上游限流（QFSD-7001）」 | `sources health` 的 `kind=rate_limited` 事件与建议时长 | 不是故障：数据仍是上一批（`payload.stale` / `source.pool_stale` 写了是哪天的）。要更保守就调小 `sync.rate_limit.max_retries` / `max_wait_sec`，要更激进就调大 `max_cooldown_sec` |
 | 退出 8 | `sync` 输出的 `results[].detail` 与 `trail` | 只补失败的数据集：`sync --dataset <name>` |
 | `validate` 退出 3 | 输出里的 `chains` / `warnings` | 主备不同 peer / 工具未登记：修 `sources.yaml` 或 `sync.yaml` |
 | 数据没更新 | `sync status` 的 `watermarks` 与 `recent_runs` | 水位是否已推进；`empty` 说明 peer 返回空，不应覆盖旧数据 |

@@ -5,7 +5,7 @@
 """
 
 from ladderstock.data.adapters.senate import from_data_envelope
-from ladderstock.data.adapters.tickhub import from_tool_response
+from ladderstock.data.adapters.tickhub import RateLimited, from_tool_response
 from ladderstock.data.adapters.wire import from_wire_envelope
 
-__all__ = ["from_tool_response", "from_wire_envelope", "from_data_envelope"]
+__all__ = ["RateLimited", "from_tool_response", "from_wire_envelope", "from_data_envelope"]

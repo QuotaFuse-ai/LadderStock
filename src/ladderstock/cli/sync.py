@@ -434,6 +434,7 @@ def sync_per_item(
     halted: list[str] = []
     cache_hits = 0
     degraded = False
+    paced = False
     last_envelope: LadderEnvelope | None = None
     consecutive = 0
 
@@ -447,12 +448,14 @@ def sync_per_item(
             outcome = registry.fetch(dataset, params=params_for(item), ignore_cooldown=True)
         except SourceUnavailable as exc:
             consecutive += 1
+            paced = paced or exc.rate_limited
             failures.append(f"{item}：{_one_line(exc)}")
             continue
         consecutive = 0
         trail.extend(outcome.trail)
         if outcome.from_cache:
             cache_hits += 1
+            paced = paced or outcome.rate_limited
             continue
         envelope = outcome.envelope
         last_envelope = envelope
@@ -469,10 +472,12 @@ def sync_per_item(
     )
     if not succeeded:
         if cache_hits:
-            detail = (
-                f"peer 全部不可用，回放本地缓存（{pool_desc}，freshness=cached，"
-                "未重写、未推进水位）"
+            head = (
+                "上游限流（QFSD-7001）退避后仍取不到，回放本地昨日池"
+                if paced
+                else "peer 全部不可用，回放本地缓存"
             )
+            detail = f"{head}（{pool_desc}，freshness=cached，未重写、未推进水位）"
             status, source = "degraded", "local_cache"
         else:
             detail = f"{pool_desc}全部失败：{_clip('; '.join(failures))}{halt_note}"
@@ -647,7 +652,14 @@ def sync_one(
 
     envelope = outcome.envelope
     if outcome.from_cache:
-        detail = "peer 全部不可用，回放本地缓存（freshness=cached，未重写、未推进水位）"
+        detail = (
+            # 限流降级要说清是「被上游 pacing 挡的」，不是「源坏了」：复盘时这两条的
+            # 处理动作完全不同（QUOT-349）
+            "上游限流（QFSD-7001）退避后仍取不到当日数据，回放本地昨日池"
+            "（freshness=cached，未重写、未推进水位）"
+            if outcome.rate_limited
+            else "peer 全部不可用，回放本地缓存（freshness=cached，未重写、未推进水位）"
+        )
         _log(f"  {dataset} degraded：{detail}")
         store.record_run(
             dataset,

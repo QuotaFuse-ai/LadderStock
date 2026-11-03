@@ -1,10 +1,16 @@
-# DEC-046 收盘全量同步任务：新增 `sync_close` job kind、复用 sync 链路落 Parquet 日分区
+# DEC-047 收盘全量同步任务：新增 `sync_close` job kind、复用 sync 链路落 Parquet 日分区
 
 - 日期：2026-11-03
 - 提出：后端架构师（agent `dda26417`），QUOT-347（父 QUOT-345 范围 1「收盘后全量自动拉取」）
 - 状态：生效（实现随 PR 进 `main`）
-- 编号：`DEC-046`。按 `DEC-045` 规则取值：`git ls-tree -r --name-only origin/main docs/decisions/`
-  已扫到的最大号 = 045，本决策取 046
+- 编号：`DEC-047`。**让号来源**：开单时按 `DEC-045` §2.1 取值（`git ls-tree -r --name-only origin/main docs/decisions/`
+  已扫到的最大号 = 045，取 046）；合并时 `DEC-046` 与 QUOT-344 的
+  `DEC-046-review-nav-three-independent-entries.md` 撞号——后者被 `frontend/src/App.tsx`、`Layout.tsx`、
+  `routes.ts`、`AiReviewScreen.tsx`、`nav-routes.test.tsx`、`docs/UI-SPEC.md` 等反向引用十几处，按
+  DEC-045 §2.3 保留原号；本决策正文除自身文件外零反向引用（`git grep -ln "DEC-046" origin/main -- docs src config scripts tests frontend`
+  中不含指向本决策的引用），由本决策让号至 `DEC-047`。同批 QUOT-349 的限流退避决策同让，取 `DEC-048`。
+  裁定来源：QUOT-349 收口审计意见（2026-11-03）。
+  决策正文不改，只改编号与文件名（DEC-045 §2「只增不改」约束的是内容，不是让号后的文件名）。
 - 关联：DEC-006（数据只来自生态 peer、只落本机、不直打上游）、DEC-007（同步与缓存链路）、
   DEC-035（盘中 6 时点快照：当天当场、仅交易日动作）、DEC-036（DuckDB 跨进程写：进程级写锁）、
   QUOT-286（快照实现）、QUOT-345（近乎实时 + 自持久化）、`docs/specs/`、
