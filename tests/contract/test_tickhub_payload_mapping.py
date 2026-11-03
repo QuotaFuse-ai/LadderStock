@@ -121,8 +121,8 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
         "tencent_quote_batch.json",
         "spot_quote",
         "tencent_quote_batch",
-        47,
-        date(2026, 11, 2),
+        124,
+        date(2026, 11, 3),
         "high",
     ),
 ]

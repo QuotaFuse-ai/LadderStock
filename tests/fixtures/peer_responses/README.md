@@ -15,23 +15,30 @@ R5 产业研究新增的四只（`sw_industry_history` / `eastmoney_finance_indi
 
 ## `tencent_quote_batch.json`（QUOT-286 建，QUOT-290 换成真实整包）
 
-**变更记录（2026-11-02，QUOT-290 盘中真实整包验证）**：本文件已是真实整包原文
-——2026-11-02（周一）09:36:36 由 `th-cn tool call tencent_quote_batch` 在盘中抓的
-47 只昨日涨停股批量报价，`ok` / `data` / `meta` 三层结构、字段值一律照抄，
-只按上面的脱敏规则把 `meta.trace_id` 换成 `trace-fixture-1`（真实返回里没有
-`source_url` / `note` / `fallback_from`，也没有任何 `http(s)` 值）。
-上一版（QUOT-286）是按文档与源码拼的等价形状，只留 3 行。
+**变更记录（2026-11-03，QUOT-290 收口）**：本文件是**最近一个完整交易日（2026-11-03）**
+的真实整包原文——17:54:03 由 `th-cn tool call tencent_quote_batch` 对当日 11:30 快照的
+124 只昨日涨停股整包请求，`ok` / `data` / `meta` 三层结构与字段值一律照抄，只按上面的
+脱敏规则把 `meta.trace_id` 换成 `trace-fixture-1`（真实返回里没有 `source_url` /
+`note` / `fallback_from`，也没有任何 `http(s)` 值）。
 
-真实整包与拼装形状逐字段比对的结果：**无改名、无层级变化、无单位变化、无缺失字段**；
-真实返回比拼装形状多 6 个一档盘口字段 —— `bid1` / `bid1_volume` / `ask1` /
-`ask1_volume` / `inside_volume` / `outside_volume`。47 行字段集合完全一致，
-`limit_up` / `limit_down` / `open` 在这份里都非空（`limit_up/limit_down` 为空的情况
-仍按上游实现保留为可能出现）。
+上一版是 2026-11-02（周一）09:36:36 盘中抓的 47 只整包，那份原文没有丢，留在
+`docs/tasks/QUOT-290/evidence/tencent_quote_batch_intraday_20261102.json`——本单原本要的就是
+盘中整包，但 11-03 的六个时点窗口都已过、按 DEC-035「只创建不补跑」不能回补，
+所以主 fixture 换成了当日可获得的最新真实整包，盘中那份额外留档。
+
+两版真实整包（11-02 盘中 47 行 / 11-03 收盘 124 行）逐字段比对结果：**28 个行内字段
+无改名、无层级变化、无单位变化、无缺失字段**，`quotes` 键集合完全一致。
+最初那版（QUOT-286 按文档与源码拼的 3 行形状）与真实包的差异只有一个：真实返回多
+6 个一档盘口字段 `bid1` / `bid1_volume` / `ask1` / `ask1_volume` / `inside_volume` /
+`outside_volume`。
 
 - 外层 `{total, succeeded, failed, quotes, failures}`（`quotes` 是 **`{code: row}`
   对象**，不是数组）；
 - 行内 `timestamp` 是 `YYYYMMDDHHMMSS`；
 - 代码集合与当日昨日涨停池一致，快照用例可端到端跑通。
+- 124 行整包 **0 个 null**：`ask1` / `ask1_volume` 各有 15 行为 `0`、`amplitude` /
+  `outside_volume` 各有 5 行为 `0`，逐行核过全部是市场状态本身（15 行 `price == limit_up`
+  封死涨停没有卖一；5 行 `high == low` 一字板振幅 0、无外盘），不是上游缺字段也不是解析问题。
 
 `quotes` 是对象不是记录数组，所以「最多留 3 行」的裁剪规则不适用，整包原样保留。
 
