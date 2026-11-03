@@ -1,4 +1,4 @@
-# DEC-047 复盘两屏分工：数据面 `/review` 与模型面 `/review/ai` 的内容切分、四态口径同源、「我的判断」归属
+# DEC-049 复盘两屏分工：数据面 `/review` 与模型面 `/review/ai` 的内容切分、四态口径同源、「我的判断」归属
 
 - 日期：2026-11-03
 - 提出：老板（QUOT-344 S2 的屏边界拍板；单描述明写「别再自创」）
@@ -99,14 +99,14 @@ S1 收尾还留下两处口径没定义，S2 动手前必须一次性裁定，�
   原有的这些入口随之移除（不是并存），旧深链 `/review` 仍然直达数据面，无 URL 破坏。
 - `docs/UI-SPEC.md`：§3.1 改写为数据面口径、新增 §3.19「AI复盘（模型面）」、§10 两行映射落定、
   §11.1 重写 + 新增 §11.20、§12.5 补 R-27（页面导出缺口）；变更记录按 DEC-045 §4 合并进 **v1.6 同一条**（S1+S2），不另起一行。
-- **编号占用与一处待裁定的撞号**：按 DEC-045 §1，本单开单时扫描
-  `git ls-tree -r --name-only origin/main docs/decisions/` 的最大号 = 045，取 046；
-  但单描述里预留的 DEC-046 与 S1（QUOT-355）已合入 `main` 的同名文件冲突——
-  `main` 上现在**有两份 DEC-046**：`DEC-046-review-nav-three-independent-entries.md`
-  （提交 3bfe936，16:04）与 `DEC-046-schedule-close-sync-job.md`（提交 6bc247d，16:16，QUOT-347）。
-  本决策因此取 **DEC-047**（046 之后的实号），并提请人类按 DEC-045 §3「先合入 main 的一方保留」裁定：
-  从提交时间看应由复盘导航那份保留 046、QUOT-347 的调度那份让号；让号需改名已合并的决策文件，
-  超出 S2 的授权范围，不由本单擅自执行。
+- **编号占用**：开单时按 DEC-045 §1 扫 `origin/main` 最大号 = 045，本单先取了 046，与 S1（QUOT-355）
+  已合入的同名文件撞号；那次撞号已由人类在提交 6be168c「让号 DEC-047/048」里收口
+  （`DEC-046-review-nav-three-independent-entries.md` 保留 046，QUOT-347 的调度那份改为
+  `DEC-047-schedule-close-sync-job.md`，QUOT-349 的限流那份为 `DEC-048-…`）。
+  本决策原先按扫描结果写成 DEC-047，在 S2 进行期间 047 被 6be168c 占走，
+  于是合并 `origin/main` 后重扫取 **DEC-049**（当前 `origin/main` 最大号 048 + 1）。
+  这正是 DEC-045 §1「以合入 main 的最大号 +1 为准，分支上的预留号不算」要处理的情形，
+  留此记录以免后来者误以为 047 是本单。
 - 回滚方式：还原两屏文件 + 删除 `review/parse.ts`、`review/SectionMetrics.tsx`、
   `tests/review-split.test.tsx` 与本文件；`routes.ts` / `App.tsx` / 导航零变更，故回滚不碰 DEC-046 的三入口。
 
