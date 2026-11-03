@@ -83,11 +83,19 @@ export interface SearchPanelProps {
   actions: SearchPanelActions
 }
 
-/** §7.2 第 3 条：option 的 id 必须稳定，`aria-activedescendant` 才指得准。 */
+/**
+ * §7.2 第 3 条：option 的 id 必须稳定，`aria-activedescendant` 才指得准。
+ */
 const optionId = (panelId: string, index: number) => `${panelId}-opt-${index}`
 
-/** §8.2 空态的三条引导：与 §3.2 的四类输入映射同源，写在这里给第一次使用的人看。 */
-const GUIDE_ROWS = [
+/**
+ * §8.2 空态的三条引导：与 §3.2 的四类输入映射同源，写在这里给第一次使用的人看。
+ *
+ * 首页 B 块（`screens/home/HomeSearch.tsx`）的三行映射**导出复用这一份**：
+ * 同一个「输入 → 落到哪一屏」的说明如果在两处各写一遍字符串，改了搜索路由口径时
+ * 一定只改到其中一处（SPEC-HOME-V2 §3.1 / §1-7「一份实现」）。
+ */
+export const GUIDE_ROWS: Array<{ how: string; to: string }> = [
   { how: '6 位代码或个股名称', to: '个股深挖（/research/:code）' },
   { how: '行业 / 题材完整名称', to: '行业详情（/industry/:name）' },
   { how: '任意关键词', to: '资讯雷达（/news?q=…）' },
