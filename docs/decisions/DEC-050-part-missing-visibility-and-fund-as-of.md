@@ -92,6 +92,12 @@ QUOT-364 的验收在合并后的主干 `c2acaef` 上报了四条，其中三条
 - 测试：`tests/unit/core/test_pool_fund_as_of.py`（回落、最近一天、窗口外、签名）；
   `test_pool_live_fields.py` 的 `compute_pool` 用例改为走真缓存不打桩——
   QUOT-364 承认的漏测（夹具与容忍表一起缺 `main_net` 时两边一起绿）只有真读写路径能堵住。
+- **复验入口（裁定）**：本条改动的验收取证必须从**干净检出**跑 `ldst pool --date <D> --output json`，
+  环境变量 `LDST_DATA_DIR` 指向中心库 `D:\QuotaFuseModules\LadderStock\data`（只写变量名与路径，
+  不写值）；**不能**读 `http://127.0.0.1:5950/api/pool`——5950 当前进程跑的是
+  `D:\workplace\LadderStock` 那棵脏树的代码（落后 `origin/main` 198 提交，`docs/ops/pool-verification.md` §1），
+  在它上面复验只会看到改动前的行为。`pool-verification.md` 的 §1/§2 把取证入口绑在这棵脏树进程上，
+  需要按上面两句改正——那份文档是 QUOT-363（运维）的产出，本条只下裁定、不代改。
 - 未解决、也不在本条范围内：盘中实时资金通路（`realtime_fund_flow` 在主干没有任何登记），
   所以 QUOT-364 第 5 条判据（盘中 vs 盘后两点取证）在当前主干上结构性无法取证，
   等 QUOT-367 / QUOT-368 落地后重跑。
