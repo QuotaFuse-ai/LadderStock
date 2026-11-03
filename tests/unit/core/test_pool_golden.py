@@ -54,6 +54,7 @@ DOC_INFLOW_KEYS = (
     "net_inflow",
     "main_net_inflow",
     "net_amount",
+    "main_net",
     "主力净流入",
     "净流入",
     "净额",

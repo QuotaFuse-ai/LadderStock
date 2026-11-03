@@ -76,6 +76,9 @@ NET_INFLOW_KEYS: tuple[str, ...] = (
     "net_inflow",
     "main_net_inflow",
     "net_amount",
+    # 日频 `stock_fund_flow` 分区的字段名（单位：元）。候选池只读 `fund_flow`
+    # 数据集，不读 `realtime_fund_flow`，不会把实时通道的分/非元口径灌进来。
+    "main_net",
     "主力净流入",
     "净流入",
     "净额",
@@ -107,6 +110,8 @@ CHANGE_PCT_KEYS: tuple[str, ...] = (
 )
 #: 参与溯源与 `missing` 的固定数据集顺序
 POOL_DATASETS: tuple[str, ...] = ("limit_pool", "concept_board", "fund_flow")
+#: 概念板块记录里的板块名容忍键（TickHub `concept_board` 用 `board_name`）
+BOARD_NAME_KEYS: tuple[str, ...] = (*ladder_module.NAME_KEYS, "board_name")
 
 SCORE_FORMULA = (
     "score = Σ(weight_i × part_i) / Σ(weight_i)，part_i ∈ [0,100]（1 位小数）；"
@@ -143,7 +148,7 @@ def theme_board_index(records: list[dict[str, Any]]) -> dict[str, float]:
     """概念板块名 → 涨幅（%）。同名板块取最大涨幅，名称空白行丢弃。"""
     index: dict[str, float] = {}
     for record in records:
-        name = str(pick(record, ladder_module.NAME_KEYS) or "").strip()
+        name = str(pick(record, BOARD_NAME_KEYS) or "").strip()
         change = as_float(pick(record, CHANGE_PCT_KEYS))
         if not name or change is None:
             continue
@@ -353,6 +358,7 @@ def summary(pool: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "BOARD_NAME_KEYS",
     "CHANGE_PCT_KEYS",
     "NET_INFLOW_KEYS",
     "POOL_DATASETS",
