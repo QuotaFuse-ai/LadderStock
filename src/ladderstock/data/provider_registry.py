@@ -62,7 +62,7 @@ MAX_HEALTH_EVENTS = 500
 INFLIGHT_WAIT_SEC = 180.0
 
 # 上游限流（QFSD-7001）的退避口径默认值，`sync.yaml` 的 `sync.rate_limit` 可改。
-# 一次「未命中缓存的取数」内共享，链路里所有工具用同一份预算（DEC-046）。
+# 一次「未命中缓存的取数」内共享，链路里所有工具用同一份预算（DEC-048）。
 DEFAULT_RATE_LIMIT_RETRIES = 2
 #: 单次愿意等的上限：超过它就按「等不起」处理，直接降级而不是把整轮定时任务拖住
 DEFAULT_RATE_LIMIT_MAX_WAIT_SEC = 15.0
@@ -752,7 +752,7 @@ class _Backoff:
 
     「按 `retry_after_s` 退避」就是按上游说的等，不打折、不加抖动；但**只在等得起的时候等**：
     建议时长超过 `max_wait_sec`、次数用完、或上游压根没给时长，都不再等，直接按失败处理
-    交给上层降级（DEC-046）。盘中高频轮询（QUOT-345 范围 2）要的就是这条硬上限。
+    交给上层降级（DEC-048）。盘中高频轮询（QUOT-345 范围 2）要的就是这条硬上限。
     """
 
     retries_left: int

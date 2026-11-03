@@ -245,6 +245,7 @@ def main() -> int:
     if snapshot_file.is_file():
         payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
     pool_stale = (payload.get("source") or {}).get("pool_stale") or {}
+    meta = payload.get("meta") or {}
     report.check(
         "任务没有失败",
         result["status"] == "degraded",
@@ -252,8 +253,11 @@ def main() -> int:
     )
     report.check(
         "看板仍有数据，且带着时点标记",
-        bool(pool_stale) and payload.get("yesterday_limit_up", {}).get("fresh", 0) > 0,
-        f"昨日池 {pool_stale.get('as_of')}（reason={pool_stale.get('reason')}），"
+        bool(pool_stale)
+        and meta.get("degraded") == "stale_cache"
+        and payload.get("yesterday_limit_up", {}).get("fresh", 0) > 0,
+        f"meta.degraded={meta.get('degraded')}、昨日池 {pool_stale.get('as_of')}"
+        f"（reason={pool_stale.get('reason')}），"
         f"今天读数 {payload.get('yesterday_limit_up', {}).get('fresh')} 只 / "
         f"共 {payload.get('yesterday_limit_up', {}).get('count')} 只",
     )

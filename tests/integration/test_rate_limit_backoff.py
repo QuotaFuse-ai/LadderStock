@@ -283,6 +283,8 @@ def test_rate_limited_snapshot_job_is_degraded_and_keeps_the_stale_pool(tmp_path
     stale = snapshot["source"]["pool_stale"]
     assert stale["as_of"] == "2026-10-29"
     assert stale["reason"] == "rate_limited"
+    # 看板侧的口径：降级类别 + 实际数据日，一处读到底（QUOT-366 验收项 `meta.degraded=stale_cache`）
+    assert snapshot["meta"] == {"degraded": "stale_cache", "pool_as_of": "2026-10-29"}
     assert snapshot["yesterday_limit_up"]["fresh"] > 0, "今天的报价照读，池子才是旧的"
     status = intraday.read_status(date(2026, 10, 30), tmp_path)
     assert status["slots"]["10:00"]["status"] == "degraded"

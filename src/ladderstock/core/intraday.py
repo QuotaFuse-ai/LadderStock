@@ -30,14 +30,15 @@
 - 一条新鲜报价都没有 → `status=missing`，不写快照；
 - 抓取抛错 → `status=failed`，只写 `status.json`，不写快照。
 
-## 上游限流（QFSD-7001）是另一回事（QUOT-349 / DEC-046）
+## 上游限流（QFSD-7001）是另一回事（QUOT-349 / DEC-048）
 
 限流不是「数据不存在」，是「现在不让这么问」。数据层已经先按 `retry_after_s` 退避、
 退完仍取不到才回放到本地缓存，走到这里的是**带回放池子的降级结果**，所以：
 
 - 昨日涨停池来自缓存回放且日期不是今天 → **只允许在「因限流回放」时**带着
-  `pool_stale` 标记继续，快照照写、`status=degraded`；其它原因（空池、形状漂移、
-  对账不上）仍然判 `missing`，不拿旧池子冒充今天的读数；
+  `pool_stale` 标记继续，快照照写、`status=degraded`；快照同时写
+  `meta.degraded="stale_cache"` + `meta.pool_as_of`（看板读这一处就知道这批数据是哪天的）；
+  其它原因（空池、形状漂移、对账不上）仍然判 `missing`，不拿旧池子冒充今天的读数；
 - 行情批次被限流打回 → 这一批没有读数但不放弃整个时点，`status=degraded`，
   不写快照（一条今天的读数都没有，写了就是污染）；
 - 两种情况都**不是 `failed`**：调度器整轮契约是「单任务失败只记 degraded / skipped」，
@@ -83,6 +84,9 @@ STATUS_ALREADY = "already"
 STATUS_SKIPPED = "skipped"
 STATUS_MISSING = "missing"
 STATUS_FAILED = "failed"
+
+#: `payload["meta"]["degraded"]` 的取值：目前只有一类——昨日池因上游限流回放到本地缓存
+DEGRADED_STALE_CACHE = "stale_cache"
 
 
 class SnapshotUnavailable(Exception):
@@ -601,6 +605,15 @@ def capture(slot: str, day: date, moment: datetime, registry: Any) -> tuple[dict
         "date": day.isoformat(),
         "slot": slot,
         "captured_at": moment.isoformat(timespec="seconds"),
+        # 看板只读这一处就能判断「这批是不是今天的」：degraded 是降级的**数据类别**，
+        # pool_as_of 是**实际数据日**。限流回放时 degraded=stale_cache、pool_as_of 是昨天，
+        # 有今天的数据时 degraded=null、pool_as_of 就是今天——两者都不缺，不靠消费方猜。
+        "meta": {
+            "degraded": DEGRADED_STALE_CACHE if pool_stale is not None else None,
+            "pool_as_of": (
+                pool_stale["as_of"] if pool_stale is not None else day.isoformat()
+            ),
+        },
         "price_field": "open" if slot == AUCTION_SLOT else "price",
         "source": {
             "dataset": "spot_quote",

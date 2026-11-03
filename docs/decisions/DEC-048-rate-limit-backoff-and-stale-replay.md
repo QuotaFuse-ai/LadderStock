@@ -1,10 +1,15 @@
-# DEC-046 上游限流（QFSD-7001）：按建议时长有界退避，退不到就用带标记的昨日池
+# DEC-048 上游限流（QFSD-7001）：按建议时长有界退避，退不到就用带标记的昨日池
 
 - 日期：2026-11-03
 - 提出：后端架构师（QUOT-349，QUOT-345 范围 3 健壮性）
 - 状态：生效
-- 编号取值：`git ls-tree -r --name-only origin/main docs/decisions/` 已扫到的最大号 = 045
-  （origin/main `8436dc1`），本决策取 046（DEC-045 §2.1）
+- 编号：`DEC-048`。**让号来源**：开单时按 DEC-045 §2.1 取值 `DEC-046`（origin/main `8436dc1`
+  已扫到的最大号 = 045），合并时 main 上 `DEC-046` 已有两份实体——QUOT-344 的
+  `DEC-046-review-nav-three-independent-entries.md`（反向引用十几处，保留原号）与 QUOT-347 的
+  `DEC-046-schedule-close-sync-job.md`。按 DEC-045 §2.3「让号成本由零反向引用的一方承担」，
+  本决策零反向引用，让号至 `DEC-048`；合并前重扫 `git ls-tree -r --name-only origin/main docs/decisions/`
+  最大号 = 046，047 让给同批的 `DEC-047-schedule-close-sync-job.md`（原 DEC-046），本决策取 048。
+  裁定来源：QUOT-349 收口审计意见（2026-11-03）。
 - 关联：DEC-007 §2.4（请求治理：短 TTL 缓存 / 失败冷却 / 并发与最小间隔 / 有界重试）、
   DEC-006（生态边界：不自建采集、主备同 peer）、DEC-035（盘中 6 时点快照，写一次、不补跑）、
   DEC-043（`retry_after_s` 与冷却同为「跨轮」闸门的另一头）、DEC-034 同族口径（缺数如实标记）、
@@ -81,6 +86,12 @@ rate_limit:
 其它日期不符（上游发了别的日子、缓存里是旧一轮的账）照旧判 `missing`：
 用别的 cohort 冒充今天的读数会永久污染快照，从文件里也看不出异样（DEC-035 的不变量）。
 批量报价整批被限流打回时，`degraded` 但**不写快照**——一条今天的读数都没有，写了就是污染。
+
+**消费方口径（合并时补，QUOT-366 验收项）**：快照顶层再写一处
+`meta = {degraded, pool_as_of}`——限流回放时 `degraded="stale_cache"`、`pool_as_of` 是昨日；
+有当天池子时 `degraded=null`、`pool_as_of` 就是今天。看板不必去翻嵌套的 `source.pool_stale`
+是否存在，读 `meta` 一处就能同时拿到「这批数据是哪天的」和「它是不是降级来的」；
+这一对值互斥且总在场，正是为了不让消费方靠「字段缺失」去猜。
 
 ### 2.5 冷却期里的跳过也算「还在 pacing 窗口里」
 

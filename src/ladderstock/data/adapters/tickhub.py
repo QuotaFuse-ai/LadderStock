@@ -67,7 +67,7 @@ class RateLimited(LadderStockError):
     """上游限流，带 peer 自己建议的等待秒数（没给就是 `None`，不猜）。
 
     单独成一个类型是为了让链路能**先退避再降级**：等待时长由 `provider_registry`
-    按预算决定（DEC-046）。这里只负责「识别 + 把上游的建议原样带出来」。
+    按预算决定（DEC-048）。这里只负责「识别 + 把上游的建议原样带出来」。
     """
 
     def __init__(self, message: str, retry_after_s: float | None = None) -> None:

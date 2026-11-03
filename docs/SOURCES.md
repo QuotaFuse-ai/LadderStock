@@ -293,7 +293,7 @@ sync.yaml 的 primary
 
 ### 4.1 上游限流（`QFSD-7001 rate_limited`）：退避 → 昨日池 → 整轮 degraded
 
-QUOT-349 / DEC-046。上游命中自身限流或熔断时回 `ok:false` + `error.detail.retry_after_s`，
+QUOT-349 / DEC-048。上游命中自身限流或熔断时回 `ok:false` + `error.detail.retry_after_s`，
 **语义是「等几秒再来拿同一批数据」**，与「这个源坏了」是两回事，所以单独一条路：
 
 1. **识别在适配器层**：`adapters/tickhub.py:classify_failure()` 把 `QFSD-7001`
