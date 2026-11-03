@@ -27,5 +27,21 @@ R5 产业研究新增的四只（`sw_industry_history` / `eastmoney_finance_indi
 
 拿到真实盘中整包后应原样替换本文件，形状不应变化。
 
+## 例外：`tencent_kline_rate_limited.json`（QUOT-349）
+
+限流是**碰运气的返回**：要么刚好被 pacing 挡住，要么把上游打到限流窗口里（不该为了
+拿样本去压上游），所以这份同样不是抓包原文，而是按 TickHub-CN 源码拼出的等价形状，
+2026-11-03 逐字段核对过：
+
+- `error` 的键集合来自 `core/errors.py:TickHubError.to_dict`
+  （`code/name/message/action/detail/retryable`），`name` / `action` 取自
+  `ERROR_CODES["QFSD-7001"]` = `rate_limited` / 「返回重试建议」；
+- `detail.{url, endpoint, reason, retry_after_s}` 与 `core/http.py` 里
+  `endpoint_paced` 那条抛出一致（`retry_after_s` 是**整秒**，`endpoint_breaker`
+  那条没有 `reason`，另有熔断恢复时长）；
+- `detail.url` 按本目录规则抹去。
+
+拿到真实限流返回后应原样替换本文件，形状不应变化。
+
 契约测试：`tests/contract/test_tickhub_payload_mapping.py`。
 新增/更换工具必须在这里补一份真实返回，并在 `adapters/tickhub.py:ROW_SHAPES` 登记形状。

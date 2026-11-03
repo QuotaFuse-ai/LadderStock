@@ -125,12 +125,20 @@ def default_payloads(day: date = date(2026, 10, 30)) -> dict[str, Any]:
 
 @dataclass
 class StubRegistry:
-    """按数据集返回固定载荷；`errors` 里的数据集直接抛异常（模拟 peer 不可用）。"""
+    """按数据集返回固定载荷；`errors` 里的数据集直接抛异常（模拟 peer 不可用）。
+
+    `from_cache` / `rate_limited` 模拟「链路全挂之后回放本地昨日池」那次取数的形状
+    （QUOT-349）：信封日期用 `data_as_of` 按数据集覆盖，所以能做到「池子是昨天的、
+    报价是今天的」。
+    """
 
     payloads: dict[str, Any] = field(default_factory=default_payloads)
     day: date = date(2026, 10, 30)
     errors: dict[str, Exception] = field(default_factory=dict)
     used_fallback: bool = False
+    from_cache: bool = False
+    rate_limited: bool = False
+    data_as_of: dict[str, date] = field(default_factory=dict)
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def _outcome(self, dataset: str, params: dict[str, Any] | None) -> FetchOutcome:
@@ -140,28 +148,37 @@ class StubRegistry:
             raise failure
         if dataset not in self.payloads:
             raise LookupError(f"桩里没有 {dataset}")
+        replayed = self.from_cache
+        as_of = self.data_as_of.get(dataset, self.day)
+        payload: dict[str, Any] = {
+            "dataset": dataset,
+            "tool": "cache_replay" if replayed else f"{dataset}_stub",
+            "records": self.payloads[dataset],
+        }
+        if replayed and dataset in self.data_as_of:
+            payload["stale"] = {
+                "as_of": as_of.isoformat(),
+                "reason": "rate_limited" if self.rate_limited else "peer_unavailable",
+            }
         envelope = LadderEnvelope(
             domain="review",
             topic=dataset,
-            data_as_of=self.day,
-            payload={
-                "dataset": dataset,
-                "tool": f"{dataset}_stub",
-                "records": self.payloads[dataset],
-            },
-            source="tickhub_cn",
-            source_detail=f"{dataset}_stub@stub",
+            data_as_of=as_of,
+            payload=payload,
+            source="local_cache" if replayed else "tickhub_cn",
+            source_detail="缓存回放（stub）" if replayed else f"{dataset}_stub@stub",
             fetched_at=datetime.now().astimezone(),
-            freshness="realtime",
-            confidence="high",
-            source_status="ok",
+            freshness="cached" if replayed else "realtime",
+            confidence="low" if replayed else "high",
+            source_status="degraded" if replayed else "ok",
         )
         return FetchOutcome(
             envelope=envelope,
-            source="stub",
+            source="local_cache" if replayed else "stub",
             used_fallback=self.used_fallback,
-            from_cache=False,
-            trail=[f"{dataset}_stub@stub"],
+            from_cache=replayed,
+            trail=[envelope.source_detail],
+            rate_limited=self.rate_limited,
         )
 
     def fetch(

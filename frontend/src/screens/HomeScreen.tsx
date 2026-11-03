@@ -42,6 +42,7 @@ import { useDensity } from '../lib/prefs'
 import { useReviewDraft } from '../../stores/reviewDraft'
 import { useValidationDraft } from '../../stores/validationDraft'
 import { DEMO_TRADE_DATE } from './home/demo'
+import { HomeSearch } from './home/HomeSearch'
 import { useHomeDemoEnabled, useHomeSource } from './home/useHomeSource'
 
 /**
@@ -317,15 +318,20 @@ export default function HomeScreen() {
       subtitle={summary}
       badge={<DemoStateBadge state={forced} />}
       actions={
-        <Button
-          variant="primary"
-          loading={busy && state !== 'loading'}
-          disabled={state === 'loading'}
-          onClick={reloadAll}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新全部
-        </Button>
+        <>
+          {/* QUOT-357：搜索入口常驻 `actions` 槽且永不 disabled（§8.2 / §4.4）——
+              加载中禁掉入口等于把「我现在就想搜」的人挡在门外，面板自己会显示取数状态 */}
+          <HomeSearch />
+          <Button
+            variant="primary"
+            loading={busy && state !== 'loading'}
+            disabled={state === 'loading'}
+            onClick={reloadAll}
+            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+          >
+            刷新全部
+          </Button>
+        </>
       }
     />
   )

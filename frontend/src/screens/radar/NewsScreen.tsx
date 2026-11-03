@@ -59,6 +59,21 @@ function matchesIndustry(item: NewsItem, term: string): boolean {
   return `${item.title}${item.summary}`.includes(term)
 }
 
+/**
+ * `?q=` 关键词过滤（QUOT-357 / 规格 §3.4）。
+ *
+ * 后端 `/api/news` 没有全文检索参数，所以这一层只能对**已经取回的当前窗口**做包含匹配：
+ * 命中范围 = 窗口内条数，不是全库。这句话必须写在界面上（见调用点的 `Banner`），
+ * 否则「没有含 X 的资讯」会被读成「没有 X 的资讯」。
+ * 6 位数字串按代码处理（`related_codes`），因为用户输 6 位数字要的是标的而不是标题里的字面串。
+ */
+function matchesKeyword(item: NewsItem, term: string): boolean {
+  if (!term) return true
+  if (/^\d{6}$/.test(term)) return item.related_codes.some((code) => code.includes(term))
+  const needle = term.toLowerCase()
+  return `${item.title} ${item.summary}`.toLowerCase().includes(needle)
+}
+
 function eventLabel(events: ExtractedEvent[]): string {
   const labels = [...new Set(events.map((event) => event.label || event.type))]
   return labels.join('、')
@@ -203,11 +218,13 @@ function TimelineColumn({
   eventsByItem,
   selectedId,
   onSelect,
+  keyword,
 }: {
   items: NewsItem[]
   eventsByItem: Map<string, ExtractedEvent[]>
   selectedId: string | null
   onSelect: (id: string) => void
+  keyword: string
 }) {
   return (
     <Card className="flex min-h-0 flex-col">
@@ -215,7 +232,12 @@ function TimelineColumn({
       <div className="min-h-0 flex-1 overflow-auto">
         {items.length === 0 ? (
           <div className="p-4">
-            <EmptyState compact title="没有匹配的资讯" description="换个代码 / 行业，或清空筛选。" />
+            {/* 带着 `?q=` 进来时必须说出这个词，否则空态读起来像「雷达没数据」（§3.4 / §8.5） */}
+            <EmptyState
+              compact
+              title={keyword ? `窗口内没有含「${keyword}」的资讯` : '没有匹配的资讯'}
+              description="换个代码 / 行业 / 关键词，或清空筛选、拉长窗口。"
+            />
           </div>
         ) : (
           <ul className="flex flex-col">
@@ -406,6 +428,8 @@ export default function NewsScreen() {
   const sourceParam = params.get('source') ?? ''
   const codeParam = params.get('code') ?? ''
   const industryParam = params.get('industry') ?? ''
+  /** 搜索面板的关键词出口（`/news?q=…`）；与 `code` / `industry` 是并列的第三条过滤，不互相顶替 */
+  const keywordParam = (params.get('q') ?? '').trim()
 
   const [codeText, setCodeText] = useState(codeParam)
   const [industryText, setIndustryText] = useState(industryParam)
@@ -431,9 +455,10 @@ export default function NewsScreen() {
       .filter((item) => selected.size === 0 || selected.has(item.source))
       .filter((item) => matchesCodes(item, codeTerms))
       .filter((item) => matchesIndustry(item, industryTerm))
+      .filter((item) => matchesKeyword(item, keywordParam))
       .slice()
       .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''))
-  }, [payload, selected, codeTerms, industryTerm])
+  }, [payload, selected, codeTerms, industryTerm, keywordParam])
 
   const eventsByItem = useMemo(() => {
     const map = new Map<string, ExtractedEvent[]>()
@@ -577,6 +602,21 @@ export default function NewsScreen() {
         </Banner>
       )}
 
+      {keywordParam && (
+        <Banner
+          tone="info"
+          title={`关键词：${keywordParam}`}
+          action={
+            <Button variant="ghost" onClick={() => setParam('q', null)}>
+              清除关键词
+            </Button>
+          }
+        >
+          关键词过滤发生在浏览器这一侧，只匹配<b>当前窗口已取回的 {payload?.items.length ?? 0} 条</b>
+          的标题与摘要（后端没有全文检索参数）。这里没有命中，不等于资讯库里没有——把窗口拉长或换代码再试。
+        </Banner>
+      )}
+
       <div className="grid grid-cols-[184px_minmax(0,1fr)_340px] items-start gap-4 desk:grid-cols-[200px_minmax(0,1fr)_400px]">
         <SourceColumn
           payload={payload}
@@ -593,6 +633,7 @@ export default function NewsScreen() {
             next.delete('source')
             next.delete('code')
             next.delete('industry')
+            next.delete('q')
             setParams(next, { replace: true })
             setCodeText('')
             setIndustryText('')
@@ -617,6 +658,7 @@ export default function NewsScreen() {
           eventsByItem={eventsByItem}
           selectedId={activeItem?.id ?? null}
           onSelect={setSelectedId}
+          keyword={keywordParam}
         />
 
         <DetailColumn item={activeItem} events={activeEvents} state={state} />

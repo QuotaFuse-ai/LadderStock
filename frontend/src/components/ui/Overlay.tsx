@@ -17,7 +17,15 @@ import { useEnter } from './useEnter'
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
-function useModalChrome(
+/**
+ * 模态外壳的共用行为：滚动锁、焦点陷阱、Esc 关闭、关闭后焦点回触发元素。
+ *
+ * `Drawer` / `ConfirmDialog` 与 `components/search/SearchPanel`（QUOT-357 / 规格 §5.4）
+ * 三家共用这一份。**不允许在别处再实现一份**——焦点回归与 Esc 的边角行为（输入法候选期间
+ * Esc 归输入法、`body.overflow` 恢复原值）在 `SourceBadges.tsx` 文件头那份「四份本地实现」
+ * 的复盘里就是这类重复的代价。
+ */
+export function useModalChrome(
   open: boolean,
   onRequestClose: () => void,
   ref: RefObject<HTMLElement>,
