@@ -75,6 +75,18 @@
     background-color: var(--ldst-border-strong);
   }
 
+  /* 只横向滚一行、又不显示滚动条的容器（QUOT-390 胶囊页签条）：
+     8px 高的滚动条会把行间距吃掉并把整条顶出对齐线，所以这里显式裁掉。
+     Tailwind 的任意值写法被组件层 token 纪律挡着（QUOT-310 验收 2），滚动条伪元素也只能走 CSS。 */
+  .ldst-no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .ldst-no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
   /* 骨架扫光（C-18）：1.2s 循环；reduced-motion 下退化为静态底色 */
   .ldst-skeleton {
     background-color: var(--ldst-skeleton);
