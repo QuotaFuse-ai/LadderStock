@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "QFSD-7001",
+    "name": "rate_limited",
+    "message": "push2_quote 调用过于频繁（约 4 秒后可再试）",
+    "action": "返回重试建议",
+    "detail": {
+      "url": "(已抹去)",
+      "endpoint": "push2_quote",
+      "reason": "endpoint_paced",
+      "retry_after_s": 4
+    },
+    "retryable": true
+  }
+}

@@ -10,9 +10,12 @@
    - in-flight 合并：同一 `(dataset, 参数)` 的并发请求只打一次，其余等同一次结果；
    - 短窗缓存：成功结果按 `cold_hot.intraday_cache_ttl_sec` 内存缓存，命中标 `freshness=cached`；
    - 失败冷却：工具失败后按 `cooldown_sec` 冷却，冷却期内直接跳备源；
-   - 每 peer 并发上限 + 最小间隔 + `retries` 有界重试。
+   - 每 peer 并发上限 + 最小间隔 + `retries` 有界重试；
+   - **限流退避**（QUOT-349）：上游回 `QFSD-7001` 时按它给的 `retry_after_s` 等，
+     等待时长与次数由 `sync.rate_limit` 兜死，等不起就照旧走备源 → 缓存回放。
 3. **降级与溯源**：备源成功 / 缓存回放都写 `source_detail` 轨迹与 `source_status`，
-   同时落一条 health 事件，供 `ldst sources health` 与看板标注。
+   同时落一条 health 事件，供 `ldst sources health` 与看板标注。因限流走到缓存回放时，
+   信封带 `payload.stale`（数据日 + 原因），轨迹与事件都能看出是「限流降级」而不是「源坏了」。
 
 **这里没有「换个地方抓」的分支**：链路终点永远是本地缓存，缓存也没有就抛
 `LadderStockError(EXIT_SOURCE)`（DEC-007 §2.5）。
@@ -25,7 +28,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -41,10 +44,12 @@ from ladderstock.core.models import LadderEnvelope
 from ladderstock.core.privacy import mask_url
 from ladderstock.data import archive
 from ladderstock.data.adapters import (
+    RateLimited,
     from_data_envelope,
     from_tool_response,
     from_wire_envelope,
 )
+from ladderstock.data.adapters.tickhub import RATE_LIMIT_NAME
 from ladderstock.errors import EXIT_CONFIG, EXIT_SOURCE, LadderStockError
 
 # 每 peer 的并发上限与最小调用间隔：配置里没有这两项（schema 冻结），
@@ -56,12 +61,25 @@ DEFAULT_TTL_SEC = 60.0
 MAX_HEALTH_EVENTS = 500
 INFLIGHT_WAIT_SEC = 180.0
 
+# 上游限流（QFSD-7001）的退避口径默认值，`sync.yaml` 的 `sync.rate_limit` 可改。
+# 一次「未命中缓存的取数」内共享，链路里所有工具用同一份预算（DEC-046）。
+DEFAULT_RATE_LIMIT_RETRIES = 2
+#: 单次愿意等的上限：超过它就按「等不起」处理，直接降级而不是把整轮定时任务拖住
+DEFAULT_RATE_LIMIT_MAX_WAIT_SEC = 15.0
+#: 冷却时长封顶：按上游建议设冷却，但不允许一个异常大的 `retry_after_s` 把数据集冻死一整天
+DEFAULT_RATE_LIMIT_MAX_COOLDOWN_SEC = 900.0
+
 
 class SourceUnavailable(LadderStockError):
-    """源不可用（超时 / 不可达 / 上游拒收），可降级到备源或缓存。"""
+    """源不可用（超时 / 不可达 / 上游拒收），可降级到备源或缓存。
 
-    def __init__(self, message: str) -> None:
+    `rate_limited=True` 表示这条链路里至少撞到过一次上游限流：调用方据此把
+    「因限流降级」和「源真的坏了」在日志与看板里分开说（QUOT-349）。
+    """
+
+    def __init__(self, message: str, *, rate_limited: bool = False) -> None:
         super().__init__(message, EXIT_SOURCE)
+        self.rate_limited = rate_limited
 
 
 # 这些异常本身就是「源不可用」的具体形态，向上原样抛出以保留超时/拒连的区分
@@ -615,13 +633,20 @@ class HealthLog:
     # ---------------------------------------------------------------- 冷却
 
     def cooldown_until(self, source_id: str, *, now: datetime | None = None) -> datetime | None:
+        item = self.active_cooldown(source_id, now=now)
+        return None if item is None else _parse_dt(item.get("until"))
+
+    def active_cooldown(
+        self, source_id: str, *, now: datetime | None = None
+    ) -> dict[str, Any] | None:
+        """还在生效的冷却条目（含 `reason`）——上一轮为什么被挡，本轮要能看出来。"""
         item = (self._data.get("cooldowns") or {}).get(source_id)
         if not item:
             return None
         until = _parse_dt(item.get("until"))
-        if until is None:
+        if until is None or until <= (now or _now()):
             return None
-        return until if until > (now or _now()) else None
+        return item if isinstance(item, dict) else None
 
     def set_cooldown(
         self, source_id: str, seconds: float, *, reason: str, tool: str = ""
@@ -722,6 +747,33 @@ class _PeerGate:
 
 
 @dataclass
+class _Backoff:
+    """一次取数（未命中缓存）内共享的限流退避预算——链路里所有工具用同一份。
+
+    「按 `retry_after_s` 退避」就是按上游说的等，不打折、不加抖动；但**只在等得起的时候等**：
+    建议时长超过 `max_wait_sec`、次数用完、或上游压根没给时长，都不再等，直接按失败处理
+    交给上层降级（DEC-046）。盘中高频轮询（QUOT-345 范围 2）要的就是这条硬上限。
+    """
+
+    retries_left: int
+    max_wait_sec: float
+    hit: bool = False
+    paced: dict[str, list[tuple[float, str]]] = field(default_factory=dict)
+
+    def plan(self, retry_after_s: float | None) -> float | None:
+        """本次限流该等多久；`None` = 不等了（预算用完 / 等不起 / 上游没给时长）。"""
+        self.hit = True
+        if self.retries_left <= 0 or retry_after_s is None or retry_after_s > self.max_wait_sec:
+            return None
+        self.retries_left -= 1
+        return retry_after_s
+
+    def note_wait(self, spec_id: str, wait: float, message: str) -> None:
+        """记一次「真的等了」的退避，归属到具体工具——轨迹与健康事件要说清是谁被 pacing。"""
+        self.paced.setdefault(spec_id, []).append((wait, message))
+
+
+@dataclass
 class FetchOutcome:
     """一次取数的完整结果，供 sync 记录运行轨迹。"""
 
@@ -730,6 +782,8 @@ class FetchOutcome:
     used_fallback: bool
     from_cache: bool
     trail: list[str] = field(default_factory=list)
+    #: 这一趟至少撞到过一次上游限流。退避后拿到真数据时**不算降级**，只是日志要能说明白
+    rate_limited: bool = False
 
     @property
     def degraded(self) -> bool:
@@ -751,6 +805,7 @@ class ProviderRegistry:
         ttl_sec: float | None = None,
         peer_concurrency: dict[str, int] | None = None,
         peer_min_interval: dict[str, float] | None = None,
+        sleeper: Callable[[float], None] | None = None,
     ) -> None:
         self.sources_doc = sources if sources is not None else load_sources_config()
         self.sync_doc = sync if sync is not None else load_sync_config()
@@ -764,6 +819,17 @@ class ProviderRegistry:
         cold_hot = (self.sync_doc.get("sync") or {}).get("cold_hot") or {}
         configured_ttl = cold_hot.get("intraday_cache_ttl_sec") or DEFAULT_TTL_SEC
         self.ttl_sec = float(ttl_sec) if ttl_sec is not None else float(configured_ttl)
+        rate_limit = (self.sync_doc.get("sync") or {}).get("rate_limit") or {}
+        self.rate_limit_retries = int(
+            rate_limit.get("max_retries", DEFAULT_RATE_LIMIT_RETRIES)
+        )
+        self.rate_limit_max_wait_sec = float(
+            rate_limit.get("max_wait_sec", DEFAULT_RATE_LIMIT_MAX_WAIT_SEC)
+        )
+        self.rate_limit_max_cooldown_sec = float(
+            rate_limit.get("max_cooldown_sec", DEFAULT_RATE_LIMIT_MAX_COOLDOWN_SEC)
+        )
+        self._sleep = sleeper or time.sleep
         self._cache: dict[tuple[str, str, str], tuple[float, LadderEnvelope]] = {}
         self._inflight: dict[tuple[str, str, str], _Pending] = {}
         self._guard = threading.Lock()
@@ -960,36 +1026,58 @@ class ProviderRegistry:
     ) -> FetchOutcome:
         trail: list[str] = []
         failures: list[str] = []
+        backoff = _Backoff(self.rate_limit_retries, self.rate_limit_max_wait_sec)
         for index, spec in enumerate(chain):
-            until = None if ignore_cooldown else self.health.cooldown_until(spec.id)
-            if until is not None:
+            cooled = None if ignore_cooldown else self.health.active_cooldown(spec.id)
+            if cooled is not None:
+                until = _parse_dt(cooled.get("until"))
                 trail.append(f"{spec.trail_label()}:cooldown")
+                # 冷却是上一轮限流设的（`reason`），本轮仍然在同一个 pacing 窗口里：
+                # 一次调用都没发出去不等于「这个源坏了/今天没数据」，判降级才不骗人
+                if cooled.get("reason") == RATE_LIMIT_NAME:
+                    backoff.hit = True
                 self.health.record(
                     "skipped_cooldown",
                     dataset,
                     source=spec.id,
                     tool=spec.tool,
-                    detail=f"冷却至 {until.isoformat(timespec='seconds')}",
+                    detail=f"冷却至 {until.isoformat(timespec='seconds') if until else '?'}",
                 )
                 continue
             try:
-                envelope = self._call_source(spec, params, trade_date)
+                envelope = self._call_source(spec, params, trade_date, backoff)
             except Exception as exc:
                 reason = _reason(exc)
                 trail.append(f"{spec.trail_label()}:{reason}")
                 failures.append(f"{spec.trail_label()}={reason}")
                 self.health.set_cooldown(
-                    spec.id, spec.cooldown_sec, reason=reason, tool=spec.tool
+                    spec.id, self._cooldown_sec(spec, exc), reason=reason, tool=spec.tool
                 )
                 self.health.record(
-                    "failure",
+                    # 限流不是「这个源坏了」，是「这个源现在不让你这么问」——单独一个 kind，
+                    # `sources health` 里能一眼看出这一轮是被上游 pacing 挡的（QUOT-349）
+                    "rate_limited" if isinstance(exc, RateLimited) else "failure",
                     dataset,
                     source=spec.id,
                     tool=spec.tool,
                     detail=f"{reason}: {exc}",
                 )
                 continue
+            # 退避成功也是「被上游 pacing 过」：轨迹与健康事件里要先看得见等过，再是 ok，
+            # 否则复盘时只看到一路顺利，不知道这一轮慢在哪（QUOT-349 验收 a）。
+            for waited, advice in backoff.paced.get(spec.id, ()):
+                trail.append(f"{spec.trail_label()}:rate_limited")
+                self.health.record(
+                    "rate_limited",
+                    dataset,
+                    source=spec.id,
+                    tool=spec.tool,
+                    detail=f"退避 {waited:g} 秒后重试：{advice}",
+                )
             trail.append(f"{spec.trail_label()}:ok")
+            # 这一路刚证明自己是通的：把它自己的冷却关掉。限流退避成功后继续背着
+            # 60 秒闸门，下一轮就会「明明能取却被 cooldown 跳过」， pacing 越频繁越明显。
+            self.health.clear_cooldown(spec.id)
             used_fallback = index > 0
             envelope.source_detail = _source_detail(spec, used_fallback, trail)
             if used_fallback:
@@ -1007,10 +1095,13 @@ class ProviderRegistry:
                 used_fallback=used_fallback,
                 from_cache=False,
                 trail=trail,
+                rate_limited=backoff.hit,
             )
 
         if allow_cache:
-            outcome = self._replay(dataset, trade_date, trail, failures)
+            outcome = self._replay(
+                dataset, trade_date, trail, failures, rate_limited=backoff.hit
+            )
             if outcome is not None:
                 return outcome
         # failures 为空说明链路里的工具都在冷却期，一次调用都没发出去——
@@ -1018,31 +1109,64 @@ class ProviderRegistry:
         reason = "；".join(failures) or "链路内工具均在冷却期，本轮未发起调用"
         raise SourceUnavailable(
             f"{dataset} 的生态链路全部不可用：{reason}"
-            + ("，且本地无缓存可回放" if allow_cache else "（已禁用缓存回放）")
+            + ("，且本地无缓存可回放" if allow_cache else "（已禁用缓存回放）"),
+            rate_limited=backoff.hit,
+        )
+
+    def _cooldown_sec(self, spec: SourceSpec, exc: BaseException) -> float:
+        """冷却时长：限流按上游建议（取两者较长，封顶），其它失败按 `cooldown_sec`。
+
+        取较长值而不是照抄 `retry_after_s`：`cooldown_sec` 是我们自己的最小保护窗口，
+        上游说「2 秒后再来」不该把本来 60 秒的闸门提前打开。
+        """
+        if not isinstance(exc, RateLimited) or exc.retry_after_s is None:
+            return spec.cooldown_sec
+        return min(
+            max(exc.retry_after_s, spec.cooldown_sec), self.rate_limit_max_cooldown_sec
         )
 
     def _call_source(
-        self, spec: SourceSpec, params: dict[str, Any], trade_date: date | None
+        self,
+        spec: SourceSpec,
+        params: dict[str, Any],
+        trade_date: date | None,
+        backoff: _Backoff,
     ) -> LadderEnvelope:
         peer = self.peers.get(spec.via)
         if peer is None:
             raise SourceUnavailable(f"sources.yaml 缺少 peer {spec.via}")
+        transport_left = max(0, spec.retries)
         last: Exception | None = None
-        for _attempt in range(max(0, spec.retries) + 1):
-            self._enter_peer(peer)
+        while True:
+            wait: float | None = None
+            advice = ""
             try:
-                response = self.transport.call(
-                    peer, spec.tool, dict(params), timeout=spec.timeout_sec
-                )
-                return self._to_envelope(spec, response, trade_date)
+                self._enter_peer(peer)
+                try:
+                    response = self.transport.call(
+                        peer, spec.tool, dict(params), timeout=spec.timeout_sec
+                    )
+                    return self._to_envelope(spec, response, trade_date)
+                finally:
+                    self._leave_peer(peer)
             except Exception as exc:  # noqa: BLE001 - 换备源由上层决定
                 last = exc
-            finally:
-                self._leave_peer(peer)
+                if isinstance(exc, RateLimited):
+                    # 等待放在 peer 闸门之外：攥着并发信号量睡觉会把同 peer 的其它取数一起拖住
+                    wait = backoff.plan(exc.retry_after_s)
+                    advice = str(exc)
+            if wait is not None:
+                backoff.note_wait(spec.id, wait, advice)
+                self._sleep(wait)
+                continue
+            if isinstance(last, RateLimited) or transport_left <= 0:
+                break
+            transport_left -= 1
         assert last is not None
         # 传输层异常原样抛出：`_reason` 才能把 timeout / unreachable 区分进轨迹与冷却原因；
         # 包成 SourceUnavailable 会把所有失败压成同一句话，复盘时看不出是超时还是拒连。
-        if isinstance(last, _TRANSPORT_ERRORS):
+        # `RateLimited` 同理——退避建议时长要留给上层换算成冷却。
+        if isinstance(last, _TRANSPORT_ERRORS) or isinstance(last, RateLimited):
             raise last
         raise SourceUnavailable(str(last)) from last
 
@@ -1074,6 +1198,8 @@ class ProviderRegistry:
         trade_date: date | None,
         trail: list[str],
         failures: list[str],
+        *,
+        rate_limited: bool = False,
     ) -> FetchOutcome | None:
         snapshot = self.cache_reader(dataset, trade_date, root=self.root)
         if getattr(snapshot, "empty", True) and trade_date is not None:
@@ -1091,9 +1217,16 @@ class ProviderRegistry:
                 "dataset": dataset,
                 "tool": "cache_replay",
                 "records": list(snapshot.records),
+                # 明确的 stale 标记：看板不用猜「这批是不是今天的」，读这一项就够
+                "stale": {
+                    "as_of": as_of.isoformat(),
+                    "requested_as_of": trade_date.isoformat() if trade_date else None,
+                    "reason": "rate_limited" if rate_limited else "peer_unavailable",
+                    "cached_at": _iso(getattr(snapshot, "cached_at", None)),
+                },
             },
             source="local_cache",
-            source_detail=_cache_detail(snapshot, trail),
+            source_detail=_cache_detail(snapshot, trail, rate_limited=rate_limited),
             fetched_at=_now(),
             freshness="cached",
             confidence="low",
@@ -1105,7 +1238,11 @@ class ProviderRegistry:
             dataset,
             source="local_cache",
             tool=str(getattr(snapshot, "backend", "none")),
-            detail="peer 全部不可用，已回放本地缓存",
+            detail=(
+                "上游限流（QFSD-7001），退避后仍取不到当日数据，已回放本地昨日池"
+                if rate_limited
+                else "peer 全部不可用，已回放本地缓存"
+            ),
         )
         return FetchOutcome(
             envelope=envelope,
@@ -1113,6 +1250,7 @@ class ProviderRegistry:
             used_fallback=False,
             from_cache=True,
             trail=trail,
+            rate_limited=rate_limited,
         )
 
     # ---------------------------------------------------------------- 限流
@@ -1202,13 +1340,16 @@ def _source_detail(spec: SourceSpec, used_fallback: bool, trail: list[str]) -> s
     return f"{head} {spec.trail_label()}；轨迹 {' → '.join(trail)}"
 
 
-def _cache_detail(snapshot: Any, trail: list[str]) -> str:
+def _cache_detail(snapshot: Any, trail: list[str], *, rate_limited: bool = False) -> str:
     backend = getattr(snapshot, "backend", "none")
     as_of = getattr(snapshot, "as_of", None)
-    return f"缓存回放（{backend}，{as_of}）；轨迹 {' → '.join(trail)}"
+    head = "限流降级，回放本地昨日池" if rate_limited else "缓存回放"
+    return f"{head}（{backend}，数据日 {as_of}）；轨迹 {' → '.join(trail)}"
 
 
 def _reason(exc: BaseException) -> str:
+    if isinstance(exc, RateLimited):
+        return "rate_limited"
     if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
         return "timeout"
     if isinstance(exc, (ConnectionError, OSError, httpx.TransportError)):
@@ -1226,6 +1367,10 @@ def _key(params: dict[str, Any]) -> str:
 
 def _now() -> datetime:
     return datetime.now().astimezone()
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat(timespec="seconds") if isinstance(value, datetime) else None
 
 
 def _parse_dt(value: Any) -> datetime | None:

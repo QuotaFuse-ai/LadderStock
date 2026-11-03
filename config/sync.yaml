@@ -229,3 +229,13 @@ sync:
   cold_hot:
     intraday_cache_ttl_sec: 60
     history_backend: duckdb
+
+  # ---- 上游限流退避（QFSD-7001，QUOT-349 / DEC-046）----
+  # 命中标 `rate_limited` 的返回时，链路内按上游给的 `retry_after_s` 等，等得起才重试。
+  # 预算是**一次取数**共享的（链路里主备工具用同一份），不是每个工具各来一遍：
+  # 盘中高频轮询（QUOT-345 范围 2，30–60s 一轮）不能被一次限流拖住整轮。
+  # 次数用完 / 建议时长超过 `max_wait_sec` → 不再等，照旧走备源 → 本地昨日池回放。
+  rate_limit:
+    max_retries: 2
+    max_wait_sec: 15
+    max_cooldown_sec: 900

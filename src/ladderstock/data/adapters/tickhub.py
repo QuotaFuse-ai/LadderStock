@@ -17,9 +17,10 @@ TickHub-CN 的原始返回（README §envelope）不是 `DataEnvelope`，而是�
   按 `ROW_SHAPES` 展开成行；
 - **对象快照（无行概念）** —— `market_sentiment`：整包落**一行**，不硬凑。
 
-所以这里做四件事：把 `ok/data/meta` 翻成统一信封、把 A/B/C 置信度映射为
+所以这里做五件事：把 `ok/data/meta` 翻成统一信封、把 A/B/C 置信度映射为
 `high/medium/low`、把 `cache_hit` 映射为 `realtime/cached`、**按工具声明的形状把对象
-`data` 展开成行（`date → trade_date`，`code/period/adjust` 透传）**——
+`data` 展开成行（`date → trade_date`，`code/period/adjust` 透传）**、
+**把 `ok: false` 里的限流（`QFSD-7001`）单独识别成可退避的 `RateLimited`，其它失败照旧**——
 不做任何字段填充式补救，也不用「猜哪个键是列表」：形状表里没有的工具一旦返回对象
 就照快照落一行，表里声明的键缺失则直接报错（形状变了要知道，不要静默吞掉）。
 """
@@ -44,6 +45,34 @@ ROW_DATE_KEYS: tuple[str, ...] = ("trade_date", "date")
 
 #: `data` 对象顶层承载「这批数据属于哪天」的键
 HEADER_DATE_KEYS: tuple[str, ...] = ("date", "trade_date", "latest_date", "as_of")
+
+
+# --------------------------------------------------------------------------- #
+# 限流（QFSD-7001）
+# --------------------------------------------------------------------------- #
+
+#: 上游命中自身限流/熔断时的码。`retryable=true`，语义是「等一会儿再来拿同一批数据」，
+#: 不是「换个工具」——同 peer 的备工具在同一个限流窗口里，换过去只是把一次等待变成两次失败。
+RATE_LIMIT_CODE = "QFSD-7001"
+RATE_LIMIT_NAME = "rate_limited"
+#: `QF-xxxx` 是上游早期草稿的别名（`core/errors.py` 的 ALIASES），两种写法都认
+_RATE_LIMIT_CODES: frozenset[str] = frozenset({RATE_LIMIT_CODE, "QF-7001"})
+#: 建议等待时长的键名（真实 peer 把它放在 `error.detail` 里，单位秒）
+RETRY_AFTER_KEYS: tuple[str, ...] = ("retry_after_s", "retry_after")
+#: 建议时长的合理区间上限：超过它按「上游没好好说」处理，不拿它去睡
+RETRY_AFTER_PLAUSIBLE_SEC = 86_400.0
+
+
+class RateLimited(LadderStockError):
+    """上游限流，带 peer 自己建议的等待秒数（没给就是 `None`，不猜）。
+
+    单独成一个类型是为了让链路能**先退避再降级**：等待时长由 `provider_registry`
+    按预算决定（DEC-046）。这里只负责「识别 + 把上游的建议原样带出来」。
+    """
+
+    def __init__(self, message: str, retry_after_s: float | None = None) -> None:
+        super().__init__(message, EXIT_SOURCE)
+        self.retry_after_s = retry_after_s
 
 
 @dataclass(frozen=True)
@@ -173,9 +202,7 @@ def from_tool_response(
     actual = tool or binding.tool
 
     if not response.get("ok", False):
-        raise LadderStockError(
-            f"TickHub-CN {actual} 返回失败：{_failure_text(response)}", EXIT_SOURCE
-        )
+        raise classify_failure(actual, response)
 
     meta: dict[str, Any] = response.get("meta") or {}
     data = response.get("data")
@@ -269,6 +296,58 @@ def normalize_records(
 # --------------------------------------------------------------------------- #
 # 内部
 # --------------------------------------------------------------------------- #
+
+def classify_failure(tool: str, response: dict[str, Any]) -> LadderStockError:
+    """`ok: false` → 异常类型。
+
+    限流（`QFSD-7001` / `rate_limited`）单独识别成 `RateLimited`，把上游建议的等待时长
+    原样带出去（QUOT-349）；其它失败保持原来的「源返回失败」一句话，不改变既有口径。
+    """
+    text = _failure_text(response)
+    if _is_rate_limited(response):
+        seconds = retry_after_s(response)
+        # 原样带上上游的错误码：日志里要能认出是 QFSD-7001，而不是笼统一句「限流」
+        code = str(_error_block(response).get("code") or response.get("code") or RATE_LIMIT_CODE)
+        advice = "" if seconds is None else f"，上游建议 {seconds:g} 秒后再试"
+        return RateLimited(
+            f"TickHub-CN {tool} 限流（{code} {RATE_LIMIT_NAME}）：{text}{advice}", seconds
+        )
+    return LadderStockError(f"TickHub-CN {tool} 返回失败：{text}", EXIT_SOURCE)
+
+
+def _error_block(response: Mapping[str, Any]) -> Mapping[str, Any]:
+    error = response.get("error")
+    return error if isinstance(error, Mapping) else {}
+
+
+def _is_rate_limited(response: Mapping[str, Any]) -> bool:
+    error = _error_block(response)
+    code = str(error.get("code") or response.get("code") or "").strip().upper()
+    name = str(error.get("name") or response.get("name") or "").strip().lower()
+    return code in _RATE_LIMIT_CODES or name == RATE_LIMIT_NAME
+
+
+def retry_after_s(response: Mapping[str, Any]) -> float | None:
+    """上游建议的等待秒数：`error.detail.retry_after_s` 优先，其次 `error` 顶层。
+
+    取不到、不是数字、为负、或大于一天的都回 `None`——「上游没好好说」和「上游说等 0 秒」
+    是两件事，前者不该被当成立刻重试，后者由调用方按 `0.0` 处理。
+    """
+    error = _error_block(response)
+    candidates: list[Any] = []
+    detail = error.get("detail")
+    if isinstance(detail, Mapping):
+        candidates.extend(detail.get(key) for key in RETRY_AFTER_KEYS)
+    candidates.extend(error.get(key) for key in RETRY_AFTER_KEYS)
+    candidates.extend(response.get(key) for key in RETRY_AFTER_KEYS)
+    for value in candidates:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        seconds = float(value)
+        if 0.0 <= seconds <= RETRY_AFTER_PLAUSIBLE_SEC:
+            return seconds
+    return None
+
 
 def _failure_text(response: dict[str, Any]) -> str:
     """失败信息：真实 peer 把它放在 `error.{code,name,message}`，不是顶层 `message`。
