@@ -18,6 +18,7 @@ import {
   describeApiError,
   isApiError,
   type BoardPayload,
+  type ComponentSnapshot,
   type JobView,
   type PeerLogs,
   type PeerSnapshot,
@@ -83,7 +84,7 @@ interface SectionMeta {
 }
 
 const SECTIONS: readonly SectionMeta[] = [
-  { value: 'peers', label: '子模块', hint: '四个数据 / 资讯 / 合议模块' },
+  { value: 'peers', label: '子模块', hint: '四个数据 / 资讯 / 合议模块 + 工具组件' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
   { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
@@ -432,6 +433,62 @@ function PeerCard({
   )
 }
 
+function ComponentCard({ component }: { component: ComponentSnapshot }) {
+  const statusLabel = component.status_label || PEER_STATUS_LABEL[component.status]
+  return (
+    <li className="rounded border border-border bg-surface shadow-card">
+      <div className="flex flex-col gap-2 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusDot tone={PEER_DOT[component.status]} pulse={component.status === 'starting'}>
+                {statusLabel}
+              </StatusDot>
+              <h3 className="truncate text-subtitle font-semibold text-text">{component.product}</h3>
+              <Badge tone="info">工具组件</Badge>
+            </div>
+            <p className="mt-1 text-caption text-text-secondary">{component.role}</p>
+          </div>
+        </div>
+
+        <p className="text-caption text-text-secondary">
+          控制台 <span className="ldst-num">{component.ports.console}</span> · 网关{' '}
+          <span className="ldst-num">{component.ports.gateway ?? MISSING}</span> · {statusLabel}
+        </p>
+        <p className="text-caption text-text-muted">{component.detail}</p>
+        <p className="truncate text-caption text-text-muted" title={component.directory}>
+          目录 <span className="ldst-num">{component.directory}</span>
+        </p>
+        <p className="text-caption text-text-muted">托管：{component.managed_by}</p>
+        {component.notes.map((note) => (
+          <p key={note} className="text-caption text-text-muted">
+            {note}
+          </p>
+        ))}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {component.actions.can_open && component.open_url && (
+            <a
+              href={component.open_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-control items-center gap-1 rounded px-2 text-body text-text-secondary transition-colors duration-fast hover:bg-surface-3 hover:text-text"
+            >
+              打开控制台
+              <ExternalLink className="size-3.5" aria-hidden="true" />
+            </a>
+          )}
+          {!component.actions.can_open && (
+            <span className="text-caption text-text-muted">
+              未运行；启停用 <span className="ldst-num">python pfctl.py start|stop</span>（计划任务托管，控制面不代管）
+            </span>
+          )}
+        </div>
+      </div>
+    </li>
+  )
+}
+
 function StaticPeerCard({ peer, reason }: { peer: StaticPeer; reason: string }) {
   return (
     <li className="rounded border border-border bg-surface shadow-card">
@@ -578,6 +635,10 @@ function buildPortRows(board: BoardPayload | null, probed: boolean): PortRow[] {
       push(peer.mcp, `${peer.product} MCP`, null)
       push(peer.web, `${peer.product} ${peer.webLabel}`, null)
     }
+  }
+  for (const component of board?.components ?? []) {
+    push(component.ports.console, `${component.product} 控制台`, component.listening.console)
+    push(component.ports.gateway, `${component.product} 网关`, component.listening.gateway)
   }
   return rows
 }
@@ -1281,6 +1342,7 @@ export default function SettingsScreen() {
   )
 
   const peers = useMemo(() => board.data?.peers ?? [], [board.data])
+  const components = useMemo(() => board.data?.components ?? [], [board.data])
   const controlError = board.error
   const notConnected = isApiError(controlError) && controlError.kind === 'not-connected'
   const httpStatus = isApiError(controlError) && controlError.kind === 'http' ? controlError.status : null
@@ -1387,7 +1449,11 @@ export default function SettingsScreen() {
           : controlOff
             ? '控制面未启用（LDST_CONTROL_ENABLED=0）'
             : board.data
-              ? `${peers.length} 个模块 · 运行中 ${peers.filter((peer) => peer.status === 'running').length}`
+              ? `${peers.length} 个模块 · 运行中 ${peers.filter((peer) => peer.status === 'running').length}${
+                  components.length > 0
+                    ? ` · 组件 ${components.filter((item) => item.status === 'running').length}/${components.length}`
+                    : ''
+                }`
               : '读取模块状态…'
       }
       badge={<DemoStateBadge state={forced} />}
@@ -1545,6 +1611,20 @@ export default function SettingsScreen() {
                   ))}
               </ul>
             </SectionCard>
+
+            {components.length > 0 && (
+              <SectionCard
+                title="工具组件"
+                subtitle="公共基础设施，只读观测；启停由各自的守护进程 / 计划任务负责"
+                bodyClassName="p-0"
+              >
+                <ul className="flex flex-col gap-3 p-4">
+                  {components.map((component) => (
+                    <ComponentCard key={component.id} component={component} />
+                  ))}
+                </ul>
+              </SectionCard>
+            )}
 
             <p className="text-caption text-text-muted">
               端口由后端预检给出：8001 被 WSL 转发占用时 TickHub-US 用 8002；US 本机构建没有管理端，不再占 8789；
