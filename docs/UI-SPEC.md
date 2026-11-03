@@ -1,7 +1,7 @@
-# 看板信息架构与视觉规范（19 屏）
+# 看板信息架构与视觉规范（20 屏）
 
-- 版本：v1.5
-- 日期：2026-11-02
+- 版本：v1.6
+- 日期：2026-11-03
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -18,21 +18,22 @@
 | v1.3 | 2026-11-02 | QUOT-306 / QUOT-317 收口：一致性口径脚本化（`frontend/scripts/check-ui-consistency.mjs` + `npm run check:ui`，六项：裸表 / hex / 任意值 / 数值基线 / DataTable 引用 / 过渡时长）；`DataTable` 补整行 `summaryRow`（列级 `summary` 保留，二者互斥）；四处任意值收口为 `min-h-calendar-cell` / `min-w-table-min` 与 `truncate` 列；§0 表格「事件日历 / 我的持仓」的侧栏分组同步为「我的股票」（v1.2 遗漏）；编号与变更记录合并规则见 DEC-045。 |
 | v1.3.1 | 2026-11-02 | 外壳层 §2 逐条走查落地（QUOT-316，只动 `components/Layout.tsx` / `PageShell.tsx` / `PersistenceBanner.tsx`，`NAV_SECTIONS` 结构零变更）：① §2 提示条「同类最多 2 条 + 另有 N 条提示」此前无实现，`PersistenceBanner` 现按 tone 各截 2 条、余量并成一行且逐个列出分片名（折叠不丢信息），顶内距 `pt-3`→`pt-5` 与 `main` 的 `py-5` 对齐；② §11.0「数字必 `.ldst-num`」在页头不可达——`PageHeader` 的 subtitle / meta 由外壳统一挂 `.ldst-num`（只加可继承的 `font-variant-numeric`，字号与颜色仍归各屏），19 屏一次生效；页头换行纵向间距 12px→4px；③ §2 侧栏二级缩进 8px→16px（导引线落在一级图标正下方），`rail:` 档展平后加组间 1px 分隔线，否则 19 行同形图标无分组可读性；④ §2 阅读型内容度量：外壳自有的 `OfflineBanner` 说明段挂 `max-w-measure`（`--ldst-measure: 52ch`）；⑤ `Layout.tsx` 头注释的 `DESIGN-SPEC §3.1/§4.1` 假引用（M-9）改引 `UI-SPEC §2`；⑥ R-21 实测更正为「非缺陷」，见 §12.5。规范条文本身未放宽：以上都是代码向 §2 / §11.0 收敛。 |
 | v1.5 | 2026-11-02 | 新增「接入 AI」一等入口（QUOT-200）：侧栏底部（主题与设置之间）按钮 + 设置 → AI 接入顶部状态卡，打开右侧向导抽屉（`AiConnectDialog`）；提供 DeepSeek / 通义千问 / Kimi / MiniMax / 本机 Ollama / 自定义预置，测试连通性后写入 `config/ai.env`（`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY`），密钥只写不读回。订阅版 CLI（Codex / Claude Code / WorkBuddy）当前后端未实现，不放入口。`?ai=1` 可直接打开抽屉（截图/排障）。 |
+| v1.6 | 2026-11-03 | 复盘组拆三独立入口（QUOT-344，决策 DEC-046；本链 S1+S2 合并成这一行，按 DEC-045 §4）。导航：`复盘` 组由「情绪复盘 / 周度复盘 / 候选池」改为 **每日复盘 `/review` · AI复盘 `/review/ai` · AI周报 `/weekly` · 候选池 `/pool`**——三屏同源不合并，`/weekly` 只改文案不改路由。路由新增 `/review/ai`（与 `/review` 同族前缀，不用 `/ai-review`）；`frontend/tests/nav-routes.test.tsx` 加三入口互不相同、各自深链可达、`/review` 与 `/review/ai` 不同组件的断言；`visual-shot.mjs` 记为第 20 屏。AI复盘的导航图标取 `Bot`，不复用底部「接入 AI」动作的 `Sparkles`——`rail:` 档只剩图标可辨，两个 Sparkles 分不开。**分工**：每日复盘 = 当日五段数据（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），AI复盘 = AI 生成段落 + 降级/失败段，AI周报 = 按周聚合叙述。**本行只覆盖 S1 的导航与路由面**（§0 表行、§2 导航顺序与外壳图）；DEC-046 实体文件随 S1 落地（QUOT-366 收口审计要求），新屏的 §3 小节与 §11 清单由 S2 在同一 PR 链补齐——S1 阶段 `/review/ai` 是占位壳，不预测正文结构。 |
 | v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
 
 ## 0. 范围与非目标
 
-**覆盖（19 屏）**——路由以 `App.tsx:54-76` 为准（v1.1 的 18 屏 + QUOT-302 新增的 `/intraday`），侧栏入口以 `components/Layout.tsx:64-119` 为准。
+**覆盖（20 屏）**——路由以 `App.tsx` 的 `ROUTE_ELEMENTS` 为准（v1.1 的 18 屏 + QUOT-302 的 `/intraday` + QUOT-344 的 `/review/ai`），侧栏入口以 `components/Layout.tsx` 的 `NAV_SECTIONS` 为准。
 
 | # | 屏 | 路由 | 侧栏入口（分组 · 标签） | 契约码 | v1.0 |
 |---|---|---|---|---|---|
-| 1 | 复盘 | `/review` | 复盘 · 情绪复盘 | P-04 | 已覆盖 |
+| 1 | 每日复盘 | `/review` | 复盘 · 每日复盘 | P-04 | 已覆盖 |
 | 2 | 盯盘 | `/watch` | 盯盘 · 盘中信号 | P-03 | 已覆盖 |
 | 3 | 验证 | `/validate` | 验证 · 验证 | P-06 | 已覆盖 |
 | 4 | 日志 | `/journal` | 日志 · 交易日志 | P-05 | 已覆盖 |
 | 5 | 首页 | `/`（index，`App.tsx:54`） | 首页 · 首页（单页分组） | P-01 | 新增 |
 | 6 | 市场 | `/market?tab=sentiment\|ladder\|theme` | 市场 · 情绪温度 / 连板梯队 / 题材轮动（3 个入口同屏） | P-02 | 新增 |
-| 7 | 周度复盘 | `/weekly` | 复盘 · 周度复盘 | — | 新增 |
+| 7 | AI周报 | `/weekly` | 复盘 · AI周报 | — | 新增 |
 | 8 | 资讯雷达 | `/news`（**不是** `/radar`） | 市场 · 资讯雷达 | — | 新增 |
 | 9 | 事件日历 | `/calendar` | 我的股票 · 事件日历 | — | 新增 |
 | 10 | 候选池 | `/pool` | 复盘 · 候选池 | — | 新增 |
@@ -45,6 +46,7 @@
 | 17 | 研究报告 | `/research/:code/report` | 无侧栏入口（深挖页跳转） | — | 新增 |
 | 18 | 设置 | `/settings` | 侧栏底部固定项 | P-07 | 新增 |
 | 19 | 盯盘·竞价与盘中 | `/intraday`（QUOT-302 新增） | 盯盘 · 竞价与盘中 | — | 新增 |
+| 20 | AI复盘 | `/review/ai`（QUOT-344 新增） | 复盘 · AI复盘 | — | 新增（S1 占位壳，正文与 §3/§11 由 S2 落） |
 
 > 任务书里的 `/radar`、`/radar/pool` 等路由在代码里不存在：雷达家族的实际路由是 `/news` `/calendar` `/pool` `/positions`（`App.tsx:65-68`）。本规范一律按代码写。
 
@@ -81,8 +83,11 @@
 │  资讯雷达    │  │              + meta + actions（右）    │  │
 │ 盯盘         │  ├────────────────────────────────────────┤  │
 │ 复盘  ▾      │  │ 提示条区（Banner，最多同类 2 条）      │  │
-│  周度复盘    │  ├────────────────────────────────────────┤  │
-│ 日志  ▾      │  │ 主内容（卡 / 表 / 列表 / 图）          │  │
+│  每日复盘    │  ├────────────────────────────────────────┤  │
+│  AI复盘      │  │ 主内容（卡 / 表 / 列表 / 图）          │  │
+│  AI周报      │  │                                        │  │
+│  候选池      │  │                                        │  │
+│ 日志  ▾      │  │                                        │  │
 │ 验证  ▾      │  └────────────────────────────────────────┘  │
 │ ───────────  │                                              │
 │ 主题 Seg.    │                                              │
@@ -105,10 +110,10 @@
 | 键盘 | 首元素「跳到主内容」（`Layout.tsx:191`）；Tab 顺序与视觉顺序一致；`main` 可聚焦（`tabIndex=-1`） | `Layout.tsx:191,328` |
 | 焦点可见 | `:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible` 走 `--ldst-focus-ring` | `styles/index.css:30` |
 | 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx:327`），页面级 `Banner` 在 `PageHeader` 之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
-| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（情绪 / 周度 / 候选池）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件、「接入 AI」动作与设置固定在侧栏底部（QUOT-304 / DEC-044；接入 AI 见 v1.5） | `Layout.tsx` `NAV_SECTIONS` |
+| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（每日复盘 / AI复盘 / AI周报 / 候选池，QUOT-344 / DEC-046 拆三独立入口）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件、「接入 AI」动作与设置固定在侧栏底部（QUOT-304 / DEC-044；接入 AI 见 v1.5） | `Layout.tsx` `NAV_SECTIONS` |
 | 侧栏本机说明 | 「仅监听本机回环 · 草稿只存本机 IndexedDB」常驻 | `Layout.tsx:320-322` |
 
-**19 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
+**20 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组、QUOT-344 给 `/review/ai` 建独立入口后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
 
 ## 3. 逐屏信息架构
 
@@ -276,7 +281,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「复盘」分组第二项 | `Layout.tsx:91-100` |
+| 入口 | 侧栏「复盘」分组第三项，标签「AI周报」（QUOT-344 / DEC-046 只改导航文案；屏内 `h1` 仍是「周度复盘」，改文案归 S2） | `Layout.tsx` `NAV_SECTIONS` |
 | 工具栏 | `PageHeader` 标题「周度复盘」；subtitle `${week} · start ~ end · N 个交易日有数据`；右侧 `上周 / 下周 / 刷新` 三键（次操作在左，主操作「刷新」在最右） | `WeeklyScreen.tsx:259-298` |
 | 主区 | 4 指标卡（首卡 `hero` + `Sparkline`）→ 程序直出概览卡（手写 `section` + `Badge`）→ 缺日 `Banner info` → 五段 AI `SectionCard`（编号标题 + 状态徽标 + `降级` + `AiErrorNotice`）→ 失败汇总 `Banner danger` → 每日序列 `DataTable`（compact）→ 两列 `min-[1100px]:grid-cols-2`（涨跌分布 / 主线题材 `HBarList`）→ 本周龙头 / 待验证结算 | `WeeklyScreen.tsx:371-610` |
 | 六态 | loading/error/offline 齐全；**empty 只出头部 + 一条横幅**，不保留指标卡阵（与其它屏不对称，R-15）；每日序列表的空态是**裸文本**不是 C-17（`WeeklyScreen.tsx:502`，R-16） | `WeeklyScreen.tsx:300-337,502` |
@@ -749,6 +754,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | 屏 | 路由 | 主要端点 / 数据来源 | 持久化 | 可信规则 |
 |---|---|---|---|---|
 | 复盘 | `/review` | `/api/review`、`/api/sentiment`、`/api/ladder`、`/api/control/ai/generate` | `review_draft` | 指标永远只读；AI 段独立降级 |
+| AI复盘 | `/review/ai` | S1 无端点（占位壳）；S2 按 DEC-046 接当日 AI 段落与逐段状态 | S2 定 | 段落状态与降级只信后端字段，缺失显示「—」，不补 0、不编造 |
 | 盯盘 | `/watch` | `/api/watch/snapshot` | `watch_snapshot`（TTL 300s）、`watch_settings`（DEC-037） | 过期即不渲染旧值 |
 | 盯盘·竞价与盘中 | `/intraday` | `/api/intraday`、`/api/intraday/snapshot`（回环独占） | 无（快照走 `data/intraday/`，不进分片） | 逐时点状态只信 `status.json`；文件不在就写「没有快照」，不补 0（SPEC-INTRADAY-READ） |
 | 验证 | `/validate` | `/api/validation`、`/api/control/validation/conditions`、`/api/health` | `validation_draft` / 后端缓存 | 15:00 前不可对账；部分缺失只给参考结论 |
