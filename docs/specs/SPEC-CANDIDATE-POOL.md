@@ -40,8 +40,9 @@
 |---|---|
 | 代码 / 名称 / 连板数 | 复用 `core/ladder.py` 的 `CODE_KEYS` / `NAME_KEYS` / `BOARD_KEYS` |
 | 换手率 | `turnover_rate`、`turnover`、`hb_rate`、`actual_turnover`、`换手率`、`换手` |
-| 个股净额 | `net_inflow`、`main_net_inflow`、`net_amount`、`主力净流入`、`净流入`、`净额` |
+| 个股净额 | `net_inflow`、`main_net_inflow`、`net_amount`、`main_net`、`主力净流入`、`净流入`、`净额` |
 | 题材标签 | `hot_topic`、`theme`、`topic`、`concept`、`labels`、`题材`、`概念`、`标签`、`热点` |
+| 板块名 | `name`、`stock_name`、`sec_name`、`名称`、`board_name` |
 | 板块涨幅 | `change_pct`、`pct_chg`、`pct_change`、`changePercent`、`change`、`涨跌幅`、`涨幅` |
 
 题材标签常一格写多个概念，按 `，,、;；/|` 与空白切分、去重、保持出现顺序（结果可复算）。
