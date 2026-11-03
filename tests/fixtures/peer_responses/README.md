@@ -21,10 +21,10 @@ R5 产业研究新增的四只（`sw_industry_history` / `eastmoney_finance_indi
 脱敏规则把 `meta.trace_id` 换成 `trace-fixture-1`（真实返回里没有 `source_url` /
 `note` / `fallback_from`，也没有任何 `http(s)` 值）。
 
-上一版是 2026-11-02（周一）09:36:36 盘中抓的 47 只整包，那份原文没有丢，留在
-`docs/tasks/QUOT-290/evidence/tencent_quote_batch_intraday_20261102.json`——本单原本要的就是
+上一版是 2026-11-02（周一）09:36:36 盘中抓的 47 只整包，那份原文仍在仓里可取：
+`git show bf8d0df:tests/fixtures/peer_responses/tencent_quote_batch.json`。本单原本要的就是
 盘中整包，但 11-03 的六个时点窗口都已过、按 DEC-035「只创建不补跑」不能回补，
-所以主 fixture 换成了当日可获得的最新真实整包，盘中那份额外留档。
+所以主 fixture 换成了当日可获得的最新真实整包；一个工具只留一份主样本，两份都验过形状。
 
 两版真实整包（11-02 盘中 47 行 / 11-03 收盘 124 行）逐字段比对结果：**28 个行内字段
 无改名、无层级变化、无单位变化、无缺失字段**，`quotes` 键集合完全一致。
