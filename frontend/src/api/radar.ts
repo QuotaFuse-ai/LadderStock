@@ -258,6 +258,8 @@ export interface CandidatePoolPayload {
 
 export interface PositionItem {
   code: string
+  /** 前端 v2 首页需要；QUOT-380 交付前后端不给，缺失时显示「名称未接入」 */
+  name?: string | null
   cost: number
   qty: number
   entry_date: string | null
@@ -267,6 +269,9 @@ export interface PositionItem {
   market_value: number | null
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
+  /** QUOT-380 交付前无此字段；首页保留列、值显示 `—` */
+  currency?: string | null
+  day_pnl?: number | null
 }
 
 export interface PositionHolding {
@@ -290,6 +295,8 @@ export interface PositionsPayload {
     coverage_pct: number | null
     unrealized_pnl: number | null
     unrealized_pnl_pct: number | null
+    /** QUOT-380 交付前无此字段；首页汇总行缺它时显示 `—` */
+    day_pnl?: number | null
   }
   items: PositionItem[]
   concentration: {
@@ -785,6 +792,7 @@ function parsePositionItem(value: unknown): PositionItem | null {
   const entry = text(row.entry_date)
   return {
     code,
+    name: text(row.name) || null,
     cost: numberOrNull(row.cost) ?? 0,
     qty: numberOrNull(row.qty) ?? 0,
     entry_date: entry || null,
@@ -794,6 +802,8 @@ function parsePositionItem(value: unknown): PositionItem | null {
     market_value: numberOrNull(row.market_value),
     unrealized_pnl: numberOrNull(row.unrealized_pnl),
     unrealized_pnl_pct: numberOrNull(row.unrealized_pnl_pct),
+    currency: text(row.currency) || null,
+    day_pnl: numberOrNull(row.day_pnl),
   }
 }
 
@@ -827,6 +837,7 @@ export function parsePositions(raw: unknown): PositionsPayload {
       coverage_pct: numberOrNull(valuation.coverage_pct),
       unrealized_pnl: numberOrNull(valuation.unrealized_pnl),
       unrealized_pnl_pct: numberOrNull(valuation.unrealized_pnl_pct),
+      day_pnl: numberOrNull(valuation.day_pnl),
     },
     items,
     concentration: {

@@ -1,5 +1,7 @@
 import { Search } from 'lucide-react'
 
+import { cn } from '../../lib/cn'
+
 /**
  * C-21 `HomeSearchTrigger`（规格 §4）：首页右上角看起来是输入框、行为是按钮的入口。
  *
@@ -18,9 +20,11 @@ export interface HomeSearchTriggerProps {
   /** 面板元素 id，供 `aria-controls` 关联 */
   panelId: string
   onOpen: () => void
+  /** 首页 v2 把入口移进「今天，想研究什么？」卡内，触发条改为满栏（SPEC-HOME-V2 §3.1） */
+  fullWidth?: boolean
 }
 
-export function HomeSearchTrigger({ expanded, panelId, onOpen }: HomeSearchTriggerProps) {
+export function HomeSearchTrigger({ expanded, panelId, onOpen, fullWidth = false }: HomeSearchTriggerProps) {
   return (
     <button
       type="button"
@@ -32,7 +36,10 @@ export function HomeSearchTrigger({ expanded, panelId, onOpen }: HomeSearchTrigg
       aria-haspopup="dialog"
       aria-expanded={expanded}
       aria-controls={panelId}
-      className="group relative inline-flex h-control-lg w-64 max-w-full items-center rounded border border-border-strong bg-sunken pl-7 pr-2 text-body transition-colors duration-fast ease-ldst hover:border-accent active:translate-y-px focus-visible:border-accent rail:w-44"
+      className={cn(
+        'group relative inline-flex h-control-lg items-center rounded border border-border-strong bg-sunken pl-7 pr-2 text-body transition-colors duration-fast ease-ldst hover:border-accent active:translate-y-px focus-visible:border-accent',
+        fullWidth ? 'w-full' : 'w-64 max-w-full rail:w-44',
+      )}
     >
       <span aria-hidden="true" className="pointer-events-none absolute left-2 flex text-text-muted">
         <Search className="size-3.5" aria-hidden="true" />

@@ -86,8 +86,9 @@ export interface SearchPanelProps {
 /** §7.2 第 3 条：option 的 id 必须稳定，`aria-activedescendant` 才指得准。 */
 const optionId = (panelId: string, index: number) => `${panelId}-opt-${index}`
 
-/** §8.2 空态的三条引导：与 §3.2 的四类输入映射同源，写在这里给第一次使用的人看。 */
-const GUIDE_ROWS = [
+/** §8.2 空态的三条引导：与 §3.2 的四类输入映射同源，写在这里给第一次使用的人看。
+ *  首页 v2 的「今天，想研究什么？」卡直接复用这一份（SPEC-HOME-V2 §3.1），不复制字符串。 */
+export const GUIDE_ROWS = [
   { how: '6 位代码或个股名称', to: '个股深挖（/research/:code）' },
   { how: '行业 / 题材完整名称', to: '行业详情（/industry/:name）' },
   { how: '任意关键词', to: '资讯雷达（/news?q=…）' },

@@ -1,163 +1,34 @@
 /**
  * 首页演示数据（`?demo=1` 或「设置 → 虚拟数据」开启，页头带「演示数据」徽标）。
  *
- * 首页聚合四路只读接口，**四份 payload 必须齐给**，缺一处首屏就还是半张空卡：
- * `/api/sentiment`、`/api/ladder`、`/api/watch/snapshot`、`/api/validation`。
- * 外壳逐键对齐 `web/server.py:_envelope`（`available=false` → `data_as_of=null`
- * + `source_status=partial`，不拿请求日期顶替数据时点），payload 逐键对齐
- * `core/sentiment.py:compute_sentiment`、`core/ladder.py:compute_ladder`、
- * `web/server.py:_watch_rows`、`web/server.py:_validation_conditions`。
+ * 首页 v2（SPEC-HOME-V2）聚合五路只读接口：`/api/indices`、`/api/watchlist`、
+ * `/api/positions`、`/api/watch/snapshot`、`/api/validation`。
+ * 信封外壳逐键对齐 `web/server.py:_envelope`（`available=false` → `data_as_of=null`
+ * + `source_status=partial`，不拿请求日期顶替数据时点）。
  *
- * 盯盘快照的行直接取 `watch/demo.ts` 的同一批事实，两屏讲的是同一个交易日；
- * 标的的板数与 `limitup/demo.ts` 也对得上（`002594` 3 板、`600519` 无板数 → 落 `unknown_board`）。
+ * 盯盘快照的行直接取 `watch/demo.ts` 的同一批事实；持仓取 `radar/demo.ts` 的夹具，
+ * 再补上首页需要的名称与当日盈亏。指数 / 自选的字段口径对齐 QUOT-380 的 S2 契约。
  *
  * **绝不在真实通道里回落到这份数据**：404 / 断连时页面进空态 / 离线态。
  */
 
 import type {
+  IndexQuoteItem,
+  IndicesPayload,
   LadderEnvelope,
-  LadderResult,
-  LadderStock,
-  SentimentResult,
   ValidationPayload,
   WatchSnapshotPayload,
+  WatchlistItem,
+  WatchlistPayload,
 } from '../../api'
+import type { PositionsPayload } from '../../api/radar'
 import { DEMO_FETCHED_AT, DEMO_TRADE_DATE, DEMO_WATCH_ROWS } from '../watch/demo'
+import { demoPositions } from '../radar/demo'
 
 /** 基准交易日与 `limitup/demo.ts:15-18` 同值；屏侧只要认 `home/demo` 一处即可。 */
 export { DEMO_FETCHED_AT, DEMO_TRADE_DATE }
 
 export type HomeDemoVariant = 'full' | 'partial' | 'empty'
-
-/** `core/sentiment.py:TEMPERATURE_FORMULA` 原文，指标口径要能复核。 */
-const TEMPERATURE_FORMULA =
-  '温度 = 0.45×晋级率 + 0.35×封板率 + 0.20×min(1, 最高板/6)，缺失分项按可用权重重新归一'
-
-/**
- * 2026-10-30 的连板天梯：1 板 32 / 2 板 8 / 3 板 4 / 4 板 2 / 5 板 1，合计 47 只、最高 5 板、无断层。
- * 与复盘 / 周报 / 验证屏共用同一份市场事实（QUOT-334 基线）；板数列与 `limitup/demo.ts` 同源，
- * `600519 贵州茅台` 取不到板数，落进 `unknown_board` 而不是被编成 1 板。
- */
-const LADDER_LEVELS: Array<{ boards: number; stocks: LadderStock[] }> = [
-  {
-    boards: 5,
-    stocks: [
-      { code: '002230', name: '科大讯飞', boards: 5, first_seal_time: '092500', seal_time: '092500' },
-    ],
-  },
-  {
-    boards: 4,
-    stocks: [
-      { code: '002229', name: '鸿博股份', boards: 4, first_seal_time: '093300', seal_time: '110218' },
-      { code: '603083', name: '剑桥科技', boards: 4, first_seal_time: '094800', seal_time: '141500' },
-    ],
-  },
-  {
-    boards: 3,
-    stocks: [
-      { code: '002594', name: '比亚迪', boards: 3, first_seal_time: '101205', seal_time: '143001' },
-      { code: '300308', name: '中际旭创', boards: 3, first_seal_time: '093700', seal_time: '140500' },
-      { code: '002371', name: '北方华创', boards: 3, first_seal_time: '094900', seal_time: null },
-      { code: '600837', name: '海通证券', boards: 3, first_seal_time: '100200', seal_time: '100200' },
-    ],
-  },
-  {
-    boards: 2,
-    stocks: [
-      { code: '600000', name: '浦发银行', boards: 2, first_seal_time: '093015', seal_time: '142500' },
-      { code: '000001', name: '平安银行', boards: 2, first_seal_time: '092945', seal_time: null },
-      { code: '601127', name: '赛力斯', boards: 2, first_seal_time: '133500', seal_time: '133500' },
-      { code: '600050', name: '中国联通', boards: 2, first_seal_time: '094500', seal_time: '140200' },
-      { code: '002475', name: '立讯精密', boards: 2, first_seal_time: '100100', seal_time: null },
-      { code: '002241', name: '歌尔股份', boards: 2, first_seal_time: '101500', seal_time: '144000' },
-      { code: '600031', name: '三一重工', boards: 2, first_seal_time: '102800', seal_time: '143500' },
-      { code: '601318', name: '中国平安', boards: 2, first_seal_time: '110200', seal_time: null },
-    ],
-  },
-  {
-    boards: 1,
-    stocks: [
-      { code: '300750', name: '宁德时代', boards: 1, first_seal_time: '094210', seal_time: '094210' },
-      { code: '688981', name: '中芯国际', boards: 1, first_seal_time: '130502', seal_time: '130502' },
-      { code: '002415', name: '海康威视', boards: 1, first_seal_time: '141000', seal_time: null },
-      { code: '600585', name: '海螺水泥', boards: 1, first_seal_time: '095500', seal_time: '095500' },
-      { code: '000651', name: '格力电器', boards: 1, first_seal_time: null, seal_time: null },
-      { code: '601899', name: '紫金矿业', boards: 1, first_seal_time: '144500', seal_time: '144500' },
-      { code: '000333', name: '美的集团', boards: 1, first_seal_time: '093800', seal_time: '093800' },
-      { code: '000858', name: '五粮液', boards: 1, first_seal_time: '100400', seal_time: null },
-      { code: '000568', name: '泸州老窖', boards: 1, first_seal_time: '101800', seal_time: '140800' },
-      { code: '600887', name: '伊利股份', boards: 1, first_seal_time: '094100', seal_time: '094100' },
-      { code: '600309', name: '万华化学', boards: 1, first_seal_time: '102200', seal_time: null },
-      { code: '600900', name: '长江电力', boards: 1, first_seal_time: '103500', seal_time: '103500' },
-      { code: '601088', name: '中国神华', boards: 1, first_seal_time: '104800', seal_time: '142000' },
-      { code: '601816', name: '京沪高铁', boards: 1, first_seal_time: '110100', seal_time: null },
-      { code: '600030', name: '中信证券', boards: 1, first_seal_time: '111500', seal_time: '141000' },
-      { code: '601688', name: '华泰证券', boards: 1, first_seal_time: '130100', seal_time: null },
-      { code: '600438', name: '通威股份', boards: 1, first_seal_time: '131500', seal_time: '143200' },
-      { code: '300274', name: '阳光电源', boards: 1, first_seal_time: '132800', seal_time: null },
-      { code: '300014', name: '亿纬锂能', boards: 1, first_seal_time: '134200', seal_time: '144200' },
-      { code: '002466', name: '天齐锂业', boards: 1, first_seal_time: '135500', seal_time: null },
-      { code: '600111', name: '北方稀土', boards: 1, first_seal_time: '140800', seal_time: '140800' },
-      { code: '600150', name: '中国船舶', boards: 1, first_seal_time: '142100', seal_time: null },
-      { code: '600760', name: '中航沈飞', boards: 1, first_seal_time: '143400', seal_time: '143400' },
-      { code: '600276', name: '恒瑞医药', boards: 1, first_seal_time: '090500', seal_time: '090500' },
-      { code: '603259', name: '药明康德', boards: 1, first_seal_time: '091800', seal_time: null },
-      { code: '601888', name: '中国中免', boards: 1, first_seal_time: '093200', seal_time: '093200' },
-      { code: '600104', name: '上汽集团', boards: 1, first_seal_time: '094600', seal_time: null },
-      { code: '601633', name: '长城汽车', boards: 1, first_seal_time: '100000', seal_time: '142800' },
-      { code: '000338', name: '潍柴动力', boards: 1, first_seal_time: '101300', seal_time: null },
-      { code: '601668', name: '中国建筑', boards: 1, first_seal_time: '102600', seal_time: '143800' },
-      { code: '600028', name: '中国石化', boards: 1, first_seal_time: '103900', seal_time: null },
-      { code: '601857', name: '中国石油', boards: 1, first_seal_time: '105200', seal_time: '144600' },
-    ],
-  },
-]
-
-const LADDER_COUNT = LADDER_LEVELS.reduce((total, level) => total + level.stocks.length, 0)
-
-/** 涨停池原始记录数：47 只能解析板数 + 1 条取不到板数（`600519`）→ `unknown_board`。 */
-const LIMIT_POOL_RECORDS = LADDER_COUNT + 1
-
-/**
- * 情绪指标与复盘 / 周报 / 验证屏同一份市场事实：温度 68、涨停 47 家、炸板 8 家、
- * 昨日涨停 46 家今日晋级 15 家（32.6%）、封板率 85.5%、最高 5 板且梯队无断层。
- */
-const SENTIMENT_BASE: SentimentResult = {
-  date: DEMO_TRADE_DATE,
-  available: true,
-  reason: null,
-  temperature: 68,
-  promotion_rate: 32.6,
-  seal_rate: 85.5,
-  limit_up_count: LADDER_COUNT,
-  broken_count: 8,
-  yesterday_limit_up_count: 46,
-  promoted_count: 15,
-  max_board: 5,
-  gap: false,
-  gap_levels: [],
-  missing: [],
-  formula: TEMPERATURE_FORMULA,
-  source_detail: 'limit_pool: duckdb; broken_board: duckdb; yesterday_limit_up: duckdb',
-}
-
-const LADDER_BASE: LadderResult = {
-  date: DEMO_TRADE_DATE,
-  available: true,
-  reason: null,
-  source_detail: `limit_pool: duckdb（${LIMIT_POOL_RECORDS} 条）`,
-  height: 5,
-  count: LADDER_COUNT,
-  ladder: LADDER_LEVELS.map((level) => ({
-    boards: level.boards,
-    count: level.stocks.length,
-    stocks: level.stocks,
-  })),
-  gap: false,
-  gap_levels: [],
-  leader_candidates: LADDER_LEVELS[0].stocks.map((stock) => ({ ...stock })),
-  unknown_board: 1,
-}
 
 /**
  * 条件列表按 `_validation_conditions` 的缺值口径给：源文件没有标的代码的行 →
@@ -192,102 +63,119 @@ function envelopeOf<T>(
   }
 }
 
-type SentimentBody = { sentiment: SentimentResult }
-type LadderBody = { ladder: LadderResult }
+// ---------------------------------------------------------------- 首页 v2：指数 / 自选 / 持仓
 
-function sentimentPayload(variant: HomeDemoVariant): LadderEnvelope<SentimentBody> {
+/**
+ * 参考页的 8 格顺序：A 股四指数 → 美股 → 港股。
+ * 真实后端（QUOT-380）先只交付 A 股四只；演示源给满 8 格是为了让版式在 1440 / 1280
+ * 两档都被真正验证过（前端对 `items[]` 只做「给几格渲染几格」）。
+ */
+const INDEX_ITEMS: IndexQuoteItem[] = [
+  { code: 'sh000001', name: '上证指数', market: 'cn', value: 3813.79, change_pct: 0.05 },
+  { code: 'sh000300', name: '沪深300', market: 'cn', value: 4317.25, change_pct: 0.16 },
+  { code: 'sz399001', name: '深证成指', market: 'cn', value: 12641.86, change_pct: -0.42 },
+  { code: 'sz399006', name: '创业板指', market: 'cn', value: 2856.31, change_pct: 0.73 },
+  { code: 'us.DJI', name: '道琼斯', market: 'us', value: 41113.97, change_pct: -0.21 },
+  { code: 'us.IXIC', name: '纳斯达克综合', market: 'us', value: 17856.42, change_pct: 0.63 },
+  { code: 'hk.HSI', name: '恒生指数', market: 'hk', value: 20198.52, change_pct: 1.12 },
+  { code: 'hk.HSTECH', name: '恒生科技', market: 'hk', value: 4420.18, change_pct: 0.86 },
+]
+
+const WATCHLIST_ITEMS: WatchlistItem[] = [
+  { code: '600519', name: '贵州茅台', latest_price: 1263.0, change_pct: 0.57 },
+  { code: '300308', name: '中际旭创', latest_price: 188.42, change_pct: -1.26 },
+  { code: '002594', name: '比亚迪', latest_price: 312.55, change_pct: 2.04 },
+  { code: '600837', name: '海通证券', latest_price: 11.86, change_pct: 0.34 },
+  { code: '300750', name: '宁德时代', latest_price: 252.1, change_pct: -0.68 },
+]
+
+const POSITION_NAMES: Record<string, string> = {
+  '600000': '浦发银行',
+  '600519': '贵州茅台',
+  '300750': '宁德时代',
+}
+
+/** 演示夹具的当日盈亏；真实通道要等 QUOT-380 从 `daily_k` 昨收价算，缺失时整列 `—`。 */
+const POSITION_DAY_PNL: Record<string, number> = {
+  '600000': 120,
+  '600519': -220,
+  '300750': 355,
+}
+
+function indicesPayload(variant: HomeDemoVariant): LadderEnvelope<IndicesPayload> {
   if (variant === 'empty') {
-    return envelopeOf<SentimentBody>('sentiment', 'shortline_sentiment',
-      {
-        sentiment: {
-          ...SENTIMENT_BASE,
-          available: false,
-          reason: '涨停池为空，无法计算情绪指标（先运行 ldst sync）',
-          temperature: null,
-          promotion_rate: null,
-          seal_rate: null,
-          limit_up_count: 0,
-          broken_count: 0,
-          yesterday_limit_up_count: 0,
-          promoted_count: 0,
-          max_board: null,
-          gap: false,
-          gap_levels: [],
-          missing: ['limit_pool', 'yesterday_limit_up', 'broken_board'],
-          data_source_status: 'missing',
-        } as SentimentBody['sentiment'],
-      },
-      {
-        available: false,
-        sourceDetail: 'limit_pool: missing; broken_board: missing; yesterday_limit_up: missing',
-      },
+    return envelopeOf<IndicesPayload>('market', 'indices',
+      { items: [], data_source_status: 'missing' },
+      { available: false, sourceDetail: 'index_quote: missing（未接入指数行情数据集）' },
     )
   }
-  if (variant === 'partial') {
-    // 缺 `broken_board` 一个数据集：炸板数取不到就是取不到，不补 0 参与算式
-    return envelopeOf<SentimentBody>('sentiment', 'shortline_sentiment',
-      {
-        sentiment: {
-          ...SENTIMENT_BASE,
-          reason: null,
-          seal_rate: null,
-          broken_count: 0,
-          missing: ['broken_board'],
-          source_detail: 'limit_pool: duckdb; broken_board: missing; yesterday_limit_up: duckdb',
-          data_source_status: 'ok',
-        } as SentimentBody['sentiment'],
-      },
-      {
-        available: true,
-        degraded: true,
-        sourceDetail: 'limit_pool: duckdb; broken_board: missing（炸板池未同步，封板率不参与算式）',
-      },
-    )
-  }
-  return envelopeOf<SentimentBody>('sentiment', 'shortline_sentiment',
-    { sentiment: { ...SENTIMENT_BASE, data_source_status: 'ok' } as SentimentBody['sentiment'] },
-    { available: true, sourceDetail: SENTIMENT_BASE.source_detail ?? '' },
+  const items =
+    variant === 'partial'
+      ? INDEX_ITEMS.map((item) =>
+          item.market === 'hk' ? { ...item, value: null, change_pct: null, reason: '源未接入' } : item,
+        )
+      : INDEX_ITEMS
+  return envelopeOf<IndicesPayload>('market', 'indices',
+    { items, data_source_status: 'ok' },
+    {
+      available: true,
+      degraded: variant === 'partial',
+      sourceDetail: variant === 'partial' ? 'index_quote: 港股未接入，A 股与美股可用' : 'index_quote: 行情快照',
+    },
   )
 }
 
-function ladderPayload(variant: HomeDemoVariant): LadderEnvelope<LadderBody> {
-  if (variant !== 'full') {
-    const degraded = variant === 'partial'
-    return envelopeOf<LadderBody>('sentiment', 'limit_ladder',
-      {
-        ladder: {
-          ...LADDER_BASE,
-          available: degraded,
-          reason: degraded
-            ? '部分层级缺少封板时间，梯队高度按可解析记录给出'
-            : '涨停池没有可解析的连板数据（可能尚未同步）',
-          height: degraded ? 5 : null,
-          count: degraded ? LADDER_COUNT : 0,
-          ladder: degraded
-            ? LADDER_BASE.ladder.map((level) => ({
-                ...level,
-                stocks: level.stocks.map((stock) => ({ ...stock, first_seal_time: null })),
-              }))
-            : [],
-          gap_levels: [],
-          leader_candidates: degraded ? LADDER_BASE.leader_candidates : [],
-          unknown_board: degraded ? 1 : 0,
-          data_source_status: degraded ? 'ok' : 'missing',
-        } as LadderBody['ladder'],
-      },
-      {
-        available: degraded,
-        degraded,
-        sourceDetail: degraded
-          ? 'limit_pool: duckdb（48 条，5 条缺少封板时间）'
-          : 'limit_pool: missing（0 条）',
-      },
-    )
+function watchlistPayload(variant: HomeDemoVariant): WatchlistPayload {
+  if (variant === 'empty') {
+    return {
+      local_only: true,
+      watch_count: 0,
+      items: [],
+      as_of: null,
+      price_source: null,
+      data_source_status: 'missing',
+    }
   }
-  return envelopeOf<LadderBody>('sentiment', 'limit_ladder',
-    { ladder: { ...LADDER_BASE, data_source_status: 'ok' } as LadderBody['ladder'] },
-    { available: true, sourceDetail: LADDER_BASE.source_detail },
-  )
+  if (variant === 'partial') {
+    return {
+      local_only: true,
+      watch_count: 3,
+      items: [
+        WATCHLIST_ITEMS[0],
+        WATCHLIST_ITEMS[1],
+        { ...WATCHLIST_ITEMS[2], latest_price: null, change_pct: null, reason: '现价未取到' },
+      ],
+      as_of: DEMO_TRADE_DATE,
+      price_source: 'spot_quote: 部分代码未命中',
+      data_source_status: 'ok',
+    }
+  }
+  return {
+    local_only: true,
+    watch_count: WATCHLIST_ITEMS.length,
+    items: WATCHLIST_ITEMS,
+    as_of: DEMO_TRADE_DATE,
+    price_source: 'spot_quote: 行情快照',
+    data_source_status: 'ok',
+  }
+}
+
+function positionsPayload(variant: HomeDemoVariant): PositionsPayload {
+  const base = demoPositions(variant)
+  const items = base.items.map((item) => ({
+    ...item,
+    name: POSITION_NAMES[item.code] ?? null,
+    currency: null,
+    day_pnl: item.latest_price === null ? null : POSITION_DAY_PNL[item.code] ?? null,
+  }))
+  const dayPnl = items.every((item) => item.day_pnl === null)
+    ? null
+    : items.reduce((total, item) => total + (item.day_pnl ?? 0), 0)
+  return {
+    ...base,
+    items,
+    valuation: { ...base.valuation, day_pnl: dayPnl },
+  }
 }
 
 function watchPayload(variant: HomeDemoVariant): LadderEnvelope<WatchSnapshotPayload> {
@@ -344,19 +232,21 @@ function validationPayload(date: string, variant: HomeDemoVariant): LadderEnvelo
   )
 }
 
-/** 屏侧取数口：四条与 `api.sentiment` / `api.ladder` / `api.watchSnapshot` / `api.validation` 同签名。 */
+/** 屏侧取数口：与 http 源同签名（QUOT-381 首页 v2 起含指数 / 自选 / 持仓五路）。 */
 export interface HomeSource {
-  sentiment(date: string, signal?: AbortSignal): Promise<LadderEnvelope<SentimentBody>>
-  ladder(date: string, signal?: AbortSignal): Promise<LadderEnvelope<LadderBody>>
   watchSnapshot(signal?: AbortSignal): Promise<LadderEnvelope<WatchSnapshotPayload>>
   validation(date: string, signal?: AbortSignal): Promise<LadderEnvelope<ValidationPayload>>
+  indices(signal?: AbortSignal): Promise<LadderEnvelope<IndicesPayload>>
+  watchlist(signal?: AbortSignal): Promise<WatchlistPayload>
+  positions(date: string, signal?: AbortSignal): Promise<PositionsPayload>
 }
 
 export function demoHomeSource(variant: HomeDemoVariant, date: string): HomeSource {
   return {
-    sentiment: async () => sentimentPayload(variant),
-    ladder: async () => ladderPayload(variant),
     watchSnapshot: async () => watchPayload(variant),
     validation: async () => validationPayload(date, variant),
+    indices: async () => indicesPayload(variant),
+    watchlist: async () => watchlistPayload(variant),
+    positions: async () => positionsPayload(variant),
   }
 }

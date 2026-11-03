@@ -72,8 +72,18 @@ function fieldOf(label: string): string {
   return dd?.textContent ?? ''
 }
 
-function metricCards(): NodeListOf<HTMLElement> {
-  return document.querySelectorAll('[class~="min-h-metric"]')
+/** 按表头 caption 定位一张表的数据行数（空态 / 错误态是跨列提示行，不算）。 */
+function rowsInTable(captionText: string): number {
+  const table = Array.from(document.querySelectorAll('table')).find((item) =>
+    item.querySelector('caption')?.textContent?.includes(captionText),
+  )
+  if (!table) return 0
+  return Array.from(table.querySelectorAll('tbody tr')).filter((row) => row.querySelectorAll('td').length > 1).length
+}
+
+/** 首页 v2 的指数格是 `<article>`，一格一只指数。 */
+function indexCells(): NodeListOf<HTMLElement> {
+  return document.querySelectorAll('article')
 }
 
 beforeEach(async () => {
@@ -99,14 +109,15 @@ describe('首页演示源', () => {
     renderAt('/?demo=1')
 
     expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
-    // 先等四路取数落定（骨架里没有表格），再断言读数
-    await waitFor(() => expect(dataRowCount()).toBe(10))
-    expect(screen.getByText('68')).toBeTruthy()
-    expect(screen.getAllByText('2026-10-30').length).toBeGreaterThan(0)
-    // 梯队表填满：§3.5 首页表容量是 Top 10，演示源给 47 只保证填满
-    expect(screen.getAllByText('比亚迪').length).toBeGreaterThan(0)
-    // 演示态根本不碰网络：fetch 全程是断连桩，首屏照样有内容
-    expect(fetch).not.toHaveBeenCalled()
+    // 五路取数落定后指数格才从骨架换成读数
+    expect(await screen.findByText('上证指数')).toBeTruthy()
+    await waitFor(() => expect(indexCells().length).toBe(8))
+    expect(screen.getByText('我的自选 · (5)')).toBeTruthy()
+    expect(screen.getByText('我的持仓 · (3)')).toBeTruthy()
+    expect(document.body.textContent).toContain('2026-10-30')
+    // 演示态不取任何行情：本机状态落库的 `/__state/index` 不算，只锁 `/api/` 一路
+    const apiCalls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/api/'))
+    expect(apiCalls).toHaveLength(0)
   })
 
   it('「设置 → 虚拟数据」开关（不写 URL）同样出内容', async () => {
@@ -114,28 +125,33 @@ describe('首页演示源', () => {
     renderAt('/')
 
     expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
-    await waitFor(() => expect(dataRowCount()).toBe(10))
-    expect(screen.getByText('68')).toBeTruthy()
+    await waitFor(() => expect(indexCells().length).toBe(8))
+    expect(screen.getByText('我的自选 · (5)')).toBeTruthy()
   })
 
-  it('五张指标卡都带溯源徽标（含「主线题材」，§11.5）', async () => {
+  it('结构口径：指数 8 格 / 自选 5 行 / 持仓汇总 1 行 + 明细 3 行', async () => {
     renderAt('/?demo=1')
-    await waitFor(() => expect(metricCards().length).toBe(5))
+    await waitFor(() => expect(indexCells().length).toBe(8))
 
-    metricCards().forEach((card) => {
-      expect(card.querySelectorAll('span[title]').length).toBeGreaterThanOrEqual(2)
-    })
-    expect(screen.getByText('未取到')).toBeTruthy()
+    expect(rowsInTable('我的自选')).toBe(5)
+    expect(rowsInTable('币种汇总')).toBe(1)
+    expect(rowsInTable('逐条持仓')).toBe(3)
+    // 首页 v2 不再有情绪温度条与五张指标卡
+    expect(screen.queryByText('今日连板梯队 Top 10')).toBeNull()
+    expect(screen.queryByText('情绪温度')).toBeNull()
   })
 
-  it('真实 404：进错误态，绝不回落演示数据', async () => {
+  it('真实 404：各块说「接口未接入」，整屏不判失败、绝不回落演示数据', async () => {
     stub404()
     renderAt('/')
 
-    expect(await screen.findAllByText('取数失败')).toBeTruthy()
-    expect(document.body.textContent).not.toContain('比亚迪')
-    expect(document.body.textContent).not.toContain('58')
-    expect(dataRowCount()).toBe(0)
+    expect(await screen.findByText('指数数据源未接入')).toBeTruthy()
+    expect(screen.getByText('自选接口未接入')).toBeTruthy()
+    expect(screen.getByText('持仓接口未接入')).toBeTruthy()
+    expect(screen.queryByText('取数失败')).toBeNull()
+    expect(document.body.textContent).not.toContain('贵州茅台')
+    expect(document.body.textContent).not.toContain('演示数据')
+    expect(indexCells().length).toBe(0)
   })
 
   it('断连：进离线态，绝不出现演示行', async () => {
@@ -143,10 +159,11 @@ describe('首页演示源', () => {
     renderAt('/')
 
     expect(await screen.findByText('本机服务未连接')).toBeTruthy()
-    expect(document.body.textContent).not.toContain('宁德时代')
+    expect(document.body.textContent).not.toContain('贵州茅台')
     expect(document.body.textContent).not.toContain('演示数据')
-    expect(metricCards().length).toBe(5)
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+    expect(indexCells().length).toBe(0)
+    // 各块给出离线说明，而不是一屏「—」
+    expect(screen.getAllByText(/本地服务未连接/).length).toBeGreaterThan(1)
   })
 
   it('演示源 empty 变体：明确空态 + 引导，而不是整屏「—」', async () => {
@@ -154,7 +171,7 @@ describe('首页演示源', () => {
 
     expect(await screen.findByText(/没有可用数据/)).toBeTruthy()
     expect(screen.getByText('ldst sync --date 2026-10-30')).toBeTruthy()
-    expect(metricCards().length).toBe(0)
+    expect(indexCells().length).toBe(0)
   })
 })
 

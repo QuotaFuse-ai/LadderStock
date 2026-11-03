@@ -508,6 +508,47 @@ export interface ValidationPayload {
   data_source_status?: 'ok' | 'missing'
 }
 
+// ---------------------------------------------------------------- 首页 v2 契约（QUOT-380 / SPEC-HOME-V2）
+//
+// `/api/indices` 与 `/api/watchlist` 由 QUOT-380（S2）交付；接口未上线时返回 404，
+// 首页把 404 当作「该块源未接入」的空态，不当作整屏故障，也不回落演示数据。
+
+/** 指数格：顺序由后端 `items[]` 给出，前端不排序（SPEC-HOME-V2 §1.1）。 */
+export interface IndexQuoteItem {
+  code: string
+  /** 名称由后端给；缺失时不拿代码顶替 */
+  name: string | null
+  market: 'cn' | 'hk' | 'us' | null
+  value: number | null
+  change_pct: number | null
+  /** 该格降级原因（例如「源未接入」），只在 `value === null` 时有意义 */
+  reason?: string | null
+}
+
+export interface IndicesPayload {
+  items: IndexQuoteItem[]
+  data_source_status?: 'ok' | 'partial' | 'missing'
+}
+
+/** 自选行（DEC-049：平面 JSON，不进信封，`note` 不外露）。 */
+export interface WatchlistItem {
+  code: string
+  name: string | null
+  latest_price: number | null
+  change_pct: number | null
+  reason?: string | null
+}
+
+export interface WatchlistPayload {
+  local_only?: true
+  /** 自选只数；缺失时按第 4 节口径显示 `—`，不补 0 */
+  watch_count: number | null
+  items: WatchlistItem[]
+  as_of?: string | null
+  price_source?: string | null
+  data_source_status?: 'ok' | 'partial' | 'missing' | null
+}
+
 export interface StateConfigPayload {
   ok: boolean
   read_only: boolean
@@ -810,6 +851,11 @@ export const api = {
     }),
   watchSnapshot: (signal?: AbortSignal) =>
     request<LadderEnvelope<WatchSnapshotPayload>>('/watch/snapshot', { signal }),
+  /** 首页指数条（QUOT-380）；未上线时 404 → 块级「源未接入」，不是整屏错误 */
+  indices: (signal?: AbortSignal) =>
+    request<LadderEnvelope<IndicesPayload>>('/indices', { signal }),
+  /** 首页自选（QUOT-380 / DEC-049）：回环独占的平面 JSON，不进信封 */
+  watchlist: (signal?: AbortSignal) => request<WatchlistPayload>('/watchlist', { signal }),
   /**
    * 近 N 日情绪温度序列（Q172-8 缺口）。后端未上线时抛 `http` 404，
    * 调用方用 `isEndpointMissing` 判成「未接入」，不当作页面错误。

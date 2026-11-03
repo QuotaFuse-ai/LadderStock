@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { api } from '../../api'
+import { httpRadarSource } from '../../api/radar'
 import { useDemoEnabled, useForcedState } from '../../lib/pageState'
 import { demoHomeSource, type HomeDemoVariant, type HomeSource } from './demo'
 
@@ -34,10 +35,11 @@ function useHomeDemoVariant(): HomeDemoVariant {
 }
 
 export const httpHomeSource: HomeSource = {
-  sentiment: (date, signal) => api.sentiment(date, signal),
-  ladder: (date, signal) => api.ladder(date, signal),
   watchSnapshot: (signal) => api.watchSnapshot(signal),
   validation: (date, signal) => api.validation(date, signal),
+  indices: (signal) => api.indices(signal),
+  watchlist: (signal) => api.watchlist(signal),
+  positions: (date, signal) => httpRadarSource.positions({ date }, signal),
 }
 
 export function useHomeSource(date: string): {
