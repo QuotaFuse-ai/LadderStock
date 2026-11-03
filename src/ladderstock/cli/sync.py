@@ -53,7 +53,7 @@ import typer
 from ladderstock.cli.output import OutputOption, emit, error
 from ladderstock.core.boundary import BoundaryViolation, owner_of
 from ladderstock.core.models import LadderEnvelope
-from ladderstock.data import duckdb_store, sqlite_store, watermark
+from ladderstock.data import archive, duckdb_store, sqlite_store, watermark
 from ladderstock.data.adapters.tickhub import needs_code, tool_params
 from ladderstock.data.adapters.wire import needs_topic
 from ladderstock.data.adapters.wire import tool_params as wire_tool_params
@@ -81,6 +81,8 @@ MAX_POOL_CODES = 100
 #: 池子来源（写进 detail，便于复盘时知道这次是谁提供的代码）
 POOL_CLI = "命令行 --codes"
 POOL_CONFIG = "config/sync.yaml"
+#: `codes_from`：代码池直接取自另一个数据集的**当日归档**（见 `pool_codes_from_archive`）
+POOL_ARCHIVE = "当日归档"
 
 #: 扇出内的连续失败止损上限（QUOT-328）。扇出不吃 source 冷却——一次失败常常只是
 #: 「这个入参上游不认识」，按冷却判下去就是 1 个坏元素废掉整池。代价是 peer 真下线时
@@ -199,15 +201,47 @@ def watchlist_codes(root: Path | None = None) -> list[str]:
     return clean_codes([row["code"] for row in rows])
 
 
+def pool_codes_from_archive(source: str, root: Path | None) -> tuple[list[str], str]:
+    """代码池 = `source` 数据集**当日归档**里的代码（QUOT-362 逐只归属）。
+
+    读本机缓存、不扩全市场：`concept_membership` 是「当日候选池那批代码各取一次」的
+    TTL 快照，取全市场就是把 100 只的窗口撑成几千次调用。池子来自归档而不是入参，
+    所以同步顺序很重要——排在 `limit_pool` 之后，同一轮里读到的就是今天刚落的池子。
+
+    超过 `MAX_POOL_CODES` 时按池子顺序截断并**在来源里写明**（静默丢尾部才是问题）：
+    少几只票只影响那几只的 `theme` 分项走关键词降级，不会让整轮同步挂掉。
+    """
+    if not source:
+        raise LadderStockError(f"{POOL_CONFIG} 的 codes_from 是空字符串，要写数据集名", EXIT_CONFIG)
+    owner_of(source)  # 未登记的数据集没有「归档」这回事（DEC-006 闸门）
+    snapshot = archive.snapshot(source, date.today(), root=root)
+    codes = clean_codes([duckdb_store.record_code(row) for row in snapshot.records])
+    if not codes:
+        return [], f"{POOL_ARCHIVE} {source}（backend={snapshot.backend}，0 只）"
+    if len(codes) > MAX_POOL_CODES:
+        return (
+            codes[:MAX_POOL_CODES],
+            f"{POOL_ARCHIVE} {source}（截断至 {MAX_POOL_CODES} 只，原 {len(codes)} 只）",
+        )
+    return codes, f"{POOL_ARCHIVE} {source}（{len(codes)} 只）"
+
+
 def resolve_code_pool(
     dataset: str, *, declared: dict[str, Any], cli_codes: list[str], root: Path | None
 ) -> tuple[list[str], str]:
-    """按 `--codes` → `sync.yaml` 的 `codes` → 本机自选 取代码池，返回 (池子, 来源)。"""
+    """按 `--codes` → `sync.yaml` 的 `codes` → 当日归档 `codes_from` → 本机自选 取代码池。
+
+    `codes` 排在 `codes_from` 前面：手写的池子是明确意图（回补某几只），归档池子是
+    「跟着当天的候选池走」，显式覆盖隐式。`--codes` 同样覆盖两者。
+    """
     if cli_codes:
         return cli_codes, POOL_CLI
     configured = clean_codes(declared.get("codes") or [])
     if configured:
         return configured, POOL_CONFIG
+    source = str(declared.get("codes_from") or "").strip()
+    if source:
+        return pool_codes_from_archive(source, root)
     watched = watchlist_codes(root)
     if watched:
         return watched, POOL_WATCHLIST
@@ -296,9 +330,9 @@ def sync_code_pool(
             dataset, code=code, since=None if full else before
         ),
         empty_detail=(
-            f"代码池为空：`--codes` / config/sync.yaml 的 sync.datasets.{dataset}.codes / "
-            f"本机自选均为空，未发起调用（{binding.tool} 的 code 必填，"
-            "空参实测回 QFSD-9001）"
+            f"代码池为空（本次来源：{pool_source}）：`--codes` / config/sync.yaml 的 "
+            f"sync.datasets.{dataset}.codes / codes_from / 本机自选均为空，未发起调用"
+            f"（{binding.tool} 的 code 必填，空参实测回 QFSD-9001）"
         ),
     )
 

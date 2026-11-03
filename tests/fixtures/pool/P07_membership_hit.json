@@ -1,0 +1,107 @@
+{
+  "name": "P07 归属命中：题材只认逐只 concept_membership，不认关键词",
+  "description": "两只候选都有当日归属（concept_membership，`board_name` 与真实上游同键）。600010 涨停池里没有任何题材字段，靠归属拿到「固态电池」（当日 +4.0%，对 5% 基准 = 80.0），它同时挂在「农林牧渔」上——那是行业归属，不在当日概念榜里，按名 join 直接被过滤掉。600011 的关键词「妖股」当日 +5.0%（走关键词会得 100），但归属只给了「光模块」+1.0% = 20.0：主口径命中时降级口径不参与，题材分取 20.0。总分：600010 = 0.30×66.7 + 0.10×50.0 + 0.25×100.0 + 0.20×100.0 + 0.15×80.0 = 82.01 → 82.0；600011 = 0.30×33.3 + 0.10×20.0 + 0.25×50.0 + 0.20×0.0 + 0.15×20.0 = 27.49 → 27.5。手算对照见 SPEC-CANDIDATE-POOL.md §5。",
+  "datasets": {
+    "limit_pool": [
+      {
+        "code": "600010",
+        "name": "丁",
+        "boards": 4,
+        "turnover_rate": 10.0
+      },
+      {
+        "code": "600011",
+        "name": "戊",
+        "boards": 2,
+        "turnover_rate": 4.0,
+        "hot_topic": "光模块、妖股"
+      }
+    ],
+    "concept_board": [
+      {
+        "board_name": "固态电池",
+        "change_pct": 4.0
+      },
+      {
+        "board_name": "光模块",
+        "change_pct": 1.0
+      },
+      {
+        "board_name": "妖股",
+        "change_pct": 5.0
+      }
+    ],
+    "concept_membership": [
+      {
+        "code": "600010",
+        "board_name": "固态电池",
+        "board_code": "BK1509",
+        "change_pct": 4.0
+      },
+      {
+        "code": "600010",
+        "board_name": "农林牧渔",
+        "board_code": "BK0433",
+        "change_pct": 1.2
+      },
+      {
+        "code": "600011",
+        "board_name": "光模块",
+        "board_code": "BK1258",
+        "change_pct": 1.0
+      }
+    ],
+    "fund_flow": [
+      {
+        "code": "600010",
+        "net_inflow": 20000000
+      },
+      {
+        "code": "600011",
+        "net_inflow": -1000000
+      }
+    ]
+  },
+  "expected": {
+    "pool": {
+      "available": true,
+      "reason": null,
+      "height": 4,
+      "candidate_count": 2,
+      "candidates": [
+        {
+          "code": "600010",
+          "score": 82.0,
+          "parts": {
+            "strength": 66.7,
+            "turnover": 50.0,
+            "standing": 100.0,
+            "capital": 100.0,
+            "theme": 80.0
+          },
+          "absent_parts": []
+        },
+        {
+          "code": "600011",
+          "score": 27.5,
+          "parts": {
+            "strength": 33.3,
+            "turnover": 20.0,
+            "standing": 50.0,
+            "capital": 0.0,
+            "theme": 20.0
+          },
+          "absent_parts": []
+        }
+      ],
+      "counts": {
+        "limit_pool_rows": 2,
+        "dropped_duplicates": 0,
+        "unknown_code": 0,
+        "theme_boards": 3,
+        "fund_flow_rows": 2
+      },
+      "missing_datasets": []
+    }
+  }
+}

@@ -47,6 +47,8 @@ def test_compute_pool_fills_capital_and_theme(monkeypatch) -> None:
     snapshots: dict[str, tuple[list[dict[str, Any]], str]] = {
         "concept_board": ([{"board_name": "白酒概念", "change_pct": 3.0}], "parquet"),
         "fund_flow": ([{"code": "600001", "main_net": 506847989.25}], "parquet"),
+        # 归属表缺失时走「标签直连」路径，本用例只锁 capital/theme 的字段映射
+        "concept_membership": ([], "missing"),
     }
 
     def fake_snapshot(dataset: str, day: Any, root: Any = None):

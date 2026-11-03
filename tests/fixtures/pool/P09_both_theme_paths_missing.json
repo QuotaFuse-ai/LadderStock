@@ -1,0 +1,76 @@
+{
+  "name": "P09 两条路都没有：theme = null，权重从分母剔除，不补 0",
+  "description": "归属表当日取到了行，但那只股票挂的「农林牧渔」是行业归属、不在当日概念榜里 → 过滤后 `members` 为空；候选 600030 的涨停池行里既没有题材标签也没有 `reason` → 关键词路径也切不出词。题材分项是 `null`（不是 0），0.15 的权重从分母里剔除（分母 0.85），总分 = (0.30×33.3 + 0.10×30.0 + 0.25×100.0 + 0.20×50.0) / 0.85 = 47.99/0.85 = 56.5。板块索引本身建起来了（theme_boards=2），缺的是「这只股票挂哪」，两件事分开。",
+  "datasets": {
+    "limit_pool": [
+      {
+        "code": "600030",
+        "name": "庚",
+        "boards": 2,
+        "turnover_rate": 6.0
+      }
+    ],
+    "concept_board": [
+      {
+        "board_name": "港口",
+        "change_pct": 2.0
+      },
+      {
+        "board_name": "跨境电商",
+        "change_pct": 3.5
+      }
+    ],
+    "concept_membership": [
+      {
+        "code": "600099",
+        "board_name": "农林牧渔",
+        "board_code": "BK0433",
+        "change_pct": 1.2
+      },
+      {
+        "code": "600098",
+        "board_name": "地域板块",
+        "board_code": "BK0100",
+        "change_pct": 0.4
+      }
+    ],
+    "fund_flow": [
+      {
+        "code": "600030",
+        "net_inflow": 1200000
+      }
+    ]
+  },
+  "expected": {
+    "pool": {
+      "available": true,
+      "reason": null,
+      "height": 2,
+      "candidate_count": 1,
+      "candidates": [
+        {
+          "code": "600030",
+          "score": 56.5,
+          "parts": {
+            "strength": 33.3,
+            "turnover": 30.0,
+            "standing": 100.0,
+            "capital": 50.0,
+            "theme": null
+          },
+          "absent_parts": [
+            "theme"
+          ]
+        }
+      ],
+      "counts": {
+        "limit_pool_rows": 1,
+        "dropped_duplicates": 0,
+        "unknown_code": 0,
+        "theme_boards": 2,
+        "fund_flow_rows": 1
+      },
+      "missing_datasets": []
+    }
+  }
+}

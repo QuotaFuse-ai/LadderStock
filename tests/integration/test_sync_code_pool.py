@@ -2,8 +2,8 @@
 
 真实 `tencent_kline` 空参会被 peer 拒回 `QFSD-9001`，所以这三个数据集
 （`daily_k` / `fund_flow` / `dragon_tiger_seats`）必须带代码池，池子来源只有
-`--codes` > `config/sync.yaml` 的 `codes` > 本机自选 `watchlist`，
-**三处都为空时一次调用都不发**。
+`--codes` > `config/sync.yaml` 的 `codes` > `codes_from` 的当日归档 > 本机自选 `watchlist`，
+**全部为空时一次调用都不发**。
 
 peer 全部由 `tests/fixtures/fake_peers.py` 的离线桩扮演，不发任何网络请求；
 桩返回用真实形状 `kline_tool_payload`（`data` 是对象、K 线在 `klines` 里）。
@@ -12,11 +12,13 @@ peer 全部由 `tests/fixtures/fake_peers.py` 的离线桩扮演，不发任何�
 from __future__ import annotations
 
 import copy
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fixtures.fake_peers import (
+    SOURCES_DOC,
     SYNC_DOC,
     FakeTransport,
     kline_tool_payload,
@@ -28,7 +30,7 @@ from typer.testing import CliRunner
 
 from ladderstock.cli.main import app
 from ladderstock.cli.sync import MAX_POOL_CODES, run_sync, watchlist_codes
-from ladderstock.data import duckdb_store, sqlite_store, watermark
+from ladderstock.data import archive, duckdb_store, sqlite_store, watermark
 from ladderstock.data.provider_registry import SourceUnavailable
 from ladderstock.errors import EXIT_USAGE, LadderStockError
 
@@ -302,3 +304,156 @@ def test_cli_accepts_comma_separated_codes(repo, data_home, monkeypatch) -> None
 
     assert result.exit_code == 0, result.stderr
     assert [call.params["code"] for call in transport.calls] == ["600000", "000001"]
+
+
+# --------------------------------------------------------------------------- #
+# codes_from：代码池取自当日归档（QUOT-362 逐只归属）
+# --------------------------------------------------------------------------- #
+
+TODAY = date.today().isoformat()
+
+
+def _membership_docs() -> tuple[dict[str, Any], dict[str, Any]]:
+    """`sources.yaml` / `sync.yaml` 里 QUOT-362 那两条的最小题面。
+
+    `cooldown_sec` 不小于上游 60 秒 TTL 是登记的硬要求，写在这里当一次留档。
+    """
+    sources = copy.deepcopy(SOURCES_DOC)
+    sources["sources"].append(
+        {
+            "id": "tickhub_concept_membership",
+            "dataset": "concept_membership",
+            "via": "tickhub",
+            "tool": "stock_concept_blocks",
+            "primary": True,
+            "fallback": [],
+            "timeout_sec": 1,
+            "retries": 0,
+            "cooldown_sec": 90,
+        }
+    )
+    sync = copy.deepcopy(SYNC_DOC)
+    sync["sync"]["datasets"]["concept_membership"] = {
+        "primary": "tickhub_concept_membership",
+        "fallback": [],
+        "watermark_field": "timestamp",
+        "mode": "replace",
+        "optional": True,
+        "codes_from": "limit_pool",
+    }
+    return sources, sync
+
+
+def _membership_payload(code: str) -> dict[str, Any]:
+    """真实 `stock_concept_blocks` 形状：`data.code` 是股票，`boards[].code` 是板块。"""
+    return {
+        "ok": True,
+        "data": {
+            "code": code,
+            "total": 2,
+            "boards": [
+                {
+                    "name": "水产饲料",
+                    "code": "BK1509",
+                    "change_pct": 3.08,
+                    "lead_stock": "百洋股份",
+                },
+                {
+                    "name": "农林牧渔",
+                    "code": "BK0433",
+                    "change_pct": 1.2,
+                    "lead_stock": "东方海洋",
+                },
+            ],
+            "concept_tags": ["水产饲料", "农林牧渔"],
+        },
+        "meta": {
+            "source": "eastmoney",
+            "fetched_at": f"{TODAY}T15:05:00+08:00",
+            "cache_hit": False,
+            "confidence": "B",
+            "trace_id": "trace-fixture-1",
+            "count": 2,
+        },
+    }
+
+
+def _membership_transport() -> FakeTransport:
+    return FakeTransport(
+        handlers={
+            "limit_up_pool": lambda _p: tickhub_payload(limit_records(TODAY)),
+            "stock_concept_blocks": lambda p: _membership_payload(str(p["code"])),
+        }
+    )
+
+
+def test_codes_from_fans_out_on_todays_archive(data_home) -> None:
+    """池子来自当日涨停池归档，且落库的行仍是个股维度（股票代码没被板块码盖掉）。"""
+    sources, sync = _membership_docs()
+    transport = _membership_transport()
+    registry = make_registry(transport, data_home, sources=sources, sync=sync)
+    store = _store(data_home)
+
+    payload = run_sync(registry, store, ["limit_pool", "concept_membership"])
+
+    pool = [row["code"] for row in limit_records(TODAY)]
+    asked = [c.params["code"] for c in transport.calls if c.tool == "stock_concept_blocks"]
+    # 归档读回来的行序由存储决定，池子只保证「去重保序于归档」，不比顺序比集合
+    assert sorted(asked) == sorted(pool)
+    row = payload["results"][1]
+    assert row["status"] == "ok"
+    assert "当日归档 limit_pool" in row["detail"]
+
+    saved = archive.snapshot("concept_membership", TODAY, root=data_home).records
+    assert {record["code"] for record in saved} == set(pool)
+    assert {record["board_code"] for record in saved} == {"BK1509", "BK0433"}
+
+
+def test_codes_from_with_empty_archive_skips_and_calls_nothing(data_home) -> None:
+    """今天还没有涨停池（休市 / 上一步失败）：可选数据集判 skipped，一次调用都不发。"""
+    sources, sync = _membership_docs()
+    transport = _membership_transport()
+    registry = make_registry(transport, data_home, sources=sources, sync=sync)
+
+    payload = run_sync(registry, _store(data_home), ["concept_membership"])
+
+    assert transport.calls == []
+    row = payload["results"][0]
+    assert row["status"] == "skipped"
+    assert "当日归档 limit_pool" in row["detail"]
+
+
+def test_codes_from_over_cap_truncates_with_notice(data_home) -> None:
+    """归档池超过上限：截断到 100 只并把原数量写进来源，不悄悄丢，也不打断整轮。"""
+    duckdb_store.write_dataset(
+        "limit_pool",
+        [{"code": f"{i:06d}", "trade_date": TODAY, "limit_times": 1} for i in range(101)],
+        root=data_home,
+    )
+    sources, sync = _membership_docs()
+    transport = FakeTransport(
+        handlers={"stock_concept_blocks": lambda p: _membership_payload(str(p["code"]))}
+    )
+    registry = make_registry(transport, data_home, sources=sources, sync=sync)
+
+    payload = run_sync(registry, _store(data_home), ["concept_membership"])
+
+    assert len([c for c in transport.calls if c.tool == "stock_concept_blocks"]) == MAX_POOL_CODES
+    detail = payload["results"][0]["detail"]
+    assert f"截断至 {MAX_POOL_CODES} 只，原 101 只" in detail
+
+
+def test_explicit_codes_still_beat_codes_from(data_home) -> None:
+    """`--codes` / `codes` 是明确意图，覆盖归档池（回补某几只时不该被当日池子绑住）。"""
+    duckdb_store.write_dataset(
+        "limit_pool", [{"code": "600519", "trade_date": TODAY}], root=data_home
+    )
+    sources, sync = _membership_docs()
+    sync["sync"]["datasets"]["concept_membership"]["codes"] = ["000001"]
+    transport = _membership_transport()
+    registry = make_registry(transport, data_home, sources=sources, sync=sync)
+
+    run_sync(registry, _store(data_home), ["concept_membership"])
+
+    asked = [c.params["code"] for c in transport.calls if c.tool == "stock_concept_blocks"]
+    assert asked == ["000001"]

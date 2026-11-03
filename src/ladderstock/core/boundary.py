@@ -336,6 +336,15 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
            note="行业板块排行"),
         _b("concept_board", "tickhub", "concept_boards", "replace", "trade_date",
            note="概念板块排行"),
+        # 个股↔概念板块归属（QUOT-362）：`stock_concept_blocks(code)` 是**逐只实时快照**，
+        # 上游 TTL 60 秒，没有 `since` 入参、也没有「一天一条」的水位——照
+        # `_b("spot_quote", ...)` 先例把水位字段写成 `timestamp`（它只表取数时刻，
+        # **不作交易日增量起点**），所以 `sync.yaml` 里它是 `optional` 的整批替换项，
+        # 代码池来自当日涨停池归档（`codes_from`），不扩全市场。
+        # 无备工具：同 peer 的 `em_hot_concept` 是「热门概念榜」不是逐只归属，
+        # 换过去等于换口径，不是换源（DEC-006 主备同口径要求）。
+        _b("concept_membership", "tickhub", "stock_concept_blocks", "replace", "timestamp",
+           note="个股归属的概念板块（逐只快照）；timestamp 只表取数时刻，不作交易日水位"),
         _b("fund_flow", "tickhub", "stock_fund_flow", "replace", "trade_date", note="个股资金流"),
         # ---- R5 产业研究（QUOT-143）：行业画像的四路输入 ----
         _b("sw_industry_map", "tickhub", "sw_industry_history", "append", "trade_date",
