@@ -1478,7 +1478,9 @@ def test_page_commands_cover_routes_and_resolve_date(
     today = datetime.now().date().isoformat()
     assert by_key["review"]["argv"] == ["review", "--date", today]
     assert by_key["validate"]["argv"] == ["validate", "reconcile", "--date", today]
-    assert all(item["last_job"] is None and item["running"] is False for item in payload["commands"])
+    assert all(
+        item["last_job"] is None and item["running"] is False for item in payload["commands"]
+    )
 
 
 def test_page_command_runs_whitelisted_argv(

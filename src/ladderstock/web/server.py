@@ -1579,7 +1579,8 @@ def create_app(
             except ValueError:
                 raise HTTPException(status_code=404, detail="Not Found") from None
             if candidate.is_file():
-                headers = ASSET_CACHE_HEADERS if full_path.startswith("assets/") else INDEX_CACHE_HEADERS
+                is_asset = full_path.startswith("assets/")
+                headers = ASSET_CACHE_HEADERS if is_asset else INDEX_CACHE_HEADERS
                 return FileResponse(candidate, headers=headers)
             index_page = dist / "index.html"
             if index_page.is_file():
