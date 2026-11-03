@@ -28,6 +28,18 @@ WSL `Ubuntu-24.04` 只跑了 Redis（docker-proxy → 宿主机 `127.0.0.1:6379`
 ⚠️ 上面那句「supervisor 循环」只有在 `schtasks /run /tn "LadderStock UI 5950"` **手动拉起之后**才成立：
 该计划任务的 `<Triggers />` 是空的，没有任何触发器，永远不会自己起（见 §5）。
 
+**当前 5950 不是那个计划任务起的。** 16:15 复核进程树：
+
+```
+21356 "D:\workplace\ruanjian\python312\python.exe" "D:\workplace\LadderStock\.venv\Scripts\ldst.exe" run --port 5950 --host 127.0.0.1
+  └ 15436 "D:\workplace\LadderStock\.venv\Scripts\ldst.exe" run ...
+       └ 6800  ← 真正在监听 127.0.0.1:5950 的进程，创建时间 2026-11-03 15:20:51
+```
+
+⇒ 代码基线是 **`D:\workplace\LadderStock`（脏树，落后 `origin/main` 198 提交）**，数据是中心库。
+`ldst-5950.pid` 里的 25888 是 11-02 那一次的残留，和现在的进程无关，**不要拿它找进程**。
+（这一条纠正本文早先写的「11:42 手工启动」——那是上一个已经死掉的实例。）
+
 `/api/pool` 的实际 base URL：**`http://127.0.0.1:5950`**。
 `LDST_TICKHUB_MCP_URL=http://127.0.0.1:8000/mcp` 由 `serve-5950.ps1` 注入，与 QUOT-360 要求一致。
 
@@ -44,9 +56,34 @@ WSL `Ubuntu-24.04` 只跑了 Redis（docker-proxy → 宿主机 `127.0.0.1:6379`
 ### ⚠️ 别连这两个（QUOT-360 踩过的坑）
 
 - `http://127.0.0.1:5957` —— 另一个 `ldst run` 实例（`D:\workplace\ls-quot-325`），它的数据目录下**根本没有 `archive/` 分区**，`/api/pool` 返回 `available=false`、三个数据集全 0 条。取证连它会得出「上游没数」的错误结论。
-- `D:\workplace\LadderStock`（脏树，`feat/quot-231-ladder`，落后 `origin/main` 198 提交）—— `data/archive/` 为空、也没有 `market.duckdb`，在这里找 `*/archive/2026/11/*` 永远找不到。**实机读的不是这个目录。**
+- `D:\workplace\LadderStock`（脏树，`feat/quot-231-ladder`，落后 `origin/main` 198 提交）—— `data/archive/` 为空、也没有 `market.duckdb`，在这里找 `*/archive/2026/11/*` 永远找不到。**实机读的不是这个目录。**（注意：脏树的**代码**确实在给 5950 供服务，见上；空的只是它**自己那份 `data/`**。）
+
+这个坑的准确指纹，今天在本机用空闲端口 + 空数据目录复现过一次，认 signature 比认端口可靠：
+
+```
+/api/pool?date=2026-11-03  →  available=false
+                              data_source_status="missing"
+                              reason="涨停池没有可解析的候选（可能尚未同步）"
+                              source_detail="limit_pool: none（0 条）; concept_board: none（0 条）; ..."
+```
+
+看到 `missing` + 全 `none（0 条）`＝**连错实例 / 错数据目录**，不是上游没数；`ok` + `fund_flow: none（0 条）` 才是 §2 说的当日资金口径缺数。
 
 ## 2. 数据口径
+
+⚠️ **这台机器上现在有两套 runtime × 两个 data 目录，只有一个是取证入口**（2026-11-03 16:15 复核）：
+
+| 谁 | 代码基线（`LDST_RUNTIME` / 启动路径） | 读的 data 目录 | 监听 | 在跑吗 |
+|---|---|---|---|---|
+| 取证入口（本文） | `D:\workplace\LadderStock`（脏树） | **`D:\QuotaFuseModules\LadderStock\data`** ✅ 有 `archive/2026/11/{01,02,03}` | 5950 | 是（pid 6800，15:20:51 起） |
+| QUOT-350 部署态调度 | `D:\workplace\ls-quot-325` | `D:\workplace\ls-quot-325\data` ❌ **只有 `intraday/` + `state/`，没有 `archive/`** | 5957（当前未监听） | `ldst schedule run` 在跑（15:31 起） |
+| QUOT-350 新落的常驻层 | `ldst.env` 写 `LDST_RUNTIME=D:\workplace\ls-quot-325`、`LDST_DATA_DIR=D:\QuotaFuseModules\LadderStock\data`（**与本文一致**） | 中心库 | — | 16:12–16:16 正在写入 `D:\QuotaFuseModules\LadderStock\ops\`（`ldst.env` / `schedule-ops.cmd` / `schedule_supervisor.py`） |
+
+⇒ **给开发的结论**：旧调度（`run-service.ps1`，`LDST_DATA_DIR` 指仓库内 `ls-quot-325\data`）产出的分区**不会进 5950 读的中心库**。
+在它被 `ldst.env` 那一版接管之前，中心 `archive/` 不会自己长出新交易日——今天 11-03 的分区是手工 sync 的产物（§5 第 3 条）。
+所以 §4 的「取证前先手工 sync 并记时间」**在新层接管前一直是前置步骤**，别指望明天有 11-04 的分区。
+这一条不在本任务范围内动（属 QUOT-347 / QUOT-349 / QUOT-350），已在评论里 @ 协调人。
+
 
 变量名（值不贴）：`LDST_DATA_DIR`、`LDST_CONFIG_DIR`，由 `serve-5950.ps1` 注入；
 另有 `LDST_PEER_DIR_TICKHUB` / `LDST_PEER_DIR_TICKHUB_US` / `LDST_PEER_DIR_WIRE` / `LDST_PEER_DIR_SENATE`、
@@ -79,22 +116,36 @@ curl -s http://127.0.0.1:5950/api/state/config
 |---|---|---|---|---|
 | `limit_pool` | 11:46 读为 52 行，**15:21:52 被再次 sync 重写为 48 行**（`source_detail` 同步变为「48 条」） | 与 parquet 同源 | 11-02：125 行 | `2026-11-03` / **48 行** / `tickhub_limit_pool` / ok（updated_at 15:21:52） |
 | `concept_board` | 100 行 | 100 行 | 11-02：100 行 | `2026-11-03` / 100 行 / `tickhub_concept` / ok（updated_at 11:46:08） |
-| `fund_flow` | **无文件** | **0 行** | **11-02：30 行**（表内共 1806 行，逐日 30） | **`2026-11-02`** / 1800 行 / `tickhub_fund_flow` / ok（updated_at 11:46:35） |
+| `fund_flow` | **11:46 无文件 → 16:22 已有 `fund_flow.parquet` 40 行**（见下方「结论已作废」） | 表内 1806 行 → **2400 行** | 11-02：30 行 | **11:46 是 `2026-11-02`／1800 行；16:22:23 变成 `2026-11-03`／2400 行** / `tickhub_fund_flow` |
 
 ⚠️ **当日行数不是基线，不能写进断言。** 同一个 `limit_pool` 当日分区在 11:46 是 52 行、15:21 是 48 行——
-盘中/盘后每跑一次 `ldst sync` 就会覆盖当日 parquet 并改写水位。取证时**同时记下 `source_detail` 原文和采集时刻**，
-要断言就断言 `available` / `data_source_status` / `parts.*` 的 null 状态，**不要断言行数**。
+盘中/盘后每跑一次 `ldst sync` 就会覆盖当日 parquet 并改写水位。取证时**同时记下 `source_detail` 原文和采集时刻**。
+连「`parts.capital` 是不是 null」都不能断言：11:46 那次它是 null，16:22 已经变成 `84.6`（见下）。
 （15:21 那次改写在中心 `logs/` 里没有任何对应记录，见 §5 第 8 条。）
 
-**当日 `fund_flow` 两条读法都没数。** 不是水位问题也不是代理问题——日线主力净额当日盘后才发布，
-而 15:35 那条导出链压根没进 `origin/main`（`git grep "15:35" origin/main` 0 命中），也没接进这台机器（见 §5）。
+#### ⛔ 本文早先「当日 `fund_flow` 两条读法都没数」的结论，已于 2026-11-03 16:22 作废
 
-取证读法二选一，**不要去改同步逻辑**（归 QUOT-347 / QUOT-349）：
+16:22 中心库被新一轮 sync 写入（`limit_pool` 16:22:00 / `fund_flow` 16:22:23 / `concept_board` 16:22:24，
+紧接着 16:21:48 有人跑了 `schedule_supervisor.py stop` —— 属 QUOT-350 的换层动作）。同一分钟 `/api/pool` 实测：
 
-1. **回落最近交易日**：读 `2026-11-02` 那 30 行，`data_as_of` 明确写出资金口径日期；
-2. **当日盘中口径**：`realtime_fund_flow(code)`，已实测可达且真打到上游（§3）。
+```
+source_detail = "limit_pool: parquet（48 条）; concept_board: parquet（100 条）; fund_flow: parquet（40 条）"
+counts        = {limit_pool_rows:48, fund_flow_rows:40, theme_boards:0, ...}
+candidates[0] = 002696 百洋股份 parts={strength:100.0, turnover:100.0, standing:100.0, capital:84.6, theme:null}
+                absent_parts=["theme"]   raw.net_inflow=417850659.38
+```
 
-`concept_board` 当日 100 行在库，题材侧缺的只是「代码 → 板块」归属，`stock_concept_blocks` 可直接给出。
+⇒ **资金侧已经有数了**，`core/pool.py` 本来就会把 `fund_flow` 里的 `net_inflow` 吃进 `parts.capital`——
+之前 `capital=null` 是**缺数据**，不是缺代码。上面「二选一取证读法」那段（回落 11-02 / 走 `realtime_fund_flow`）
+在当日分区存在时不再需要，**但别删**：当日分区会不会有，取决于 sync 有没有跑（§5 第 3、8 条）。
+
+🔴 **给 QUOT-361 的一个必须开工前确认的量纲问题**：这个入库数据集的 `net_inflow` 是 **`4.18e8`（元）量级**，
+而 §3 里 `realtime_fund_flow` 的 `eastmoney` 通道 `main_net` 是 **`3.0`** 量级、`sina` 通道是 **`3.8e8`**。
+即 **已落盘的 `fund_flow` 数据在量纲上像 sina 那一档，而不像 DEC-046 裁定「只认」的 eastmoney**。
+如果 361 按「只认 eastmoney」实现，就会和这个已经在喂 `parts.capital` 的数据集打架，而且两边看起来都有数——静默错。
+开工前先确认 `parts.capital` 应当以哪一个为准（数据集 or 实时工具），这条判定属 DEC-046，不在本任务范围。
+
+`concept_board` 当日 100 行在库，题材侧缺的只是「代码 → 板块」归属，`stock_concept_blocks` 可直接给出（`theme` 至今仍 null、`theme_boards=0`）。
 
 ## 3. 两个上游工具的可达性（已实测）
 
@@ -144,6 +195,11 @@ th-cn proxy check -o json   # 5/5 可达，延迟 468–2265 ms
 # 0) 先确认连的是有数的实例，并看清它的数据目录
 curl -s http://127.0.0.1:5950/api/health
 
+# 0b) 再看这份数是几点落盘的——行数和分区会被后来的 sync 覆盖，取证记录里必须带这个时刻
+python -c "import json;w=json.load(open(r'D:/QuotaFuseModules/LadderStock/data/state/watermark.json',encoding='utf-8'))['watermarks'];\
+[print(k,w.get(k,{}).get('value'),w.get(k,{}).get('rows'),w.get(k,{}).get('updated_at')) for k in ('limit_pool','concept_board','fund_flow')]"
+ls /d/QuotaFuseModules/LadderStock/data/archive/2026/11/03/
+
 # 1) 打榜池取证（今日）
 curl -s "http://127.0.0.1:5950/api/pool?date=2026-11-03" | python -m json.tool
 
@@ -151,11 +207,13 @@ curl -s "http://127.0.0.1:5950/api/pool?date=2026-11-03" | python -m json.tool
 #   payload.available = true
 #   payload.data_source_status = "ok"
 #   payload.source_detail 含 "limit_pool: parquet（N 条）"、"concept_board: parquet（100 条）"、
-#                          改动前 "fund_flow: none（0 条）"
+#                          11:46 那次是 "fund_flow: none（0 条）"，16:22 起是 "fund_flow: parquet（40 条）"
 #   payload.candidate_count = 30，counts.limit_pool_rows 与 source_detail 里的 N 一致
-#   改动前：每个 candidate 的 parts.capital / parts.theme = null，
-#           absent_parts = ["capital","theme"]，raw.net_inflow = null，raw.theme_tags = []，
-#           counts.theme_boards = 0
+#   11:46 采集：parts.capital / parts.theme = null，absent_parts = ["capital","theme"]，raw.net_inflow = null，
+#                counts.theme_boards = 0
+#   16:22 采集：parts.capital 已非 null（002696 → 84.6，raw.net_inflow=4.18e8），absent_parts 只剩 ["theme"]，
+#                counts.theme_boards 仍 0，raw.theme_tags 仍 []  ← 题材侧一点没变
+#   ⇒ 资金侧的 null 是「数据没落盘」造成的，不是代码；见 §2「结论已作废」那节的量纲警告（DEC-046）
 #   QUOT-361 完成后：parts.capital 非 null、raw.net_inflow 有值、data_as_of 写明资金口径日期
 #   QUOT-362 完成后：parts.theme 非 null、raw.theme_tags 非空、counts.theme_boards > 0
 
@@ -235,8 +293,8 @@ stock_concept_blocks("002696") ok=true  cache_hit=false  meta.source=eastmoney
 ## 5. 运维风险（本文只报告，未动任何配置）
 
 1. **`LadderStock UI 5950` 计划任务的 `<Triggers />` 是空的** —— 没有任何触发器，永远不会自己起；
-   11-02 22:37 那次是手动 `schtasks /run`。当前监听 5950 的进程是 11-03 11:42 从 `D:\workplace\LadderStock`
-   **手工**启动的，父进程是一次性 shell，随它退出就没了；`ldst-5950.pid`（25888）已过期。
+   11-02 22:37 那次是手动 `schtasks /run`。当前监听 5950 的进程是 11-03 **15:20:51** 从 `D:\workplace\LadderStock`
+   **手工**启动的（进程树见 §1），父进程是一次性 shell，随它退出就没了；`ldst-5950.pid`（25888）是 11-02 那一次的残留，别拿它找进程。
    **取证前先 `curl /api/health` 确认进程还活着。** 这比「supervisor 掉了」更糟：它是**一次性**的。
 2. **整套服务守护层住在一个 agent 任务工作区里**：`serve-5950.ps1` 所在目录
    （`C:\Users\Administrator\multica_workspaces\...\quot-200-baf27edac135\workdir\run-logs\`）还有 8 个
@@ -247,7 +305,19 @@ stock_concept_blocks("002696") ok=true  cache_hit=false  meta.source=eastmoney
    5950 与 TickHub peer 一起失联——而那正是 QUOT-361 / QUOT-362 的取证入口。
    处置方案（照 disk-guard 先例）：脚本迁到 `D:\QuotaFuseModules\LadderStock\ops\`（D 盘，不在 disk-guard 的
    C 盘回收范围内）+ 计划任务改指新路径 + **补上真实触发器**（开机触发 + 每 5 分钟端口巡检）。
-   **属于服务器配置变更，等人点头，未执行。**
+   **2026-11-03 16:12 进展**：备份已做——9 个任务的 XML 原样导出 + 10 个脚本逐字副本 + 一份加了端口守卫的参考实现，
+   全部放在 `D:\QuotaFuseModules\LadderStock\ops\quot-363-backup\`（原件未动，`cp -p` 保持 mtime；回滚命令见该目录 README）。
+   **改任务 / 补触发器仍然没做**，原因变了：`ops\` 目录当时正被 **QUOT-350** 实时写入（`ldst.env` 16:12、
+   `schedule-ops.cmd` + `schedule_supervisor.py` 16:16，随后 16:2x 又落了 `register-autostart.ps1` / `start-now.ps1`），
+   同一台机器的同一层常驻服务已有人在落。再注册一套 supervisor＝两个守护层抢同一个 `data/`，比原问题更糟。
+   **但要看清他们落的是哪一层**：`register-autostart.ps1` 注册的是 **`LadderStock Schedule`**（调度控制器，
+   默认 `-Method Logon` 只写当前用户的启动文件夹快捷方式；`-Method Task` 那种计划任务承载，脚本自己写了「需项目领导人/老板在 issue 里明确批准后再执行」），
+   `start-now.ps1` 拉的是 `schedule_supervisor.py run`。
+   ⇒ **`LadderStock UI 5950` 这条不在他们的覆盖范围内**：5950 仍然是 15:20:51 那个手工进程（第 1 条），
+   没有任何常驻层管它，QUOT-361 / QUOT-362 的取证入口照旧会在它退出后起不来。
+   这一格还空着，`quot-363-backup\serve-5950.ps1` 就是为它准备的（照 QUOT-350 的写法：端口占用就 skip，不自旋重启）。
+   顺带查出一个真 bug：`serve-*.ps1` 原件的 `while($true)` **不看端口就重启**，端口若被别的进程占着（现在 5950 就是手工进程），
+   子进程秒退→**每 10s 重启一次停不下来**；参考实现里加了「端口已占用就 skip 退出」的守卫，接管的人照这个写。
 3. **没有任何计划任务在写这台机器的 `archive/` 分区。** 11-03 的分区来自 11:43–11:46 一次手工 `ldst sync`（`limit_pool` 当时 52 行，后被 15:21 那次重写，见第 8 条）；
    部署态 `schedule.yaml` 里只有 09:05 提醒、6 个盘中快照、15:05 收盘对账，**没有 15:35 的日线导出**，
    且 `git grep "15:35" origin/main` 0 命中 —— 那条链没进 main，也没接进这台机器（转回 QUOT-347 验收意见处理）。
@@ -256,16 +326,29 @@ stock_concept_blocks("002696") ok=true  cache_hit=false  meta.source=eastmoney
 6. 本机 Redis 在 WSL 的 docker 里，WSL 一停 TickHub 缓存层就退化；`th-cn doctor` 的 `cache_backend` 会立刻变红。
 7. 本文所有「当前值」（§2 快照、5950/8000 的 PID、水位日期）都是 2026-11-03 一次采集，会过期；复核一律先跑 §4 第 0 步。
 8. **中心 `data/` 目录有多个写入者，而且没有审计。** 15:21:52 那次 sync 重写了 `archive/2026/11/03/limit_pool.parquet`、
-   `market.duckdb`、`state/watermark.json`，把当日 `limit_pool` 从 52 行改成 48 行，但中心 `logs/` 里
-   （`ldst-5950.*.log` / `watch-scan.log`）**没有任何对应记录**，`schedule.yaml` 里也没有 15:21 这个时点——
-   说明它来自某个带 `LDST_DATA_DIR` 的临时 `ldst sync`（agent 工作区里的运行），而非计划任务。
-   5950 本身是 `read_only=true`，不会写。后果直接落在取证上：**你读到的当日行数取决于谁最后一次跑了 sync**。
-   处置建议（属配置变更，等人点头，未执行）：给 sync 加一行带 PID/调用者的落地日志，或把「取证前先看 `watermark.json` 的 `updated_at`」
-   写成硬性前置步骤。本文 §4 的复测段就是按这个口径记时刻的。
+   `market.duckdb`、`state/watermark.json`，把当日 `limit_pool` 从 52 行改成 48 行，但中心 `logs/`
+   （`ldst-5950.*.log` / `watch-scan.log`）与 `D:\workplace\ls-quot-325-ops\logs\` 里**都没有 15:21 的任何记录**。
+   时间上它紧跟 15:20:51 那次 5950 重启（§1），像是在同一个临时 shell 里「重启 + sync」连着做的；5950 本身 `read_only=true` 不会写。
+   后果直接落在取证上：**你读到的当日行数取决于谁最后一次跑了 sync**。
+   处置：「取证前先看 `watermark.json` 的 `updated_at`」已写成 §4 第 0b 步硬性前置；给 sync 加一行带 PID/调用者的落地日志
+   属配置/代码变更，**没做**，等 QUOT-347 / QUOT-350 认领。
 
 ## 6. 清理
 
-本任务没有改任何配置、没停任何进程、没动 `market.duckdb`（全程 `read_only=True`）。
+本任务没有改任何计划任务、没有停任何进程、没有写 `market.duckdb`，也没往仓库里放过第二个文件。
+
+**在本机写过的东西（只有这一处，且不在仓库、不在会被回收的工作区）**：
+
+```
+D:\QuotaFuseModules\LadderStock\ops\quot-363-backup\      ← 见该目录 README.md
+├── backup-20261103\   9 个计划任务的原样 XML（回滚依据）
+├── orig-20261103\     10 个守护脚本的逐字副本（cp -p，源文件与 mtime 未动）
+├── serve-5950.ps1     带端口守卫的参考实现——未注册、无任务引用它
+└── watch-scan.ps1     同上
+```
+
+为验证这个参考实现，用空闲端口 5960 + 一次性空数据目录跑过一遍 supervisor（起得来、端口被占会 skip、子进程被杀会 10s 后重启），
+测完**已把测试实例与测试目录整个删掉**，`5960` 无残留监听，全程没碰 5950 / 8000 的现有进程。
 
 ```bash
 # 中间产物（本地工作区，非仓库）
