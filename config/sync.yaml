@@ -70,6 +70,20 @@ sync:
       watermark_field: trade_date
       mode: replace
 
+    # 个股↔概念板块归属（QUOT-362，题材分项的正式输入）：逐只 `stock_concept_blocks`
+    # 快照，**代码池来自当日涨停池归档**（`codes_from`），不扩全市场。
+    # 必须排在 `limit_pool` 之后：同一轮 `ldst sync` 里读到的才是今天刚落的池子。
+    # `watermark_field: timestamp` 只表「取数时刻」，不是交易日水位（上游 TTL 60 秒，
+    # 没有 `since` 入参，每次都整批替换）——口径同 `_b("spot_quote", ...)`。
+    # `optional: true`：今天没有涨停池（休市/取数失败）时判 skipped 而不是 failed。
+    concept_membership:
+      primary: tickhub_concept_membership
+      fallback: []
+      watermark_field: timestamp
+      mode: replace
+      optional: true
+      codes_from: limit_pool
+
     fund_flow:
       primary: tickhub_fund_flow
       fallback: []

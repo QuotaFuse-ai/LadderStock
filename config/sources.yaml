@@ -191,6 +191,22 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 个股↔概念板块归属（QUOT-362）：逐只实时快照，**不进台账**（水位是取数时刻，
+  # 见 `core/boundary.py` 的 `concept_membership` 登记）。同步入口只取当日候选池那批
+  # 代码（`sync.yaml` 的 `codes_from: limit_pool`），不扩全市场。
+  # `cooldown_sec` 不小于上游 60 秒 TTL：命中限流后立刻重试只会再撞一次同一个
+  # 还没刷新的窗口，等于把一次等待变成两次失败。
+  - id: tickhub_concept_membership
+    dataset: concept_membership
+    via: tickhub
+    tool: stock_concept_blocks
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 90
+    weight: 1.0
+
   - id: tickhub_fund_flow
     dataset: fund_flow
     via: tickhub

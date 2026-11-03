@@ -88,12 +88,17 @@ class RowShape:
     - `date_keys`：行内日期键的别名。财务指标行只有 `report_date`、申万分类行只有
       `start_date`，落库仍统一用 `trade_date` 当幂等键与水位（R5，QUOT-143）；
       不新增别名之外的兜底，取不到日期就回落到本次同步日期。
+    - `rename`：**记录行里**的键改名（`(旧名, 新名)` 序列）。用在「上游把同名的
+      键放了两次」的情况：`stock_concept_blocks` 的 `data.code` 是股票代码、
+      `boards[].code` 是板块代码，透传 + 原样合并会让板块码盖掉股票代码
+      （行就不再是个股维度的行了）。改名发生在合并之前，只作用于记录行。
     """
 
     rows_key: str
     passthrough: tuple[str, ...] = ()
     require_code: bool = True
     date_keys: tuple[str, ...] = ()
+    rename: tuple[tuple[str, str], ...] = ()
 
 
 ROW_SHAPES: dict[str, RowShape] = {
@@ -115,6 +120,14 @@ ROW_SHAPES: dict[str, RowShape] = {
     # 盘中快照（QUOT-286）：`tencent_quote_batch` 的 `quotes` 是按 code 索引的对象，
     # 取值即记录行（见 `normalize_records` 对 Mapping 的处理）；行内只有 `timestamp`。
     "spot_quote": RowShape("quotes"),
+    # 逐只归属（QUOT-362）：一行 = 「这只股票挂在这个板块」，股票维度，`require_code`。
+    # `boards[].name` 改成 `board_name` 是与板块榜（`concept_board`）同一套列名，
+    # `boards[].code`（东财板块码）改成 `board_code` 是给 `data.code`（股票代码）让位。
+    "concept_membership": RowShape(
+        "boards",
+        passthrough=("code",),
+        rename=(("name", "board_name"), ("code", "board_code")),
+    ),
 }
 
 #: `tdx_daily_package` 是 daily_k 的备源工具，形状按工具名登记（同数据集两种形状）
@@ -138,6 +151,9 @@ CODE_POOL_DATASETS: frozenset[str] = frozenset(
         "sw_industry_map",
         "finance_indicators",
         "valuation_history",
+        # QUOT-362：`stock_concept_blocks` 的 `code` 必填，且是**当日候选池那批代码**
+        # 的逐只快照（上游 TTL 60 秒），不扩全市场。
+        "concept_membership",
     }
 )
 
@@ -248,7 +264,8 @@ def normalize_records(
     """真实 `data` → 待落库记录（列表或快照对象）+ payload 自己声明的日期。
 
     - 列表：原样返回（旧行为，桩测试不受影响）；
-    - 对象且登记了形状：展开 `rows_key`，透传口径字段，`date → trade_date`，
+    - 对象且登记了形状：展开 `rows_key`，透传口径字段（先按 `rename` 改记录行的键，
+      避免同名字段盖掉透传值），`date → trade_date`，
       丢弃没有代码的个股行；
     - 对象但没登记形状（`market_sentiment` 这类快照）：整包返回，由 `sync` 落一行。
     """
@@ -281,7 +298,7 @@ def normalize_records(
     for item in raw_rows:
         if not isinstance(item, dict):
             continue
-        row = {**defaults, **item}
+        row = {**defaults, **_renamed(item, shape.rename)}
         date_keys = shape.date_keys or ROW_DATE_KEYS
         if (day := _row_date(row, date_keys)) is not None:
             row["trade_date"] = day.isoformat()
@@ -363,6 +380,17 @@ def _failure_text(response: dict[str, Any]) -> str:
         if parts:
             return " ".join(parts)
     return str(response.get("message") or response.get("code") or "未知错误")
+
+
+def _renamed(item: dict[str, Any], rename: tuple[tuple[str, str], ...]) -> dict[str, Any]:
+    """记录行的键改名（`rename` 为空时原样返回，不复制出新字典）。"""
+    if not rename:
+        return item
+    renamed = dict(item)
+    for old, new in rename:
+        if old in renamed:
+            renamed[new] = renamed.pop(old)
+    return renamed
 
 
 def _row_date(row: dict[str, Any], keys: tuple[str, ...] = ROW_DATE_KEYS) -> date | None:
