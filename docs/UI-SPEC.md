@@ -944,6 +944,20 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 主题 / 密度切换后：深浅两主题下本屏对比度与徽标颜色均正确，密度只改行高。
 - [ ] 抽屉保存错误从纯行内文本升级为 C-19 `Banner danger` + 保留可编辑内容。
 
+### 11.19 盯盘·竞价与盘中 `/intraday`
+
+- [ ] 时点条只有一个来源：格子数量与时刻全部来自 `GET /api/intraday` 的 `slots[]`（`intraday/IntradayScreen.tsx:195`），渲染层不持有自己的时点表（`intraday/demo.ts:25` 的 `DEMO_SLOTS` 只用于造夹具）；从载荷里删掉任一时点，页面上那一格必须消失而不是由前端补回（DEC-039 §2.1）。
+- [ ] 六态逐条可复现：`?state=empty|loading|error|partial|offline` 与 `?demo=1&variant=full|partial|empty|mixed` 各看一遍；`partial` 的判据必须是**时点级**的 `snapshot_count < slot_count`（`intraday/useIntradayView.ts:64`），不得改用信封的 `data_source_status`——汇总只回答「这一天有没有至少一个时点落盘」，粒度不对（SPEC-INTRADAY-READ §3）。
+- [ ] 八种时点状态各有**图形 + 文案**双通道：六种记录状态（`intraday/IntradayScreen.tsx:77-84`）、「当天没跑过」（`:87-92`）、「未知状态」原样透出后端 `status` 文案不折叠（`:95-100,104-106`）。`?demo=1&variant=mixed` 下六格文案依次为 已写入 / 降级写入 / 已存在·未覆盖 / 已过窗口，不补跑 / 未取到 / 抓取失败，六个图标互不相同；只靠边框颜色区分即判不通过（§9）。
+- [ ] `recorded` 与 `available` 两条通道不得合并（DEC-039 §2.2）：`recorded=false` 写「当天没跑过」，`recorded=true && status=missing` 写「未取到」；`status.json` 说 `ok` 而磁盘文件不在时，该格必须落到「没有快照文件」并透出 `reason`，不得照抄 `file` 字段。
+- [ ] 「计划内的空」不得升格成错误：`skipped` 与没跑过的时点走 `EmptyState` + 窗口说明（`:289-304`），整屏不出现 `ErrorBlock`；整屏 empty 时后端给的时点条仍照常列出（`:709`），且空态文案必须区分三种空因——接口未接入 / `status.json` 不存在 / 有 `status.json` 但六个时点都没文件（`:670-707`）。
+- [ ] 页面零重算：昨日涨停池、今日仍封板、平均涨跌幅、情绪面六项、`1 进 2` 全部取 `payload.snapshot` 原值（`:411-437`、`:446-476`），缺失一律「—」+ 原因，不出现 `0` 顶替（DEC-028）；`1 进 2` 无载荷时写「该时点没有 1进2 载荷」而不是 `0.0%`。
+- [ ] 表体只有 C-09 一处（`:500`）；七处列宽 `width: '112px'…'96px'`（`:332-393`）与 `maxHeight="calc(100vh - 420px)"`（`:506`）属 R-02 家族，收口到 §7.3 刻度后本条必须为真。
+- [ ] 裸值必须过 §8 / §5.8：`captured_at`（`:562`）、`slot.at`（`:551`）、`status_updated_at`（`:186`）目前直显 `2026-10-30T09:25:06+08:00` 形态（`?demo=1` 实拍即反例）→ 当日 `HH:mm:ss`、跨日 `MM-DD HH:mm`；`取数工具`（`:561`）与表头「读数（price）」（`:356`）目前透出 `tencent_quote_batch` / `price` 这类后端 key → 一律映射为中文标签。
+- [ ] 页头「来源」不得是假定值：`payload.slots.length > 0` 就恒写 `status.json`（`:612-616`），而 `has_status_file === false` 时同屏空态卡正写着「status.json 不存在」——本单的 `intraday-before-dark.png` / `intraday-before-light.png` 即为该矛盾的实拍 → 必须按 `has_status_file` 给「—（无 status.json）」。
+- [ ] 键盘与读屏：时点格是原生 `button`，`aria-pressed` 标选中、`aria-label` 为「{时点} {状态文案}」、`sr-only` 说明「当前选中 / 可选」（`:135-168`），焦点环走 `focus-visible:shadow-focus`（`:142`）；Tab 可遍历六格，Enter 换选中后快照节选卡同步更新。`?slot=11:30` 直接选中该格、`?date=` 换日清空手动选择（`intraday/useIntradayView.ts:98-111`），两者在 `?demo=1` 下同样成立。
+- [ ] 骨架与真实内容同构（`:638` 的 3 指标 + 6 行 对得上三张 `MetricCard` + 一张表）；`gap-1.5`×2（`:141,148`）与 `size-3.5`×2（`:151,626`）是 Tailwind 默认泄漏档，`transition-colors` 缺 `duration-fast`（`:141`，全仓唯一一处裸过渡）→ 收口后本条必须为真；`npm run check:ui` 六项对本屏必须保持 PASS（QUOT-317 口径）。
+
 ## 12. 遗留与下一步
 
 1. **阈值持久化**：已由 DEC-037 落地 `watch_settings` 分片（`config/state.yaml` + `stores/manifest.json` + 契约测试三处同步），刷新 / 重启 / 多窗口共用同一份。
@@ -969,6 +983,8 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | M | §10 四屏映射 | 18 屏映射 | 新屏的数据来源与可信规则此前无处可查 |
 | N | §2「内容最大宽 `--ldst-content-max: 1080px`，超出居中」 | 分层：`main` = `--ldst-table-max: 1296px`（表/图/卡阵），阅读型正文再收 `1080px` | 实际容器是 `max-w-table`（`Layout.tsx:328`）；1080 只该管行长，硬套给整屏会让表格屏白白缩掉 216px |
 | O | §3.1 五段「`≥1100px` 内左右两栏」 | 改为 `desk:`（≥1280），并去掉 1024 单列的说法 | 系统里没有 1100 档；实现是 `desk:grid-cols-[2fr_3fr]`（`ReviewScreen.tsx:763`）与 `grid-cols-1 desk:grid-cols-3`（`:666`） |
+| P | §11 逐屏清单止于 `11.18 设置`（v1.1 的 L 条：18 节） | 补 **§11.19 盯盘·竞价与盘中 `/intraday`**，并把编号规则显式写成「**§11.n = §0 覆盖表的第 n 行**」 | QUOT-302 把 `/intraday` 记进 §0（第 19 行）与 §10，§11 却没跟着长——该屏成了唯一「进了名单、没进走查」的屏，§12.3 的逐条走查与 §12.6 的截图对对它无从执行（QUOT-365）。11.1–11.18 与 §0 行号本来就一一对应（11.1 复盘 = 第 1 行 … 11.18 设置 = 第 18 行），本条把这条巧合升格为规则；`/intraday` 在 §10 表里物理排在第 3 行（紧跟盯盘），**不**按 §10 的行位编号，否则 11.1–11.18 全部要重排、既有 PR 引用与 `docs/screenshots/` 命名一起失效 |
+| Q | §10 标题「全 18 屏与后端契约映射」、§4.5「全 18 屏的持久化面」、§3 止于 3.18 | **本单不改，登记为遗留**：§10 表格实为 19 行、§3 缺 3.19 | 与 P 同源的 18/19 屏遗留表述，但改标题与补 §3.19 会动到本单边界外的章节（QUOT-365 只允许动 §11.19 与 §12.4）。留给 QUOT-306 阶段四的文档收口一次性对齐：§3.19 小节 + §10/§4.5 标题改「19 屏」+ 顶部变更记录加行（DEC-045 §4 要求串行合并，避免与在途 PR 撞同一行） |
 
 ### 12.5 整改清单（v1.1 登记，代码侧待办；本轮不改代码）
 
