@@ -19,6 +19,7 @@
 | v1.3.1 | 2026-11-02 | 外壳层 §2 逐条走查落地（QUOT-316，只动 `components/Layout.tsx` / `PageShell.tsx` / `PersistenceBanner.tsx`，`NAV_SECTIONS` 结构零变更）：① §2 提示条「同类最多 2 条 + 另有 N 条提示」此前无实现，`PersistenceBanner` 现按 tone 各截 2 条、余量并成一行且逐个列出分片名（折叠不丢信息），顶内距 `pt-3`→`pt-5` 与 `main` 的 `py-5` 对齐；② §11.0「数字必 `.ldst-num`」在页头不可达——`PageHeader` 的 subtitle / meta 由外壳统一挂 `.ldst-num`（只加可继承的 `font-variant-numeric`，字号与颜色仍归各屏），19 屏一次生效；页头换行纵向间距 12px→4px；③ §2 侧栏二级缩进 8px→16px（导引线落在一级图标正下方），`rail:` 档展平后加组间 1px 分隔线，否则 19 行同形图标无分组可读性；④ §2 阅读型内容度量：外壳自有的 `OfflineBanner` 说明段挂 `max-w-measure`（`--ldst-measure: 52ch`）；⑤ `Layout.tsx` 头注释的 `DESIGN-SPEC §3.1/§4.1` 假引用（M-9）改引 `UI-SPEC §2`；⑥ R-21 实测更正为「非缺陷」，见 §12.5。规范条文本身未放宽：以上都是代码向 §2 / §11.0 收敛。 |
 | v1.5 | 2026-11-02 | 新增「接入 AI」一等入口（QUOT-200）：侧栏底部（主题与设置之间）按钮 + 设置 → AI 接入顶部状态卡，打开右侧向导抽屉（`AiConnectDialog`）；提供 DeepSeek / 通义千问 / Kimi / MiniMax / 本机 Ollama / 自定义预置，测试连通性后写入 `config/ai.env`（`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY`），密钥只写不读回。订阅版 CLI（Codex / Claude Code / WorkBuddy）当前后端未实现，不放入口。`?ai=1` 可直接打开抽屉（截图/排障）。 |
 | v1.6 | 2026-11-03 | 复盘组拆三独立入口（QUOT-344，决策 DEC-046；本链 S1+S2 合并成这一行，按 DEC-045 §4）。导航：`复盘` 组由「情绪复盘 / 周度复盘 / 候选池」改为 **每日复盘 `/review` · AI复盘 `/review/ai` · AI周报 `/weekly` · 候选池 `/pool`**——三屏同源不合并，`/weekly` 只改文案不改路由。路由新增 `/review/ai`（与 `/review` 同族前缀，不用 `/ai-review`）；`frontend/tests/nav-routes.test.tsx` 加三入口互不相同、各自深链可达、`/review` 与 `/review/ai` 不同组件的断言；`visual-shot.mjs` 记为第 20 屏。AI复盘的导航图标取 `Bot`，不复用底部「接入 AI」动作的 `Sparkles`——`rail:` 档只剩图标可辨，两个 Sparkles 分不开。**分工**：每日复盘 = 当日五段数据（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），AI复盘 = AI 生成段落 + 降级/失败段，AI周报 = 按周聚合叙述。**本行只覆盖 S1 的导航与路由面**（§0 表行、§2 导航顺序与外壳图）；DEC-046 实体文件随 S1 落地（QUOT-366 收口审计要求），新屏的 §3 小节与 §11 清单由 S2 在同一 PR 链补齐——S1 阶段 `/review/ai` 是占位壳，不预测正文结构。 |
+| v1.7 | 2026-11-03 | 新增 §3.19「首页搜索/提问面板」（QUOT-348 规格落盘，指针型小节：交互与视觉真源在 `docs/specs/home-search.md` v1.1，本节只登记入口位置 / 面板尺寸 / 分组顺序 / 键盘焦点四件外壳级事实）。§6.1 登记 C-21 `HomeSearchTrigger`、C-22 `SearchPanel`（均为**待实装**，全仓组件编号由 C-20 续到 C-22）。同批落盘 `docs/specs/home-search-prototype.html` 与 `docs/screenshots/home-search-*.png` 10 张规格图。**本节未改任何规范条文**，只补索引；与已落地数据层（`lib/searchCore.ts`，QUOT-356）的口径差异以数据层命名为准，见规格 §9.4。 |
 | v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
 
 ## 0. 范围与非目标
@@ -424,6 +425,23 @@
 
 **必须整改（观感一致性优先级最高）**：同屏挂了**两套** Toast 栈（屏级 `SettingsScreen.tsx:1473` 与 AI 段内部 `:773,934` 各一份 `useToasts`）→ R-20；Toast 无进出场过渡（`ui/Overlay.tsx`、`ui/Feedback.tsx` 内零 `transition`）而 token 注释承诺 180ms → R-19；离线时仍把假定默认端口 `5950/5951` 当真值展示、失败路径显示「耗时 0ms」、PID 缺失显示「?」→ R-07。
 
+### 3.19 首页搜索/提问面板（`/` 上的模态面板，QUOT-348）
+
+**规格真源是 `docs/specs/home-search.md`（v1.1，含原型 `docs/specs/home-search-prototype.html` 与 10 张规格图）**；本节只登记外壳级事实，不在此重复交互细节，避免第二个真源。
+
+| 项 | 规范 | 依据 |
+|---|---|---|
+| 入口位置 | 首页 `PageHeader` 的 `actions` 槽，「刷新全部」**左侧**；宽 `w-64`（256px，rail 档 `w-44`），`size=md`，`leadingIcon=Search`，placeholder「搜索个股 / 行业 / 资讯」，右侧键位提示 `/` | 规格 §4.1–§4.2 |
+| 打开条件 | `pointerdown` 或 `Enter`；**Tab 造成的 focus 不打开**（否则键盘用户每 Tab 一次被遮罩打断） | 规格 §4.5 / §14-A2 |
+| 面板尺寸 | `role="dialog" aria-modal="true"`，宽 640px（复用 `w-drawer-wide`），上偏移 64px，**最大高 420px 且必然内部滚动**（内容约 550px）；`max-h` 与滚动条只在面板内 | 规格 §5.2–§5.3 |
+| 结果分组顺序 | **固定三组**：`个股` → `行业 / 题材` → `资讯`，顺序与组名直接渲染数据层的 `result.groups` / `group.label`（`SEARCH_GROUP_ORDER`、`GROUP_LABELS`，`lib/searchCore.ts:37-43`），UI 不自己排、不写字面量 | 规格 §6 / §9.4 |
+| 每组上限 | 第一期 UI 传 `hitLimit: 5`；组头计数 = 本轮返回条数（无截断前总数，§14-A5） | 规格 §6.1 |
+| 组头徽标 | **一枚** `SourceStatusBadge`（`数据完整 / 已降级 / 部分缺失 / 未取到`），取值由 `GroupStatus` 映射；**面板内不出 `freshness` 徽标**（一次打 6 个源，无单一新鲜度）。加载中的组头留空 | 规格 §6.7 / §8.4 / §8.8 |
+| 键盘与焦点 | 焦点落输入框；`↑/↓` 移动高亮（`aria-activedescendant`，结果行 `tabIndex={-1}` 不进 Tab 序列）；`Enter` 跳转；`Esc` / 遮罩 / 选中行 = 三条关闭路径，关闭前 `runner.cancel()`，焦点归还入口；`Tab` **在面板内循环不逃出模态**（复用 `useModalChrome`，需 export）；可 Tab 件 ≤5 | 规格 §5.4 / §7.1–§7.2 |
+| 四态 | 空输入（不发任何请求）/ 加载中（骨架 + `aria-busy`）/ 无结果（「没匹配 ≠ 不存在」）/ 源失败降级（单组挂不影响另两组）/ 离线（`Banner tone="warn"`，入口不禁用）——逐态文案见规格 §8.8 | 规格 §8.8 |
+| 竞态 | 只接受最后一次响应：`if (result.superseded) return`，不自己比序号 | 规格 §8.3 / §9.4 |
+| 禁止 | 面板内不得出现 `DemoStateBadge` 或任何演示水印；不得自带第三份 label map；不得新增颜色令牌 | 规格 §6.7 / §10.2 / §5.5–§5.6 |
+
 ## 4. 状态恢复交互
 
 所有恢复相关提示都在**内容区顶部提示条区**，不弹模态，不阻塞输入。
@@ -583,6 +601,8 @@
 | C-19 | `ErrorBlock` `Banner` | `ui/Feedback.tsx:8` | 段内错误面板 / 顶部提示条 | 全 18 屏 |
 | C-15/C-16 | `Drawer` `ConfirmDialog` | `ui/Overlay.tsx:10` | 宽 480 / 640（`lg`），确认框 420；焦点陷阱 + `Esc` + 焦点归还 | 候选池、信号、研究、设置 |
 | C-20 / CH-03 | `Sparkline` `HBarList` | `ui/MiniChart.tsx:4` | 迷你趋势与横向条（值带 `.ldst-num`） | 周度、持仓、市场、研究 |
+| C-21 | `HomeSearchTrigger`（**待实装**） | `components/search/`（位置归架构师） | 首页搜索入口：纯展示 + `onOpen`，不请求、不禁用（离线也可点） | 首页（§3.19） |
+| C-22 | `SearchPanel`（**待实装**，含内部件 `SearchGroup` / `SearchOption` 不对外导出） | 同目录 | `role=dialog` 搜索面板：输入 + 三组结果 + 四态；只吃 props 与 `onSelect(href)`，复用 C-12 `Badge` / C-17 `EmptyState` / C-18 `SkeletonRows` / C-19 `Banner` / `SourceStatusBadge` | 首页（§3.19） |
 | CH-01/CH-02 | `LineChart` `BarChart` | `charts/Chart.tsx:10,151` | uPlot；色值必须来自 `chartPalette()`/`cssVar()` | 市场（情绪折线 + 梯队柱） |
 | — | `AiErrorNotice` | `kit/AiErrorNotice.tsx` | §5.4 五类 AI 错误 | 复盘、周度 |
 | — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 18 屏 |

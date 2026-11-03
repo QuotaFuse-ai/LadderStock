@@ -93,3 +93,33 @@ node scripts/visual-shot.mjs --routes review,watch,validate,journal --suffix aft
 页脚溯源行与 `—` 缺失纪律）。**没有用 `?demo=1`**：本轮改动里有三项（盯盘徽标同源、§4.2 四类原因文案、
 剩余 TTL 的 `—`）只在「无信封 / 无快照」路径上才判定得出来，演示源会把它们一并遮掉；且 §5.6 要求演示源
 与真源不混拍。逐条判定与证据见 `docs/tasks/TASK-QUOT-306/ui-spec-11-walkthrough-315.md`。
+
+## QUOT-348 首页搜索面板规格图（2026-11-03）
+
+`home-search-<state>-<dark|light>.png` 十张**是规格图（设计稿渲染），不是实机截图**：搜索面板尚未实装，
+`visual-shot.mjs` 拍不到它（脚本按路由表打真页面）。这批图由 `docs/specs/home-search-prototype.html`
+经 Chrome 无头渲染产出，用来给 `docs/specs/home-search.md` 的每个状态留像素证据。命名沿用本目录
+`<route>-…-<dark|light>.png` 的骨架（`<route>` = `home`），中间段换成状态名而不是 `before|after`——
+没有改动前后对照可拍，实装后再补 `home-search-*-after-*` 对比组。
+
+```bash
+# 在仓库根目录执行；chrome=0 隐藏原型自带的状态切换条（不属于设计体系）
+CHROME="/c/Program Files/Google/Chrome/Application/chrome.exe"
+P="file:///$(cygpath -w docs/specs/home-search-prototype.html | tr '\\' '/')"
+shot() { "$CHROME" --headless=new --disable-gpu --hide-scrollbars --window-size="$2" \
+  --virtual-time-budget=2500 --screenshot="$PWD/docs/screenshots/$1.png" "$P?chrome=0&$3" >/dev/null 2>&1; }
+
+shot home-search-entry-states-dark        1440,900 "state=entry-states"
+shot home-search-panel-empty-dark         1440,900 "state=empty"
+shot home-search-panel-results-dark       1440,900 "state=results"
+shot home-search-panel-results-scrolled-dark 1440,900 "state=results&scroll=bottom"
+shot home-search-panel-loading-dark       1440,900 "state=loading"
+shot home-search-panel-no-result-dark     1440,900 "state=noresult"
+shot home-search-panel-group-error-dark   1440,900 "state=grouperror"
+shot home-search-panel-offline-dark       1440,900 "state=offline"
+shot home-search-panel-results-light      1440,900 "state=results&theme=light"
+shot home-search-panel-results-1024-dark  1024,900 "state=results&vw=rail"
+```
+
+`--window-size` 取 1440×900（本目录基准，同 `visual-shot.mjs:12-18`），最后一张 1024×900 是 rail 断点。
+逐态对应的规格章节见 `docs/specs/home-search.md` §11。
