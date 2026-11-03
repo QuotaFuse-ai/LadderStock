@@ -57,7 +57,9 @@ from ladderstock.cli.paths import config_dir, project_root
 from ladderstock.core.boundary import (
     PEER_DIR_ENV,
     BoundaryViolation,
+    ComponentControl,
     PeerControl,
+    resolve_components,
     resolve_peer_control,
 )
 from ladderstock.core.fsguard import (
@@ -1267,6 +1269,7 @@ class ControlPlane:
         *,
         data_root: Path,
         peers: Mapping[str, PeerControl] | None = None,
+        components: Mapping[str, ComponentControl] | None = None,
         sources_loader: Callable[[], Mapping[str, Any]] | None = None,
         run: Callable[[list[str], Path, float], StepResult] | None = None,
         port_probe: Callable[[int | None], list[PortOwner]] | None = None,
@@ -1284,6 +1287,10 @@ class ControlPlane:
         # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
         self.config_root = Path(config_root) if config_root is not None else config_dir()
         self.peers: dict[str, PeerControl] = dict(peers or resolve_peer_control())
+        # 工具组件只读观测，不参与 peer 的数据边界与启停任务
+        self.components: dict[str, ComponentControl] = dict(
+            components if components is not None else resolve_components()
+        )
         # 启动即校验 peer 目录（QUOT-194 P1-3）：共享盘上的 peer 等于把执行权
         # 交给别人，命中即抛 SharedPeerDirectoryError，不进入任何动作。
         require_local_peer_directories(
@@ -1629,8 +1636,68 @@ class ControlPlane:
         peer = PEERS.get(key)
         return peer.role if peer else ""
 
+    def component_snapshot(self, key: str) -> dict[str, Any]:
+        """工具组件的只读观测：目录 → 端口 → health。不安装、不启停。"""
+        ctl = self.components[key]
+        directory = Path(ctl.directory)
+        dir_exists = directory.is_dir()
+        console_owners = self._port_probe(ctl.console_port)
+        gateway_owners = (
+            self._port_probe(ctl.gateway_port) if ctl.gateway_port else []
+        )
+        listening = bool(console_owners or gateway_owners)
+
+        health: dict[str, Any] = {"ok": None, "detail": ""}
+        if console_owners:
+            ok, detail = self._health(
+                f"http://127.0.0.1:{ctl.console_port}{ctl.health_path}",
+                HEALTH_TIMEOUT_SEC,
+            )
+            health = {"ok": ok, "detail": detail}
+
+        gateway_hint = f" / {ctl.gateway_port}" if ctl.gateway_port else ""
+        if not dir_exists:
+            status, detail = STATUS_UNCONFIGURED, f"目录不存在：{ctl.directory}"
+        elif not listening:
+            status, detail = (
+                STATUS_STOPPED,
+                f"端口 {ctl.console_port}{gateway_hint} 无监听；{ctl.managed_by}",
+            )
+        elif health["ok"]:
+            status, detail = STATUS_RUNNING, f"端口已监听，健康检查通过（{health['detail']}）"
+        else:
+            status, detail = (
+                STATUS_FAILED,
+                f"端口已监听但健康检查失败（{health['detail'] or '控制台未响应'}）",
+            )
+
+        running = status == STATUS_RUNNING
+        return {
+            "id": key,
+            "kind": "component",
+            "product": ctl.product,
+            "role": ctl.role,
+            "directory": str(directory),
+            "directory_exists": dir_exists,
+            "status": status,
+            "status_label": STATUS_LABELS[status],
+            "detail": detail,
+            "ports": {"console": ctl.console_port, "gateway": ctl.gateway_port},
+            "listening": {
+                "console": [owner.as_dict() for owner in console_owners],
+                "gateway": [owner.as_dict() for owner in gateway_owners],
+            },
+            "health": health,
+            "open_url": (
+                f"http://127.0.0.1:{ctl.console_port}" if running and console_owners else None
+            ),
+            "managed_by": ctl.managed_by,
+            "notes": list(ctl.notes),
+            "actions": {"can_open": running and bool(console_owners)},
+        }
+
     def board(self) -> dict[str, Any]:
-        """四个 peer + 端口占用汇总（`GET /api/control/peers`）。"""
+        """五个模块（4 个数据 peer + ProxyFleet 组件）+ 端口占用汇总。"""
         snapshots = [self.snapshot(key) for key in self.peers]
         conflicts: list[dict[str, Any]] = []
         for snapshot in snapshots:
@@ -1640,6 +1707,7 @@ class ControlPlane:
             "ok": True,
             "control_enabled": control_enabled(),
             "peers": snapshots,
+            "components": [self.component_snapshot(key) for key in self.components],
             "port_conflicts": conflicts,
             "ports": {
                 "board": 5950,

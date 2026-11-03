@@ -1,7 +1,7 @@
 # 看板信息架构与视觉规范（20 屏）
 
-- 版本：v1.6
-- 日期：2026-11-03
+- 版本：v1.9
+- 日期：2026-11-04
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -20,7 +20,9 @@
 | v1.5 | 2026-11-02 | 新增「接入 AI」一等入口（QUOT-200）：侧栏底部（主题与设置之间）按钮 + 设置 → AI 接入顶部状态卡，打开右侧向导抽屉（`AiConnectDialog`）；提供 DeepSeek / 通义千问 / Kimi / MiniMax / 本机 Ollama / 自定义预置，测试连通性后写入 `config/ai.env`（`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY`），密钥只写不读回。订阅版 CLI（Codex / Claude Code / WorkBuddy）当前后端未实现，不放入口。`?ai=1` 可直接打开抽屉（截图/排障）。 |
 | v1.6 | 2026-11-03 | 复盘组拆三独立入口（QUOT-344，决策 DEC-046；本链 S1+S2 合并成这一行，按 DEC-045 §4）。导航：`复盘` 组由「情绪复盘 / 周度复盘 / 候选池」改为 **每日复盘 `/review` · AI复盘 `/review/ai` · AI周报 `/weekly` · 候选池 `/pool`**——三屏同源不合并，`/weekly` 只改文案不改路由。路由新增 `/review/ai`（与 `/review` 同族前缀，不用 `/ai-review`）；`frontend/tests/nav-routes.test.tsx` 加三入口互不相同、各自深链可达、`/review` 与 `/review/ai` 不同组件的断言；`visual-shot.mjs` 记为第 20 屏。AI复盘的导航图标取 `Bot`，不复用底部「接入 AI」动作的 `Sparkles`——`rail:` 档只剩图标可辨，两个 Sparkles 分不开。**分工**：每日复盘 = 当日五段数据（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），AI复盘 = AI 生成段落 + 降级/失败段，AI周报 = 按周聚合叙述。S2（QUOT-353，决策 DEC-049）补齐内容面：**`/review` = 数据面、`/review/ai` = 模型面，两屏读同一份 `review/<date>.json` 各取一半，互不重叠**。数据面新增此前不存在的正文层 `screens/review/SectionMetrics.tsx`（五段 `sections[].metrics` 走 key 登记表，未登记不上屏）；「我的判断」裁定归数据面且全仓只有一份 `review_draft` 存储，模型面不写第二份、交易日只跟 `?date=`（DEC-049 §3）。模型面从占位壳变为可用屏：五段 `narrative` + 段级 `status` + `ai_failures[]` + `ai.model` + 控制面 `generate`/按段 `retry` + 1.5s 轮询 `jobs/{id}` 全在这一屏，「重新生成 / 重试失败段」从 `/review` 移除（不是并存）。**三种「没有 AI 正文」分开显示**（`review/parse.ts:classifyAiCase`，只读契约字段不解析文案）：产物不存在 → 引导 `ldst review`；产物在但模型未配 → 「模型未接入：五段都没有跑过模型」+「接入 AI」，且必须写「缺的是模型，不是数据」；段级失败 → 逐段标注 + 按段重跑。同源修正三处口径：`headline` 是 `pipeline._headline()` 的程序直出，此前挂着「AI 摘要」+ 模型名属错标，现改标「程序直出 · 当日摘要」并留在数据面（DEC-049 §6）；段级缺数横幅按 §5.2 取 `danger`，收口 R-12（复盘两份本地溯源徽标一并收进 `SourceBadges`，R-01 计数 4→3）；演示态永不触发控制面、永不预填「我的判断」、离线回放缓存仍只有一个键（`review_snapshot_cache_v1`）。规范落点：§0 表行 1/20 标注两屏分工、§3.1 重写为数据面、新增 §3.19（模型面）、§10 两行映射落定、§11.1 重写 + 新增 §11.20、§12.5 补 R-27（复盘页面导出从未实现）。证据：`tests/review-split.test.tsx`（两屏同挂对照重叠检查）+ `tests/quota-334-review-weekly.test.tsx`（按拆屏后口径重写）+ `docs/screenshots/{review,review-ai}-after-344s2[-1024|-noartifact|-demo|-demo-partial][-tall]-{dark,light}.png`；`typecheck` / `test`（399 例）/ `check:ui`（6/6）全绿。 |
 | v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
-| v1.7 | 2026-11-04 | 后端数据面新增两个首页出口（QUOT-380，决策 DEC-052；§0「不覆盖」清单只加标注、原文不改）：**`GET /api/indices`** 首页 A 股指数条 4 格（`sh000001` 上证 / `sh000300` 沪深300 / `sz399001` 深证成指 / `sz399006` 创业板指，白名单由后端写死、不向 peer 动态要清单），每格 `price` / `change` / `change_pct` / `prev_close` / `as_of`，取不到是 `available=false` + 原因，不补 0、不自采；**`GET /api/watchlist`** 自选只读面（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，顶层 `items` + `watch_count`，`note` 不出，写面仍不经 HTTP）。`GET /api/positions` 只**加字段**不改既有形状：`items[].daily_pnl` / `daily_pnl_status` / `daily_pnl_reason` 与 `valuation.daily_pnl` / `currency: CNY`（当日盈亏 = `daily_k` 的 `close(T) − close(T−1)`，停牌日显 `missing` 不退回更早交易日；币种汇总本版不做）。前端接线与 §10 路由映射由 S3（QUOT-381）承接。 |
+| v1.7 | 2026-11-03 | 首页 v2 版式立项（QUOT-378，父任务 QUOT-377「首页改版 A」S1，老板拍板 A 案）：首页整页改为参考页四块——**大盘与全球指数条 → 今天，想研究什么？（研究入口卡）→ 我的自选 → 我的持仓**，待办 / 最近异动保留并下移，情绪温度条 + 5 指标卡阵 + 连板梯队 Top 10 + 题材强度 Top 5 从首页移除（`/market?tab=sentiment\|ladder\|theme` 已有同三块，信息不丢）。**逐块线框、字段表（要哪些字段 / 从哪来 / 拿不到显示什么）、块级状态矩阵、整屏六态与块级四态的关系、验收清单全部落在 `docs/specs/SPEC-HOME-V2.md`**，本文件 §3.5 与 §11.5 的首页条目在 S3 接线合入时按该 spec 同步（本行只登记立项，不改旧条目正文）。零新增 token / 依赖 / 断点；四处与参考页的实质偏差（指数条 4 列 × 2 行而非单排 8 格、研究入口不承诺 AI 问答、自选与持仓各自满宽堆叠而非并排、卡头不放「管理自选」）与算术理由见 SPEC-HOME-V2 §12-L01/L02/L06/L07。 |
+| v1.8 | 2026-11-03 | 新增 §3.20「首页搜索/提问面板」（QUOT-348 规格落盘，指针型小节：交互与视觉真源在 `docs/specs/home-search.md` v1.1，本节只登记入口位置 / 面板尺寸 / 分组顺序 / 键盘焦点四件外壳级事实）。§6.1 登记 C-21 `HomeSearchTrigger`、C-22 `SearchPanel`（均为**待实装**，全仓组件编号由 C-20 续到 C-22）。同批落盘 `docs/specs/home-search-prototype.html` 与 `docs/screenshots/home-search-*.png` 10 张规格图。**本节未改任何规范条文**，只补索引；与已落地数据层（`lib/searchCore.ts`，QUOT-356）的口径差异以数据层命名为准，见规格 §9.4。 |
+| v1.9 | 2026-11-04 | 后端数据面新增两个首页出口（QUOT-380，决策 DEC-052；§0「不覆盖」清单只加标注、原文不改）：**`GET /api/indices`** 首页 A 股指数条 4 格（`sh000001` 上证 / `sh000300` 沪深300 / `sz399001` 深证成指 / `sz399006` 创业板指，白名单由后端写死、不向 peer 动态要清单），每格 `price` / `change` / `change_pct` / `prev_close` / `as_of`，取不到是 `available=false` + 原因，不补 0、不自采；**`GET /api/watchlist`** 自选只读面（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，顶层 `items` + `watch_count`，`note` 不出，写面仍不经 HTTP）。`GET /api/positions` 只**加字段**不改既有形状：`items[].daily_pnl` / `daily_pnl_status` / `daily_pnl_reason` 与 `valuation.daily_pnl` / `currency: CNY`（当日盈亏 = `daily_k` 的 `close(T) − close(T−1)`，停牌日显 `missing` 不退回更早交易日；币种汇总本版不做）。前端接线与 §10 路由映射由 S3（QUOT-381）承接。 |
 
 ## 0. 范围与非目标
 
@@ -462,6 +464,23 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 
 **禁止**：三张指标卡、逐段 `metrics`、「我的判断」编辑框（都在 §3.1）；把「模型未配」显示成「数据缺失」或反过来（DEC-049 §4）；`model-unconfigured` 时再叠一条泛化的「几段降级」横幅（两条横幅讲同一件事，用户读不出重点）；未配置提示在五段各贴一遍页面级说明（页面级只说一次，段内只说本段）。
 
+### 3.20 首页搜索/提问面板（`/` 上的模态面板，QUOT-348）
+
+**规格真源是 `docs/specs/home-search.md`（v1.1，含原型 `docs/specs/home-search-prototype.html` 与 10 张规格图）**；本节只登记外壳级事实，不在此重复交互细节，避免第二个真源。
+
+| 项 | 规范 | 依据 |
+|---|---|---|
+| 入口位置 | 首页 `PageHeader` 的 `actions` 槽，「刷新全部」**左侧**；宽 `w-64`（256px，rail 档 `w-44`），`size=md`，`leadingIcon=Search`，placeholder「搜索个股 / 行业 / 资讯」，右侧键位提示 `/` | 规格 §4.1–§4.2 |
+| 打开条件 | `pointerdown` 或 `Enter`；**Tab 造成的 focus 不打开**（否则键盘用户每 Tab 一次被遮罩打断） | 规格 §4.5 / §14-A2 |
+| 面板尺寸 | `role="dialog" aria-modal="true"`，宽 640px（复用 `w-drawer-wide`），上偏移 64px，**最大高 420px 且必然内部滚动**（内容约 550px）；`max-h` 与滚动条只在面板内 | 规格 §5.2–§5.3 |
+| 结果分组顺序 | **固定三组**：`个股` → `行业 / 题材` → `资讯`，顺序与组名直接渲染数据层的 `result.groups` / `group.label`（`SEARCH_GROUP_ORDER`、`GROUP_LABELS`，`lib/searchCore.ts:37-43`），UI 不自己排、不写字面量 | 规格 §6 / §9.4 |
+| 每组上限 | 第一期 UI 传 `hitLimit: 5`；组头计数 = 本轮返回条数（无截断前总数，§14-A5） | 规格 §6.1 |
+| 组头徽标 | **一枚** `SourceStatusBadge`（`数据完整 / 已降级 / 部分缺失 / 未取到`），取值由 `GroupStatus` 映射；**面板内不出 `freshness` 徽标**（一次打 6 个源，无单一新鲜度）。加载中的组头留空 | 规格 §6.7 / §8.4 / §8.8 |
+| 键盘与焦点 | 焦点落输入框；`↑/↓` 移动高亮（`aria-activedescendant`，结果行 `tabIndex={-1}` 不进 Tab 序列）；`Enter` 跳转；`Esc` / 遮罩 / 选中行 = 三条关闭路径，关闭前 `runner.cancel()`，焦点归还入口；`Tab` **在面板内循环不逃出模态**（复用 `useModalChrome`，需 export）；可 Tab 件 ≤5 | 规格 §5.4 / §7.1–§7.2 |
+| 四态 | 空输入（不发任何请求）/ 加载中（骨架 + `aria-busy`）/ 无结果（「没匹配 ≠ 不存在」）/ 源失败降级（单组挂不影响另两组）/ 离线（`Banner tone="warn"`，入口不禁用）——逐态文案见规格 §8.8 | 规格 §8.8 |
+| 竞态 | 只接受最后一次响应：`if (result.superseded) return`，不自己比序号 | 规格 §8.3 / §9.4 |
+| 禁止 | 面板内不得出现 `DemoStateBadge` 或任何演示水印；不得自带第三份 label map；不得新增颜色令牌 | 规格 §6.7 / §10.2 / §5.5–§5.6 |
+
 ## 4. 状态恢复交互
 
 所有恢复相关提示都在**内容区顶部提示条区**，不弹模态，不阻塞输入。
@@ -621,6 +640,8 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | C-19 | `ErrorBlock` `Banner` | `ui/Feedback.tsx:8` | 段内错误面板 / 顶部提示条 | 全 18 屏 |
 | C-15/C-16 | `Drawer` `ConfirmDialog` | `ui/Overlay.tsx:10` | 宽 480 / 640（`lg`），确认框 420；焦点陷阱 + `Esc` + 焦点归还 | 候选池、信号、研究、设置 |
 | C-20 / CH-03 | `Sparkline` `HBarList` | `ui/MiniChart.tsx:4` | 迷你趋势与横向条（值带 `.ldst-num`） | 周度、持仓、市场、研究 |
+| C-21 | `HomeSearchTrigger`（已实装） | `components/search/HomeSearchTrigger.tsx` | 首页搜索入口：纯展示 + `onOpen`，不请求、不禁用（离线也可点） | 首页（§3.20） |
+| C-22 | `SearchPanel`（已实装，含内部件 `SearchGroupView` 等；取数与判定在 `screens/home/useHomeSearch.ts`） | `components/search/SearchPanel.tsx` | `role=dialog` 搜索面板：输入 + 三组结果 + 四态；只吃 props 与 `onSelect(href)`，复用 C-12 `Badge` / C-17 `EmptyState` / C-18 `SkeletonRows` / C-19 `Banner` / `SourceStatusBadge` | 首页（§3.20） |
 | CH-01/CH-02 | `LineChart` `BarChart` | `charts/Chart.tsx:10,151` | uPlot；色值必须来自 `chartPalette()`/`cssVar()` | 市场（情绪折线 + 梯队柱） |
 | — | `AiErrorNotice` | `kit/AiErrorNotice.tsx` | §5.4 五类 AI 错误 | 复盘、周度 |
 | — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 18 屏 |
