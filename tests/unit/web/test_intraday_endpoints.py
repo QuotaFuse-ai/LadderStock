@@ -318,6 +318,7 @@ def test_snapshot_returns_file_body_verbatim(tmp_path: Path) -> None:
         "date",
         "slot",
         "captured_at",
+        "meta",
         "price_field",
         "source",
         "yesterday_limit_up",
