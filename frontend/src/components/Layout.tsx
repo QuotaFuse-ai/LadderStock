@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
   BarChart3,
+  Bot,
   Building2,
   CalendarDays,
   CalendarRange,
@@ -114,7 +115,7 @@ export const NAV_SECTIONS: NavSection[] = [
     // 候选池是复盘的产出，位置与文案不变
     pages: [
       { to: '/review', label: '每日复盘', icon: NotebookPen },
-      { to: '/review/ai', label: 'AI复盘', icon: Sparkles },
+      { to: '/review/ai', label: 'AI复盘', icon: Bot },
       // R11（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
       { to: '/weekly', label: 'AI周报', icon: CalendarRange },
       { to: '/pool', label: '候选池', icon: ListChecks },
