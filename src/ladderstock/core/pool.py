@@ -8,7 +8,7 @@
 | 连板梯队 | 同上（复用 `core/ladder.compute_ladder`） | 当日最高板 → 「地位」的相对位置 |
 | 题材成员 | `concept_board` | 题材标签 → 板块涨幅 → 「题材」强度 |
 | 个股↔板块归属 | `concept_membership` | 逐只「这只股票挂在哪些概念板块」，替代关键词切分 |
-| 资金流 | `fund_flow` | 个股净额在候选集内的分位 → 「资金」 |
+| 资金流 | `fund_flow` | 个股净额在候选集内的分位 → 「资金」；当日分区缺失时回落到最近可用交易日 |
 
 分项固定五个，顺序即口径顺序，**不可增删**：`strength / turnover / standing / capital / theme`
 （强度 / 换手 / 地位 / 资金 / 题材）。权重、算式、字段容忍表与手算对照全部写在
@@ -30,13 +30,14 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from ladderstock.core import ladder as ladder_module
 from ladderstock.core import limit_pool as limit_pool_module
 from ladderstock.core import sentiment as sentiment_module
 from ladderstock.core.ladder import as_float, as_int, dataset_snapshot, dedupe_by_code, pick
+from ladderstock.data import archive
 
 #: 分项固定顺序（对外键名）
 SUB_SCORES: tuple[str, ...] = ("strength", "turnover", "standing", "capital", "theme")
@@ -132,8 +133,20 @@ MEMBERSHIP_CODE_KEYS: tuple[str, ...] = ("code", "symbol", "stock_code")
 #: 题材取数口径（对外只有这两个值，读到就知道分数是哪条路出来的，QUOT-362）
 THEME_SOURCE_MEMBERSHIP = "stock_concept_blocks"
 THEME_SOURCE_KEYWORDS = "reason_keywords"
-#: 参与溯源与 `missing` 的固定数据集顺序
-POOL_DATASETS: tuple[str, ...] = ("limit_pool", "concept_board", "fund_flow")
+#: 参与溯源与 `missing` 的固定数据集顺序。`concept_membership` 排在最后：
+#: 它是**可选**的第四路输入，缺它只让题材降级（不进 `missing`），但必须进溯源
+#: 与 `degraded_inputs`（QUOT-364 B-2：归属整列取不到时 `missing=[]` + `status=ok`，
+#: 消费方看不见题材缺数）。信封 `data_as_of` 只取首位（limit_pool）的口径日期，
+#: 加在末尾不会改变对外信封的日期语义。
+POOL_DATASETS: tuple[str, ...] = ("limit_pool", "concept_board", "fund_flow", "concept_membership")
+#: 资金回落窗口（自然日）：日线主力净额当日盘后才发布，当日分区缺失是**常态**而不是异常。
+#: 6 天够跨一个周末；再早就不是「落后一天」而是这条链路断了，宁缺不补（DEC-050）。
+FUND_LOOKBACK_DAYS = 6
+#: 单只候选在归属这一路上的状态（QUOT-364 B-1：「没落库」与「落库但板块不在榜」
+#: 是两件事，混成一个 null 就没法判断该找同步还是该找上游榜单）
+MEMBERSHIP_HIT = "hit"
+MEMBERSHIP_LANDED_OFF_BOARD = "landed_off_board"
+MEMBERSHIP_NOT_FETCHED = "not_fetched"
 
 SCORE_FORMULA = (
     "score = Σ(weight_i × part_i) / Σ(weight_i)，part_i ∈ [0,100]（1 位小数）；"
@@ -191,6 +204,9 @@ def membership_index(
     （2026-11-03 实测：行业段 `BK04xx` 28 行、地域段 `BK01xx` 29 行命中概念榜 0 行，
     14 个「XX板块」结尾的地域名同样 0 命中）。
     不在当日榜内的归属如实丢弃：没有当日涨幅就没有可打分的口径，不做任何补数。
+    行里那个 `change_pct` **不参与算分**（QUOT-364 B-4 / DEC-050）：它是那次调用时刻的板块涨幅，
+    与 `concept_board` 同日同名可以符号相反（实测 `融资融券` −1.27 vs +1.2782），
+    题材分的涨幅来源只有一个——榜单侧。
     """
     index: dict[str, list[str]] = {}
     for record in records:
@@ -214,6 +230,57 @@ def fund_inflow_map(records: list[dict[str, Any]]) -> dict[str, float]:
             continue
         flows[code] = value
     return flows
+
+
+def dataset_snapshot_as_of(
+    dataset: str, day: date | str, root: Any = None
+) -> tuple[list[dict[str, Any]], str, date | None]:
+    """`dataset_snapshot()` 的带口径日期版本：除了记录与后端，再给出 `as_of`。
+
+    `ladder.dataset_snapshot()` 的签名与现有调用点一个都不动（天梯 / 情绪都在用它的
+    二元组，QUOT-361 的硬约束），要拿到「这批数是哪天的」只能走 `archive.snapshot()`。
+    `as_of` 是**记录里 `trade_date` 的最大值**；缓存不可读或没有记录时给 `None`——
+    拿请求日期顶上去，就是把回落读出来的数伪装成当日数（QUOT-364 B-3 的根因）。
+    """
+    try:
+        snapshot = archive.snapshot(dataset, day, root=root)
+    except Exception:  # noqa: BLE001 - 缓存损坏 / 非法日期都不该让整条打分崩掉
+        return [], "error", None
+    return snapshot.records, snapshot.backend, (snapshot.as_of if snapshot.records else None)
+
+
+def _request_day(day: date | str) -> date | None:
+    """把 `compute_pool` 的 `day`（可能是字符串）规约成 `date`；解析不出来就不回落。"""
+    if isinstance(day, date):
+        return day
+    try:
+        return date.fromisoformat(str(day).strip())
+    except ValueError:
+        return None
+
+
+def fund_flow_snapshot(
+    day: date | str, root: Any = None
+) -> tuple[list[dict[str, Any]], str, date | None, bool]:
+    """资金取数顺序：**先当日分区，缺则回落到最近一个可用交易日**（QUOT-361 / QUOT-364 B-3）。
+
+    返回 `(records, backend, as_of, fell_back)`。日线主力净额是当日盘后才发布的，
+    「请求日没有分区」是常态而不是异常；只读请求日就等于在盘后早段把 `capital`
+    整列判空。`fell_back=True` 时输出侧必须把 `as_of` 写在明面上（`meta.fund_data_as_of`
+    与 `source_detail`），不能让它冒充请求日的数。
+    窗口外仍找不到就给空列表，走既有的「`capital=null` + 权重从分母剔除」，不补 0。
+    """
+    when = _request_day(day)
+    if when is None:
+        records, backend, as_of = dataset_snapshot_as_of("fund_flow", day, root)
+        return records, backend, as_of, False
+    backend = "none"
+    for offset in range(FUND_LOOKBACK_DAYS + 1):
+        probe = when - timedelta(days=offset)
+        records, backend, as_of = dataset_snapshot_as_of("fund_flow", probe, root)
+        if records:
+            return records, backend, as_of or probe, offset > 0
+    return [], backend, None, False
 
 
 def rank_percentiles(values: dict[str, float]) -> dict[str, float]:
@@ -262,7 +329,7 @@ def compute_pool(
     dropped = raw_total - len(unique)
 
     concept_records, concept_backend = dataset_snapshot("concept_board", day, root)
-    flow_records, flow_backend = dataset_snapshot("fund_flow", day, root)
+    flow_records, flow_backend, flow_as_of, flow_fell_back = fund_flow_snapshot(day, root)
     member_records, member_backend = dataset_snapshot("concept_membership", day, root)
     boards = theme_board_index(concept_records)
     members = membership_index(member_records, boards)
@@ -277,7 +344,6 @@ def compute_pool(
     height = ladder.get("height")
 
     rows: list[dict[str, Any]] = []
-    theme_source_counts: dict[str, int] = {THEME_SOURCE_MEMBERSHIP: 0, THEME_SOURCE_KEYWORDS: 0}
     unknown = 0
     for record in unique:
         code = str(pick(record, ladder_module.CODE_KEYS) or "").strip()
@@ -302,8 +368,6 @@ def compute_pool(
         # 命中多个板块取最大涨幅（SPEC §3 既有口径：题材分回答「最强那条题材有多强」，
         # 求和会让挂在概念多的股票天然占便宜，见 DEC-049）
         theme_change = max((change for _, change in matched), default=None)
-        if theme_source is not None:
-            theme_source_counts[theme_source] += 1
 
         parts = {
             "strength": (
@@ -353,10 +417,27 @@ def compute_pool(
         )
         if not source
     ]
+    #: 「可选输入不可用」与「口径日期不是请求日」都进这里：`missing` 的语义
+    #: （候选池缺哪一路**必需**输入）一个都不动，消费方却看得见降级（QUOT-364 B-2/B-3）。
+    request_day = _request_day(day)
+    fund_is_request_day = flow_as_of is not None and flow_as_of == request_day
+    degraded_inputs = []
+    if not member_records:
+        degraded_inputs.append("concept_membership")
+    if flow_records and not fund_is_request_day:
+        degraded_inputs.append("fund_flow")
+
+    fund_note = f"（{len(flow_records)} 条"
+    if flow_as_of is not None and not fund_is_request_day:
+        fund_note += (
+            f"，口径日期 {flow_as_of.isoformat()}"
+            f" ≠ 请求日 {day}{'，回落读取' if flow_fell_back else ''}"
+        )
+    fund_note += "）"
     detail = (
         f"limit_pool: {backend}（{raw_total} 条）; "
         f"concept_board: {concept_backend}（{len(concept_records)} 条）; "
-        f"fund_flow: {flow_backend}（{len(flow_records)} 条）; "
+        f"fund_flow: {flow_backend}{fund_note}; "
         f"concept_membership: {member_backend}（{len(member_records)} 条，"
         f"{len(landed_codes)} 只落库，{len(members)} 只命中当日概念榜）"
     )
@@ -367,36 +448,8 @@ def compute_pool(
             1,
         )
 
-    if not rows:
-        return {
-            "date": str(day),
-            "available": False,
-            # 与 web / MCP 同一约定：载荷里始终显式带数据状态，缺失/降级一眼可见
-            "data_source_status": "missing",
-            "reason": (
-                "涨停池没有可解析的候选（可能尚未同步）" if not unique else "涨停池记录缺少代码字段"
-            ),
-            "source_detail": detail,
-            "height": height,
-            "candidate_count": 0,
-            "candidates": [],
-            "weights": dict(WEIGHTS),
-            "formula": SCORE_FORMULA,
-            "meta": _theme_meta(member_records, members, theme_source_counts, landed_codes),
-            "counts": {
-                "limit_pool_rows": raw_total,
-                "dropped_duplicates": dropped,
-                "unknown_code": unknown,
-                "theme_boards": len(boards),
-                "fund_flow_rows": len(flow_records),
-            },
-            "missing": missing_datasets,
-        }
-
-    return {
+    base: dict[str, Any] = {
         "date": str(day),
-        "available": True,
-        "data_source_status": "ok",
         "reason": None,
         "source_detail": detail,
         "height": height,
@@ -404,33 +457,94 @@ def compute_pool(
         "candidates": rows,
         "weights": dict(WEIGHTS),
         "formula": SCORE_FORMULA,
-        "meta": _theme_meta(member_records, members, theme_source_counts, landed_codes),
+        "meta": _pool_meta(
+            rows, member_records, members, landed_codes, flow_as_of, fund_is_request_day
+        ),
         "counts": {
             "limit_pool_rows": raw_total,
             "dropped_duplicates": dropped,
             "unknown_code": unknown,
             "theme_boards": len(boards),
             "fund_flow_rows": len(flow_records),
+            "concept_membership_rows": len(member_records),
         },
         "missing": missing_datasets,
+        "degraded_inputs": degraded_inputs,
     }
+    if not rows:
+        return {
+            **base,
+            "available": False,
+            # 与 web / MCP 同一约定：载荷里始终显式带数据状态，缺失/降级一眼可见
+            "data_source_status": "missing",
+            "reason": (
+                "涨停池没有可解析的候选（可能尚未同步）" if not unique else "涨停池记录缺少代码字段"
+            ),
+        }
+    return {**base, "available": True, "data_source_status": "ok"}
 
 
-def _theme_meta(
+def _pool_meta(
+    rows: list[dict[str, Any]],
     member_records: list[dict[str, Any]],
     members: dict[str, list[str]],
-    theme_source_counts: dict[str, int],
     landed_codes: set[str],
+    flow_as_of: date | None,
+    fund_is_request_day: bool,
 ) -> dict[str, Any]:
-    """题材分项这轮是**怎么**取到数的——两条路的行数都摆在明面上，不靠读的人猜。"""
+    """这轮分数是**怎么**取到的、覆盖到本次返回的哪几只候选（QUOT-362 / QUOT-364）。
+
+    口径纪律只有一条：**`membership` 与 `parts_non_null` 里带 `candidates` 字样的数字，
+    分母都是 `len(rows)`（`limit` 截断之后真正对外的那批候选）**。QUOT-364 B-1 的教训是
+    这些计数原先按「归属表全量」统计，报出 21 只而响应里只有 18 只候选 `theme` 非空——
+    覆盖率不能靠读的人自己数。表级覆盖（落库几只）单独放在 `membership.table_*`，
+    两种口径刻意不同名。
+    """
+    source_counts: dict[str, int] = {THEME_SOURCE_MEMBERSHIP: 0, THEME_SOURCE_KEYWORDS: 0}
+    states: dict[str, int] = {
+        MEMBERSHIP_HIT: 0,
+        MEMBERSHIP_LANDED_OFF_BOARD: 0,
+        MEMBERSHIP_NOT_FETCHED: 0,
+    }
+    not_fetched: list[str] = []
+    for row in rows:
+        theme_source = row["raw"]["theme_source"]
+        if theme_source is not None:
+            source_counts[theme_source] += 1
+        code = row["code"]
+        if code in members:
+            states[MEMBERSHIP_HIT] += 1
+        elif code in landed_codes:
+            # 归属行取到了，但它挂的板块名不在当日概念榜里（榜只有 100 行，是热度榜）
+            states[MEMBERSHIP_LANDED_OFF_BOARD] += 1
+        else:
+            # 归属这一路根本没覆盖这只：该找同步扇出的代码池，不是找解析
+            states[MEMBERSHIP_NOT_FETCHED] += 1
+            not_fetched.append(code)
+
     return {
-        # 本轮的主口径：有逐只归属就认归属，没有就是关键词降级（不是成分归属）
-        "theme_source": THEME_SOURCE_MEMBERSHIP if members else THEME_SOURCE_KEYWORDS,
-        "theme_membership_rows": len(member_records),
-        # 落库覆盖几只 vs 其中几只挂的板块在当日概念榜里（题材分只能用后者）
-        "theme_membership_landed_codes": len(landed_codes),
-        "theme_membership_codes": len(members),
-        "theme_source_counts": dict(theme_source_counts),
+        "theme_source": next(
+            (
+                name
+                for name in (THEME_SOURCE_MEMBERSHIP, THEME_SOURCE_KEYWORDS)
+                if source_counts[name]
+            ),
+            None,
+        ),
+        "theme_source_counts": dict(source_counts),
+        "parts_non_null": {
+            key: sum(1 for row in rows if row["parts"][key] is not None) for key in SUB_SCORES
+        },
+        "membership": {
+            "rows": len(member_records),
+            "table_codes": len(landed_codes),
+            "table_board_matched_codes": len(members),
+            "candidates": len(rows),
+            "states": states,
+            "not_fetched_codes": not_fetched,
+        },
+        "fund_data_as_of": None if flow_as_of is None else flow_as_of.isoformat(),
+        "fund_is_request_day": fund_is_request_day,
     }
 
 
@@ -450,7 +564,11 @@ def summary(pool: dict[str, Any]) -> str:
 __all__ = [
     "BOARD_NAME_KEYS",
     "CHANGE_PCT_KEYS",
+    "FUND_LOOKBACK_DAYS",
     "MEMBERSHIP_CODE_KEYS",
+    "MEMBERSHIP_HIT",
+    "MEMBERSHIP_LANDED_OFF_BOARD",
+    "MEMBERSHIP_NOT_FETCHED",
     "NET_INFLOW_KEYS",
     "POOL_DATASETS",
     "SUB_SCORE_LABELS",
@@ -464,6 +582,8 @@ __all__ = [
     "TURNOVER_NORM",
     "WEIGHTS",
     "compute_pool",
+    "dataset_snapshot_as_of",
+    "fund_flow_snapshot",
     "fund_inflow_map",
     "membership_index",
     "rank_percentiles",
