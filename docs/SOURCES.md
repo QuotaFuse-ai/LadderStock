@@ -23,8 +23,9 @@
 | `wire` | QuotaFuse Wire | `qfw` | `LDST_WIRE_MCP_URL` | `http://127.0.0.1:8791/mcp` | 可选消费（题材叙事） |
 | `senate` | StockSenate | `ssenate` | `LDST_SENATE_MCP_URL` | `http://127.0.0.1:8765/mcp` | 只读消费（不复现合议） |
 
-TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 WSL 转发服务
-的固定端口，8787 已被 TickHub-CN 管理端占用，两者都不允许抢占（不自动换端口）。
+TickHub-US 的端口固定为 MCP **8002**（本机构建没有 admin API，不分配管理端端口）——8001 是
+WSL 转发服务的固定端口，8787 已被 TickHub-CN 管理端占用，两者都不允许抢占（不自动换端口）。
+`8788` / `8789` 本机归 ProxyFleet 网关，控制面不再把它们登记成 US 管理端（DEC-047）。
 
 传输层是 MCP Streamable HTTP：首次调用先 `initialize` 握手，拿响应头的
 `Mcp-Session-Id` 回一条 `notifications/initialized`，之后每个请求带

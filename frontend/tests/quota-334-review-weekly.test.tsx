@@ -8,13 +8,14 @@ import ReviewScreen from '../src/screens/ReviewScreen'
 import WeeklyScreen from '../src/screens/WeeklyScreen'
 
 /**
- * QUOT-337：`/review` 与 `/weekly` 的演示源（UI-SPEC §5.6 / §11.1 / §11.7）。
+ * QUOT-337 / QUOT-344-S2：`/review`（数据面）与 `/weekly` 的演示源（UI-SPEC §5.6 / §11.1 / §11.7）。
  *
- * 断言三件事：
+ * 断言四件事：
  * 1. `?demo=1` 与设置开关两个入口都让两屏首屏就有内容，并出示「演示数据」徽标；
- * 2. 演示态关掉写入口——「重新生成 / 重试失败段」禁用且原因可读，不碰真实控制面；
+ * 2. `/review` 只有程序指标 +「我的判断」：AI 段落、模型名、段级成败、生成入口一个都不在本屏
+ *    （DEC-047 §2 的边界，模型面在 `/review/ai`，另有用例）；
  * 3. **关开关 + 真实请求失败时，页面不出现任何演示数据**（离线就是离线，不回落到 demo.ts）；
- * 4. `partial` / `empty` 变体的降级与缺失标注：缺什么写什么，不补 0。
+ * 4. `partial` / `empty` 变体的缺失标注：缺什么写什么，不补 0、不显示 AI 的降级/失败字样。
  *
  * 演示事实基线与 `/limit-up` 等屏同一份：交易日 2026-10-30、情绪温度 68、涨停 47 家、最高 5 板。
  */
@@ -26,6 +27,9 @@ const DEMO_SENTINELS = [
   '一周龙头与梯队',
   '情绪偏暖且较昨日继续抬升',
 ]
+
+/** 只属于模型面的哨兵：数据面出现任何一条就是两屏重叠（验收项「三屏内容互不重叠」）。 */
+const MODEL_ONLY = ['deepseek-v3', '已完成', '降级完成', '重跑该段']
 
 afterEach(() => {
   cleanup()
@@ -59,31 +63,47 @@ function bodyText(): string {
   return document.body.textContent ?? ''
 }
 
-describe('复盘 / 周度复盘演示源', () => {
-  it('/review ?demo=1：首屏出指标与五段叙述，写入口禁用且原因可见', async () => {
+/** 段内程序指标行：`dt` 标签 + 同排 `dd` 取值（`review/SectionMetrics.tsx`）。按段落定位，因为「最高板」「断层档位」这类 key 多段共有。 */
+function metricRow(sectionName: string, label: string): string {
+  const block = document.getElementById(`review-section-${sectionName}`)
+  if (!block) throw new Error(`页面上没有 ${sectionName} 段`)
+  const dt = Array.from(block.querySelectorAll('dt')).find((node) => node.textContent === label)
+  const dd = dt?.parentElement?.querySelector('dd')
+  if (!dd) throw new Error(`${sectionName} 段没有指标行「${label}」`)
+  return dd.textContent ?? ''
+}
+
+describe('每日复盘（数据面）/ 周度复盘演示源', () => {
+  it('/review ?demo=1：指标卡与五段程序指标首屏可见，模型内容一律不在本屏', async () => {
     stubOffline()
     renderBoth('/review?demo=1&date=2026-10-30')
 
     expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
-    expect(screen.getByRole('heading', { level: 1, name: '收盘复盘' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 1, name: '每日复盘' })).toBeTruthy()
 
-    // 核心指标行 + 主面板首屏可见：三张指标卡来自同一份市场事实
-    expect(screen.getByText('68')).toBeTruthy()
-    expect(screen.getByText('32.6%')).toBeTruthy()
+    // 三张指标卡与段内指标同口径：同一个读数在两处必须相等（68 / 32.6% 各出现两次）
+    expect(screen.getAllByText('68')).toHaveLength(2)
+    expect(screen.getAllByText('32.6%')).toHaveLength(2)
     expect(bodyText()).toContain('涨停 47 家')
 
-    // 五段固定顺序与 AI 叙述（≥12 行内容的主体）
+    // 五段固定顺序 + 段内程序指标（与指标卡同口径，不是 AI 复述）
     expect(screen.getByText('情绪温度与赚钱效应')).toBeTruthy()
-    expect(screen.getByText('人工智能仍是强度第一的主线，机器人、半导体紧随其后，三线同日共振是当日情绪上行的直接来源。')).toBeTruthy()
+    expect(metricRow('sentiment', '封板率')).toBe('85.5%')
+    expect(metricRow('sentiment', '断层档位')).toBe('无断层')
+    expect(metricRow('dragon_tiger', '上榜个股')).toBe('38')
 
-    // 演示态禁用控制面写入口，且给出可读原因（C-03 的禁用原因走 aria-describedby）
-    const generate = screen.getByRole('button', { name: /重新生成|重试失败段/ })
-    expect(generate.hasAttribute('disabled')).toBe(true)
-    const describedBy = generate.getAttribute('aria-describedby')
-    expect(describedBy).not.toBeNull()
-    expect(document.getElementById(describedBy!)?.textContent).toContain('演示态不触发 AI 生成')
+    // 「我的判断」归数据面：五段可编辑草稿（DEC-047 §3 的裁定）
+    expect(document.querySelectorAll('textarea')).toHaveLength(5)
+    expect(screen.getByRole('textbox', { name: '我的判断 · 情绪' })).toBeTruthy()
 
-    // 「我的判断」不被演示数据预填、不写本机草稿
+    for (const sentinel of MODEL_ONLY) {
+      expect(bodyText()).not.toContain(sentinel)
+    }
+    expect(screen.queryByRole('button', { name: /重新生成|重试失败段/ })).toBeNull()
+    expect(bodyText()).not.toContain('人工智能仍是强度第一的主线')
+
+    // 演示态「我的判断」既不预填也不写本机草稿（隐私内容不靠演示数据冒充）
+    expect(screen.getByRole('textbox', { name: '我的判断 · 情绪' }).hasAttribute('readonly')).toBe(true)
     expect(bodyText()).not.toContain('已恢复')
   })
 
@@ -107,14 +127,21 @@ describe('复盘 / 周度复盘演示源', () => {
     expect(bodyText()).toContain('68')
   })
 
-  it('partial / empty 两个变体：降级与缺失各有明确标注，不补 0', async () => {
+  it('partial / empty 两个变体：缺数段落逐段标注、计数按 — 显示，不补 0 也不借模型的词', async () => {
     stubOffline()
     renderBoth('/review?demo=1&variant=partial&date=2026-10-30')
     await screen.findByText('演示数据 · ?demo=1')
-    // §5.2：`degraded`=走了别的路 → 「已降级」warn；段级同时给出「降级完成」「失败」两档
-    expect(bodyText()).toContain('已降级')
-    expect(bodyText()).toContain('降级完成')
-    expect(bodyText()).toContain('失败')
+    // 数据面的 partial = 某段数据集没落盘，与段级 AI 成败是两件事（§5.2）
+    expect(bodyText()).toContain('五段中 1 段数据缺失')
+    expect(screen.getByText('缺数')).toBeTruthy()
+    expect(metricRow('dragon_tiger', '上榜个股')).toBe('—')
+    expect(metricRow('dragon_tiger', '席位行数')).toBe('—')
+    expect(bodyText()).toContain('本段数据缺失：本地缓存没有龙虎榜数据')
+    // 段级降级/失败属于模型面，本屏不出现
+    for (const sentinel of MODEL_ONLY) {
+      expect(bodyText()).not.toContain(sentinel)
+    }
+    expect(bodyText()).not.toContain('重新生成')
 
     cleanup()
     renderBoth('/weekly?demo=1&variant=partial')
@@ -135,7 +162,7 @@ describe('复盘 / 周度复盘演示源', () => {
     stubOffline()
 
     renderBoth('/review')
-    await screen.findByRole('heading', { level: 1, name: '收盘复盘' })
+    await screen.findByRole('heading', { level: 1, name: '每日复盘' })
     await waitFor(() => {
       expect(bodyText()).toContain('服务未连接')
     })

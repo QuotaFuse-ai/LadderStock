@@ -145,6 +145,27 @@ AI_JOB_ACTIONS: frozenset[str] = frozenset({"generate", "retry"})
 #: 五段生成可能较慢；单次子进程的硬上限（超时即失败，不无限挂起）
 AI_JOB_TIMEOUT_SEC = 1800.0
 
+#: 页面一键命令白名单：key → (前端路由, 按钮文案, argv)。
+#: 只允许本机只读 / 生成本机数据的 `ldst` 子命令，不接受任何请求参数（DEC-014）；
+#: 唯一的动态值是 `{date}`（执行时替换为本机当天日期），避免前端能改写参数。
+PAGE_COMMANDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "market": ("/market", "拉取行情数据", ("sync",)),
+    "review": ("/review", "生成收盘复盘", ("review", "--date", "{date}")),
+    "review-ai": ("/review/ai", "重新生成 AI 复盘", ("review", "--date", "{date}", "--force")),
+    "weekly": ("/weekly", "生成 AI 周报", ("weekly",)),
+    "news": ("/news", "抓取资讯雷达", ("news",)),
+    "calendar": ("/calendar", "刷新事件日历", ("events",)),
+    "pool": ("/pool", "重算候选池", ("pool",)),
+    "validate": ("/validate", "提交收盘对账", ("validate", "reconcile", "--date", "{date}")),
+    "positions": ("/positions", "查询持仓", ("position", "list")),
+}
+#: argv 占位符：只认当天日期，执行时替换（不把日期存进任务，避免排队跨夜后跑错日）
+PAGE_COMMAND_DATE = "{date}"
+#: 页面命令单次执行的硬上限（与 AI 生成同档：全量同步 / 复盘都可能跑几分钟）
+PAGE_COMMAND_TIMEOUT_SEC = 1800.0
+#: 允许视为「跑完但部分降级」的退出码：0 成功、8 部分数据源失败、9 AI 降级
+PAGE_COMMAND_OK_CODES = frozenset({0, 8, 9})
+
 #: `import <pkg>` 探测超时（PRD §3.1）
 IMPORT_PROBE_TIMEOUT_SEC = 15.0
 #: 健康检查超时（PRD §3.1：2s 内成功才算运行中）
@@ -167,7 +188,6 @@ CONTROL_STATE_FILE = "peer_state.json"
 KNOWN_AVOIDED_PORTS: dict[str, tuple[tuple[int, str], ...]] = {
     "tickhub_us": (
         (8001, "TickHub-US 默认 MCP 端口：被 WSL 转发服务占用，改用 8002"),
-        (8787, "TickHub-US 默认管理端端口：与 TickHub-CN 撞车，改用 8789"),
     ),
 }
 
@@ -656,6 +676,12 @@ def _ldst_command() -> list[str]:
     return [sys.executable, "-m", "ladderstock.cli.main"]
 
 
+def _page_argv(argv: tuple[str, ...]) -> list[str]:
+    """页面命令 argv：只把 `{date}` 换成执行当天的日期，其余原样返回。"""
+    today = datetime.now().date().isoformat()
+    return [today if item == PAGE_COMMAND_DATE else item for item in argv]
+
+
 def _ai_working_dir() -> Path:
     """AI 子进程 cwd：工程根（含 prompts/ 与默认 config/），不随控制面从哪启动而漂移。"""
     return project_root()
@@ -918,6 +944,8 @@ class Job:
     day: str = ""
     section: str | None = None
     force: bool = False
+    #: 页面一键命令的 key（`PAGE_COMMANDS`）；只有 action="command" 时非空
+    command: str = ""
     _log: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -1282,6 +1310,8 @@ class ControlPlane:
         self._jobs: dict[str, Job] = {}
         self._last_job: dict[str, Job] = {}
         self._ai_job: Job | None = None
+        self._command_job: Job | None = None
+        self._last_command: dict[str, Job] = {}
         self._handles: dict[str, list[Any]] = {}
         self._state: dict[str, Any] = self._load_state()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ldst-control")
@@ -1427,6 +1457,19 @@ class ControlPlane:
             foreign_ports=[c["port"] for c in conflicts if c.get("foreign")],
         )
 
+        # 模块已在正常服务、占用的又是它自己的声明端口：这不是冲突，只是「控制面没
+        # 亲手拉起它」（手动启动很常见，如 CN 要先加载代理 env）。降级成归属提示，
+        # 保留 PID/进程名与「不接管」的事实，避免整页全红。
+        if status == STATUS_RUNNING:
+            own_ports = {ctl.mcp_port, ctl.web_port}
+            for conflict in conflicts:
+                if conflict.get("foreign") and conflict["port"] in own_ports:
+                    conflict["severity"] = "info"
+                    conflict["note"] = (
+                        "端口由控制面之外的进程监听（手动启动）；"
+                        "控制面不接管启停，也不会终止它"
+                    )
+
         last_job = self._last_job.get(key)
         running_with_web = status == STATUS_RUNNING and bool(ctl.web_port)
         open_url = f"http://127.0.0.1:{ctl.web_port}" if running_with_web else None
@@ -1548,7 +1591,13 @@ class ControlPlane:
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
             for owner in self._port_probe(port):
                 conflicts.append(
-                    {"port": port, "pid": owner.pid, "process": owner.process, "note": note}
+                    {
+                        "port": port,
+                        "pid": owner.pid,
+                        "process": owner.process,
+                        "note": note,
+                        "severity": "conflict",
+                    }
                 )
         for bound_port, owners in ((ctl.mcp_port, mcp_owners), (ctl.web_port, web_owners)):
             if not bound_port:
@@ -1563,6 +1612,7 @@ class ControlPlane:
                         "process": owner.process,
                         "note": "端口已被其他进程占用（不自动换端口，DEC-004）",
                         "foreign": True,
+                        "severity": "conflict",
                     }
                 )
         return conflicts
@@ -1655,6 +1705,39 @@ class ControlPlane:
         self._executor.submit(self._execute, job)
         return job
 
+    def page_commands(self) -> dict[str, Any]:
+        """页面一键命令清单（含各自最近一次任务；前端按当前路由取一条）。"""
+        items: list[dict[str, Any]] = []
+        for key, (route, label, argv) in PAGE_COMMANDS.items():
+            last = self._last_command.get(key)
+            items.append(
+                {
+                    "key": key,
+                    "route": route,
+                    "label": label,
+                    "argv": _page_argv(argv),
+                    "running": last is not None
+                    and last.status in {"queued", "running"},
+                    "last_job": last.view() if last is not None else None,
+                }
+            )
+        return {"ok": True, "commands": items}
+
+    def create_command_job(self, key: str) -> Job:
+        """建页面命令任务：同一时刻只允许一个（避开调度器与彼此的数据写竞争）。"""
+        if key not in PAGE_COMMANDS:
+            raise KeyError(key)
+        with self._lock:
+            active = self._command_job
+            if active is not None and active.status in {"queued", "running"}:
+                raise RuntimeError("已有页面命令在执行，请等待结束")
+            job = Job(id=uuid.uuid4().hex, peer="ldst", action="command", command=key)
+            self._jobs[job.id] = job
+            self._command_job = job
+            self._last_command[key] = job
+        self._executor.submit(self._execute, job)
+        return job
+
     def _execute(self, job: Job) -> None:
         job.status = "running"
         job.started_at = _now_iso()
@@ -1662,6 +1745,8 @@ class ControlPlane:
         try:
             if job.action in AI_JOB_ACTIONS:
                 self._ai_run(job)
+            elif job.action == "command":
+                self._run_page_command(job)
             elif job.action == "install":
                 self._install(job)
             elif job.action == "start":
@@ -1699,6 +1784,22 @@ class ControlPlane:
             if job.section:
                 command += ["--section", job.section]
         return command
+
+    def _run_page_command(self, job: Job) -> None:
+        """跑页面白名单命令；argv 全部来自常量表，不接受请求内容。"""
+        _, label, argv = PAGE_COMMANDS[job.command]
+        args = [*_ldst_command(), *_page_argv(argv)]
+        job.step = label
+        job.log(f"$ {' '.join(args)}")
+        result = self._run(args, _ai_working_dir(), PAGE_COMMAND_TIMEOUT_SEC)
+        for line in tail_lines(result.output, JOB_TAIL_LINES * 2):
+            job.log(f"  {line}")
+        if result.returncode not in PAGE_COMMAND_OK_CODES:
+            last = tail_lines(result.output, 1)
+            hint = f"：{last[0]}" if last else ""
+            raise JobFailure(f"{label}失败（退出码 {result.returncode}）{hint}")
+        if result.returncode != 0:
+            job.log(f"退出码 {result.returncode}：部分数据源失败或 AI 降级，结果已落盘")
 
     def _ai_run(self, job: Job) -> None:
         """跑 `ldst review` / `ldst ai retry`；退出码 9（AI 降级）仍算任务成功。"""
@@ -2704,6 +2805,25 @@ def build_router(plane: ControlPlane) -> APIRouter:
         """
         raise HTTPException(status_code=405, headers={"Allow": "PUT"})
 
+    @router.get("/commands")
+    def list_commands() -> dict[str, Any]:
+        """页面一键命令清单（白名单 + 各自最近一次任务）。"""
+        return plane.page_commands()
+
+    @router.post("/commands/{key}")
+    def run_command(key: str) -> dict[str, Any]:
+        """执行一条白名单命令（后台任务，前端轮询 `/jobs/{id}`）。"""
+        if key not in PAGE_COMMANDS:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未知命令：{key}（可选：{', '.join(PAGE_COMMANDS)}）",
+            )
+        try:
+            job = plane.create_command_job(key)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"job_id": job.id, "status": job.status}
+
     @router.get("/jobs/{job_id}")
     def job(job_id: str) -> dict[str, Any]:
         found = plane.get_job(job_id)
@@ -2726,6 +2846,7 @@ __all__ = [
     "KNOWN_AVOIDED_PORTS",
     "MAX_CONDITIONS",
     "MAX_TRIGGER_CHARS",
+    "PAGE_COMMANDS",
     "STATUS_LABELS",
     "StatePersistError",
     "VALIDATION_CONDITION_FIELDS",

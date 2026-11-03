@@ -54,6 +54,7 @@ DOC_INFLOW_KEYS = (
     "net_inflow",
     "main_net_inflow",
     "net_amount",
+    "main_net",
     "主力净流入",
     "净流入",
     "净额",
@@ -66,7 +67,14 @@ DOC_INFLOW_KEYS = (
 
 def load_case(path: Path) -> dict[str, Any]:
     case: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    assert set(case["datasets"]) == {"limit_pool", "concept_board", "fund_flow"}
+    # `concept_membership` 是可选第四路（QUOT-362）：缺它就走关键词降级，不判缓存缺失
+    assert {"limit_pool", "concept_board", "fund_flow"} <= set(case["datasets"])
+    assert set(case["datasets"]) <= {
+        "limit_pool",
+        "concept_board",
+        "fund_flow",
+        "concept_membership",
+    }
     assert {"available", "candidates", "counts"} <= set(case["expected"]["pool"])
     return case
 

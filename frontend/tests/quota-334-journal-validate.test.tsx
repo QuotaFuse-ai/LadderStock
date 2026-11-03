@@ -110,7 +110,8 @@ describe('明日验证演示源', () => {
 
     expect(await screen.findByRole('heading', { name: '明日验证', level: 1 })).toBeTruthy()
     expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
-    expect(screen.getByText('演示样本 · 本页条件不是你写的')).toBeTruthy()
+    // 横幅挂在 `state !== 'loading'` 分支上：标题先出、横幅后出，CI 慢机下同步断言会偶发失败
+    expect(await screen.findByText('演示样本 · 本页条件不是你写的')).toBeTruthy()
 
     // 条件表是 §7.3 的 div 网格（不是 `<table>`，见 check:ui 的 bare-table 口径），
     // 每行必有一个「仓位上限 = —」的结构格，用它数行数最稳。

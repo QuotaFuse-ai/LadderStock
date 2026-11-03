@@ -127,6 +127,17 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
         date(2026, 10, 30),
         "high",
     ),
+    # 逐只归属（QUOT-362）：`boards[]` 的 `code` 是东财板块码，必须让位给 `data.code`
+    # （股票代码）——行是「股票↔板块」，`require_code` 校验的就是股票代码还在。
+    # 行内也没有日期，数据日同样由 `fetched_at` 承担。
+    (
+        "stock_concept_blocks.json",
+        "concept_membership",
+        "stock_concept_blocks",
+        3,
+        date(2026, 11, 3),
+        "medium",
+    ),
 ]
 
 #: 快照型：整包一行，不硬凑记录
@@ -273,6 +284,27 @@ def test_rows_without_code_are_dropped_not_stored() -> None:
     assert records == []
 
 
+def test_concept_membership_rename_keeps_the_stock_code() -> None:
+    """`data.code`（股票）与 `boards[].code`（东财板块码）同名，透传值不能被盖掉。
+
+    盖掉之后行就不是个股维度的行了：`require_code` 仍然过（BK 码也是码），
+    但 `concept_membership` 从此按板块代码入库，题材归属与候选池再也接不上。
+    """
+    doc = load("stock_concept_blocks.json")
+    records = from_tool_response("concept_membership", doc, tool="stock_concept_blocks").payload[
+        "records"
+    ]
+
+    assert [row["code"] for row in records] == [doc["data"]["code"]] * len(records)
+    assert [row["board_code"] for row in records] == [
+        board["code"] for board in doc["data"]["boards"]
+    ]
+    assert [row["board_name"] for row in records] == [
+        board["name"] for board in doc["data"]["boards"]
+    ]
+    assert all("name" not in row for row in records)
+
+
 # --------------------------------------------------------------------------- #
 # 快照型
 # --------------------------------------------------------------------------- #
@@ -381,6 +413,8 @@ def test_code_pool_datasets_are_the_ones_requiring_code() -> None:
             "sw_industry_map",
             "finance_indicators",
             "valuation_history",
+            # QUOT-362：`stock_concept_blocks` 的 `code` 必填，池子来自当日涨停池
+            "concept_membership",
         }
     )
     assert set(CODE_POOL_DATASETS) == {d for d in DATASET_CATALOG if needs_code(d)}

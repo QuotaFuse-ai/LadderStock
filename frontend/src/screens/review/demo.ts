@@ -59,7 +59,78 @@ interface DemoSection {
   notes: string[]
 }
 
-/** 五段固定顺序（情绪→资金→题材→龙虎榜→龙头），内容只写叙述，指标一律归指标卡。 */
+/**
+ * 五段的程序指标演示取值（`review/pipeline.collect_metrics` 的同形状）。
+ *
+ * QUOT-344-S2 之前这里一律是 `metrics: {}`——那时每日复盘屏只渲染 AI 叙述，程序指标没上屏。
+ * 拆屏之后 `/review` 的正文就是这些指标，演示态必须与真实态同形状，否则 `?demo=1` 拍不到数据屏。
+ * 取值全部对齐上面的事实基线（涨停 47 / 最高 5 板 / 无断层），不新造数字。
+ */
+const SECTION_METRICS: Record<string, Record<string, unknown>> = {
+  sentiment: {
+    available: true,
+    temperature: DEMO_SENTIMENT.temperature,
+    promotion_rate: DEMO_SENTIMENT.promotion_rate,
+    seal_rate: DEMO_SENTIMENT.seal_rate,
+    limit_up_count: DEMO_SENTIMENT.limit_up_count,
+    broken_count: DEMO_SENTIMENT.broken_count,
+    yesterday_limit_up_count: DEMO_SENTIMENT.yesterday_limit_up_count,
+    max_board: DEMO_SENTIMENT.max_board,
+    gap: DEMO_SENTIMENT.gap,
+    gap_levels: DEMO_SENTIMENT.gap_levels,
+    missing: DEMO_SENTIMENT.missing,
+    source_detail: DEMO_SENTIMENT.source_detail,
+  },
+  capital: {
+    available: true,
+    records: 47,
+    source_detail: 'fund_flow: duckdb（47 条）',
+  },
+  theme: {
+    available: true,
+    industry_rows: 31,
+    concept_rows: 40,
+    news_rows: 12,
+    source_detail: 'industry_board: duckdb; concept_board: duckdb; theme_news: duckdb',
+  },
+  dragon_tiger: {
+    available: true,
+    board_rows: 38,
+    seat_rows: 96,
+    source_detail: 'dragon_tiger: duckdb; dragon_tiger_seats: duckdb',
+  },
+  leader: {
+    available: true,
+    reason: null,
+    height: 5,
+    count: 47,
+    gap: false,
+    gap_levels: [],
+    leader_candidates: [{ code: '002230', name: '科大讯飞', boards: 5 }],
+    unknown_board: 0,
+    summary: '连板天梯：最高 5 板，47 只涨停，梯队没有断层',
+  },
+}
+
+/**
+ * `partial` 变体里让龙虎榜整段缺数：`board_rows: 0` 在 `available: false` 的段里是
+ * 「本机没有这个数据集」，屏上必须显示 `—` 而不是 0（QUOT-319 的硬规矩，演示态也要拍得到）。
+ */
+const PARTIAL_MISSING_SECTION = 'dragon_tiger'
+
+function sectionMetrics(name: string, variant: ReviewDemoVariant): Record<string, unknown> {
+  const base = SECTION_METRICS[name] ?? {}
+  if (variant !== 'partial' || name !== PARTIAL_MISSING_SECTION) return base
+  return {
+    available: false,
+    board_rows: 0,
+    seat_rows: 0,
+    reason: '本地缓存没有龙虎榜数据（先运行 ldst sync）',
+    source_detail: 'dragon_tiger: none; dragon_tiger_seats: none',
+  }
+}
+
+/** 五段固定顺序（情绪→资金→题材→龙虎榜→龙头），叙述与指标同段返回、分别落到两个屏。 */
 const SECTIONS: DemoSection[] = [
   {
     name: 'sentiment',
@@ -127,7 +198,7 @@ function sectionPayload(variant: ReviewDemoVariant) {
       notes: degraded
         ? ['模板降级：本段 AI 叙述未生成，以下要点由程序从事实包直出。', ...section.notes]
         : section.notes,
-      metrics: {},
+      metrics: sectionMetrics(section.name, variant),
     }
   })
 }
