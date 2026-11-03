@@ -5,6 +5,11 @@
 此前没有被任何一份文档说清——`D:\workplace\LadderStock` 那棵脏树的 `data/archive/` 是空的，
 按它找数会误判成「上游没数」。本文是这个入口的唯一权威说明。
 
+> **结论更正（2026-11-03 16:4，先读这条再读其余）**：资金侧的口径**不是**「只认 `meta.source = eastmoney`」——
+> 那条写法已作废，`eastmoney` 单股实时通道返回的 `price` 是**分**、`main_net` **不是元**，禁止直灌 `raw.net_inflow`；
+> 现网正在喂 `parts.capital` 的日线 `stock_fund_flow` 才是**元**。完整证据与更正后的 6 条裁定在 **§3「⛔ 更正」**。
+> 另外 `capital` 自 16:22 起**已非 null**（当日 `fund_flow` 分区落盘），本文各处「两个分项一直空着」指的是 11:46 那次采集，见 §2。
+
 - **本文件是 source of truth**（仓库这份）。运行时数据不在仓库里，见下。
 - 数据目录：`D:\QuotaFuseModules\LadderStock\data`（由 `LDST_DATA_DIR` 指向，`/api/health` 可自证）
 - 配置目录：`D:\QuotaFuseModules\LadderStock\config`（改 `sources.yaml` / `sync.yaml` / `schedule.yaml` 要改这份，不是仓库里那份）
@@ -139,11 +144,10 @@ candidates[0] = 002696 百洋股份 parts={strength:100.0, turnover:100.0, stand
 之前 `capital=null` 是**缺数据**，不是缺代码。上面「二选一取证读法」那段（回落 11-02 / 走 `realtime_fund_flow`）
 在当日分区存在时不再需要，**但别删**：当日分区会不会有，取决于 sync 有没有跑（§5 第 3、8 条）。
 
-🔴 **给 QUOT-361 的一个必须开工前确认的量纲问题**：这个入库数据集的 `net_inflow` 是 **`4.18e8`（元）量级**，
-而 §3 里 `realtime_fund_flow` 的 `eastmoney` 通道 `main_net` 是 **`3.0`** 量级、`sina` 通道是 **`3.8e8`**。
-即 **已落盘的 `fund_flow` 数据在量纲上像 sina 那一档，而不像 DEC-046 裁定「只认」的 eastmoney**。
-如果 361 按「只认 eastmoney」实现，就会和这个已经在喂 `parts.capital` 的数据集打架，而且两边看起来都有数——静默错。
-开工前先确认 `parts.capital` 应当以哪一个为准（数据集 or 实时工具），这条判定属 DEC-046，不在本任务范围。
+🔴 **量纲这件事已经有了判定，别按本文早先的写法办**（2026-11-03 16:4 由项目领导人更正，证据见 §3）：
+中心库这份 `fund_flow` 的 `net_inflow`（`002696` → `417850659.38`）是**人民币元**，来自日线 `stock_fund_flow` 通道，
+是 361 可以直接用的主源之一；反而是 `realtime_fund_flow` 的 **`eastmoney` 单股实时通道不是元**（`price` 是分、`main_net` 是未标明的 push2 标度），
+**禁止把它的 `f62` 原值直灌 `raw.net_inflow`**。本文在此之前写的「只认 eastmoney」是错的，已在 §3 更正。
 
 `concept_board` 当日 100 行在库，题材侧缺的只是「代码 → 板块」归属，`stock_concept_blocks` 可直接给出（`theme` 至今仍 null、`theme_boards=0`）。
 
@@ -171,14 +175,35 @@ th-cn proxy check -o json   # 5/5 可达，延迟 468–2265 ms
 
 | meta.source | `price` | `main_net` | `super_large_net` | `large_net` | `main_net_pct` | `change_pct` |
 |---|---|---|---|---|---|---|
-| `eastmoney` | `1236.0` | `3.0` | null | null | `11.0132121781` | null |
-| `sina` | `12.36` | `380599473.38` | `328248414.78` | `18725719.8` | null | `9.9644` |
+| `eastmoney` | `1236.0`（**分**） | `3.0`（**不是元**） | null | null | `11.0132121781` | null |
+| `sina` | `12.36`（元） | `380599473.38`（**元**） | `328248414.78` | `18725719.8` | null | `9.9644` |
 
-**已裁定（QUOT-360）：资金分项只认 `meta.source = eastmoney`，其它源（含 `sina`）按「取不到」处理**，
-走现有 null + 剔除权重的机制，**不做单位换算兜底**——`price` 差 100 倍、`main_net` 差数量级目前只是观察到的现象，
-没有经过验证的换算表，换算写错是**静默错**，`parts.capital` 会给出看起来合理的假排名，比 null 坏得多。
-过滤点现成：`adapters/tickhub.py:187` 已把 `meta.source` 落成 `upstream`。
-该口径由 QUOT-361 写进 DEC-046 与 `docs/specs/SPEC-CANDIDATE-POOL.md` 资金口径小节（**DEC-046 已预留给 361**，按 DEC-045 取号规则，其他任务别占这个号）。
+#### ⛔ 更正：本文此前写的「资金分项只认 `meta.source = eastmoney`、其它源按取不到处理」是错的（2026-11-03 16:4，项目领导人）
+
+错在把「不做单位换算兜底」当成了「选 eastmoney」。量纲逐条查过代码（`D:\workplace\TickHub-CN\src\tickhub_cn\datasources\funds.py`，本机 10-25 版与安装态同源；下列行号我逐条复验）：
+
+| 通道 | 取数与是否换算 | 量纲 |
+|---|---|---|
+| `realtime_fund_flow` **eastmoney** | 请求 `funds.py:392-398` 只带 `secid` + `fields`，**没有 `fltt` / `invt`**；`price=f43`（`:408`）、`main_net=f62`（`:409`）经 `to_float` 原样透传（`datasources/util.py:17-29` 无任何缩放） | `price` = **分**（1236 = 12.36 元）；`main_net` = push2 默认标度，**不是元**。具体倍数**不要靠猜**——同一只 `002696` 与当日日线实测差约 8 个数量级，够判禁用了 |
+| `realtime_fund_flow` **sina** | `funds.py:442-443` `trade` / `netamount`，同样不换算 | **元**。有回归夹具：`netamount="12345678"` → `main_net == 12345678.0`（`tests/regression/test_push2_fallbacks.py:58,95,121`） |
+| `stock_fund_flow`（日线，**现网正在喂 `parts.capital`**） | `funds.py:59` `main_net = p[1]`；sina 兜底 `:122` `netamount` | **元** |
+| `fund_flow_ranking`（批量） | `funds.py:164-165` **带 `fltt: 2, invt: 2`**，`:187,:189` 原样读 `f62` | **元** |
+
+TickHub 自己也把这件事写进了产品文档：`skills/tickhub-cn/references/sources.md` 的「Units differ per source」一节 —— Units are **not** unified across the product，**报数必须把量纲写在数旁边**。
+消费侧 `core/pool.py:74-75` 那句注释「只用于排名，所以不做单位换算——元/万元的歧义不影响名次」**只在单源时成立**：
+一旦「当日源 → 回落最近交易日」把两种量纲喂进同一次 `rank_percentiles()`，名次就静默错。
+
+**更正后的裁定（正文由 QUOT-361 落进 DEC-046 与 `docs/specs/SPEC-CANDIDATE-POOL.md` 资金口径小节）：**
+
+1. `raw.net_inflow` 的语义**固定为人民币元**；任何通道写入该字段前必须先**证明**量纲（代码位置或回归夹具，不接受「看起来对」）。
+2. **禁止**把 `realtime_fund_flow` eastmoney 单股实时通道的 `f62` 原值直灌 `raw.net_inflow`。
+   要它当主源，先在 TickHub-CN 给该请求补 `fltt=2` / `invt=2` 并加回归 —— **跨仓改动，另开任务，不塞进 361**。
+3. 361 可用主源二选一：**sina 实时（元）** 或 **日线 `stock_fund_flow`（元，现网已在喂）**；批量备选 `fund_flow_ranking`（已带 `fltt=2`，元）。
+4. **一次排名只允许一种量纲**：混源必须先归一到元，否则本轮全用同一源。`price` 同理（eastmoney 是分，用到就 `/100` 或换源）。
+5. 加一条对照测试：同一只股票「日线 vs 实时」的 `main_net` 比值应 ≈ 1，显著偏离即判量纲回归破，不许放行。
+6. 过滤点现成：`adapters/tickhub.py:187` 已把 `meta.source` 落成 `upstream`，按上面 1–4 在此分流。
+
+（**DEC-046 已预留给 361**，按 DEC-045 取号规则，其他任务别占这个号。）
 
 ### `stock_concept_blocks(code)`
 
@@ -213,8 +238,10 @@ curl -s "http://127.0.0.1:5950/api/pool?date=2026-11-03" | python -m json.tool
 #                counts.theme_boards = 0
 #   16:22 采集：parts.capital 已非 null（002696 → 84.6，raw.net_inflow=4.18e8），absent_parts 只剩 ["theme"]，
 #                counts.theme_boards 仍 0，raw.theme_tags 仍 []  ← 题材侧一点没变
-#   ⇒ 资金侧的 null 是「数据没落盘」造成的，不是代码；见 §2「结论已作废」那节的量纲警告（DEC-046）
-#   QUOT-361 完成后：parts.capital 非 null、raw.net_inflow 有值、data_as_of 写明资金口径日期
+#   ⇒ 资金侧的 null 是「数据没落盘」造成的，不是代码；16:22 起 `raw.net_inflow=4.18e8` 是**人民币元**
+#     （日线 `stock_fund_flow` 通道），量纲判定见 §3「⛔ 更正」——361 的候选源按那里，别按 eastmoney 单股实时
+#   QUOT-361 完成后：parts.capital 非 null、raw.net_inflow 有值且量纲已按 §3 更正选定，
+#                data_as_of 写明资金口径来自哪个通道（日线 or 实时，两者不能混一轮）
 #   QUOT-362 完成后：parts.theme 非 null、raw.theme_tags 非空、counts.theme_boards > 0
 
 # 断言式取证（只看关键位）
@@ -286,8 +313,11 @@ stock_concept_blocks("002696") ok=true  cache_hit=false  meta.source=eastmoney
   total=23  boards[0]={name:"农林牧渔", code:"BK0433", change_pct:1.2, lead_stock:"..."}
 ```
 
-`meta.source` 仍是 `eastmoney` ⇒ §3 裁定的资金口径这次能取到数；`price` / `main_net` 的量级也和 §3 那张表一致，
-**别把它们当元 / 当万元用**。`boards[].change_pct` 会随盘中变化（11:46 读到 `BK0433 +1.75`，15:55 读到 `+1.2`），
+**这两个读数的正确读法（2026-11-03 16:4 更正后）：** `meta.source = eastmoney` 只证明**通道可达**，
+**不**等于「这路的 `main_net` 能当元用」——恰恰相反，`price=1236.0` 是**分**、`main_net=3.0` 是 push2 未标明标度，
+**都不是元**（逐条代码证据见 §3「⛔ 更正」那张表）。当时我据此写过的「资金口径只认 eastmoney」是错的，已作废。
+取证时要判的是「工具能不能返回」，量纲按 §3；要拿 `main_net` 当 `raw.net_inflow` 用，必须走 sina 实时或日线 `stock_fund_flow`。
+`boards[].change_pct` 会随盘中变化（11:46 读到 `BK0433 +1.75`，15:55 读到 `+1.2`），
 所以它同样不是取证基线。
 
 ## 5. 运维风险（本文只报告，未动任何配置）
@@ -316,6 +346,9 @@ stock_concept_blocks("002696") ok=true  cache_hit=false  meta.source=eastmoney
    ⇒ **`LadderStock UI 5950` 这条不在他们的覆盖范围内**：5950 仍然是 15:20:51 那个手工进程（第 1 条），
    没有任何常驻层管它，QUOT-361 / QUOT-362 的取证入口照旧会在它退出后起不来。
    这一格还空着，`quot-363-backup\serve-5950.ps1` 就是为它准备的（照 QUOT-350 的写法：端口占用就 skip，不自旋重启）。
+   **归属已定（2026-11-03 17:0，项目领导人）：5950 守护这一格归 QUOT-350，不落在 QUOT-363**——本文只交付备份、
+   端口守卫参考实现和这一条缺口，注册与「杀掉手工进程看 5950 是否自愈」的自测由 350 执行；接管时把第 8 条的
+   `data/` 多写入者审计一并计入 350 的最小可观测性。
    顺带查出一个真 bug：`serve-*.ps1` 原件的 `while($true)` **不看端口就重启**，端口若被别的进程占着（现在 5950 就是手工进程），
    子进程秒退→**每 10s 重启一次停不下来**；参考实现里加了「端口已占用就 skip 退出」的守卫，接管的人照这个写。
 3. **没有任何计划任务在写这台机器的 `archive/` 分区。** 11-03 的分区来自 11:43–11:46 一次手工 `ldst sync`（`limit_pool` 当时 52 行，后被 15:21 那次重写，见第 8 条）；
