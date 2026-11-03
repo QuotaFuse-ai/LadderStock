@@ -1,6 +1,6 @@
-import { Link } from 'react-router-dom'
 import { Sparkles } from 'lucide-react'
 
+import { LinkButton } from '../components/research/bits'
 import { PageHeader } from '../components/PageShell'
 import { Card, EmptyState } from '../components/ui'
 
@@ -38,12 +38,9 @@ export default function AiReviewScreen() {
             </>
           }
           action={
-            <Link
-              to="/review"
-              className="font-medium text-text underline underline-offset-2"
-            >
+            <LinkButton to="/review" variant="secondary">
               到每日复盘看当日五段
-            </Link>
+            </LinkButton>
           }
         />
       </Card>
