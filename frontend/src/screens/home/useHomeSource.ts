@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { api } from '../../api'
+import { fetchIndices, fetchWatchlist } from '../../api/home'
 import { httpRadarSource } from '../../api/radar'
 import { useDemoEnabled, useForcedState } from '../../lib/pageState'
 import { demoHomeSource, type HomeDemoVariant, type HomeSource } from './demo'
@@ -37,8 +38,8 @@ function useHomeDemoVariant(): HomeDemoVariant {
 export const httpHomeSource: HomeSource = {
   watchSnapshot: (signal) => api.watchSnapshot(signal),
   validation: (date, signal) => api.validation(date, signal),
-  indices: (signal) => api.indices(signal),
-  watchlist: (signal) => api.watchlist(signal),
+  indices: (signal) => fetchIndices(signal),
+  watchlist: (signal) => fetchWatchlist(signal),
   positions: (date, signal) => httpRadarSource.positions({ date }, signal),
 }
 

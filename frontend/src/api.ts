@@ -155,7 +155,7 @@ export interface LadderEnvelope<T> {
   topic: string
   event_id: string | null
   data_as_of: string | null
-  payload: T & { data_source_status?: 'ok' | 'missing' }
+  payload: T & { data_source_status?: 'ok' | 'partial' | 'missing' }
   source: 'ladderstock'
   source_detail: string
   fetched_at: string
@@ -528,15 +528,20 @@ export interface IndexQuoteItem {
 export interface IndicesPayload {
   items: IndexQuoteItem[]
   data_source_status?: 'ok' | 'partial' | 'missing'
+  /** 后端脚注（例如「快照，不是逐笔实时」），原样展示 */
+  footnote?: string | null
+  as_of?: string | null
 }
 
-/** 自选行（DEC-049：平面 JSON，不进信封，`note` 不外露）。 */
+/** 自选行（DEC-052：平面 JSON，不进信封，`note` 不外露）。 */
 export interface WatchlistItem {
   code: string
   name: string | null
   latest_price: number | null
   change_pct: number | null
   reason?: string | null
+  change?: number | null
+  price_as_of?: string | null
 }
 
 export interface WatchlistPayload {
@@ -547,6 +552,8 @@ export interface WatchlistPayload {
   as_of?: string | null
   price_source?: string | null
   data_source_status?: 'ok' | 'partial' | 'missing' | null
+  /** 本机没有自选时的引导文案（后端给，前端原样展示） */
+  reason?: string | null
 }
 
 export interface StateConfigPayload {
@@ -851,11 +858,7 @@ export const api = {
     }),
   watchSnapshot: (signal?: AbortSignal) =>
     request<LadderEnvelope<WatchSnapshotPayload>>('/watch/snapshot', { signal }),
-  /** 首页指数条（QUOT-380）；未上线时 404 → 块级「源未接入」，不是整屏错误 */
-  indices: (signal?: AbortSignal) =>
-    request<LadderEnvelope<IndicesPayload>>('/indices', { signal }),
-  /** 首页自选（QUOT-380 / DEC-049）：回环独占的平面 JSON，不进信封 */
-  watchlist: (signal?: AbortSignal) => request<WatchlistPayload>('/watchlist', { signal }),
+  /** 首页指数条 / 自选不走这里：形状归一在 `api/home.ts`（QUOT-380 回 `cells[]` / `price`） */
   /**
    * 近 N 日情绪温度序列（Q172-8 缺口）。后端未上线时抛 `http` 404，
    * 调用方用 `isEndpointMissing` 判成「未接入」，不当作页面错误。

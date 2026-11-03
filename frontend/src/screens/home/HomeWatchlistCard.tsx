@@ -137,7 +137,7 @@ export function HomeWatchlistCard({
               ? '本地服务未连接，先运行 ldst run 再回来。'
               : missingEndpoint
                 ? 'GET /api/watchlist 由 QUOT-377 S2 交付；本机隐私库已有 watchlist 表，缺的是读接口。'
-                : '自选只写本机 SQLite；增删入口随后端自选接口一起提供。'
+                : payload?.reason ?? '自选只写本机 SQLite；用 ldst watch add <代码> 添加。'
           }
           action={
             offline ? undefined : (

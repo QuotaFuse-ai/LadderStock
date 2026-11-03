@@ -144,7 +144,8 @@ export function HomeIndexStrip({ envelope, status, error, offline, onRetry }: Ho
     >
       {body}
       <p className="mt-3 border-t border-border pt-2 text-caption leading-body text-text-muted">
-        指数为行情快照，不是逐笔实时；港股 / 美股指数源未接入时该格显示「—」与原因，不补 0。
+        {envelope?.payload.footnote ??
+          '指数为行情快照，不是逐笔实时；港股 / 美股指数源未接入时该格显示「—」与原因，不补 0。'}
       </p>
     </SectionCard>
   )
