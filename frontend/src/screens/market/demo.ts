@@ -111,8 +111,11 @@ const HISTORY_POINTS: MarketHistoryPoint[] = HISTORY_SERIES.map(([date, temperat
   temperature,
 }))
 
-/** 题材强度（CH-03）：10 条、降序；前 8 名与 QUOT-334 基线一致（82/74/66/58/51/47/39/31）。 */
-const THEMES: MarketThemeRow[] = [
+/**
+ * 题材强度（CH-03）：10 条、降序；前 8 名与 QUOT-334 基线一致（82/74/66/58/51/47/39/31）。
+ * 首页「主线题材」卡片与「题材强度 Top 5」也读这一份，跨屏讲同一个交易日。
+ */
+export const DEMO_THEMES: readonly MarketThemeRow[] = [
   { theme: '人工智能', strength: 82.0, limit_up_count: 12, leader: '鸿博股份', delta: 6.3 },
   { theme: '机器人', strength: 74.0, limit_up_count: 9, leader: '科大讯飞', delta: -3.4 },
   { theme: '半导体', strength: 66.0, limit_up_count: 8, leader: '中芯国际', delta: 2.1 },
@@ -258,7 +261,7 @@ function themeEnvelope(variant: MarketDemoVariant, date: string): ThemeEnvelope 
     date,
     available,
     reason: available ? null : THEME_NOT_CONNECTED(date),
-    themes: available ? THEMES : [],
+    themes: available ? [...DEMO_THEMES] : [],
     data_source_status: available ? 'ok' : 'missing',
   }
   return {
@@ -269,7 +272,7 @@ function themeEnvelope(variant: MarketDemoVariant, date: string): ThemeEnvelope 
     payload,
     source: 'ladderstock',
     source_detail: available
-      ? `theme_news: duckdb（${THEMES.length * 12} 条 → ${THEMES.length} 个题材，${date}）`
+      ? `theme_news: duckdb（${DEMO_THEMES.length * 12} 条 → ${DEMO_THEMES.length} 个题材，${date}）`
       : `theme_news 未接入（QuotaFuse Wire），先配置 qfw：缓存后端 missing，${date} 没有 theme_news 记录（配置后运行 ldst sync --dataset theme_news）`,
     fetched_at: DEMO_FETCHED_AT,
     freshness: 'cached',

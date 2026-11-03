@@ -16,6 +16,7 @@ import type {
   IndexQuoteItem,
   IndicesPayload,
   LadderEnvelope,
+  MarketThemePayload,
   ValidationPayload,
   WatchSnapshotPayload,
   WatchlistItem,
@@ -24,6 +25,7 @@ import type {
 import type { PositionsPayload } from '../../api/radar'
 import { DEMO_FETCHED_AT, DEMO_TRADE_DATE, DEMO_WATCH_ROWS } from '../watch/demo'
 import { demoPositions } from '../radar/demo'
+import { DEMO_THEMES } from '../market/demo'
 
 /** 基准交易日与 `limitup/demo.ts:15-18` 同值；屏侧只要认 `home/demo` 一处即可。 */
 export { DEMO_FETCHED_AT, DEMO_TRADE_DATE }
@@ -232,13 +234,37 @@ function validationPayload(date: string, variant: HomeDemoVariant): LadderEnvelo
   )
 }
 
-/** 屏侧取数口：与 http 源同签名（QUOT-381 首页 v2 起含指数 / 自选 / 持仓五路）。 */
+/** 题材强度与市场屏同源（`market/demo.ts:DEMO_THEMES`），首页只读前几名。 */
+function themePayload(variant: HomeDemoVariant, date: string): LadderEnvelope<MarketThemePayload> {
+  // `partial` 是这台机器最常见形态：`/api/market/theme` 在、但没接 QuotaFuse Wire → available=false
+  const available = variant === 'full'
+  return envelopeOf<MarketThemePayload>('sentiment', 'theme_rotation',
+    {
+      date,
+      available,
+      reason: available
+        ? null
+        : `theme_news 未接入（QuotaFuse Wire），先配置 qfw：缓存后端 missing，${date} 没有 theme_news 记录（配置后运行 ldst sync --dataset theme_news）`,
+      themes: available ? DEMO_THEMES.slice(0, 5) : [],
+      data_source_status: available ? 'ok' : 'missing',
+    },
+    {
+      available,
+      sourceDetail: available
+        ? `theme_news: duckdb（${DEMO_THEMES.length * 12} 条 → ${DEMO_THEMES.length} 个题材，${date}）`
+        : `theme_news 未接入（QuotaFuse Wire）；${date} 没有 theme_news 记录`,
+    },
+  )
+}
+
+/** 屏侧取数口：与 http 源同签名（QUOT-381 首页 v2 起含指数 / 自选 / 持仓五路，另加题材一路）。 */
 export interface HomeSource {
   watchSnapshot(signal?: AbortSignal): Promise<LadderEnvelope<WatchSnapshotPayload>>
   validation(date: string, signal?: AbortSignal): Promise<LadderEnvelope<ValidationPayload>>
   indices(signal?: AbortSignal): Promise<LadderEnvelope<IndicesPayload>>
   watchlist(signal?: AbortSignal): Promise<WatchlistPayload>
   positions(date: string, signal?: AbortSignal): Promise<PositionsPayload>
+  theme(date: string, signal?: AbortSignal): Promise<LadderEnvelope<MarketThemePayload>>
 }
 
 export function demoHomeSource(variant: HomeDemoVariant, date: string): HomeSource {
@@ -248,5 +274,6 @@ export function demoHomeSource(variant: HomeDemoVariant, date: string): HomeSour
     indices: async () => indicesPayload(variant),
     watchlist: async () => watchlistPayload(variant),
     positions: async () => positionsPayload(variant),
+    theme: async (requested) => themePayload(variant, requested || date),
   }
 }

@@ -8,7 +8,7 @@ import { useDemoEnabled, useForcedState } from '../../lib/pageState'
 import { demoHomeSource, type HomeDemoVariant, type HomeSource } from './demo'
 
 /**
- * 首页四路取数口的选择（模板同 `limitup/useLimitUpView.ts:30-31,71-76`）。
+ * 首页取数口的选择（模板同 `limitup/useLimitUpView.ts:30-31,71-76`）。
  *
  * 演示开关判定只有一处真源（`lib/pageState.ts:104` 的 `useDemoEnabled`）；
  * `demo ? demoSource : httpSource` 之外不写第二条判定，**真实请求失败也不回落到演示数据**。
@@ -41,6 +41,7 @@ export const httpHomeSource: HomeSource = {
   indices: (signal) => fetchIndices(signal),
   watchlist: (signal) => fetchWatchlist(signal),
   positions: (date, signal) => httpRadarSource.positions({ date }, signal),
+  theme: (date, signal) => api.marketTheme(date, signal),
 }
 
 export function useHomeSource(date: string): {
