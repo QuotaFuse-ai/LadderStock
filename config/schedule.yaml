@@ -50,3 +50,13 @@ jobs:
     kind: reconcile
     trigger: "15:05"
     enabled: true
+  # 15:35 收盘全量同步（QUOT-347）：复用 `ldst sync` 链路顺序拉候选池数据集
+  # （limit_pool / fund_flow / concept_board，一切取数走 TickHub 缓存、不直打上游 DEC-006），
+  # 落 `archive/YYYY/MM/DD/<dataset>.parquet` 日分区，再触发当日 `ldst review`。
+  # 仅交易日动作，非交易日整轮 skipped；单任务失败只记 degraded/failed，不影响 15:05 对账。
+  # 幂等由 duckdb_store 兜底（replace 整日覆盖、append 按 (code,trade_date) upsert）。
+  - id: close_sync
+    name: 15:35 收盘全量同步
+    kind: sync_close
+    trigger: "15:35"
+    enabled: true
