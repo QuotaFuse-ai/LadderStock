@@ -1458,3 +1458,107 @@ def test_ai_job_is_exclusive(tmp_path: Path, peer_dirs: dict[str, Path]) -> None
     finally:
         gate.set()
     assert _wait(plane, first.id).status == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# 7. 页面一键命令（QUOT-200）
+# --------------------------------------------------------------------------- #
+
+def test_page_commands_cover_routes_and_resolve_date(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    plane = _plane(tmp_path, peer_dirs)
+    payload = plane.page_commands()
+
+    assert payload["ok"] is True
+    by_key = {item["key"]: item for item in payload["commands"]}
+    assert set(by_key) == set(control.PAGE_COMMANDS)
+    assert by_key["market"]["route"] == "/market"
+    assert by_key["market"]["argv"] == ["sync"]
+    today = datetime.now().date().isoformat()
+    assert by_key["review"]["argv"] == ["review", "--date", today]
+    assert by_key["validate"]["argv"] == ["validate", "reconcile", "--date", today]
+    assert all(item["last_job"] is None and item["running"] is False for item in payload["commands"])
+
+
+def test_page_command_runs_whitelisted_argv(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    runtime = FakeRuntime()
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    job = plane.create_command_job("market")
+    done = _wait(plane, job.id)
+
+    assert done.status == "ok"
+    assert done.command == "market"
+    assert runtime.calls[-1][-1] == "sync"
+
+    row = next(item for item in plane.page_commands()["commands"] if item["key"] == "market")
+    assert row["last_job"]["id"] == job.id
+    assert row["running"] is False
+
+
+def test_page_command_exit_codes_map_to_status(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    runtime = FakeRuntime()
+    runtime.default = StepResult(9, "degraded\n")
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+    assert _wait(plane, plane.create_command_job("news").id).status == "ok"
+
+    runtime.default = StepResult(1, "boom\n")
+    done = _wait(plane, plane.create_command_job("calendar").id)
+    assert done.status == "failed"
+    assert "刷新事件日历失败" in (done.error or "")
+
+
+def test_page_command_is_exclusive_and_rejects_unknown(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    import threading
+
+    gate = threading.Event()
+
+    def blocked(args: list[str], cwd: Path, timeout: float) -> StepResult:
+        gate.wait(5)
+        return StepResult(0, "ok\n")
+
+    runtime = FakeRuntime()
+    runtime.run = blocked  # type: ignore[method-assign]
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    with pytest.raises(KeyError):
+        plane.create_command_job("nope")
+
+    first = plane.create_command_job("pool")
+    try:
+        with pytest.raises(RuntimeError, match="已有页面命令在执行"):
+            plane.create_command_job("market")
+    finally:
+        gate.set()
+    assert _wait(plane, first.id).status == "ok"
+
+
+def test_command_endpoints_expose_whitelist(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    client = TestClient(
+        create_app(
+            data_root=tmp_path,
+            dist_dir=tmp_path / "missing",
+            control_plane=_plane(tmp_path, peer_dirs),
+        ),
+        client=LOOPBACK,
+        headers=WRITE_HEADERS,
+    )
+
+    listed = client.get("/api/control/commands")
+    assert listed.status_code == 200
+    assert listed.json()["ok"] is True
+    assert {item["key"] for item in listed.json()["commands"]} == set(control.PAGE_COMMANDS)
+
+    assert client.post("/api/control/commands/nope").status_code == 404
+    started = client.post("/api/control/commands/positions")
+    assert started.status_code == 200
+    assert started.json()["job_id"]

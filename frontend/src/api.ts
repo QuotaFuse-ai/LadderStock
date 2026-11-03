@@ -684,6 +684,21 @@ export interface BoardPayload {
   ports: { board: number; mcp: number } & Record<string, { mcp: number; web: number | null } | number>
 }
 
+/** 页面一键命令（后端白名单；argv 不接受前端传入）。 */
+export interface PageCommand {
+  key: string
+  route: string
+  label: string
+  argv: string[]
+  running: boolean
+  last_job: JobView | null
+}
+
+export interface PageCommandsPayload {
+  ok: boolean
+  commands: PageCommand[]
+}
+
 export interface ConfigEntry {
   set: boolean
   secret: boolean
@@ -918,6 +933,15 @@ export const api = {
     job: (jobId: string, signal?: AbortSignal) =>
       request<JobView>(`/control/jobs/${encodeURIComponent(jobId)}`, {
         signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 页面一键命令清单（白名单 + 最近一次任务）。 */
+    commands: (signal?: AbortSignal) =>
+      request<PageCommandsPayload>('/control/commands', { signal, timeoutMs: CONTROL_TIMEOUT_MS }),
+    runCommand: (key: string) =>
+      request<JobHandle>(`/control/commands/${encodeURIComponent(key)}`, {
+        method: 'POST',
+        body: {},
         timeoutMs: CONTROL_TIMEOUT_MS,
       }),
   },

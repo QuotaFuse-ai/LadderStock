@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 
 import AiConnectDialog from './AiConnectDialog'
+import PageCommandBar from './PageCommandBar'
 import PersistenceBanner from './PersistenceBanner'
 import { Segmented } from './ui'
 import { cn } from '../lib/cn'
@@ -399,6 +400,8 @@ export default function Layout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <PersistenceBanner />
         <main id="main" tabIndex={-1} className="mx-auto w-full max-w-table flex-1 px-5 py-5 focus:outline-none">
+          {/* QUOT-200：每页顶部的「运行本页命令」条；没有对应命令或控制面未开启时整条不渲染 */}
+          <PageCommandBar />
           <Outlet />
         </main>
       </div>
