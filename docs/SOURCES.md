@@ -49,6 +49,7 @@ WSL 转发服务的固定端口，8787 已被 TickHub-CN 管理端占用，两�
 | `yesterday_limit_up` | tickhub | `yesterday_limit_up_pool` | — | replace | `trade_date` |
 | `sentiment` | tickhub | `market_sentiment` | — | replace | `trade_date` |
 | `spot_quote` | tickhub | `tencent_quote_batch` | — | replace | `timestamp`（**非**交易日水位） |
+| `index_quote` | tickhub | `index_quote` | — | replace | `timestamp`（**非**交易日水位） |
 | `dragon_tiger` | tickhub | `dragon_tiger` | `dragon_tiger_backup` | replace | `trade_date` |
 | `dragon_tiger_seats` | tickhub | `dragon_tiger_seats` | — | replace | `trade_date` |
 | `industry_board` | tickhub | `industry_boards` | — | replace | `trade_date` |
@@ -69,6 +70,23 @@ WSL 转发服务的固定端口，8787 已被 TickHub-CN 管理端占用，两�
 实时报价没有「一天一条」的交易日水位，进 sync 台账会被 `ldst sync` 当成按日落库的
 数据集。调度侧走 `ProviderRegistry.fetch_live()`（链路只按 `sources.yaml` 组装），
 口径见 `docs/specs/SPEC-INTRADAY-SNAPSHOT.md`。
+
+**`index_quote`（首页指数条，QUOT-380 / DEC-052）与 `spot_quote` 同构**：行内没有
+`trade_date`，行情时间是 `timestamp`（`YYYYMMDDHHMMSS`），同样**只在 `sources.yaml` 登记、
+不进 `sync.yaml`**；非交易时段 peer 照旧回上一交易日收盘，接口把 `as_of` 如实带出。
+三条实测出来的取数纪律（口径钉在 `core/indices.py`，不在登记层）：
+
+1. **入参必须带 `sh`/`sz` 前缀，且只允许前缀形式**——裸 `000001` 与点号写法 `000001.SH`
+   都会被上游**静默回平安银行**且照旧标 `is_index: true`（比报错更危险）；
+2. **指数绝不能图省事复用 `spot_quote` / `tencent_quote_batch`**——批量报价工具剥掉前缀后
+   按 6 位代码回键，指数与个股代码撞车时静默给错票（实测四回三、`000001` 成了平安银行、
+   `failed=0`）；
+3. **返回行的 `code` 不带前缀**，匹配必须按 `(market, code)`，按 `code` 建字典会把
+   `sh000001` 与 `sz000001` 撞成一格。
+
+**`index_list` 不能当指数注册表用**：实测回的是按 `change_pct` 降序的 100 条榜，
+不含首页要的四个指数，还混老三板个股（`400224 苏阳光5`）。所以四格白名单由本仓写死
+（`sh000001` / `sh000300` / `sz399001` / `sz399006`），不向 peer 动态要清单。
 
 **R5 产业研究的四路输入**：`sw_industry_map` / `finance_indicators` /
 `valuation_history` 是**逐股**取数（代码池见 §2.3），成分表采用**懒缓存**——

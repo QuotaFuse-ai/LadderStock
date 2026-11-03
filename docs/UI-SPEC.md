@@ -20,6 +20,7 @@
 | v1.5 | 2026-11-02 | 新增「接入 AI」一等入口（QUOT-200）：侧栏底部（主题与设置之间）按钮 + 设置 → AI 接入顶部状态卡，打开右侧向导抽屉（`AiConnectDialog`）；提供 DeepSeek / 通义千问 / Kimi / MiniMax / 本机 Ollama / 自定义预置，测试连通性后写入 `config/ai.env`（`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY`），密钥只写不读回。订阅版 CLI（Codex / Claude Code / WorkBuddy）当前后端未实现，不放入口。`?ai=1` 可直接打开抽屉（截图/排障）。 |
 | v1.6 | 2026-11-03 | 复盘组拆三独立入口（QUOT-344，决策 DEC-046；本链 S1+S2 合并成这一行，按 DEC-045 §4）。导航：`复盘` 组由「情绪复盘 / 周度复盘 / 候选池」改为 **每日复盘 `/review` · AI复盘 `/review/ai` · AI周报 `/weekly` · 候选池 `/pool`**——三屏同源不合并，`/weekly` 只改文案不改路由。路由新增 `/review/ai`（与 `/review` 同族前缀，不用 `/ai-review`）；`frontend/tests/nav-routes.test.tsx` 加三入口互不相同、各自深链可达、`/review` 与 `/review/ai` 不同组件的断言；`visual-shot.mjs` 记为第 20 屏。AI复盘的导航图标取 `Bot`，不复用底部「接入 AI」动作的 `Sparkles`——`rail:` 档只剩图标可辨，两个 Sparkles 分不开。**分工**：每日复盘 = 当日五段数据（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），AI复盘 = AI 生成段落 + 降级/失败段，AI周报 = 按周聚合叙述。S2（QUOT-353，决策 DEC-049）补齐内容面：**`/review` = 数据面、`/review/ai` = 模型面，两屏读同一份 `review/<date>.json` 各取一半，互不重叠**。数据面新增此前不存在的正文层 `screens/review/SectionMetrics.tsx`（五段 `sections[].metrics` 走 key 登记表，未登记不上屏）；「我的判断」裁定归数据面且全仓只有一份 `review_draft` 存储，模型面不写第二份、交易日只跟 `?date=`（DEC-049 §3）。模型面从占位壳变为可用屏：五段 `narrative` + 段级 `status` + `ai_failures[]` + `ai.model` + 控制面 `generate`/按段 `retry` + 1.5s 轮询 `jobs/{id}` 全在这一屏，「重新生成 / 重试失败段」从 `/review` 移除（不是并存）。**三种「没有 AI 正文」分开显示**（`review/parse.ts:classifyAiCase`，只读契约字段不解析文案）：产物不存在 → 引导 `ldst review`；产物在但模型未配 → 「模型未接入：五段都没有跑过模型」+「接入 AI」，且必须写「缺的是模型，不是数据」；段级失败 → 逐段标注 + 按段重跑。同源修正三处口径：`headline` 是 `pipeline._headline()` 的程序直出，此前挂着「AI 摘要」+ 模型名属错标，现改标「程序直出 · 当日摘要」并留在数据面（DEC-049 §6）；段级缺数横幅按 §5.2 取 `danger`，收口 R-12（复盘两份本地溯源徽标一并收进 `SourceBadges`，R-01 计数 4→3）；演示态永不触发控制面、永不预填「我的判断」、离线回放缓存仍只有一个键（`review_snapshot_cache_v1`）。规范落点：§0 表行 1/20 标注两屏分工、§3.1 重写为数据面、新增 §3.19（模型面）、§10 两行映射落定、§11.1 重写 + 新增 §11.20、§12.5 补 R-27（复盘页面导出从未实现）。证据：`tests/review-split.test.tsx`（两屏同挂对照重叠检查）+ `tests/quota-334-review-weekly.test.tsx`（按拆屏后口径重写）+ `docs/screenshots/{review,review-ai}-after-344s2[-1024|-noartifact|-demo|-demo-partial][-tall]-{dark,light}.png`；`typecheck` / `test`（399 例）/ `check:ui`（6/6）全绿。 |
 | v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
+| v1.7 | 2026-11-04 | 后端数据面新增两个首页出口（QUOT-380，决策 DEC-052；§0「不覆盖」清单只加标注、原文不改）：**`GET /api/indices`** 首页 A 股指数条 4 格（`sh000001` 上证 / `sh000300` 沪深300 / `sz399001` 深证成指 / `sz399006` 创业板指，白名单由后端写死、不向 peer 动态要清单），每格 `price` / `change` / `change_pct` / `prev_close` / `as_of`，取不到是 `available=false` + 原因，不补 0、不自采；**`GET /api/watchlist`** 自选只读面（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，顶层 `items` + `watch_count`，`note` 不出，写面仍不经 HTTP）。`GET /api/positions` 只**加字段**不改既有形状：`items[].daily_pnl` / `daily_pnl_status` / `daily_pnl_reason` 与 `valuation.daily_pnl` / `currency: CNY`（当日盈亏 = `daily_k` 的 `close(T) − close(T−1)`，停牌日显 `missing` 不退回更早交易日；币种汇总本版不做）。前端接线与 §10 路由映射由 S3（QUOT-381）承接。 |
 
 ## 0. 范围与非目标
 
@@ -54,6 +55,11 @@
 
 - 任何行情采集、数据清洗、指标计算逻辑（数字只由程序算，AI 只写叙述）。
 - 交易日志 / 持仓 / 自选的网络读写（隐私数据只进本机 SQLite，`journal*` 不经 HTTP）。
+  **已开的两个回环口子**（不改写上面这句原文，只在清单上标注口径）：
+  **持仓**按 DEC-033 开读写面，**自选**按 DEC-052 只开**一条只读**路由
+  `GET /api/watchlist`（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，只 GET、
+  增删只走本机 CLI `ldst watch add|rm|list`，`note` 不出）。
+  **交易日志仍一条 HTTP 路由都不开**（`/api/journal/stats` 只出聚合数字那条边界不动）。
 - 买卖建议、目标价、收益预测（产品边界：复盘辅助，不输出交易信号）。
 - 新增数据源或"某个 peer 挂了就换一家"的降级（只允许同 peer 备工具 → 缓存回放）。
 - **视口 < 1024px**：v1.0 §2 写的「<1024 侧栏折叠为顶部横向导航」「<720 表格转卡片列表」在 `270caf8` 上没有任何实现（`Layout.tsx:194` 只有 `w-sidebar` / `rail:w-sidebar-rail` 两档，`rail` = `max-width:1279px`）。v1.1 把最低支持视口正式定为 `--ldst-bp-min: 1024px`，窄屏适配移出规范（DEC-040 §3，理由见 §12.4-B）。

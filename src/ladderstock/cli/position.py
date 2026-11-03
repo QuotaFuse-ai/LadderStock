@@ -27,7 +27,7 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from ladderstock.cli.output import OutputOption, emit, error
-from ladderstock.core.quotes import price_map
+from ladderstock.core.quotes import daily_change_map, price_map
 from ladderstock.errors import EXIT_CONFIG, EXIT_OK, EXIT_USAGE, LadderStockError
 from ladderstock.journal.position import (
     add_position,
@@ -93,13 +93,18 @@ def position_list(
     """我的持仓 + 本地计算：浮动盈亏、已实现盈亏、集中度、行业分布（只读本机）。"""
     try:
         rows = list_positions(code=code)
-        prices, status = price_map([str(row["code"]) for row in rows], price_date)
+        codes = [str(row["code"]) for row in rows]
+        prices, status = price_map(codes, price_date)
         trades = list_journal_trades()
-        payload = compute_metrics(rows, prices, as_of=status["date"], trades=trades)
+        daily, daily_status = daily_change_map(codes, status["date"])
+        payload = compute_metrics(
+            rows, prices, as_of=status["date"], trades=trades, daily=daily
+        )
     except LadderStockError as exc:
         _fail(exc)
 
     payload["price_lookup"] = status
+    payload["daily_lookup"] = daily_status
     if status["reason"]:
         sys.stderr.write(f"ldst: 持仓现价不可用：{status['reason']}\n")
         sys.stderr.flush()
