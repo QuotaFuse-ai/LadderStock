@@ -101,6 +101,15 @@ function group(result: { groups: SearchGroup[] }, id: SearchGroup['id']): Search
   return found
 }
 
+/** 去掉实测耗时：两次调用的 `elapsedMs` 不保证相等，其余字段才是聚合契约。 */
+function withoutTiming(groups: SearchGroup[]): SearchGroup[] {
+  return groups.map((item) => ({
+    ...item,
+    elapsedMs: 0,
+    sources: item.sources.map((source) => ({ ...source, elapsedMs: 0 })),
+  }))
+}
+
 // ---------------------------------------------------------------- 归一化与意图
 
 describe('输入归一化与意图判定', () => {
@@ -192,7 +201,8 @@ describe('runSearch 分组与跳转', () => {
     const sources = [stockSource(rows), themeSource(['机器人']), newsSource([])]
     const plain = await runSearch('600000', { date: DATE, sources })
     const padded = await runSearch('  600 000 ', { date: DATE, sources })
-    expect(padded.groups).toEqual(plain.groups)
+    // `elapsedMs` 是实测耗时，两次调用天然不相等；比较语义内容时归零。
+    expect(withoutTiming(padded.groups)).toEqual(withoutTiming(plain.groups))
     expect(padded.query.code).toBe('600000')
   })
 
