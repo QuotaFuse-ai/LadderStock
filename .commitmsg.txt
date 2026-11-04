@@ -1,0 +1,23 @@
+fix(ui): 壳层页头吸顶 + 内容区 1440 居中等宽留白（QUOT-397）
+
+老板的原话是两条：横向导航要像正常后台那样固定住，内容区左右两边要
+有大空白。现状是窗口整体滚动、页头跟着走，内容栏用 max-w-table 顶在最
+左，宽屏下右侧一片空。
+
+改法：
+- 主内容列（Layout）改成滚动容器 `h-screen overflow-y-auto`，窗口不再
+  滚，页头 `sticky top-0` 才钉得住；换页时手动归顶（浏览器自带复原管不
+  到内层容器），页内 `#anchor` 不拦。
+- 新增 `.page-shell`：上限 1440px、`margin-inline: auto`、两侧 16/24px
+  留白。1440 是版面承诺不是主题令牌，所以放组件层而非 tokens.css。
+- 新增 `.page-shell-header`：负外边距抵消 `.page-shell` 的横向留白，让
+  底色与分隔线贴满主栏、标题仍与正文对齐；z 用 `--ldst-z-sticky`，低于
+  提示条与 Drawer/Modal。
+- 胶囊页签条留在页头之外，滚走的是它、钉住的是标题行 —— 不把一整条页签
+  常驻视口。
+
+证据（docs/screenshots/quot-397/，24 组 × before/after）：1440×900 与
+1920×1080 双主题，首页/市场/行业三屏各拍首屏与滚到中部。1920 下实测
+`main.left=356 / width=1440 / headerTop=0 / overflowX=0`。
+
+门禁：typecheck 通过、check:ui 6/6、生产构建通过。
