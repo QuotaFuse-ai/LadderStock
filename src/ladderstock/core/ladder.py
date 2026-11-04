@@ -7,8 +7,8 @@
 不新增任何采集入口（DEC-007 §2.6）。
 
 字段容忍：TickHub 不同工具对连板数的命名不一致（`consecutive_boards` /
-`limit_up_days` / `连板数` …），这里按优先级取第一个可解析的值；都没有就
-把该股记入 `unknown_board`，不猜。
+`streak` / `连板数` …），这里按优先级取第一个可解析的值；都没有就把该股记入
+`unknown_board`，不猜。`limit_up_days` 排在最后，理由见该键处的注释。
 
 口径（METRICS.md §3.4，D-01/D-04）：
 
@@ -27,11 +27,14 @@ from ladderstock.data import archive
 BOARD_KEYS: tuple[str, ...] = (
     "consecutive_boards",
     "consecutive_limit_up",
-    "limit_up_days",
     "board_count",
     "boards",
     "streak",
     "连板数",
+    # 只作兜底别名，必须排在真正的连板数之后：东财涨停池的 `limit_up_days` 是
+    # `zttj.days`（「n天m板」里的 n，统计窗口天数），不是连板数。股票纯连板时
+    # n 恰好等于 `streak`，老 fixture 两值相同，掩盖了差异（DEC-046 / QUOT-290）。
+    "limit_up_days",
 )
 NAME_KEYS: tuple[str, ...] = ("name", "stock_name", "sec_name", "名称")
 CODE_KEYS: tuple[str, ...] = ("code", "symbol", "stock_code", "sec_code", "ts_code")

@@ -43,6 +43,30 @@ def test_tolerant_board_field_names() -> None:
     assert boards == {"A": 5, "B": 3, "C": 2, "D": 1}
 
 
+def test_streak_outranks_limit_up_days() -> None:
+    """真实东财涨停池两个字段并存且不等：`streak`=`lbc`（连板数），`limit_up_days`=`zttj.days`。
+
+    2026-11-02 09:36 实测（QUOT-290）：002086 streak=3 / limit_up_days=9。
+    取错会让天梯高度、层级、龙头、1进2 整体虚高（DEC-046）。
+    """
+    records = [
+        {"code": "002086", "name": "东方海洋", "streak": 3, "limit_up_days": 9},
+        {"code": "000995", "name": "皇台酒业", "streak": 2, "limit_up_days": 6},
+    ]
+    ladder = compute_ladder(DAY, records=records)
+    boards = {row["code"]: row["boards"] for group in ladder["ladder"] for row in group["stocks"]}
+
+    assert boards == {"002086": 3, "000995": 2}
+    assert ladder["height"] == 3
+    assert [g["boards"] for g in ladder["ladder"]] == [3, 2]
+
+
+def test_limit_up_days_still_accepted_as_last_alias() -> None:
+    """只有 `limit_up_days`「3板」这种文本形状时仍按别名解析（P04 / S09 容忍口径不变）。"""
+    ladder = compute_ladder(DAY, records=[{"code": "F", "name": "己", "limit_up_days": "4板"}])
+    assert ladder["height"] == 4
+
+
 def test_empty_pool_is_unavailable_not_zero() -> None:
     ladder = compute_ladder(DAY, records=[])
     assert ladder["available"] is False
