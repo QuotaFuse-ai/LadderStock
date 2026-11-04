@@ -34,6 +34,13 @@
 > `docs/specs/SPEC-WEEKLY.md`）。行号续编 44，全表 **44 行**、叶子 **42** 个、
 > `scripts/check_commands.py` 实测可执行 argv **41** 条。见 §A′。
 >
+> **QUOT-380 增量（2026-11-04）**：基线 31 条口径**不变**，新增 3 条自选清单命令
+> `ldst watch add|rm|list`，行号续编 46–48，见 §I。
+> ⚠️ 上面的历史计数**彼此不一致**（R6 那条写「全表 45 行 / 叶子 43 / argv 42」，
+> R11 那条写「44 行 / 42 叶子 / 41 argv」，两者都自称「行号续编 44」），
+> 本单不代为对账；**唯一可复核的计数口径是 `tests/fixtures/command_matrix.py`**
+> （`LEAF_PATHS` 现为 **45** 个叶子路径，含本单新增 3 条）。
+>
 > **前置约束**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
 ## 0. 总览（31 条）
@@ -257,6 +264,32 @@ ldst position list --output json                         # realized.total_pnl（
 - **幂等**：同一份缓存 + 同一份配置重跑，除信封的取值时刻 `fetched_at` 之外逐字段一致
   （溯源时间来自缓存的入库时间 `_ingested_at`，公式里没有 `now()`）。
 > §D′ 的行 36（`ldst research`）、§E″ 的行 37–41（R7 增量 5 条）、§D‴ 的行 42–43（R5 增量 2 条）、§D″ 的行 44–45（R6 增量 2 条）都在 31 条基线之外，**不计入上面的 31/33/35/32**；全部算上是 45 行 / **43 个叶子** / **42 条可执行 argv**（`scripts/check_commands.py` 现覆盖 42 条）。
+
+## I. 我的自选清单（QUOT-380 增量，3）
+
+> 口径来源：`docs/decisions/DEC-052-watchlist-read-endpoint.md`（自选读面，2026-11-03 拍板）、
+> `docs/specs/SPEC-RADAR-PAGES.md` §9.2。这 3 条**不属于** 31 条 P0 基线，
+> 测试矩阵按「QUOT-380 增量」单独登记（`tests/fixtures/command_matrix.py`：叶子路径 **45** 个）。
+>
+> ⚠️ **同一个 `watch` 组里有两类命令**：`start|status|stop` 是**盘中盯盘**（§C，离线单轮信号扫描），
+> `add|rm|list` 是**我的自选**（本组，本机隐私库 `watchlist` 表）。组名共用是任务书指定的口径，
+> 读写的东西完全不同——`ldst watch --help` 两行帮助里都写明了这一点。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 46 | `ldst watch add` | 加一条自选 | `--code`（必填，6 位数字，可带 `sh`/`sz`/`bj` 前缀） | **仅写本机 `data/journal.sqlite` 的 `watchlist` 表**，不联网、不上传、不经 HTTP；重复 code 更新加入时间 → 0；代码非法 → 2 |
+| 47 | `ldst watch rm` | 删一条自选 | `--code` | code 不在清单里 → **6**（「无结果」，不静默成功） |
+| 48 | `ldst watch list` | 我的自选清单（按加入时间排序） | `--output` | 0 + 结构化载荷；**空清单也是 0**。**只出 `code` 与 `created_at`，不出 `note`**（DEC-052 §2.2 拍板：自由文本不进这个出口） |
+
+**为什么写面只有 CLI、没有 HTTP**：`watchlist` 表此前只有 schema、没有任何生产者，
+数据恒为空——只上 `GET /api/watchlist` 读面就是一张永久空态卡。本组三条就是那个生产者：
+它写的是本机 SQLite，正是 DEC-052「自选的增删**不经 HTTP**」要求走的路，所以**不需要新决策**
+（HTTP 侧仍然只有那一条只读路由；写面要放开是再一次独立决定）。
+
+自选与 `journal` / `position` 同为**本地数据**：清单不进 `LadderEnvelope`、不进 MCP 工具清单、
+不进 AI 上下文。`GET /api/watchlist` 的三条闸门（回环独占 + `Host` 白名单 + `no-store`）
+由 `scripts/check_privacy.py` 第 3 组的第三条授权例外钉住，四项判据缺一不可，
+反例覆盖「自选模块出现在 MCP / AI 出口」——**白名单不能变成后门**。
 
 ## F. 全局约定
 

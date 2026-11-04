@@ -255,7 +255,71 @@ PEER_SIBLING_DIRS: dict[str, str] = {
     "senate": "StockSenate",
 }
 
+# --------------------------------------------------------------------------- #
+# 工具组件（不是 peer：不提供数据集，只提供生态里的公共能力）
+# --------------------------------------------------------------------------- #
+#
+# peer 是「向谁取数」的边界对象；工具组件是「生态里的基础设施」。二者不能混在
+# `PEERS` 里：数据集归属校验要求 `peer in PEERS`，把代理池登记成 peer 会让它
+# 变成合法数据来源，反而破坏四层边界。因此单独一张表，只读观测、不代管启停。
+
+
+@dataclass(frozen=True)
+class ComponentControl:
+    """一个工具组件的只读观测元数据。"""
+
+    key: str
+    product: str
+    role: str
+    directory: str
+    console_port: int
+    gateway_port: int | None
+    health_path: str
+    #: 谁负责它的生命周期（控制面只展示，不接管）
+    managed_by: str
+    notes: tuple[str, ...] = ()
+
+
+COMPONENTS: dict[str, ComponentControl] = {
+    "proxyfleet": ComponentControl(
+        key="proxyfleet",
+        product="ProxyFleet",
+        role="代理池：节点采集 / 健康检查 / 出口网关（8788 控制台 · 8789 网关）",
+        directory=r"[local-path]\ProxyFleet",
+        console_port=8788,
+        gateway_port=8789,
+        health_path="/readyz",
+        managed_by="Windows 计划任务 ProxyFleet（SYSTEM，开机自启 + 崩溃重启）",
+        notes=(
+            "不登记为 peer：它不提供 LadderStock 的数据集，只提供出口代理（DEC-047）。",
+            "控制面只做只读观测；安装与启停走 pfctl.py / 计划任务，不在本页执行。",
+        ),
+    ),
+}
+
+#: 组件目录覆盖入口：与 peer 一样是固定键白名单。
+COMPONENT_DIR_ENV: dict[str, str] = {
+    "proxyfleet": "LDST_COMPONENT_DIR_PROXYFLEET",
+}
+
+COMPONENT_SIBLING_DIRS: dict[str, str] = {
+    "proxyfleet": "ProxyFleet",
+}
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def resolve_components(env: Mapping[str, str] | None = None) -> dict[str, ComponentControl]:
+    """解析组件目录：环境变量 > LadderStock 同级目录 > 占位符。"""
+    values = os.environ if env is None else env
+    resolved: dict[str, ComponentControl] = {}
+    for key, ctl in COMPONENTS.items():
+        directory = (values.get(COMPONENT_DIR_ENV[key]) or "").strip()
+        if not directory:
+            sibling = _REPO_ROOT.parent / COMPONENT_SIBLING_DIRS[key]
+            directory = str(sibling) if sibling.is_dir() else ctl.directory
+        resolved[key] = ctl if directory == ctl.directory else replace(ctl, directory=directory)
+    return resolved
 
 
 def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, PeerControl]:
@@ -328,6 +392,15 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # 一条」的水位，硬套 `trade_date` 会让它看起来像可按日增量同步的数据集。
         _b("spot_quote", "tickhub", "tencent_quote_batch", "replace", "timestamp",
            note="实时批量报价（盘中快照用）；不进 sync 台账，timestamp 不作交易日水位"),
+        # 指数实时报价（QUOT-380 / QUOT-379 盘点 A-1）：与 `spot_quote` **同构**——
+        # 行内没有 `trade_date`，行情时间是 `timestamp`（`YYYYMMDDHHMMSS`），硬套
+        # `trade_date` 会让它看起来像可按日增量同步的数据集，所以同样**不进 sync.yaml**。
+        # 入参与 `spot_quote` 有一个实测出来的差别：必须带 `sh`/`sz` 前缀（`000001.SH`
+        # 与裸 `000001` 都会被解析成平安银行且照旧标 `is_index: true`），
+        # 返回行的 `code` 又是**不带前缀**的 6 位，所以按代码匹配要看 `(market, code)`。
+        # 口径由调用方 `core/indices.py` 钉住，登记本身不做任何过滤。
+        _b("index_quote", "tickhub", "index_quote", "replace", "timestamp",
+           note="指数实时报价（首页指数条用）；不进 sync 台账，timestamp 不作交易日水位"),
         _b("dragon_tiger", "tickhub", "dragon_tiger", "replace", "trade_date",
            ("dragon_tiger_backup",), "备源为交易所官方榜"),
         _b("dragon_tiger_seats", "tickhub", "dragon_tiger_seats", "replace", "trade_date",

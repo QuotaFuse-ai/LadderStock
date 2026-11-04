@@ -136,6 +136,21 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 首页指数条（QUOT-380）：与 `spot_quote` 同构的实时报价——**不进 sync.yaml / 不进台账**，
+  # 非交易时段 peer 照旧回上一交易日收盘（`as_of` 如实带出），不需要日更。
+  # 无备源：同 peer 的 `index_list` 是「按涨幅排序的 100 条榜」（实测不含这四个指数、
+  # 还混老三板个股），`index_kline` 是历史 K 线，都不是同一口径的换源（DEC-006 主备同口径）。
+  - id: tickhub_index_quote
+    dataset: index_quote
+    via: tickhub
+    tool: index_quote
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   - id: tickhub_dragon_tiger
     dataset: dragon_tiger
     via: tickhub

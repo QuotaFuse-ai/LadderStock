@@ -1,0 +1,3 @@
+[submodule "ProxyFleet"]
+	path = ProxyFleet
+	url = https://github.com/QuotaFuse-ai/ProxyFleet.git

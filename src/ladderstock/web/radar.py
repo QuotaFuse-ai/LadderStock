@@ -48,6 +48,7 @@ from typing import Annotated, Any, Literal, TypeVar
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+from ladderstock.core import indices as indices_module
 from ladderstock.core import pool as pool_module
 from ladderstock.core.boundary import owner_of
 from ladderstock.core.models import (
@@ -58,7 +59,9 @@ from ladderstock.core.models import (
     SourceStatus,
 )
 from ladderstock.core.privacy import strip_private
-from ladderstock.core.quotes import price_map
+from ladderstock.core.quotes import daily_change_map, price_map
+from ladderstock.core.watch_prices import DATASET as SPOT_QUOTE_DATASET
+from ladderstock.core.watch_prices import fetch_prices
 from ladderstock.data.provider_registry import ProviderRegistry
 from ladderstock.errors import (
     EXIT_CONFIG,
@@ -76,6 +79,7 @@ from ladderstock.journal.position import (
     list_positions,
     remove_position,
 )
+from ladderstock.journal.watchlist import list_watch
 from ladderstock.news import store as news_store
 from ladderstock.news import stream as news_stream
 from ladderstock.news.calendar import DEFAULT_LIMIT as CALENDAR_DEFAULT_LIMIT
@@ -94,6 +98,11 @@ NEWS_TOPIC = "news_stream"
 CALENDAR_TOPIC = "event_calendar"
 POOL_DOMAIN: Domain = "sentiment"
 POOL_TOPIC = "candidate_pool"
+
+#: 首页指数条（QUOT-380）：与候选池同为公开行情面，`domain` 沿用 `sentiment`，
+#: `topic` 直接用数据集名，前端 `radar.ts` 按 topic 下钻。
+INDICES_DOMAIN: Domain = "sentiment"
+INDICES_TOPIC = "index_quote"
 
 #: 栏目账本的状态词表沿用 R6（`ok / empty / skipped / failed`），不另立一套
 STATUS_OK = news_stream.STATUS_OK
@@ -132,6 +141,9 @@ INDUSTRIES_PLACEHOLDER: list[str] = []
 READ_FAILURE = "本机数据读取失败"
 WRITE_FAILURE = "本机持仓写入失败"
 POSITIONS_DENIED = "持仓只接受回环来源"
+#: 自选读面（DEC-052）：闸门判据与持仓一模一样，只是文案指向本单编号
+WATCHLIST_DENIED = "自选只接受回环来源（DEC-052）"
+EMPTY_WATCHLIST = "本机还没有自选：用 ldst watch add --code 600000 加一条（写入只在本机）"
 POSITIONS_WRITE_DENIED = "持仓写入缺少来源证据：需要本机页面 Origin，或显式头 X-LDST-Client: 1"
 
 #: `POST /api/positions` 的请求体白名单（**多一个键就 400**，不做模糊匹配）。
@@ -520,6 +532,29 @@ class RadarPlane:
             freshness="realtime",
         )
 
+    # -------------------------------------------------------------- 指数条 §9.1
+
+    def indices_view(self) -> dict[str, Any]:
+        """首页指数条（QUOT-380）：一次 `index_quote` 请求投影四格。
+
+        公开行情面，**不加回环独占**（判据与 `/api/news` `/api/pool` 同一条）。
+        四格的顺序、条数、名称由 `core.indices` 的白名单写死；peer 回什么就用什么，
+        取不到的格子是 `available=false` + 原因，`data_source_status` 走
+        `ok / partial / missing`（全挂是 missing，不是 404，也不伪造行）。
+        """
+        registry = self._active_registry()
+        active = registry if registry is not None else ProviderRegistry()
+        result = self._read(lambda: indices_module.fetch_indices(active))
+        return _envelope(
+            domain=INDICES_DOMAIN,
+            topic=INDICES_TOPIC,
+            day=result.day,
+            payload=result.payload,
+            status=result.status,
+            source_detail=result.source_detail,
+            freshness="realtime",
+        )
+
     # ---------------------------------------------------------------- 候选池 §5
 
     def pool_view(self, raw_date: str | None, raw_limit: int | None) -> dict[str, Any]:
@@ -550,6 +585,11 @@ class RadarPlane:
 
         已实现盈亏不在这儿另算一遍：流水取到之后交给 `compute_metrics()`，
         与 CLI 走同一个函数、同一份数字（QUOT-292 / DEC-038）。
+
+        当日盈亏同理：`core.quotes.daily_change_map()` 读**同一份 `daily_k` 缓存**算
+        `close(T) − close(T−1)`，这里只传进去，不重新算差价，也**没有**因为加这个字段
+        把持仓现价改成实时报价（QUOT-380 拍板口径 4）。算不出就是 `null`，原因随
+        `daily_lookup` / `items[].daily_pnl_reason` 给出。
         """
         day = raw_date or None
         if day and day.strip():
@@ -560,9 +600,69 @@ class RadarPlane:
         codes = [str(row["code"]) for row in rows]
         prices, lookup = self._read(lambda: price_map(codes, day, root=self.data_root))
         trades = self._read(lambda: list_journal_trades(root=self.data_root))
-        payload = compute_metrics(rows, prices, as_of=lookup["date"], trades=trades)
+        daily, daily_lookup = self._read(
+            lambda: daily_change_map(codes, lookup["date"], root=self.data_root)
+        )
+        payload = compute_metrics(
+            rows, prices, as_of=lookup["date"], trades=trades, daily=daily
+        )
         payload["price_lookup"] = lookup
+        payload["daily_lookup"] = daily_lookup
         return payload
+
+    # ---------------------------------------------------------------- 我的自选 §9.2
+
+    def watchlist_view(self) -> dict[str, Any]:
+        """`GET /api/watchlist`：**平面 JSON、只 GET、回环独占**（DEC-052 拍板口径 1）。
+
+        载荷 = 本机自选清单（`code` + 加入时间）+ 每条的现价与涨跌
+        （`core.watch_prices` 复用已登记的 `spot_quote`）。四条纪律都落在这个形状里：
+
+        - **不进 `LadderEnvelope`**：`payload` / `domain` / `fetched_at` 一个键都不出现。
+          这是隐私数据到不了 export / MCP / AI 三条出口的**结构性**原因（DEC-015），
+          不是装饰；
+        - **字段名不叫 `watchlist` / `自选`**：这两个词在 `core/privacy.py` 的
+          `PRIVATE_KEYS` 里，走任何信封出口会被 `strip_private()` 静默删字段。
+          顶层用 `items` + `watch_count`；
+        - **`note` 不出**（QUOT-380 拍板口径 2）：投影在 `journal/watchlist.py` 就不读那一列；
+        - **空态是 200**：本机没有自选就回 `available=false` + 指向本机 CLI 的文案，
+          不是 404、不伪造行。
+        """
+        rows = self._read(lambda: list_watch(root=self.data_root))
+        codes = [str(row["code"]) for row in rows]
+        registry = self._active_registry()
+        active = registry if registry is not None else ProviderRegistry()
+        strip = self._read(lambda: fetch_prices(active, codes))
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            code = str(row["code"])
+            quote = strip.prices.get(code) or {
+                "available": False,
+                "name": None,
+                "market": None,
+                "latest_price": None,
+                "change": None,
+                "change_pct": None,
+                "prev_close": None,
+                "price_as_of": None,
+                "price_status": "unavailable",
+                "price_reason": "这批自选没有取到报价",
+            }
+            items.append({"code": code, "added_at": row.get("created_at"), **quote})
+
+        return {
+            "local_only": True,
+            "store": "local_sqlite",
+            "available": bool(items),
+            "reason": None if items else EMPTY_WATCHLIST,
+            "watch_count": len(items),
+            "data_source_status": strip.status,
+            "price_source": SPOT_QUOTE_DATASET,
+            "price_as_of": strip.as_of,
+            "source_detail": strip.source_detail,
+            "items": items,
+        }
 
     # -------------------------------------------------------------- 持仓写入 §6.2
 
@@ -887,8 +987,26 @@ async def _positions_write_guard(request: Request) -> None:
         )
 
 
+async def _watchlist_guard(request: Request) -> None:
+    """自选读面的回环独占闸门：**照抄 `_positions_guard`，一条闸门都不改**（DEC-052 §2.1）。
+
+    同样**不看 `LDST_CONTROL_ENABLED`**（关的是控制面，不是本机数据面），
+    也**不看远程访问 Token**——Token 管「谁连得进来」，不管「隐私数据该不该出去」。
+    """
+    if not control_plane.is_loopback_host(control_plane.client_host(request.client)):
+        raise HTTPException(status_code=403, detail=WATCHLIST_DENIED)
+    if not control_plane.host_header_allowed(request):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Host 不在白名单内：{request.headers.get('host') or '(空)'}"
+                "（自选只接受 127.0.0.1 / localhost / ::1）"
+            ),
+        )
+
+
 def build_router(plane: RadarPlane) -> APIRouter:
-    """SPEC §3–§6.2：四个只读路由 + 两条持仓写入路由（都是 `POST`）。"""
+    """SPEC §3–§6.2 + §9：只读路由（含首页指数条、自选读面）+ 两条持仓写入路由。"""
     router = APIRouter(prefix=RADAR_PREFIX)
 
     @router.get("/news")
@@ -916,6 +1034,11 @@ def build_router(plane: RadarPlane) -> APIRouter:
         ] = None,
     ) -> dict[str, Any]:
         return plane.events_view(month, code, limit)
+
+    @router.get("/indices")
+    def indices() -> dict[str, Any]:
+        """首页指数条：无入参（四格由后端白名单写死），只 GET、公开数据面。"""
+        return plane.indices_view()
 
     @router.get("/pool")
     def pool(
@@ -952,6 +1075,15 @@ def build_router(plane: RadarPlane) -> APIRouter:
         return JSONResponse(
             plane.position_delete(code), headers={"Cache-Control": "no-store"}
         )
+
+    @router.get("/watchlist", dependencies=[Depends(_watchlist_guard)])
+    def watchlist() -> JSONResponse:
+        """我的自选（只读）：平面 JSON、`no-store`、只 GET。
+
+        **没有配套的写路由**（DEC-052 §2.3）：增删只走本机 CLI `ldst watch add|rm`，
+        写面若要把「不经 HTTP」这条改掉，是再一次独立决定，不与本单捆绑。
+        """
+        return JSONResponse(plane.watchlist_view(), headers={"Cache-Control": "no-store"})
 
     return router
 

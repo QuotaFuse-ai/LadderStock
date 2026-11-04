@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-ldst-theme="dark">
+<head>
+<meta charset="utf-8" />
+<title>LadderStock · 首页聚合搜索面板 · 状态视觉稿（QUOT-348）</title>
+<style>
+/* ============================================================
+   令牌真值：逐条抄自 frontend/src/styles/tokens.css（生成物）
+   本文件是全仓允许出现 hex/rgba 的两处之一（另一处是 tokens.css 本身）
+   手写 CSS 与规格里的 Tailwind class 一一对应，见每个选择器后面的注释
+   ============================================================ */
+:root {
+  color-scheme: dark;
+  --ldst-bg: #0e1116;
+  --ldst-surface: #151a21;
+  --ldst-surface-2: #1b2230;
+  --ldst-surface-3: #202836;
+  --ldst-sunken: #0a0d11;
+  --ldst-border: #2a3342;
+  --ldst-border-strong: #5d6c82;
+  --ldst-text: #e8ecf2;
+  --ldst-text-secondary: #b4becb;
+  --ldst-text-muted: #8a96a6;
+  --ldst-text-inverse: #0e1116;
+  --ldst-accent: #4c8dff;
+  --ldst-accent-hover: #6ba1ff;
+  --ldst-accent-solid: #2f6fe0;
+  --ldst-accent-solid-hover: #245ec7;
+  --ldst-accent-soft: rgba(76, 141, 255, 0.10);
+  --ldst-accent-contrast: #ffffff;
+  --ldst-up: #ff5c5c;      --ldst-up-soft: rgba(255, 92, 92, 0.12);
+  --ldst-down: #2fbf71;    --ldst-down-soft: rgba(47, 191, 113, 0.12);
+  --ldst-flat: #9aa4b2;    --ldst-flat-soft: rgba(154, 164, 178, 0.12);
+  --ldst-ok: #3fb6a8;      --ldst-ok-soft: rgba(63, 182, 168, 0.14);
+  --ldst-warn: #f0b429;    --ldst-warn-soft: rgba(240, 180, 41, 0.14);
+  --ldst-danger: #ff7a45;  --ldst-danger-soft: rgba(255, 122, 69, 0.14);
+  --ldst-info: #4c8dff;    --ldst-info-soft: rgba(76, 141, 255, 0.10);
+  --ldst-scrim: rgba(4, 6, 9, 0.68);
+  --ldst-skeleton: #1d2530; --ldst-skeleton-shine: #26303d;
+  --ldst-focus: #6ba1ff;
+  --ldst-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --ldst-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --ldst-shadow-dialog: 0 24px 48px rgba(0, 0, 0, 0.55);
+  --ldst-focus-ring: 0 0 0 2px var(--ldst-bg), 0 0 0 4px #6ba1ff;
+  --ldst-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --ldst-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --ldst-fs-caption: 12px; --ldst-fs-body: 14px; --ldst-fs-subtitle: 16px;
+  --ldst-fs-section: 20px; --ldst-fs-page: 28px;
+  --ldst-weight-regular: 400; --ldst-weight-medium: 500; --ldst-weight-semibold: 600;
+  --ldst-space-1: 4px; --ldst-space-2: 8px; --ldst-space-3: 12px;
+  --ldst-space-4: 16px; --ldst-space-5: 24px; --ldst-space-7: 48px;
+  --ldst-radius: 8px; --ldst-radius-xs: 4px; --ldst-radius-pill: 999px;
+  --ldst-sidebar-w: 232px; --ldst-topbar-h: 56px;
+  --ldst-row-h: 38px; --ldst-table-h-lg: 420px;
+  --ldst-control-h: 32px; --ldst-control-h-lg: 40px; --ldst-icon-btn: 32px;
+  --ldst-measure: 52ch;
+  --ldst-duration-fast: 120ms; --ldst-duration-base: 180ms;
+  --ldst-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+html[data-ldst-theme="light"] {
+  color-scheme: light;
+  --ldst-bg: #f5f7fa;         --ldst-surface: #ffffff;
+  --ldst-surface-2: #f0f3f7;  --ldst-surface-3: #edf1f7;
+  --ldst-sunken: #e9eef4;     --ldst-border: #d8dee7;
+  --ldst-border-strong: #8791a0;
+  --ldst-text: #141a22;       --ldst-text-secondary: #46505e;
+  --ldst-text-muted: #5f6b7a; --ldst-text-inverse: #ffffff;
+  --ldst-accent: #1a5fd0;     --ldst-accent-hover: #1348a8;
+  --ldst-accent-solid: #1a5fd0; --ldst-accent-solid-hover: #1348a8;
+  --ldst-accent-soft: rgba(26, 95, 208, 0.08);
+  --ldst-up: #c42b1c;   --ldst-up-soft: rgba(196, 43, 28, 0.10);
+  --ldst-down: #0b7a41; --ldst-down-soft: rgba(11, 122, 65, 0.10);
+  --ldst-flat: #5f6b7a;   --ldst-flat-soft: rgba(95, 107, 122, 0.10);
+  --ldst-ok: #0f7a6e;     --ldst-ok-soft: rgba(15, 122, 110, 0.10);
+  --ldst-warn: #8a5a00;   --ldst-warn-soft: rgba(138, 90, 0, 0.12);
+  --ldst-danger: #b23b12; --ldst-danger-soft: rgba(178, 59, 18, 0.10);
+  --ldst-info: #1a5fd0;   --ldst-info-soft: rgba(26, 95, 208, 0.08);
+  --ldst-scrim: rgba(16, 24, 40, 0.40);
+  --ldst-skeleton: #e7ecf3; --ldst-skeleton-shine: #f2f5f9;
+  --ldst-focus: #1a5fd0;
+  --ldst-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.08);
+  --ldst-shadow-overlay: 0 8px 24px rgba(16, 24, 40, 0.12);
+  --ldst-shadow-dialog: 0 24px 48px rgba(16, 24, 40, 0.18);
+  --ldst-focus-ring: 0 0 0 2px var(--ldst-surface), 0 0 0 4px #1a5fd0;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: #05070a; font-family: var(--ldst-font-sans);
+  color: var(--ldst-text); -webkit-font-smoothing: antialiased;
+}
+html[data-ldst-theme="light"] body { background: #dfe5ee; }
+.num { font-family: var(--ldst-font-mono); font-variant-numeric: tabular-nums; }
+
+/* ---------- 外部控制条（真应用里没有，只在原型上；截图 ?chrome=0 隐藏） ---------- */
+#controls {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 10px 14px; background: #05070a; color: #b4becb;
+  font: 500 12px/1.6 var(--ldst-font-sans); border-bottom: 1px solid #23283a;
+}
+html[data-ldst-theme="light"] #controls { background: #dfe5ee; color: #46505e; border-color: #c3ccd9; }
+#controls b { color: inherit; }
+/* 控制条是原型的外部 chrome，不属于设计体系（真应用里没有这一条）；
+   下面的 hex 只为让切换条在深浅两种底色下都可读，不是设计令牌 */
+#controls button {
+  font: 500 12px/1 var(--ldst-font-sans); padding: 5px 8px; border-radius: 4px;
+  border: 1px solid #3a4354; background: #0b0f15; color: #b4becb; cursor: pointer;
+}
+#controls button[aria-pressed="true"] { border-color: #4c8dff; background: #16202e; color: #e8ecf2; }
+html[data-ldst-theme="light"] #controls button { border-color: #a8b3c2; background: #eef2f7; color: #46505e; }
+html[data-ldst-theme="light"] #controls button[aria-pressed="true"] { border-color: #1a5fd0; background: #dbe6f7; color: #141a22; }
+body[data-chrome="0"] #controls { display: none; }
+body[data-chrome="0"] { background: transparent; }
+
+/* ---------- 视口框 1440×900（视觉基准，同 scripts/visual-shot.mjs） ---------- */
+.frame {
+  position: relative; width: 1440px; height: 900px; overflow: hidden;
+  margin: 0 auto; background: var(--ldst-bg); color: var(--ldst-text);
+  display: flex; font-size: var(--ldst-fs-body); line-height: 1.5;
+}
+.app { display: flex; width: 100%; height: 100%; }
+
+/* ---------- 侧栏 Layout.tsx:246（sticky top-0 w-sidebar，无 z-index） ---------- */
+.side {
+  width: var(--ldst-sidebar-w); flex: none; height: 100%;
+  border-right: 1px solid var(--ldst-border); background: var(--ldst-surface);
+  display: flex; flex-direction: column;
+}
+.side-top { height: var(--ldst-topbar-h); display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--ldst-border); }
+.mark { width: 28px; height: 28px; flex: none; border-radius: var(--ldst-radius); background: var(--ldst-accent-soft); color: var(--ldst-accent); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+.side-top .n1 { font: 600 var(--ldst-fs-body)/1.4 var(--ldst-font-sans); color: var(--ldst-text); }
+.side-top .n2 { font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); }
+.nav { padding: 8px; overflow: hidden; }
+.grp { font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); padding: 8px 8px 4px; }
+.it { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: var(--ldst-radius); color: var(--ldst-text-secondary); font-size: var(--ldst-fs-body); }
+.it.on { background: var(--ldst-accent-soft); color: var(--ldst-accent); font-weight: var(--ldst-weight-medium); }
+.it .ic { width: 14px; text-align: center; opacity: .8; }
+.side-foot { margin-top: auto; padding: 8px; font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); }
+
+/* ---------- 主内容 main#main px-5 py-5（Layout.tsx:395） ---------- */
+.main { flex: 1; min-width: 0; padding: 20px; overflow: hidden; }
+.phead { min-height: var(--ldst-topbar-h); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.phead .t { display: flex; align-items: baseline; gap: 12px; min-width: 0; flex-wrap: wrap; }
+h1 { margin: 0; font: 600 var(--ldst-fs-page)/1.4 var(--ldst-font-sans); color: var(--ldst-text); }
+.sub { font-size: var(--ldst-fs-caption); color: var(--ldst-text-secondary); }
+.acts { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* ---------- C-21 入口：h-control-lg bg-sunken border-border-strong rounded px pr-2 pl-7 ---------- */
+.entry {
+  position: relative; display: inline-flex; align-items: center; gap: 8px;
+  height: var(--ldst-control-h-lg); width: 256px; max-width: 100%;
+  padding: 0 8px 0 28px; border-radius: var(--ldst-radius);
+  border: 1px solid var(--ldst-border-strong); background: var(--ldst-sunken);
+  color: var(--ldst-text-muted); font: 400 var(--ldst-fs-body)/1 var(--ldst-font-sans);
+  cursor: text; text-align: left;
+  transition: border-color var(--ldst-duration-fast) var(--ldst-ease),
+              color var(--ldst-duration-fast) var(--ldst-ease),
+              box-shadow var(--ldst-duration-fast) var(--ldst-ease);
+}
+.entry .mag { position: absolute; left: 8px; top: 50%; margin-top: -7px; font-size: 14px; line-height: 14px; }
+.entry .ph { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.entry .kbd {
+  flex: none; height: 18px; padding: 0 5px; border-radius: var(--ldst-radius-xs);
+  border: 1px solid var(--ldst-border); color: var(--ldst-text-muted);
+  font: 500 var(--ldst-fs-caption)/18px var(--ldst-font-mono);
+}
+.entry.is-hover, .entry:hover { border-color: var(--ldst-accent); color: var(--ldst-text-secondary); }
+.entry.is-focus, .entry:focus-visible, .entry.force-focus {
+  outline: none; border-color: var(--ldst-accent); box-shadow: var(--ldst-focus-ring);
+}
+.entry.is-focus .kbd, .entry.force-focus .kbd { color: var(--ldst-accent); border-color: var(--ldst-accent); }
+.btn {
+  display: inline-flex; align-items: center; gap: 4px; height: var(--ldst-control-h-lg);
+  padding: 0 16px; border-radius: var(--ldst-radius); font: 500 var(--ldst-fs-body)/1 var(--ldst-font-sans);
+  background: var(--ldst-accent-solid); color: var(--ldst-accent-contrast); border: 1px solid transparent; cursor: pointer;
+}
+.cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-top: 16px; }
+.card { height: 96px; border: 1px solid var(--ldst-border); border-radius: var(--ldst-radius); background: var(--ldst-surface); box-shadow: var(--ldst-shadow-card); padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
+.card .lb { font-size: var(--ldst-fs-caption); color: var(--ldst-text-secondary); }
+.card .vl { font: 600 var(--ldst-fs-hero)/1.4 var(--ldst-font-mono); font-size: 30px; }
+.card .mt { font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); display: flex; align-items: center; gap: 6px; }
+.sec { margin-top: 16px; border: 1px solid var(--ldst-border); border-radius: var(--ldst-radius); background: var(--ldst-surface); overflow: hidden; }
+.sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--ldst-border); font: 600 var(--ldst-fs-subtitle)/1.4 var(--ldst-font-sans); }
+.tr { display: flex; align-items: center; gap: 12px; height: var(--ldst-row-h); padding: 0 12px; border-bottom: 1px solid var(--ldst-border); font-size: var(--ldst-fs-body); }
+.tr:last-child { border-bottom: 0; }
+.tr .c { width: 76px; color: var(--ldst-text-secondary); }
+.up { color: var(--ldst-up); } .down { color: var(--ldst-down); } .flat { color: var(--ldst-flat); }
+.badge {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; max-width: 100%;
+  padding: 0 8px; border-radius: var(--ldst-radius-xs);
+  font: 500 var(--ldst-fs-caption)/1 var(--ldst-font-sans); white-space: nowrap;
+}
+.badge.flat { border: 1px solid var(--ldst-border); color: var(--ldst-text-secondary); background: transparent; }
+.badge.info { background: var(--ldst-info-soft); color: var(--ldst-info); }
+.badge.ok { background: var(--ldst-ok-soft); color: var(--ldst-ok); }
+.badge.warn { background: var(--ldst-warn-soft); color: var(--ldst-warn); }
+.badge.danger { background: var(--ldst-danger-soft); color: var(--ldst-danger); }
+.badge.neutral { background: var(--ldst-flat-soft); color: var(--ldst-flat); }
+
+/* ---------- C-22 面板外壳：fixed inset-0 z-overlay + bg-scrim + 面板 ---------- */
+.wrap { position: absolute; inset: 0; z-index: 40; }
+.scrim { position: absolute; inset: 0; background: var(--ldst-scrim); }
+.panel {
+  position: absolute; right: 20px; top: 64px; width: 640px;
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--ldst-border); border-radius: var(--ldst-radius);
+  background: var(--ldst-surface); box-shadow: var(--ldst-shadow-dialog);
+  transform-origin: 70% 0;
+}
+body[data-anim="on"] .panel { animation: pop var(--ldst-duration-fast) var(--ldst-ease) both; }
+@keyframes pop { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: none; } }
+/* ---------- rail 1024 断点（?vw=rail）：Layout.tsx 的 rail:w-sidebar-rail + §5.1/§5.2 的 176 / 480 ---------- */
+.frame[data-vw="1024"] { width: 1024px; }
+.frame[data-vw="1024"] .side { width: 56px; }
+.frame[data-vw="1024"] .side-top { padding: 0; justify-content: center; }
+.frame[data-vw="1024"] .n1, .frame[data-vw="1024"] .n2, .frame[data-vw="1024"] .grp, .frame[data-vw="1024"] .side-foot { display: none; }
+.frame[data-vw="1024"] .it { justify-content: center; padding: 0; font-size: 0; gap: 0; }
+.frame[data-vw="1024"] .it .ic { font-size: 14px; }
+.frame[data-vw="1024"] .entry { width: 176px; }
+.frame[data-vw="1024"] .panel { width: 480px; }
+.p-top { display: flex; align-items: center; gap: 8px; padding: 12px 12px 8px; }
+.field { position: relative; display: flex; align-items: center; flex: 1; min-width: 0; }
+/* 面板输入框 = Input(C-03) 同 CONTROL：h-control-lg bg-sunken border-strong pl-7 */
+.pin {
+  width: 100%; height: var(--ldst-control-h-lg); padding: 0 40px 0 28px;
+  border-radius: var(--ldst-radius); border: 1px solid var(--ldst-border-strong);
+  background: var(--ldst-sunken); color: var(--ldst-text);
+  font: 400 var(--ldst-fs-body)/1 var(--ldst-font-sans);
+  transition: border-color var(--ldst-duration-fast) var(--ldst-ease);
+}
+.pin::placeholder { color: var(--ldst-text-muted); }
+/* type="search" 在 Chromium 会自带一枚 ✕，与自定义清除按钮重复，必须关掉 */
+.pin::-webkit-search-cancel-button, .pin::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
+.pin:focus { outline: none; border-color: var(--ldst-accent); box-shadow: var(--ldst-focus-ring); }
+.field .mag { position: absolute; left: 8px; font-size: 14px; color: var(--ldst-text-muted); pointer-events: none; }
+/* 清除件挂在输入框内右端，不占面板右上角——右上角的 ✕ 在对话框惯例里是「关闭」（规格 §5.5） */
+.ib {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: var(--ldst-icon-btn); height: var(--ldst-icon-btn); flex: none; border-radius: var(--ldst-radius);
+  border: 1px solid transparent; background: transparent; color: var(--ldst-text-secondary);
+  font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background-color var(--ldst-duration-fast) var(--ldst-ease);
+}
+.ib:hover { background: var(--ldst-surface-3); color: var(--ldst-text); }
+.ib:focus-visible { outline: none; box-shadow: var(--ldst-focus-ring); }
+.hint { padding: 0 12px 8px; font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); }
+
+/* 结果滚动区：max-height = var(--ldst-table-h-lg) 420px */
+.scroll { max-height: var(--ldst-table-h-lg); overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: 32px; }
+.group { display: flex; flex-direction: column; }
+.gh {
+  position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px;
+  min-height: var(--ldst-control-h); padding: 0 12px;
+  background: var(--ldst-surface-2); border-bottom: 1px solid var(--ldst-border);
+  font: 500 var(--ldst-fs-caption)/1 var(--ldst-font-sans); color: var(--ldst-text-secondary);
+}
+.gh .cnt { color: var(--ldst-text-muted); }
+.gh .src { margin-left: auto; display: inline-flex; gap: 4px; }
+.opt {
+  display: flex; align-items: center; gap: 8px; min-height: var(--ldst-row-h);
+  padding: 0 8px 0 6px; margin: 0 6px; border-radius: var(--ldst-radius);
+  border-left: 2px solid transparent; cursor: pointer;
+  transition: background-color var(--ldst-duration-fast) var(--ldst-ease),
+              border-color var(--ldst-duration-fast) var(--ldst-ease);
+}
+.opt .code { width: 64px; flex: none; font-size: var(--ldst-fs-body); color: var(--ldst-text-secondary); }
+.opt .nm { min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ldst-text); }
+.opt .aux { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: var(--ldst-fs-caption); color: var(--ldst-text-secondary); }
+.opt .arrow { flex: none; width: 14px; color: var(--ldst-text-muted); opacity: 0; transition: opacity var(--ldst-duration-fast) var(--ldst-ease); }
+.opt:hover, .opt.active { background: var(--ldst-surface-3); }
+.opt.active { border-left-color: var(--ldst-accent); }
+.opt:hover .arrow, .opt.active .arrow { opacity: 1; }
+.opt.two { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding: 4px 8px 4px 6px; min-height: var(--ldst-row-h); }
+.opt.two .l1 { display: flex; align-items: center; gap: 8px; width: 100%; }
+.opt.two .meta { display: flex; align-items: center; gap: 8px; font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); }
+.more {
+  display: flex; align-items: center; gap: 6px; min-height: 30px; margin: 0 6px 4px; padding: 0 8px 0 6px;
+  border-left: 2px solid transparent; border-radius: var(--ldst-radius);
+  font: 500 var(--ldst-fs-caption)/1.5 var(--ldst-font-sans); color: var(--ldst-accent); cursor: pointer;
+}
+.more:hover { background: var(--ldst-surface-3); }
+.foot {
+  display: flex; align-items: center; gap: 8px; min-height: var(--ldst-control-h); padding: 0 12px;
+  border-top: 1px solid var(--ldst-border); background: var(--ldst-surface);
+  font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted);
+}
+.foot .sp { margin-left: auto; }
+.k { display: inline-block; min-width: 16px; padding: 1px 4px; border: 1px solid var(--ldst-border); border-radius: var(--ldst-radius-xs); font: 500 11px/14px var(--ldst-font-mono); color: var(--ldst-text-secondary); text-align: center; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+/* 骨架（C-18） */
+.sk { display: block; height: 12px; border-radius: var(--ldst-radius-xs); background: var(--ldst-skeleton); position: relative; overflow: hidden; }
+.sk::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, var(--ldst-skeleton) 0%, var(--ldst-skeleton-shine) 50%, var(--ldst-skeleton) 100%); animation: shine 1.2s linear infinite; }
+@keyframes shine { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.srow { display: flex; align-items: center; gap: 12px; height: var(--ldst-row-h); padding: 0 12px; border-bottom: 1px solid var(--ldst-border); }
+
+/* 空态 / 无结果 / 降级 / 离线 */
+.empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 16px 20px; }
+.empty h2 { margin: 0; font: 500 var(--ldst-fs-subtitle)/1.4 var(--ldst-font-sans); color: var(--ldst-text); }
+.empty p { margin: 0; max-width: var(--ldst-measure); font-size: var(--ldst-fs-body); line-height: 1.5; color: var(--ldst-text-secondary); }
+.empty .li { display: flex; gap: 6px; align-items: flex-start; font-size: var(--ldst-fs-caption); line-height: 1.6; color: var(--ldst-text-secondary); max-width: 44ch; }
+.empty .li i { color: var(--ldst-text-muted); font-style: normal; }
+.btn2 {
+  display: inline-flex; align-items: center; gap: 4px; height: var(--ldst-control-h); padding: 0 12px;
+  border-radius: var(--ldst-radius); border: 1px solid var(--ldst-border-strong);
+  background: var(--ldst-surface); color: var(--ldst-text);
+  font: 500 var(--ldst-fs-body)/1 var(--ldst-font-sans); cursor: pointer;
+  transition: background-color var(--ldst-duration-fast) var(--ldst-ease);
+}
+.btn2:hover { background: var(--ldst-surface-3); }
+.btn2:focus-visible { outline: none; box-shadow: var(--ldst-focus-ring); }
+.btn3 {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border-radius: var(--ldst-radius);
+  border: 1px solid transparent; background: transparent; color: var(--ldst-accent);
+  font: 500 var(--ldst-fs-caption)/1 var(--ldst-font-sans); cursor: pointer;
+}
+.btn3:hover { background: var(--ldst-surface-3); }
+.btn3:focus-visible { outline: none; box-shadow: var(--ldst-focus-ring); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 4px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--ldst-border); border-radius: var(--ldst-radius-pill);
+  background: var(--ldst-surface-2); color: var(--ldst-text-secondary);
+  font: 400 var(--ldst-fs-caption)/1 var(--ldst-font-sans); cursor: pointer;
+}
+.chip:hover { background: var(--ldst-surface-3); color: var(--ldst-text); }
+.chip .x { color: var(--ldst-text-muted); }
+.cblock { padding: 12px 16px 8px; }
+.ctitle { font: 500 var(--ldst-fs-caption)/1.5 var(--ldst-font-sans); color: var(--ldst-text-muted); text-transform: none; margin-bottom: 6px; }
+.degrade {
+  display: flex; align-items: center; gap: 8px; min-height: var(--ldst-control-h); margin: 8px 12px;
+  padding: 0 8px; border-radius: var(--ldst-radius-xs);
+  border: 1px solid var(--ldst-danger); background: var(--ldst-danger-soft);
+  font-size: var(--ldst-fs-caption); color: var(--ldst-danger);
+}
+.degrade .g { margin-left: auto; }
+.banner {
+  display: flex; align-items: flex-start; gap: 8px; margin: 8px 12px 12px; padding: 8px 12px;
+  border: 1px solid var(--ldst-warn); border-radius: var(--ldst-radius); background: var(--ldst-warn-soft);
+}
+.banner .tt { font: 500 var(--ldst-fs-body)/1.5 var(--ldst-font-sans); color: var(--ldst-warn); }
+.banner .bd { font-size: var(--ldst-fs-caption); line-height: 1.6; color: var(--ldst-text-secondary); max-width: var(--ldst-measure); }
+.dim { color: var(--ldst-text-muted); }
+.slow { font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); }
+
+/* 截图用：JS 直接标 data-focus，不依赖 setTimeout 后的真实焦点（无头渲染时机不稳） */
+.frame[data-focus="1"] .pin { border-color: var(--ldst-accent); box-shadow: var(--ldst-focus-ring); }
+
+/* 标注页（state=entry-states）：隐藏应用视图，显示入口三态放大标注 */
+#sheet { display: none; position: absolute; inset: 0; background: var(--ldst-bg); padding: 28px 32px; overflow: hidden; }
+.frame[data-mode="sheet"] .app, .frame[data-mode="sheet"] .wrap { display: none; }
+.frame[data-mode="sheet"] #sheet { display: block; }
+.sh-h { font: 600 var(--ldst-fs-section)/1.4 var(--ldst-font-sans); color: var(--ldst-text); margin: 0 0 4px; }
+.sh-s { font-size: var(--ldst-fs-body); color: var(--ldst-text-secondary); margin: 0 0 20px; }
+.sh-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.sh-cell { border: 1px solid var(--ldst-border); border-radius: var(--ldst-radius); background: var(--ldst-surface); padding: 16px; }
+.sh-cell h3 { margin: 0 0 2px; font: 500 var(--ldst-fs-subtitle)/1.4 var(--ldst-font-sans); color: var(--ldst-text); }
+.sh-cell p { margin: 0 0 14px; font-size: var(--ldst-fs-caption); color: var(--ldst-text-muted); }
+.stage { background: var(--ldst-bg); border: 1px dashed var(--ldst-border); border-radius: var(--ldst-radius); padding: 24px 16px; display: flex; justify-content: center; }
+.stage .entry { transform: scale(2); transform-origin: center; }
+.notes { margin-top: 10px; font-size: var(--ldst-fs-caption); line-height: 1.7; color: var(--ldst-text-secondary); }
+.notes code { font-family: var(--ldst-font-mono); color: var(--ldst-text); }
+.ruler { margin-top: 14px; display: flex; gap: 6px; flex-wrap: wrap; }
+.ruler span { font: 500 11px/18px var(--ldst-font-mono); padding: 0 6px; border-radius: var(--ldst-radius-xs); border: 1px solid var(--ldst-border); color: var(--ldst-text-muted); }
+
+/* 状态可见性：JS 给当前态的 .st 加 .on */
+.st { display: none; }
+.st.on { display: block; }
+</style>
+</head>
+<body data-chrome="1" data-anim="off">
+
+<div id="controls">
+  <b>QUOT-348 状态视觉稿</b>
+  <span class="dim" style="color:#8a96a6">— 点状态切换；面板内可打字、Tab、↑/↓、Enter、Esc</span>
+  <span id="btns" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;width:100%"></span>
+</div>
+
+<!-- ======================= 视口 ======================= -->
+<div class="frame" id="f">
+  <div class="app">
+    <aside class="side">
+      <div class="side-top">
+        <span class="mark">▲</span>
+        <div><div class="n1">天梯股复盘台</div><div class="n2">LadderStock · 本地看板</div></div>
+      </div>
+      <div class="nav">
+        <div class="it on"><span class="ic">⌂</span>首页</div>
+        <div class="grp">市场</div>
+        <div class="it"><span class="ic">◴</span>情绪温度</div>
+        <div class="it"><span class="ic">▤</span>连板梯队</div>
+        <div class="it"><span class="ic">▦</span>题材轮动</div>
+        <div class="it"><span class="ic">☰</span>资讯雷达</div>
+        <div class="grp">盯盘</div>
+        <div class="it"><span class="ic">◎</span>盘中信号</div>
+        <div class="it"><span class="ic">◷</span>竞价与盘中</div>
+        <div class="grp">复盘</div>
+        <div class="it"><span class="ic">✎</span>情绪复盘</div>
+        <div class="it"><span class="ic">▥</span>周度复盘</div>
+        <div class="it"><span class="ic">☑</span>候选池</div>
+      </div>
+      <div class="side-foot">仅监听本机回环 · 草稿只存本机 IndexedDB</div>
+    </aside>
+
+    <div class="main">
+      <div class="phead">
+        <div class="t">
+          <h1>首页</h1>
+          <span class="sub num">2026-11-03 · 情绪温度 62 活跃 · 涨停 74 只 · 最高 5 板</span>
+        </div>
+        <div class="acts">
+          <button class="entry" id="entry" aria-haspopup="dialog" aria-expanded="false" aria-controls="panel">
+            <span class="mag">⌕</span>
+            <span class="ph" id="entryPh">搜索个股 / 行业 / 资讯</span>
+            <span class="kbd" id="entryKbd">/</span>
+          </button>
+          <button class="btn">↻ 刷新全部</button>
+        </div>
+      </div>
+
+      <div class="cards">
+        <div class="card"><div class="lb">情绪温度</div><div class="vl num" style="color:var(--ldst-up)">62</div><div class="mt"><span class="badge info">● 实时</span><span>0–100 · 50 中性</span></div></div>
+        <div class="card"><div class="lb">最高连板</div><div class="vl num">5</div><div class="mt"><span class="badge warn">◐ 缓存</span><span class="badge ok">数据完整</span></div></div>
+        <div class="card"><div class="lb">主线题材</div><div class="vl" style="font-size:22px">电力</div><div class="mt"><span class="badge info">● 实时</span><span class="badge danger">部分缺失</span></div></div>
+        <div class="card"><div class="lb">晋级率</div><div class="vl num">31%</div><div class="mt"><span class="badge info">● 实时</span><span class="badge ok">数据完整</span></div></div>
+        <div class="card"><div class="lb">待验证条件</div><div class="vl num">4</div><div class="mt"><span class="badge neutral">○ 存档</span><span class="badge ok">数据完整</span></div></div>
+      </div>
+
+      <div class="sec" style="margin-top:16px">
+        <div class="sec-h"><span>今日连板梯队 · 前 10 只</span><span class="dim num" style="font-size:12px;font-weight:400">74 只 · 按连板数降序</span></div>
+        <div class="tr"><span class="c num">002463</span><span>沪电股份</span><span class="num up" style="margin-left:auto">+10.01%</span><span class="badge warn num">5 板</span></div>
+        <div class="tr"><span class="c num">600886</span><span>国投电力</span><span class="num up" style="margin-left:auto">+9.98%</span><span class="badge warn num">4 板</span></div>
+        <div class="tr"><span class="c num">000543</span><span>皖能电力</span><span class="num up" style="margin-left:auto">+10.02%</span><span class="badge neutral num">3 板</span></div>
+        <div class="tr"><span class="c num">300024</span><span>机器人</span><span class="num up" style="margin-left:auto">+2.68%</span><span class="badge neutral num">2 板</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= 面板（portal → body，z-overlay 40） ======================= -->
+  <div class="wrap" id="overlay" style="display:none">
+    <div class="scrim" id="scrim"></div>
+    <div class="panel" id="panel" role="dialog" aria-modal="true" aria-label="聚合搜索">
+      <div class="p-top">
+        <span class="field">
+          <span class="mag">⌕</span>
+          <input class="pin" id="q" type="search" role="combobox" aria-expanded="true" aria-controls="lb"
+                 aria-label="搜索个股、行业、题材或资讯" autocomplete="off" spellcheck="false"
+                 placeholder="搜索个股 / 行业 / 资讯" value="" />
+          <button class="ib" id="clr" title="清除" aria-label="清除输入">✕</button>
+        </span>
+      </div>
+
+      <!-- 输入不足 -->
+      <p class="hint st" data-key="short">
+        <span role="status">继续输入 <b class="num">1</b> 个字开始搜索 · 代码满 3 位、名称或关键词满 2 字即搜</span>
+      </p>
+
+      <div class="scroll" id="lb" role="listbox" aria-label="搜索结果" aria-busy="false">
+        <p class="sr" role="status" aria-live="polite" aria-atomic="true" id="live"></p>
+
+        <!-- ============ 空态（未输入） ============ -->
+        <div class="st" data-key="empty">
+          <div class="cblock" style="padding-bottom:0">
+            <div class="ctitle">最近搜索</div>
+            <div class="chips" style="padding:0">
+              <button class="chip num">600886</button>
+              <button class="chip">电力 <span class="x">✕</span></button>
+              <button class="chip">机器人</button>
+              <button class="chip">沪电股份</button>
+              <button class="chip">算力 <span class="x">✕</span></button>
+            </div>
+          </div>
+          <div class="empty" style="padding-top:12px">
+            <h2>可以搜这三类</h2>
+            <div class="li"><i>1</i><span><b>6 位代码或名称</b> → 个股深挖 <code class="num" style="color:var(--ldst-text-secondary)">/research/600886</code></span></div>
+            <div class="li"><i>2</i><span><b>行业 / 题材全名</b> → 行业详情 <code class="num" style="color:var(--ldst-text-secondary)">/industry/电力设备</code>；未登记题材去题材榜</span></div>
+            <div class="li"><i>3</i><span><b>资讯关键词</b> → 资讯雷达带词 <code class="num" style="color:var(--ldst-text-secondary)">/news?q=电力现货</code></span></div>
+            <p class="dim" style="font-size:12px">搜索结果来自本机服务的当日数据：涨停池、连板天梯、盯盘、候选池、行业字典、题材榜与资讯流。</p>
+          </div>
+        </div>
+
+        <!-- ============ 有结果（输入中） ============ -->
+        <div class="st" data-key="results">
+          <div class="group">
+            <div class="gh"><span>个股</span><span class="cnt num">· 5</span>
+              <span class="src"><span class="badge ok">数据完整</span></span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="code num">600886</span><span class="nm">国投电力</span><span class="badge flat">个股</span><span class="aux"><span class="num up">+9.98%</span><span class="num">4 板</span></span><span class="arrow">›</span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="code num">000543</span><span class="nm">皖能电力</span><span class="badge flat">个股</span><span class="aux"><span class="num up">+10.02%</span><span class="num">3 板</span></span><span class="arrow">›</span></div>
+            <div class="opt active" role="option" aria-selected="true"><span class="code num">000951</span><span class="nm">长源电力</span><span class="badge flat">个股</span><span class="aux"><span class="num up">+6.14%</span><span class="dim">1 板</span></span><span class="arrow">›</span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="code num">600795</span><span class="nm">国电电力</span><span class="badge flat">个股</span><span class="aux"><span class="num down">−1.20%</span><span class="dim">—</span></span><span class="arrow">›</span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="code num">002463</span><span class="nm">沪电股份</span><span class="badge flat">个股</span><span class="aux"><span class="num up">+10.01%</span><span class="num">5 板</span></span><span class="arrow">›</span></div>
+            <div class="more">未列出的 3 只仍在今日池内 · 用完整代码定位</div>
+          </div>
+
+          <div class="group">
+            <div class="gh"><span>行业 / 题材</span><span class="cnt num">· 3</span>
+              <span class="src"><span class="badge danger">部分缺失</span></span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="nm">电力设备</span><span class="badge flat">行业</span><span class="aux"><span class="num">成分 342</span></span><span class="arrow">›</span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="nm">电力</span><span class="badge flat">行业</span><span class="aux"><span class="num">涨停 11</span><span class="dim">龙头 华能水电</span></span><span class="arrow">›</span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="nm">特高压</span><span class="badge flat">题材</span><span class="aux"><span class="num">涨停 6</span><span class="dim">强度 —</span></span><span class="arrow">›</span></div>
+            <div class="more">看全部行业 →</div>
+          </div>
+
+          <div class="group">
+            <div class="gh"><span>资讯</span><span class="cnt num">· 12</span>
+              <span class="src"><span class="badge ok">数据完整</span></span></div>
+            <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">多地电力现货市场转入正式运行，交易机制进一步完善</span><span class="badge flat">财联社</span></span>
+              <span class="meta"><span class="num">11-03 09:12</span><span>关联 3 只</span></span><span class="arrow">›</span></div>
+            <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">电力板块主力资金净流入居前，机构关注容量电价落地</span><span class="badge flat">东方财富</span></span>
+              <span class="meta"><span class="num">11-03 08:40</span><span>关联 2 只</span></span><span class="arrow">›</span></div>
+                        <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">两部门联合印发新型电力系统建设指导意见</span><span class="badge flat">新华社</span></span>
+              <span class="meta"><span class="num">11-02 18:05</span><span class="dim">无关联标的</span></span><span class="arrow">›</span></div>
+            <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">电价改革周报：省级电网输配电价第三监管周期落地</span><span class="badge flat">Wind</span></span>
+              <span class="meta"><span class="num">11-02 15:31</span><span>关联 5 只</span></span><span class="arrow">›</span></div>
+            <div class="more">查看全部 12 条 →</div>
+          </div>
+        </div>
+
+        <!-- ============ 代码精确命中 ============ -->
+        <div class="st" data-key="codehit">
+          <div class="group">
+            <div class="gh"><span>个股</span><span class="cnt num">· 1</span>
+              <span class="src"><span class="badge ok">数据完整</span></span></div>
+            <div class="opt active" role="option" aria-selected="true"><span class="code num">600000</span><span class="nm">浦发银行</span><span class="badge flat">个股</span><span class="aux"><span class="num down">−0.42%</span><span class="dim">—</span></span><span class="arrow">›</span></div>
+          </div>
+          <div class="group">
+            <div class="gh"><span>资讯</span><span class="cnt num">· 2</span>
+              <span class="src"><span class="badge warn">已降级</span></span></div>
+            <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">浦发银行三季报：净息差环比收窄，不良率持平</span><span class="badge flat">财联社</span></span>
+              <span class="meta"><span class="num">11-02 20:14</span><span class="dim">标题未含代码，按 related_codes 命中</span></span><span class="arrow">›</span></div>
+            <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">600000 今日大宗交易折价 3.1%，成交额 1.2 亿</span><span class="badge flat">东方财富</span></span>
+              <span class="meta"><span class="num">11-03 15:40</span></span><span class="arrow">›</span></div>
+          </div>
+        </div>
+
+        <!-- ============ 加载中 ============ -->
+        <div class="st" data-key="loading">
+          <div class="group">
+            <div class="gh"><span>个股</span><span class="cnt num">· 1</span>
+              <span class="src"><span class="badge ok">数据完整</span></span></div>
+            <div class="opt active" role="option" aria-selected="true"><span class="code num">300024</span><span class="nm">机器人</span><span class="badge flat">个股</span><span class="aux"><span class="num up">+2.68%</span></span><span class="arrow">›</span></div>
+          </div>
+          <div class="group">
+            <div class="gh"><span>行业 / 题材</span><span class="dim num">搜索中…</span><span class="src"></span></div>
+            <div class="srow"><span class="sk" style="width:20%"></span><span class="sk" style="width:34%"></span><span class="sk" style="width:16%"></span></div>
+            <div class="srow"><span class="sk" style="width:20%"></span><span class="sk" style="width:34%"></span><span class="sk" style="width:16%"></span></div>
+            <div class="srow"><span class="sk" style="width:20%"></span><span class="sk" style="width:34%"></span><span class="sk" style="width:16%"></span></div>
+          </div>
+          <div class="group">
+            <div class="gh"><span>资讯</span><span class="dim num">搜索中…</span><span class="src"></span></div>
+            <div class="srow"><span class="sk" style="width:20%"></span><span class="sk" style="width:34%"></span><span class="sk" style="width:16%"></span></div>
+            <div class="srow"><span class="sk" style="width:20%"></span><span class="sk" style="width:34%"></span><span class="sk" style="width:16%"></span></div>
+            <div class="srow"><span class="sk" style="width:20%"></span><span class="sk" style="width:34%"></span><span class="sk" style="width:16%"></span></div>
+          </div>
+        </div>
+
+        <!-- ============ 无结果 ============ -->
+        <div class="st" data-key="noresult">
+          <div class="empty" style="min-height:200px">
+            <h2>今日数据里没有匹配「机器猫」</h2>
+            <div class="li"><i>·</i><span>个股用 6 位代码（如 <span class="num">002463</span>），名称只匹配当日涨停池、盯盘与候选池里的标的</span></div>
+            <div class="li"><i>·</i><span>行业 / 题材用完整名称（「机器人」而不是「机器」）</span></div>
+            <div class="li"><i>·</i><span>资讯关键词可在雷达里按日期窗口再找</span></div>
+            <div style="margin-top:4px"><button class="btn2">在资讯雷达中搜索「机器猫」</button></div>
+            <p class="dim" style="font-size:12px">没匹配 ≠ 不存在：本机只索引当日数据。按 Enter 走上面的兜底搜索。</p>
+          </div>
+        </div>
+
+        <!-- ============ 单组失败（降级） ============ -->
+        <div class="st" data-key="grouperror">
+          <div class="group">
+            <div class="gh"><span>个股</span><span class="cnt num">未取到</span>
+              <span class="src"><span class="badge danger">未取到</span></span></div>
+            <div class="degrade" role="status">
+              <span>✕ 个股结果没取到，其他结果仍可用</span>
+              <span class="g"><button class="btn3">重试</button></span>
+            </div>
+          </div>
+          <div class="group">
+            <div class="gh"><span>行业 / 题材</span><span class="cnt num">· 3</span>
+              <span class="src"><span class="badge ok">数据完整</span></span></div>
+            <div class="opt active" role="option" aria-selected="true"><span class="nm">电力设备</span><span class="badge flat">行业</span><span class="aux"><span class="num">成分 342</span></span><span class="arrow">›</span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="nm">电力</span><span class="badge flat">行业</span><span class="aux"><span class="num">涨停 11</span></span><span class="arrow">›</span></div>
+            <div class="opt" role="option" aria-selected="false"><span class="nm">特高压</span><span class="badge flat">题材</span><span class="aux"><span class="num">涨停 6</span></span><span class="arrow">›</span></div>
+          </div>
+          <div class="group">
+            <div class="gh"><span>资讯</span><span class="cnt num">· 12</span>
+              <span class="src"><span class="badge danger">部分缺失</span></span></div>
+            <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">多地电力现货市场转入正式运行</span><span class="badge flat">财联社</span></span>
+              <span class="meta"><span class="num">11-03 09:12</span><span class="dim">2 个栏目未返回，已按缓存回放</span></span><span class="arrow">›</span></div>
+            <div class="opt two" role="option" aria-selected="false">
+              <span class="l1"><span class="nm">电力板块主力资金净流入居前</span><span class="badge flat">东方财富</span></span>
+              <span class="meta"><span class="num">11-03 08:40</span></span><span class="arrow">›</span></div>
+          </div>
+        </div>
+
+        <!-- ============ 整体失败 / 离线 ============ -->
+        <div class="st" data-key="offline">
+          <div class="banner" role="alert">
+            <span style="font-size:16px;line-height:1.4">⚠</span>
+            <span>
+              <span class="tt">本机服务未连接</span><br />
+              <span class="bd">搜索要读当日涨停池、行业字典与资讯流，全部来自本机只读 API。先运行 <span class="num">ldst run</span> 启动服务（默认 <span class="num">127.0.0.1:5950</span>），再重试。</span>
+              <span style="display:flex;gap:8px;margin-top:8px">
+                <button class="btn2">重试全部</button>
+                <button class="btn3">打开设置页看数据源 →</button>
+              </span>
+            </span>
+          </div>
+          <p class="hint" style="padding-top:0">入口不会因此禁用：面板保持打开，你随时可以再点一次重试。</p>
+        </div>
+      </div>
+
+      <div class="foot">
+        <span><span class="k">↑</span><span class="k">↓</span> 选择</span>
+        <span><span class="k">Enter</span> 打开</span>
+        <span><span class="k">Esc</span> 关闭</span>
+        <span class="sp slow st" data-key="loading">正在加载搜索结果</span>
+        <span class="sp slow st" data-key="slow">本机接口响应较慢，Esc 可先关闭</span>
+        <button class="btn3 st" data-key="results" style="margin-left:8px">可搜什么？</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 入口三态标注页（state=entry-states） ============ -->
+  <div id="sheet">
+    <p class="sh-h">C-21 入口：默认 / hover / focus-visible</p>
+    <p class="sh-s">挂载在 <code>PageHeader actions</code> 槽位（PageShell.tsx:26-40），「刷新全部」左侧。放大 2× 展示。</p>
+    <div class="sh-grid">
+      <div class="sh-cell">
+        <h3>默认</h3><p>border-border-strong + bg-sunken，占位文案 text-text-muted</p>
+        <div class="stage"><button class="entry"><span class="mag">&#8981;</span><span class="ph">搜索个股 / 行业 / 资讯</span><span class="kbd">/</span></button></div>
+        <div class="ruler"><span>h 40px = control-h-lg</span><span>w 256px</span><span>radius 8px</span><span>icon left 8px</span></div>
+        <p class="notes"><code>--ldst-control-h-lg</code> 的 usage 注释原文即「主操作按钮 lg / <b>搜索框</b>」（tokens.css:111）——这一档本来就留给它。</p>
+      </div>
+      <div class="sh-cell">
+        <h3>hover</h3><p>只换描边与占位文字颜色，底色不变</p>
+        <div class="stage"><button class="entry is-hover"><span class="mag">&#8981;</span><span class="ph">搜索个股 / 行业 / 资讯</span><span class="kbd">/</span></button></div>
+        <div class="ruler"><span>border-strong &rarr; accent</span><span>muted &rarr; secondary</span><span>duration-fast 120ms</span></div>
+        <p class="notes">底色保持 <code>sunken</code>：体系里没有 sunken 的 hover 档，<b>不新造</b>；可点击性由描边变亮承担（accent vs sunken 实测 5.9:1 / 6.3:1）。</p>
+      </div>
+      <div class="sh-cell">
+        <h3>focus-visible（键盘到达但未打开）</h3><p>全局焦点环 + 键帽位换成 Enter 提示</p>
+        <div class="stage"><button class="entry force-focus"><span class="mag">&#8981;</span><span class="ph">搜索个股 / 行业 / 资讯</span><span class="kbd">&#8629;</span></button></div>
+        <div class="ruler"><span>ring: 2px bg + 2px #6ba1ff</span><span>outer vs surface 6.80:1</span></div>
+        <p class="notes">Tab 路过<b>不</b>弹面板（规格 §4.5）：焦点环 + 键帽提示承担同等可发现性，不抢占遮罩。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* 状态切换：?state=results&theme=light&chrome=0&anim=1&q=电力
+   真应用的焦点/遮罩由 useModalChrome（Overlay.tsx:32-77）提供，这里只复刻可见行为 */
+const STATES = {
+  entry:      { q: '',       on: null,         ph: '搜索个股 / 行业 / 资讯', focus: false, entry: 'default' },
+  'entry-hover': { q: '',    on: null,         ph: '搜索个股 / 行业 / 资讯', focus: false, entry: 'hover' },
+  'entry-focus': { q: '',    on: null,         ph: '搜索个股 / 行业 / 资讯', focus: false, entry: 'focus' },
+  'entry-states': { q: '',   on: null,         ph: '搜索个股 / 行业 / 资讯', focus: false, entry: 'sheet' },
+  empty:      { q: '',       on: 'empty',      ph: '搜索个股 / 行业 / 资讯', focus: true },
+  results:    { q: '电力',   on: 'results',    ph: '搜索个股 / 行业 / 资讯', focus: true },
+  codehit:    { q: '600000', on: 'codehit',    ph: '搜索个股 / 行业 / 资讯', focus: true },
+  loading:    { q: '机器',   on: 'loading',    ph: '搜索个股 / 行业 / 资讯', focus: true, slow: true },
+  short:      { q: '机',     on: 'short',      ph: '搜索个股 / 行业 / 资讯', focus: true },
+  noresult:   { q: '机器猫', on: 'noresult',   ph: '搜索个股 / 行业 / 资讯', focus: true },
+  grouperror: { q: '电力',   on: 'grouperror', ph: '搜索个股 / 行业 / 资讯', focus: true },
+  offline:    { q: '电力',   on: 'offline',    ph: '搜索个股 / 行业 / 资讯', focus: true },
+};
+const p = new URLSearchParams(location.search);
+const f = document.getElementById('f'), ov = document.getElementById('overlay'),
+      entry = document.getElementById('entry'), q = document.getElementById('q'),
+      live = document.getElementById('live'), kbd = document.getElementById('entryKbd'),
+      clr = document.getElementById('clr'), ph = document.getElementById('entryPh');
+if (p.get('theme') === 'light') document.documentElement.dataset.ldstTheme = 'light';
+if (p.get('chrome') === '0') document.body.dataset.chrome = '0';
+if (p.get('anim') === '1') document.body.dataset.anim = 'on';
+if (p.get('vw') === 'rail') f.dataset.vw = '1024';
+let state = p.get('state') || 'results';
+
+function apply(name, open) {
+  const s = STATES[name] || STATES.results;
+  state = name;
+  const shown = open === undefined ? (s.on !== null) : open;
+  ov.style.display = shown ? 'block' : 'none';
+  entry.setAttribute('aria-expanded', String(shown));
+  q.value = s.q;
+  clr.style.display = s.q ? '' : 'none';
+  ph.textContent = s.ph;
+  entry.className = 'entry' + (s.entry === 'hover' ? ' is-hover' : s.entry === 'focus' ? ' force-focus' : '');
+  kbd.textContent = s.entry === 'focus' ? '↵' : '/';
+  document.querySelectorAll('.frame .st').forEach((n) => {
+    const k = n.getAttribute('data-key');
+    n.classList.toggle('on', Boolean(shown && s.on && (k === s.on || (s.slow && k === 'slow'))));
+  });
+  f.dataset.mode = name === 'entry-states' ? 'sheet' : '';
+  f.dataset.focus = shown && s.focus ? '1' : '';
+  live.textContent = shown && s.q ? '找到若干条，第 1 条已高亮' : '';
+  if (shown && s.focus) setTimeout(() => q.focus(), 0);
+  const lb = document.getElementById('lb');
+  lb.scrollTop = p.get('scroll') === 'bottom' ? lb.scrollHeight : 0;
+}
+/* 交互：入口 / 遮罩 / Esc / ↑↓ / Enter（键盘契约 §7.1） */
+entry.addEventListener('pointerdown', (e) => { e.preventDefault(); apply(state, true); });
+document.getElementById('scrim').addEventListener('pointerdown', () => { apply(state, false); entry.focus({ preventScroll: true }); });
+document.getElementById('clr').addEventListener('click', () => { q.value = ''; apply('empty', true); });
+q.addEventListener('input', () => {
+  const v = q.value.trim();
+  if (!v) return apply('empty', true);
+  if (/[0-9]/.test(v) ? v.length < 3 : v.length < 2) return apply('short', true);
+  if (/^\d{6}$/.test(v)) return apply('codehit', true);
+  if (v === '机器猫') return apply('noresult', true);
+  apply('results', true);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !e.isComposing) { apply(state, false); return; }
+  if (e.key === '/' && document.activeElement !== q && !ov.style.display.includes('block')) { apply('empty', true); e.preventDefault(); return; }
+  if (ov.style.display === 'none') return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const opts = [...ov.querySelectorAll('.opt[role=option]')];
+    const i = opts.findIndex((o) => o.classList.contains('active'));
+    let n = e.key === 'ArrowDown' ? Math.min(i + 1, opts.length - 1) : Math.max(i - 1, 0);
+    opts.forEach((o) => { o.classList.remove('active'); o.setAttribute('aria-selected', 'false'); });
+    opts[n].classList.add('active'); opts[n].setAttribute('aria-selected', 'true');
+    opts[n].scrollIntoView({ block: 'nearest' });
+    e.preventDefault();
+  }
+});
+apply(state);
+/* 状态切换条（外部 chrome）：截图用 ?state= 直达，人工验收用点击 */
+const LABEL = {
+  entry: '入口·默认', 'entry-hover': '入口·hover', 'entry-focus': '入口·focus', 'entry-states': '入口·三态标注',
+  empty: '面板打开（空态）', results: '输入中·三组命中', codehit: '6 位代码命中', loading: '加载中',
+  short: '输入不足', noresult: '无结果', grouperror: '单组失败', offline: '离线',
+};
+const btns = document.getElementById('btns');
+Object.keys(STATES).forEach((k) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = LABEL[k] || k;
+  b.addEventListener('click', () => { apply(k); sync(); });
+  btns.appendChild(b);
+});
+const tb = document.createElement('button');
+tb.type = 'button';
+tb.textContent = '切换浅色主题';
+tb.addEventListener('click', () => {
+  const r = document.documentElement.dataset.ldstTheme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.ldstTheme = r;
+  sync();
+});
+btns.appendChild(tb);
+const rb = document.createElement('button');
+rb.type = 'button';
+rb.textContent = '切换 rail 1024 断点';
+rb.addEventListener('click', () => {
+  f.dataset.vw = f.dataset.vw === '1024' ? '' : '1024';
+  sync();
+});
+btns.appendChild(rb);
+function sync() {
+  const keys = Object.keys(STATES);
+  [...btns.children].forEach((b, i) => {
+    const k = keys[i];
+    const on = k ? i === keys.indexOf(state)
+      : i === keys.length ? document.documentElement.dataset.ldstTheme === 'light'
+        : f.dataset.vw === '1024';
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+sync();
+</script>
+</body>
+</html>

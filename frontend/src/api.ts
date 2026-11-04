@@ -676,10 +676,31 @@ export interface PeerSnapshot {
   actions: { can_install: boolean; can_start: boolean; can_stop: boolean; can_open: boolean }
 }
 
+/** 工具组件（如 ProxyFleet）：只读观测，不参与 peer 的安装/启停任务。 */
+export interface ComponentSnapshot {
+  id: string
+  kind: 'component'
+  product: string
+  role: string
+  directory: string
+  directory_exists: boolean
+  status: PeerStatus
+  status_label: string
+  detail: string
+  ports: { console: number; gateway: number | null }
+  listening: { console: PortOwner[]; gateway: PortOwner[] }
+  health: { ok: boolean | null; detail: string }
+  open_url: string | null
+  managed_by: string
+  notes: string[]
+  actions: { can_open: boolean }
+}
+
 export interface BoardPayload {
   ok: boolean
   control_enabled: boolean
   peers: PeerSnapshot[]
+  components?: ComponentSnapshot[]
   port_conflicts: Array<PortConflict & { peer: string }>
   ports: { board: number; mcp: number } & Record<string, { mcp: number; web: number | null } | number>
 }

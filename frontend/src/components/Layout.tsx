@@ -57,6 +57,10 @@ import type { ThemeChoice } from '../lib/theme'
  * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）；
  *   展平后 20 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
+ *
+ * **胶囊样式**（QUOT-200）：导航仍保持竖排侧栏，只是每个条目本身是横置胶囊（`rounded-pill`）——
+ * 一级组、二级页、底部设置/AI 全部同一形状；当前页整颗填色，不再靠左侧色条或方角区分。
+ * 不改竖排结构、不改展开逻辑，窄屏 rail 下胶囊收成图标胶囊。
  */
 
 export interface NavPage {
@@ -217,9 +221,9 @@ const RAIL_GROUP = 'rail:border-t rail:border-border rail:first:border-t-0'
 
 function navClass(isActive: boolean, secondary = false): string {
   return cn(
-    'group flex h-row items-center gap-2 rounded px-2 text-body transition-colors duration-fast rail:justify-center rail:px-0',
+    'group flex h-row items-center gap-2 rounded-pill px-3 text-body transition-colors duration-fast rail:justify-center rail:px-0',
     isActive
-      ? 'bg-surface-3 font-medium text-text'
+      ? 'bg-accent-soft font-medium text-accent'
       : secondary
         ? 'text-text-secondary hover:bg-surface-3 hover:text-text'
         : 'text-text-secondary hover:bg-surface-3 hover:text-text',
@@ -305,8 +309,8 @@ export default function Layout() {
                     title={isOpen ? `收起${section.label}` : `展开${section.label}`}
                     onClick={() => toggleGroup(section.key)}
                     className={cn(
-                      'flex h-row w-full items-center gap-2 rounded px-2 text-body transition-colors duration-fast hover:bg-surface-3 hover:text-text rail:hidden',
-                      childActive ? 'font-medium text-text' : 'text-text-secondary',
+                      'flex h-row w-full items-center gap-2 rounded-pill px-3 text-body transition-colors duration-fast hover:bg-surface-3 hover:text-text rail:hidden',
+                      childActive ? 'bg-accent-soft font-medium text-accent' : 'text-text-secondary',
                     )}
                   >
                     <section.icon
@@ -325,12 +329,12 @@ export default function Layout() {
                   </button>
 
                   {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标。
-                      完整侧栏下二级缩进 16px：导引线落在一级图标正下方（`ml-2`），线与文字
-                      仍留 8px 呼吸（`pl-2`）。原来总缩进只有 8px，分组标题与条目几乎同列。 */}
+                      完整侧栏下二级胶囊再缩进 12px，靠缩进而不是导引线表达层级
+                      （胶囊是整条填色，左侧竖线会切进胶囊圆角里）。 */}
                   <ul
                     id={`nav-group-${section.key}`}
                     className={cn(
-                      'mt-1 ml-2 flex flex-col gap-1 border-l border-border pl-2 rail:ml-0 rail:mt-0 rail:border-l-0 rail:pl-0',
+                      'mt-1 ml-2 flex flex-col gap-1 pl-2 rail:ml-0 rail:mt-0 rail:pl-0',
                       !isOpen && 'hidden rail:flex',
                     )}
                   >
