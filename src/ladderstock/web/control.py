@@ -67,6 +67,12 @@ from ladderstock.core.fsguard import (
     harden_file_acl,
     require_local_peer_directories,
 )
+from ladderstock.core.peer_versions import (
+    ReleaseCache,
+    start_release_watcher,
+    upgrade_command,
+    version_status,
+)
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 
@@ -1321,6 +1327,15 @@ class ControlPlane:
         self._last_command: dict[str, Job] = {}
         self._handles: dict[str, list[Any]] = {}
         self._state: dict[str, Any] = self._load_state()
+        # 期望版本缓存（QUOT-402）：只读缓存文件 + daemon 线程每小时刷一次；
+        # 快照 / doctor 永远不在请求线程里等 GitHub（断网不阻塞、不报错）。
+        self._release_cache = ReleaseCache(
+            self.data_root / CONTROL_STATE_SUBDIR / "github-releases.json"
+        )
+        self._release_thread = start_release_watcher(
+            self._release_cache,
+            sorted({ctl.repo for ctl in self.peers.values() if ctl.repo}),
+        )
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ldst-control")
 
     # ---------------------------------------------------------------- 状态文件
@@ -1480,6 +1495,10 @@ class ControlPlane:
         last_job = self._last_job.get(key)
         running_with_web = status == STATUS_RUNNING and bool(ctl.web_port)
         open_url = f"http://127.0.0.1:{ctl.web_port}" if running_with_web else None
+        # 版本三态（QUOT-402）：期望值来自后台线程维护的 GitHub Release 缓存；
+        # 缓存没有 / 任一侧不是 semver 都判 unknown，不许猜。只读，绝不代跑升级。
+        expected_version = self._release_cache.expected(ctl.repo) if ctl.repo else None
+        v_status = version_status(version, expected_version)
         return {
             "id": key,
             "product": self._product_name(key),
@@ -1492,6 +1511,10 @@ class ControlPlane:
             "detail": detail,
             "installed": installed,
             "version": version,
+            "version_expected": expected_version,
+            "version_status": v_status,
+            "upgrade_hint": upgrade_command(ctl.directory) if v_status == "behind" else None,
+            "repo": ctl.repo,
             "venv": str(self._venv_dir(ctl)) if self._venv_dir(ctl).is_dir() else None,
             "ports": {"mcp": ctl.mcp_port, "web": ctl.web_port, "web_label": ctl.web_port_label},
             "listening": {

@@ -138,6 +138,10 @@ class PeerControl:
     env_filename: str = PEER_ENV_FILENAME
     #: 配置项与目标实现不一致时的说明（如实暴露，不静默）
     config_notes: tuple[str, ...] = ()
+    #: GitHub 仓库（`owner/name`），期望版本源（QUOT-402）；None 表示不检测
+    repo: str | None = None
+    #: 本机分发包名（importlib.metadata 的发现名）；None 则退回 import_package
+    dist_name: str | None = None
 
 
 PEER_CONTROL: dict[str, PeerControl] = {
@@ -145,6 +149,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         key="tickhub",
         directory=r"[local-path]\TickHub-CN",
         import_package="tickhub_cn",
+        repo="QuotaFuse-ai/TickHub-CN",
+        dist_name="tickhub-cn",
         mcp_port=8000,
         web_port=8787,
         web_port_label="管理端",
@@ -163,6 +169,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         key="tickhub_us",
         directory=r"[local-path]\TickHub-US",
         import_package="tickhub_us",
+        repo="QuotaFuse-ai/TickHub-US",
+        dist_name="tickhub-us",
         mcp_port=8002,
         # 本机构建没有 admin API：给一个端口只会把 ProxyFleet 的 8789 探成「本模块」
         web_port=None,
@@ -193,6 +201,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         key="wire",
         directory=r"[local-path]\Wire\quotafuse-wire",
         import_package="qf_wire",
+        repo="QuotaFuse-ai/quotafuse-wire",
+        dist_name="quota-fuse-wire",
         mcp_port=8791,
         web_port=8790,
         web_port_label="HTTP 服务",
@@ -218,6 +228,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         key="senate",
         directory=r"[local-path]\StockSenate",
         import_package="stock_senate",
+        repo="QuotaFuse-ai/StockSenate",
+        dist_name="stocksenate",
         mcp_port=8765,
         web_port=8786,
         web_port_label="WebUI",
@@ -251,7 +263,8 @@ PEER_DIR_ENV: dict[str, str] = {
 PEER_SIBLING_DIRS: dict[str, str] = {
     "tickhub": "TickHub-CN",
     "tickhub_us": "TickHub-US",
-    "wire": "quotafuse-wire",
+    # Wire 实际嵌套一层：D:\workplace\Wire\quotafuse-wire
+    "wire": os.path.join("Wire", "quotafuse-wire"),
     "senate": "StockSenate",
 }
 
