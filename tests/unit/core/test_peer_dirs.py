@@ -19,12 +19,13 @@ def test_sibling_directory_discovered(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(boundary, "_REPO_ROOT", tmp_path / "LadderStock")
     (tmp_path / "LadderStock").mkdir()
     (tmp_path / "TickHub-CN").mkdir()
-    (tmp_path / "quotafuse-wire").mkdir()
+    # Wire 实际嵌套一层：D:\workplace\Wire\quotafuse-wire
+    (tmp_path / "Wire" / "quotafuse-wire").mkdir(parents=True)
 
     resolved = resolve_peer_control({})
 
     assert resolved["tickhub"].directory == str(tmp_path / "TickHub-CN")
-    assert resolved["wire"].directory == str(tmp_path / "quotafuse-wire")
+    assert resolved["wire"].directory == str(tmp_path / "Wire" / "quotafuse-wire")
 
 
 def test_missing_directory_keeps_placeholder(monkeypatch, tmp_path) -> None:
