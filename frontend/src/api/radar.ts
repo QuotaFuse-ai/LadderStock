@@ -92,12 +92,19 @@ export const POOL_PART_LABEL: Record<string, string> = {
 export const POOL_PART_WEIGHT_LABEL: Record<string, string> = {
   strength: '连板高度',
   standing: '梯队相对位置',
-  capital: '候选集内净额分位',
+  // QUOT-372 口径定稿（老板原话）：资金分项 = 当日实时主力净额（元）· 净占比（%）
+  capital: '当日实时主力净额（元）· 净占比（%）',
   theme: '板块涨幅',
   turnover: '换手率',
 }
 
 export type PoolPart = (typeof POOL_PART_ORDER)[number]
+
+/**
+ * 资金分项的数据来源三态（QUOT-372）：`realtime` = 当日实时批量分区命中；
+ * `daily_fallback` = 回落日线（不是当日实时，页面必须标「回放」）；`none` = 没有资金数据。
+ */
+export type FundFreshness = 'realtime' | 'daily_fallback' | 'none'
 
 // ---------------------------------------------------------------- 类型
 
@@ -232,6 +239,8 @@ export interface PoolCandidate {
     turnover_rate: number | null
     height: number | null
     net_inflow: number | null
+    /** 主力净占比（%，当日实时批量工具定稿字段）；回落日线没有这列 → null，显示「—」 */
+    main_net_pct: number | null
     theme_tags: string[]
     theme_board_change_pct: number | null
   }
@@ -257,6 +266,9 @@ export interface CandidatePoolPayload {
   missing: string[]
   data_source_status: RadarStatus
   data_as_of: string | null
+  /** 资金分项口径与取数时刻（QUOT-372）：挨着 `data_as_of`，后端恒给（缺数时为 'none' + null） */
+  fund_freshness: FundFreshness
+  fund_fetched_at: string | null
 }
 
 // ---------------------------------------------------------------- 首页指数条（§9.1，信封）
@@ -872,6 +884,7 @@ function parsePoolCandidate(value: unknown): PoolCandidate | null {
       turnover_rate: numberOrNull(raw.turnover_rate),
       height: numberOrNull(raw.height),
       net_inflow: numberOrNull(raw.net_inflow),
+      main_net_pct: numberOrNull(raw.main_net_pct),
       theme_tags: stringList(raw.theme_tags),
       theme_board_change_pct: numberOrNull(raw.theme_board_change_pct),
     },
@@ -908,7 +921,14 @@ export function parseCandidatePool(raw: unknown): CandidatePoolPayload {
     missing: stringList(payload.missing),
     data_source_status: parseStatus(payload.data_source_status, available ? 'ok' : 'missing'),
     data_as_of: text(payload.data_as_of) || text(payload.date) || null,
+    fund_freshness: parseFundFreshness(payload.fund_freshness),
+    fund_fetched_at: text(payload.fund_fetched_at) || null,
   }
+}
+
+function parseFundFreshness(value: unknown): FundFreshness {
+  const raw = text(value)
+  return raw === 'realtime' || raw === 'daily_fallback' ? raw : 'none'
 }
 
 // ---------------------------------------------------------------- 首页指数条（§9.1，信封）

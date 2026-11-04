@@ -62,6 +62,7 @@ from ladderstock.core.privacy import strip_private
 from ladderstock.core.quotes import daily_change_map, price_map
 from ladderstock.core.watch_prices import DATASET as SPOT_QUOTE_DATASET
 from ladderstock.core.watch_prices import fetch_prices
+from ladderstock.data import archive
 from ladderstock.data.provider_registry import ProviderRegistry
 from ladderstock.errors import (
     EXIT_CONFIG,
@@ -564,6 +565,16 @@ class RadarPlane:
             lambda: pool_module.compute_pool(day, root=self.data_root, limit=limit)
         )
         available = bool(result.get("available"))
+        fund_freshness, fund_fetched_at, fund_pcts = _pool_fund_provenance(
+            day, result, self.data_root
+        )
+        # 净占比透传到每只候选的 raw（QUOT-372）：批量工具定稿字段 `main_net_pct`，
+        # 取不到就是 None，前端显示「—」，不拿 0 冒充。
+        for row in result.get("candidates") or []:
+            raw = row.get("raw") if isinstance(row, Mapping) else None
+            if isinstance(raw, dict):
+                code = str(row.get("code") or "")
+                raw["main_net_pct"] = fund_pcts.get(code)
         return _envelope(
             domain=POOL_DOMAIN,
             topic=POOL_TOPIC,
@@ -571,7 +582,11 @@ class RadarPlane:
             payload=result,
             status="ok" if available else "missing",
             source_detail=str(result.get("source_detail") or ""),
-            freshness="cached",
+            # freshness 按资金数据的真实来源给（QUOT-372）：命中当日实时批量分区
+            # 才是 realtime；回落日线仍是本地缓存回放，如实标 cached。
+            freshness="realtime" if fund_freshness == "realtime" else "cached",
+            fund_freshness=fund_freshness,
+            fund_fetched_at=fund_fetched_at,
         )
 
     # ---------------------------------------------------------------- 我的持仓 §6.1
@@ -908,6 +923,85 @@ def _calendar_detail(result: Any) -> str:
 # 信封
 # --------------------------------------------------------------------------- #
 
+#: 候选池资金分项的 freshness 三态（QUOT-372）：与信封 `Freshness` 枚举解耦，
+#: 载荷字段可以比信封枚举说得更细（回落日线要跟「实时」明确区分开）。
+FUND_FRESHNESS_REALTIME = "realtime"
+FUND_FRESHNESS_DAILY_FALLBACK = "daily_fallback"
+FUND_FRESHNESS_NONE = "none"
+
+#: 资金两路数据集：当日实时批量（QUOT-371）与日线历史（QUOT-361 既有链路）
+FUND_REALTIME_DATASET = "fund_flow_realtime"
+FUND_DAILY_DATASET = "fund_flow"
+
+
+def _minute_stamp(stamp: datetime | None) -> str | None:
+    """落库时刻的分钟级 ISO 文本；没有就 None，前端如实显示「—」，不伪造。"""
+    return stamp.isoformat(timespec="minutes") if stamp is not None else None
+
+
+def _fund_pct_map(records: Sequence[Mapping[str, Any]]) -> dict[str, float | None]:
+    """code → `main_net_pct`（批量工具定稿字段，单位 %）；这列缺失的行给 None。"""
+    pcts: dict[str, float | None] = {}
+    for record in records:
+        code = str(record.get("code") or "").strip()
+        if not code:
+            continue
+        value = record.get("main_net_pct")
+        try:
+            pcts[code] = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            pcts[code] = None
+    return pcts
+
+
+def _pool_fund_provenance(
+    day: date, result: Mapping[str, Any], root: Any
+) -> tuple[str, str | None, dict[str, float | None]]:
+    """资金分项的溯源三态（QUOT-372）：`(fund_freshness, fund_fetched_at, 净占比映射)`。
+
+    - `realtime`：`fund_flow_realtime` 当日分区命中（`core.pool.fund_flow_snapshot`
+      的第一顺位，命中时载荷 `meta.fund_data_as_of` 就是请求日）；
+    - `daily_fallback`：回落日线 `fund_flow`（当日盘后分区或更早交易日）——
+      这批数不是「当日实时」，要跟实时口径明确区分；
+    - `none`：没有任何资金数据，`fetched_at=None`，净占比不冒充。
+
+    `fund_fetched_at` 取记录的 `_ingested_at`（`archive.snapshot` 的 `cached_at`，
+    真实落库时刻）到分钟；缓存读不动时不让整条接口崩，如实降级成 `daily_fallback`
+    / `None`。这里只读缓存，不改 `core/pool.py` 的取数与算分（QUOT-361 地盘）。
+    """
+    counts = result.get("counts")
+    flow_rows = int(counts.get("fund_flow_rows") or 0) if isinstance(counts, Mapping) else 0
+    if flow_rows <= 0:
+        return FUND_FRESHNESS_NONE, None, {}
+    try:
+        snap = archive.snapshot(FUND_REALTIME_DATASET, day, root=root)
+    except Exception:  # noqa: BLE001 - 缓存损坏不崩接口，如实降级
+        snap = None
+    if snap is not None and snap.records:
+        return (
+            FUND_FRESHNESS_REALTIME,
+            _minute_stamp(snap.cached_at),
+            _fund_pct_map(snap.records),
+        )
+    meta = result.get("meta")
+    as_of_raw = str(meta.get("fund_data_as_of") or "") if isinstance(meta, Mapping) else ""
+    try:
+        as_of = date.fromisoformat(as_of_raw) if as_of_raw else None
+    except ValueError:
+        as_of = None
+    if as_of is None:
+        return FUND_FRESHNESS_DAILY_FALLBACK, None, {}
+    try:
+        daily = archive.snapshot(FUND_DAILY_DATASET, as_of, root=root)
+    except Exception:  # noqa: BLE001
+        return FUND_FRESHNESS_DAILY_FALLBACK, None, {}
+    return (
+        FUND_FRESHNESS_DAILY_FALLBACK,
+        _minute_stamp(daily.cached_at),
+        _fund_pct_map(daily.records),
+    )
+
+
 def _envelope(
     *,
     domain: Domain,
@@ -917,16 +1011,26 @@ def _envelope(
     status: Status,
     source_detail: str,
     freshness: Freshness,
+    fund_freshness: str | None = None,
+    fund_fetched_at: str | None = None,
 ) -> dict[str, Any]:
     """套 `LadderEnvelope`，并把 `data_source_status` / `data_as_of` 复制进载荷。
 
     `status="missing"` 时 `data_as_of=None`：无数据不拿请求日期顶替数据时点
     （METRICS.md §4.3 / D-02）。
+
+    `fund_freshness` / `fund_fetched_at` 是候选池资金分项的口径与取数时刻
+    （QUOT-372），同样复制进载荷（前端 `unwrap()` 只下钻 `payload`，信封顶层
+    读不到）；它们是**新增字段**，不动 `data_as_of` 的日期语义。
     """
     as_of = day if status != "missing" else None
     body = dict(strip_private(payload))
     body["data_source_status"] = status
     body["data_as_of"] = as_of.isoformat() if as_of else None
+    if fund_freshness is not None:
+        body["fund_freshness"] = fund_freshness
+    if fund_fetched_at is not None or fund_freshness is not None:
+        body["fund_fetched_at"] = fund_fetched_at
     envelope = LadderEnvelope(
         domain=domain,
         topic=topic,
