@@ -20,6 +20,8 @@ import { useEnter } from '../ui/useEnter'
  * 三条容易被「顺手改掉」的规格口径，改之前先读规格对应小节：
  * - 模态对话框：复用 `useModalChrome`（§5.4），焦点、Esc、滚动锁、关闭后回入口都在那里，
  *   **不允许在面板里再实现一份**；
+ * - 居中模态（QUOT-398）：面板在视口水平居中、距顶 12vh，宽度 `min(86vw, 表宽上线)`，
+ *   结果区吃掉剩余高度。这是 QUOT-357 v1.1 的「右上角 640px 浮层」被否掉后的 v1.2 口径；
  * - 类型标签一律 `Badge tone="flat"`（§7.4 第 1 条：`neutral` 的 `bg-flat-soft` 混合底在浅色
  *   主题下 12px 文字 4.45:1，不达 4.5）；
  * - 面板内不出现 `DemoStateBadge`、「演示」字样水印（§6.7 / QUOT-348 硬约束），
@@ -100,6 +102,20 @@ export const GUIDE_ROWS: Array<{ how: string; to: string }> = [
   { how: '行业 / 题材完整名称', to: '行业详情（/industry/:name）' },
   { how: '任意关键词', to: '资讯雷达（/news?q=…）' },
 ]
+
+/**
+ * QUOT-398 居中模态的几何口径（内联 CSS 变量而非方括号任意值 class，同 §5.2 的既有写法）：
+ * 宽 = min(86vw, 表宽上线 1296px)——1440 视口下压进内容区（侧栏 232 + 两侧 32 = 296 < 14vw）；
+ * 高 = 视口 − 顶 12vh − 底 15vh，900 高下 ≈ 657px；结果区吃掉输入区与提示条之外的全部高度，
+ * 满命中不再被 420px 的固定档截断。
+ */
+const PANEL_STYLE: React.CSSProperties = {
+  left: '50%',
+  top: '12vh',
+  transform: 'translateX(-50%)',
+  width: 'min(86vw, var(--ldst-table-max, 1296px))',
+  maxHeight: '73vh',
+}
 
 function OptionRow({
   hit,
@@ -316,10 +332,11 @@ export function SearchPanel({ panelId, model, actions }: SearchPanelProps) {
         aria-modal="true"
         aria-label="聚合搜索"
         className={cn(
-          'absolute right-5 top-16 flex w-drawer-wide max-w-full flex-col rounded border border-border bg-surface shadow-dialog',
-          'transition-all duration-fast ease-ldst rail:w-drawer',
+          'absolute flex flex-col rounded border border-border bg-surface shadow-dialog',
+          'transition-all duration-fast ease-ldst',
           entered ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
         )}
+        style={PANEL_STYLE}
       >
         <div className="relative p-2 pb-1">
           <Input
@@ -383,20 +400,21 @@ export function SearchPanel({ panelId, model, actions }: SearchPanelProps) {
         </p>
 
         <div
-          className="min-h-0 overflow-auto overscroll-contain px-2 pb-2"
+          className="min-h-0 flex-1 overflow-auto overscroll-contain px-2 pb-2"
           role="listbox"
           id={listId}
           aria-label="搜索结果"
           aria-busy={model.pending}
-          // sticky 组头会压住顶部一行，滚动定位要让出这一档（§7.3）。
-          // 规格 §5.2 写的 `var(--ldst-table-h-lg)` 在 baseline 的 `tokens.css` 里不存在
-          // （只有 `--ldst-table-max`），所以按仓内既有口径写字面量 420px——
-          // 同 `HomeScreen.tsx:501`、`MarketScreen.tsx:645` 的 `maxHeight="420px"`，
-          // `check:ui` 规则 3 禁的是 `max-h-[420px]` 这种方括号任意值 class。
-          style={{ maxHeight: '420px', scrollPaddingTop: 'var(--ldst-control-h)' }}
+          // sticky 组头会压住顶部一行，滚动定位要让出这一档（§7.3）
+          style={{ scrollPaddingTop: 'var(--ldst-control-h)' }}
         >
           {model.phase === 'idle' && (
-            <div className="flex flex-col gap-2 py-2">
+            <div className="flex flex-col gap-3 py-3">
+              {/* QUOT-398：大输入框在上，空态第一行先接住「可以搜什么」——参考实现的「想研究什么」提问卡 */}
+              <p className="flex items-center gap-1 text-caption text-text-muted">
+                <Search className="size-3.5 shrink-0" aria-hidden="true" />
+                输入关键词开始搜索，或点下面最近搜索直接进入
+              </p>
               {model.recent.length > 0 && (
                 <div className="flex flex-col gap-1">
                   <span className="text-caption text-text-muted">最近搜索</span>
@@ -495,7 +513,7 @@ export function SearchPanel({ panelId, model, actions }: SearchPanelProps) {
               title={`今日数据里没有匹配「${model.query}」`}
               description={
                 <>
-                  换个写法试试：个股用 6 位代码（如 002463），名称只匹配当日涨停池、盯盘与候选池里的标的；
+                  没有命中，试试 6 位代码 / 行业名：个股名称只匹配当日涨停池、盯盘与候选池里的标的；
                   行业 / 题材用完整名称（如「机器人」而非「机器」）；资讯关键词可在雷达里按日期窗口再找。
                   没匹配不等于不存在——这里搜的是当日数据并集。
                 </>

@@ -3,6 +3,7 @@
 > - **v1.0（2026-11-03，QUOT-348，UI/UX）** 首版。范围：首页右上角搜索/提问**入口**与**聚合搜索面板**的交互与视觉规格；含状态定义、键盘可达、空态/无结果/降级文案、跳转契约与实测对比度。**本文件不含实现代码，不改动任何 `frontend/src/` 文件。**
 > - **v1.1（2026-11-03，QUOT-348 落盘轮）** 与已合入 main 的数据层 `frontend/src/lib/searchCore.ts`（QUOT-356，merge `8ecdd21`）对齐：组名统一为 `行业 / 题材`、类型标签收进 `SearchTag` 四值、组状态改按 `GroupStatus` 五值表达（新增 §8.8 四态矩阵与 §9.4 接口对应表）；§9.3 的后端提案标记为已被客户端聚合取代；视觉稿路径改为仓内真实路径（`docs/screenshots/` + `docs/specs/home-search-prototype.html`）。**仍未改动任何 `frontend/src/` 文件。**
 > - **v1.2（2026-11-03，合入 main 轮）** 与 main 上的实装（`424af9f` 首页搜索入口 + 聚合面板，QUOT-357）对齐，**只改状态标记与文档编号，规格条文零改动**：① `UI-SPEC.md` 的小节号让位给先落地的 §3.19 AI复盘，本节改为 **§3.20**，变更记录行相应改为 v1.8；② C-21 `HomeSearchTrigger` / C-22 `SearchPanel` 由「待实装」更新为「已实装」并给出真实文件路径（§10.2、§13）；③ §13 的两条跨队协作项（`NewsScreen` 读 `?q=`、`Overlay.tsx` export `useModalChrome`）标记为已完成，并如实写明后端 `/api/news` 仍无 `q` 参数（资讯匹配走 §9.3 #3 的前端退化路径）。
+> - **v1.3（2026-11-04，QUOT-398）** 面板外壳改为**居中模态**，只动 §5.1 示意图、§5.2 尺寸表、§5.3 与侧栏的关系、§5.5 结构里的结果区高度，以及 §6.2 行数核算的引用：① 定位从 `right-5 top-16`（右上角 640px 浮层）改为 `left-50% + translateX(-50%)`、顶边 `12vh`；② 宽度从 `w-drawer-wide`(640) / `w-drawer`(480) 改为 `min(86vw, var(--ldst-table-max, 1296px))`；③ 结果区从固定 `max-height: var(--ldst-table-h-lg)`(420px) 改为 **flex 吃掉面板剩余高度**（面板 `max-height: 73vh`），满命中不再被 420px 截断；④ 空态第一行改为「输入关键词开始搜索，或点下面最近搜索直接进入」；无结果态首句改为「没有命中，试试 6 位代码 / 行业名」。**交互契约（§7 键盘、§8 状态、§9 接口映射、§5.4 模态语义）零改动**，`useHomeSearch` / 路由映射 / 首页其它卡片均未动。
 - 上游需求：QUOT-343（父：QUOT-343 描述里的第 2 条口径已过期，见本文 §3.1 的更正）。
 > - 上游规范：`docs/UI-SPEC.md`（§5.1/§5.2/§5.3 溯源徽标、§7.3 层级与过渡、§8 文案、§9 可访问性）、`docs/tasks/TASK-UI-REDESIGN/DESIGN-SPEC.md`（§5 控件 C-xx、§8 五态——**该文件在 `docs/tasks/` 下，按 DEC-0026 被 `.gitignore` 排除，仓库内读不到**；本文所有 C-xx 编号在仓库内的可核对真源是 `docs/UI-SPEC.md §6.1`）、`frontend/tokens.json` + `frontend/src/styles/tokens.css`（令牌真源）。
 
@@ -173,7 +174,8 @@ document.body
 └─ createPortal
    └─ div  fixed inset-0 z-overlay          ← 容器（遮罩 + 面板）
       ├─ div  absolute inset-0 bg-scrim      ← 遮罩，点击关闭，aria-hidden
-      └─ div  absolute right-5 top-16 ...    ← 面板
+      └─ div  absolute left-50% top-[12vh]   ← 面板（水平居中，v1.3 / QUOT-398）
+               translateX(-50%)
 ```
 
 | 项 | 规定 | 依据 |
@@ -191,23 +193,22 @@ document.body
 
 | 项 | 取值 | 依据 |
 |---|---|---|
-| 宽度（desk ≥1280） | **640px**（`w-drawer-wide`） | `tailwind.config.ts` `width['drawer-wide'] = 640px`，Drawer 已用同名结构尺寸 |
-| 宽度（rail <1280） | **480px**（`w-drawer`） | 同上 `drawer = 480px` |
-| 顶边 | `top-16` = 64px | 页头 `py-5`（20px）+ 入口 40px = 60px，取 64px 留 4px 缝；64px 是 Tailwind 内建档，不是任意值 |
-| 右边 | `right-5` = 20px | 与 `main` 的 `px-5`（`Layout.tsx:395`）同一条竖向边线，视觉上不「飘出」内容区 |
-| 结果滚动区最大高 | **420px**：`style={{ maxHeight: 'var(--ldst-table-h-lg)' }}` | `--ldst-table-h-lg: 420px`（`tokens.css:108`，usage「高表、首页 Top 10」）。同写法已在 `HomeScreen.tsx:532`、`MarketScreen.tsx:809` 等处成立：内联 CSS 变量是仓内既有、且不触发 `check:ui` 规则 3（禁的是 `max-h-[...]` 方括号任意值） |
-| 面板整体最大高 | 输入区 + 420px + 底部提示条 ≈ **512px**；在 900px 高的基准视口下上下各留 >190px，不需要第二档 | 基准视口 1440×900（`scripts/visual-shot.mjs:12-18`） |
+| 水平定位 | **视口水平居中**：`left: 50%` + `transform: translateX(-50%)` | v1.3 / QUOT-398：老板看过参考实现（`vibe-astock` 首页「今天，想研究什么？」卡片）后否掉了右上角浮层。居中后与入口的横向位置无关，页头窄屏换行也不影响 |
+| 宽度 | **`min(86vw, var(--ldst-table-max, 1296px))`**，两个断点同一口径 | 1440 视口下 = 1238px，左边界 101px：侧栏 232 + 两侧留白，压进内容区；1280 下 = 1100px、左边界 90px，仍 > 侧栏 232 − 不要求「躲开侧栏」，遮罩本来盖住它（§5.3）。**不新增令牌**：`--ldst-table-max` 是既有表格宽度上限，内联 `style` 写 CSS 变量不触发 `check:ui` 规则 3（禁 `w-[...]` 方括号任意值） |
+| 顶边 | **`top: 12vh`** = 108px（900 高） | 视觉重心略高于正中；给下方留出结果区的余量。**不做 `translateY(-50%)` 的严格垂直居中**：结果区高度随命中数变化，严格居中会让面板「上下两头同时长」，输入框在使用中漂移 |
+| 面板整体最大高 | **`max-height: 73vh`** ≈ 657px（900 高） | 与顶边 12vh 合计留出底部 15vh；窗口再矮时面板整体收缩、结果区跟着滚（结果区是 `flex-1 min-h-0`） |
+| 结果滚动区 | **flex 吃掉剩余高度**：`min-h-0 flex-1 overflow-auto`，**不再设固定 `max-height`** | v1.3 起满命中（§6.2 ≈550px）在 900 高视口下不再必然滚动；窗口矮到装不下时才滚，§7.3 的「高亮行自动进视野」仍然必要 |
 
-面板总高构成（实现按此核对，不要再自己算）：输入行 40 + 下内距 8 = 48；结果区 ≤420；底部提示条 `min-h-control` = 32；面板上下内距 8 + 8 → 合计 **≤508px**。
+面板总高构成（实现按此核对，不要再自己算）：输入行 40 + 下内距 8 = 48；结果区 = 面板高 − 48 − 底部提示条 `min-h-control`(32) − 下内距 8；面板上下内距合计 16。900 高视口、空态下实测面板 301px（内容自然高度），满命中时到 73vh 封顶。
 
 ### 5.3 与侧栏 `Layout.tsx` 的关系
 
 | 事实 | 结论 |
 |---|---|
 | 侧栏是 `sticky top-0 w-sidebar`（232px / rail 56px），**没有设置 z-index**（`Layout.tsx:246`） | 面板 portal 到 body 且在 `z-overlay`(40)，**必然盖住侧栏**，不需要给侧栏补 z-index，也不要为面板改 `Layout.tsx` |
-| 面板右边 `right-5`（20px），宽 640（desk）/480（rail） | desk 1280 时左边界 = 1280−20−640 = **620px** > 侧栏右边界 232px；rail 1024 时左边界 = 1024−20−480 = **524px** > 56px。**两个断点下面板都不与侧栏重叠**，侧栏只是被遮罩压暗 |
+| 面板水平居中、宽 `min(86vw, 1296px)` | desk 1280 时左边界 = (1280−1100)/2 = **90px**，与侧栏右边界 232px 有交集；rail 1024 时 = **72px**。**面板会压住侧栏的一部分**——这是居中模态的必然结果，不是缺陷：遮罩本来就盖住整屏、侧栏在面板打开时不可点（下一行），压住的是已压暗的不可交互区域。`LadderStock` 的侧栏没有 z-index（上一行），面板在 `z-overlay` 之上，视觉顺序正确 |
 | 遮罩覆盖整屏（含侧栏） | 打开面板时侧栏不可点，Esc / 点遮罩即回。这是模态语义的代价，见 §5.4 |
-| 面板**不跟随**入口横向位置 | 入口在 `actions` 槽，页头 `flex-wrap`：窄屏下入口可能换行到标题下方。面板固定在视口右上角（`right-5 top-16`），不做「测入口矩形再定位」的逻辑——省一段 resize/scroll 测量代码，且面板始终与页面主内容区右缘对齐，不会因入口换行而漂到别处 |
+| 面板**不跟随**入口位置 | 入口在 `actions` 槽，页头 `flex-wrap`：窄屏下入口可能换行到标题下方。面板固定在视口水平中央（`left-50% top-12vh`），不做「测入口矩形再定位」的逻辑——省一段 resize/scroll 测量代码；居中定位也因此与入口换行完全无关 |
 
 ### 5.4 模态还是非模态（规格做的取舍，需架构师知情）
 
@@ -222,7 +223,7 @@ document.body
 ```
 SearchPanel (dialog)
 ├─ 输入区  ── Input(C-03, leadingIcon=Search, h-control-lg) + 输入框内右端「清除 ✕」IconButton(仅非空时出现)
-├─ 结果滚动区 (max-height 420px, overflow-auto, overscroll-contain)
+├─ 结果滚动区 (flex-1 min-h-0, overflow-auto, overscroll-contain；高度见 §5.2)
 │   ├─ SearchGroup 个股        : 组头(sticky) + 行列表 + 组尾「查看全部」(可选)
 │   ├─ SearchGroup 行业 / 题材 : 同上
 │   └─ SearchGroup 资讯        : 同上
@@ -255,7 +256,7 @@ SearchPanel (dialog)
 | 行业 / 题材 | 4（行业至多 3 + 题材至多 3，去重后 ≤4） | 「看全部行业 →」跳 `/industry` |
 | 资讯 | 4 | 「查看全部 N 条 →」跳 `/news?q=<kw>` |
 
-行数核算（决定 §5.2 的 420px 够不够）：5×38 + 3×32(组头) = 214；行业组 +148；资讯组 4×47 = 188。满命中总高 ≈ **550px** > 420 → **必然滚动**。因此 §7.3 的「高亮行自动进视野」不是可选项。
+行数核算：5×38 + 3×32(组头) = 214；行业组 +148；资讯组 4×47 = 188。满命中总高 ≈ **550px**。v1.3 起结果区是 flex 剩余高度（900 高视口下 ≈ 560px），满命中基本一屏放下；窗口更矮时才会滚动，因此 §7.3 的「高亮行自动进视野」仍然不是可选项。
 
 ### 6.3 排序规则（可直接翻译成比较函数）
 
@@ -459,7 +460,7 @@ stateDir TB
 [ 在资讯雷达中搜索「{kw}」 ]   ← 主操作（Button variant="secondary"）
 ```
 
-- 用 `EmptyState`（`Feedback.tsx:75-90`）的非 compact 形态：`min-h-empty`（200px）+ `text-subtitle` 标题 + `max-w-measure`（52ch）描述；**不加 `icon`**（`[&>svg]:size-12` 的 48px 大图标在 640px 面板里过重，且无信息增益）。
+- 用 `EmptyState`（`Feedback.tsx:75-90`）的非 compact 形态：`min-h-empty`（200px）+ `text-subtitle` 标题 + `max-w-measure`（52ch）描述；**不加 `icon`**（`[&>svg]:size-12` 的 48px 大图标在 v1.3 的 1238px 面板里过重，且无信息增益）。
 - **措辞刻意用「今日数据里没有匹配」而不是「没有 X 这只股票」**：命中域是当日并集（§9.2），说「没有」是在撒谎，用户会以为代码输错了。
 - 出口按钮 `variant="secondary"`（不是 primary：它是兜底路径，不该比正常结果更抢眼），Enter 绑定到它。
 
@@ -628,7 +629,7 @@ GET /api/search?q=<kw>&limit=6
 
 组件编号 C-21/C-22 是下一个空闲档（`UI-SPEC §6.1` 已用到 C-20），**本 PR 已把它们登记进 `docs/UI-SPEC.md §6.1` / §3.20**——这是文档动作，不是令牌动作。`DESIGN-SPEC §5` 在 gitignore 的 `docs/tasks/` 下，仓库内不可维护，不再作为登记目标。
 
-**令牌结论：颜色 / 圆角 / 阴影 / 字号 / 间距 / 层级 / 时长全部零新增。** 出现的「新数值」只有两个宽度（256px / 176px）与一个 64px 顶偏移，它们都落在 Tailwind **内建档位**（`w-64` / `w-44` / `top-16`）上，不是方括号任意值，因此不触发 `scripts/check-ui-consistency.mjs` 规则 3，也不需要进 `tailwind.config.ts`。若架构师希望把它们也登记成结构尺寸（同 `w-drawer: 480px` 的做法，`tailwind.config.ts:120-128` 有先例），建议 `width['search-entry'] = 256px` / `width['search-panel'] = 640px`（后者直接复用 `w-drawer-wide` 更好），并在注释里写明是**结构尺寸而非视觉令牌**——两种做法规格都接受，取其一即可（§14-B1）。
+**令牌结论：颜色 / 圆角 / 阴影 / 字号 / 间距 / 层级 / 时长全部零新增。** 出现的「新数值」只有两个宽度（256px / 176px），它们都落在 Tailwind **内建档位**（`w-64` / `w-44`）上（v1.3 起面板顶偏移与宽度改为内联 CSS 变量，见 §5.2），不是方括号任意值，因此不触发 `scripts/check-ui-consistency.mjs` 规则 3，也不需要进 `tailwind.config.ts`。若架构师希望把它们也登记成结构尺寸（同 `w-drawer: 480px` 的做法，`tailwind.config.ts:120-128` 有先例），建议 `width['search-entry'] = 256px`（面板宽度 v1.3 起走 `min(86vw, var(--ldst-table-max))`，不再需要结构宽度），并在注释里写明是**结构尺寸而非视觉令牌**——两种做法规格都接受，取其一即可（§14-B1）。
 
 ## 11. 视觉稿清单（仓库落盘路径）
 
@@ -639,7 +640,7 @@ GET /api/search?q=<kw>&limit=6
 | `home-search-entry-states-dark.png` | 入口默认 / hover / focus（三种状态并排 + 2× 放大标注，含 §4.5 的「Tab 路过不弹」注记） |
 | `home-search-panel-empty-dark.png` | 面板打开 = 空态（未输入）：焦点环在输入框、最近搜索 chips、「可以搜这三类」引导；清除 ✕ 此时**不出现** |
 | `home-search-panel-results-dark.png` | 输入中（`电力`）：个股 5 行 + 行业 / 题材 3 行、高亮行（左侧 accent 条 + `bg-surface-3`）、组头徽标、组尾出口 |
-| `home-search-panel-results-scrolled-dark.png` | 同一态滚动到底：sticky 组头仍钉在顶部、资讯组（双行 47px 行高）、「查看全部 12 条 →」（组头计数在第一期只显本轮返回条数，§6.1 v1.1）——证明 §6 的 550px > 420px 必然滚动与 §7.3 的必要性 |
+| `home-search-panel-results-scrolled-dark.png` | 同一态滚动到底：sticky 组头仍钉在顶部、资讯组（双行 47px 行高）、「查看全部 12 条 →」（组头计数在第一期只显本轮返回条数，§6.1 v1.1）——证明 §6 的满命中总高（v1.3 结果区已改为 flex 剩余高度，窗口变矮时仍会滚）与 §7.3 的必要性 |
 | `home-search-panel-loading-dark.png` | 加载中：个股一路已回，另两组 3×3 骨架 + 组头**无徽标**（§8.4），底部 `正在加载搜索结果` / 1.2s 慢响应提示 |
 | `home-search-panel-no-result-dark.png` | 无结果态（§8.5 定稿文案 + 3 条下一步指引 + 兜底出口 + 「没匹配 ≠ 不存在」） |
 | `home-search-panel-group-error-dark.png` | 单组失败（§8.6：组头保留 +「未取到」+ 降级条 + 重试，另两组仍可用） |
@@ -687,7 +688,7 @@ GET /api/search?q=<kw>&limit=6
 | **A1** | 入口文案去掉「提问」（§4.2）。后端无问答通道，「问」是骗人的承诺 | 采用「搜索个股 / 行业 / 资讯」；若产品坚持「提问」，需要先有 §0 里那条问答通道，另开需求 | 只影响一行 placeholder |
 | **A2** | Tab 路过入口**不**自动弹面板（§4.5），与 QUOT-343「点击或聚焦即弹出」字面分歧 | 采用「pointerdown/Enter 打开、focus 不打开」；被否则改 `onFocus` 打开，需同时接受键盘用户每 Tab 一次被遮罩打断 | 一行事件绑定 |
 | **A3** | `/api/search` 新端点（§9.3）是否本期做 | **已解决（v1.1）**：QUOT-356 走的是**客户端聚合**（`searchCore.ts` 的 6 个源拼 `/api/ladder` + 候选池 + `/api/industry` + `/api/market/theme` + 资讯流），§9.3 那个服务端聚合端点不再需要，已降级为背景材料。遗留的只有资讯关键词检索：`/api/news` 仍无 `?q=`，第一期由前端在已加载窗口内子串匹配（§9.3 #3 的退化路径），组头需如实标注匹配范围 | 一条后端小改 |
-| **B1** | 两个结构宽度（入口 256 / 面板 640）是否登记进 `tailwind.config.ts` 的 `width`（§10.2） | 面板复用 `w-drawer-wide`；入口用 `w-64` 内建档，不登记 | 一行配置 |
+| **B1** | 入口结构宽度（256）是否登记进 `tailwind.config.ts` 的 `width`（§10.2）；面板宽度 v1.3 起已不适用 | 入口用 `w-64` 内建档，不登记 | 一行配置 |
 | **B2** | 个股命中 >5 的出口（第一期是分页、是跳 `/market?tab=ladder`、还是只提示） | 只提示，不做分页（面板内分页 = 焦点位置与滚动位置两套新状态，收益不抵复杂度） | 交互复杂度 |
 | **C1** | 「空输入 Backspace 清除上一条最近搜索」是否做 | 可不做（§7.1 已标为可选） | 键盘行为 |
 | **D2** | 题材名不在行业字典时跳 `/market?tab=theme` 而不是 `/industry/:name`（§3.2 第 3 行）——`/industry/:name` 对未登记题材会显「该行业暂无数据」 | 采用 §3.2 表；若架构师希望题材统一落 `/industry/:name`，需要行业页先支持题材名解析 | 路由语义 |
