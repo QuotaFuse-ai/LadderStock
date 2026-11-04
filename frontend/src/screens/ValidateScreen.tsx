@@ -684,7 +684,7 @@ export default function ValidateScreen() {
         <DataTable<ConditionRow>
           rows={items}
           rowKey={(row) => row.key}
-          maxHeight="calc(100vh - 280px)"
+          maxHeight="var(--ldst-table-h)"
           caption={caption}
           summaryRow={() => caption}
           rowClassName={(row) => {

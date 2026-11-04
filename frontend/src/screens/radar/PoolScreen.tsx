@@ -452,7 +452,7 @@ export default function PoolScreen() {
         rowKey={(row) => row.code}
         caption={`${payload.date} 候选池（${payload.candidates.length} 只）；点击「展开」看分项依据，分数由后端计算`}
         density="compact"
-        maxHeight="calc(100vh - 360px)"
+        maxHeight="var(--ldst-table-h)"
         onRowClick={(row) => setSelected(row)}
         empty={<EmptyState compact title="没有候选" description="换一个交易日，或先运行 ldst pool。" />}
       />
