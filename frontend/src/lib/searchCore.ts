@@ -5,9 +5,9 @@
  * 这一层不碰 DOM、不碰 uPlot / matchMedia，`vitest` 注入假源就能跑完整逻辑。
  *
  * 三条硬口径：
- * 1. **只用已有接口**。本期不新增后端端点：个股名称匹配只能覆盖本机当天数据集里带
- *    代码 + 名称的那部分（连板天梯 + 候选池）；全市场按名称模糊检索的端点仍缺，
- *    代码意图因此另有一条 `code_direct` 直达项兜住跳转。
+ * 1. **只用已有接口**。QUOT-405 补上了 `/api/symbols/search` 标的字典（本机缓存
+ *    反查），个股名称不再只靠当天数据集；字典与缓存都查不到时仍由 `code_direct`
+ *    给「未核实」直达项兜住跳转，全市场模糊检索依旧不在这里做。
  * 2. **单源失败不影响其它组**。每个源独立 try/catch，失败只落到该源的
  *    `SourceStat.error`；整组全挂才把组的 `status` 打成 `error`，UI 据此显示「该组暂不可用」。
  * 3. **没有数据就说没有**。`name: null` 表示名称未接入（跳转仍可用），空结果返回
@@ -192,6 +192,37 @@ export const httpSearchSources: readonly SearchSource[] = [
           verified: false,
         },
       ]
+    },
+  },
+  {
+    id: 'symbol_dictionary',
+    group: 'stocks',
+    label: '标的字典',
+    /**
+     * `/api/symbols/search`（QUOT-405）：本机缓存反查的标的字典，覆盖比当日
+     * 涨停池 / 候选池宽。代码意图把归一化后的代码传上去（精确命中），其余意图
+     * 原样传词（服务端做名称包含匹配）。命中即 `verified: true` 且带真实名称，
+     * 与 `code_direct` 的「未核实」占位在同一标的合并后，名称与徽标都被顶掉。
+     * 接口未上线（404）只算本源失败，代码直达项照常兜住跳转。
+     */
+    async load({ query, signal }) {
+      const envelope = await api.symbolsSearch(query.code ?? query.text, 10, signal)
+      const out: Candidate[] = []
+      for (const match of envelope.payload.matches) {
+        const parts = [match.market, match.board].filter(
+          (part) => typeof part === 'string' && part !== '',
+        )
+        out.push({
+          key: match.symbol,
+          tag: '个股',
+          code: match.symbol,
+          name: match.name,
+          detail: parts.length > 0 ? parts.join(' · ') : null,
+          score: query.code === match.symbol ? 100 : 85,
+          verified: true,
+        })
+      }
+      return out
     },
   },
   {

@@ -211,6 +211,24 @@ export interface LadderResult {
   unknown_board: number
 }
 
+/** 标的字典的一条命中（QUOT-405，字段对齐参考库 `symbolSearch`）。 */
+export interface SymbolMatch {
+  symbol: string
+  name: string
+  market: string | null
+  kind: string | null
+  board: string | null
+  /** pypinyin 不在依赖里时为 `null`（拼音匹配待后续单接入） */
+  pinyin: string | null
+}
+
+export interface SymbolsSearchPayload {
+  query: string
+  limit: number
+  count: number
+  matches: SymbolMatch[]
+}
+
 /**
  * 后端 `ai/error_taxonomy.py:FailureKind` 的镜像：四类面向用户的失败 + `internal` 兜底。
  * 前端不重新分类，只按这个 kind 决定呈现与可执行操作。
@@ -855,6 +873,15 @@ export const api = {
     request<LadderEnvelope<MarketThemePayload>>(`/market/theme?date=${encodeURIComponent(date)}`, {
       signal,
     }),
+  /**
+   * 标的字典检索（QUOT-405）：本机缓存反查的代码 + 名称，只读。
+   * 未接入（后端 404）或查无此代码时调用方按空结果回落，不编名称。
+   */
+  symbolsSearch: (q: string, limit = 10, signal?: AbortSignal) =>
+    request<LadderEnvelope<SymbolsSearchPayload>>(
+      `/symbols/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+      { signal },
+    ),
   validation: (date: string, signal?: AbortSignal) =>
     request<LadderEnvelope<ValidationPayload>>(`/validation?date=${encodeURIComponent(date)}`, {
       signal,
