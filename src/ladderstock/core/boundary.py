@@ -467,7 +467,7 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         _b("theme_news", "wire", "wire_get_digest", "replace", "data_as_of",
            ("wire_get_timeline",), "只做叙事与时间线，不产出任何数值指标"),
         # ---- StockSenate：合议结果只读（可选）----
-        _b("council_memo", "senate", "report_query", "replace", "data_as_of",
+        _b("council_memo", "senate", "stock_senate_report_query", "replace", "data_as_of",
            note="只读报告，不在本项目内复现辩论/风控流程"),
     )
 }
@@ -492,7 +492,8 @@ NEWS_CALENDAR_DATASETS: tuple[str, ...] = ("lockup_calendar", "earnings_preview"
 # 工具名尚未在真实 peer 上确认的数据集：`ldst doctor` 会探**一次** tools/list，
 # 连得上就按实际工具名下结论（在列表里 = 已联调、不在 = 明确报工具不存在），
 # 连不上只说「peer 不可达」。本集合只影响 doctor 的 warning 措辞，不影响 ok 与退出码。
-PROVISIONAL_TOOLS: frozenset[str] = frozenset({"report_query"})
+# QUOT-389：senate 的 `stock_senate_report_query` 已实测在列（5 个工具），全部清空。
+PROVISIONAL_TOOLS: frozenset[str] = frozenset()
 
 
 def owner_of(dataset: str) -> DatasetBinding:

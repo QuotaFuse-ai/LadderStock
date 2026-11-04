@@ -126,7 +126,7 @@ SOURCES_DOC: dict[str, Any] = {
             "id": "senate_reports",
             "dataset": "council_memo",
             "via": "senate",
-            "tool": "report_query",
+            "tool": "stock_senate_report_query",
             "primary": True,
             "fallback": [],
             "timeout_sec": 1,

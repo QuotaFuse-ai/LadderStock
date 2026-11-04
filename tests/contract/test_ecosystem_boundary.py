@@ -199,7 +199,7 @@ def test_senate_adapter_maps_missing_to_partial() -> None:
             "data_as_of": "2026-10-27",
             "payload": {"verdict": "观察"},
             "source": "stock-senate",
-            "source_detail": "report_query",
+            "source_detail": "stock_senate_report_query",
             "fetched_at": "2026-10-27T21:00:00+08:00",
             "freshness": "cached",
             "confidence": "medium",
