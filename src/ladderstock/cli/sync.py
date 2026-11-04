@@ -57,6 +57,7 @@ from typing import Annotated, Any
 import typer
 
 from ladderstock.cli.output import OutputOption, emit, error
+from ladderstock.core import intraday
 from ladderstock.core.boundary import BoundaryViolation, owner_of
 from ladderstock.core.models import LadderEnvelope
 from ladderstock.data import archive, duckdb_store, sqlite_store, watermark
@@ -474,36 +475,39 @@ def sync_batch_pool(
     requests = _batch_request_count(envelope)
     partial_note = "" if requests is None else f"，上游往返 {requests} 次"
 
-    result = duckdb_store.write_dataset(
-        dataset,
-        rows,
-        mode=binding.mode,
-        source=outcome.source,
-        default_trade_date=_as_date(envelope.data_as_of),
-    )
+    # 盘中批量结果走槽存储（QUOT-373 / DEC-054）：每 60 秒一轮刷新**不进 DuckDB、
+    # 不触发 Parquet 日分区整体 COPY 重写**（写放大 + 跨进程写锁），照 spot_quote
+    # 先例落 `data/intraday/<date>/<dataset>/<HHMM>.json` 只创建不覆盖；读侧
+    # `archive.snapshot()` 取当天最新一槽，日粒度历史读法不变。
+    slot = intraday.write_batch_slot(dataset, rows, source=outcome.source)
+    if slot["written"]:
+        intraday.purge_batch_slots()
+
     value = watermark_value(dataset, rows, envelope)
-    if result.empty or not value:
+    if not rows or not value:
         status = "empty"
         after = before
         detail = f"{pool_desc}返回空记录（{partial_note.lstrip('，')}），未覆盖已有数据，水位保持"
     else:
         status = "degraded" if degraded else "ok"
         after = store.advance(
-            dataset, value, rows=result.rows, source=outcome.source, status=status
+            dataset, value, rows=slot["rows"], source=outcome.source, status=status
         ).value
         detail = (
-            f"{result.rows} 行 / {len(result.days)} 天，分区 {len(result.partitions)} 个"
-            f"；{pool_desc}，批量 1 次调用{partial_note}"
+            f"{slot['rows']} 行落盘中槽 {slot['slot']}（{slot['path'].parent}，"
+            f"不进 archive，DEC-054）{partial_note}"
         )
+        if not slot["written"]:
+            detail += "；本分钟槽已存在，按先到先得未覆盖"
         if degraded:
-            detail += f"；{envelope.source_detail}（部分批次未取到，已按降级落库）"
+            detail += f"；{envelope.source_detail}（部分批次未取到，已按降级落槽）"
 
     _log(f"  {dataset} {status}：{detail}，水位 {before or '-'} → {after or '-'}")
     store.record_run(
         dataset,
         mode=mode,
         status=status,
-        rows=result.rows,
+        rows=slot["rows"],
         source=outcome.source,
         trail=trail,
         started_at=started,
@@ -515,9 +519,9 @@ def sync_batch_pool(
         "dataset": dataset,
         "status": status,
         "mode": mode,
-        "rows": result.rows,
-        "total_rows": result.total_rows,
-        "days": list(result.days),
+        "rows": slot["rows"],
+        "total_rows": slot["rows"],
+        "days": [envelope.data_as_of] if envelope.data_as_of else [],
         "source": outcome.source,
         "optional": optional,
         "from_cache": False,

@@ -750,6 +750,123 @@ def run_slot(
     return {**base, "status": status, "detail": detail, "file": target.name}
 
 
+# ---------------------------------------------------------------- 批量槽存储
+#
+# QUOT-373 / DEC-054：盘中批量数据集（`fund_flow_realtime`）的分钟级结果**不进
+# DuckDB / 不落 Parquet 日分区**——否则每 60 秒一轮刷新就要把当天那个分区文件
+# 整体 COPY 重写一遍（写放大），外加 DuckDB 跨进程写锁竞争。照 `spot_quote`
+# 先例落 `data/intraday/<date>/<dataset>/<HHMM>.json`，`write_new_json` 只创建
+# 不覆盖；读侧 `archive.snapshot()` 取当天最新一槽。日粒度历史读法不变：
+# 某天的「最后一条槽」就是那天的值，T-1 及更早仍走日线口径。
+
+
+def batch_slot_dir(dataset: str, day: date, root: Path | None = None) -> Path:
+    """`data/intraday/<date>/<dataset>/`；与 spot_quote 的 `<HHMM>.json` 同级不同名。"""
+    from ladderstock.cli.paths import data_dir
+
+    base = Path(root) if root is not None else data_dir()
+    return base / SNAPSHOT_DIR / day.isoformat() / dataset
+
+
+def batch_slot_path(dataset: str, slot: str, day: date, root: Path | None = None) -> Path:
+    return batch_slot_dir(dataset, day, root) / f"{slot.replace(':', '')}.json"
+
+
+def write_batch_slot(
+    dataset: str,
+    records: Sequence[Mapping[str, Any]],
+    *,
+    source: str = "",
+    root: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """把一轮盘中批量结果写成当分钟槽文件；返回 `{slot, path, written, rows}`。
+
+    同一分钟内第二轮刷新**不覆盖**（`write_new_json` 语义，先到先得）：槽的
+    价值在于「那一分钟盘面上是什么」，事后改写等于伪造历史读数。空记录不写槽。
+    """
+    moment = local_moment(now, None)
+    slot = moment.strftime("%H:%M")
+    path = batch_slot_path(dataset, slot, moment.date(), root)
+    if not records:
+        return {"slot": slot, "path": path, "written": False, "rows": 0}
+    payload = {
+        "dataset": dataset,
+        "slot": slot,
+        "captured_at": moment.isoformat(),
+        "source": source,
+        "rows": len(records),
+        "records": [dict(record) for record in records],
+    }
+    written = write_new_json(path, payload)
+    return {"slot": slot, "path": path, "written": written, "rows": len(records)}
+
+
+def latest_batch_slot(
+    dataset: str, day: date, root: Path | None = None
+) -> dict[str, Any] | None:
+    """读某天最新一条槽；没有该数据集的槽目录或全读不了时回 None。"""
+    directory = batch_slot_dir(dataset, day, root)
+    if not directory.is_dir():
+        return None
+    for path in sorted(
+        (p for p in directory.glob("*.json") if p.stem.isdigit() and len(p.stem) == 4),
+        reverse=True,
+    ):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and "records" in payload:
+            payload.setdefault("_slot_file", path)
+            return payload
+    return None
+
+
+def purge_batch_slots(
+    root: Path | None = None,
+    *,
+    keep_days: int = 3,
+    today: date | None = None,
+) -> list[str]:
+    """清理过期槽目录（默认保留今天在内最近 3 天）；返回被删的目录路径列表。
+
+    240 槽 × 150 只 ≈ 单日 10–50MB，不清理会线性堆积；只删
+    `data/intraday/<date>/<dataset>/` 形状的**本工具自有目录**，spot_quote 的
+    `<HHMM>.json` 与 status.json 不在 `<dataset>/` 子目录里，天然不受影响。
+    """
+    import shutil
+
+    from ladderstock.cli.paths import data_dir
+
+    base = Path(root) if root is not None else data_dir()
+    anchor = today or local_moment(None, None).date()
+    removed: list[str] = []
+    if not base.is_dir():
+        return removed
+    for day_dir in base.glob(f"{SNAPSHOT_DIR}/*"):
+        if not day_dir.is_dir():
+            continue
+        try:
+            day = date.fromisoformat(day_dir.name)
+        except ValueError:
+            continue
+        if (anchor - day).days < keep_days:
+            continue
+        for dataset_dir in day_dir.iterdir():
+            if dataset_dir.is_dir() and dataset_dir.name != "status.json":
+                shutil.rmtree(dataset_dir, ignore_errors=True)
+                removed.append(str(dataset_dir))
+        # 整天目录只剩 status.json 时也一并清掉，目录树不留空壳
+        if day == anchor:
+            continue
+        leftovers = [p for p in day_dir.iterdir()]
+        if not leftovers or (len(leftovers) == 1 and leftovers[0].name == "status.json"):
+            shutil.rmtree(day_dir, ignore_errors=True)
+            removed.append(str(day_dir))
+    return removed
+
+
 def _one_line(exc: BaseException) -> str:
     return " ".join(str(exc).split())
 
@@ -760,10 +877,14 @@ __all__ = [
     "SENTIMENT_FROM",
     "SLOTS",
     "SnapshotUnavailable",
+    "batch_slot_dir",
+    "batch_slot_path",
     "capture",
     "in_window",
+    "latest_batch_slot",
     "local_moment",
     "project_readings",
+    "purge_batch_slots",
     "quote_day",
     "read_status",
     "record_status",
@@ -774,5 +895,6 @@ __all__ = [
     "snapshot_path",
     "status_path",
     "window_text",
+    "write_batch_slot",
     "write_new_json",
 ]
