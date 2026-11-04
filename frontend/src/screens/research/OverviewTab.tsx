@@ -1,8 +1,21 @@
+import { useState, type ReactNode } from 'react'
 import { ChartLine, FileClock } from 'lucide-react'
 
-import { describeResearchError, type ResearchOverview } from '../../api/research'
+import {
+  describeResearchError,
+  KLINE_ADJUSTS,
+  KLINE_ADJUST_LABEL,
+  KLINE_PERIODS,
+  KLINE_PERIOD_LABEL,
+  type KlineAdjust,
+  type KlineData,
+  type KlinePeriod,
+  type ResearchOverview,
+  type ResearchSource,
+} from '../../api/research'
 import { MISSING, formatChangePct, formatMoney } from '../../lib/format'
-import { BarChart, LineChart } from '../../charts/Chart'
+import { useAsync } from '../../lib/useAsync'
+import { CandlestickChart } from '../../charts/CandlestickChart'
 import {
   Badge,
   Button,
@@ -10,75 +23,113 @@ import {
   ErrorBlock,
   MetricCard,
   SectionCard,
+  Segmented,
   SkeletonText,
   SourceStatusBadge,
 } from '../../components/ui'
 
 /**
- * 个股深挖「概览」标签（QUOT-400）。
+ * 个股深挖「概览」标签（QUOT-400 / QUOT-411）。
  *
  * 块序照参考实现（vibe-astock 个股页）：行情条 → K 线走势 → 财报卡。
- * 数据只来自 `/api/research/{code}/overview` 的本机缓存回放：
- * K 线（daily_k）、快照（spot_quote）、财务指标（finance_indicators），
+ * 数据只来自两个只读接口的本机缓存回放：
+ * - `/api/research/{code}/overview`：行情条（spot_quote）、财务指标（finance_indicators）；
+ * - `/api/research/{code}/kline?period=…&adjust=…`（QUOT-411）：蜡烛主图 + 成交量副图
+ *   + MA5/10/20/60，日/周/月、前/后/不复权切换各打一次端点，前端不合成行情。
  * 哪块缺就如实出哪块的缺数态，不补 0、不编数。概览**不依赖六段产物**。
  */
 
 /**
- * 走势图：复用仓库已有的 uPlot 图表（`charts/Chart.tsx`，CH-01/CH-02），
- * 收盘线走 `LineChart`（`yScale="auto"`，收盘价不是 0 起的量）、
- * 成交额副图走 `BarChart`，**不引新依赖**。数值一律来自 bars 原值，页面不重算。
+ * K 线走势（QUOT-411）：蜡烛主图 + 成交量副图 + MA5/10/20/60 + 日期区间滑条，
+ * 走 `charts/CandlestickChart.tsx`（uPlot 自定义 paths，**不引新图表库**）。
+ * 周期（日/周/月）与复权（前/后/不复权）切换各自打新端点
+ * `GET /api/research/{code}/kline?period=…&adjust=…`，前端不合成行情。
+ * 数据源明确没有（available=false）或 bars 为空 → 「无数据（未核实）」，
+ * 不造数、不补零、不放骨架假数据；加载中才显示骨架。
  */
-function KlineChart({ overview }: { overview: ResearchOverview }) {
-  const bars = overview.kline.bars
-  const closes = bars.map((bar) => bar.close)
-  const volumes = bars.map((bar) => bar.volume)
+function KlineChart({
+  source,
+  code,
+  name,
+}: {
+  source: ResearchSource
+  code: string
+  name?: string
+}) {
+  const [period, setPeriod] = useState<KlinePeriod>('daily')
+  const [adjust, setAdjust] = useState<KlineAdjust>('qfq')
+  const request = useAsync<KlineData>(
+    (signal) => source.kline(code, period, adjust, signal),
+    [source, code, period, adjust],
+  )
 
-  if (closes.filter((value) => value !== null).length < 2) {
-    return (
+  const data = request.data
+  const bars = data?.bars ?? []
+  const empty = data !== null && (data.available === false || bars.length === 0)
+  const firstDate = bars.length > 0 ? bars[0].date : ''
+  const lastDate = bars.length > 0 ? bars[bars.length - 1].date : ''
+  const periodLabel = KLINE_PERIOD_LABEL[period]
+
+  const controls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Segmented
+        ariaLabel="K线周期"
+        size="sm"
+        options={KLINE_PERIODS.map((value) => ({ value, label: KLINE_PERIOD_LABEL[value] }))}
+        value={period}
+        onChange={setPeriod}
+      />
+      <Segmented
+        ariaLabel="K线复权"
+        size="sm"
+        options={KLINE_ADJUSTS.map((value) => ({ value, label: KLINE_ADJUST_LABEL[value] }))}
+        value={adjust}
+        onChange={setAdjust}
+      />
+    </div>
+  )
+
+  let body: ReactNode
+  if (request.status === 'error') {
+    body = (
+      <ErrorBlock {...describeResearchError(request.error)} variant="inline" onRetry={request.reload} />
+    )
+  } else if (request.status === 'loading' && data === null) {
+    body = <SkeletonText lines={6} />
+  } else if (empty) {
+    body = (
       <EmptyState
         compact
         icon={<ChartLine aria-hidden="true" />}
-        title="数据点不足，暂不绘制走势"
-        description={overview.kline.reason ?? '本地日线缓存不足 2 根，页面不会拼一条假趋势线。'}
+        title="无数据（未核实）"
+        description={
+          data?.reason ??
+          '数据源没有返回该周期/复权的 K 线；页面不拼接、不补零、不放占位假数据。'
+        }
       />
     )
+  } else if (bars.length > 0) {
+    body = (
+      <CandlestickChart
+        bars={bars}
+        ariaLabel={`${name ?? code} ${periodLabel}K线（${KLINE_ADJUST_LABEL[adjust]}），${bars.length} 根，从 ${firstDate} 到 ${lastDate}`}
+      />
+    )
+  } else {
+    body = <SkeletonText lines={6} />
   }
 
-  const points = bars.map((bar) => ({ label: bar.date, value: bar.close }))
-  const volumeOk = volumes.every((value) => value !== null)
-  const volumePoints = volumeOk
-    ? bars.map((bar) => ({ label: bar.date, value: bar.volume as number }))
-    : []
-  const firstDate = bars[0].date
-  const lastDate = bars[bars.length - 1].date
-  const first = closes[0]
-  const last = closes[closes.length - 1]
-  const trend = first !== null && last !== null ? (last > first ? '上涨' : last < first ? '下跌' : '持平') : '缺收盘价'
-  const stroke = trend === '上涨' ? 'text-up' : trend === '下跌' ? 'text-down' : 'text-text-secondary'
-
   return (
-    <figure className="flex flex-col gap-2">
-      <div className={stroke}>
-        <LineChart
-          points={points}
-          height={220}
-          yScale="auto"
-          ariaLabel={`${overview.name ?? overview.code} 收盘价走势，${bars.length} 个交易日，从 ${firstDate} 到 ${lastDate}，区间内${trend}`}
-        />
+    <figure className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {controls}
+        {bars.length > 0 && (
+          <span className="ldst-num text-caption text-text-muted">
+            {bars.length} 根 · {firstDate} → {lastDate} · {periodLabel}线 {KLINE_ADJUST_LABEL[adjust]}
+          </span>
+        )}
       </div>
-      {volumeOk && (
-        <BarChart
-          points={volumePoints}
-          height={72}
-          ariaLabel={`成交额副图，${bars.length} 个交易日`}
-        />
-      )}
-      <figcaption className="flex flex-wrap items-center justify-between gap-2 text-caption text-text-muted">
-        <span className="ldst-num">{firstDate} → {lastDate}</span>
-        <span className="ldst-num">
-          {bars.length} 个交易日{volumeOk ? ' · 成交额副图' : ' · 成交额缺数，副图不绘'}
-        </span>
-      </figcaption>
+      {body}
     </figure>
   )
 }
@@ -192,12 +243,14 @@ function OverviewSkeleton() {
 export default function OverviewTab({
   overview,
   code,
+  source,
   error,
   requesting,
   reload,
 }: {
   overview: ResearchOverview | null
   code: string | null
+  source: ResearchSource
   error: unknown
   requesting: boolean
   reload: () => void
@@ -237,12 +290,16 @@ export default function OverviewTab({
       <QuoteStrip overview={overview} />
       <SectionCard
         title="走势"
-        subtitle="日线收盘价 + 成交额副图（本地 daily_k 原值回放）"
+        subtitle="K 线 + 成交量 + 均线（本地 daily_k 原值回放，前端不合成行情）"
         actions={
-          overview.kline.reason ? <Badge tone="warn">部分数据</Badge> : <Badge tone="ok">日线</Badge>
+          overview.kline.reason ? <Badge tone="warn">部分数据</Badge> : <Badge tone="ok">K线</Badge>
         }
       >
-        <KlineChart overview={overview} />
+        <KlineChart
+          source={source}
+          code={overview.code}
+          name={overview.name ?? undefined}
+        />
         {overview.kline.reason && (
           <p className="mt-2 text-caption leading-body text-text-muted">{overview.kline.reason}</p>
         )}

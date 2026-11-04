@@ -25,6 +25,13 @@ vi.mock('../src/charts/Chart', () => ({
   ),
 }))
 
+// QUOT-411：概览 tab 换成 CandlestickChart（同样间接加载 uPlot），同款替身。
+vi.mock('../src/charts/CandlestickChart', () => ({
+  CandlestickChart: ({ bars, ariaLabel }: { bars?: unknown[]; ariaLabel?: string }) => (
+    <div data-testid="candle-chart" data-bars={bars?.length ?? 0} aria-label={ariaLabel} />
+  ),
+}))
+
 /**
  * QUOT-319-B 屏侧两件事：
  * 1. B 族缺数不冒充真数（§8）：payload 没取到时，副标题写 `—`，不写 `0` / `0 只` / `0 个行业` / `0.0%`。

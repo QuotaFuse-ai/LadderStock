@@ -6,6 +6,7 @@ import {
   describeResearchError,
   isResearchEndpointMissing,
   normalizeResearchCode,
+  parseKlineData,
   parseResearchJob,
   parseResearchOverview,
   parseResearchStatus,
@@ -277,5 +278,76 @@ describe('错误文案', () => {
     const info = describeResearchError(new ApiError('not-connected', 'down'))
     expect(info.title).toBe('研究接口未接入')
     expect(info.detail).toMatch(/ldst run/)
+  })
+})
+
+describe('K 线解析（QUOT-411）', () => {
+  const KLINE = {
+    code: '600000',
+    period: 'daily',
+    adjust: 'qfq',
+    available: true,
+    bars: [
+      { date: '2026-11-02', open: 9.4, high: 9.7, low: 9.3, close: 9.6, volume: 75000 },
+      { date: '2026-11-03', open: 9.6, high: 9.9, low: 9.5, close: 9.8, volume: null },
+    ],
+    as_of: '2026-11-03',
+    reason: null,
+  }
+
+  it('解析 bars 与元数据，volume 可为 null（停牌/缺量不补 0）', () => {
+    const data = parseKlineData(KLINE, '600000')
+    expect(data.available).toBe(true)
+    expect(data.bars).toHaveLength(2)
+    expect(data.bars[0].close).toBe(9.6)
+    expect(data.bars[1].volume).toBeNull()
+    expect(data.asOf).toBe('2026-11-03')
+    expect(data.period).toBe('daily')
+    expect(data.adjust).toBe('qfq')
+  })
+
+  it('信封外壳（payload 下钻）与 data_as_of 优先于 as_of', () => {
+    const data = parseKlineData(
+      {
+        payload: { ...KLINE, data_as_of: '2026-11-04', as_of: '2026-11-03' },
+        meta: {},
+      },
+      '600000',
+    )
+    expect(data.bars).toHaveLength(2)
+    expect(data.asOf).toBe('2026-11-04')
+  })
+
+  it('available=false → available=false 且 bars 恒为空（契约：说没有就不给数）', () => {
+    const data = parseKlineData(
+      { ...KLINE, available: false, reason: '本地 daily_k 缓存里没有这只代码的行' },
+      '600000',
+    )
+    expect(data.available).toBe(false)
+    expect(data.bars).toEqual([])
+    expect(data.reason).toMatch(/daily_k/)
+  })
+
+  it('data_source_status=missing 同样视为无数据，即使 bars 里塞了数也丢弃', () => {
+    const data = parseKlineData({ ...KLINE, data_source_status: 'missing' }, '600000')
+    expect(data.available).toBe(false)
+    expect(data.bars).toEqual([])
+  })
+
+  it('period/adjust 非法或缺失时回退调用方期望值；code 缺失回退 expectedCode', () => {
+    const data = parseKlineData({ ...KLINE, period: 'hourly', adjust: 42, code: null }, '600000', 'weekly', 'none')
+    expect(data.period).toBe('weekly')
+    expect(data.adjust).toBe('none')
+    expect(data.code).toBe('600000')
+  })
+
+  it('bars 非数组 → 空数组；非对象条目被过滤，只有 date 的 bar 保留为全 null OHLC', () => {
+    const data = parseKlineData({ ...KLINE, bars: [{ date: '2026-11-03' }, 'junk', 42] }, '600000')
+    expect(data.bars).toHaveLength(1)
+    expect(data.bars[0].date).toBe('2026-11-03')
+    expect(data.bars[0].open).toBeNull()
+    expect(data.bars[0].volume).toBeNull()
+    const noBars = parseKlineData({ ...KLINE, bars: 'oops' }, '600000')
+    expect(noBars.bars).toEqual([])
   })
 })

@@ -146,6 +146,13 @@ export interface ResearchSource {
   status: (code: string, date: string, signal?: AbortSignal) => Promise<ResearchStatus>
   /** 概览（QUOT-400）：K 线 + 快照 + 财务指标，不依赖六段产物 */
   overview: (code: string, signal?: AbortSignal) => Promise<ResearchOverview>
+  /** K 线（QUOT-411）：周期 + 复权可切换的完整行情序列，概览主图用 */
+  kline: (
+    code: string,
+    period: KlinePeriod,
+    adjust: KlineAdjust,
+    signal?: AbortSignal,
+  ) => Promise<KlineData>
   run: (code: string, date: string, only: ResearchStageName) => Promise<ResearchRunHandle>
   job: (jobId: string, signal?: AbortSignal) => Promise<ResearchJob>
 }
@@ -496,6 +503,84 @@ export function parseResearchOverview(payload: unknown, expectedCode?: string): 
   }
 }
 
+// ---------------------------------------------------------------- K 线（QUOT-411）
+
+export const KLINE_PERIODS = ['daily', 'weekly', 'monthly'] as const
+export type KlinePeriod = (typeof KLINE_PERIODS)[number]
+
+export const KLINE_ADJUSTS = ['qfq', 'hfq', 'none'] as const
+export type KlineAdjust = (typeof KLINE_ADJUSTS)[number]
+
+export const KLINE_PERIOD_LABEL: Record<KlinePeriod, string> = {
+  daily: '日',
+  weekly: '周',
+  monthly: '月',
+}
+
+export const KLINE_ADJUST_LABEL: Record<KlineAdjust, string> = {
+  qfq: '前复权',
+  hfq: '后复权',
+  none: '不复权',
+}
+
+export interface KlineData {
+  code: string
+  period: KlinePeriod
+  adjust: KlineAdjust
+  /**
+   * false = 数据源明确说没有（available=false）；此时 bars 恒为空，
+   * 页面出「无数据（未核实）」空态——不造数、不补零、不放骨架假数据。
+   */
+  available: boolean
+  /** 与 overview.kline.bars 同形；volume 单位为手 */
+  bars: KlineBar[]
+  asOf: string | null
+  reason: string | null
+}
+
+export function isKlinePeriod(value: unknown): value is KlinePeriod {
+  return typeof value === 'string' && (KLINE_PERIODS as readonly string[]).includes(value)
+}
+
+export function isKlineAdjust(value: unknown): value is KlineAdjust {
+  return typeof value === 'string' && (KLINE_ADJUSTS as readonly string[]).includes(value)
+}
+
+/**
+ * 解析 `GET /api/research/{code}/kline?period=…&adjust=…`。
+ * 信封与 overview 同款（`payload / data_source_status / data_as_of`），兼容平铺；
+ * `available` 只认数据源的显式 `false`（或 `data_source_status: "missing"`），
+ * 其余情况照实回传 bars——空数组本身就是「无数据」。
+ */
+export function parseKlineData(
+  payload: unknown,
+  expectedCode?: string,
+  expectedPeriod: KlinePeriod = 'daily',
+  expectedAdjust: KlineAdjust = 'qfq',
+): KlineData {
+  let root = asRecord(payload, 'K 线响应')
+  if (root.payload && typeof root.payload === 'object' && !Array.isArray(root.payload)) {
+    root = root.payload as Record<string, unknown>
+  }
+
+  const bars = Array.isArray(root.bars)
+    ? root.bars.map(parseKlineBar).filter((bar): bar is KlineBar => bar !== null)
+    : []
+  const explicitlyMissing =
+    root.available === false || root.data_source_status === 'missing'
+
+  return {
+    code: asString(root.code) ?? expectedCode ?? '',
+    period: isKlinePeriod(root.period) ? root.period : expectedPeriod,
+    adjust: isKlineAdjust(root.adjust) ? root.adjust : expectedAdjust,
+    available: !explicitlyMissing,
+    // available=false 时 bars 恒为空（KlineData 契约），防止「说没有又给数」的脏载荷漏出去
+    bars: explicitlyMissing ? [] : bars,
+    asOf: asString(root.data_as_of) ?? asString(root.as_of),
+    reason: asString(root.reason),
+  }
+}
+
 // ---------------------------------------------------------------- 传输
 
 const TIMEOUT_MS = 12000
@@ -573,6 +658,16 @@ export const httpResearchSource: ResearchSource = {
         { signal, timeoutMs: 20000 },
       ),
       code,
+    ),
+  kline: async (code, period, adjust, signal) =>
+    parseKlineData(
+      await request<unknown>(
+        `/api/research/${encodeURIComponent(code)}/kline?${new URLSearchParams({ period, adjust })}`,
+        { signal, timeoutMs: 20000 },
+      ),
+      code,
+      period,
+      adjust,
     ),
   run: (code, date, only) =>
     request<ResearchRunHandle>(`/api/research/${encodeURIComponent(code)}/run`, {

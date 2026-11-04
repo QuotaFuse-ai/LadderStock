@@ -17,6 +17,10 @@ const FALLBACK: Record<string, string> = {
   '--ldst-chart-series-2': '#a78bfa',
   '--ldst-chart-threshold': '#f0b429',
   '--ldst-chart-empty': '#2a3342',
+  '--ldst-chart-ma-1': '#f0b429',
+  '--ldst-chart-ma-2': '#4cc3d9',
+  '--ldst-chart-ma-3': '#c792ff',
+  '--ldst-chart-ma-4': '#ff8fd0',
   '--ldst-accent': '#4c8dff',
   '--ldst-text-muted': '#8a96a6',
 }
@@ -39,6 +43,10 @@ export interface ChartPalette {
   series2: string
   threshold: string
   empty: string
+  ma1: string
+  ma2: string
+  ma3: string
+  ma4: string
 }
 
 /** 每次重绘前读一次，保证深浅主题切换后颜色跟着变。 */
@@ -53,5 +61,9 @@ export function chartPalette(): ChartPalette {
     series2: cssVar('--ldst-chart-series-2'),
     threshold: cssVar('--ldst-chart-threshold'),
     empty: cssVar('--ldst-chart-empty'),
+    ma1: cssVar('--ldst-chart-ma-1'),
+    ma2: cssVar('--ldst-chart-ma-2'),
+    ma3: cssVar('--ldst-chart-ma-3'),
+    ma4: cssVar('--ldst-chart-ma-4'),
   }
 }

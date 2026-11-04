@@ -720,6 +720,7 @@ export default function ResearchDetailScreen() {
         <OverviewTab
           overview={overviewRequest.data}
           code={view.code}
+          source={view.source}
           error={overviewRequest.status === 'error' ? overviewRequest.error : null}
           requesting={overviewRequest.status === 'loading'}
           reload={overviewRequest.reload}

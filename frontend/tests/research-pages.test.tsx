@@ -19,6 +19,12 @@ vi.mock('../src/charts/Chart', () => ({
   ),
 }))
 
+vi.mock('../src/charts/CandlestickChart', () => ({
+  CandlestickChart: ({ bars, ariaLabel }: { bars?: unknown[]; ariaLabel?: string }) => (
+    <div data-testid="candle-chart" data-bars={bars?.length ?? 0} aria-label={ariaLabel} />
+  ),
+}))
+
 afterEach(cleanup)
 
 function renderRoute(path: string) {
@@ -33,13 +39,14 @@ function renderRoute(path: string) {
 }
 
 describe('个股深挖页', () => {
-  it('概览默认：走势 + 财报卡直接出，深度研究要点 tab 才看', async () => {
+  it('概览默认：K 线 + 财报卡直接出，深度研究要点 tab 才看', async () => {
     renderRoute('/research/600000?demo=1')
 
-    // 默认概览：demo 源的 120 根 K 线直接画出来（chart 替身记录入参），不依赖六段
+    // 默认概览：demo 源的 120 根日线直接进蜡烛图（替身记录入参），不依赖六段
     expect(await screen.findByRole('tab', { name: '概览' })).toBeTruthy()
-    const chart = await screen.findByTestId('line-chart')
-    expect(Number(chart.getAttribute('data-points'))).toBeGreaterThan(0)
+    const chart = await screen.findByTestId('candle-chart')
+    expect(Number(chart.getAttribute('data-bars'))).toBe(120)
+    expect(screen.getByText(/日线 前复权/)).toBeTruthy()
     expect(screen.getByRole('heading', { name: '财报前瞻与复盘' })).toBeTruthy()
 
     // 切到深度研究：六段内容照旧（回归）
@@ -52,6 +59,38 @@ describe('个股深挖页', () => {
     expect(screen.getAllByText(/净息差持续收窄，利息净收入承压/).length).toBeGreaterThan(0)
     expect(screen.getByText('PE 近五年分位')).toBeTruthy()
     expect(screen.getAllByRole('link', { name: /研究报告/ }).length).toBeGreaterThan(0)
+  })
+
+  it('K 线周期/复权切换：换档打新端点，月线由日线确定性聚合', async () => {
+    renderRoute('/research/600000?demo=1')
+
+    expect(await screen.findByTestId('candle-chart')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('radio', { name: '月' }))
+    await waitFor(() => {
+      const chart = screen.getByTestId('candle-chart')
+      expect(Number(chart.getAttribute('data-bars'))).toBe(5)
+    })
+    expect(screen.getByText(/月线 前复权/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('radio', { name: '后复权' }))
+    expect(await screen.findByText(/月线 后复权/)).toBeTruthy()
+    expect(Number(screen.getByTestId('candle-chart').getAttribute('data-bars'))).toBe(5)
+
+    fireEvent.click(screen.getByRole('radio', { name: '周' }))
+    await waitFor(() => {
+      const chart = screen.getByTestId('candle-chart')
+      expect(Number(chart.getAttribute('data-bars'))).toBe(24)
+    })
+  })
+
+  it('K 线空态：数据源明确没有 → 「无数据（未核实）」，不出假图', async () => {
+    renderRoute('/research/600000?demo=1&state=empty')
+
+    expect(await screen.findByText('无数据（未核实）')).toBeTruthy()
+    expect(screen.queryByTestId('candle-chart')).toBeNull()
+    // 行情条与财报卡照常（概览的其他块不受 K 线缺数牵连）
+    expect(screen.getByRole('heading', { name: '财报前瞻与复盘' })).toBeTruthy()
   })
 
   it('五态可只靠 URL 演示（深度研究 tab）', async () => {

@@ -16,7 +16,10 @@ import {
 import {
   RESEARCH_STAGES,
   STAGE_TITLE,
+  type KlineAdjust,
   type KlineBar,
+  type KlineData,
+  type KlinePeriod,
   type ProvenanceSlot,
   type ProvenanceSource,
   type ResearchJob,
@@ -512,12 +515,9 @@ export function createDemoValuationLoader(): (
   })
 }
 
-/**
- * 概览演示数据（QUOT-400）：120 根确定性 K 线 + 快照 + 一期财报。
- * 只在 `?demo=1` 时使用；真实通道绝不回落到这里。
- */
-function demoResearchOverview(code: string): ResearchOverview {
-  const bars: KlineBar[] = Array.from({ length: 120 }, (_, index) => {
+/** 120 根确定性日线（QUOT-400 起沿用）：正弦 + 缓涨，同一 seed 永远同一形态。 */
+function demoDailyBars(): KlineBar[] {
+  return Array.from({ length: 120 }, (_, index) => {
     const close = 10 + Math.sin(index / 9) * 1.5 + index * 0.02
     const day = new Date(2026, 4, 11 + index)
     return {
@@ -529,6 +529,83 @@ function demoResearchOverview(code: string): ResearchOverview {
       volume: 600000 + index * 1500,
     }
   })
+}
+
+/** 周线/月线由日线确定性聚合：首开末收、区间极值、量求和，日期取末根。 */
+function aggregateBars(daily: KlineBar[], groupSize: number): KlineBar[] {
+  const out: KlineBar[] = []
+  for (let start = 0; start + groupSize <= daily.length; start += groupSize) {
+    const slice = daily.slice(start, start + groupSize)
+    out.push({
+      date: slice[slice.length - 1].date,
+      open: slice[0].open,
+      high: Math.max(...slice.map((bar) => bar.high as number)),
+      low: Math.min(...slice.map((bar) => bar.low as number)),
+      close: slice[slice.length - 1].close,
+      volume: slice.reduce((sum, bar) => sum + (bar.volume as number), 0),
+    })
+  }
+  return out
+}
+
+/**
+ * 后复权演示：每根 OHLC 乘同一确定性系数（越早的根系数越大），
+ * 让「后复权」切换肉眼可见。演示数据在数据层构造；渲染层绝不造数。
+ */
+function adjustDemoBars(bars: KlineBar[], mode: KlineAdjust): KlineBar[] {
+  if (mode !== 'hfq') return bars
+  return bars.map((bar, index) => {
+    const k = 1 + 0.0002 * (bars.length - index)
+    return {
+      date: bar.date,
+      open: bar.open === null ? null : Number((bar.open * k).toFixed(2)),
+      high: bar.high === null ? null : Number((bar.high * k).toFixed(2)),
+      low: bar.low === null ? null : Number((bar.low * k).toFixed(2)),
+      close: bar.close === null ? null : Number((bar.close * k).toFixed(2)),
+      volume: bar.volume,
+    }
+  })
+}
+
+/** K 线演示取数（QUOT-411）：empty 变体 available=false，其余按周期聚合 + 复权变换。 */
+function demoKline(
+  variant: DemoVariant,
+  code: string,
+  period: KlinePeriod,
+  adjust: KlineAdjust,
+): KlineData {
+  if (variant === 'empty') {
+    return {
+      code,
+      period,
+      adjust,
+      available: false,
+      bars: [],
+      asOf: null,
+      reason: '演示态：数据源未接入，无 K 线（未核实）',
+    }
+  }
+  const daily = demoDailyBars()
+  const bars =
+    period === 'daily' ? daily : aggregateBars(daily, period === 'weekly' ? 5 : 21)
+  const scaled = adjustDemoBars(bars, adjust)
+  return {
+    code,
+    period,
+    adjust,
+    available: true,
+    bars: scaled,
+    asOf: scaled.length > 0 ? scaled[scaled.length - 1].date : null,
+    reason: null,
+  }
+}
+
+/**
+ * 概览演示数据（QUOT-400）：120 根确定性 K 线 + 快照 + 一期财报。
+ * 只在 `?demo=1` 时使用；真实通道绝不回落到这里。
+ */
+function demoResearchOverview(code: string): ResearchOverview {
+  const bars = demoDailyBars()
   return {
     code,
     name: DEMO_NAME,
@@ -577,6 +654,8 @@ export function createDemoResearchSource(
   return {
     status: async () => current,
     overview: async (code): Promise<ResearchOverview> => demoResearchOverview(code),
+    kline: async (code, period, adjust): Promise<KlineData> =>
+      demoKline(variant, code, period, adjust),
     run: async (_code, _date, only): Promise<ResearchRunHandle> => {
       const id = `demo-job-${++seed}`
       jobs.set(id, { stage: only, ticks: 0 })

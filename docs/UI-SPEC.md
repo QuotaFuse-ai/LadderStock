@@ -1,7 +1,7 @@
 # 看板信息架构与视觉规范（20 屏）
 
-- 版本：v1.12
-- 日期：2026-11-04
+- 版本：v1.13
+- 日期：2026-11-05
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -26,6 +26,7 @@
 | v1.10 | 2026-11-04 | QUOT-354 走查 7 项缺陷收口（QUOT-353 修复轮，只改口径不加新功能，DEC-049 §3 落地细则补充）。**BUG-A**：`/weekly` 屏内 h1 由「周度复盘」改为**「AI周报」**，与 v1.6 侧栏改名对齐（当时只改了导航，屏内文案挂账到 S2）。**BUG-B/BUG-C**（BUG-B 是 P1，会串日）：交易日**只认 URL**，`review_draft` 分片删除 `tradeDate` 字段并按交易日分槽 `slots[date]`——`?date=` 深链不再被本机草稿日期反向覆盖，切日期不互相覆盖笔记，「清空草稿」改名**「清空当日草稿」**且只清当前一天；旧单槽分片在读取时归入它自己记录的日期（`sanitize` 归一，不升 `SCHEMA_VERSION`，避免同时动 `stores/manifest.json` 与 `tests/unit/test_state_contract.py` 的三处版本约定）。**BUG-D**：缺数兜底文案点名的按钮真叫「重试取数」（`ErrorBlock retryLabel`）。**BUG-E**：`/weekly` 每日序列 `available:false` 整行按缺失走 `—`，后端给计数补的 0 不再被读成「0 家涨停」，真实 0 照旧显示。**BUG-F**：行数口径改为**按来源后端判定**——`review/pipeline._row_count` 只在 `parquet`/`duckdb`（确实读到过数据源）时返回行数，`none` 返回 `None`；缺数据的原因复用已有的「数据来源」行，不新增契约字段。**BUG-G**：拆屏决策的注释引用统一改为 `DEC-049`（走查报 17 处，按 `grep -rn "DEC-047" frontend/` 复核为 15 处命中，现已**归零**；`src/ladderstock/core/boundary.py` 与 `tests/unit/web/test_control_plane.py` 里的 `DEC-047` 是端口归属那一份决策，编号正确，不改）。规范落点：§8 新增「整行无读数」「分源行数」「文案点名的按钮」三条口径；§3.1 新增「交易日与草稿的归属」；§3.7 / §11.7 随 BUG-A 改名并补断言；§10 每日复盘与 AI周报两行映射更新；§11.1 补 4 条走查项。证据：`tests/quota-354-defects.test.tsx`（BUG-B/C/D 行为断言 + BUG-F 屏侧口径）+ `tests/weekly-screen.test.tsx`（BUG-A/E）+ `tests/persistence.test.ts`·`tests/migrate.test.ts`（分槽与旧分片归一往返）+ `tests/unit/review/test_row_count_caliber.py`（BUG-F 两种后端）+ `docs/screenshots/review-{before,after}-353fix-bugb-dark.png`·`docs/screenshots/weekly-{before,after}-353fix-buge-{dark,light}.png`（5950 实机，前端 5199 代理）；`typecheck` / `test`（43 files / 434 例）/ `check:ui`（6/6）全绿。 |
 | v1.11 | 2026-11-05 | 屏数口径对齐到 20 屏（QUOT-396，父任务 QUOT-306 阶段三；只改下列位置）：§0 原则 6「全 18 屏」→「全 20 屏」、原则 7「在 18 屏里」→「在 20 屏里」；§4.5 标题改「全 20 屏的持久化面（v1.1 新增；v1.7 按 20 屏对齐）」并重算表——拆出「盯盘·竞价与盘中」（`/intraday`）与「AI复盘」（`/review/ai`）两行（均无本机写入，快照归「盯盘」），原「其余 10 屏」行收敛为 12 屏，合计 6 + 2 + 12 = 20；§6 组件清单 7 处「全 18 屏」→「全 20 屏」；§10 标题改「全 20 屏与后端契约映射」。§3.19 早已存在（`:463`），本版不重写；§12.4 A 行等历史记录按当时事实保留，Q 行末尾追加处理说明。同批补 `/review/ai` 的 before 双主题图 `docs/screenshots/review-ai-before-{dark,light}.png`（5950 实机 + 5199 代理，`?date=2026-11-03`）。 |
 | v1.12 | 2026-11-04 | 表高刻度落地 `--ldst-table-h-*`（QUOT-342，共享层；源头 `frontend/tokens.json` + 生成口径 `styles/tokens.css`）：固定档 `sm/md/lg/xl = {240,320,360,420}`；视口档两档具名减数 `--ldst-table-h-rail: 360px`（1024–1279 保底；1024×900 实测表体上沿 341，减数起点 ≥341，360 落在固定档刻度上）与 `--ldst-table-h-desk: 280px`（≥1280；280 这个减数只在 desk: 档成立——1024 下 L0 快照卡 `dl` 折 2×2 抬高上沿 75px，QUOT-336 实测），消费变量 `--ldst-table-h` 在 `styles/tokens.css` 由 `@media (min-width: 1280px)` 换值，不新增断点档名（DEC-040 断点词汇仍只有 `rail:`/`desk:`；`mid:` 是否增设另行决策）。产业矩阵 / 连板梯队 / 验证 / 候选池 / 产业信号 / 分时 6 处 `calc(100vh - Npx)` 减数（280×3 / 360 / 380 / 420）收口为 `var(--ldst-table-h)`，不动各屏信息架构与 L0 卡布局；§10 R-02 表高计数随之核减（剩 watch/journal 2 处 280 档合法字面量，不在本单 6 处清单，登记待随下一单收口）；§7.3 表高刻度行同步为具名集。 |
+| v1.13 | 2026-11-05 | 个股深挖概览（`/research/:code`）补 **K 线主图模块**（QUOT-411，父任务 QUOT-408；对齐全 20 屏的「个股深挖 · 概览」）。**零新增图表库**：主图蜡烛沿用 `charts/Chart.tsx` 的 uPlot `paths` 扩展模式，用 `Path2D` + 自定义 `paths.stroke/fill`（单 series 双色）画蜡烛，成交量副图用 `uPlot.paths.bars`，MA5/10/20/60 由前端按收盘价滚动平均（`charts/ma.ts`，O(n)，窗口不满或窗口内含 null 该点不出值）。**红涨绿跌**取 `--ldst-up`/`--ldst-down`；四条均线新增 `--ldst-chart-ma-1..4`（深 `#f0b429/#4cc3d9/#c792ff/#ff8fd0`，浅 `#8a5a00/#0e7490/#6d3fd4/#b0326e`，刻意避开红绿涨跌语义），源头仍是 `frontend/tokens.json`。主图/副图共享时间轴与光标（`cursor.sync`），缩放窗口由 React `window:{lo,hi}` 单一真源经 `applyX()` 对两图 `setScale('x')` 联动；底部日期区间滑条（双 `role="slider"`）拖拽查看更早行情；悬停读数固定六项 日期/开/高/低/收/量。周期（日/周/月）与复权（前复权/后复权/不复权）各一 C-07 `Segmented`，切换打新端点 `GET /api/research/{code}/kline?period=&adjust=`（后端并行开发，开发期 fixture，联调以契约为准）。**无数据不造**：`available=false` 或 `bars` 为空 → C-17「无数据（未核实）」，不补 0、不放骨架假数据。规范落点：§3.16 新增「K 线模块」小节、§6.1 登记 C-23 `CandlestickChart`、§7.1 chart 行补 `chart-ma-1..4`、§10 个股深挖端点行补 `/overview` 与 `/kline`、§11.16 补 5 条 K 线验收项。证据：`tests/candles.test.ts` + `tests/ma.test.ts` + `tests/research-api.test.ts`（`parseKlineData`）+ `tests/research-pages.test.tsx`（周期/复权切换与空态）；`docs/screenshots/research-code-after-411-{dark,light}.png`（5950 实机 + 5199 代理，`?demo=1`）；`typecheck` / `test`（46 files / 475 例）/ `build` / `check:ui`（6/6）全绿。 |
 
 ## 0. 范围与非目标
 
@@ -436,6 +437,24 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 **已合格**：缺失值全链路 `—`（`facts.ts:75-78`），无任何 0 冒充。
 **必须整改**：`-mx-4 -mb-4` 负边距出血（破坏卡片内距节奏，R-17）；`gap-0.5` 2px（R-02）；分位卡与六段状态卡**没有**来源脚注（R-11）。
 
+#### 3.16.1 K 线模块（概览 tab，QUOT-411）
+
+概览 tab（不依赖六段状态机）在走势卡内嵌 K 线主图；六段还没跑过也能出走势与财报。模块自身有独立取数与四态，与概览信封的股票/快照/财务三块互不牵连。
+
+| 项 | 规范 | 代码依据 |
+|---|---|---|
+| 取数 | 独立端点 `GET /api/research/{code}/kline?period=daily\|weekly\|monthly&adjust=qfq\|hfq\|none`，不走概览信封；解析收口 `parseKlineData`（信封下钻 + `available=false` → `bars` 恒空） | `api/research.ts` `httpResearchSource.kline`、`parseKlineData` |
+| 组件 | C-23 `CandlestickChart`（uPlot，`charts/CandlestickChart.tsx`）：主图蜡烛（280px）+ 成交量副图（96px），两图共享 x 轴、`cursor.sync` 联动光标，窗口缩放由 React `window:{lo,hi}` 单一真源经 `applyX()` 对两图 `setScale('x')` 联动 | `charts/CandlestickChart.tsx` |
+| 蜡烛 | uPlot 自定义 `paths.stroke/fill`，单 series 用 `Map<strokeStyle, Path2D>` 画红/绿双色；`close >= open` 阳线（`--ldst-up` 红）、否则阴线（`--ldst-down` 绿）；实体宽 `clamp(round(spacing×0.55), 1, 16)`；平盘实体最小 1px 不消失；任一 OHLC 为 null 的根跳过 | `charts/candles.ts:drawCandles` |
+| 均线 | MA5/10/20/60 前端按收盘价 O(n) 滚动平均（展示序列，不参与估值/分位/对账口径）；窗口不满或窗口内含 null → 该点不出值；色取 `--ldst-chart-ma-1..4`；图例在读数行右侧 | `charts/ma.ts:movingAverages` |
+| 读数 | 悬停十字光标固定六项：日期 / 开 / 高 / 低 / 收 / 量（量固定「手」），涨跌 tone 用 up/down；无光标时给窗口末根 | `charts/CandlestickChart.tsx` |
+| 区间滑条 | 主图下方双 `role="slider"` 手柄（`role="group"` 轨道），pointer capture 拖拽 + Arrow/Home/End 键盘；拖拽窗口查看更早行情 | `charts/CandlestickChart.tsx` |
+| 周期/复权 | 两个 C-07 `Segmented`（日/周/月；前复权/后复权/不复权），切换即打新端点参数；`KLINE_PERIODS` / `KLINE_ADJUSTS` 为唯一枚举源 | `charts/…`、`api/research.ts` |
+| 空态 | `available=false` 或 `bars` 为空 → C-17「无数据（未核实）」+ 后端 `reason`；**不造数、不补零、不放骨架假数据**；取数失败 → C-19 `ErrorBlock variant="inline"` + 重试 | `screens/research/OverviewTab.tsx:KlineChart` |
+| 无障碍 | 图可聚焦区带 `aria-label`（名称 + 周期 + 复权 + 根数 + 起止日期）；滑条两个手柄各有 `aria-label` 与 `aria-valuenow/valuemin/valuemax` | `charts/CandlestickChart.tsx` |
+
+**硬约束**：不引入新图表库（沿用 uPlot）；主图色只取 `--ldst-up` / `--ldst-down` / `--ldst-chart-ma-*`，不写色字面量。
+
 ### 3.17 研究报告（`/research/:code/report`）— 主任务：逐段读六段报告并核来源
 
 | 项 | 规范 | 代码依据 |
@@ -660,6 +679,7 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | C-21 | `HomeSearchTrigger`（已实装） | `components/search/HomeSearchTrigger.tsx` | 首页搜索入口：纯展示 + `onOpen`，不请求、不禁用（离线也可点） | 首页（§3.20） |
 | C-22 | `SearchPanel`（已实装，含内部件 `SearchGroupView` 等；取数与判定在 `screens/home/useHomeSearch.ts`） | `components/search/SearchPanel.tsx` | `role=dialog` 搜索面板：输入 + 三组结果 + 四态；只吃 props 与 `onSelect(href)`，复用 C-12 `Badge` / C-17 `EmptyState` / C-18 `SkeletonRows` / C-19 `Banner` / `SourceStatusBadge` | 首页（§3.20） |
 | CH-01/CH-02 | `LineChart` `BarChart` | `charts/Chart.tsx:10,151` | uPlot；色值必须来自 `chartPalette()`/`cssVar()` | 市场（情绪折线 + 梯队柱） |
+| C-23 | `CandlestickChart` | `charts/CandlestickChart.tsx` | K 线主图 + 成交量副图 + MA5/10/20/60；uPlot 自定义 `paths`（`charts/candles.ts`）；色取 `--ldst-up`/`--ldst-down`/`--ldst-chart-ma-*` | 个股深挖（概览走势卡，§3.16.1） |
 | — | `AiErrorNotice` | `kit/AiErrorNotice.tsx` | §5.4 五类 AI 错误 | 复盘、周度 |
 | — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 20 屏 |
 | — | `Layout` `PersistenceBanner` | `components/Layout.tsx`、`components/PersistenceBanner.tsx` | 外壳与恢复提示 | 全局 |
@@ -726,7 +746,7 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | `--ldst-scrim` | `rgba(4,6,9,.68)` | `rgba(16,24,40,.40)` | 抽屉 / 确认框遮罩 |
 | `--ldst-skeleton` / `-shine` | `#1d2530` / `#26303d` | `#e7ecf3` / `#f2f5f9` | 骨架底 / 扫光 |
 | `--ldst-focus` | `#6ba1ff` | `#1a5fd0` | 焦点环外圈 |
-| `--ldst-chart-*` | 见 `tokens.css:51-59` | 见 `tokens.css:173-181` | 图表专用（grid/axis/band/line/bar-up/bar-down/series-2/threshold/empty） |
+| `--ldst-chart-*` | 见 `tokens.css:51-63` | 见 `tokens.css:173-181` | 图表专用（grid/axis/band/line/bar-up/bar-down/series-2/threshold/empty）；`chart-ma-1..4` = K 线 MA5/10/20/60（深 `#f0b429/#4cc3d9/#c792ff/#ff8fd0`，浅 `#8a5a00/#0e7490/#6d3fd4/#b0326e`，避开红绿涨跌语义）（QUOT-411） |
 
 **两套色互不复用**：涨跌色只作用于数字/箭头；状态色只作用于徽标/提示条。浅色主题通过 `:root[data-ldst-theme='light']` 覆盖；色盲模式 `:root[data-ldst-colorblind='true']` 把涨/跌换成蓝/橙。
 
@@ -849,7 +869,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | 行业详情 | `/industry/:name` | `/api/industry/{name}` | 无 | 五维缺项逐个标注 |
 | 产业信号 | `/signals` | `/api/signals?industry=&rule=`、`/api/industry` | 无 | 命中数无数据不得为 0（R-07） |
 | 涨停样本 | `/limit-up` | `/api/limit-pool?date=` | 无 | 信封字段不得丢弃（R-01/R-11） |
-| 个股深挖 | `/research/:code` | `/api/research/{code}` | 无 | 引用四元组齐全才可点 |
+| 个股深挖 | `/research/:code` | `/api/research/{code}`、`/api/research/{code}/overview`（QUOT-400 概览三块）、`/api/research/{code}/kline?period=&adjust=`（QUOT-411 K 线，周期/复权切换即换参） | 无 | 引用四元组齐全才可点；K 线 `available=false` 或空 → 显式空态「无数据（未核实）」，不补 0（§3.16.1） |
 | 研究报告 | `/research/:code/report` | `/api/research/{code}`、`/api/research/jobs/*`（轮询 1s） | 无 | `〔未核实〕`由后端补，前端不改写（SPEC-RESEARCH-PROVENANCE） |
 | 设置 | `/settings` | `/api/control/peers`、`/api/control/*`、`/api/health`、`/api/state/config` | `config/state.yaml`；偏好 localStorage | 控制面未接入即全禁用 + 可见原因 |
 | 全局 | — | `/api/health`、`/__state/index`（DEC-034） | 索引文件 | 索引只含元数据 |
@@ -1019,6 +1039,12 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] `min-[1024px]:` 清零；`gap-0.5` 清零。
 - [ ] 分位为空时用 C-17，不用裸 `<p>`。
 - [ ] 演示徽标 + `DemoStateBadge` 同时出现时不重叠、不换行错位。
+- [ ] K 线（QUOT-411）：主图蜡烛红涨绿跌（`--ldst-up`/`--ldst-down`），成交量柱随当日涨跌同色，MA5/10/20/60 四条线 + 图例齐全，色取 `--ldst-chart-ma-1..4`，无任何色字面量。
+- [ ] 主图与副图时间轴对齐、光标与缩放联动；底部区间滑条可拖拽窗口查看更早行情（双 `role="slider"`，键盘可操作）。
+- [ ] 悬停读数六项齐全（日期/开/高/低/收/量），数值缺时任一项显示「—」，不补 0。
+- [ ] 周期（日/周/月）与复权（前/后/不复权）两档 C-07 切换，切换即打 `GET /api/research/{code}/kline?period=&adjust=`；非法或缺失回退默认 `daily`/`qfq`。
+- [ ] 无数据 / `available=false` → C-17「无数据（未核实）」+ 后端 `reason`，**不造数、不补零、不放骨架假数据**；取数失败 → C-19 `ErrorBlock variant="inline"` + 重试。
+- [ ] 深浅两主题下图 / 轴 / 均线 / 涨跌色对比度正确（截图 `research-code-after-411-{dark,light}.png`）。
 
 ### 11.17 研究报告 `/research/:code/report`
 
