@@ -110,6 +110,9 @@ def pool_view(result: dict[str, Any]) -> dict[str, Any]:
         ],
         "counts": result["counts"],
         "missing_datasets": result["missing"],
+        # 可选输入不可用 / 口径日期不是请求日，都必须能在期望块里手算出来（QUOT-364 B-2/B-3）
+        "degraded_inputs": result["degraded_inputs"],
+        "fund_data_as_of": result["meta"]["fund_data_as_of"],
     }
 
 
@@ -283,6 +286,22 @@ def test_cli_matches_golden(path: Path, tmp_path: Path, monkeypatch: pytest.Monk
     assert_matches(expected, pool_view(envelope["payload"]), f"{path.stem}.cli")
     for dataset in ("limit_pool", "concept_board", "fund_flow"):
         assert dataset in envelope["source_detail"]
+
+
+def test_fund_fallback_is_annotated_in_source_detail(tmp_path: Path) -> None:
+    """回落读出来的资金数必须在 `source_detail` 里写明口径日期不是请求日（QUOT-364 B-3）。
+
+    `data_as_of` 是信封级的单一日期（跟着涨停池走），资金这一路的真实口径日期只能落在
+    载荷里；两处都不写，读者就会把 T-1 的净额当成当日数用。
+    """
+    case = load_case(FIXTURES / "P11_fund_falls_back_to_t_minus_1.json")
+    write_cache(case["datasets"], tmp_path)
+
+    result = pool_module.compute_pool(DAY, root=tmp_path)
+
+    assert f"口径日期 2026-10-26 ≠ 请求日 {DAY}" in result["source_detail"]
+    assert "回落读取" in result["source_detail"]
+    assert result["meta"]["fund_is_request_day"] is False
 
 
 def test_cli_limit_truncates_after_sorting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
