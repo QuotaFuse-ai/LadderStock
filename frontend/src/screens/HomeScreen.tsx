@@ -22,7 +22,7 @@ import {
   StatusDot,
   type SourceBadgeMeta,
 } from '../components/ui'
-import { useReviewDraft } from '../../stores/reviewDraft'
+import { draftCharCount, selectSlot, useReviewDraft } from '../../stores/reviewDraft'
 import { DEMO_TRADE_DATE } from './home/demo'
 import { HomeIndexStrip } from './home/HomeIndexStrip'
 import { HomePositionsCard } from './home/HomePositionsCard'
@@ -81,9 +81,9 @@ export default function HomeScreen() {
       ? validationView.data?.payload.reconcile
       : null) ?? null
 
-  const reviewSections = useReviewDraft((state) => state.sections)
+  const reviewSections = useReviewDraft((state) => selectSlot(state, tradeDate).sections)
   const reviewChars = useMemo(
-    () => Object.values(reviewSections).reduce((total, text) => total + text.trim().length, 0),
+    () => draftCharCount(reviewSections),
     [reviewSections],
   )
 

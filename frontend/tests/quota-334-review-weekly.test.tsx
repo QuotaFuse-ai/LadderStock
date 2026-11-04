@@ -13,7 +13,7 @@ import WeeklyScreen from '../src/screens/WeeklyScreen'
  * 断言四件事：
  * 1. `?demo=1` 与设置开关两个入口都让两屏首屏就有内容，并出示「演示数据」徽标；
  * 2. `/review` 只有程序指标 +「我的判断」：AI 段落、模型名、段级成败、生成入口一个都不在本屏
- *    （DEC-047 §2 的边界，模型面在 `/review/ai`，另有用例）；
+ *    （DEC-049 §2 的边界，模型面在 `/review/ai`，另有用例）；
  * 3. **关开关 + 真实请求失败时，页面不出现任何演示数据**（离线就是离线，不回落到 demo.ts）；
  * 4. `partial` / `empty` 变体的缺失标注：缺什么写什么，不补 0、不显示 AI 的降级/失败字样。
  *
@@ -92,7 +92,7 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
     expect(metricRow('sentiment', '断层档位')).toBe('无断层')
     expect(metricRow('dragon_tiger', '上榜个股')).toBe('38')
 
-    // 「我的判断」归数据面：五段可编辑草稿（DEC-047 §3 的裁定）
+    // 「我的判断」归数据面：五段可编辑草稿（DEC-049 §3 的裁定）
     expect(document.querySelectorAll('textarea')).toHaveLength(5)
     expect(screen.getByRole('textbox', { name: '我的判断 · 情绪' })).toBeTruthy()
 
@@ -174,7 +174,7 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
 
     cleanup()
     renderBoth('/weekly')
-    await screen.findByRole('heading', { level: 1, name: '周度复盘' })
+    await screen.findByRole('heading', { level: 1, name: 'AI周报' })
     await waitFor(() => {
       expect(bodyText()).toContain('服务未连接')
     })

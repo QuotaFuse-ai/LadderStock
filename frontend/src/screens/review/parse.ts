@@ -3,7 +3,7 @@ import type { SectionTone } from '../../components/ui'
 import type { ReviewSectionKey } from '../../../stores/reviewDraft'
 
 /**
- * 复盘三屏的同源解析层（QUOT-344-S2 / DEC-047）。
+ * 复盘三屏的同源解析层（QUOT-344-S2 / DEC-049）。
  *
  * `/review`（数据面）与 `/review/ai`（模型面）读的是**同一份** `/api/review` 产物：
  * `review/<date>.json` 里 `sections[].metrics` 由程序直出、`sections[].narrative` 由

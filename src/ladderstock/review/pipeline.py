@@ -93,6 +93,18 @@ def _records(dataset: str, day: date | str, root: Any) -> tuple[list[dict[str, A
     return ladder_module.dataset_snapshot(dataset, day, root)
 
 
+#: 读到过数据源的后端（`data/archive.py:snapshot`）。空列表配上这两种后端是「当天真的有 0 行」。
+_READ_BACKENDS = ("parquet", "duckdb")
+
+
+def _row_count(records: list[dict[str, Any]], backend: str) -> int | None:
+    """行数口径（QUOT-354 BUG-F）：`backend == "none"` 是「本机没有这个数据集当天的产物」，
+    此时 `len(records) == 0` 不是一条读数，不能写成 0（页面上 0 会被读成「今天没有资讯」）。
+    如实给 `None`，屏侧按 §8 显示 `—`；分区存在但当天为空仍是 `parquet`，那才是真实的 0。
+    """
+    return len(records) if backend in _READ_BACKENDS else None
+
+
 def collect_metrics(day: date | str, *, root: Any = None) -> dict[str, dict[str, Any]]:
     """五段各自的只读指标快照；缺数据如实标 `available=False`，不补默认值。"""
     sentiment = sentiment_module.compute_sentiment(day, root=root)
@@ -152,9 +164,9 @@ def _theme_metrics(day: date | str, root: Any) -> dict[str, Any]:
     available = bool(industry or concept or news)
     snapshot: dict[str, Any] = {
         "available": available,
-        "industry_rows": len(industry),
-        "concept_rows": len(concept),
-        "news_rows": len(news),
+        "industry_rows": _row_count(industry, industry_backend),
+        "concept_rows": _row_count(concept, concept_backend),
+        "news_rows": _row_count(news, news_backend),
         "source_detail": (
             f"industry_board: {industry_backend}; concept_board: {concept_backend}; "
             f"theme_news: {news_backend}"
@@ -171,8 +183,8 @@ def _dragon_tiger_metrics(day: date | str, root: Any) -> dict[str, Any]:
     available = bool(board or seats)
     snapshot: dict[str, Any] = {
         "available": available,
-        "board_rows": len(board),
-        "seat_rows": len(seats),
+        "board_rows": _row_count(board, board_backend),
+        "seat_rows": _row_count(seats, seats_backend),
         "source_detail": (
             f"dragon_tiger: {board_backend}; dragon_tiger_seats: {seats_backend}"
         ),

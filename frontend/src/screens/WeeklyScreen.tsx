@@ -259,17 +259,22 @@ export default function WeeklyScreen() {
     .map((row) => number(row.temperature))
     .filter((value): value is number => value !== null)
 
-  const rows: SentimentDayRow[] = (sentiment?.series ?? []).map((row) => ({
-    date: row.date,
-    temperature: number(row.temperature),
-    promotion_rate: number(row.promotion_rate),
-    seal_rate: number(row.seal_rate),
-    limit_up_count: number(row.limit_up_count),
-    broken_count: number(row.broken_count),
-    max_board: number(row.max_board),
-    gap_levels: Array.isArray(row.gap_levels) ? row.gap_levels : [],
-    source: text(row.source),
-  }))
+  const rows: SentimentDayRow[] = (sentiment?.series ?? []).map((row) => {
+    // §8 / QUOT-319：`available:false` 的那天没有任何读数。后端给计数补的 0 不是「0 家涨停」，
+    // 整行按缺失走 `—`（QUOT-354 BUG-E：温度/最高板已按此，涨停与炸板是漏覆盖列）。
+    const read = (value: number | null) => (row.available === false ? null : number(value))
+    return {
+      date: row.date,
+      temperature: read(row.temperature),
+      promotion_rate: read(row.promotion_rate),
+      seal_rate: read(row.seal_rate),
+      limit_up_count: read(row.limit_up_count),
+      broken_count: read(row.broken_count),
+      max_board: read(row.max_board),
+      gap_levels: row.available === false ? [] : Array.isArray(row.gap_levels) ? row.gap_levels : [],
+      source: text(row.source),
+    }
+  })
 
   const goWeek = (next: string) => {
     const merged = new URLSearchParams(params)
@@ -283,11 +288,12 @@ export default function WeeklyScreen() {
   const demoSuffix = demo ? ' · 演示数据（非真实行情）' : ''
   const subtitle = usable
     ? `${displayWeek} · ${range?.start ?? MISSING} ~ ${range?.end ?? MISSING} · ${formatInt(sessionDays.length)} 个交易日有数据${demoSuffix}`
-    : `${displayWeek} 周度复盘${demoSuffix}`
+    : `${displayWeek} AI周报${demoSuffix}`
 
   const header = (
     <PageHeader
-      title="周度复盘"
+      // 屏内标题跟侧栏一致（QUOT-344 / DEC-046 只改了导航，屏内文案按 §3.7 挂账到 S2，QUOT-354 BUG-A 收口）
+      title="AI周报"
       subtitle={subtitle}
       badge={<DemoStateBadge state={forced} />}
       actions={

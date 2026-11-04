@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Copy, FileText, RefreshCw, Trash2 } from 'lucide-react'
 
@@ -23,23 +23,23 @@ import {
 } from '../components/ui'
 import { LinkButton } from '../components/research/bits'
 import { KV_STORE, idbGet, idbSet } from '../../persist/indexeddb'
-import { REVIEW_SECTIONS, draftCharCount, useReviewDraft } from '../../stores/reviewDraft'
+import { REVIEW_SECTIONS, draftCharCount, selectSlot, useReviewDraft } from '../../stores/reviewDraft'
 import { useReviewDemoEnabled, useReviewView } from './review/useReviewView'
 import { DEMO_REVIEW_DATE } from './review/demo'
 import { SECTION_PAYLOAD_NAME, parseHeader, parseSections, type ReviewSectionView } from './review/parse'
 import SectionMetrics from './review/SectionMetrics'
 
 /**
- * 每日复盘（数据面，`/review`，UI-SPEC §3.1 / QUOT-344-S2 / DEC-047）。
+ * 每日复盘（数据面，`/review`，UI-SPEC §3.1 / QUOT-344-S2 / DEC-049）。
  *
  * 一屏三层里的**数据**那两层：3 张指标卡（程序直出，不可编辑）+ 五段固定顺序
  * （情绪→资金→题材→龙虎榜→龙头）的程序指标，加「我的判断」手写草稿（IndexedDB）。
  *
  * 这一屏**不出现 AI**：没有 `narrative`、没有模型名、没有段级 `status`、没有
- * 「重新生成 / 重试失败段」。那些是 AI复盘 `/review/ai` 的内容（DEC-047 §2），
+ * 「重新生成 / 重试失败段」。那些是 AI复盘 `/review/ai` 的内容（DEC-049 §2），
  * 两屏读同一份 `/api/review` 产物，各取一半。
  *
- * 「我的判断」归这一屏：它是人写的、按段对齐数据，不是模型产物（DEC-047 §3 裁定），
+ * 「我的判断」归这一屏：它是人写的、按段对齐数据，不是模型产物（DEC-049 §3 裁定），
  * AI复盘屏不写第二份草稿存储。
  *
  * 演示源（`?demo=1` 或设置页「虚拟数据」）只替换两条读接口，且**关掉写入口**：
@@ -107,21 +107,42 @@ function formatCharCount(value: number): string {
   return Math.round(value).toLocaleString('zh-CN')
 }
 
-export default function ReviewScreen() {
-  const [params] = useSearchParams()
+/**
+ * 「本机恢复出来的草稿」长什么样，按当前 URL 的那一个交易日算。
+ * 快照取的是当帧时刻的分片内容，用来把「恢复的旧笔记」和「本次新写的」分开。
+ */
+function draftSnapshot(date: string) {
+  const slot = selectSlot(useReviewDraft.getState(), date)
+  const filled = REVIEW_SECTIONS.filter((section) => slot.sections[section.key].trim().length > 0)
+  return {
+    chars: draftCharCount(slot.sections),
+    updatedAt: slot.updatedAt,
+    labels: filled.map((section) => section.label),
+    firstKey: filled[0]?.key,
+  }
+}
 
-  const draftTradeDate = useReviewDraft((state) => state.tradeDate)
-  const updatedAt = useReviewDraft((state) => state.updatedAt)
-  const draftSections = useReviewDraft((state) => state.sections)
-  const setTradeDate = useReviewDraft((state) => state.setTradeDate)
+export default function ReviewScreen() {
+  const [params, setParams] = useSearchParams()
+  const demo = useReviewDemoEnabled()
+
+  // 交易日只认 URL（QUOT-354 BUG-B）：草稿分片里不再存日期，`?date=` 深链优先于一切本机状态。
+  // 演示态默认落在事实基线的交易日（同 `limitup` 屏口径），避免出现「日期 11-02 / 正文 10-30」的错位
+  const tradeDate = params.get('date') ?? (demo ? DEMO_REVIEW_DATE : localDateIso())
+  const setTradeDate = (date: string | null) => {
+    const merged = new URLSearchParams(params)
+    if (date) merged.set('date', date)
+    else merged.delete('date')
+    setParams(merged, { replace: true })
+  }
+
+  // 草稿按交易日分槽（QUOT-354 BUG-C）：切日期只换这一天的五段正文，不会覆盖另一天的笔记
+  const slot = useReviewDraft((state) => selectSlot(state, tradeDate))
+  const updatedAt = slot.updatedAt
+  const draftSections = slot.sections
   const setSection = useReviewDraft((state) => state.setSection)
   const setActiveSection = useReviewDraft((state) => state.setActiveSection)
-  const reset = useReviewDraft((state) => state.reset)
-
-  const demo = useReviewDemoEnabled()
-  // 演示态默认落在事实基线的交易日（同 `limitup` 屏口径），避免出现「日期 11-02 / 正文 10-30」的错位
-  const tradeDate =
-    draftTradeDate ?? params.get('date') ?? (demo ? DEMO_REVIEW_DATE : localDateIso())
+  const clearDate = useReviewDraft((state) => state.clearDate)
 
   const view = useReviewView({ date: tradeDate })
   const forced = view.forced
@@ -131,25 +152,15 @@ export default function ReviewScreen() {
   const reloadAll = view.reloadAll
   const busy = requests.some((request) => request.status === 'loading')
 
-  // 首帧快照：区分「本机恢复的草稿」与「本次新写的笔记」
-  const [restored] = useState(() => {
-    const state = useReviewDraft.getState()
-    return {
-      chars: draftCharCount(state),
-      updatedAt: state.updatedAt,
-      labels: REVIEW_SECTIONS.filter((section) => state.sections[section.key].trim().length > 0).map(
-        (section) => section.label,
-      ),
-      firstKey: REVIEW_SECTIONS.map((section) => section.key).find(
-        (key) => state.sections[key].trim().length > 0,
-      ),
-    }
-  })
+  // 首帧快照：区分「本机恢复的草稿」与「本次新写的笔记」；换交易日时按新的那一天重新快照
+  const [restored, setRestored] = useState(() => draftSnapshot(tradeDate))
+  const restoredDate = useRef(tradeDate)
+  if (restoredDate.current !== tradeDate) {
+    restoredDate.current = tradeDate
+    setRestored(draftSnapshot(tradeDate))
+  }
 
-  const total = useMemo(
-    () => Object.values(draftSections).reduce((sum, text) => sum + text.trim().length, 0),
-    [draftSections],
-  )
+  const total = useMemo(() => draftCharCount(draftSections), [draftSections])
 
   const [confirmReset, setConfirmReset] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -265,9 +276,10 @@ export default function ReviewScreen() {
   }, [state, tradeDate, total, updatedAt, failedLabels.length, missingNames.length, replay, reviewCommand, demo])
 
   const handleReset = () => {
-    reset()
+    clearDate(tradeDate)
     setConfirmReset(false)
-    setNotice('本机复盘草稿已清空')
+    setRestored(draftSnapshot(tradeDate))
+    setNotice(`${tradeDate} 的本机复盘草稿已清空`)
   }
 
   const copyCommand = () => {
@@ -342,7 +354,8 @@ export default function ReviewScreen() {
     return (
       <div className="flex flex-col gap-5">
         {pageHeader}
-        <ErrorBlock {...errorInfo} onRetry={reloadAll} />
+        {/* 文案写的是「重试取数」，按钮就得真叫这个名字（QUOT-354 BUG-D：默认标签「重试」与文案不一致） */}
+        <ErrorBlock {...errorInfo} onRetry={reloadAll} retryLabel="重试取数" />
       </div>
     )
   }
@@ -400,7 +413,7 @@ export default function ReviewScreen() {
             onChange={(event) => setTradeDate(event.target.value || null)}
           />
         </Field>
-        <Badge tone="neutral">草稿 {formatInt(total)} 字</Badge>
+        <Badge tone="neutral">{tradeDate} 草稿 {formatInt(total)} 字</Badge>
         <Badge tone="neutral">最后写入 {formatTime(updatedAt)}</Badge>
         {viewHeader?.generatedAt && <Badge tone="neutral">复盘生成于 {formatTime(viewHeader.generatedAt)}</Badge>}
         <div className="grow" />
@@ -410,14 +423,14 @@ export default function ReviewScreen() {
           disabled={total === 0}
           leadingIcon={<Trash2 className="size-3.5" aria-hidden="true" />}
         >
-          清空草稿
+          清空当日草稿
         </Button>
       </div>
 
       {restored.chars > 0 && (
         <Banner
           tone="info"
-          title={`已恢复 ${formatDraftTime(restored.updatedAt)} 的草稿`}
+          title={`已恢复 ${tradeDate} 的草稿（${formatDraftTime(restored.updatedAt)}）`}
           action={
             <>
               {restored.firstKey && (
@@ -429,7 +442,7 @@ export default function ReviewScreen() {
                 </Button>
               )}
               <Button variant="secondary" onClick={() => setConfirmReset(true)}>
-                清空草稿
+                清空当日草稿
               </Button>
             </>
           }
@@ -582,7 +595,7 @@ export default function ReviewScreen() {
                         placeholder={demo ? '演示态不填写判断（内容不会落本机）' : `写今天的${section.label}判断…`}
                         onChange={(event) => {
                           if (demo) return
-                          setSection(section.key, event.target.value)
+                          setSection(tradeDate, section.key, event.target.value)
                         }}
                         onFocus={() => setActiveSection(section.key)}
                       />
@@ -609,9 +622,9 @@ export default function ReviewScreen() {
 
       <ConfirmDialog
         open={confirmReset}
-        title="清空本机复盘草稿？"
-        description="五段正文与交易日会一并清除，该操作不可撤销；只影响本机 IndexedDB，不动后端已生成的复盘。"
-        confirmLabel="清空草稿"
+        title={`清空 ${tradeDate} 的本机复盘草稿？`}
+        description="这一天的五段正文会一并清除，该操作不可撤销；其它交易日的草稿不受影响，也只影响本机 IndexedDB，不动后端已生成的复盘。"
+        confirmLabel="清空当日草稿"
         tone="danger"
         onCancel={() => setConfirmReset(false)}
         onConfirm={handleReset}

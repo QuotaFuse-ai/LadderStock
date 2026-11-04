@@ -2,7 +2,7 @@ import { MISSING, formatBoards, formatInt, formatRatePct } from '../../lib/forma
 import { cn } from '../../lib/cn'
 
 /**
- * 五段的**程序指标**（每日复盘 `/review` 的正文，QUOT-344-S2 / DEC-047）。
+ * 五段的**程序指标**（每日复盘 `/review` 的正文，QUOT-344-S2 / DEC-049）。
  *
  * 数据只来自 `review/<date>.json` 的 `sections[].metrics`——由 `review/pipeline.collect_metrics`
  * 直出，AI 不参与（边界闸门 `merge_narrative` 保证模型只能追加 `narrative`，改不动指标）。
