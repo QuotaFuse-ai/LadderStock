@@ -340,6 +340,29 @@ describe('首页搜索入口（QUOT-357）', () => {
     expect(JSON.parse(window.localStorage.getItem('ldst.home-search.recent') ?? '[]')).toEqual(['浦发'])
   })
 
+  it('面板是居中模态：水平居中、宽度取 min(86vw, 表宽)，不再钉右上角 640px 浮层（QUOT-398）', async () => {
+    renderHome([LADDER, INDUSTRY, NEWS])
+    fireEvent.click(trigger())
+    await flush(20)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.style.left).toBe('50%')
+    expect(dialog.style.transform).toBe('translateX(-50%)')
+    expect(dialog.style.width).toBe('min(86vw, var(--ldst-table-max, 1296px))')
+    expect(dialog.style.maxHeight).toBe('73vh')
+    // 旧的右上角定位与固定宽档必须退场，否则 `absolute` 仍在左上角起排
+    expect(dialog.className).not.toMatch(/right-5|top-16|w-drawer/)
+    // 列表容器走 flex 吃满剩余高度，而不是固定 420px
+    const list = dialog.querySelector('[role="listbox"]') as HTMLElement
+    expect(list.className).toContain('flex-1')
+    expect(list.className).not.toContain('max-h')
+  })
+
+  it('无结果态首句是「没有命中，试试 6 位代码 / 行业名」（QUOT-398）', async () => {
+    renderHome([LADDER, INDUSTRY, NEWS])
+    await openAndType('不存在xyz')
+    expect(screen.getByRole('dialog').textContent).toContain('没有命中，试试 6 位代码 / 行业名')
+  })
+
   /**
    * 走真实 `HomeSearch`（不注入假源）：测装配件自己的深链契约——`?search=` 必须把词填进
    * 输入框，且参数被消费撤掉之后输入框**不能**被清空。取数在此打真接口（jsdom 里必失败），
