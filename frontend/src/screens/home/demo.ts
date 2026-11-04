@@ -258,7 +258,7 @@ function positionsPayload(variant: HomeDemoVariant): PositionsPayload {
     variant === 'partial' && index === POSITION_SEEDS.length - 1 ? { ...seed, price: null, prevClose: null } : seed,
   )
 
-  const items = seeds.map((seed) => {
+  const items: PositionsPayload['items'] = seeds.map((seed) => {
     const priced = seed.price !== null
     const dayChange = priced && seed.prevClose !== null ? round(seed.price! - seed.prevClose) : null
     return {
@@ -310,7 +310,7 @@ function positionsPayload(variant: HomeDemoVariant): PositionsPayload {
       daily_pnl: dailyComplete ? dailyTotal : null,
       daily_pnl_status: dailyComplete ? 'ok' : dailyMissing.length === items.length ? 'missing' : 'partial',
       currency: 'CNY',
-      daily_pnl_missing: dailyMissing.map((item) => ({ code: item.code, reason: item.daily_pnl_reason })),
+      daily_pnl_missing: dailyMissing.map((item) => ({ code: item.code, reason: item.daily_pnl_reason ?? null })),
     },
     items,
     concentration: { available: false, reason: '首页不展示集中度', basis: unpricedCost > 0 ? 'cost' : 'market_value', top1_pct: null, top3_pct: null, hhi: null, holdings: [] },

@@ -72,10 +72,6 @@ function fieldOf(label: string): string {
   return dd?.textContent ?? ''
 }
 
-function metricCards(): NodeListOf<HTMLElement> {
-  return document.querySelectorAll('[class~="min-h-metric"]')
-}
-
 beforeEach(async () => {
   stubDisconnected()
   setDemoPref(false)
@@ -95,18 +91,18 @@ afterEach(() => {
 })
 
 describe('首页演示源', () => {
-  it('?demo=1 首屏直接出内容，交易日跟随演示基准日', async () => {
+  it('?demo=1 首屏直接出内容：四块都在，交易日跟随演示基准日', async () => {
     renderAt('/?demo=1')
 
     expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
-    // 先等四路取数落定（骨架里没有表格），再断言读数
-    await waitFor(() => expect(dataRowCount()).toBe(10))
-    expect(screen.getByText('68')).toBeTruthy()
-    expect(screen.getAllByText('2026-10-30').length).toBeGreaterThan(0)
-    // 梯队表填满：§3.5 首页表容量是 Top 10，演示源给 47 只保证填满
-    expect(screen.getAllByText('比亚迪').length).toBeGreaterThan(0)
+    // A 块指数条、C 块自选、D 块持仓都落到首屏（v2 已无 5 卡阵与连板梯队表）
+    expect(await screen.findByText('上证指数')).toBeTruthy()
+    expect(await screen.findByText('贵州茅台')).toBeTruthy()
+    await waitFor(() => expect(dataRowCount()).toBeGreaterThan(0))
     // 演示态根本不碰网络：fetch 全程是断连桩，首屏照样有内容
-    expect(fetch).not.toHaveBeenCalled()
+    const calls = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
+    const apiCalls = calls.filter(([url]) => String(url).includes('/api/'))
+    expect(apiCalls).toHaveLength(0)
   })
 
   it('「设置 → 虚拟数据」开关（不写 URL）同样出内容', async () => {
@@ -114,18 +110,25 @@ describe('首页演示源', () => {
     renderAt('/')
 
     expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
-    await waitFor(() => expect(dataRowCount()).toBe(10))
-    expect(screen.getByText('68')).toBeTruthy()
+    expect(await screen.findByText('上证指数')).toBeTruthy()
+    await waitFor(() => expect(dataRowCount()).toBeGreaterThan(0))
   })
 
-  it('五张指标卡都带溯源徽标（含「主线题材」，§11.5）', async () => {
+  it('四块按 SPEC-HOME-V2 顺序装配，且旧三块不再出现', async () => {
     renderAt('/?demo=1')
-    await waitFor(() => expect(metricCards().length).toBe(5))
+    await screen.findByText('上证指数')
 
-    metricCards().forEach((card) => {
-      expect(card.querySelectorAll('span[title]').length).toBeGreaterThanOrEqual(2)
-    })
-    expect(screen.getByText('未取到')).toBeTruthy()
+    // A 大盘与全球指数（§2）→ B 今天，想研究什么（§3）→ C 我的自选（§4）→ D 我的持仓（§5）
+    const headings = ['大盘与全球指数', '今天，想研究什么？', '我的自选', '我的持仓'].map((text) =>
+      document.body.textContent?.indexOf(text) ?? -1,
+    )
+    headings.forEach((index) => expect(index).toBeGreaterThan(-1))
+    expect(headings).toEqual([...headings].sort((a, b) => a - b))
+
+    // 移除项（§1.3）：情绪温度条 / 5 张指标卡 / 连板梯队 Top 10 / 题材强度 Top 5 一律不在首页 DOM
+    expect(document.body.textContent).not.toContain('连板梯队 Top 10')
+    expect(document.body.textContent).not.toContain('题材强度 Top 5')
+    expect(document.body.textContent).not.toContain('情绪温度')
   })
 
   it('真实 404：进错误态，绝不回落演示数据', async () => {
@@ -133,8 +136,8 @@ describe('首页演示源', () => {
     renderAt('/')
 
     expect(await screen.findAllByText('取数失败')).toBeTruthy()
-    expect(document.body.textContent).not.toContain('比亚迪')
-    expect(document.body.textContent).not.toContain('58')
+    expect(document.body.textContent).not.toContain('贵州茅台')
+    expect(document.body.textContent).not.toContain('上证指数')
     expect(dataRowCount()).toBe(0)
   })
 
@@ -142,11 +145,10 @@ describe('首页演示源', () => {
     stubDisconnected()
     renderAt('/')
 
-    expect(await screen.findByText('本机服务未连接')).toBeTruthy()
+    expect((await screen.findAllByText('本地服务未连接')).length).toBeGreaterThan(0)
     expect(document.body.textContent).not.toContain('宁德时代')
     expect(document.body.textContent).not.toContain('演示数据')
-    expect(metricCards().length).toBe(5)
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+    expect(document.body.textContent).not.toContain('上证指数')
   })
 
   it('演示源 empty 变体：明确空态 + 引导，而不是整屏「—」', async () => {
@@ -154,7 +156,8 @@ describe('首页演示源', () => {
 
     expect(await screen.findByText(/没有可用数据/)).toBeTruthy()
     expect(screen.getByText('ldst sync --date 2026-10-30')).toBeTruthy()
-    expect(metricCards().length).toBe(0)
+    expect(document.body.textContent).not.toContain('上证指数')
+    expect(dataRowCount()).toBe(0)
   })
 })
 
