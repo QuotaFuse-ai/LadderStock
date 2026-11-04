@@ -126,7 +126,7 @@ SOURCES_DOC: dict[str, Any] = {
             "id": "senate_reports",
             "dataset": "council_memo",
             "via": "senate",
-            "tool": "report_query",
+            "tool": "stock_senate_report_query",
             "primary": True,
             "fallback": [],
             "timeout_sec": 1,
@@ -237,14 +237,19 @@ def make_registry(
     sources: dict[str, Any] | None = None,
     sync: dict[str, Any] | None = None,
     ttl_sec: float = 0.0,
+    sleeper: Callable[[float], None] | None = None,
 ) -> ProviderRegistry:
-    """用假配置建注册表；`ttl_sec=0` 关掉短窗缓存，避免污染调用次数断言。"""
+    """用假配置建注册表；`ttl_sec=0` 关掉短窗缓存，避免污染调用次数断言。
+
+    `sleeper` 只给限流退避用例换：断言「按上游建议的秒数等了」不能靠真睡一秒。
+    """
     return ProviderRegistry(
         sources=sources if sources is not None else SOURCES_DOC,
         sync=sync if sync is not None else SYNC_DOC,
         transport=transport,
         root=root,
         ttl_sec=ttl_sec,
+        sleeper=sleeper,
     )
 
 
@@ -277,6 +282,32 @@ def tickhub_payload(
             "trace_id": "trace-stub-1",
         },
     }
+
+
+def rate_limited_payload(
+    retry_after_s: int | float | None = 3,
+    *,
+    tool: str = "tencent_kline",
+    reason: str = "endpoint_paced",
+) -> dict[str, Any]:
+    """TickHub 命中自身限流/熔断的返回形状（`QFSD-7001 rate_limited`，QUOT-349）。
+
+    真实上游把建议时长放在 `error.detail.retry_after_s`（`core/http.py` 的 pacing 与
+    熔断两条路都是这个形状），并且 `retryable: true`——语义是「等几秒再来拿同一批数据」，
+    不是「换个工具」。`retry_after_s=None` 用来模拟上游没给时长的退化情况。
+    """
+    detail: dict[str, Any] = {"url": "(已抹去)", "endpoint": tool, "reason": reason}
+    error: dict[str, Any] = {
+        "code": "QFSD-7001",
+        "name": "rate_limited",
+        "message": f"{tool} 调用过于频繁（约 {retry_after_s} 秒后可再试）",
+        "action": "返回重试建议",
+        "retryable": True,
+    }
+    if retry_after_s is not None:
+        detail["retry_after_s"] = retry_after_s
+    error["detail"] = detail
+    return {"ok": False, "error": error}
 
 
 def kline_records(day: str = "2026-10-24") -> list[dict[str, Any]]:

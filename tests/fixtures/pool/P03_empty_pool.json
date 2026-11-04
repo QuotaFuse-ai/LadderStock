@@ -18,9 +18,18 @@
         "dropped_duplicates": 0,
         "unknown_code": 0,
         "theme_boards": 0,
-        "fund_flow_rows": 0
+        "fund_flow_rows": 0,
+        "concept_membership_rows": 0
       },
-      "missing_datasets": ["limit_pool", "concept_board", "fund_flow"]
+      "missing_datasets": [
+        "limit_pool",
+        "concept_board",
+        "fund_flow"
+      ],
+      "degraded_inputs": [
+        "concept_membership"
+      ],
+      "fund_data_as_of": null
     }
   }
 }

@@ -18,17 +18,19 @@ import {
   describeApiError,
   isApiError,
   type BoardPayload,
+  type ComponentSnapshot,
   type JobView,
   type PeerLogs,
   type PeerSnapshot,
   type PeerStatus,
+  type SelfAiStatus,
   type HealthPayload,
   type PortConflict,
   type PortOwner,
   type StateConfigPayload,
 } from '../api'
 import { useAsync, type AsyncResult } from '../lib/useAsync'
-import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { setDemoPref, useDemoEnabled, useForcedState, resolveState, type PageState } from '../lib/pageState'
 import { MISSING, countOrMissing } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
@@ -48,12 +50,14 @@ import {
   Segmented,
   SkeletonText,
   StatusDot,
+  Switch,
   Toasts,
   useToasts,
   type Column,
   type DotTone,
   type ToastItem,
 } from '../components/ui'
+import AiConnectDialog from '../components/AiConnectDialog'
 import { setDensityPref, setTheme, useDensity, useThemeChoice } from '../lib/prefs'
 import type { Density, ThemeChoice } from '../lib/theme'
 import { cn } from '../lib/cn'
@@ -62,7 +66,9 @@ import { cn } from '../lib/cn'
  * 设置页（P-07 / DESIGN-SPEC §4.8 + PRD-SETTINGS-CONTROL-PLANE）。
  *
  * 四个分区（左侧 176px 二级菜单，`?tab=` 深链）：
- *   子模块   —— 四张 peer 状态卡；状态**只**取后端 `status` / `status_label`，前端不推断。
+ *   子模块   —— 六张模块卡（5 个生态 peer + ProxyFleet 代理模块）；状态**只**取后端
+ *              `status` / `status_label`，前端不推断。peer 列表由后端返回，
+ *              注册表唯一真源是 config/sources.yaml 的 peers 块（QUOT-403）。
  *   AI 接入  —— 端点 / 模型 / 密钥；密钥只写不读回（只显示 `set` + `preview`）。
  *   数据与端口 —— 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
  *   关于     —— 版本、数据目录、DEC-006 边界、主题与密度（与侧栏同一状态）。
@@ -80,7 +86,7 @@ interface SectionMeta {
 }
 
 const SECTIONS: readonly SectionMeta[] = [
-  { value: 'peers', label: '子模块', hint: '四个数据 / 资讯 / 合议模块' },
+  { value: 'peers', label: '子模块', hint: '六个模块：数据 / 资讯 / 合议 / 存储 / 代理' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
   { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
@@ -129,6 +135,7 @@ const PEER_MODULE: Record<string, string> = {
   'tickhub-us': 'tickhub_us',
   wire: 'quotafuse_wire',
   senate: 'stocksenate',
+  financecoffer: 'financecoffer',
 }
 
 /**
@@ -141,7 +148,7 @@ interface StaticPeer {
   role: string
   directory: string
   mcp: number
-  web: number
+  web: number | null
   webLabel: string
 }
 
@@ -161,8 +168,8 @@ const STATIC_PEERS: readonly StaticPeer[] = [
     role: '数据底座 · 美股',
     directory: '[local-path]\\TickHub-US',
     mcp: 8002,
-    web: 8789,
-    webLabel: '管理端',
+    web: null,
+    webLabel: '管理端（本构建未提供）',
   },
   {
     id: 'wire',
@@ -179,8 +186,26 @@ const STATIC_PEERS: readonly StaticPeer[] = [
     role: '合议层',
     directory: '[local-path]\\StockSenate',
     mcp: 8765,
-    web: 8788,
+    web: 8786,
     webLabel: 'WebUI',
+  },
+  {
+    id: 'financecoffer',
+    product: 'FinanceCoffer',
+    role: '数据存储：宽表 / 公告检索 / 风险（WSL，只读观测）',
+    directory: '[local-path]\\FinanceCoffer',
+    mcp: 8100,
+    web: null,
+    webLabel: 'HTTP 服务（WSL）',
+  },
+  {
+    id: 'proxyfleet',
+    product: 'ProxyFleet',
+    role: '代理池：出口节点 / 网关 / 拨测',
+    directory: '[local-path]\\ProxyFleet',
+    mcp: 8789,
+    web: 8788,
+    webLabel: '控制台',
   },
 ]
 
@@ -305,20 +330,30 @@ function PeerCard({
 
         {peer.port_conflicts.length > 0 && (
           <ul className="flex flex-col gap-1">
-            {peer.port_conflicts.map((conflict) => (
-              <li key={conflict.port} className="flex items-start gap-1 text-caption text-warn">
-                <AlertTriangle className="mt-half size-3.5 shrink-0" aria-hidden="true" />
-                <span>
-                  端口 <span className="ldst-num">{conflict.port}</span> {conflict.note}
-                  {conflict.pid !== null && (
-                    <>
-                      （PID <span className="ldst-num">{conflict.pid}</span>
-                      {conflict.process ? ` · ${conflict.process}` : ''}）
-                    </>
+            {peer.port_conflicts.map((conflict) => {
+              const info = conflict.severity === 'info'
+              return (
+                <li
+                  key={conflict.port}
+                  className={`flex items-start gap-1 text-caption ${info ? 'text-text-muted' : 'text-warn'}`}
+                >
+                  {info ? (
+                    <Info className="mt-half size-3.5 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <AlertTriangle className="mt-half size-3.5 shrink-0" aria-hidden="true" />
                   )}
-                </span>
-              </li>
-            ))}
+                  <span>
+                    端口 <span className="ldst-num">{conflict.port}</span> {conflict.note}
+                    {conflict.pid !== null && (
+                      <>
+                        （PID <span className="ldst-num">{conflict.pid}</span>
+                        {conflict.process ? ` · ${conflict.process}` : ''}）
+                      </>
+                    )}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
         )}
 
@@ -419,6 +454,62 @@ function PeerCard({
   )
 }
 
+function ComponentCard({ component }: { component: ComponentSnapshot }) {
+  const statusLabel = component.status_label || PEER_STATUS_LABEL[component.status]
+  return (
+    <li className="rounded border border-border bg-surface shadow-card">
+      <div className="flex flex-col gap-2 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusDot tone={PEER_DOT[component.status]} pulse={component.status === 'starting'}>
+                {statusLabel}
+              </StatusDot>
+              <h3 className="truncate text-subtitle font-semibold text-text">{component.product}</h3>
+              <Badge tone="info">代理模块</Badge>
+            </div>
+            <p className="mt-1 text-caption text-text-secondary">{component.role}</p>
+          </div>
+        </div>
+
+        <p className="text-caption text-text-secondary">
+          控制台 <span className="ldst-num">{component.ports.console}</span> · 网关{' '}
+          <span className="ldst-num">{component.ports.gateway ?? MISSING}</span> · {statusLabel}
+        </p>
+        <p className="text-caption text-text-muted">{component.detail}</p>
+        <p className="truncate text-caption text-text-muted" title={component.directory}>
+          目录 <span className="ldst-num">{component.directory}</span>
+        </p>
+        <p className="text-caption text-text-muted">托管：{component.managed_by}</p>
+        {component.notes.map((note) => (
+          <p key={note} className="text-caption text-text-muted">
+            {note}
+          </p>
+        ))}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {component.actions.can_open && component.open_url && (
+            <a
+              href={component.open_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-control items-center gap-1 rounded px-2 text-body text-text-secondary transition-colors duration-fast hover:bg-surface-3 hover:text-text"
+            >
+              打开控制台
+              <ExternalLink className="size-3.5" aria-hidden="true" />
+            </a>
+          )}
+          {!component.actions.can_open && (
+            <span className="text-caption text-text-muted">
+              未运行；启停用 <span className="ldst-num">python pfctl.py start|stop</span>（计划任务托管，控制面不代管）
+            </span>
+          )}
+        </div>
+      </div>
+    </li>
+  )
+}
+
 function StaticPeerCard({ peer, reason }: { peer: StaticPeer; reason: string }) {
   return (
     <li className="rounded border border-border bg-surface shadow-card">
@@ -439,7 +530,7 @@ function StaticPeerCard({ peer, reason }: { peer: StaticPeer; reason: string }) 
         </p>
         <p className="text-caption text-text-muted">
           登记基线 <span className="ldst-num">{peer.mcp}</span> /{' '}
-          <span className="ldst-num">{peer.web}</span>（来自 config/sources.yaml，非探测值）
+          <span className="ldst-num">{peer.web ?? MISSING}</span>（来自 config/sources.yaml，非探测值）
         </p>
         <p className="truncate text-caption text-text-muted" title={peer.directory}>
           目录 <span className="ldst-num">{peer.directory}</span>
@@ -529,10 +620,12 @@ function buildPortRows(board: BoardPayload | null, probed: boolean): PortRow[] {
     }
     const conflict = conflicts.get(port)
     if (conflict) {
+      // severity=info：模块已在服务、只是不是控制面启动的 → 不是冲突
+      const info = conflict.severity === 'info'
       rows.push({
         port,
         usage,
-        state: 'busy',
+        state: info ? 'self' : 'busy',
         owner: ownerText(conflict),
         note: conflict.note || (conflict.foreign ? '外部进程占用' : '已被占用'),
       })
@@ -563,6 +656,10 @@ function buildPortRows(board: BoardPayload | null, probed: boolean): PortRow[] {
       push(peer.mcp, `${peer.product} MCP`, null)
       push(peer.web, `${peer.product} ${peer.webLabel}`, null)
     }
+  }
+  for (const component of board?.components ?? []) {
+    push(component.ports.console, `${component.product} 控制台`, component.listening.console)
+    push(component.ports.gateway, `${component.product} 网关`, component.listening.gateway)
   }
   return rows
 }
@@ -824,6 +921,8 @@ function AiSection({
   const [selected, setSelected] = useState<string[]>(['wire'])
   const [testing, setTesting] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [connectOpen, setConnectOpen] = useState(false)
+  const selfAi = useAsync((signal) => api.control.selfAi(signal), [], { enabled: controlReady })
   // `latency_ms === null` = 没测出结果（失败路径），不能显示「耗时 0ms」（§11.18）
   const [result, setResult] = useState<{
     ok: boolean
@@ -886,8 +985,41 @@ function AiSection({
 
   const chosen = AI_TARGETS.filter((target) => selected.includes(target.id))
 
+  const selfStatus: SelfAiStatus | null = selfAi.data
+  const selfError = selfAi.status === 'error' ? describeApiError(selfAi.error) : null
+
   return (
     <div className="flex flex-col gap-4">
+      <SectionCard
+        title="看板自己的 AI"
+        subtitle="复盘生成读取 config/ai.env；一次配置，生成复盘立即生效"
+      >
+        {selfAi.status === 'loading' && <SkeletonText lines={2} />}
+        {selfError && (
+          <Banner tone="danger" title="读不到看板 AI 配置">
+            {selfError.detail}
+          </Banner>
+        )}
+        {selfStatus && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge tone={selfStatus.configured ? 'ok' : 'warn'}>
+              {selfStatus.configured ? '已配置' : '未配置'}
+            </Badge>
+            {selfStatus.model_override && (
+              <span className="text-body text-text-secondary">
+                模型 <span className="ldst-num text-text">{selfStatus.model_override}</span>
+              </span>
+            )}
+            <span className="text-caption text-text-muted">
+              {selfStatus.configured ? '复盘生成会真实调用该模型' : '未配置时只能走纯文本降级'}
+            </span>
+            <Button variant="secondary" onClick={() => setConnectOpen(true)} className="ml-auto">
+              打开接入向导
+            </Button>
+          </div>
+        )}
+      </SectionCard>
+
       <SectionCard
         title="统一 AI 配置"
         subtitle="网络端点 / 模型 / 密钥写入各模块自己的 env；密钥只写不读回"
@@ -977,6 +1109,12 @@ function AiSection({
           )}
         </div>
       </SectionCard>
+
+      <AiConnectDialog
+        open={connectOpen}
+        onClose={() => setConnectOpen(false)}
+        onSaved={() => selfAi.reload()}
+      />
     </div>
   )
 }
@@ -1004,7 +1142,7 @@ function PortsSection({
         subtitle={
           <>
             看板 <span className="ldst-num">{countOrMissing(board.data?.ports.board)}</span> / MCP{' '}
-            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 四个模块
+            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 六个模块
           </>
         }
         bodyClassName="p-0"
@@ -1079,6 +1217,8 @@ function AboutSection({
 }) {
   const theme = useThemeChoice()
   const density = useDensity()
+  const demo = useDemoEnabled()
+  const [params, setParams] = useSearchParams()
   const info = health.data
   const config = stateConfig.data
   // 每段自己的 loading / error 原因（§11.18）：失败时给真实标题，不写死「本地服务未连接」
@@ -1108,6 +1248,16 @@ function AboutSection({
     },
   ]
 
+  const changeDemo = (next: boolean) => {
+    setDemoPref(next)
+    // 关掉时连 URL 里的深链参数一起摘掉，否则「?demo=1」会把开关立刻顶回去
+    if (!next && params.has('demo')) {
+      const copy = new URLSearchParams(params)
+      copy.delete('demo')
+      setParams(copy, { replace: true })
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <SectionCard title="版本与环境" subtitle="只读，来自 /api/health 与 /api/state/config">
@@ -1129,6 +1279,20 @@ function AboutSection({
           本应用不采集数据，只消费子模块。看板只读取本机文件与回环接口（127.0.0.1），不联网、不上传、不做多用户与远程访问；
           子模块的抓取、清洗与远程调用由各自项目负责。
         </p>
+      </SectionCard>
+
+      <SectionCard title="数据来源" subtitle="虚拟数据只用于预览，不写入本机、不代表行情">
+        <div className="flex flex-col gap-3">
+          <Switch
+            checked={demo}
+            onChange={changeDemo}
+            label="虚拟数据（演示）"
+            description="开启后各页面用内置演示数据填充；关闭后只显示本机真实数据。"
+          />
+          <p className="text-caption text-text-muted">
+            URL 里带 <code className="ldst-num">?demo=1</code> 也会临时开启演示源，等同于这里的开关。
+          </p>
+        </div>
       </SectionCard>
 
       <SectionCard title="外观" subtitle="与侧栏底部同一状态，切换不重载页面">
@@ -1199,6 +1363,7 @@ export default function SettingsScreen() {
   )
 
   const peers = useMemo(() => board.data?.peers ?? [], [board.data])
+  const components = useMemo(() => board.data?.components ?? [], [board.data])
   const controlError = board.error
   const notConnected = isApiError(controlError) && controlError.kind === 'not-connected'
   const httpStatus = isApiError(controlError) && controlError.kind === 'http' ? controlError.status : null
@@ -1305,7 +1470,10 @@ export default function SettingsScreen() {
           : controlOff
             ? '控制面未启用（LDST_CONTROL_ENABLED=0）'
             : board.data
-              ? `${peers.length} 个模块 · 运行中 ${peers.filter((peer) => peer.status === 'running').length}`
+              ? `${peers.length + components.length} 个模块 · 运行中 ${
+                  peers.filter((peer) => peer.status === 'running').length +
+                  components.filter((item) => item.status === 'running').length
+                }`
               : '读取模块状态…'
       }
       badge={<DemoStateBadge state={forced} />}
@@ -1421,7 +1589,7 @@ export default function SettingsScreen() {
                   <li>
                     <EmptyState
                       title="后端没有返回任何子模块"
-                      description="确认 `/api/control/peers` 返回四个 peer（tickhub / tickhub-us / wire / senate），或检查 config/sources.yaml 是否登记。"
+                      description="确认 /api/control/peers 返回数据模块（tickhub / tickhub_us / wire / senate / financecoffer，列表由 config/sources.yaml 的 peers 块驱动）与代理模块（proxyfleet），或检查 config/sources.yaml 是否登记。"
                       action={
                         <Button variant="secondary" onClick={board.reload}>
                           重新读取
@@ -1435,7 +1603,7 @@ export default function SettingsScreen() {
                     <EmptyState
                       compact
                       title="控制面不可用"
-                      description="本地服务未连接或控制面被禁用，四个模块的目录与端口以静态基线展示。"
+                      description="本地服务未连接或控制面被禁用，六个模块的目录与端口以静态基线展示。"
                     />
                   </li>
                 )}
@@ -1457,6 +1625,9 @@ export default function SettingsScreen() {
                     onMeta={() => setMetaPeer(peer)}
                   />
                 ))}
+                {components.map((component) => (
+                  <ComponentCard key={component.id} component={component} />
+                ))}
                 {(state === 'offline' || peers.length === 0) &&
                   STATIC_PEERS.map((peer) => (
                     <StaticPeerCard key={peer.id} peer={peer} reason={CONTROL_ABSENT_NOTE} />
@@ -1465,8 +1636,9 @@ export default function SettingsScreen() {
             </SectionCard>
 
             <p className="text-caption text-text-muted">
-              端口冲突由后端预检给出：8001 被外部进程占用时 TickHub-US 用 8002；admin 8787 与 CN 冲突时 US 用 8789。
-              前端只展示，不自动改端口。
+              端口由后端预检给出：8001 被 WSL 转发占用时 TickHub-US 用 8002；US 本机构建没有管理端，不再占 8789；
+              8788/8789 归 ProxyFleet，Senate WebUI 用 8786。前端只展示，不自动改端口。
+              「非控制面启动」是归属提示，不是冲突。
             </p>
           </>
         )}

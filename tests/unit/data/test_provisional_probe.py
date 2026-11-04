@@ -1,4 +1,4 @@
-"""`doctor` 的 council_memo 联调提示：探一次 `tools/list`，措辞说准（QUOT-112）。
+"""`doctor` 的联调提示：探一次 `tools/list`，措辞说准（QUOT-112 / QUOT-389）。
 
 契约：
 
@@ -6,6 +6,10 @@
 - 工具不在列表里 → 明说工具不存在，并列出 peer 实际工具名；
 - peer 不可达 → 「未联调：peer 不可达（打码地址）」，**绝不打印凭据**；
 - 只探一次、短超时、失败不改 `ok` / 退出码 / 检查项数（DEC-008）。
+
+QUOT-389 之后 `PROVISIONAL_TOOLS` 为空（senate 工具名已实测确认），所以用例先
+把该集合临时填回 senate 工具，验证探针逻辑本身仍然可用；另有一条用例钉住
+「真实登记表里没有待联调工具」。
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ladderstock.cli.main import app
+from ladderstock.core import boundary
 from ladderstock.data.provider_registry import (
     PeerEndpoint,
     SourceUnavailable,
@@ -27,6 +32,7 @@ from ladderstock.data.provider_registry import (
 runner = CliRunner()
 
 SENATE_URL = "http://127.0.0.1:8765/mcp"
+SENATE_TOOL = "stock_senate_report_query"
 
 
 class FakeTransport:
@@ -51,6 +57,15 @@ class FakeTransport:
 def repo_env(repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("LDST_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("LDST_SENATE_MCP_URL", raising=False)
+    # 探针逻辑仍要覆盖：临时把 senate 工具标回待联调
+    monkeypatch.setattr(boundary, "PROVISIONAL_TOOLS", frozenset({SENATE_TOOL}))
+    return repo
+
+
+@pytest.fixture()
+def real_catalog_env(repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setenv("LDST_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("LDST_SENATE_MCP_URL", raising=False)
     return repo
 
 
@@ -58,8 +73,14 @@ def _warnings(**kwargs: Any) -> list[str]:
     return provisional_tool_warnings(timeout=0.01, **kwargs)
 
 
+def test_real_catalog_has_no_provisional_tools(real_catalog_env: Path) -> None:
+    transport = FakeTransport(tools=[SENATE_TOOL])
+    assert _warnings(transport=transport) == []
+    assert transport.calls == [], "没有待联调工具就不该打 peer"
+
+
 def test_tool_present_yields_no_warning(repo_env: Path) -> None:
-    transport = FakeTransport(tools=["report_query", "something_else"])
+    transport = FakeTransport(tools=[SENATE_TOOL, "something_else"])
     assert _warnings(transport=transport) == []
     assert transport.calls == [("senate", 0.01)], "只探一次，且只探 senate"
 
@@ -70,7 +91,7 @@ def test_tool_missing_reports_actual_tools(repo_env: Path) -> None:
     assert len(warnings) == 1
     text = warnings[0]
     assert text.startswith("council_memo:")
-    assert "report_query" in text
+    assert SENATE_TOOL in text
     assert "不在" in text
     assert "report_list" in text and "backtest" in text
     assert "待联调" not in text, "既要联调就别说「待联调」这种谁也判断不了的话"
@@ -109,7 +130,7 @@ def test_probe_error_never_escapes(repo_env: Path) -> None:
     assert "不可达" in warnings[0]
 
 
-def test_doctor_keeps_23_checks_and_warning_does_not_change_exit(
+def test_doctor_keeps_24_checks_and_warning_does_not_change_exit(
     repo_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     unmasked = "council_memo: 未联调：peer 不可达（http://127.0.0.1:8765/mcp）"
@@ -120,7 +141,9 @@ def test_doctor_keeps_23_checks_and_warning_does_not_change_exit(
     result = runner.invoke(app, ["doctor", "--output", "json"])
 
     payload = json.loads(result.stdout)
-    # 22 项 + R5 新增的 `config:industry.yaml`（QUOT-143）：探测仍不参与计数
-    assert len(payload["checks"]) == 23, "检查项数必须仍是 23"
+    # 22 项 + R5 新增的 `config:industry.yaml`（QUOT-143）
+    #    + peers 注册表检查 `peers:registry`（QUOT-403）：探测仍不参与计数
+    assert len(payload["checks"]) == 24, "检查项数必须仍是 24"
+    assert any(c["check"] == "peers:registry" for c in payload["checks"])
     assert unmasked in payload["warnings"]
     assert result.exit_code == (0 if payload["ok"] else 3)

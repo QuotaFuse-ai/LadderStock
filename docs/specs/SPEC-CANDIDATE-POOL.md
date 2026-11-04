@@ -1,12 +1,29 @@
 # SPEC-CANDIDATE-POOL 候选池评分口径
 
 - 日期：2026-10-30
+- 更新：2026-11-03（QUOT-364 验收退回的四条，新增 §3.4 与夹具 P10–P11，口径见 DEC-050；
+  五个分项、权重与算式不变）：
+  1. **资金口径日期**（B-3）：当日 `fund_flow` 分区缺失时回落到最近一个可用交易日，
+     实际日期走 `meta.fund_data_as_of` + `source_detail` + `degraded_inputs`，
+     信封的 `data_as_of` 仍然只跟涨停池走（§3.4）；
+  2. **覆盖率口径**（B-1）：`meta` 里带 `candidates` 字样的计数分母一律是
+     `limit` 截断之后真正对外的候选，表级覆盖另放在 `membership.table_*`（§3.3）；
+  3. **可选输入可见**（B-2）：`concept_membership` 进 `counts` / `POOL_DATASETS` /
+     `degraded_inputs`，但**不进 `missing`**（§4）；
+  4. **同名板块涨幅符号相反**（B-4）：题材分只认 `concept_board`，
+     `stock_concept_blocks` 的 `boards[].change_pct` 一律不用（§3.3 第 1 条）。
+- 更新：2026-11-03（QUOT-362：题材接上逐只归属 `concept_membership`，并修掉板块名解析
+  ——`parts.theme` 此前恒为 `null`。新增 §3.3 与夹具 P07–P09，口径见 DEC-049；
+  其余分项、权重、算式不变）
 - 归属：数据面 R7
 - 实现：`src/ladderstock/core/pool.py`（打分）、`src/ladderstock/cli/pool.py`（`ldst pool`）、
   `src/ladderstock/mcp/server.py::_tool_candidate_pool`（MCP `candidate_pool`）
-- 夹具：`tests/fixtures/pool/P01…P06.json` + `tests/unit/core/test_pool_golden.py`
+- 夹具：`tests/fixtures/pool/P01…P11.json` + `tests/unit/core/test_pool_golden.py`
+  （题材链另有 `tests/unit/core/test_pool_theme_membership.py`，
+  资金口径日期另有 `tests/unit/core/test_pool_fund_as_of.py`）
 - 相关：生态边界（不采集）、`available=false` → 退出码 6、本文两条命名与权重口径
-- 口径不变项：本文**不修改**任何既有指标口径；连板高度基准直接复用既有 6 板口径。
+- 口径不变项：五个分项、权重与算式不变；连板高度基准直接复用既有 6 板口径。
+  QUOT-362 只改「题材的数从哪来」（§3.3），没改题材的算式本身。
 
 ## 0. 一句话
 
@@ -14,22 +31,26 @@
 固定顺序、固定权重，**取不到数的分项给 `null` 并把它的权重从分母里剔除**，
 不猜值、不补 0、不新增分项。
 
-## 1. 输入（四个，全部只读本机缓存）
+## 1. 输入（四路必取 + 一路可选，全部只读本机缓存）
 
 | 输入 | 数据集 | 取用字段 | 用途 |
 |---|---|---|---|
 | 当日涨停池 | `limit_pool` | 代码、名称、连板数、换手率、题材标签 | 候选集本身 |
 | 连板梯队 | 同上（复用 `core/ladder.compute_ladder`） | `height`（当日最高板） | 「地位」的相对位置 |
-| 题材成员 | `concept_board` | 板块名、板块涨幅 | 「题材」强度 |
-| 资金流 | `fund_flow` | 代码、当日净额 | 「资金」集合内分位 |
+| 概念板块榜 | `concept_board` | 板块名、板块涨幅 | 「题材」强度 |
+| 个股↔板块归属 | `concept_membership`（可选，QUOT-362） | 代码、板块名 | 「题材」成员：这只票挂在哪些概念板块上 |
+| 资金流 | `fund_flow_realtime`（当日实时，QUOT-371）→ `fund_flow`（日线回落） | 代码、当日净额 | 「资金」集合内分位；实时分区缺失时按 §3.4 回落日线 |
 
 三条硬约束：
 
-1. **不新增采集入口**：四个数据集都是 `data/archive.py` 里已登记的缓存回放，
+1. **不新增采集入口**：五路数据集都是 `data/archive.py` 里已登记的缓存回放，
    本模块不发起任何网络请求；缓存没有就是没有 → `available=false` + 退出码 6。
+   `concept_membership` 的取数在同步侧（`ldst sync`，代码池来自当日涨停池归档），
+   不在这里（见 §3.3）。
 2. **不读隐私库**：本模块不 import `ladderstock.journal` / `data.sqlite_store` / `sqlite3`
    （AST 级断言见 `tests/integration/test_position_privacy.py::test_pool_does_not_import_privacy_store`），
    所以「我的持仓」不可能经打分结果外溢到 MCP / AI。
+   （代码池解析在 `cli/sync.py` 里读自选表，那是同步入口，与本模块无关。）
 3. **梯队不另算一遍**：`height` 直接取 `compute_ladder` 的结果，公式只有一份（D-07 同源）。
 
 ## 2. 字段容忍表
@@ -39,12 +60,21 @@
 | 语义 | 容忍键（顺序即优先级） |
 |---|---|
 | 代码 / 名称 / 连板数 | 复用 `core/ladder.py` 的 `CODE_KEYS` / `NAME_KEYS` / `BOARD_KEYS` |
+| **板块名** | `board_name`、`concept_name`、`板块名称`、`板块名`、`name`、`名称`（`pool.py` 的 `BOARD_NAME_KEYS`，QUOT-362） |
 | 换手率 | `turnover_rate`、`turnover`、`hb_rate`、`actual_turnover`、`换手率`、`换手` |
-| 个股净额 | `net_inflow`、`main_net_inflow`、`net_amount`、`主力净流入`、`净流入`、`净额` |
-| 题材标签 | `hot_topic`、`theme`、`topic`、`concept`、`labels`、`题材`、`概念`、`标签`、`热点` |
+| 个股净额 | `net_inflow`、`main_net_inflow`、`net_amount`、`main_net`、`主力净流入`、`净流入`、`净额` |
+| 题材标签 | `hot_topic`、`theme`、`topic`、`concept`、`labels`、`题材`、`概念`、`标签`、`热点`，末尾接 `core/limit_pool.py` 的 `REASON_KEYS`（`reason`、`limit_up_reason`、`涨停原因`、`解释`） |
 | 板块涨幅 | `change_pct`、`pct_chg`、`pct_change`、`changePercent`、`change`、`涨跌幅`、`涨幅` |
+| 归属行的代码 | `code`、`symbol`、`stock_code`（`MEMBERSHIP_CODE_KEYS`：落库行的代码列是**股票代码**，板块码在 `board_code` 里） |
 
-题材标签常一格写多个概念，按 `，,、;；/|` 与空白切分、去重、保持出现顺序（结果可复算）。
+板块名单独一份、**不动 `ladder.NAME_KEYS`**：后者是天梯与 sentiment 都在用的「股票名」语义，
+而现网 `concept_boards` / `stock_concept_blocks` 的行用的是 `board_name`——
+把两种语义并到一张表里，等于要么板块索引建不起来（QUOT-362 之前的真实状态：
+当日 `concept_board` 有 100 行、`parts.theme` 仍恒为 `null`），要么股票名被板块名污染。
+
+题材标签常一格写多个概念，按 `，,、;；/|＋` 与空白切分、去重、保持出现顺序（结果可复算）。
+`+` / `＋` 也在分隔符里（QUOT-362 实测：涨停原因的真实写法是
+`水产加工+鱼粉鱼油+“羊”字辈`，`+` 才是主分隔符）。
 概念板块同名重复时**取最大涨幅**；空白板块名丢弃。资金流同一代码重复保留首条
 （与天梯 D-04 去重口径一致）。
 
@@ -55,8 +85,8 @@
 | 强度 | `strength` | `min(1, boards / 6) × 100` | 6 板基准直接复用 `METRICS.md` §3.3 `TOP_BOARD_NORM`，不另立口径；6 板以上视为「打满」 |
 | 换手 | `turnover` | `clamp(换手率, 0, 20) / 20 × 100` | 20% 是短线情绪票的常见满档换手；负值记 0，超过记 100 |
 | 地位 | `standing` | `min(1, boards / height) × 100` | 「相对当日最高板的位置」，随每日梯队自动伸缩 |
-| 资金 | `capital` | 集合内分位名次：`严格小于该净额的样本数 / (n − 1) × 100`；`n = 1` 给中位 `50.0` | **只用名次不用金额**：上游单位有「元 / 万元」两种口径，名次不受单位影响；`n = 1` 没有比较对象，如实给中位而不是 0 或 100 |
-| 题材 | `theme` | `clamp(所挂概念板块最大涨幅, 0, 5) / 5 × 100` | 板块 5% 涨幅记满档；负涨幅记 0（题材走弱不给分）；匹配不到板块 → `null` |
+| 资金 | `capital` | 集合内分位名次：`严格小于该净额的样本数 / (n − 1) × 100`；`n = 1` 给中位 `50.0` | **只用名次不用金额**：两个资金数据集（`fund_flow_realtime` 当日实时 / `fund_flow` 日线）金额单位都已统一为**元**（DEC-053、QUOT-368），但金额本身仍不外报——候选集内比的是相对位置，不是绝对规模；`n = 1` 没有比较对象，如实给中位而不是 0 或 100 |
+| 题材 | `theme` | `clamp(所挂概念板块最大涨幅, 0, 5) / 5 × 100` | 板块 5% 涨幅记满档；负涨幅记 0（题材走弱不给分）；「所挂板块」按 §3.3 取，取不到 → `null` |
 
 ### 3.1 权重（和为 1.00）
 
@@ -85,6 +115,104 @@ score = Σ(weight_i × part_i) / Σ(weight_i)   （i 只取 part_i 非 null 的�
 对外键名用 `absent_parts` 而不是第二个 `missing`：顶层 `missing` 已经是「缺哪个**数据集**」，
 两个概念刻意不同名（详见 §3）。
 
+### 3.3 题材的两条取数路（QUOT-362 / DEC-049）
+
+算式只有一条（§3 的 `theme`），**「所挂概念板块」怎么得到**有两条路，优先级固定：
+
+| 路 | `meta.theme_source` / `raw.theme_source` | 成员来源 | 涨幅来源 |
+|---|---|---|---|
+| 主口径 | `stock_concept_blocks` | `concept_membership` 当日归档里该代码挂着的板块名 | **只取当日 `concept_board` 榜里的涨幅** |
+| 降级口径 | `reason_keywords` | 涨停池行的题材标签 / `reason` 按 §2 分隔符切词 | 同上 |
+| 都没有 | `null` | — | `theme = null`，0.15 权重从分母剔除（不补 0） |
+
+四条口径细节，都是踩过的坑：
+
+1. **涨幅只认 `concept_board` 的当日榜，`stock_concept_blocks` 的 `boards[].change_pct` 一律不用**
+   （QUOT-364 B-4 把它写成硬规则）。两条理由，第二条是新增的实测：
+   - 归属快照里的 `boards[].change_pct` 是「那次调用时刻的板块涨幅」，逐只取数时每只票的
+     时刻都不一样，用它就等于让分数依赖取数时刻
+     （与 `docs/ops/pool-verification.md` §3 的 as-of 纪律同一件事）；
+   - **上游两条通道对同名板块的涨幅可以符号相反**。2026-11-03 实机 `融资融券`：
+     `stock_concept_blocks` 给 −1.27，`concept_boards` 给 +1.2782，且后者的
+     `price` / `change` 自洽（`change` 与 `price` 同向）。两侧都「像是真的」，
+     所以这里不做判断，只定一条：**榜单侧是唯一的涨幅来源**；归属侧的涨幅字段
+     只当调试信息读，不参与算分、不做取绝对值或取平均之类的调和。
+     回归夹具 `tests/unit/core/test_pool_live_fields.py::test_theme_ignores_membership_change_pct_when_the_two_channels_disagree`。
+2. **概念过滤 = 按名 join 当日概念榜**。`stock_concept_blocks` 明写 industry / concept / region
+   **混在一起**，而它的板块码是东财 `BKxxxx`，与 `concept_board` 的主键（实测 `gn_*`）不同构
+   （QUOT-364 B-4：同一只 `融资融券`，一侧 `gn_rzrq`、一侧 `BK0596`），**两边只能按板块名对接**，
+   任何想用 `board_code` join 的写法都注定接不上；「对接得上」本身就是概念板块的判据。
+   2026-11-03 实测当日归属表：行业段（`BK04xx`）与地域段（`BK01xx`，含「XX板块」结尾的地域名）
+   命中当日概念榜 **0 行**，即过滤规则没有误杀概念归属。榜外的归属如实丢弃，不做任何补数。
+3. **`theme_source` 必须逐候选标出来**，因为降级口径是**关键词**不是成分归属——
+   没有标注时，`raw.theme_tags` 看起来和归属名单一模一样。
+   `meta.theme_source` 是本轮的主口径（有归属命中就是 `stock_concept_blocks`），
+   `meta.theme_source_counts` 给出两条路各覆盖几只，两者不能互相代替。
+4. **命中多个板块取最大涨幅**（`max(...)`，沿用 §3 既有口径）。求和会让「挂在很多概念上」
+   天然占便宜，而题材分回答的是「最强那条题材有多强」；分位名次则会把分数与候选池规模、
+   归属同步进度耦合——池子越浅分位越没有意义（理由见 DEC-049）。
+
+`concept_membership` **不进** `missing`：它是可选的第四路输入，缺它只让题材降级到关键词，
+不构成「候选池缺数据」（`missing` 仍然只有 `limit_pool` / `concept_board` / `fund_flow` 三个）。
+但**缺它必须看得见**（QUOT-364 B-2）：`counts.concept_membership_rows`、
+`meta.membership`、`degraded_inputs: ["concept_membership"]` 三处都点名，
+「不进 missing」从来不等于「静默」。
+
+**覆盖率数字的分母是本次对外的候选，不是归属表全量**（QUOT-364 B-1）。
+`meta.membership.candidates` / `membership.states` / `membership.not_fetched_codes` /
+`meta.theme_source_counts` / `meta.parts_non_null` 一律按 `limit` 截断**之后**的那批候选统计；
+表级覆盖只有 `membership.rows` / `membership.table_codes` /
+`membership.table_board_matched_codes` 三个，命名上刻意区分。
+2026-11-03 的教训：本文件上一版写的「实测 21/30 只候选 `theme` 非空」是按归属表全量统计的，
+验收方在 `limit=30` 的响应里只能复现出 18——覆盖率不能靠读的人自己数。
+
+单只候选在归属这一路上只有三种状态，`membership.states` 的键就是它们，缺数时该找谁一目了然：
+
+| 状态 | 含义 | 该找谁 |
+|---|---|---|
+| `hit` | 归属行有这只，且它挂的板块名在当日概念榜里 | 正常出分 |
+| `landed_off_board` | 归属行有这只，但它挂的板块名**不在**当日 100 行热度榜里 | 上游榜单口径，不是解析 |
+| `not_fetched` | 归属表里**根本没有这只的代码**（同步扇出没覆盖到 / 单只取数失败） | 同步侧代码池，见 `membership.not_fetched_codes` |
+
+**覆盖率的上界由两张表决定，不由解析代码决定**：
+当日概念榜只有 100 行（热度榜，不是概念全集），挂得再准、板块名不在榜里也只能 `null`；
+而涨停池当日落库行没有原因字段时，降级路一只也接不上。这两种情况都按 `null` 报出并点名进
+`absent_parts`，不补 0、不扩榜、不去调 `board_members` 反查（DEC-049 否决项）。
+
+### 3.4 资金分项的口径日期（QUOT-361 / QUOT-364 B-3）
+
+日频 `stock_fund_flow` 的主力净额是**当日盘后**才发布的，「请求日没有分区」是常态而不是异常。
+只读请求日分区，就等于在盘后早段（或当日 sync 没跑的那些天）把 `capital` 整列判空。
+
+取数顺序（`core/pool.py::fund_flow_snapshot`）：
+
+1. 先读请求日的 `fund_flow` 分区；
+2. 为空则按自然日逐日往前找，最多 `FUND_LOOKBACK_DAYS = 6` 天（够跨一个周末）；
+3. 找到就用，**并按 `archive.CacheSnapshot.as_of`（记录里 `trade_date` 的最大值）报告口径日期**；
+4. 窗口内仍然没有 → 不给数，`capital = null` + 0.20 权重从分母剔除（§3 的既有机制一个字不改），
+   不补 0、不把窗口外的旧分区捞回来冒充当日。
+
+口径日期写在三处，缺一处都算没落地（QUOT-364 第 2 条判据不通过就是因为三处都没有）：
+
+| 位置 | 内容 |
+|---|---|
+| `meta.fund_data_as_of` | 这批资金数实际是哪一天（`null` = 压根没取到） |
+| `meta.fund_is_request_day` | 口径日期是否就是请求日 |
+| `source_detail` 的 `fund_flow` 段 | 不是请求日时写成 `（40 条，口径日期 2026-11-02 ≠ 请求日 2026-11-03，回落读取）` |
+| `degraded_inputs` | 有数但口径日期不是请求日 → 追加 `"fund_flow"` |
+
+**为什么不复用信封的 `data_as_of`**：`data_as_of` 是 `LadderEnvelope` 的必填标量 date，
+语义是「这份载荷依据的那天涨停池」（`core/ladder.py::cache_meta` 只取首个数据集），
+资金只是五路输入里的一路。把它改成资金的口径日期会同时破坏天梯 / 情绪的同一字段
+（`tests/contract/` 锁着）。也不逐候选挂日期：30 只票的资金本来同出一张分区，
+挂 30 遍等于把「一路输入的一个属性」伪装成「每只票各自的属性」，所以只有这一路的一个标量。
+
+实时通道（`realtime_fund_flow`）**不在本节范围内**，属 QUOT-367 / QUOT-368：
+本模块仍然只读本机缓存、不发网络请求（§1 硬约束 1）。QUOT-364 第 5 条判据
+（盘中 vs 盘后两点取证）在当前主干上结构性无法取证——主干没有任何实时资金通路，
+盘中盘后必然同源，这条要等 QUOT-367 落地后重跑。
+
+
 ## 4. 输出契约
 
 `compute_pool(day, *, root=None, records=None, limit=None)`（`records` 供测试注入）：
@@ -94,7 +222,8 @@ score = Σ(weight_i × part_i) / Σ(weight_i)   （i 只取 part_i 非 null 的�
   "date": "2026-10-22",
   "available": true,
   "reason": null,
-  "source_detail": "limit_pool: archive（3 条）; concept_board: …; fund_flow: …",
+  "source_detail": "limit_pool: archive（3 条）; concept_board: …; fund_flow: …; "
+                   "concept_membership: …（N 条，X 只落库，M 只命中当日概念榜）",
   "height": 5,
   "candidate_count": 3,
   "candidates": [
@@ -102,22 +231,46 @@ score = Σ(weight_i × part_i) / Σ(weight_i)   （i 只取 part_i 非 null 的�
      "parts": {"strength": 83.3, "turnover": 60.0, "standing": 100.0, "capital": 100.0, "theme": 100.0},
      "absent_parts": [],
      "raw": {"boards": 5, "turnover_rate": 12.0, "height": 5, "net_inflow": 30000000.0,
-             "theme_tags": ["机器人"], "theme_board_change_pct": 8.0}}
+             "theme_tags": ["机器人"], "theme_board_change_pct": 8.0,
+             "theme_source": "stock_concept_blocks"}}
   ],
   "weights": {"strength": 0.3, "turnover": 0.1, "standing": 0.25, "capital": 0.2, "theme": 0.15},
   "formula": "score = Σ(weight_i × part_i) / Σ(weight_i)…",
+  "meta": {"theme_source": "stock_concept_blocks",
+           "theme_source_counts": {"stock_concept_blocks": 2, "reason_keywords": 1},
+           "parts_non_null": {"strength": 3, "turnover": 3, "standing": 3, "capital": 3, "theme": 2},
+           "membership": {"rows": 4, "table_codes": 3, "table_board_matched_codes": 2,
+                          "candidates": 3,
+                          "states": {"hit": 2, "landed_off_board": 0, "not_fetched": 1},
+                          "not_fetched_codes": ["600003"]},
+           "fund_data_as_of": "2026-10-22", "fund_is_request_day": true},
   "counts": {"limit_pool_rows": 3, "dropped_duplicates": 0, "unknown_code": 0,
-             "theme_boards": 3, "fund_flow_rows": 3},
+             "theme_boards": 3, "fund_flow_rows": 3, "concept_membership_rows": 4},
   "missing": [],
+  "degraded_inputs": [],
   "data_source_status": "ok"
 }
 ```
 
 - 排序：`score` 降序 → 同分按 `code` 升序 → `score=null` 的排最后；`--limit` 在排序**之后**截断。
 - `raw` 里给出该候选用到的原始值，任何一条分数都能就地复算。
-- `counts` 是输入侧的账（原始行数、去重掉的重复 code、缺代码被丢的行、板块数、资金行数），
-  用来解释 `candidate_count` 为什么比 `limit_pool_rows` 少。
+  `raw.theme_source` 是**这只票**的题材来源（§3.3），`null` 表示两条路都没数。
+- `meta` 是「这轮分数是怎么来的」的账，载荷级字段，不参与打分，也不进 `counts`。
+  分两类，命名上不许混（QUOT-364 B-1）：
+  - **候选窗口口径**（分母 = `limit` 之后真正对外的候选）：`theme_source_counts`、
+    `parts_non_null`、`membership.candidates` / `states` / `not_fetched_codes`；
+  - **归属表口径**（整张表，与本次返回几只无关）：`membership.rows` /
+    `table_codes`（同步覆盖面）/ `table_board_matched_codes`（其中几只挂的板块名在当日概念榜里）。
+    2026-11-03 现网是 516 行 / 29 只落库 / 21 只命中榜——差额是榜单深度与扇出覆盖，不是解析丢了行。
+- `counts` 是输入侧的账（原始行数、去重掉的重复 code、缺代码被丢的行、板块数、资金行数、
+  **归属行数**）。四路输入都有行数，读的人不用去 `source_detail` 的文本里数（QUOT-364 B-2）。
+- `missing` = 缺哪一路**必需**输入（仍是 `limit_pool` / `concept_board` / `fund_flow` 三个）；
+  `degraded_inputs` = 哪一路可选输入没数、或哪一路的口径日期不是请求日
+  （取值：`concept_membership` / `fund_flow`，见 §3.3 与 §3.4）。两者互不重叠、都不为空时
+  分数仍然可信，但读者应当知道有分项是靠降级/回落出来的。
 - `data_source_status` 恒为 `ok` / `missing`，与 web、MCP 同一约定。
+  降级**不新增枚举值**（消费方按 `ok|partial|missing` 三档解析，加第四档会让界面塌成未知态），
+  可见性走 `degraded_inputs`。
 
 两个出口的外层形状（同一份 `compute_pool`，公式不复制）：
 
@@ -132,12 +285,15 @@ stdout 仍是完整结构化结果，stderr 说明原因。
 
 ## 5. 手算对照（与夹具逐条一致）
 
-夹具的断言视图（`pool_view`）只取「口径相关」的字段：`available` / `reason` / `height` /
+夹具的断言视图（`pool_view`）取「口径相关」的字段：`available` / `reason` / `height` /
 `candidate_count` / 每条候选的 `code`、`score`、`parts`、`absent_parts` / `counts` / `missing`
-（在夹具里换名写作 `missing_datasets`，避免与候选级的 `absent_parts` 混）。
-视图里**没有**的字段（`source_detail`、`formula`、`weights`、`data_source_status`、候选的 `raw`）
+（在夹具里换名写作 `missing_datasets`，避免与候选级的 `absent_parts` 混）
+/ `degraded_inputs` / `meta.fund_data_as_of`（夹具里平铺作 `fund_data_as_of`）。
+后两个是 QUOT-364 B-2/B-3 之后补进视图的：回落与降级都是口径，必须能用手算期望块钉住。
+视图里**没有**的字段（`source_detail`、`formula`、`weights`、`meta` 的其余键、`data_source_status`、候选的 `raw`）
 由另外两条测试负责：`test_weights_sum_to_one_and_sub_scores_are_fixed` 与
-`test_parts_and_score_recompute_from_reported_inputs`（后者正是从 `raw` 出发重算）。
+`test_parts_and_score_recompute_from_reported_inputs`（后者正是从 `raw` 出发重算）；
+`meta.membership` 的三态归因与 `raw.theme_source` 由 `tests/unit/core/test_pool_theme_membership.py` 钉。
 `assert_matches` 会拒绝「视图里出现了预期没声明的键」，所以新增口径字段必须同时补夹具。
 
 ### P01 标准池（`height=5`）
@@ -195,6 +351,64 @@ stdout 仍是完整结构化结果，stderr 说明原因。
 600601 的题材「中药」在 `concept_board` 里没有对应板块 → `theme=null`（**不是 0**），
 `absent_parts=["theme"]`；600600 没有连板数 → `absent_parts=["strength", "standing"]`。
 
+### P07 归属命中（`concept_membership`，主口径）
+
+板块榜与归属表都用真实键 `board_name`；归属表里还挂了「农林牧渔」（行业段，不在当日概念榜里）。
+
+| code | boards | 换手% | 净额 | 题材来源 | 题材板块涨幅 | strength | turnover | standing | capital | theme | score |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 600010 | 4 | 10.0 | 2e7 | 归属 | 固态电池 4.0 | 4/6→66.7 | 10/20→50.0 | 4/4→100.0 | 分位 100.0 | 4/5→80.0 | 20.01+5+25+20+12 = 82.01 → **82.0** |
+| 600011 | 2 | 4.0 | −1e6 | 归属（关键词被弃用） | 光模块 1.0 | 2/6→33.3 | 4/20→20.0 | 2/4→50.0 | 分位 0.0 | 1/5→20.0 | 9.99+2+12.5+0+3 = 27.49 → **27.5** |
+
+600011 的标签写着「光模块、妖股」，而「妖股」当日 +5.0%（走关键词会得 100.0）——
+**归属命中时降级口径不参与**，所以题材是 20.0（`theme_source = stock_concept_blocks`）。
+
+### P08 归属没覆盖到这只（降级到 `reason` 关键词）
+
+归属表当日只覆盖 600099，本候选 600020 不在里面 → 退回关键词，
+`raw.theme_source = reason_keywords`（`meta.theme_source` 仍是 `stock_concept_blocks`，
+两者说的是不同的事，故都要标）。
+
+| code | boards | 换手% | 净额 | `reason` 切词 | 命中板块 | strength | turnover | standing | capital | theme | score |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 600020 | 3 | 8.0 | 5e6（n=1） | `水产加工+饲料+跨境物流` → 三个词 | 饲料 5.0、跨境物流 1.5（水产加工不在榜） | 3/6→50.0 | 8/20→40.0 | 3/3→100.0 | 中位 50.0 | ≥5→100.0 | 15+4+25+10+15 = **69.0** |
+
+### P09 两条路都没有（`theme = null`，权重剔出分母）
+
+归属表里两只挂的都是行业/地域段（榜外）→ 过滤后 `members` 为空；600030 的涨停池行既无题材标签
+也无 `reason` → 关键词也切不出词。板块索引本身建起来了（`theme_boards=2`）：
+**「榜有没有」与「这只票挂哪」是两件事**。
+
+| code | boards | 换手% | 净额 | 分母 | score |
+|---|---|---|---|---|---|
+| 600030 | 2 | 6.0 | 1.2e6（n=1） | 0.30+0.10+0.25+0.20 = 0.85 | (0.30×33.3 + 0.10×30.0 + 0.25×100.0 + 0.20×50.0)/0.85 = 47.99/0.85 = **56.5** |
+
+`parts.theme = null`、`absent_parts = ["theme"]`、`raw.theme_source = null`、`missing = []`
+（`concept_membership` 缺席不进 `missing`，见 §3.3）。
+
+### P10 资金分区只有 `main_net`（日频真实字段名）
+
+`fund_flow` 两行都只有 `main_net`（2026-11-03 实机日频分区就是这个形状）。
+QUOT-364 的漏测点：容忍表与金标夹具曾经**一起**缺这个键，`main_net` 不认时两边一起绿，
+所以本夹具走真缓存（`duckdb_store.write_dataset`）驱动 `compute_pool()`。
+
+| code | boards | 换手% | 净额（`main_net`） | 分母 | score |
+|---|---|---|---|---|---|
+| 600001 | 3 | 8.0 | 506847989.25（n=2 → 100.0） | 1.00 | 0.30×50.0 + 0.10×40.0 + 0.25×100.0 + 0.20×100.0 + 0.15×100.0 = **79.0** |
+| 600002 | 1 | 20.0 | −1200000.0（n=2 → 0.0） | 1.00 | 0.30×16.7 + 0.10×100.0 + 0.25×33.3 + 0.20×0.0 + 0.15×100.0 = **38.3** |
+
+题材走关键词降级（`hot_topic=机器人` 当日 +5.0% = 100.0）⇒ `degraded_inputs=["concept_membership"]`、
+`counts.concept_membership_rows=0`、`meta.fund_data_as_of = 请求日`。
+
+### P11 当日无资金分区 → 回落 T-1 并标口径日期
+
+与 P10 同一批资金值，只差分区日期在 2026-10-26（请求日 2026-10-27 没有分区）。
+**六个判据、两条总分与 P10 完全相同**——回落不改算式，只改口径标注：
+`meta.fund_data_as_of = "2026-10-26"`、`fund_is_request_day = false`、
+`degraded_inputs = ["concept_membership", "fund_flow"]`、`source_detail` 的 `fund_flow` 段带
+`口径日期 2026-10-26 ≠ 请求日 2026-10-27，回落读取`。
+窗口外（>6 天）不设回落，走 `capital = null` + 0.20 剔出分母，见 §3.4 第 4 步。
+
 ## 6. 可复算性与确定性
 
 - `test_pool_matches_hand_calculation`：夹具里的 `expected` 由本文 §5 手算写成，程序必须逐字段命中
@@ -205,7 +419,7 @@ stdout 仍是完整结构化结果，stderr 说明原因。
 - `test_scoring_is_deterministic`：同一输入两次 `compute_pool` 的 JSON **逐字节相同**。
   范围要说清：这是**载荷级**确定性，外层信封的 `fetched_at` 每次调用都取当前时间，
   所以「两次 CLI 全量 stdout diff 为空」本来就不成立，比对要落在 `payload`；
-- 打分不用随机、不用时间、不用环境变量，只依赖 §1 的四个数据集与本文常量。
+- 打分不用随机、不用时间、不用环境变量，只依赖 §1 的五路数据集与本文常量。
 
 ## 7. 与「我的持仓」的关系
 

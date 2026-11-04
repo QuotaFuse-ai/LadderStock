@@ -424,7 +424,7 @@ export default function SignalsScreen() {
             rowKey={(row) => row.id}
             caption="信号由后端基于 R5 五维指标判定；每条都能回溯到字段与时点"
             density="compact"
-            maxHeight="calc(100vh - 380px)"
+            maxHeight="var(--ldst-table-h)"
             onRowClick={(row) => setSelectedId(row.id)}
             initialSort={{ key: 'asOf', dir: 'desc' }}
             empty={

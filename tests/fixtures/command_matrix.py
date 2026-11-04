@@ -61,6 +61,11 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     (("watch", "start"), {0, 4}),
     (("watch", "status"), {0}),
     (("watch", "stop"), {0}),
+    # QUOT-380 / DEC-049：同一个组里的「我的自选」三条（add|rm|list），只写本机隐私库。
+    # `add` 成功 0；`list` 空库也照常出结构化结果 0；`rm` 作用在不存在的代码上 -> 6。
+    (("watch", "add", "--code", "600519"), {0}),
+    (("watch", "list"), {0}),
+    (("watch", "rm", "--code", "600999"), {6}),
     (("notify", "test"), {0}),
     # 交易日志（M2 已实现）：只写本机临时数据目录，成功即 0
     (
@@ -150,7 +155,8 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
 # R7（QUOT-145）在此之外加了 5 条：`pool` + `position add|list|update|remove`，
 # 共 39 个叶子路径（含 R1-1 的 `research`）；R5（QUOT-143）再加 2 条
 # `industry list|show` → 41 个叶子路径；R11（QUOT-149）再加 1 条 `weekly` →
-# **42 个叶子路径**。它们都是**增量命令**，
+# **42 个叶子路径**。QUOT-380（自选清单 `watch add|rm|list`）再加 3 条 →
+# **45 个叶子路径**。它们都是**增量命令**，
 # 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴ / §A′）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
@@ -170,6 +176,10 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("watch", "start"),
     ("watch", "status"),
     ("watch", "stop"),
+    # QUOT-380 / DEC-049：自选清单（不计入 31 条基线）
+    ("watch", "add"),
+    ("watch", "rm"),
+    ("watch", "list"),
     ("notify", "test"),
     ("journal", "add"),
     ("journal", "list"),
@@ -231,6 +241,10 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     # tests/integration/test_watch_signals.py 覆盖。
     ("watch", "status"),
     ("watch", "stop"),
+    # QUOT-380：`watch list` 是 0 + 结构化载荷；`add` 不在列——`--code` 是必填，
+    # 裸调用按 2 退出（本表口径是 0/3）；`rm` 不在列——矩阵里它作用在不存在的代码上
+    # 按 6 退出。两者的成功载荷由 tests/unit/journal/test_watchlist.py 覆盖。
+    ("watch", "list"),
     ("notify", "test"),
     ("schedule", "list"),
     ("schedule", "run", "--once"),

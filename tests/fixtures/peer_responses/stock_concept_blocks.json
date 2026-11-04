@@ -1,0 +1,40 @@
+{
+  "ok": true,
+  "data": {
+    "code": "002696",
+    "total": 23,
+    "boards": [
+      {
+        "name": "农林牧渔",
+        "code": "BK0433",
+        "change_pct": 1.2,
+        "lead_stock": "东方海洋"
+      },
+      {
+        "name": "水产饲料",
+        "code": "BK1509",
+        "change_pct": 3.08,
+        "lead_stock": "百洋股份"
+      },
+      {
+        "name": "饲料",
+        "code": "BK1258",
+        "change_pct": 1.95,
+        "lead_stock": "百洋股份"
+      }
+    ],
+    "concept_tags": [
+      "农林牧渔",
+      "水产饲料",
+      "饲料"
+    ]
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-11-03T19:39:19+08:00",
+    "cache_hit": false,
+    "confidence": "B",
+    "trace_id": "trace-fixture-1",
+    "count": 23
+  }
+}

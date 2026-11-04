@@ -38,6 +38,7 @@ from ladderstock.cli.main import app
 from ladderstock.core import pool as pool_module
 from ladderstock.core.boundary import NEWS_STREAM_DATASETS
 from ladderstock.core.privacy import private_keys_present, strip_private
+from ladderstock.core.quotes import daily_change_map
 from ladderstock.data.provider_registry import ProviderRegistry
 from ladderstock.journal import log as log_module
 from ladderstock.journal import position as position_module
@@ -550,23 +551,45 @@ def test_positions_is_flat_json_not_an_envelope(tmp_path: Path) -> None:
     assert "daily_k" in body["price_lookup"]["reason"]
 
 
+def test_positions_daily_pnl_is_missing_not_zero_when_cache_is_empty(tmp_path: Path) -> None:
+    """缓存里没有 `daily_k`：当日盈亏逐条 `missing` + 原因，汇总 `null`，都不补 0。"""
+    _seed_positions(tmp_path)
+    body = _client(tmp_path).get("/api/positions").json()
+
+    assert body["daily_lookup"]["dataset"] == "daily_k"
+    assert body["daily_lookup"]["date"] is None
+    assert body["price_source"] == "daily_k"  # 加这个字段没有改持仓现价口径
+    assert {item["daily_pnl_status"] for item in body["items"]} == {"missing"}
+    assert all(item["daily_pnl"] is None for item in body["items"])
+    assert body["valuation"]["daily_pnl"] is None
+    assert body["valuation"]["daily_pnl_status"] == "missing"
+    assert body["valuation"]["currency"] == "CNY"
+    assert len(body["valuation"]["daily_pnl_missing"]) == body["position_count"]
+
+
 def test_positions_are_the_cli_numbers_not_a_reimplementation(tmp_path: Path) -> None:
     """接口层只做投影：与 `ldst position list` 调的同一个 `compute_metrics()`，逐键相等。
 
     已实现盈亏加进来以后这条更关键了：接口层必须把**同一份流水**注入同一个函数，
-    而不是在 web 里再复算一遍（QUOT-292 / DEC-038）。
+    而不是在 web 里再复算一遍（QUOT-292 / DEC-038）。当日盈亏同理——同一份 `daily_k`
+    缓存算出的 `daily` 映射注入同一个函数（QUOT-380）。
     """
     _seed_positions(tmp_path)
     _seed_trades(tmp_path)
     body = _client(tmp_path).get("/api/positions").json()
 
+    rows = position_module.list_positions(root=tmp_path)
+    codes = [str(row["code"]) for row in rows]
+    daily, _ = daily_change_map(codes, None, root=tmp_path)
     expected = position_module.compute_metrics(
-        position_module.list_positions(root=tmp_path),
+        rows,
         {},
         as_of=None,
         trades=position_module.list_journal_trades(root=tmp_path),
+        daily=daily,
     )
-    assert {key: value for key, value in body.items() if key != "price_lookup"} == expected
+    stripped = {k: v for k, v in body.items() if k not in ("price_lookup", "daily_lookup")}
+    assert stripped == expected
 
 
 def test_positions_cli_and_api_return_the_same_fields(

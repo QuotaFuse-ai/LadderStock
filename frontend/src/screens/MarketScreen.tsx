@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router-dom'
 import { Database, RefreshCw } from 'lucide-react'
 
 import {
-  api,
   describeApiError,
   isApiError,
   isEndpointMissing,
@@ -17,7 +16,7 @@ import {
   type SentimentResult,
 } from '../api'
 import { useAsync } from '../lib/useAsync'
-import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { resolveState, type PageState } from '../lib/pageState'
 import {
   MISSING,
   formatInt,
@@ -48,6 +47,8 @@ import {
   type Column,
 } from '../components/ui'
 import { useDensity } from '../lib/prefs'
+import { DEMO_MARKET_DATE } from './market/demo'
+import { useMarketView } from './market/useMarketView'
 
 /**
  * 市场（P-02 / DESIGN-SPEC §4.3「分段，不是三个子页」）。
@@ -62,6 +63,9 @@ import { useDensity } from '../lib/prefs'
  *
  * 三条硬规则：没有数据就显示「数据未同步」并给下一步（`ldst sync --date …`），
  * **不补 0、不画假线、不出现 NaN / undefined**；404 只代表「该段暂未接入」，不是页面故障。
+ *
+ * 取数通道由 `market/useMarketView.ts` 决定：演示（`?demo=1` / 设置开关）走 `market/demo.ts`，
+ * 其余一律走真实 HTTP。真实 404 / 断连**不回落到演示数据**（UI-SPEC §5.6）。
  */
 
 type MarketTab = 'sentiment' | 'ladder' | 'theme'
@@ -260,12 +264,13 @@ function ThemeColumns(): Array<Column<MarketThemeRow>> {
 }
 
 export default function MarketScreen() {
-  const forced = useForcedState()
+  const { demo, forced, source } = useMarketView()
   const [params, setParams] = useSearchParams()
   // 三张表的行高只跟随「设置 → 表格密度」，屏内不写死（§11.18）
   const density = useDensity()
 
-  const tradeDate = params.get('date') ?? localDateIso()
+  // 演示态没选日期时落在演示基准日，避免「今日不是交易日 → 首屏空白」被误读成演示源没生效
+  const tradeDate = params.get('date') ?? (demo ? DEMO_MARKET_DATE : localDateIso())
   const tabParam = params.get('tab')
   const tab: MarketTab = tabParam === 'ladder' || tabParam === 'theme' ? tabParam : 'sentiment'
 
@@ -282,24 +287,24 @@ export default function MarketScreen() {
     setParams(paramsNext, { replace: true })
   }
 
-  const sentiment = useAsync((signal) => api.sentiment(tradeDate, signal), [tradeDate])
-  const ladder = useAsync((signal) => api.ladder(tradeDate, signal), [tradeDate])
+  const sentiment = useAsync((signal) => source.sentiment(tradeDate, signal), [source, tradeDate])
+  const ladder = useAsync((signal) => source.ladder(tradeDate, signal), [source, tradeDate])
   // 缺口端点：404 视为「这一段没有数据源」，把错误吞成 null，不让整屏变红
   const history = useAsync(
     (signal) =>
-      api.marketHistory(tradeDate, HISTORY_WINDOW, signal).catch((error: unknown) => {
+      source.history(tradeDate, HISTORY_WINDOW, signal).catch((error: unknown) => {
         if (isEndpointMissing(error)) return null
         throw error
       }),
-    [tradeDate],
+    [source, tradeDate],
   )
   const theme = useAsync(
     (signal) =>
-      api.marketTheme(tradeDate, signal).catch((error: unknown) => {
+      source.theme(tradeDate, signal).catch((error: unknown) => {
         if (isEndpointMissing(error)) return null
         throw error
       }),
-    [tradeDate],
+    [source, tradeDate],
   )
 
   const requests = [sentiment, ladder, history, theme]
@@ -521,7 +526,7 @@ export default function MarketScreen() {
         <div className="flex flex-col gap-4 desk:col-span-8">
           {tab === 'sentiment' && (
             <>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 rail:grid-cols-3 desk:grid-cols-3">
                 <MetricCard
                   label="情绪温度"
                   hero
@@ -612,40 +617,46 @@ export default function MarketScreen() {
                         )}
                       </Banner>
                     )}
-                    <LineChart
-                      points={linePoints}
-                      height={CHART_HEIGHT}
-                      band={{ lower: 40, upper: 60 }}
-                      threshold={{ value: 50, label: '中性 50' }}
-                      ariaLabel={`情绪温度走势，${linePoints.length} 个数据点，50 为中性线`}
-                    />
-                    <DataTable<MarketHistoryPoint>
-                      columns={HISTORY_COLUMNS}
-                      rows={hasHistory ? historyRows : []}
-                      rowKey={(row) => row.date}
-                      caption={
-                        hasHistory ? (
-                          <>
-                            情绪温度近 <Num>{historyRows.length}</Num> 日序列（按日期升序）
-                          </>
-                        ) : (
-                          '情绪温度当日单点（历史序列未同步）'
-                        )
-                      }
-                      density={density}
-                      maxHeight="240px"
-                      empty={
-                        <EmptyState
-                          compact
-                          title="历史序列没有可用行"
-                          description={
-                            historyMissing
-                              ? '/api/market/history 未接入（404），本段只有当日单点，故不出表。'
-                              : '近 20 日序列还没同步到本机；同步后自动补上表格。'
+                    <div className="grid grid-cols-1 gap-4 desk:grid-cols-12">
+                      <div className="desk:col-span-7">
+                        <LineChart
+                          points={linePoints}
+                          height={CHART_HEIGHT}
+                          band={{ lower: 40, upper: 60 }}
+                          threshold={{ value: 50, label: '中性 50' }}
+                          ariaLabel={`情绪温度走势，${linePoints.length} 个数据点，50 为中性线`}
+                        />
+                      </div>
+                      <div className="desk:col-span-5">
+                        <DataTable<MarketHistoryPoint>
+                          columns={HISTORY_COLUMNS}
+                          rows={hasHistory ? historyRows : []}
+                          rowKey={(row) => row.date}
+                          caption={
+                            hasHistory ? (
+                              <>
+                                情绪温度近 <Num>{historyRows.length}</Num> 日序列（按日期升序）
+                              </>
+                            ) : (
+                              '情绪温度当日单点（历史序列未同步）'
+                            )
+                          }
+                          density={density}
+                          maxHeight={hasHistory ? '420px' : '240px'}
+                          empty={
+                            <EmptyState
+                              compact
+                              title="历史序列没有可用行"
+                              description={
+                                historyMissing
+                                  ? '/api/market/history 未接入（404），本段只有当日单点，故不出表。'
+                                  : '近 20 日序列还没同步到本机；同步后自动补上表格。'
+                              }
+                            />
                           }
                         />
-                      }
-                    />
+                      </div>
+                    </div>
                     <SourceLine envelope={history.data ?? sentiment.data} extra="情绪温度 = 涨停/炸板/晋级等程序指标合成，非模型生成" />
                   </div>
                 )}

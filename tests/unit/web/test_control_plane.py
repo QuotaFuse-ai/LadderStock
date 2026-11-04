@@ -130,11 +130,14 @@ def _plane(
     process_info: Any = None,
     process_started: Any = None,
     resolve: Any = None,
+    components: Any = None,
 ) -> ControlPlane:
     runtime = runtime or FakeRuntime()
     return ControlPlane(
         data_root=tmp_path,
         peers=_peers(peer_dirs),
+        # 默认不探测真实组件目录/端口，避免单元测试依赖本机 ProxyFleet
+        components=components if components is not None else {},
         sources_loader=lambda: {key: {"product": key} for key in registered},
         run=runtime.run,
         port_probe=ports or (lambda port: []),
@@ -238,6 +241,8 @@ def test_status_running_requires_port_and_health(
     snapshot = plane.snapshot("alpha")
     assert snapshot["status"] == control.STATUS_RUNNING
     assert snapshot["open_url"] == "http://127.0.0.1:8789"
+    # 自己的声明端口被控制面之外的进程监听，且模块在正常服务：归属提示，不是冲突
+    assert snapshot["port_conflicts"][0]["severity"] == "info"
 
 
 def test_status_failed_when_health_down(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
@@ -304,8 +309,8 @@ def test_port_conflicts_reported_for_known_avoided_ports(
     )
     snapshot = real.snapshot("tickhub_us")
     reported = {item["port"]: item for item in snapshot["port_conflicts"]}
+    assert set(reported) == {8001}  # 8787 不再是 US 的端口（DEC-047），不该再报
     assert reported[8001]["pid"] == 777
-    assert reported[8787]["process"] == "wslhost.exe"
     assert "8002" in reported[8001]["note"]
 
 
@@ -348,6 +353,7 @@ def test_foreign_occupier_marks_failed_without_killing(
     assert "不会终止占用者" in snapshot["detail"]
     conflict = snapshot["port_conflicts"][0]
     assert conflict["pid"] == 321 and conflict["foreign"] is True
+    assert conflict["severity"] == "conflict"  # 健康检查没过，仍是真冲突
     assert runtime.calls == []  # 看一眼而已，没执行任何子进程
 
 
@@ -703,7 +709,7 @@ def test_logs_endpoint_masks_stored_secret(
 def test_tickhub_us_metadata_matches_dec013() -> None:
     us = PEER_CONTROL["tickhub_us"]
     assert us.mcp_port == 8002
-    assert us.web_port == 8789
+    assert us.web_port is None  # 本机构建没有 admin API，不占 8789（DEC-047）
     assert us.has_wheel_dist is False  # 无 dist/*.whl，只能 -e
     assert us.import_package == "tickhub_us"
     assert {"MCP_HTTP_PORT", "ADMIN_HTTP_PORT", "POLYGON_API_KEY"} <= set(us.config_keys)
@@ -728,6 +734,203 @@ def test_peer_health_paths_are_the_ones_the_services_serve() -> None:
     for key in ("tickhub", "tickhub_us", "senate"):
         assert PEER_CONTROL[key].health_path == "/healthz"
     assert PEER_CONTROL["wire"].health_path == "/api/health"
+
+
+def _proxyfleet_component(directory: Path) -> Any:
+    from ladderstock.core.boundary import ComponentControl
+
+    return ComponentControl(
+        key="proxyfleet",
+        product="ProxyFleet",
+        role="代理池",
+        directory=str(directory),
+        console_port=8788,
+        gateway_port=8789,
+        health_path="/readyz",
+        managed_by="计划任务 ProxyFleet",
+    )
+
+
+def test_proxyfleet_is_a_component_not_a_peer() -> None:
+    """代理池不提供数据集：必须留在组件表里，不能进 PEERS / PEER_CONTROL。"""
+    from ladderstock.core.boundary import COMPONENTS, PEERS
+
+    ctl = COMPONENTS["proxyfleet"]
+    assert ctl.console_port == 8788
+    assert ctl.gateway_port == 8789
+    assert ctl.health_path == "/readyz"
+    assert "proxyfleet" not in PEERS
+    assert "proxyfleet" not in PEER_CONTROL
+
+
+def test_component_snapshot_running_from_health(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    component = _proxyfleet_component(peer_dirs["alpha"])
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": component},
+        ports=lambda port: [PortOwner(pid=7, process="python.exe")]
+        if port in (8788, 8789)
+        else [],
+        health=lambda url, timeout: (True, "HTTP 200"),
+    )
+
+    snapshot = plane.component_snapshot("proxyfleet")
+
+    assert snapshot["status"] == "running"
+    assert snapshot["status_label"] == "运行中"
+    assert snapshot["open_url"] == "http://127.0.0.1:8788"
+    assert snapshot["actions"]["can_open"] is True
+    assert snapshot["kind"] == "component"
+
+
+def test_component_snapshot_stopped_when_ports_are_free(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": _proxyfleet_component(peer_dirs["alpha"])},
+    )
+
+    snapshot = plane.component_snapshot("proxyfleet")
+
+    assert snapshot["status"] == "stopped"
+    assert snapshot["open_url"] is None
+    assert snapshot["actions"]["can_open"] is False
+    assert "计划任务 ProxyFleet" in snapshot["detail"]
+
+
+def test_component_snapshot_unconfigured_when_directory_missing(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": _proxyfleet_component(tmp_path / "missing")},
+    )
+
+    snapshot = plane.component_snapshot("proxyfleet")
+
+    assert snapshot["status"] == "unconfigured"
+    assert snapshot["directory_exists"] is False
+
+
+def test_board_includes_components(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": _proxyfleet_component(peer_dirs["alpha"])},
+    )
+
+    payload = plane.board()
+
+    assert [item["id"] for item in payload["components"]] == ["proxyfleet"]
+
+
+# --------------------------------------------------------------------------- #
+# 6a. QUOT-403：模块卡由 sources.yaml peers 块驱动 + FinanceCoffer 只读观测
+# --------------------------------------------------------------------------- #
+
+def test_board_peer_cards_follow_sources_yaml(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """yaml 里删掉一段（重启后）对应卡消失；peers 块读不到时回退全表不许变空。"""
+    plane = _plane(tmp_path, peer_dirs, registered=("alpha",))
+    payload = plane.board()
+    assert [item["id"] for item in payload["peers"]] == ["alpha"]
+    assert set(payload["ports"]) == {"board", "mcp", "alpha"}
+
+    # peers 块缺失/写坏：load_sources_peers 返回 {} → 回退全表（QUOT-403 验收 2）
+    plane_empty = _plane(tmp_path, peer_dirs, registered=())
+    payload_empty = plane_empty.board()
+    assert [item["id"] for item in payload_empty["peers"]] == ["alpha", "beta"]
+
+
+def test_unmanaged_peer_has_no_action_buttons(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """FinanceCoffer（WSL，QUOT-403）：面板出卡、探健康，但不出安装/启停按钮。"""
+    from dataclasses import replace as dc_replace
+
+    peers = _peers(peer_dirs)
+    peers["alpha"] = dc_replace(peers["alpha"], managed=False)
+    _venv(peer_dirs["alpha"])
+    plane = ControlPlane(
+        data_root=tmp_path,
+        peers=peers,
+        components={},
+        sources_loader=lambda: {"alpha": {}},
+        run=FakeRuntime().run,
+        port_probe=lambda port: [],
+        health_probe=lambda url, timeout: (True, "HTTP 200"),
+        spawn=lambda args, *, cwd, log_path: SimpleNamespace(pid=4242),
+    )
+    snapshot = plane.snapshot("alpha")
+    actions = snapshot["actions"]
+    assert actions["can_install"] is False
+    assert actions["can_start"] is False
+    assert actions["can_stop"] is False
+    with pytest.raises(ValueError, match="不由控制面托管"):
+        plane.create_job("alpha", "start")
+
+
+def test_financecoffer_is_registered_as_readonly_peer() -> None:
+    from ladderstock.core.boundary import PEER_SIBLING_DIRS, resolve_peer_control
+
+    assert "financecoffer" in resolve_peer_control()
+    assert PEER_SIBLING_DIRS["financecoffer"] == "FinanceCoffer"
+
+
+def test_degraded_health_is_reported_verbatim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FinanceCoffer /health 回 degraded（如 embedding unreachable）→ 如实显示，不美化。"""
+    import http.server
+    import threading
+
+    body = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "status": "degraded",
+                "version": "0.1.0",
+                "checks": {"database": "ok", "embedding": "unreachable"},
+            },
+        }
+    ).encode("utf-8")
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server 约定
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:  # noqa: D401 - 静音
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        ok, detail = control.probe_health(f"http://127.0.0.1:{port}/health", timeout=2.0)
+    finally:
+        server.shutdown()
+    assert ok is True  # 服务在响应：健康（degraded 不等于 down）
+    assert detail == "HTTP 200 · degraded（embedding: unreachable）"
+
+
+def test_degraded_suffix_only_fires_for_non_ok_status() -> None:
+    from ladderstock.web.control import _degraded_suffix
+
+    assert _degraded_suffix('{"ok": true}') == ""
+    assert _degraded_suffix('{"status": "ok"}') == ""
+    assert _degraded_suffix("not json") == ""
+    assert _degraded_suffix('{"status": "degraded"}') == " · degraded"
+    assert (
+        _degraded_suffix('{"data": {"status": "degraded", "checks": {"db": "ok"}}}')
+        == " · degraded"
+    )
 
 
 def test_config_notes_flag_keys_that_do_not_take_effect() -> None:
@@ -1455,3 +1658,109 @@ def test_ai_job_is_exclusive(tmp_path: Path, peer_dirs: dict[str, Path]) -> None
     finally:
         gate.set()
     assert _wait(plane, first.id).status == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# 7. 页面一键命令（QUOT-200）
+# --------------------------------------------------------------------------- #
+
+def test_page_commands_cover_routes_and_resolve_date(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    plane = _plane(tmp_path, peer_dirs)
+    payload = plane.page_commands()
+
+    assert payload["ok"] is True
+    by_key = {item["key"]: item for item in payload["commands"]}
+    assert set(by_key) == set(control.PAGE_COMMANDS)
+    assert by_key["market"]["route"] == "/market"
+    assert by_key["market"]["argv"] == ["sync"]
+    today = datetime.now().date().isoformat()
+    assert by_key["review"]["argv"] == ["review", "--date", today]
+    assert by_key["validate"]["argv"] == ["validate", "reconcile", "--date", today]
+    assert all(
+        item["last_job"] is None and item["running"] is False for item in payload["commands"]
+    )
+
+
+def test_page_command_runs_whitelisted_argv(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    runtime = FakeRuntime()
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    job = plane.create_command_job("market")
+    done = _wait(plane, job.id)
+
+    assert done.status == "ok"
+    assert done.command == "market"
+    assert runtime.calls[-1][-1] == "sync"
+
+    row = next(item for item in plane.page_commands()["commands"] if item["key"] == "market")
+    assert row["last_job"]["id"] == job.id
+    assert row["running"] is False
+
+
+def test_page_command_exit_codes_map_to_status(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    runtime = FakeRuntime()
+    runtime.default = StepResult(9, "degraded\n")
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+    assert _wait(plane, plane.create_command_job("news").id).status == "ok"
+
+    runtime.default = StepResult(1, "boom\n")
+    done = _wait(plane, plane.create_command_job("calendar").id)
+    assert done.status == "failed"
+    assert "刷新事件日历失败" in (done.error or "")
+
+
+def test_page_command_is_exclusive_and_rejects_unknown(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    import threading
+
+    gate = threading.Event()
+
+    def blocked(args: list[str], cwd: Path, timeout: float) -> StepResult:
+        gate.wait(5)
+        return StepResult(0, "ok\n")
+
+    runtime = FakeRuntime()
+    runtime.run = blocked  # type: ignore[method-assign]
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    with pytest.raises(KeyError):
+        plane.create_command_job("nope")
+
+    first = plane.create_command_job("pool")
+    try:
+        with pytest.raises(RuntimeError, match="已有页面命令在执行"):
+            plane.create_command_job("market")
+    finally:
+        gate.set()
+    assert _wait(plane, first.id).status == "ok"
+
+
+def test_command_endpoints_expose_whitelist(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    client = TestClient(
+        create_app(
+            data_root=tmp_path,
+            dist_dir=tmp_path / "missing",
+            control_plane=_plane(tmp_path, peer_dirs),
+        ),
+        client=LOOPBACK,
+        headers=WRITE_HEADERS,
+    )
+
+    listed = client.get("/api/control/commands")
+    assert listed.status_code == 200
+    assert listed.json()["ok"] is True
+    assert {item["key"] for item in listed.json()["commands"]} == set(control.PAGE_COMMANDS)
+
+    assert client.post("/api/control/commands/nope").status_code == 404
+    started = client.post("/api/control/commands/positions")
+    assert started.status_code == 200
+    assert started.json()["job_id"]

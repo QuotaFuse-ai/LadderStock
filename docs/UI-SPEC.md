@@ -1,12 +1,11 @@
-# 看板信息架构与视觉规范（18 屏）
+# 看板信息架构与视觉规范（20 屏）
 
-- 版本：v1.3
-- 日期：2026-11-02
+- 版本：v1.12
+- 日期：2026-11-04
 - 归属：UI/UX
-- 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实；v1.2 改导航信息架构（DEC-044）；v1.3 只把 §0/§3 的侧栏事实补齐到 DEC-044 之后的真实结构，`done` 仍由人类确认）
+- 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
 - 代码事实基准：`origin/main` @ `270caf8`。本文所有 `文件:行号`（省略 `frontend/src/` 前缀）都在该 revision 上核对过。
-  **例外**：§0「侧栏入口」列、§2「导航顺序」与「20 屏导航可达性」两行、§3 各屏「入口」行的 `Layout.tsx:N`，按 v1.3 在 DEC-044 合入后的 main（`6b331c5`）上重新核对；其余条款（含 §2 的侧栏宽 / `main#main` / skip-link 等外壳行号）仍指 `270caf8`。这一层一致性由 `scripts/audit-nav-citations.py` 机器校验，不靠人眼（v1.2 就是靠人眼漏了 13 处，见 §12.7）。
 - 唯一真源：`frontend/tokens.json`（v2.0.0）→ 由 `frontend/scripts/gen-tokens.mjs` 生成 `styles/tokens.css` 与 `tailwind.config.ts` 的 `theme.extend`。本文与生成物冲突时**以生成物为准并回改本文**（v1.1 就是这样做的，理由见 §12.4）。
 
 ## 变更记录
@@ -16,46 +15,60 @@
 | v1.0 | 2026-10-28 | 首版：四屏 IA、状态恢复、降级与溯源、AI 四类错误、视觉 token、组件清单 |
 | v1.1 | 2026-11-01 | 覆盖 4 屏 → **18 屏**（QUOT-308，决策 DEC-040）。§0 逐屏清单 + §2 外壳/断点/标题层级按 `components/Layout.tsx:64-119`、`tailwind.config.ts:40-44` 校正（删除从未实现的「<1024 顶部横向导航」「<720 表格转卡片」，最低支持视口定为 1024）；§3.5–§3.18 补 14 屏信息架构；§5 增加溯源徽标唯一实现、演示态水印、`freshness` 缺省态；§6 组件清单按实际文件重写（v1.0 登记的 `kit/Badge.tsx` 等 11 个文件不存在）；§7 token 表按 `tokens.json` v2 全量校正（圆角收敛 8/4/999，字号 12/14/16/20/28/36，补 accent-solid / chart / skeleton / scrim 族）；§7.5 按 DEC-040 裁定 120ms / 180ms 分工；§8 补缺失值、时间格式、计数与后端 key 直显规则；§10 扩到 18 屏；§11 由「四屏清单」改为「逐屏清单」；§12.4 规范变更与理由，§12.5 整改清单 R-01…R-26。 ；同版补「盯盘·竞价与盘中」（`/intraday`，QUOT-301 / QUOT-302 / SPEC-INTRADAY-READ）：§0 与 §10 记为第 19 屏。 |
 | v1.2 | 2026-11-02 | 导航信息架构更新（QUOT-304，决策 DEC-044）：新增一级组「我的股票」（我的持仓 `/positions` + 事件日历 `/calendar`），从「日志」「市场」移出，顺序为 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖；自选、提醒无已交付页面，登记为范围外，不建占位入口。§2「导航顺序」与导航可达性段落同步改写；路由零变更。 |
-| v1.3 | 2026-11-02 | **只补事实，不改结构**（QUOT-304 收尾）：v1.2 只改了 §2，§0 的「侧栏入口」列与 §3 各屏「入口」行仍是 DEC-044 之前的旧分组与旧行号——`scripts/audit-nav-citations.py` 在 main `6b331c5` 上量到 **13 处** 文档 ↔ 侧栏不一致，本版逐条改齐（事件日历 / 我的持仓 → 我的股票；`/industry` `/signals` 由「无侧栏入口」改为「产业研究 · …」（QUOT-300 已补，文档没跟）；补登记 `/research` 落地页第 20 行；§3 的 12 处 `Layout.tsx:N` 引用重核）。§2「导航顺序」行补回被 v1.2 丢掉的两条规范：**顺序对应一天的工作流、不按字母不按频率**，以及**二级导航只在 `pages.length > 1` 时展开**；并把「`NAV_SECTIONS` 结构不由本文改」的 QUOT-306 边界改写为「结构已由 DEC-044 定稿，306/316 只做视觉层」。R-05 关闭。另登记全文遗留的「18 屏」口径（实际 20 屏，留给下次 §11 走查收，见 §12.7）。新增两份可重跑证据：`scripts/audit-nav-citations.py`（文档 ↔ 侧栏）、`frontend/scripts/check-1280.mjs`（20 条路由 × 五态的 1280px 溢出 / console / 侧栏结构 / 三条视觉不变量）。 |
+| v1.3 | 2026-11-02 | QUOT-306 / QUOT-317 收口：一致性口径脚本化（`frontend/scripts/check-ui-consistency.mjs` + `npm run check:ui`，六项：裸表 / hex / 任意值 / 数值基线 / DataTable 引用 / 过渡时长）；`DataTable` 补整行 `summaryRow`（列级 `summary` 保留，二者互斥）；四处任意值收口为 `min-h-calendar-cell` / `min-w-table-min` 与 `truncate` 列；§0 表格「事件日历 / 我的持仓」的侧栏分组同步为「我的股票」（v1.2 遗漏）；编号与变更记录合并规则见 DEC-045。 |
+| v1.3.1 | 2026-11-02 | 外壳层 §2 逐条走查落地（QUOT-316，只动 `components/Layout.tsx` / `PageShell.tsx` / `PersistenceBanner.tsx`，`NAV_SECTIONS` 结构零变更）：① §2 提示条「同类最多 2 条 + 另有 N 条提示」此前无实现，`PersistenceBanner` 现按 tone 各截 2 条、余量并成一行且逐个列出分片名（折叠不丢信息），顶内距 `pt-3`→`pt-5` 与 `main` 的 `py-5` 对齐；② §11.0「数字必 `.ldst-num`」在页头不可达——`PageHeader` 的 subtitle / meta 由外壳统一挂 `.ldst-num`（只加可继承的 `font-variant-numeric`，字号与颜色仍归各屏），19 屏一次生效；页头换行纵向间距 12px→4px；③ §2 侧栏二级缩进 8px→16px（导引线落在一级图标正下方），`rail:` 档展平后加组间 1px 分隔线，否则 19 行同形图标无分组可读性；④ §2 阅读型内容度量：外壳自有的 `OfflineBanner` 说明段挂 `max-w-measure`（`--ldst-measure: 52ch`）；⑤ `Layout.tsx` 头注释的 `DESIGN-SPEC §3.1/§4.1` 假引用（M-9）改引 `UI-SPEC §2`；⑥ R-21 实测更正为「非缺陷」，见 §12.5。规范条文本身未放宽：以上都是代码向 §2 / §11.0 收敛。 |
+| v1.5 | 2026-11-02 | 新增「接入 AI」一等入口（QUOT-200）：侧栏底部（主题与设置之间）按钮 + 设置 → AI 接入顶部状态卡，打开右侧向导抽屉（`AiConnectDialog`）；提供 DeepSeek / 通义千问 / Kimi / MiniMax / 本机 Ollama / 自定义预置，测试连通性后写入 `config/ai.env`（`LDST_LLM_BASE_URL` / `LDST_LLM_MODEL` / `LDST_LLM_API_KEY`），密钥只写不读回。订阅版 CLI（Codex / Claude Code / WorkBuddy）当前后端未实现，不放入口。`?ai=1` 可直接打开抽屉（截图/排障）。 |
+| v1.6 | 2026-11-03 | 复盘组拆三独立入口（QUOT-344，决策 DEC-046；本链 S1+S2 合并成这一行，按 DEC-045 §4）。导航：`复盘` 组由「情绪复盘 / 周度复盘 / 候选池」改为 **每日复盘 `/review` · AI复盘 `/review/ai` · AI周报 `/weekly` · 候选池 `/pool`**——三屏同源不合并，`/weekly` 只改文案不改路由。路由新增 `/review/ai`（与 `/review` 同族前缀，不用 `/ai-review`）；`frontend/tests/nav-routes.test.tsx` 加三入口互不相同、各自深链可达、`/review` 与 `/review/ai` 不同组件的断言；`visual-shot.mjs` 记为第 20 屏。AI复盘的导航图标取 `Bot`，不复用底部「接入 AI」动作的 `Sparkles`——`rail:` 档只剩图标可辨，两个 Sparkles 分不开。**分工**：每日复盘 = 当日五段数据（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），AI复盘 = AI 生成段落 + 降级/失败段，AI周报 = 按周聚合叙述。S2（QUOT-353，决策 DEC-049）补齐内容面：**`/review` = 数据面、`/review/ai` = 模型面，两屏读同一份 `review/<date>.json` 各取一半，互不重叠**。数据面新增此前不存在的正文层 `screens/review/SectionMetrics.tsx`（五段 `sections[].metrics` 走 key 登记表，未登记不上屏）；「我的判断」裁定归数据面且全仓只有一份 `review_draft` 存储，模型面不写第二份、交易日只跟 `?date=`（DEC-049 §3）。模型面从占位壳变为可用屏：五段 `narrative` + 段级 `status` + `ai_failures[]` + `ai.model` + 控制面 `generate`/按段 `retry` + 1.5s 轮询 `jobs/{id}` 全在这一屏，「重新生成 / 重试失败段」从 `/review` 移除（不是并存）。**三种「没有 AI 正文」分开显示**（`review/parse.ts:classifyAiCase`，只读契约字段不解析文案）：产物不存在 → 引导 `ldst review`；产物在但模型未配 → 「模型未接入：五段都没有跑过模型」+「接入 AI」，且必须写「缺的是模型，不是数据」；段级失败 → 逐段标注 + 按段重跑。同源修正三处口径：`headline` 是 `pipeline._headline()` 的程序直出，此前挂着「AI 摘要」+ 模型名属错标，现改标「程序直出 · 当日摘要」并留在数据面（DEC-049 §6）；段级缺数横幅按 §5.2 取 `danger`，收口 R-12（复盘两份本地溯源徽标一并收进 `SourceBadges`，R-01 计数 4→3）；演示态永不触发控制面、永不预填「我的判断」、离线回放缓存仍只有一个键（`review_snapshot_cache_v1`）。规范落点：§0 表行 1/20 标注两屏分工、§3.1 重写为数据面、新增 §3.19（模型面）、§10 两行映射落定、§11.1 重写 + 新增 §11.20、§12.5 补 R-27（复盘页面导出从未实现）。证据：`tests/review-split.test.tsx`（两屏同挂对照重叠检查）+ `tests/quota-334-review-weekly.test.tsx`（按拆屏后口径重写）+ `docs/screenshots/{review,review-ai}-after-344s2[-1024|-noartifact|-demo|-demo-partial][-tall]-{dark,light}.png`；`typecheck` / `test`（399 例）/ `check:ui`（6/6）全绿。 |
+| v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
+| v1.7 | 2026-11-03 | 首页 v2 版式立项（QUOT-378，父任务 QUOT-377「首页改版 A」S1，老板拍板 A 案）：首页整页改为参考页四块——**大盘与全球指数条 → 今天，想研究什么？（研究入口卡）→ 我的自选 → 我的持仓**，待办 / 最近异动保留并下移，情绪温度条 + 5 指标卡阵 + 连板梯队 Top 10 + 题材强度 Top 5 从首页移除（`/market?tab=sentiment\|ladder\|theme` 已有同三块，信息不丢）。**逐块线框、字段表（要哪些字段 / 从哪来 / 拿不到显示什么）、块级状态矩阵、整屏六态与块级四态的关系、验收清单全部落在 `docs/specs/SPEC-HOME-V2.md`**，本文件 §3.5 与 §11.5 的首页条目在 S3 接线合入时按该 spec 同步（本行只登记立项，不改旧条目正文）。零新增 token / 依赖 / 断点；四处与参考页的实质偏差（指数条 4 列 × 2 行而非单排 8 格、研究入口不承诺 AI 问答、自选与持仓各自满宽堆叠而非并排、卡头不放「管理自选」）与算术理由见 SPEC-HOME-V2 §12-L01/L02/L06/L07。 |
+| v1.8 | 2026-11-03 | 新增 §3.20「首页搜索/提问面板」（QUOT-348 规格落盘，指针型小节：交互与视觉真源在 `docs/specs/home-search.md` v1.1，本节只登记入口位置 / 面板尺寸 / 分组顺序 / 键盘焦点四件外壳级事实）。§6.1 登记 C-21 `HomeSearchTrigger`、C-22 `SearchPanel`（均为**待实装**，全仓组件编号由 C-20 续到 C-22）。同批落盘 `docs/specs/home-search-prototype.html` 与 `docs/screenshots/home-search-*.png` 10 张规格图。**本节未改任何规范条文**，只补索引；与已落地数据层（`lib/searchCore.ts`，QUOT-356）的口径差异以数据层命名为准，见规格 §9.4。 |
+| v1.9 | 2026-11-04 | 后端数据面新增两个首页出口（QUOT-380，决策 DEC-052；§0「不覆盖」清单只加标注、原文不改）：**`GET /api/indices`** 首页 A 股指数条 4 格（`sh000001` 上证 / `sh000300` 沪深300 / `sz399001` 深证成指 / `sz399006` 创业板指，白名单由后端写死、不向 peer 动态要清单），每格 `price` / `change` / `change_pct` / `prev_close` / `as_of`，取不到是 `available=false` + 原因，不补 0、不自采；**`GET /api/watchlist`** 自选只读面（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，顶层 `items` + `watch_count`，`note` 不出，写面仍不经 HTTP）。`GET /api/positions` 只**加字段**不改既有形状：`items[].daily_pnl` / `daily_pnl_status` / `daily_pnl_reason` 与 `valuation.daily_pnl` / `currency: CNY`（当日盈亏 = `daily_k` 的 `close(T) − close(T−1)`，停牌日显 `missing` 不退回更早交易日；币种汇总本版不做）。前端接线与 §10 路由映射由 S3（QUOT-381）承接。 |
+| v1.10 | 2026-11-04 | QUOT-354 走查 7 项缺陷收口（QUOT-353 修复轮，只改口径不加新功能，DEC-049 §3 落地细则补充）。**BUG-A**：`/weekly` 屏内 h1 由「周度复盘」改为**「AI周报」**，与 v1.6 侧栏改名对齐（当时只改了导航，屏内文案挂账到 S2）。**BUG-B/BUG-C**（BUG-B 是 P1，会串日）：交易日**只认 URL**，`review_draft` 分片删除 `tradeDate` 字段并按交易日分槽 `slots[date]`——`?date=` 深链不再被本机草稿日期反向覆盖，切日期不互相覆盖笔记，「清空草稿」改名**「清空当日草稿」**且只清当前一天；旧单槽分片在读取时归入它自己记录的日期（`sanitize` 归一，不升 `SCHEMA_VERSION`，避免同时动 `stores/manifest.json` 与 `tests/unit/test_state_contract.py` 的三处版本约定）。**BUG-D**：缺数兜底文案点名的按钮真叫「重试取数」（`ErrorBlock retryLabel`）。**BUG-E**：`/weekly` 每日序列 `available:false` 整行按缺失走 `—`，后端给计数补的 0 不再被读成「0 家涨停」，真实 0 照旧显示。**BUG-F**：行数口径改为**按来源后端判定**——`review/pipeline._row_count` 只在 `parquet`/`duckdb`（确实读到过数据源）时返回行数，`none` 返回 `None`；缺数据的原因复用已有的「数据来源」行，不新增契约字段。**BUG-G**：拆屏决策的注释引用统一改为 `DEC-049`（走查报 17 处，按 `grep -rn "DEC-047" frontend/` 复核为 15 处命中，现已**归零**；`src/ladderstock/core/boundary.py` 与 `tests/unit/web/test_control_plane.py` 里的 `DEC-047` 是端口归属那一份决策，编号正确，不改）。规范落点：§8 新增「整行无读数」「分源行数」「文案点名的按钮」三条口径；§3.1 新增「交易日与草稿的归属」；§3.7 / §11.7 随 BUG-A 改名并补断言；§10 每日复盘与 AI周报两行映射更新；§11.1 补 4 条走查项。证据：`tests/quota-354-defects.test.tsx`（BUG-B/C/D 行为断言 + BUG-F 屏侧口径）+ `tests/weekly-screen.test.tsx`（BUG-A/E）+ `tests/persistence.test.ts`·`tests/migrate.test.ts`（分槽与旧分片归一往返）+ `tests/unit/review/test_row_count_caliber.py`（BUG-F 两种后端）+ `docs/screenshots/review-{before,after}-353fix-bugb-dark.png`·`docs/screenshots/weekly-{before,after}-353fix-buge-{dark,light}.png`（5950 实机，前端 5199 代理）；`typecheck` / `test`（43 files / 434 例）/ `check:ui`（6/6）全绿。 |
+| v1.11 | 2026-11-05 | 屏数口径对齐到 20 屏（QUOT-396，父任务 QUOT-306 阶段三；只改下列位置）：§0 原则 6「全 18 屏」→「全 20 屏」、原则 7「在 18 屏里」→「在 20 屏里」；§4.5 标题改「全 20 屏的持久化面（v1.1 新增；v1.7 按 20 屏对齐）」并重算表——拆出「盯盘·竞价与盘中」（`/intraday`）与「AI复盘」（`/review/ai`）两行（均无本机写入，快照归「盯盘」），原「其余 10 屏」行收敛为 12 屏，合计 6 + 2 + 12 = 20；§6 组件清单 7 处「全 18 屏」→「全 20 屏」；§10 标题改「全 20 屏与后端契约映射」。§3.19 早已存在（`:463`），本版不重写；§12.4 A 行等历史记录按当时事实保留，Q 行末尾追加处理说明。同批补 `/review/ai` 的 before 双主题图 `docs/screenshots/review-ai-before-{dark,light}.png`（5950 实机 + 5199 代理，`?date=2026-11-03`）。 |
+| v1.12 | 2026-11-04 | 表高刻度落地 `--ldst-table-h-*`（QUOT-342，共享层；源头 `frontend/tokens.json` + 生成口径 `styles/tokens.css`）：固定档 `sm/md/lg/xl = {240,320,360,420}`；视口档两档具名减数 `--ldst-table-h-rail: 360px`（1024–1279 保底；1024×900 实测表体上沿 341，减数起点 ≥341，360 落在固定档刻度上）与 `--ldst-table-h-desk: 280px`（≥1280；280 这个减数只在 desk: 档成立——1024 下 L0 快照卡 `dl` 折 2×2 抬高上沿 75px，QUOT-336 实测），消费变量 `--ldst-table-h` 在 `styles/tokens.css` 由 `@media (min-width: 1280px)` 换值，不新增断点档名（DEC-040 断点词汇仍只有 `rail:`/`desk:`；`mid:` 是否增设另行决策）。产业矩阵 / 连板梯队 / 验证 / 候选池 / 产业信号 / 分时 6 处 `calc(100vh - Npx)` 减数（280×3 / 360 / 380 / 420）收口为 `var(--ldst-table-h)`，不动各屏信息架构与 L0 卡布局；§10 R-02 表高计数随之核减（剩 watch/journal 2 处 280 档合法字面量，不在本单 6 处清单，登记待随下一单收口）；§7.3 表高刻度行同步为具名集。 |
 
 ## 0. 范围与非目标
 
-**覆盖（20 屏）**——路由以 `App.tsx:58-88` 为准（v1.1 的 18 屏 + QUOT-302 的 `/intraday` + v1.3 补登记的 `/research` 落地页），侧栏入口以 `components/Layout.tsx:75-162` 为准（DEC-044 之后为 9 组 + 底部固定「设置」）。
+**覆盖（20 屏）**——路由以 `App.tsx` 的 `ROUTE_ELEMENTS` 为准（v1.1 的 18 屏 + QUOT-302 的 `/intraday` + QUOT-344 的 `/review/ai`），侧栏入口以 `components/Layout.tsx` 的 `NAV_SECTIONS` 为准。
 
 | # | 屏 | 路由 | 侧栏入口（分组 · 标签） | 契约码 | v1.0 |
 |---|---|---|---|---|---|
-| 1 | 复盘 | `/review` | 复盘 · 情绪复盘 | P-04 | 已覆盖 |
+| 1 | 每日复盘（**数据面**） | `/review` | 复盘 · 每日复盘 | P-04 | 已覆盖（§3.1，DEC-049 拆屏后只留程序指标 + 我的判断） |
 | 2 | 盯盘 | `/watch` | 盯盘 · 盘中信号 | P-03 | 已覆盖 |
 | 3 | 验证 | `/validate` | 验证 · 验证 | P-06 | 已覆盖 |
 | 4 | 日志 | `/journal` | 日志 · 交易日志 | P-05 | 已覆盖 |
 | 5 | 首页 | `/`（index，`App.tsx:54`） | 首页 · 首页（单页分组） | P-01 | 新增 |
 | 6 | 市场 | `/market?tab=sentiment\|ladder\|theme` | 市场 · 情绪温度 / 连板梯队 / 题材轮动（3 个入口同屏） | P-02 | 新增 |
-| 7 | 周度复盘 | `/weekly` | 复盘 · 周度复盘 | — | 新增 |
+| 7 | AI周报 | `/weekly` | 复盘 · AI周报 | — | 新增 |
 | 8 | 资讯雷达 | `/news`（**不是** `/radar`） | 市场 · 资讯雷达 | — | 新增 |
-| 9 | 事件日历 | `/calendar` | 我的股票 · 事件日历（v1.2 由 市场 迁入） | — | 新增 |
+| 9 | 事件日历 | `/calendar` | 我的股票 · 事件日历 | — | 新增 |
 | 10 | 候选池 | `/pool` | 复盘 · 候选池 | — | 新增 |
-| 11 | 我的持仓 | `/positions` | 我的股票 · 我的持仓（v1.2 由 日志 迁入） | — | 新增 |
-| 12 | 产业矩阵 | `/industry` | 产业研究 · 产业研究（QUOT-300 补入口，v1.3 校正） | — | 新增 |
+| 11 | 我的持仓 | `/positions` | 我的股票 · 我的持仓 | — | 新增 |
+| 12 | 产业矩阵 | `/industry` | 无侧栏入口（深链） | — | 新增 |
 | 13 | 行业详情 | `/industry/:name` | 无侧栏入口（矩阵下钻） | — | 新增 |
-| 14 | 产业信号 | `/signals` | 产业研究 · 产业信号（QUOT-300 补入口，v1.3 校正） | — | 新增 |
+| 14 | 产业信号 | `/signals` | 无侧栏入口（深链） | — | 新增 |
 | 15 | 涨停样本 | `/limit-up` | 验证 · 涨停样本 | — | 新增 |
-| 16 | 个股深挖 | `/research/:code` | 无侧栏入口（由 20 落地页跳入） | — | 新增 |
+| 16 | 个股深挖 | `/research/:code` | 无侧栏入口（深链） | — | 新增 |
 | 17 | 研究报告 | `/research/:code/report` | 无侧栏入口（深挖页跳转） | — | 新增 |
 | 18 | 设置 | `/settings` | 侧栏底部固定项 | P-07 | 新增 |
 | 19 | 盯盘·竞价与盘中 | `/intraday`（QUOT-302 新增） | 盯盘 · 竞价与盘中 | — | 新增 |
-| 20 | 个股深挖落地页 | `/research`（QUOT-146 交付、QUOT-300 补入口；v1.3 才登记进本表） | 个股深挖 · 个股深挖（单页分组） | — | 新增 |
+| 20 | AI复盘（**模型面**） | `/review/ai`（QUOT-344 新增） | 复盘 · AI复盘 | — | 新增（S2 已落正文：§3.19 / §11.20，DEC-049） |
 
-> 任务书里的 `/radar`、`/radar/pool` 等路由在代码里不存在：雷达家族的实际路由是 `/news` `/calendar` `/pool` `/positions`（`App.tsx:72-75`）。本规范一律按代码写。
+> 任务书里的 `/radar`、`/radar/pool` 等路由在代码里不存在：雷达家族的实际路由是 `/news` `/calendar` `/pool` `/positions`（`App.tsx:65-68`）。本规范一律按代码写。
 
 **不覆盖（明确不做）**：
 
 - 任何行情采集、数据清洗、指标计算逻辑（数字只由程序算，AI 只写叙述）。
 - 交易日志 / 持仓 / 自选的网络读写（隐私数据只进本机 SQLite，`journal*` 不经 HTTP）。
+  **已开的两个回环口子**（不改写上面这句原文，只在清单上标注口径）：
+  **持仓**按 DEC-033 开读写面，**自选**按 DEC-052 只开**一条只读**路由
+  `GET /api/watchlist`（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，只 GET、
+  增删只走本机 CLI `ldst watch add|rm|list`，`note` 不出）。
+  **交易日志仍一条 HTTP 路由都不开**（`/api/journal/stats` 只出聚合数字那条边界不动）。
 - 买卖建议、目标价、收益预测（产品边界：复盘辅助，不输出交易信号）。
 - 新增数据源或"某个 peer 挂了就换一家"的降级（只允许同 peer 备工具 → 缓存回放）。
 - **视口 < 1024px**：v1.0 §2 写的「<1024 侧栏折叠为顶部横向导航」「<720 表格转卡片列表」在 `270caf8` 上没有任何实现（`Layout.tsx:194` 只有 `w-sidebar` / `rail:w-sidebar-rail` 两档，`rail` = `max-width:1279px`）。v1.1 把最低支持视口正式定为 `--ldst-bp-min: 1024px`，窄屏适配移出规范（DEC-040 §3，理由见 §12.4-B）。
-- `NAV_SECTIONS` 的**视觉层**（图标尺寸、分组标题字号、二级缩进、展开动效）——QUOT-306 阶段三（QUOT-316）负责。分组**结构**已由 DEC-044（QUOT-304）定稿，§2「导航顺序」即规范值；再要改分组或顺序，先在 `docs/decisions/` 立一条 DEC（只增不改），再同步本文，参照 v1.2 / v1.3 的做法。
-- **「自选」与「提醒 / inbox」不在 DEC-044 范围内**：看板侧没有这两屏，路由表、`docs/specs/`、读接口里都没有对应实体（DEC-044 §2.4）。**「候选池」不等于自选**——它是复盘程序生成的候选集，不是用户手工关注的清单，DEC-044 §3 已就此否决「改名并入本组」。将来真要落地，需要独立的需求 + SPEC + 后端契约，另立决策。
+- `NAV_SECTIONS` 的分组结构本身（QUOT-306 边界：QUOT-300 / QUOT-304 正在改同一文件）。§2 只登记**现状**并约束视觉层，不改导航信息架构。
 
 ## 1. 设计原则
 
@@ -64,8 +77,8 @@
 3. **不编造数据**：未接入、过期、降级、演示四种状态都必须显式可见；宁可显示「—」与原因，也不显示占位数值（`lib/format.ts:10 MISSING = '—'`）。
 4. **降级可见**：`freshness` / `source_status` / AI 降级 / 导出降级 / **演示数据**，全部有文字徽标，颜色只是辅助。
 5. **隐私不出本机**：日志与持仓常驻隐私说明（`radar/PositionsScreen.tsx:84-99`）；界面不出现"同步到云端""分享"类入口。
-6. **一致优于新奇**：全 18 屏共用一套外壳（`components/Layout.tsx` + `PageShell`）、一套徽标、一套空态、一套表体；例外必须在本文件登记。
-7. **一份实现，不许各写一套**：同一语义（溯源徽标、"接口未接入"空态、指标卡阵、状态条）在 18 屏里只允许有一个实现；需要差异时用 props，不复制粘贴（v1.1 实测有 4 份 `SourceBadge`、3 份"接口未接入"文案，全部列入 §12.5）。
+6. **一致优于新奇**：全 20 屏共用一套外壳（`components/Layout.tsx` + `PageShell`）、一套徽标、一套空态、一套表体；例外必须在本文件登记。
+7. **一份实现，不许各写一套**：同一语义（溯源徽标、"接口未接入"空态、指标卡阵、状态条）在 20 屏里只允许有一个实现；需要差异时用 props，不复制粘贴（v1.1 实测有 4 份 `SourceBadge`、3 份"接口未接入"文案，全部列入 §12.5）。
 
 ## 2. 全局外壳
 
@@ -81,8 +94,11 @@
 │  资讯雷达    │  │              + meta + actions（右）    │  │
 │ 盯盘         │  ├────────────────────────────────────────┤  │
 │ 复盘  ▾      │  │ 提示条区（Banner，最多同类 2 条）      │  │
-│  周度复盘    │  ├────────────────────────────────────────┤  │
-│ 日志  ▾      │  │ 主内容（卡 / 表 / 列表 / 图）          │  │
+│  每日复盘    │  ├────────────────────────────────────────┤  │
+│  AI复盘      │  │ 主内容（卡 / 表 / 列表 / 图）          │  │
+│  AI周报      │  │                                        │  │
+│  候选池      │  │                                        │  │
+│ 日志  ▾      │  │                                        │  │
 │ 验证  ▾      │  └────────────────────────────────────────┘  │
 │ ───────────  │                                              │
 │ 主题 Seg.    │                                              │
@@ -105,10 +121,10 @@
 | 键盘 | 首元素「跳到主内容」（`Layout.tsx:191`）；Tab 顺序与视觉顺序一致；`main` 可聚焦（`tabIndex=-1`） | `Layout.tsx:191,328` |
 | 焦点可见 | `:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible` 走 `--ldst-focus-ring` | `styles/index.css:30` |
 | 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx:327`），页面级 `Banner` 在 `PageHeader` 之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
-| 导航顺序 | **9 组 + 底部固定「设置」**（DEC-044）：首页 → 市场（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（情绪复盘 / 周度复盘 / 候选池）→ 日志（交易日志）→ **我的股票（我的持仓 / 事件日历）** → 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件与设置固定在侧栏底部。**顺序对应一天的工作流**（看市场 → 盯盘 → 复盘 → 记日志 → 落到我自己持有的东西 → 验证 → 往外看产业与个股），**不按字母、不按访问频率**（v1.0 §2 的这条原则在 v1.1 重写时丢了，v1.3 补回；DEC-044 的新组是插入，既有组的相对次序不变）。注意 §0 表 1–4 行的「复盘 → 盯盘 → 验证 → 日志」是**文档叙述顺序**（v1.0 的四屏），不是侧栏顺序。二级导航只在 `pages.length > 1` 时展开（数据驱动；日志组移出持仓后自动收成单页一级项，不做特例） | `Layout.tsx:75-162,252,357-365` |
+| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（每日复盘 / AI复盘 / AI周报 / 候选池，QUOT-344 / DEC-046 拆三独立入口）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；主题分段控件、「接入 AI」动作与设置固定在侧栏底部（QUOT-304 / DEC-044；接入 AI 见 v1.5） | `Layout.tsx` `NAV_SECTIONS` |
 | 侧栏本机说明 | 「仅监听本机回环 · 草稿只存本机 IndexedDB」常驻 | `Layout.tsx:320-322` |
 
-**20 屏导航可达性**（v1.3 复核）：QUOT-300 补上 `/industry` `/signals` `/research` 三条入口、DEC-044 补齐「我的股票」组后，侧栏 19 条入口覆盖 17 条路由；**只剩 3 条下钻深链没有独立侧栏项**，且都由有入口的页面链入——`/industry/:name`（产业矩阵行点击）、`/research/:code`（`/research` 落地页跳入）、`/research/:code/report`（深挖页「研究报告」按钮）。`/market?tab=` 三条入口同路径，靠 `?tab=` 判高亮。§3 的「入口」列必须写明用户实际怎么走到那里，写不出路径的按 R-05 处理。两层机器校验守住这件事：`frontend/tests/nav-routes.test.tsx`（侧栏 ↔ 路由表双向断言）与 `scripts/audit-nav-citations.py`（本文 §0/§3 ↔ 侧栏分组、条目、行号三项断言）。
+**20 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组、QUOT-344 给 `/review/ai` 建独立入口后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
 
 ## 3. 逐屏信息架构
 
@@ -119,35 +135,61 @@
 - **L2** 溯源、参数、辅助信息
 - **L3** 低频操作（导出、重置、调试）
 
-### 3.1 复盘（`/review`）— 主任务：收盘后 15–30 分钟内完成五段判断
+### 3.1 每日复盘（`/review`，**数据面**）— 主任务：收盘后 15–30 分钟内核对五段程序指标并写下判断
+
+**分工（DEC-049 §2）**：这一屏只有数据——三张指标卡 + 五段程序指标 +「我的判断」草稿。
+AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」全部在 AI复盘 `/review/ai`（§3.19），
+本屏一个都不出现，只留一个「AI复盘」出口。两屏读同一份 `/api/review`，各取一半。
 
 | 层级 | 内容 |
 |---|---|
-| L0 | 标题「收盘复盘」、交易日选择、草稿保存时间、数据可信徽标 |
-| L1 | 指标卡 ×3：情绪温度 / 晋级率 / 梯队断层（程序直出，不可编辑） |
-| L1 | 五段结果：情绪 → 资金 → 题材 → 龙虎榜 → 龙头（顺序固定） |
-| L1 | 每段内「AI 叙述」（只读）与「我的判断」（可编辑，自动存本机） |
-| L2 | 每段的模型名、降级标记、段落数据时间；指标卡的数据时间与来源 |
-| L3 | 重新生成、重试失败段、导出（PDF→MD 降级）、清空草稿 |
+| L0 | 标题「每日复盘」、交易日、演示/强制态徽标、副标题（`日期 · 五段中 N 段缺数` / `草稿 N 字 · 最后写入 HH:mm`） |
+| L1 | 指标卡 ×3：情绪温度（`hero`）/ 晋级率 / 梯队断层（程序直出，不可编辑，右上角 `SourceBadges`） |
+| L1 | 「当日摘要」卡：**程序直出**（`pipeline._headline()` 用情绪温度与天梯拼的，不是模型产物；此前挂着「AI 摘要」+ 模型名，DEC-049 §6 纠正为错标） |
+| L1 | 五段结果：情绪 → 资金 → 题材 → 龙虎榜 → 龙头（顺序固定）；每段左栏「程序指标 · 不可编辑」、右栏「我的判断」（可编辑，自动存本机） |
+| L2 | 段内 `数据来源 <source_detail>` 脚注、段级数据态徽标（`程序直出` / `缺数` / `待生成`）、段级缺失原因行、页脚指标口径 + AI复盘出口 |
+| L3 | 刷新、清空当日草稿（§4.3 二次确认，只清当前交易日）、跳 AI复盘 |
+
+**交易日与草稿的归属（QUOT-354 BUG-B / BUG-C，DEC-049 §3 的落地口径）**
+
+- **交易日只有一个来源：URL `?date=`**。深链优先于一切本机状态；页内「交易日」选择器改的是查询串
+  （`setSearchParams(..., { replace: true })`，保留 `demo` / `state` 等其它参数），不是本机 store。
+  `review_draft` 分片**不再存 `tradeDate`**——把「当前看哪天」写进持久化状态，就会让 11-03 的深链
+  被 11-02 的草稿反向覆盖，人照着写判断直接串到另一天上（P1）。
+- **草稿按交易日分槽**：`slots[<YYYY-MM-DD>] = { sections, updatedAt }`，切日期只换这一天的五段正文；
+  「清空当日草稿」只删当前槽，其它日期的笔记留着。旧版单槽分片（`tradeDate` + `sections`）在恢复时
+  一次性归到它自己记录的那天（`stores/reviewDraft.ts:normalizePersistedSlots`，走 `sanitize` 读取归一，
+  不动全局 `SCHEMA_VERSION`），不让人丢笔记。
+- 「已恢复 … 的草稿」横幅、`草稿 N 字`、`最后写入` 三处**都按当前交易日算**，不是全片合计；换日期后重新快照。
+
+**段内程序指标**（`frontend/src/screens/review/SectionMetrics.tsx`）：key 走登记表
+（`temperature` → 情绪温度、`seal_rate` → 封板率、`leader_candidates` → 龙头候选 …），
+**未登记的 key 不渲染**，后端 key 不直显；取值口径与三张指标卡同源——同一个指标在卡上与段内必须是同一个字符串。
+新增指标要同时改 `review/pipeline.collect_metrics` 与该登记表。
 
 **布局**
 
-- 指标卡：三列等宽（`grid-cols-1 desk:grid-cols-3`，`ReviewScreen.tsx:666`），数值用等宽数字，右上角放溯源徽标。
-- 五段区：纵向卡片；`≥1280`（`desk:`）时每段内部左右两栏（`grid gap-4 desk:grid-cols-[2fr_3fr]` = AI 叙述 40% / 我的判断 60%，`ReviewScreen.tsx:763`），`rail:` 改为上下堆叠且 AI 叙述在上。**v1.0 写的 `≥1100px` 阈值不存在**（该档断点在系统里没有），v1.1 起以 `desk:` 为准。
-- 段落状态：`待生成`（灰）/ `生成中`（骨架 + 扫光）/ `已完成`（正常）/ `降级`（黄边 + 「降级完成」徽标）/ `失败`（红边 + 段内错误面板，成功段保留）。
+- 指标卡：`grid-cols-1 desk:grid-cols-3`，数值等宽，右上角放溯源徽标（统一实现，§5.5）。
+- 五段区：纵向卡片；`desk:`（≥1280）时每段内部 `grid gap-4 desk:grid-cols-[2fr_3fr]`（程序指标 40% / 我的判断 60%），`rail:` 上下堆叠且程序指标在上。
+- 段级数据态只看程序指标有没有落盘（`metrics.available`），**与段级 AI 成败无关**（那是 §3.19 的事）。
 
 **状态矩阵**
 
 | 状态 | 表现 | 文案要点 |
 |---|---|---|
-| 空态（该日无复盘） | 指标卡显示「—」+「未生成」；五段只显示输入框与引导 | 「先同步数据再生成复盘；也可以先写判断，正文会存本机」 |
-| 加载态 | 指标卡骨架 3 个 + 五段骨架；工具栏按钮禁用并显示「生成中…」 | 顶部状态行「程序指标计算中，AI 叙述随后到达」 |
-| 部分失败 | 顶部黄条 + 失败段内错误面板；成功段内容保留 | 「5 段中 2 段失败，已保留 3 段，可单独重试」 |
-| 全失败 | 顶部红条 + 五段错误面板 + 「导出 Markdown」可用 | 「AI 全部失败，指标与正文仍可查看/导出」 |
-| 未接入 | 指标区显示未接入说明，不显示数值 | 「本地接口未接入：先运行 `ldst run`」 |
-| 断网 | 顶部红条 + 「重试」 | 不丢草稿；输入框保持可写 |
+| 空态（该日无产物） | 指标卡 `—` + 未生成原因；五段 `待生成`；生成路径卡（命令 + 复制命令 + 重新检查） | 「在终端运行 `ldst review --date=YYYY-MM-DD` 生成五段复盘，落盘后点重新检查。**五段数据在跑过这条命令后即有；没有配置模型凭据只影响 AI复盘屏，不影响本屏。**」 |
+| 加载态 | `ScreenSkeleton metrics={3} rows={5}` + `role="status"`「程序指标计算中。」 | 不自造 spinner（§6.4） |
+| 部分失败（请求级） | `ErrorBlock variant="banner"`「部分数据源不可用」+「重试取数」 | 缺处以 `—` 标注；草稿仍可继续写 |
+| 部分缺失（段级 `available: false`） | `Banner danger`「五段中 N 段数据缺失」+「定位首个缺失段」（§5.2：数据集缺项 = `partial` → danger，不得给成 warn）；该段 `缺数` 徽标 + 原因行，段内计数整列 `—` | 「缺的是本机当天该数据集的产物，**不是模型**」+ `ldst sync` → `ldst review` 的补数路径 |
+| 全失败 | `ErrorBlock` + 重试取数 | 不编造任何数字 |
+| 未接入 / 断网 | `OfflineBanner` + `Banner warn`「缓存回放（只读）」或「没有可回放的缓存」 | 只回放本机 IndexedDB 同日快照（`review_snapshot_cache_v1`，全仓唯一键）；绝不回落 `demo.ts` |
 
-**禁止**：AI 文本里出现精确指标数字（"今日情绪 62"）时，视觉上不得渲染为指标样式；指标卡不允许直接编辑。
+**禁止**：本屏出现 `narrative`、模型名、段级 `status`、「重新生成 / 重试失败段」（DEC-049 §2）；
+指标卡或段内指标出现可编辑入口；`available: false` 的段把 `0` 当读数显示（QUOT-319）；
+演示数据预填「我的判断」或写本机草稿（§5.6）。
+
+**规范缺口**：v1.0 在本屏 L3 登记的「导出（PDF→MD 降级）」两屏都没有实现——导出在 CLI 侧
+（`src/ladderstock/review/export.py`），页面不建占位入口。该条登记为 §12.5 的 R-27，二选一收口：补页面入口或从规范删除。
 
 ### 3.2 盯盘（`/watch`）— 主任务：盘中识别阈值信号并决定是否行动
 
@@ -245,7 +287,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏首项「首页」；`/index.html` 与旧根路径重定向到此 | `App.tsx:59,86`、`Layout.tsx:80` |
+| 入口 | 侧栏首项「首页」；`/index.html` 与旧根路径重定向到此 | `App.tsx:54,78`、`Layout.tsx:66-70` |
 | 工具栏 | `PageHeader` 标题「首页」；subtitle = 一句话可信摘要（`数据完整 · 更新于…` / `部分数据降级 · …` / `本地服务未连接` / `取数失败`）；badge = `DemoStateBadge`；右侧唯一主操作「刷新全部」 | `HomeScreen.tsx:270-275,318-335` |
 | L0 | 摘要 + `TemperatureBar`（情绪温度条）+ 5 张指标卡（`grid-cols-2 gap-4 rail:grid-cols-3 desk:grid-cols-5`） | `HomeScreen.tsx:372-427` |
 | L1 | 「待办」卡（手写 `ul`/`Link` 行，`min-h-control px-4 py-2`）→ 跳转 `/validate` `/review` `/settings` | `HomeScreen.tsx:429-447` |
@@ -259,7 +301,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「市场」下 3 个入口指向同屏不同 tab；高亮跟随 `?tab=`（默认 `sentiment`） | `Layout.tsx:87-89,194-200` |
+| 入口 | 侧栏「市场」下 3 个入口指向同屏不同 tab；高亮跟随 `?tab=`（默认 `sentiment`） | `Layout.tsx:72-78,153-159` |
 | tab 同步 | 状态只存 URL：`params.get('tab') ?? 'sentiment'`；切 tab 走 `push`，改日期走 `replace` | `MarketScreen.tsx:288-302` |
 | 工具栏 | `PageHeader` 标题「市场」+ subtitle 摘要 + `DemoStateBadge`；右侧唯一「刷新」 | `MarketScreen.tsx:446-471` |
 | 选择器 | 一行 `flex flex-wrap items-end gap-3`：日期 `Field`（`w-44`）+ `Segmented`（**不是** C-08 Tabs）+ 说明「三段共用同一个交易日」 | `MarketScreen.tsx:506-522` |
@@ -272,12 +314,12 @@
 
 **图表口径**：网格 `width:1`、轴标签 `12px`、轴线尺寸 44/36、容器 padding `[8,8,0,0]`、隐藏 legend、`minWidth 240` + ResizeObserver。**折线线宽必须是 1.5px**（token 注释口径），当前实现为 2 → R-23。
 
-### 3.7 周度复盘（`/weekly`）— 主任务：一周一次，把五段结论回看成趋势
+### 3.7 AI周报（`/weekly`）— 主任务：一周一次，把五段结论回看成趋势
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「复盘」分组「周度复盘」（复盘组的第二项） | `Layout.tsx:111`、`App.tsx:66` |
-| 工具栏 | `PageHeader` 标题「周度复盘」；subtitle `${week} · start ~ end · N 个交易日有数据`；右侧 `上周 / 下周 / 刷新` 三键（次操作在左，主操作「刷新」在最右） | `WeeklyScreen.tsx:259-298` |
+| 入口 | 侧栏「复盘」分组第三项，标签「AI周报」（QUOT-344 / DEC-046 改导航文案）。**屏内 `h1` 与侧栏同名**：`PageHeader title="AI周报"`——此前导航改了而屏内仍挂「周度复盘」，同一屏两个名字（QUOT-354 BUG-A 收口；路由 `/weekly` 不变） | `Layout.tsx` `NAV_SECTIONS`、`WeeklyScreen.tsx:296` |
+| 工具栏 | `PageHeader` 标题「AI周报」；subtitle `${week} · start ~ end · N 个交易日有数据`；右侧 `上周 / 下周 / 刷新` 三键（次操作在左，主操作「刷新」在最右） | `WeeklyScreen.tsx:288-320` |
 | 主区 | 4 指标卡（首卡 `hero` + `Sparkline`）→ 程序直出概览卡（手写 `section` + `Badge`）→ 缺日 `Banner info` → 五段 AI `SectionCard`（编号标题 + 状态徽标 + `降级` + `AiErrorNotice`）→ 失败汇总 `Banner danger` → 每日序列 `DataTable`（compact）→ 两列 `min-[1100px]:grid-cols-2`（涨跌分布 / 主线题材 `HBarList`）→ 本周龙头 / 待验证结算 | `WeeklyScreen.tsx:371-610` |
 | 六态 | loading/error/offline 齐全；**empty 只出头部 + 一条横幅**，不保留指标卡阵（与其它屏不对称，R-15）；每日序列表的空态是**裸文本**不是 C-17（`WeeklyScreen.tsx:502`，R-16） | `WeeklyScreen.tsx:300-337,502` |
 | 溯源 | 屏内第四份 `SourceBadge`，直接把信封原值渲染：`freshness==='cached'?'缓存':envelope.freshness` → `realtime` / `archive` **上屏英文 key**（R-06）；AI 降级走 `Banner warn` + `Badge 降级` + `AiErrorNotice kind="degraded"` | `WeeklyScreen.tsx:166-179,376,457-468` |
@@ -288,7 +330,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「市场」分组「资讯雷达」 | `Layout.tsx:90`、`App.tsx:72` |
+| 入口 | 侧栏「市场」分组「资讯雷达」 | `Layout.tsx:79` |
 | 工具栏 | 标题「资讯雷达」；subtitle `窗口 …→… · 共 N 条 · 已抽取事件 N`；右侧「刷新」 | `NewsScreen.tsx:433-451` |
 | 主区 | `grid-cols-[184px_minmax(0,1fr)_340px] gap-4 desk:grid-cols-[200px_minmax(0,1fr)_400px]` 三列：来源列 / 时间线列（手写 `ul`/`li`/`button`）/ 详情列（`article`） | `NewsScreen.tsx:555,101-360` |
 | 六态 | 整屏 5 态齐全（loading `ScreenSkeleton metrics=3 rows=7` / offline / error / empty 含"接口未接入"分支 / partial）；列级只有空态，**无列级 loading/error** | `NewsScreen.tsx:457-547,206,285` |
@@ -300,7 +342,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「我的股票」分组「事件日历」（DEC-044 由「市场」迁入，路径不变） | `Layout.tsx:130`、`App.tsx:73` |
+| 入口 | 侧栏「市场」分组「事件日历」 | `Layout.tsx:80` |
 | 工具栏 | 标题「事件日历」；subtitle `${month} · N/N 小节有源 · 规则抽取 N 条`；右侧 `‹ 本月 › 刷新` | `CalendarScreen.tsx:371-414` |
 | 主区 | `grid-cols-[minmax(0,1fr)_360px] desk:grid-cols-[…_400px]`：月格（`grid-cols-7 gap-1`，格 `min-h-[76px] p-1.5`）+ 当日面板；下方「小节状态」卡（`gap-3 p-4 desk:grid-cols-2`） | `CalendarScreen.tsx:508,125-178,308` |
 | 六态 | 整屏 5 态齐全；**月格无自身 loading/empty/error**，空白天只渲染空白块 | `CalendarScreen.tsx:420-506,135` |
@@ -312,7 +354,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「复盘」分组「候选池」（DEC-044 留在复盘：候选池是复盘产出，不等于「自选」，见 §0 不覆盖与 DEC-044 §3） | `Layout.tsx:112`、`App.tsx:74` |
+| 入口 | 侧栏「复盘」分组「候选池」 | `Layout.tsx:99` |
 | 工具栏 | 标题「候选池」；subtitle `${date} · 高度 … · N 只候选 · 来源 …`；右侧条件性「导出」+「刷新」 | `PoolScreen.tsx:286-307` |
 | 主区 | 3 指标卡（`grid-cols-3 gap-3`）→ `DataTable density=compact maxHeight=calc(100vh - 360px) onRowClick` → 页脚口径 → 行详情 `Drawer width="lg"` | `PoolScreen.tsx:404-442` |
 | 表体 | **抽屉内的分项表必须是第二份手写 `table`**——这是全仓唯一真违规裸表，根因是 C-09 缺 `summaryRow` | `PoolScreen.tsx:125-183`、`ui/Table.tsx` |
@@ -325,7 +367,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「我的股票」分组「我的持仓」（DEC-044 由「日志」迁入；与交易日志同属本机私有数据，但不再同组——隐私说明常驻本屏） | `Layout.tsx:129`、`App.tsx:75` |
+| 入口 | 侧栏「日志」分组「我的持仓」（与交易日志同组，同为 `本机私有`） | `Layout.tsx:109` |
 | 工具栏 | 标题「我的持仓」；subtitle `${as_of} · N 只 · 价格来源 …`；右侧 `导入本地 JSON / 刷新 / 新增持仓`（主操作最右） | `PositionsScreen.tsx:633-682` |
 | 主区顺序 | 隐私条与消息区 → 5 估值卡（`grid-cols-2 gap-3 desk:grid-cols-5`）→ 明细 `Card`+`CardBody p-0`+`DataTable` → 集中度 2 张 `SectionCard`（`HBarList`）→ 页脚 → `Drawer`/`ConfirmDialog` | `PositionsScreen.tsx:684-871,109-224` |
 | 六态 | 整屏 5 态齐全 + 表内空态 + 集中度/行业空态；**估值卡无卡级 empty/loading**；导入视图直接跳过估值卡与集中度 | `PositionsScreen.tsx:740-841,109-157,843` |
@@ -337,7 +379,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「产业研究」分组「产业研究」（QUOT-300 补的侧栏一级入口，v1.3 校正本行——此前写的是「无侧栏入口」） | `App.tsx:77`、`Layout.tsx:148` |
+| 入口 | **无侧栏入口**，深链进入；需从首页/市场补跨链（R-05） | `App.tsx:70`、`Layout.tsx:64-119` |
 | 工具栏 | 标题「产业研究」；subtitle `SW 一级 · N 个行业 · 数据时间 …`；右侧「刷新」 | `IndustryMatrixScreen.tsx:286-300` |
 | 主区 | partial 条 → 筛选行（`flex-wrap gap-3`：`Segmented` + `Select w-32` + `Input w-56` + 计数）→ `DataTable density=compact maxHeight=calc(100vh - 280px)` → 图例卡「读图与口径」 | `IndustryMatrixScreen.tsx:360-451` |
 | 六态 | 5 态齐全（含 `MatrixEmpty`）+ 表内 filtered-empty | `IndustryMatrixScreen.tsx:302-354,410` |
@@ -350,7 +392,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 矩阵行点击下钻；`/industry/:name` 也可深链 | `App.tsx:78` |
+| 入口 | 矩阵行点击下钻；`/industry/:name` 也可深链 | `App.tsx:71` |
 | 工具栏 | 标题 = 行业名（回退「行业详情」）；subtitle = 代码 · 成分数 · 状态；badge 组 = `DemoStateBadge` + 状态 + `未绑定`；右侧「产业矩阵」返回 + 「刷新」 | `IndustryDetailScreen.tsx:430-462` |
 | 主区 | `grid-cols-1 gap-4 desk:grid-cols-12`：左 8 列 = 五维卡阵（`grid-cols-2 gap-3`）+ 成分股 `DataTable maxHeight=360px`；右 4 列 = 相关研报/资讯、口径与成分、溯源与缺口 | `IndustryDetailScreen.tsx:529-665` |
 | 六态 | 整屏 5 态齐全；`DetailEmpty` 细分四种空因（非法名 / 无匹配候选 / 五维全 null / 接口未接入）；成分与相关有子空态；**溯源卡无条件常渲**（无自身空态） | `IndustryDetailScreen.tsx:466-513,337-418,555,576,624` |
@@ -362,7 +404,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「产业研究」分组「产业信号」（QUOT-300 补的侧栏一级入口；行业页跳转仍在） | `App.tsx:79`、`Layout.tsx:149` |
+| 入口 | **无侧栏入口**，深链 / 从行业页跳转（R-05） | `App.tsx:72` |
 | 工具栏 | 标题「产业信号」；subtitle `规则判定基于 R5 指标 · 数据时点 … · 命中 N 条`；右侧「刷新」 | `SignalsScreen.tsx:235-247` |
 | 主区 | 3 指标卡（`grid-cols-3 gap-3`）→ 筛选行（`Segmented` + `Select w-56` + `Select w-40` + 计数）→ `desk:grid-cols-12`：左 8 列 `DataTable maxHeight=calc(100vh - 380px)`、右 4 列规则卡 → 证据 `Drawer width="lg"` | `SignalsScreen.tsx:343-423` |
 | 六态 | 5 态齐全；空态区分「接口未接入」与「没有命中」；表内 filtered-empty；规则卡有空态 | `SignalsScreen.tsx:252-331,299-311,409,501` |
@@ -374,7 +416,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「验证」分组「涨停样本」；支持 `?date=` 深链 | `Layout.tsx:139`、`App.tsx:70` |
+| 入口 | 侧栏「验证」分组「涨停样本」；支持 `?date=` 深链 | `Layout.tsx:113-119`、`App.tsx:63` |
 | 工具栏 | 标题「涨停样本」；subtitle `date · count 只 · 来源 source_detail`；右侧「刷新」 | `LimitUpScreen.tsx:122-137` |
 | 主区 | partial 条 → 单张 `DataTable density=compact maxHeight=calc(100vh - 320px) initialSort=streak desc` → 页脚口径；无卡片 | `LimitUpScreen.tsx:223-250` |
 | 六态 | 5 态齐全；「当日涨停池未同步」空态与表内空态分别存在 | `LimitUpScreen.tsx:142-217,238` |
@@ -385,7 +427,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 本屏无独立侧栏项；`/research/:code`（`App.tsx:83`）由 `/research` 落地页链入——侧栏「个股深挖」分组「个股深挖」（`Layout.tsx:157`）指向落地页 | `research/links.ts:27`、`Layout.tsx:157` |
+| 入口 | **无侧栏入口**；`/research/:code`（`App.tsx:75`）；站内入口由本屏自产的链接提供（R-05） | `research/links.ts:27` |
 | 工具栏 | 标题 = 名称 ?? 代码 ??「个股深挖」；subtitle `code · date · 个股深挖`；meta「六段齐备 · 更新于…」/「部分段落未完成…」；badge = 演示 `Badge` + `DemoStateBadge`；右侧「刷新」+ 主操作「研究报告」 | `ResearchDetailScreen.tsx:507-560` |
 | 主区 | `flex flex-col gap-5`；三行 `grid gap-4 desk:grid-cols-12`，每行 7/5 两卡：公司画像 + 盈利预期 / 财务趋势 + 风险清单 / 估值基准面板 + 估值分位与六段状态；底部 `ProvenanceDrawer` | `ResearchDetailScreen.tsx:648-720` |
 | 六态 | 整屏 5 态齐全；段内无 artifact → `StageProblem`（含 CLI 提示 + 去报告页）；预测降级 → 内嵌 `Banner warn`；序列/风险/分位各有空态；**分位为空时是裸 `<p>`** | `ResearchDetailScreen.tsx:562-637,162-192,348,457-460` |
@@ -398,7 +440,7 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 深挖页「研究报告」按钮 / 段内跳转 / 深链；`?stage=` 选段（默认第一个失败段，否则 `report`） | `App.tsx:84`、`ResearchReportScreen.tsx:117-120` |
+| 入口 | 深挖页「研究报告」按钮 / 段内跳转 / 深链；`?stage=` 选段（默认第一个失败段，否则 `report`） | `App.tsx:76`、`ResearchReportScreen.tsx:117-120` |
 | 工具栏 | `PageHeader` subtitle `code · date · 研究报告`；meta「N 段失败 · N 段待跑」；右侧「刷新」+「个股深挖」（左箭头） | `ResearchReportScreen.tsx:152-199` |
 | 主区 | `flex flex-col gap-4 desk:flex-row`：左 sticky 段轨卡（`desk:w-[208px] desk:top-4`，`CardBody p-2`，`StageRail`）+ 右 `Card flex-1`（标题 `${ordinal}. ${stage.title}`，副标题复合串「第 N 段 · 状态 · 降级 · mode=… · 模型=…」）→ 正文 `MarkdownView` → 页脚计数 | `ResearchReportScreen.tsx:271-330,427-448` |
 | 六态 + 运行态 | 整屏 5 态；段级四分支：`running` → `RunProgress`（`role="status"` + `role="progressbar"` + `aria-valuenow`）、`failed` → `ErrorBlock` + 失败类别 + 「重试本段」+ 等价命令 + 不可重试说明、`pending` → `EmptyState` +「运行本段」+ 等价命令、`ok` → 降级条 + 正文；`run.error` → `Banner danger` +「再试一次」；轮询 1s 至终态 | `ResearchReportScreen.tsx:55-84,330-424`、`useResearchRun.ts:11,56-84` |
@@ -411,13 +453,48 @@
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏底部固定项（不进 `NAV_SECTIONS`）；四段 peers / ai / ports / about 走 `?tab=`，切段用 `replace` | `Layout.tsx:162,357-365`、`SettingsScreen.tsx:74,82-91,1068-1078,1075` |
+| 入口 | 侧栏底部固定项（不进 `NAV_SECTIONS`），其上是「接入 AI」动作按钮；四段 peers / ai / ports / about 走 `?tab=`，切段用 `replace`。AI 段顶部是「看板自己的 AI」状态卡（`/api/control/self-ai`）+「打开接入向导」；向导抽屉也可用 `?ai=1` 深链打开 | `Layout.tsx`、`SettingsScreen.tsx`、`components/AiConnectDialog.tsx` |
 | 工具栏 | 标题「设置」；subtitle 随状态切换（离线 / 控制面未启用 / `N 个模块 · 运行中 M` / 读取中）；右侧主操作「刷新状态」 | `SettingsScreen.tsx:1178-1207` |
 | 主区 | 左 176px 竖排二级导航（`w-menu`，手写 `nav`，**不用** C-08 Tabs）+ 右 `min-w-0 flex-1`：peers 为 `SectionCard bodyClassName="p-0"` 内 `ul gap-3 p-4` 的 `PeerCard`；ai 为表单卡；ports 为 `DataTable`（5 列）+ 配置目录卡（`Badge` chips）；about 为两列 `dl`（`desk:grid-cols-2 gap-x-5`）+ 边界声明 + 外观 `Segmented` | `SettingsScreen.tsx:1399-1405,1280-1389,991-1039` |
 | 六态 | 整屏 5 态齐全（`?state=` 支持）；**缺段级状态**：`health`/`stateConfig` 的 loading 不 gate about（行显示 `—`+注）；AI 段无自身 loading/empty；「一键体检」永久禁用；抽屉保存错误只有行内文本 | `SettingsScreen.tsx:965-986,740,1350` |
 | 反馈 | 保存/无改动/任务完成/动作成败走 `Toasts`；`dirty` 才允许保存（`disabledReason="没有修改"`）；连通性结果走行内块 | `SettingsScreen.tsx:640-677,907-931,1130-1166` |
 
 **必须整改（观感一致性优先级最高）**：同屏挂了**两套** Toast 栈（屏级 `SettingsScreen.tsx:1473` 与 AI 段内部 `:773,934` 各一份 `useToasts`）→ R-20；Toast 无进出场过渡（`ui/Overlay.tsx`、`ui/Feedback.tsx` 内零 `transition`）而 token 注释承诺 180ms → R-19；离线时仍把假定默认端口 `5950/5951` 当真值展示、失败路径显示「耗时 0ms」、PID 缺失显示「?」→ R-07。
+
+### 3.19 AI复盘（`/review/ai`，**模型面**）— 主任务：看模型当天写了什么、哪段没写出来、把没写出来的重跑
+
+**分工（DEC-049 §2）**：只放模型产物与它的成败。程序指标、指标卡、「我的判断」草稿都在 §3.1，本屏不重复；
+两屏读同一份 `review/<date>.json`，段名映射 / 状态表 / 缺失口径 / 三-case 判定只在
+`frontend/src/screens/review/parse.ts` 一处实现，屏侧不各自 `if (section.status === …)`。
+
+| 项 | 规范 | 代码依据 |
+|---|---|---|
+| 入口 | 侧栏「复盘」组第二项「AI复盘」（`Bot` 图标，DEC-046 §2）；从数据面过来有两个出口：页头「AI复盘」按钮 + 页脚说明里的行内链接 | `Layout.tsx` `NAV_SECTIONS`、`ReviewScreen.tsx` |
+| 工具栏 | 标题「AI复盘」；副标题随态：`日期 · 模型 <名> · 生成于 HH:mm` / `日期 · 产物在，但五段都没跑过模型` / `日期 · 五段中 X 段失败 / Y 段降级` / `日期 还没有复盘产物 · 运行 ldst review --date=…`；右侧 `刷新` + 主操作 `重新生成`（存在可重试失败段时文案为 `重试失败段`） | `AiReviewScreen.tsx` |
+| 主区 | 交易日（**只跟 `?date=`**，不写 `reviewDraft`，DEC-049 §3）→ `模型 <名/未接入>` 徽标 + `SourceBadges`（同一份产物的外壳字段）+ 产物生成时间 → 页面级横幅（case 2 / case 3）→ 五段 `SectionCard`：编号标题 + 段级状态徽标 + `降级` + 段内「重跑该段」→ 段内「AI 叙述」+ 右侧模型名 → 页脚口径说明 + 回数据面链接 | 同上 |
+| 三-case | **判定是纯函数 `classifyAiCase()`，只读 `ai.model` / 逐段 `model`+`status` / `ai_failures[]`，不解析提示文案**：① `no-artifact`（产物不存在）→ `EmptyState` 引导 `ldst review --date=…` + 复制命令 + 重新检查；② `model-unconfigured`（产物在、五段都没跑过模型）→ `Banner warn`「模型未接入：五段都没有跑过模型」+「接入 AI」（`/settings?tab=ai`）+「接入后重新生成」，正文必须写「这里缺的是模型，不是数据」并指出程序指标在 `/review`；③ 段级失败 → 逐段徽标 + `AiErrorNotice` + 按段重跑，页面级 `Banner danger`「五段中 X 段失败、Y 段降级（网络 / 截断）」 | `review/parse.ts`、`tests/review-split.test.tsx` |
+| 六态 | loading：`ScreenSkeleton metrics={0} rows={5}` + `role="status"`「五段 AI 叙述取数中。」（本屏不取 `/api/sentiment`）；error：`ErrorBlock` + 重试取数；offline：`OfflineBanner`，生成/重跑入口禁用且原因可读（不假装能跑）；partial：段级失败/降级逐段标注，成功段内容保留；empty：case ① | `AiReviewScreen.tsx` |
+| 控制面 | `POST /api/control/ai/generate`（`api.control.generateAi`）与按段 `/api/control/ai/retry`（`retryAi`）→ 1.5s 轮询 `/api/control/jobs/{id}` 到 `ok`/`failed`，成功即重新取数并提示；任务失败走 `AiErrorNotice kind="internal"` +「查看 AI 状态」跳 `/settings?tab=ai`；**演示态全部禁用且原因可读、不建任务**（§5.6 / DEC-049 §7） | `api.ts`、`AiReviewScreen.tsx` |
+| 段级重试性 | `truncated` / `internal` 两类不给「重试」主按钮（§5.4）；其余按段可重跑，只重跑本段 | `review/parse.ts:isRetryableFailure` |
+
+**禁止**：三张指标卡、逐段 `metrics`、「我的判断」编辑框（都在 §3.1）；把「模型未配」显示成「数据缺失」或反过来（DEC-049 §4）；`model-unconfigured` 时再叠一条泛化的「几段降级」横幅（两条横幅讲同一件事，用户读不出重点）；未配置提示在五段各贴一遍页面级说明（页面级只说一次，段内只说本段）。
+
+### 3.20 首页搜索/提问面板（`/` 上的模态面板，QUOT-348）
+
+**规格真源是 `docs/specs/home-search.md`（v1.1，含原型 `docs/specs/home-search-prototype.html` 与 10 张规格图）**；本节只登记外壳级事实，不在此重复交互细节，避免第二个真源。
+
+| 项 | 规范 | 依据 |
+|---|---|---|
+| 入口位置 | 首页 `PageHeader` 的 `actions` 槽，「刷新全部」**左侧**；宽 `w-64`（256px，rail 档 `w-44`），`size=md`，`leadingIcon=Search`，placeholder「搜索个股 / 行业 / 资讯」，右侧键位提示 `/` | 规格 §4.1–§4.2 |
+| 打开条件 | `pointerdown` 或 `Enter`；**Tab 造成的 focus 不打开**（否则键盘用户每 Tab 一次被遮罩打断） | 规格 §4.5 / §14-A2 |
+| 面板尺寸 | `role="dialog" aria-modal="true"`，宽 640px（复用 `w-drawer-wide`），上偏移 64px，**最大高 420px 且必然内部滚动**（内容约 550px）；`max-h` 与滚动条只在面板内 | 规格 §5.2–§5.3 |
+| 结果分组顺序 | **固定三组**：`个股` → `行业 / 题材` → `资讯`，顺序与组名直接渲染数据层的 `result.groups` / `group.label`（`SEARCH_GROUP_ORDER`、`GROUP_LABELS`，`lib/searchCore.ts:37-43`），UI 不自己排、不写字面量 | 规格 §6 / §9.4 |
+| 每组上限 | 第一期 UI 传 `hitLimit: 5`；组头计数 = 本轮返回条数（无截断前总数，§14-A5） | 规格 §6.1 |
+| 组头徽标 | **一枚** `SourceStatusBadge`（`数据完整 / 已降级 / 部分缺失 / 未取到`），取值由 `GroupStatus` 映射；**面板内不出 `freshness` 徽标**（一次打 6 个源，无单一新鲜度）。加载中的组头留空 | 规格 §6.7 / §8.4 / §8.8 |
+| 键盘与焦点 | 焦点落输入框；`↑/↓` 移动高亮（`aria-activedescendant`，结果行 `tabIndex={-1}` 不进 Tab 序列）；`Enter` 跳转；`Esc` / 遮罩 / 选中行 = 三条关闭路径，关闭前 `runner.cancel()`，焦点归还入口；`Tab` **在面板内循环不逃出模态**（复用 `useModalChrome`，需 export）；可 Tab 件 ≤5 | 规格 §5.4 / §7.1–§7.2 |
+| 四态 | 空输入（不发任何请求）/ 加载中（骨架 + `aria-busy`）/ 无结果（「没匹配 ≠ 不存在」）/ 源失败降级（单组挂不影响另两组）/ 离线（`Banner tone="warn"`，入口不禁用）——逐态文案见规格 §8.8 | 规格 §8.8 |
+| 竞态 | 只接受最后一次响应：`if (result.superseded) return`，不自己比序号 | 规格 §8.3 / §9.4 |
+| 禁止 | 面板内不得出现 `DemoStateBadge` 或任何演示水印；不得自带第三份 label map；不得新增颜色令牌 | 规格 §6.7 / §10.2 / §5.5–§5.6 |
 
 ## 4. 状态恢复交互
 
@@ -470,9 +547,9 @@
 - 丢弃类提示与「已恢复」提示互斥：同一分片不可能既恢复又丢弃。
 - **v1.1 校正**：「迁移丢弃」由 v1.0 的 danger 改为 warn，与实现一致（`PersistenceBanner.tsx:24-33`）；判据是它丢的是历史草稿、不阻断当前输入，而 danger 保留给「恢复失败导致本轮从空态启动」。理由见 §12.4-C。
 
-### 4.5 全 18 屏的持久化面（v1.1 新增）
+### 4.5 全 20 屏的持久化面（v1.1 新增；v1.7 按 20 屏对齐）
 
-只有下表列出的屏有可恢复状态；其余屏刷新即重取，**不得**假装在持久化。
+只有下表列出的屏有可恢复状态；其余屏刷新即重取，**不得**假装在持久化。20 屏 = 有可恢复状态的 6 屏（复盘 / 盯盘 / 验证 / 日志·我的持仓 / 设置）+ 明确无本机写入的 2 屏（盯盘·竞价与盘中 / AI复盘）+ 其余 12 屏。
 
 | 屏 | 持久化载体 | 键 | 依据 |
 |---|---|---|---|
@@ -480,8 +557,10 @@
 | 盯盘 | `watch_snapshot`（TTL 300s）、`watch_settings` | 本机 | DEC-037、`WatchScreen.tsx:180-185` |
 | 验证 | `validation_draft`（本地）/ 后端 `validation` 缓存 | IndexedDB | `ValidateScreen.tsx:579-582` 双模文案 |
 | 日志 / 我的持仓 | 本机 SQLite | 不经 HTTP 读；写走 DEC-033 | §3.4、§3.11 |
+| 盯盘·竞价与盘中 | 无本机写入（快照归「盯盘」的 `watch_snapshot`） | 只存 URL 状态（`?date=`） | §11.19 |
 | 设置 | `config/state.yaml` + 偏好 | `ldst.theme`（system/light/dark）、`ldst.density`（compact/default/comfortable）、`ldst.nav.expanded` | `tokens.css:9-12,189-191`、`Layout.tsx:128-130` |
-| 其余 10 屏 | 只存 URL 状态（`?date=` `?week=` `?tab=` `?stage=`） | 无本机写入 | `App.tsx` 注释、各屏 hook |
+| AI复盘 | 无本机写入（「我的判断」草稿归复盘 `review_draft` 一处） | 只存 URL 状态（`?date=`） | DEC-049 §3、§3.19 |
+| 其余 12 屏（首页 / 市场 / AI周报 / 资讯雷达 / 事件日历 / 候选池 / 产业矩阵 / 行业详情 / 产业信号 / 涨停样本 / 个股深挖 / 研究报告） | 只存 URL 状态（`?date=` `?week=` `?tab=` `?stage=`） | 无本机写入 | `App.tsx` 注释、各屏 hook |
 
 **规范**：主题 / 密度 / 导航展开三键只影响呈现，不得触发数据重取；密度只改 `--ldst-row-h`，不得改其它 token（`tokens.css:189-191`）。
 
@@ -541,6 +620,8 @@
 ### 5.6 演示数据必须上屏（v1.1 新增，硬约束）
 
 - 任何由 `?demo=1`（`industry/limitup/research/radar` 的 `demo.ts`）渲染的数据，页面必须显示**演示徽标**，文案「演示数据」+ `tone="warn"`，位置在 `PageHeader` 的 badge 槽。
+- v1.4 起演示源有两个等价入口：URL `?demo=1`（一次性深链）与设置页「数据来源 → 虚拟数据（演示）」开关（`localStorage['ldst.demo-data']`）。判定唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`（URL 或偏好任一为真）；各屏与徽标不得各写一套。
+- 徽标按来源写文案：URL 开启为「演示数据 · ?demo=1」，设置开关开启为「演示数据 · 设置开关」。关闭开关时设置页同时摘掉当前 URL 的 `demo`，保证「关 = 真实数据」；真实请求失败仍不得回落 `demo.ts`。
 - `DemoStateBadge`（`PageShell.tsx:47-54`）只反映 `?state=`，`state===null` 直接 `return null`——这是 P0 根因，必须扩成同时反映 `demo`（R-18）。
 - 13 张假行业、8 只假成分（含贵州茅台）、假信号在没有 `?state=` 时**目前零标识**（`industry/demo.ts:63-324,526,876-908` 由 `useIndustryView.ts:33-37` 注入），页脚 12px 小字「演示数据：…」不算达标。
 - 禁止在真实请求失败（404 / 离线）时自动回落 `demo.ts`（现状合格：`industry/demo.ts:8-9`、`useLimitUpView.ts:20`）。
@@ -563,22 +644,24 @@
 
 | 码 | 组件 | 文件 | 用途 | 主要使用屏 |
 |---|---|---|---|---|
-| C-01/C-02 | `Button` `IconButton` | `ui/Button.tsx:7` | 主/次/危险操作；`disabledReason` 承载禁用可见原因 | 全 18 屏 |
+| C-01/C-02 | `Button` `IconButton` | `ui/Button.tsx:7` | 主/次/危险操作；`disabledReason` 承载禁用可见原因 | 全 20 屏 |
 | C-03/C-04/C-05/C-06 | `Input` `Select` `Switch` `Checkbox` + `Field` | `ui/Field.tsx:6` | 受控输入，label/hint/error 三段结构 | 设置、雷达、矩阵、信号 |
 | C-07 | `Segmented` | `ui/Segmented.tsx:6` | 2–4 选项互斥切换（tab 型选择器） | 市场、矩阵、信号、设置侧栏 |
 | C-08 | `Tabs` | `ui/Tabs.tsx:6` | 2px 下划线 + 键盘左右切换 | 设置外的分页场景（当前基本闲置） |
 | C-09 | `DataTable` `Column` | `ui/Table.tsx:7,16-24` | **全仓唯一表体**：sticky 表头/首列、三档行高、`aria-sort`、表体内 loading/empty/error | 首页 / 市场 / 日志 / 验证 / 候选池 / 持仓 / 涨停 / 矩阵 / 行业 / 信号 / 设置（13 屏真实使用） |
-| C-10/C-11 | `Card` `CardHeader` `CardBody` `CardFooter` `SectionCard` `MetricCard` | `ui/Card.tsx:6` | 容器卡 + 指标卡（`h-metric` 96px、`p-4`、值带 `.ldst-num`） | 全 18 屏 |
-| C-12/C-13 | `StatusDot` `Badge` `SignedNumber` | `ui/Badge.tsx:5` | 状态点（含 `ldst-pulse`）、徽标、带向数值 | 全 18 屏 |
+| C-10/C-11 | `Card` `CardHeader` `CardBody` `CardFooter` `SectionCard` `MetricCard` | `ui/Card.tsx:6` | 容器卡 + 指标卡（`h-metric` 96px、`p-4`、值带 `.ldst-num`） | 全 20 屏 |
+| C-12/C-13 | `StatusDot` `Badge` `SignedNumber` | `ui/Badge.tsx:5` | 状态点（含 `ldst-pulse`）、徽标、带向数值 | 全 20 屏 |
 | C-14 | `Toasts` `useToasts` | `ui/Feedback.tsx:8` | 轻量成功/失败反馈，自动消失 4000ms | 设置 |
-| C-17 | `EmptyState` | `ui/Feedback.tsx:8` | 空态 / 需重取 / 未接入 | 全 18 屏 |
-| C-18 | `Skeleton` `SkeletonText` `.ldst-skeleton` | `ui/Feedback.tsx:8`、`styles/index.css:70-90` | 骨架与扫光 | 全 18 屏 |
-| C-19 | `ErrorBlock` `Banner` | `ui/Feedback.tsx:8` | 段内错误面板 / 顶部提示条 | 全 18 屏 |
+| C-17 | `EmptyState` | `ui/Feedback.tsx:8` | 空态 / 需重取 / 未接入 | 全 20 屏 |
+| C-18 | `Skeleton` `SkeletonText` `.ldst-skeleton` | `ui/Feedback.tsx:8`、`styles/index.css:70-90` | 骨架与扫光 | 全 20 屏 |
+| C-19 | `ErrorBlock` `Banner` | `ui/Feedback.tsx:8` | 段内错误面板 / 顶部提示条 | 全 20 屏 |
 | C-15/C-16 | `Drawer` `ConfirmDialog` | `ui/Overlay.tsx:10` | 宽 480 / 640（`lg`），确认框 420；焦点陷阱 + `Esc` + 焦点归还 | 候选池、信号、研究、设置 |
 | C-20 / CH-03 | `Sparkline` `HBarList` | `ui/MiniChart.tsx:4` | 迷你趋势与横向条（值带 `.ldst-num`） | 周度、持仓、市场、研究 |
+| C-21 | `HomeSearchTrigger`（已实装） | `components/search/HomeSearchTrigger.tsx` | 首页搜索入口：纯展示 + `onOpen`，不请求、不禁用（离线也可点） | 首页（§3.20） |
+| C-22 | `SearchPanel`（已实装，含内部件 `SearchGroupView` 等；取数与判定在 `screens/home/useHomeSearch.ts`） | `components/search/SearchPanel.tsx` | `role=dialog` 搜索面板：输入 + 三组结果 + 四态；只吃 props 与 `onSelect(href)`，复用 C-12 `Badge` / C-17 `EmptyState` / C-18 `SkeletonRows` / C-19 `Banner` / `SourceStatusBadge` | 首页（§3.20） |
 | CH-01/CH-02 | `LineChart` `BarChart` | `charts/Chart.tsx:10,151` | uPlot；色值必须来自 `chartPalette()`/`cssVar()` | 市场（情绪折线 + 梯队柱） |
 | — | `AiErrorNotice` | `kit/AiErrorNotice.tsx` | §5.4 五类 AI 错误 | 复盘、周度 |
-| — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 18 屏 |
+| — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 20 屏 |
 | — | `Layout` `PersistenceBanner` | `components/Layout.tsx`、`components/PersistenceBanner.tsx` | 外壳与恢复提示 | 全局 |
 | — | `MarkdownView` `ProvenanceDrawer` `StageRail` `LinkButton` `PercentileBar` | `components/research/*` | 叙述渲染 / 引用抽屉 / 六段轨 | 研究两屏 |
 | — | `ValuationBasisPanel` | `components/valuation/` | 估值基准 | 个股深挖 |
@@ -671,7 +754,7 @@
 | 圆角 | **只有三档**：`--ldst-radius: 8px`（卡片、按钮、输入、下拉、弹层、标签页、抽屉、Toast、图表容器）；`--ldst-radius-xs: 4px`（8px 容器内的嵌套元素：行内胶囊、进度条、迷你图、表内徽标）；`--ldst-radius-pill: 999px`（状态点、计数气泡、分段外壳）。v1.0 的 `4/6/10/14/999` 五档已作废 |
 | 结构尺寸 | 侧栏 232 / 图标栏 56 / 顶栏 56 / 控件 32 / 大控件 40 / 图标按钮 32 / 行高 36·38·40 / 指标卡高 96 / 阅读宽 1080 / 表格宽 1296 |
 | 容器尺寸 | 二级菜单 176（`w-menu`）、抽屉 480 / 640（`w-drawer` `w-drawer-wide`）、确认框 420（`w-dialog`）、空态最小高 200（`min-h-empty`） |
-| **列宽与表高刻度（v1.1 新增）** | 列宽只允许 `{56, 88, 112, 144, 176, 208}`（8px 栅格）：代码 88、名称 176、数值 112、时间 144、徽标 88、操作 56；表体滚动高度只允许 `{240, 320, 360, 420}` 或 `calc(100vh - 280px)` **唯一一个**具名值（建议落成 `--ldst-table-h-*`）。现状实测：**63 处** `width: '<N>px'` 魔法像素列宽 + **4 处** `calc(100vh - Npx)`（280/320/360/380）+ 4 处 `maxHeight="<N>px"` 字面量 → R-02 |
+| **列宽与表高刻度（v1.1 新增；v1.12 表高收口 `--ldst-table-h-*`）** | 列宽只允许 `{56, 88, 112, 144, 176, 208}`（8px 栅格）：代码 88、名称 176、数值 112、时间 144、徽标 88、操作 56；表体滚动高度只允许固定档 `{240, 320, 360, 420}`（`--ldst-table-h-sm/md/lg/xl`）或视口档 `var(--ldst-table-h)`——消费变量由 `styles/tokens.css` 在 `@media (min-width: 1280px)` 换值，两档减数具名：`rail:`（1024–1279 保底）`--ldst-table-h-rail: 360px`（1024×900 实测表体上沿 341，QUOT-336；硬项 = ≥12 完整行 + 0 横向溢出，允许内容下移，1024 切末行 13px 为已知项），`desk:`（≥1280）`--ldst-table-h-desk: 280px`（280 只在 desk: 档成立）。现状：6 处 `calc(100vh - Npx)` 减数已收口（QUOT-342）；剩 watch/journal 2 处 280 档字面量（值合法，待随下一单收口）→ R-02 |
 | 层级 | `--ldst-z-sticky 10` / `-banner 20` / `-overlay 40` / `-dialog 50` / `-toast 60`；禁止 `z-[1]` `z-[11]` 这类临时层（R-02） |
 | 阴影 | 三档且**唯一用法**：`shadow-card`（卡片，卡片之间不叠阴影，靠 1px border 分界）、`shadow-overlay`（浮层 / Tooltip / Toast）、`shadow-dialog`（抽屉 / 确认框） |
 | 焦点 | `--ldst-focus-ring: 0 0 0 2px bg, 0 0 0 4px focus` + `--ldst-focus-offset: 2px` |
@@ -718,10 +801,13 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | 金额 | 两位小数 + 千分位 + 单位（万 / 亿） | `1,234.56 万` |
 | **缺失值** | 一律「—」（`lib/format.ts:10`），并在悬浮或旁注说明原因；**不得显示 0 / 0.00 / ? / 假定默认值** | `—（未取到涨停池）` |
 | 计数类 | 无数据时显示「—」而不是 `0`；计数为 0 且语义上真是 0（如"今日 0 只涨停"）才显示 `0`，且必须与空态分支一致 | `共 — 条` vs `共 0 条` |
+| **整行无读数** | 一条按日/按标的的读数行，若该天整体没有读数（`available === false`），**整行所有指标都走 `—`**，包括后端为占位补出来的 `0`。补 0 不是读数，把它显示成 `0` 等于把「今天没数据」读成「今天 0 家涨停」（QUOT-354 BUG-E，`WeeklyScreen.tsx:262-274`） | `10-28 · — · — · —` |
+| **分源行数** | 段内多数据源各自的行数（`industry_rows` / `concept_rows` / `news_rows` / `board_rows` / `seat_rows`）：该源本机当天**没有产物**（`data/archive.py:snapshot` 的 `backend === 'none'`）时给 `null` → 屏上 `—`；只有真读到该源（`parquet` / `duckdb`）且当天 0 行才是真实的 `0`。原因不新造字段——`source_detail` 逐源写着 `theme_news: none`，屏底「数据来源」行原样出示（QUOT-354 BUG-F，`review/pipeline.py:_row_count`） | `题材资讯行数 —`（来源行 `theme_news: none`） |
 | 分位 / 占比 | 一位小数 + `%`；热力分位无数据时**不上色**并 title 说明 | `62.5%`、`无数据（未核实）` |
 | 时间 | 当日 `HH:mm:ss`，跨日 `MM-DD HH:mm`；全站本地时区；**后端裸值必须格式化**（`HHMMSS`、ISO） | `10:32:15` |
 | 日期 | `YYYY-MM-DD`；周 `YYYY-Www` | `2026-10-28`、`2026-W44` |
 | 按钮文案 | 动词开头，2–4 字；破坏性动作用「清除/删除/重置」 | `立即取数`、`重试该段`、`清除草稿` |
+| **文案点名的按钮** | 说明文字里出现「点『X』」时，页面上必须真有一个名为 X 的按钮——按钮的默认标签必须显式传，不能用 kit 默认值凑（QUOT-354 BUG-D：兜底文案写「重试取数」而按钮是 kit 默认的「重试」） | `恢复后点「重试取数」` + `retryLabel="重试取数"` |
 | 状态文案 | 先结论后原因 | 「需重新取数：快照已超过 TTL」 |
 | 禁用原因 | 禁用按钮必须有可见原因（旁注或悬浮），走 C-01 `disabledReason` | 「15:00 后可对账」「没有修改」 |
 | 后端 key | 不得直显；一律映射成中文标签（`realtime`→实时、`cached`→缓存、`archive`→存档、`degraded`→已降级、`partial`→部分缺失） | `缓存 · 已降级` |
@@ -732,7 +818,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 
 - 正文对比度 ≥ 4.5:1，大字号 ≥ 3:1；`--ldst-text-muted` 在 `--ldst-surface` 上已按此校验；`--ldst-border-strong` 承担交互件边界识别，≥3:1（`tokens.css:22`）。深浅两主题都要过检。
 - 状态不只靠颜色：`freshness` 用 ●/◐/○ + 文字；涨跌用 ↑↓ + 正负号 + 颜色。
-- 焦点永远可见（`--ldst-focus-ring`），禁止无替代的 `outline: none`；「跳到主内容」在首焦点可见（`Layout.tsx:191`）。**v1.1 实测违规**：`main` 上挂着 `focus:outline-none`（`Layout.tsx:328`），skip-link 落地后无可见焦点 → R-21。
+- 焦点永远可见（`--ldst-focus-ring`），禁止无替代的 `outline: none`；「跳到主内容」在首焦点可见（`Layout.tsx` 首个 `<a href="#main">`）。~~v1.1 曾登记 `main` 上的 `focus:outline-none` 为违规（R-21）~~ **QUOT-316 实测更正**：该类只压 `outline`，压不住 base 层 `:where([tabindex]):focus-visible` 的 `box-shadow: var(--ldst-focus-ring)`；真实键盘事件（Tab → Enter）下 `#main` 命中 `:focus-visible` 且焦点环已绘制，R-21 不成立（证据见 §12.5 与 QUOT-316 回执）。
 - 表格必须有 `caption` 与 `scope="col"`，数字列右对齐（C-09 承担；`Table.tsx:160` 起的表体）；行内可点击必须可键盘到达。
 - 图标按钮必须有 `aria-label`；纯装饰图标 `aria-hidden="true"`。
 - 模态（C-16）与抽屉（C-15）：焦点陷阱 + `Esc` 取消 + 关闭后焦点回到触发元素（`Overlay.tsx:10-13`）。
@@ -742,18 +828,19 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - 引用角标可点必须 `aria-label 查看来源 n：{dataset}`；未核实胶囊是文本而非颜色编码（`MarkdownView.tsx:50-79`）。
 - 最低支持视口 1024×768；1024–1279 允许内容下移，**不允许横向溢出**（`main` 之外）。
 
-## 10. 全 18 屏与后端契约映射
+## 10. 全 20 屏与后端契约映射
 
 | 屏 | 路由 | 主要端点 / 数据来源 | 持久化 | 可信规则 |
 |---|---|---|---|---|
-| 复盘 | `/review` | `/api/review`、`/api/sentiment`、`/api/ladder`、`/api/control/ai/generate` | `review_draft` | 指标永远只读；AI 段独立降级 |
+| 每日复盘（数据面） | `/review`（**交易日只跟 `?date=`**） | `/api/review`（只取 `sections[].metrics` 与 `headline`）、`/api/sentiment`（三张指标卡）；**不发控制面请求** | `review_draft`（「我的判断」全仓唯一存储，**按交易日分槽** `slots[date]`，不存 `tradeDate`）+ `review_snapshot_cache_v1`（离线回放） | 指标永远只读；段级缺数 `—` 不补 0；真实取数失败不回落 `demo.ts` |
+| AI复盘（模型面） | `/review/ai` | `/api/review`（同一份产物的 `narrative` / `status` / `ai_failures[]` / `ai`）、`/api/control/ai/generate`、`/api/control/ai/retry`、轮询 `/api/control/jobs/{id}` | 无（**不写第二份草稿**，DEC-049 §3；交易日只跟 `?date=`） | 段落状态与降级只信后端字段，三-case 判定不解析提示文案；缺失显示「—」，不补 0、不编造；演示态禁用全部控制面 |
 | 盯盘 | `/watch` | `/api/watch/snapshot` | `watch_snapshot`（TTL 300s）、`watch_settings`（DEC-037） | 过期即不渲染旧值 |
 | 盯盘·竞价与盘中 | `/intraday` | `/api/intraday`、`/api/intraday/snapshot`（回环独占） | 无（快照走 `data/intraday/`，不进分片） | 逐时点状态只信 `status.json`；文件不在就写「没有快照」，不补 0（SPEC-INTRADAY-READ） |
 | 验证 | `/validate` | `/api/validation`、`/api/control/validation/conditions`、`/api/health` | `validation_draft` / 后端缓存 | 15:00 前不可对账；部分缺失只给参考结论 |
 | 日志 | `/journal` | `/api/journal/stats`（本机 SQLite） | 本机库 | 不出本机、不进 AI |
 | 首页 | `/` | `/api/sentiment`、`/api/ladder`、`/api/validation`、`/api/watch/snapshot` | 无 | 只读聚合，不自算 |
 | 市场 | `/market?tab=` | `/api/sentiment`、`/api/market/history?window=`、`/api/ladder`、`/api/market/theme` | 无 | 三段共用同一交易日；404 不得吞成 null（R-14） |
-| 周度复盘 | `/weekly` | `/api/weekly?week=` | 无 | 五段 AI + 事实包；降级可见 |
+| AI周报 | `/weekly` | `/api/weekly?week=` | 无 | 五段 AI + 事实包；降级可见；`available: false` 的那天整行走 `—`（补出来的 0 不上屏） |
 | 资讯雷达 | `/news` | `/api/news?date=&until=&source=&code=&limit=`（DEC-030） | 无 | 事件由后端规则抽取，页面不二次判定 |
 | 事件日历 | `/calendar` | `/api/events?month=&code=`（DEC-030） | 无 | 小节是否有源由后端 |
 | 候选池 | `/pool` | `/api/pool?date=&limit=`（DEC-030） | 无 | 分项缺失必须列明 |
@@ -781,20 +868,30 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 数字（含序号、代码、时间、百分比、计数）全部 `.ldst-num`；缺失值全部「—」，无 `0` / `0.00` / `?` / 假定默认值冒充。
 - [ ] 后端 key 不直显；状态标签与 §5.1/§5.2 标签表逐字一致。
 - [ ] `?demo=1` 有「演示数据」徽标；`?state=` 有 `DemoStateBadge`。
+- [ ] 设置页「虚拟数据（演示）」开启后，URL 不带 `demo` 也出示「演示数据 · 设置开关」徽标；关闭后回到真实通道。
 - [ ] 交互过渡只有 `duration-fast`（120ms）；无 >160ms 的 hover/press/展开过渡；`prefers-reduced-motion` 下无动画。
 - [ ] 表体只有一处（C-09）；本屏无裸 `<table>`。
 - [ ] 单行截断处均有 `title` 或 Tooltip；`min-w-0` 与 `truncate` 成对出现。
 - [ ] 键盘可达：可点行/可点卡能 Tab 到、Enter 触发；焦点环可见。
 - [ ] 区块四态齐全（正常/骨架/空/降级或错误），骨架与真实内容形状同构（列数一致）。
 
-### 11.1 复盘 `/review`
+### 11.1 每日复盘 `/review`（数据面）
 
-- [ ] 指标卡三列等宽，`<1024` 单列；数值右上角有溯源徽标，且来自统一实现。
-- [ ] `source_status=partial` 显示 `danger`、「部分缺失」；`degraded` 显示 `warn`、「已降级」（当前 `ReviewScreen.tsx:198` 相反 → 修复后本条必须为真）。
-- [ ] 五段顺序为情绪→资金→题材→龙虎榜→龙头；`desk:`（≥1280）下每段内左右 40/60（`ReviewScreen.tsx:763`），`rail:` 下上下堆叠且 AI 在上。
-- [ ] 三张指标卡在 `rail:` 下为单列、`desk:` 下等宽三列（`ReviewScreen.tsx:666`）。
-- [ ] 刷新后草稿恢复出现 §4.1 提示条；`truncated` 类错误不出现「重试」主按钮。
-- [ ] 指标卡无可编辑入口；AI 区不出现指标样式的数值。
+- [ ] 屏上没有 AI 叙述、没有模型名、没有段级 `status`、没有「重新生成 / 重试失败段」——四样任一出现即破坏 DEC-049 §2 的边界（`tests/review-split.test.tsx` 已断言）。
+- [ ] 指标卡三列等宽（`desk:`）、`rail:` 单列；数值右上角溯源徽标来自统一实现 `SourceBadges`。
+- [ ] 三张指标卡的读数与段内程序指标**逐字相等**（同一个指标在两处必须是同一个字符串）。
+- [ ] 五段顺序为情绪→资金→题材→龙虎榜→龙头；`desk:` 下每段内 `2fr/3fr`（程序指标 / 我的判断），`rail:` 上下堆叠且程序指标在上。
+- [ ] 段内指标只渲染登记表（`review/SectionMetrics.tsx`）里的 key；未登记 key 不上屏，后端 key 不直显。
+- [ ] `metrics.available === false` 的段：`缺数` 徽标 + 原因行 + 该段计数整列 `—`（无 `0`）；页面横幅为 `danger`「五段中 N 段数据缺失」（§5.2 色序，R-12 的原始位置）。
+- [ ] 空态文案给出 `ldst review --date=YYYY-MM-DD` + 复制命令 + 重新检查，并写明「没有配置模型凭据只影响 AI复盘屏，不影响本屏」。
+- [ ] 「当日摘要」卡挂 `程序直出` 标签且不带模型名（DEC-049 §6 对错标的纠正）。
+- [ ] 刷新后草稿恢复出现 §4.1 提示条；清空草稿走 §4.3 二次确认。
+- [ ] **`?date=` 深链优先**：本机草稿记着 11-02 时打开 `?date=11-03`，日期选择器与取数请求都必须是 11-03，且 11-02 的正文一个字都不出现（QUOT-354 BUG-B，`tests/quota-354-defects.test.tsx`）。
+- [ ] 页内「交易日」选择器改的是 URL（`?date=` 跟着变、可分享），不是本机状态；`review_draft` 分片里没有 `tradeDate` 字段。
+- [ ] **草稿按交易日分槽**：11-03 写下的判断不会覆盖 11-02；「清空当日草稿」只清当前那一天，恢复横幅 / 字数 / 最后写入三处都只算当天（QUOT-354 BUG-C）。
+- [ ] 兜底文案里点名的按钮（「重试取数」）在页面上真同名存在，不是 kit 默认的「重试」（QUOT-354 BUG-D，§8「文案点名的按钮」）。
+- [ ] 指标卡与段内指标无任何可编辑入口；「我的判断」是本屏唯一写入面。
+- [ ] `?demo=1`：徽标出现、「我的判断」只读且为空、不写 IndexedDB 草稿，也不写离线回放缓存。
 
 ### 11.2 盯盘 `/watch`
 
@@ -835,7 +932,10 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 每段有 `SourceLine`（来源 / 数据时间 / 取数）；段级 404 必须有可见降级，不许静默变 null。
 - [ ] 指标卡 note 中的数字（含 `—`）走 `.ldst-num`。
 
-### 11.7 周度复盘 `/weekly`
+### 11.7 AI周报 `/weekly`
+
+- [ ] 屏内 `h1` 与侧栏标签同为「AI周报」，页面上没有第二处「周度复盘」标题（QUOT-354 BUG-A；路由与后端契约仍写 `/weekly`，不改文案以外的东西）。
+- [ ] 每日序列表里 `available: false` 的那天**整行 `—`**（温度 / 晋级率 / 封板率 / 涨停 / 炸板 / 最高板 / 断层 / 来源），后端补出来的 `0` 不得上屏；有读数那天的真实 `0` 必须照显示（QUOT-354 BUG-E，§8「整行无读数」）。
 
 - [ ] `min-[1024px]` / `min-[1100px]` 清零。
 - [ ] `SourceBadge` 使用统一标签表：`realtime` 显示「实时」、`archive` 显示「存档」，页面上**不出现英文 key**。
@@ -941,6 +1041,33 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 主题 / 密度切换后：深浅两主题下本屏对比度与徽标颜色均正确，密度只改行高。
 - [ ] 抽屉保存错误从纯行内文本升级为 C-19 `Banner danger` + 保留可编辑内容。
 
+### 11.19 盯盘·竞价与盘中 `/intraday`
+
+- [ ] 时点条只有一个来源：格子数量与时刻全部来自 `GET /api/intraday` 的 `slots[]`（`intraday/IntradayScreen.tsx:195`），渲染层不持有自己的时点表（`intraday/demo.ts:25` 的 `DEMO_SLOTS` 只用于造夹具）；从载荷里删掉任一时点，页面上那一格必须消失而不是由前端补回（DEC-039 §2.1）。
+- [ ] 六态逐条可复现：`?state=empty|loading|error|partial|offline` 与 `?demo=1&variant=full|partial|empty|mixed` 各看一遍；`partial` 的判据必须是**时点级**的 `snapshot_count < slot_count`（`intraday/useIntradayView.ts:64`），不得改用信封的 `data_source_status`——汇总只回答「这一天有没有至少一个时点落盘」，粒度不对（SPEC-INTRADAY-READ §3）。
+- [ ] 八种时点状态各有**图形 + 文案**双通道：六种记录状态（`intraday/IntradayScreen.tsx:77-84`）、「当天没跑过」（`:87-92`）、「未知状态」原样透出后端 `status` 文案不折叠（`:95-100,104-106`）。`?demo=1&variant=mixed` 下六格文案依次为 已写入 / 降级写入 / 已存在·未覆盖 / 已过窗口，不补跑 / 未取到 / 抓取失败，六个图标互不相同；只靠边框颜色区分即判不通过（§9）。
+- [ ] `recorded` 与 `available` 两条通道不得合并（DEC-039 §2.2）：`recorded=false` 写「当天没跑过」，`recorded=true && status=missing` 写「未取到」；`status.json` 说 `ok` 而磁盘文件不在时，该格必须落到「没有快照文件」并透出 `reason`，不得照抄 `file` 字段。
+- [ ] 「计划内的空」不得升格成错误：`skipped` 与没跑过的时点走 `EmptyState` + 窗口说明（`:289-304`），整屏不出现 `ErrorBlock`；整屏 empty 时后端给的时点条仍照常列出（`:709`），且空态文案必须区分三种空因——接口未接入 / `status.json` 不存在 / 有 `status.json` 但六个时点都没文件（`:670-707`）。
+- [ ] 页面零重算：昨日涨停池、今日仍封板、平均涨跌幅、情绪面六项、`1 进 2` 全部取 `payload.snapshot` 原值（`:411-437`、`:446-476`），缺失一律「—」+ 原因，不出现 `0` 顶替（DEC-028）；`1 进 2` 无载荷时写「该时点没有 1进2 载荷」而不是 `0.0%`。
+- [ ] 表体只有 C-09 一处（`:500`）；七处列宽 `width: '112px'…'96px'`（`:332-393`）与 `maxHeight="calc(100vh - 420px)"`（`:506`）属 R-02 家族，收口到 §7.3 刻度后本条必须为真。
+- [ ] 裸值必须过 §8 / §5.8：`captured_at`（`:562`）、`slot.at`（`:551`）、`status_updated_at`（`:186`）目前直显 `2026-10-30T09:25:06+08:00` 形态（`?demo=1` 实拍即反例）→ 当日 `HH:mm:ss`、跨日 `MM-DD HH:mm`；`取数工具`（`:561`）与表头「读数（price）」（`:356`）目前透出 `tencent_quote_batch` / `price` 这类后端 key → 一律映射为中文标签。
+- [ ] 页头「来源」不得是假定值：`payload.slots.length > 0` 就恒写 `status.json`（`:612-616`），而 `has_status_file === false` 时同屏空态卡正写着「status.json 不存在」——本单的 `intraday-before-dark.png` / `intraday-before-light.png` 即为该矛盾的实拍 → 必须按 `has_status_file` 给「—（无 status.json）」。
+- [ ] 键盘与读屏：时点格是原生 `button`，`aria-pressed` 标选中、`aria-label` 为「{时点} {状态文案}」、`sr-only` 说明「当前选中 / 可选」（`:135-168`），焦点环走 `focus-visible:shadow-focus`（`:142`）；Tab 可遍历六格，Enter 换选中后快照节选卡同步更新。`?slot=11:30` 直接选中该格、`?date=` 换日清空手动选择（`intraday/useIntradayView.ts:98-111`），两者在 `?demo=1` 下同样成立。
+- [ ] 骨架与真实内容同构（`:638` 的 3 指标 + 6 行 对得上三张 `MetricCard` + 一张表）；`gap-1.5`×2（`:141,148`）与 `size-3.5`×2（`:151,626`）是 Tailwind 默认泄漏档，`transition-colors` 缺 `duration-fast`（`:141`，全仓唯一一处裸过渡）→ 收口后本条必须为真；`npm run check:ui` 六项对本屏必须保持 PASS（QUOT-317 口径）。
+
+### 11.20 AI复盘 `/review/ai`（模型面）
+
+- [ ] 屏上没有指标卡、没有逐段 `metrics`、没有「我的判断」编辑框（本屏 `textarea` 数必须为 0）；模型名只在本屏出现（DEC-049 §2）。
+- [ ] 三种「没有 AI 正文」各自独立可复现，且互不冒充：`?demo=1&variant=empty` → 引导 `ldst review`（复制命令 + 重新检查）；产物在而模型未配 → `Banner warn`「模型未接入」+「接入 AI」；段级失败 → 逐段徽标 + 段内 `AiErrorNotice` + 按段「重跑该段」。
+- [ ] **不允许把「模型未配」显示成「数据缺失」**，也不允许反过来：`model-unconfigured` 的屏上不得出现「还没有复盘产物」「数据缺失」「缺数」任一措辞，正文必须写明「这里缺的是模型，不是数据」并指出程序指标在 `/review`（DEC-049 §4）。
+- [ ] 判定不解析提示文案：`classifyAiCase()` 的输入只有 `ai.model` / 逐段 `model` + `status` / `ai_failures[]`（`tests/review-split.test.tsx` 用后端未配置分支的真实形状断言）。
+- [ ] `model-unconfigured` 时页面只有**一条**解释横幅，不再叠「五段中 X 段降级」的泛化统计。
+- [ ] 段级 `truncated` / `internal` 不出现「重试」主按钮（§5.4）；其余失败段可只重跑本段，成功段内容保留。
+- [ ] 生成与按段重跑在 `?demo=1` 与 offline 下均禁用且原因可读（`aria-describedby` 指向的原因文案含「演示态不触发 AI 生成」/「本地服务未连接」）。
+- [ ] 本屏只发 `/api/review` 一条读请求，不发 `/api/sentiment`（取数层 `useAiReviewView` 断言）。
+- [ ] 交易日只跟 `?date=`：切日期不写 `review_draft`，也不产生第二份草稿存储。
+- [ ] 骨架与真实内容同构（`ScreenSkeleton metrics={0} rows={5}` 对得上五段卡，本屏无指标卡）；`npm run check:ui` 六项对本屏保持 PASS。
+
 ## 12. 遗留与下一步
 
 1. **阈值持久化**：已由 DEC-037 落地 `watch_settings` 分片（`config/state.yaml` + `stores/manifest.json` + 契约测试三处同步），刷新 / 重启 / 多窗口共用同一份。
@@ -966,25 +1093,27 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | M | §10 四屏映射 | 18 屏映射 | 新屏的数据来源与可信规则此前无处可查 |
 | N | §2「内容最大宽 `--ldst-content-max: 1080px`，超出居中」 | 分层：`main` = `--ldst-table-max: 1296px`（表/图/卡阵），阅读型正文再收 `1080px` | 实际容器是 `max-w-table`（`Layout.tsx:328`）；1080 只该管行长，硬套给整屏会让表格屏白白缩掉 216px |
 | O | §3.1 五段「`≥1100px` 内左右两栏」 | 改为 `desk:`（≥1280），并去掉 1024 单列的说法 | 系统里没有 1100 档；实现是 `desk:grid-cols-[2fr_3fr]`（`ReviewScreen.tsx:763`）与 `grid-cols-1 desk:grid-cols-3`（`:666`） |
+| P | §11 逐屏清单止于 `11.18 设置`（v1.1 的 L 条：18 节） | 补 **§11.19 盯盘·竞价与盘中 `/intraday`**，并把编号规则显式写成「**§11.n = §0 覆盖表的第 n 行**」 | QUOT-302 把 `/intraday` 记进 §0（第 19 行）与 §10，§11 却没跟着长——该屏成了唯一「进了名单、没进走查」的屏，§12.3 的逐条走查与 §12.6 的截图对对它无从执行（QUOT-365）。11.1–11.18 与 §0 行号本来就一一对应（11.1 复盘 = 第 1 行 … 11.18 设置 = 第 18 行），本条把这条巧合升格为规则；`/intraday` 在 §10 表里物理排在第 3 行（紧跟盯盘），**不**按 §10 的行位编号，否则 11.1–11.18 全部要重排、既有 PR 引用与 `docs/screenshots/` 命名一起失效 |
+| Q | §10 标题「全 18 屏与后端契约映射」、§4.5「全 18 屏的持久化面」、§3 止于 3.18 | **本单不改，登记为遗留**：§10 表格实为 19 行、§3 缺 3.19 | 与 P 同源的 18/19 屏遗留表述，但改标题与补 §3.19 会动到本单边界外的章节（QUOT-365 只允许动 §11.19 与 §12.4）。留给 QUOT-306 阶段四的文档收口一次性对齐：§3.19 小节 + §10/§4.5 标题改「19 屏」+ 顶部变更记录加行（DEC-045 §4 要求串行合并，避免与在途 PR 撞同一行） | **已由 QUOT-396（QUOT-306 阶段三）于 11-05 处理**：§3.19 早已存在（`:463`），§0/§4.5/§6/§10 的 18→20 已对齐。 |
 
 ### 12.5 整改清单（v1.1 登记，代码侧待办；本轮不改代码）
 
-编号 R-01…R-26，每条都是"现状与 §n 冲突"，必须在阶段二/三落地或按 §12.4 反向修订规范。
+编号 R-01…R-27（R-27 由 v1.6 / QUOT-344-S2 登记），每条都是"现状与 §n 冲突"，必须在阶段二/三落地或按 §12.4 反向修订规范。
 
 | 编号 | 冲突 | 现状位置 | 违反条款 | 建议阶段 |
 |---|---|---|---|---|
-| R-01 | 溯源徽标 4 份本地实现，无统一件 | `HomeScreen.tsx:69-82`、`MarketScreen.tsx:105-118`、`WeeklyScreen.tsx:166-179`、`ReviewScreen.tsx:196-205` | §5.5 | 二 |
-| R-02 | 任意值与默认泄漏：**63** 处 `width:'Npx'` 列宽、**4** 处 `calc(100vh - Npx)` 表高、**4** 处 `maxHeight="Npx"`、**19** 处 `[...]` 任意值 utility、**48** 处 Tailwind 默认 `.5` 间距 | 各屏（示例：`PoolScreen.tsx:224-270,431`、`PositionsScreen.tsx:248-336`、`CalendarScreen.tsx:135-167`、`ui/Card.tsx:102` 的 `w-[3px]`、`WeeklyScreen.tsx:381`） | §7.3、§11.0 | 二 |
+| R-01 | 溯源徽标 4 份本地实现，无统一件 | `HomeScreen.tsx:69-82`、`MarketScreen.tsx:105-118`、`WeeklyScreen.tsx:166-179`；~~`ReviewScreen.tsx:196-205`~~ **复盘两份已收口**（QUOT-344-S2 / DEC-049：两屏统一用 `SourceBadges`，AI复盘屏不重复挂徽标） | §5.5 | 二 |
+| R-02 | 任意值与默认泄漏：**63** 处 `width:'Npx'` 列宽、**2** 处 `calc(100vh - Npx)` 表高字面量（v1.10 计 **4** 处后漂移又增；QUOT-342 已把产业矩阵 / 连板梯队 / 验证 / 候选池 / 产业信号 / 分时 6 处收口为 `--ldst-table-h`，剩 watch/journal 2 处 280 档合法值）、**4** 处 `maxHeight="Npx"`、**19** 处 `[...]` 任意值 utility、**48** 处 Tailwind 默认 `.5` 间距 | 各屏（示例：`PoolScreen.tsx:224-270,431`、`PositionsScreen.tsx:248-336`、`CalendarScreen.tsx:135-167`、`ui/Card.tsx:102` 的 `w-[3px]`、`WeeklyScreen.tsx:381`） | §7.3、§11.0 | 二 |
 | R-03 | C-09 缺 `summaryRow` / `expandable`，导致裸表与手写网格 | `PoolScreen.tsx:125`、`ValidateScreen.tsx:585-595` | §6.2、§6.3 | 二 |
 | R-04 | `min-[1024px]`×6、`min-[1100px]`×3、`min-[640px]`×1 绕过 `rail:`/`desk:`；`tokens.json` 的 `breakpointMin` 未注册档名 | `WeeklyScreen.tsx:381,506,554`、`MarketScreen.tsx:529`、`ResearchDetailScreen.tsx:94,262,394` | §2、§7.3 | 二 |
-| R-05 | 5 屏无导航可达路径（只能改地址栏） | **已关闭（v1.3）**：`/industry` `/signals` `/research` 由 QUOT-300 补上侧栏入口，`/positions` `/calendar` 由 DEC-044 归入「我的股票」；余下 `/industry/:name` `/research/:code` `/research/:code/report` 是**下钻页**，入口路径成立（§2「20 屏导航可达性」），不再算缺陷 | §2 | 二 |
+| R-05 | 5 屏无导航可达路径（只能改地址栏） | `/industry` `/industry/:name` `/signals` `/research/:code` `/research/:code/report` | §2 | 二 |
 | R-06 | 后端 key 直显 | `WeeklyScreen.tsx:176`（`realtime`/`archive`） | §5.8、§8 | 二 |
-| R-07 | 用 `0` / 假定值冒充缺失 | `SignalsScreen.tsx:237,347`、`NewsScreen.tsx:437`、`CalendarScreen.tsx:374`、`PoolScreen.tsx:156,289`、`PositionsScreen.tsx:636`、`WeeklyScreen.tsx:520,543`、`SettingsScreen.tsx:541,804,1346`；**v1.3 由 `check-1280.mjs` 量出并补登记 2 处**（`limitup/LimitUpScreen.tsx:153` 空态 header「0 只 · 来源 limit_pool: 未找到（0 条）」、`industry/IndustryDetailScreen.tsx:509` 未绑定行业时「成分股 0 只」；`git blame` 均为 `d87659da`，非 DEC-044 或本轮引入；行号按合入 QUOT-331 后的 `b92d5d9` 复核） | §8 | 二 |
+| R-07 | 用 `0` / 假定值冒充缺失 | `SignalsScreen.tsx:237,347`、`NewsScreen.tsx:437`、`CalendarScreen.tsx:374`、`PoolScreen.tsx:156,289`、`PositionsScreen.tsx:636`、`WeeklyScreen.tsx:520,543`、`SettingsScreen.tsx:541,804,1346` | §8 | 二 |
 | R-08 | 数字未套 `.ldst-num` | `PoolScreen.tsx:161-163`、`HomeScreen.tsx:519`、`WeeklyScreen.tsx:339-369`、`MarketScreen.tsx:538-571`、`ResearchDetailScreen.tsx:96,209`、`PositionsScreen.tsx:179,205` | §7.2 | 二 |
 | R-09 | 链接长得像按钮，丢过渡与字重（13 处） | `NewsScreen.tsx:359`、`research/bits.tsx`、`PoolScreen.tsx:98` 等 | §7.5 | 二 |
 | R-10 | 截断无 `title`（长名称/代码） | `NewsScreen.tsx:244`、`PoolScreen.tsx:237`、`HomeScreen.tsx:149,440,501`、`IndustryMatrixScreen.tsx:236` | §8 | 二 |
 | R-11 | 整屏缺溯源徽标 / 只在页脚小字 | `/news` `/calendar` `/pool` `/positions` `/limit-up` `/industry*` `/signals`；`ResearchDetailScreen.tsx:439-469,687-705` 两卡无来源脚 | §5.5、§5.8 | 二 |
-| R-12 | 色序反转（`partial`→warn、`degraded`→danger） | `ReviewScreen.tsx:198` | §5.3 | 二 |
+| R-12 | 色序反转（`partial`→warn、`degraded`→danger） | ~~`ReviewScreen.tsx:198`~~ **已修复**（QUOT-344-S2 / DEC-049 §2.5：复盘两屏的徽标统一走 `SourceBadges`，段级缺数横幅取 `danger`，模型未接入横幅取 `warn`） | §5.3 | 二 → 已收口 |
 | R-13 | 首页重复渲染他屏区块且样式各写一套 | `HomeScreen.tsx:372-514` vs 市场/盯盘/验证 | §1-7 | 二 |
 | R-14 | 404 吞成 null；theme 段空态被抑制 | `MarketScreen.tsx:307-322,500-504` | §3.6、§6.4 | 二 |
 | R-15 | 整屏 empty 只出横幅，不出卡阵（与其它屏不对称） | `WeeklyScreen.tsx:318-337` | §6.4 | 三 |
@@ -993,12 +1122,13 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | R-18 | `?demo=1` 无演示徽标（7 屏），水印只认 `?state=` | `PageShell.tsx:47-54` | §5.6 | 二（P0） |
 | R-19 | `duration-base` 三处口径不实：扫光死引用、抽屉/Toast 零过渡 | `styles/index.css:80-81`、`ui/Overlay.tsx`、`ui/Feedback.tsx` | §7.5 | 二 |
 | R-20 | 同屏两套 Toast 栈 | `SettingsScreen.tsx:773,934,1473` | §3.18 | 二 |
-| R-21 | skip-link 目标无可见焦点（`focus:outline-none`） | `Layout.tsx:328` | §9 | 二 |
+| R-21 | ~~skip-link 目标无可见焦点（`focus:outline-none`）~~ **实测不成立**：`focus:outline-none` 只压 `outline`，压不住 base 层 `:where([tabindex]):focus-visible` 的 `box-shadow: var(--ldst-focus-ring)`；真实键盘事件（Tab → Enter）下 `#main` 命中 `:focus-visible` 且环已绘制（QUOT-316 取证）。`main` 上的类**保留**，它挡的是非键盘 focus 时的 UA 默认描边 | `Layout.tsx` `main#main`、`styles/index.css:30` | §9 | 已结案（非缺陷） |
 | R-22 | `freshness` 缺省静默不渲染 | `HomeScreen.tsx:70`、`WeeklyScreen.tsx` | §5.7 | 二 |
 | R-23 | 折线线宽 2px，token 注释口径 1.5px | `charts/Chart.tsx:61` vs `tokens.css:54` | §3.6 | 二 |
 | R-24 | 叙述正文无度量上限（`flex-1` 卡内行长不可控） | `MarkdownView.tsx:130`、`ResearchReportScreen.tsx:329` | §2 | 三 |
 | R-25 | 隐私说明只持仓有 | `PositionsScreen.tsx:84-99`（日志缺） | §3.4 | 三 |
 | R-26 | 盯盘可信状态与徽标不同源 | `WatchScreen.tsx:340-341` | §3.2、§5.5 | 三 |
+| R-27 | 复盘的「导出（PDF→MD 降级）」在 v1.0 §3.1 L3 登记后从未实现，页面与 CLI 各说各话 | 导出只在 CLI 侧（`src/ladderstock/review/export.py`）；`/review`、`/review/ai` 均无入口 | §3.1 | 三（要么补页面入口，要么按 §12.4 把该条从规范里删掉） |
 
 ### 12.6 走查机制（让 §11 真的被执行）
 
@@ -1011,9 +1141,6 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 
 - QUOT-307（视觉巡检最小版 + 18 屏 before 截图）：§11 的截图证据依赖它，分支 `agent/agent/c2e06ff2f397`。
 - QUOT-309（逐屏粗糙点清单，315 条）：与本文件**互补**——它按"屏 × 维度"枚举证据，本文件按"条款"给规范。§12.5 的 R 编号是本文件的整改面，不与 QUOT-309 的 M 编号合并。
-- QUOT-300（补已交付路由入口，已合入 main `edb339b`）/ QUOT-304（「我的股票」分组，DEC-044，本文件 v1.2 + v1.3 补齐事实）：`NAV_SECTIONS` 结构已定稿为 9 组，§2「导航顺序」是**规范值**而不是现状登记。
-- QUOT-316（QUOT-306 阶段三，侧栏视觉精排）：只动视觉层（图标、间距、分组标题、展开动效），**不再改分组与顺序**；要改结构必须先在 `docs/decisions/` 立一条 DEC（只增不改），再同步本文 §2 与 §0。已知待精排的结构性事实：9 组全展开时侧栏内容在 900px 视口下纵向超出约 321px，靠 `nav` 的 `overflow-y-auto` 滚动（不是缺陷，但值得在 316 里用「默认收起非活跃组」或行高收一档解决）。
-- 本文与侧栏的一致性**不再靠人眼**：`python scripts/audit-nav-citations.py`（仓库根目录跑，非 0 退出即不一致）。v1.2 那版就是人眼漏改，量出 13 处。
-- **登记的遗留计数**：标题「（18 屏）」与 §1/§6/§10 里的「全 18 屏」是 v1.1 写作时的口径，实际覆盖自 `/intraday` 起就是 19 屏、v1.3 补登记 `/research` 落地页后是 20 屏。本版只把与侧栏直接相关的 §0/§2/§3 改齐（那是 DEC-044 的影响面），其余「18 屏」出现在组件适用列与契约映射标题里，改它们要逐条判断「是不是真的 20 屏都适用」，属 §11 逐屏走查的工作量，不由一次导航改动顺手动——留给 QUOT-316 或下一次 §11 走查一并收。
+- QUOT-300 / QUOT-304（导航补入口与分组）：QUOT-304 已按 DEC-044 完成「我的股票」分组，本规范 §2 同步到新结构；后续再动 `NAV_SECTIONS` 必须先改决策与本节。
 - `docs/specs/SPEC-RESEARCH-PAGES.md` / `SPEC-RESEARCH-PROVENANCE.md`：§3.16–§3.17 与其口径一致，冲突时以这两个 spec 的**后端契约**为准、以本文件的**视觉 token** 为准。
 - 交付位置说明：本文件与 `docs/decisions/DEC-040-*.md` 都在受版本管理的目录内；`docs/tasks/` 被 `.gitignore:48` 排除（DEC-0026），故本次产出不放 `docs/tasks/`。

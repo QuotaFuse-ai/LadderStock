@@ -233,6 +233,60 @@ describe('候选池解析', () => {
     expect(payload.data_source_status).toBe('missing')
     expect(payload.reason).toBe('没有涨停池快照')
   })
+
+  it('QUOT-372：资金溯源三态与 main_net_pct 原样解析，缺字段退 none/null（不冒充）', () => {
+    const base = {
+      date: '2026-10-30',
+      available: true,
+      candidate_count: 1,
+      candidates: [
+        {
+          code: '600519',
+          name: '贵州茅台',
+          score: 80,
+          parts: { strength: 50, standing: 50, capital: 75, theme: 50, turnover: 50 },
+          absent_parts: [],
+          raw: { boards: 3, net_inflow: 30_000_000, main_net_pct: 12.6 },
+        },
+      ],
+    }
+
+    const realtime = parseCandidatePool({
+      payload: {
+        ...base,
+        fund_freshness: 'realtime',
+        fund_fetched_at: '2026-10-30T10:32',
+      },
+    })
+    expect(realtime.fund_freshness).toBe('realtime')
+    expect(realtime.fund_fetched_at).toBe('2026-10-30T10:32')
+    expect(realtime.candidates[0].raw.main_net_pct).toBe(12.6)
+
+    const fallback = parseCandidatePool({
+      payload: {
+        ...base,
+        candidates: [{ ...base.candidates[0], raw: { boards: 3, net_inflow: 30_000_000 } }],
+        fund_freshness: 'daily_fallback',
+        fund_fetched_at: '2026-10-29T15:05',
+      },
+    })
+    expect(fallback.fund_freshness).toBe('daily_fallback')
+    expect(fallback.candidates[0].raw.main_net_pct).toBeNull()
+
+    const none = parseCandidatePool({ payload: { ...base, fund_freshness: 'none' } })
+    expect(none.fund_freshness).toBe('none')
+    expect(none.fund_fetched_at).toBeNull()
+
+    // 后端没带这批字段（旧版本）：如实 none + null，不猜测
+    const legacy = parseCandidatePool({ payload: { ...base } })
+    expect(legacy.fund_freshness).toBe('none')
+    expect(legacy.fund_fetched_at).toBeNull()
+  })
+
+  it('QUOT-372：资金分项口径文案定稿——「当日实时主力净额（元）· 净占比（%）」', async () => {
+    const { POOL_PART_WEIGHT_LABEL } = await import('../src/api/radar')
+    expect(POOL_PART_WEIGHT_LABEL.capital).toBe('当日实时主力净额（元）· 净占比（%）')
+  })
 })
 
 describe('持仓解析', () => {

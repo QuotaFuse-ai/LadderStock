@@ -1,0 +1,849 @@
+(node:22608) [DEP0174] DeprecationWarning: Calling promisify on a function that returns a Promise is likely a mistake.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+> ladderstock-frontend@0.1.0 test
+> vitest run
+
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mC:/Users/Administrator/multica_workspaces/quotafuse-g-066955b36a89/quot-317-c9cfa1f27021/workdir/LadderStock/frontend[39m
+
+ [32m✓[39m tests/ui-source-badges.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[90m 92[2mms[22m[39m
+[90mstderr[2m | tests/positions-privacy.test.tsx[2m > [22m[2m持仓页运行时隐私[2m > [22m[2m新增 / 删除 / 导入都不写存储、不发请求
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/weekly-screen.test.tsx[2m > [22m[2m周度复盘 /weekly[2m > [22m[2m渲染五段与事实包指标，请求带 week 参数
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/quota-331-envelope.test.tsx[2m > [22m[2mQUOT-331 · /limit-up 徽标真的用上 freshness[2m > [22m[2m真实通道（契约响应）：出「缓存」+「数据完整」，副标题带数据时间与取数时刻
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/quota-320-shared-layer.test.tsx[2m > [22m[2mQUOT-320 · ?demo=1 水印根因（§5.6 / R-18）[2m > [22m[2m只有 ?demo=1、没有 ?state= 时也必须上屏
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/quota-320-shared-layer.test.tsx [2m([22m[2m15 tests[22m[2m)[22m[90m 279[2mms[22m[39m
+[90mstderr[2m | tests/radar-pages.test.tsx[2m > [22m[2m四页五态[2m > [22m[2m资讯雷达：normal / loading / empty / error / partial / offline 各一条
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/valuation-basis-panel.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 510[2mms[22m[39m
+ [32m✓[39m tests/quota-331-envelope.test.tsx [2m([22m[2m12 tests[22m[2m)[22m[33m 437[2mms[22m[39m
+[90mstderr[2m | tests/intraday-screen.test.tsx[2m > [22m[2m六种时点状态[2m > [22m[2m六种状态各有独立文案 + 图形：已写入 / 降级写入 / 未覆盖 / 不补跑 / 未取到 / 抓取失败
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/industry-pages.test.tsx[2m > [22m[2m产业矩阵 /industry[2m > [22m[2m演示源渲染 13 个行业，缺列或切换维度后表头跟着变
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/ui-kit.test.tsx [2m([22m[2m27 tests[22m[2m)[22m[33m 774[2mms[22m[39m
+[90mstderr[2m | tests/quota-319b-screen-side.test.tsx[2m > [22m[2mB 族缺数不写 0（UI-SPEC §8）[2m > [22m[2m/signals 没取到载荷：副标题「命中 — 条」，不是「命中 0 条」
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/weekly-screen.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 1006[2mms[22m[39m
+   [33m[2m✓[22m[39m 周度复盘 /weekly[2m > [22m渲染五段与事实包指标，请求带 week 参数 [33m368[2mms[22m[39m
+ [32m✓[39m tests/positions-privacy.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1365[2mms[22m[39m
+   [33m[2m✓[22m[39m 持仓页运行时隐私[2m > [22m新增 / 删除 / 导入都不写存储、不发请求 [33m1200[2mms[22m[39m
+ [32m✓[39m tests/radar-api.test.ts [2m([22m[2m13 tests[22m[2m)[22m[90m 24[2mms[22m[39m
+ [32m✓[39m tests/industry-pages.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 2191[2mms[22m[39m
+   [33m[2m✓[22m[39m 产业矩阵 /industry[2m > [22m演示源渲染 13 个行业，缺列或切换维度后表头跟着变 [33m597[2mms[22m[39m
+   [33m[2m✓[22m[39m 产业矩阵 /industry[2m > [22m搜索与「仅有数据」筛选生效，未绑定行业被筛掉 [33m303[2mms[22m[39m
+   [33m[2m✓[22m[39m 产业信号 /signals[2m > [22m命中计数、规则说明与证据抽屉（字段 + 时点 + 数据集） [33m307[2mms[22m[39m
+ [32m✓[39m tests/quota-319b-screen-side.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 1805[2mms[22m[39m
+   [33m[2m✓[22m[39m B 族缺数不写 0（UI-SPEC §8）[2m > [22m/pool 抽屉：后端没给某个分项权重 → 该格「—」，合计也是「—」，不画 0.0% [33m338[2mms[22m[39m
+   [33m[2m✓[22m[39m data_source_status 上屏（UI-SPEC §5.2 / §5.3）[2m > [22mradar 四屏：ok 载荷给「数据完整」（ok 青绿） [33m331[2mms[22m[39m
+ [32m✓[39m tests/intraday-api.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 33[2mms[22m[39m
+ [31m❯[39m tests/intraday-screen.test.tsx [2m([22m[2m19 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 3127[2mms[22m[39m
+   [33m[2m✓[22m[39m 六种时点状态[2m > [22m六种状态各有独立文案 + 图形：已写入 / 降级写入 / 未覆盖 / 不补跑 / 未取到 / 抓取失败 [33m420[2mms[22m[39m
+[31m   [31m×[31m 六种时点状态[2m > [22mskipped 显示「已过窗口，不补跑」，不渲染成加载失败或空数据[33m 1124[2mms[22m[31m[39m
+[31m     → Found multiple elements with the text: /窗口外不补跑/
+
+Here are the matching elements:
+
+Ignored nodes: comments, script, style
+[36m<div[31m
+  [33mclass[31m=[32m"text-text-secondary"[31m
+[36m>[31m
+  [0m11:30 已过窗口，不补跑、14:00 未取到、15:00 抓取失败[0m
+  [0m。这些时点按各自状态显示，不显示 0；[0m
+  [36m<code[31m
+    [33mclass[31m=[32m"ldst-num"[31m
+  [36m>[31m
+    [0mskipped[0m
+  [36m</code>[31m
+  [0m的时点是窗口外不补跑，不算取数失败。[0m
+[36m</div>[31m
+
+Ignored nodes: comments, script, style
+[36m<span[31m
+  [33mclass[31m=[32m"mt-1 block text-text-secondary"[31m
+[36m>[31m
+  [0m窗口外不补跑：用当天之后的价格回填过去的时点会永久污染数据，采集侧只记状态不写文件。[0m
+[36m</span>[31m
+
+(If this is intentional, then use the `*AllBy*` variant of the query (like `queryAllByText`, `getAllByText`, or `findAllByText`)).
+
+Ignored nodes: comments, script, style
+[36m<body>[31m
+  [36m<div>[31m
+    [36m<div[31m
+      [33mclass[31m=[32m"flex flex-col gap-5"[31m
+    [36m>[31m
+      [36m<header[31m
+        [33mclass[31m=[32m"flex min-h-topbar flex-wrap items-center justify-between gap-3"[31m
+      [36m>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"flex min-w-0 flex-wrap items-center gap-3"[31m
+        [36m>[31m
+          [36m<h1[31m
+            [33mclass[31m=[32m"text-page font-semibold leading-tight text-text"[31m
+          [36m>[31m
+            [0m竞价与盘中[0m
+          [36m</h1>[31m
+          [36m<p[31m
+            [33mclass[31m=[32m"text-caption text-text-secondary"[31m
+          [36m>[31m
+            [0m2026-10-30[0m
+            [0m ·[0m
+            [0m [0m
+            [0m3/6 个时点有快照 · 来源 status.json[0m
+          [36m</p>[31m
+        [36m</div>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"flex shrink-0 flex-wrap items-center gap-2"[31m
+        [36m>[31m
+          [36m<button[31m
+            [33mclass[31m=[32m"inline-flex select-none items-center justify-center gap-1 rounded font-medium transition-all duration-fast ease-ldst active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover active:bg-accent-solid-hover h-control px-3 text-body"[31m
+            [33mtype[31m=[32m"button"[31m
+          [36m>[31m
+            [36m<svg[31m
+              [33maria-hidden[31m=[32m"true"[31m
+              [33mclass[31m=[32m"lucide lucide-refresh-cw size-3.5"[31m
+              [33mfill[31m=[32m"none"[31m
+              [33mheight[31m=[32m"24"[31m
+              [33mstroke[31m=[32m"currentColor"[31m
+              [33mstroke-linecap[31m=[32m"round"[31m
+              [33mstroke-linejoin[31m=[32m"round"[31m
+              [33mstroke-width[31m=[32m"2"[31m
+              [33mviewBox[31m=[32m"0 0 24 24"[31m
+              [33mwidth[31m=[32m"24"[31m
+              [33mxmlns[31m=[32m"http://www.w3.org/2000/svg"[31m
+            [36m>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"[31m
+              [36m/>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M21 3v5h-5"[31m
+              [36m/>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"[31m
+              [36m/>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M8 16H3v5"[31m
+              [36m/>[31m
+            [36m</svg>[31m
+            [36m<span>[31m
+              [0m刷新[0m
+            [36m</span>[31m
+          [36m</button>[31m
+        [36m</div>[31m
+      [36m</header>[31m
+      [36m<div[31m
+        [33mclass[31m=[32m"flex items-start gap-2 rounded border px-3 py-2 text-body leading-body border-warn bg-warn-soft text-warn"[31m
+        [33mrole[31m=[32m"alert"[31m
+      [36m>[31m
+        [36m<span[31m
+          [33mclass[31m=[32m"mt-half shrink-0"[31m
+        [36m>[31m
+          [36m<svg[31m
+            [33maria-hidden[31m=[32m"true"[31m
+            [33mclass[31m=[32m"lucide lucide-triangle-alert size-4"[31m
+            [33mfill[31m=[32m"none"[31m
+            [33mheight[31m=[32m"24"[31m
+            [33mstroke[31m=[32m"currentColor"[31m
+            [33mstroke-linecap[31m=[32m"round"[31m
+            [33mstroke-linejoin[31m=[32m"round"[31m
+            [33mstroke-width[31m=[32m"2"[31m
+            [33mviewBox[31m=[32m"0 0 24 24"[31m
+            [33mwidth[31m=[32m"24"[31m
+            [33mxmlns[31m=[32m"http://www.w3.org/2000/svg"[31m
+          [36m>[31m
+            [36m<path[31m
+              [33md[31m=[32m"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"[31m
+            [36m/>[31m
+            [36m<path[31m
+              [33md[31m=[32m"M12 9v4"[31m
+            [36m/>[31m
+            [36m<path[31m
+              [33md[31m=[32m"M12 17h.01"[31m
+            [36m/>[31m
+          [36m</svg>[31m
+        [36m</span>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"min-w-0 flex-1"[31m
+        [36m>[31m
+          [36m<p[31m
+            [33mclass[31m=[32m"font-medium"[31m
+          [36m>[31m
+            [0m部分时点没有落盘[0m
+          [36m</p>[31m
+          [36m<div[31m
+            [33mclass[31m=[32m"text-text-secondary"[31m
+          [36m>[31m
+            [0m11:30 已过窗口，不补跑、14:00 未取到、15:00 抓取失败[0m
+            [0m。这些时点按各自状态显示，不显示 0；[0m
+            [36m<code[31m
+              [33mclass[31m=[32m"ldst-num"[31m
+            [36m>[31m
+              [0mskipped[0m
+            [36m</code>[31m
+            [0m的时点是窗口外不补跑，不算取数失败。[0m
+          [36m</div>[31m
+        [36m</div>[31m
+      [36m</div>[31m
+      [36m<section[31m
+        [33mclass[31m=[32m"rounded border border-border bg-surface shadow-card"[31m
+      [36m>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"flex min-h-topbar items-center justify-between gap-3 border-b border-border px-4 py-2"[31m
+        [36m>[31m
+          [36m<div[31m
+            [33mclass[31m=[32m"min-w-0"[31m
+          [36m>[31m
+            [36m<h2[31m
+              [33mclass[31m=[32m"truncate text-subtitle font-semibold text-text"[31m
+            [36m>[31m
+              [0m当日时点[0m
+            [36m</h2>[31m
+            [36m<p[31m
+              [33mclass[31m=[32m"truncate text-caption text-text-secondary"[31m
+            [36m>[31m
+              [0m3/6 个时点有快照 · 状态更新 2026-10-30T15:00:00+08:00[0m
+            [36m</p>[31m
+          [36m</div>[31m
+        [36m</div>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"p-4"[31m
+        [36m>[31m
+          [36m<div[31m
+            [33maria-label[31m=[32m"当日快照时点"[31m
+            [33mclass[31m=[32m"grid grid-cols-3 gap-2 desk:grid-cols-6"[31m
+            [33mrole[31m=[32m"group"[31m
+          [36m>[31m
+            [36m<button[31m
+              [33maria-label[31m=[32m"09:25 已写入"[31m
+              [33maria-pressed[31m=[32m"false"[31m
+              [33mclass[31m=[32m"flex min-w-0 flex-col items-start gap-1.5 rounded border bg-surface p-3 text-left transition-colors focus-visible:shadow-focus focus-visible:outline-none border-ok hover:bg-surface-2"[31m
+              [33mtype[31m=[32m"button"[31m
+            [36m>[31m
+              [36m<span[31m
+                [33mclass[31m=[32m"ldst-num text-body font-semibold leading-tight text-text"[31m
+              [36m>[31m
+                [0m09:25[0m
+              [36m</span>[31m
+              [36m<span[31m
+                [33mclass[31m=[32m"flex min-w-0 items-center gap-1.5"[31m
+              [36m>[31m
+                [36m<svg[31m
+                  [33maria-hidden[31m=[32m"true"[31m
+                  [33mclass[31m=[32m"lu...
+
+Ignored nodes: comments, script, style
+[36m<body>[31m
+  [36m<div>[31m
+    [36m<div[31m
+      [33mclass[31m=[32m"flex flex-col gap-5"[31m
+    [36m>[31m
+      [36m<header[31m
+        [33mclass[31m=[32m"flex min-h-topbar flex-wrap items-center justify-between gap-3"[31m
+      [36m>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"flex min-w-0 flex-wrap items-center gap-3"[31m
+        [36m>[31m
+          [36m<h1[31m
+            [33mclass[31m=[32m"text-page font-semibold leading-tight text-text"[31m
+          [36m>[31m
+            [0m竞价与盘中[0m
+          [36m</h1>[31m
+          [36m<p[31m
+            [33mclass[31m=[32m"text-caption text-text-secondary"[31m
+          [36m>[31m
+            [0m2026-10-30[0m
+            [0m ·[0m
+            [0m [0m
+            [0m3/6 个时点有快照 · 来源 status.json[0m
+          [36m</p>[31m
+        [36m</div>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"flex shrink-0 flex-wrap items-center gap-2"[31m
+        [36m>[31m
+          [36m<button[31m
+            [33mclass[31m=[32m"inline-flex select-none items-center justify-center gap-1 rounded font-medium transition-all duration-fast ease-ldst active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover active:bg-accent-solid-hover h-control px-3 text-body"[31m
+            [33mtype[31m=[32m"button"[31m
+          [36m>[31m
+            [36m<svg[31m
+              [33maria-hidden[31m=[32m"true"[31m
+              [33mclass[31m=[32m"lucide lucide-refresh-cw size-3.5"[31m
+              [33mfill[31m=[32m"none"[31m
+              [33mheight[31m=[32m"24"[31m
+              [33mstroke[31m=[32m"currentColor"[31m
+              [33mstroke-linecap[31m=[32m"round"[31m
+              [33mstroke-linejoin[31m=[32m"round"[31m
+              [33mstroke-width[31m=[32m"2"[31m
+              [33mviewBox[31m=[32m"0 0 24 24"[31m
+              [33mwidth[31m=[32m"24"[31m
+              [33mxmlns[31m=[32m"http://www.w3.org/2000/svg"[31m
+            [36m>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"[31m
+              [36m/>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M21 3v5h-5"[31m
+              [36m/>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"[31m
+              [36m/>[31m
+              [36m<path[31m
+                [33md[31m=[32m"M8 16H3v5"[31m
+              [36m/>[31m
+            [36m</svg>[31m
+            [36m<span>[31m
+              [0m刷新[0m
+            [36m</span>[31m
+          [36m</button>[31m
+        [36m</div>[31m
+      [36m</header>[31m
+      [36m<div[31m
+        [33mclass[31m=[32m"flex items-start gap-2 rounded border px-3 py-2 text-body leading-body border-warn bg-warn-soft text-warn"[31m
+        [33mrole[31m=[32m"alert"[31m
+      [36m>[31m
+        [36m<span[31m
+          [33mclass[31m=[32m"mt-half shrink-0"[31m
+        [36m>[31m
+          [36m<svg[31m
+            [33maria-hidden[31m=[32m"true"[31m
+            [33mclass[31m=[32m"lucide lucide-triangle-alert size-4"[31m
+            [33mfill[31m=[32m"none"[31m
+            [33mheight[31m=[32m"24"[31m
+            [33mstroke[31m=[32m"currentColor"[31m
+            [33mstroke-linecap[31m=[32m"round"[31m
+            [33mstroke-linejoin[31m=[32m"round"[31m
+            [33mstroke-width[31m=[32m"2"[31m
+            [33mviewBox[31m=[32m"0 0 24 24"[31m
+            [33mwidth[31m=[32m"24"[31m
+            [33mxmlns[31m=[32m"http://www.w3.org/2000/svg"[31m
+          [36m>[31m
+            [36m<path[31m
+              [33md[31m=[32m"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"[31m
+            [36m/>[31m
+            [36m<path[31m
+              [33md[31m=[32m"M12 9v4"[31m
+            [36m/>[31m
+            [36m<path[31m
+              [33md[31m=[32m"M12 17h.01"[31m
+            [36m/>[31m
+          [36m</svg>[31m
+        [36m</span>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"min-w-0 flex-1"[31m
+        [36m>[31m
+          [36m<p[31m
+            [33mclass[31m=[32m"font-medium"[31m
+          [36m>[31m
+            [0m部分时点没有落盘[0m
+          [36m</p>[31m
+          [36m<div[31m
+            [33mclass[31m=[32m"text-text-secondary"[31m
+          [36m>[31m
+            [0m11:30 已过窗口，不补跑、14:00 未取到、15:00 抓取失败[0m
+            [0m。这些时点按各自状态显示，不显示 0；[0m
+            [36m<code[31m
+              [33mclass[31m=[32m"ldst-num"[31m
+            [36m>[31m
+              [0mskipped[0m
+            [36m</code>[31m
+            [0m的时点是窗口外不补跑，不算取数失败。[0m
+          [36m</div>[31m
+        [36m</div>[31m
+      [36m</div>[31m
+      [36m<section[31m
+        [33mclass[31m=[32m"rounded border border-border bg-surface shadow-card"[31m
+      [36m>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"flex min-h-topbar items-center justify-between gap-3 border-b border-border px-4 py-2"[31m
+        [36m>[31m
+          [36m<div[31m
+            [33mclass[31m=[32m"min-w-0"[31m
+          [36m>[31m
+            [36m<h2[31m
+              [33mclass[31m=[32m"truncate text-subtitle font-semibold text-text"[31m
+            [36m>[31m
+              [0m当日时点[0m
+            [36m</h2>[31m
+            [36m<p[31m
+              [33mclass[31m=[32m"truncate text-caption text-text-secondary"[31m
+            [36m>[31m
+              [0m3/6 个时点有快照 · 状态更新 2026-10-30T15:00:00+08:00[0m
+            [36m</p>[31m
+          [36m</div>[31m
+        [36m</div>[31m
+        [36m<div[31m
+          [33mclass[31m=[32m"p-4"[31m
+        [36m>[31m
+          [36m<div[31m
+            [33maria-label[31m=[32m"当日快照时点"[31m
+            [33mclass[31m=[32m"grid grid-cols-3 gap-2 desk:grid-cols-6"[31m
+            [33mrole[31m=[32m"group"[31m
+          [36m>[31m
+            [36m<button[31m
+              [33maria-label[31m=[32m"09:25 已写入"[31m
+              [33maria-pressed[31m=[32m"false"[31m
+              [33mclass[31m=[32m"flex min-w-0 flex-col items-start gap-1.5 rounded border bg-surface p-3 text-left transition-colors focus-visible:shadow-focus focus-visible:outline-none border-ok hover:bg-surface-2"[31m
+              [33mtype[31m=[32m"button"[31m
+            [36m>[31m
+              [36m<span[31m
+                [33mclass[31m=[32m"ldst-num text-body font-semibold leading-tight text-text"[31m
+              [36m>[31m
+                [0m09:25[0m
+              [36m</span>[31m
+              [36m<span[31m
+                [33mclass[31m=[32m"flex min-w-0 items-center gap-1.5"[31m
+              [36m>[31m
+                [36m<svg[31m
+                  [33maria-hidden[31m=[32m"true"[31m
+                  [33mclass[31m=[32m"lu...[39m
+ [32m✓[39m tests/radar-pages.test.tsx [2m([22m[2m24 tests[22m[2m)[22m[33m 3640[2mms[22m[39m
+   [33m[2m✓[22m[39m 四页五态[2m > [22m资讯雷达：normal / loading / empty / error / partial / offline 各一条 [33m623[2mms[22m[39m
+[90mstderr[2m | tests/nav-routes.test.tsx[2m > [22m[2m侧栏顺序与渲染（docs/UI-SPEC.md）[2m > [22m[2m渲染出来的侧栏默认就带着全部入口（不用先点展开，DOM 顺序即视觉顺序）
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/nav-routes.test.tsx [2m([22m[2m28 tests[22m[2m)[22m[33m 379[2mms[22m[39m
+ [32m✓[39m tests/migrate.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 211[2mms[22m[39m
+ [32m✓[39m tests/industry-api.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 45[2mms[22m[39m
+ [32m✓[39m tests/persistence.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 282[2mms[22m[39m
+ [32m✓[39m tests/financecoffer-api.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+[90mstderr[2m | tests/limit-up-screen.test.tsx[2m > [22m[2m涨停样本五态[2m > [22m[2mnormal / loading / empty / error / partial / offline 各一条
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/research-pages.test.tsx[2m > [22m[2m个股深挖页[2m > [22m[2m展示公司画像、财务、风险与估值分位
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/ai-error-notice.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 374[2mms[22m[39m
+ [32m✓[39m tests/research-api.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 13[2mms[22m[39m
+ [32m✓[39m tests/limit-up-screen.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 762[2mms[22m[39m
+   [33m[2m✓[22m[39m 涨停样本五态[2m > [22mnormal / loading / empty / error / partial / offline 各一条 [33m423[2mms[22m[39m
+ [32m✓[39m tests/ui-token-hygiene.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 33[2mms[22m[39m
+[90mstderr[2m | tests/watch-settings-screen.test.tsx[2m > [22m[2m盯盘阈值持久化[2m > [22m[2m写入 → 落库 → 新会话读回（刷新 / 重启）
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/industry-heat.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 37[2mms[22m[39m
+ [32m✓[39m tests/freshness.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+ [32m✓[39m tests/watch-settings-sync.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 14[2mms[22m[39m
+[90mstderr[2m | tests/research-entry-screen.test.tsx[2m > [22m[2m个股深挖落地页 /research[2m > [22m[2m填代码提交后跳 /research/:code
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/research-entry-screen.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 419[2mms[22m[39m
+ [32m✓[39m tests/api-headers.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 21[2mms[22m[39m
+ [32m✓[39m tests/research-citation.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+ [32m✓[39m tests/limit-pool-api.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 5[2mms[22m[39m
+ [32m✓[39m tests/ai-failures.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 6[2mms[22m[39m
+ [32m✓[39m tests/watch-settings-store.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 651[2mms[22m[39m
+ [32m✓[39m tests/watch-settings-screen.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1204[2mms[22m[39m
+   [33m[2m✓[22m[39m 盯盘阈值持久化[2m > [22m写入 → 落库 → 新会话读回（刷新 / 重启） [33m609[2mms[22m[39m
+   [33m[2m✓[22m[39m 盯盘阈值持久化[2m > [22m越界输入：红边 + 行内提示，不写分片，失焦回到已保存值 [33m356[2mms[22m[39m
+ [32m✓[39m tests/research-pages.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 3343[2mms[22m[39m
+   [33m[2m✓[22m[39m 个股深挖页[2m > [22m展示公司画像、财务、风险与估值分位 [33m507[2mms[22m[39m
+   [33m[2m✓[22m[39m 六阶段研究报告页[2m > [22m失败段「重试本段」→ 轮询 → 成功回填 [33m2147[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[1m[7m Failed Tests 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/intraday-screen.test.tsx[2m > [22m六种时点状态[2m > [22mskipped 显示「已过窗口，不补跑」，不渲染成加载失败或空数据
+[31m[1mTestingLibraryElementError[22m[39m: Found multiple elements with the text: /窗口外不补跑/
+
+Here are the matching elements:
+
+Ignored nodes: comments, script, style
+[36m<div[39m
+  [33mclass[39m=[32m"text-text-secondary"[39m
+[36m>[39m
+  [0m11:30 已过窗口，不补跑、14:00 未取到、15:00 抓取失败[0m
+  [0m。这些时点按各自状态显示，不显示 0；[0m
+  [36m<code[39m
+    [33mclass[39m=[32m"ldst-num"[39m
+  [36m>[39m
+    [0mskipped[0m
+  [36m</code>[39m
+  [0m的时点是窗口外不补跑，不算取数失败。[0m
+[36m</div>[39m
+
+Ignored nodes: comments, script, style
+[36m<span[39m
+  [33mclass[39m=[32m"mt-1 block text-text-secondary"[39m
+[36m>[39m
+  [0m窗口外不补跑：用当天之后的价格回填过去的时点会永久污染数据，采集侧只记状态不写文件。[0m
+[36m</span>[39m
+
+(If this is intentional, then use the `*AllBy*` variant of the query (like `queryAllByText`, `getAllByText`, or `findAllByText`)).
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"flex flex-col gap-5"[39m
+    [36m>[39m
+      [36m<header[39m
+        [33mclass[39m=[32m"flex min-h-topbar flex-wrap items-center justify-between gap-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex min-w-0 flex-wrap items-center gap-3"[39m
+        [36m>[39m
+          [36m<h1[39m
+            [33mclass[39m=[32m"text-page font-semibold leading-tight text-text"[39m
+          [36m>[39m
+            [0m竞价与盘中[0m
+          [36m</h1>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"text-caption text-text-secondary"[39m
+          [36m>[39m
+            [0m2026-10-30[0m
+            [0m ·[0m
+            [0m [0m
+            [0m3/6 个时点有快照 · 来源 status.json[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex shrink-0 flex-wrap items-center gap-2"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"inline-flex select-none items-center justify-center gap-1 rounded font-medium transition-all duration-fast ease-ldst active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover active:bg-accent-solid-hover h-control px-3 text-body"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"lucide lucide-refresh-cw size-3.5"[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"24"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"2"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"24"[39m
+              [33mxmlns[39m=[32m"http://www.w3.org/2000/svg"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M21 3v5h-5"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M8 16H3v5"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [36m<span>[39m
+              [0m刷新[0m
+            [36m</span>[39m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</header>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex items-start gap-2 rounded border px-3 py-2 text-body leading-body border-warn bg-warn-soft text-warn"[39m
+        [33mrole[39m=[32m"alert"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"mt-half shrink-0"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"lucide lucide-triangle-alert size-4"[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"24"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"2"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"24"[39m
+            [33mxmlns[39m=[32m"http://www.w3.org/2000/svg"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 9v4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 17h.01"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</span>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"min-w-0 flex-1"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"font-medium"[39m
+          [36m>[39m
+            [0m部分时点没有落盘[0m
+          [36m</p>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"text-text-secondary"[39m
+          [36m>[39m
+            [0m11:30 已过窗口，不补跑、14:00 未取到、15:00 抓取失败[0m
+            [0m。这些时点按各自状态显示，不显示 0；[0m
+            [36m<code[39m
+              [33mclass[39m=[32m"ldst-num"[39m
+            [36m>[39m
+              [0mskipped[0m
+            [36m</code>[39m
+            [0m的时点是窗口外不补跑，不算取数失败。[0m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<section[39m
+        [33mclass[39m=[32m"rounded border border-border bg-surface shadow-card"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex min-h-topbar items-center justify-between gap-3 border-b border-border px-4 py-2"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"min-w-0"[39m
+          [36m>[39m
+            [36m<h2[39m
+              [33mclass[39m=[32m"truncate text-subtitle font-semibold text-text"[39m
+            [36m>[39m
+              [0m当日时点[0m
+            [36m</h2>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"truncate text-caption text-text-secondary"[39m
+            [36m>[39m
+              [0m3/6 个时点有快照 · 状态更新 2026-10-30T15:00:00+08:00[0m
+            [36m</p>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"p-4"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33maria-label[39m=[32m"当日快照时点"[39m
+            [33mclass[39m=[32m"grid grid-cols-3 gap-2 desk:grid-cols-6"[39m
+            [33mrole[39m=[32m"group"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"09:25 已写入"[39m
+              [33maria-pressed[39m=[32m"false"[39m
+              [33mclass[39m=[32m"flex min-w-0 flex-col items-start gap-1.5 rounded border bg-surface p-3 text-left transition-colors focus-visible:shadow-focus focus-visible:outline-none border-ok hover:bg-surface-2"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"ldst-num text-body font-semibold leading-tight text-text"[39m
+              [36m>[39m
+                [0m09:25[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex min-w-0 items-center gap-1.5"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"lu...
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"flex flex-col gap-5"[39m
+    [36m>[39m
+      [36m<header[39m
+        [33mclass[39m=[32m"flex min-h-topbar flex-wrap items-center justify-between gap-3"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex min-w-0 flex-wrap items-center gap-3"[39m
+        [36m>[39m
+          [36m<h1[39m
+            [33mclass[39m=[32m"text-page font-semibold leading-tight text-text"[39m
+          [36m>[39m
+            [0m竞价与盘中[0m
+          [36m</h1>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"text-caption text-text-secondary"[39m
+          [36m>[39m
+            [0m2026-10-30[0m
+            [0m ·[0m
+            [0m [0m
+            [0m3/6 个时点有快照 · 来源 status.json[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex shrink-0 flex-wrap items-center gap-2"[39m
+        [36m>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"inline-flex select-none items-center justify-center gap-1 rounded font-medium transition-all duration-fast ease-ldst active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover active:bg-accent-solid-hover h-control px-3 text-body"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33maria-hidden[39m=[32m"true"[39m
+              [33mclass[39m=[32m"lucide lucide-refresh-cw size-3.5"[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mheight[39m=[32m"24"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"2"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [33mwidth[39m=[32m"24"[39m
+              [33mxmlns[39m=[32m"http://www.w3.org/2000/svg"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M21 3v5h-5"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"[39m
+              [36m/>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M8 16H3v5"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+            [36m<span>[39m
+              [0m刷新[0m
+            [36m</span>[39m
+          [36m</button>[39m
+        [36m</div>[39m
+      [36m</header>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex items-start gap-2 rounded border px-3 py-2 text-body leading-body border-warn bg-warn-soft text-warn"[39m
+        [33mrole[39m=[32m"alert"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"mt-half shrink-0"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"lucide lucide-triangle-alert size-4"[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mheight[39m=[32m"24"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"2"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [33mwidth[39m=[32m"24"[39m
+            [33mxmlns[39m=[32m"http://www.w3.org/2000/svg"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 9v4"[39m
+            [36m/>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M12 17h.01"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</span>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"min-w-0 flex-1"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"font-medium"[39m
+          [36m>[39m
+            [0m部分时点没有落盘[0m
+          [36m</p>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"text-text-secondary"[39m
+          [36m>[39m
+            [0m11:30 已过窗口，不补跑、14:00 未取到、15:00 抓取失败[0m
+            [0m。这些时点按各自状态显示，不显示 0；[0m
+            [36m<code[39m
+              [33mclass[39m=[32m"ldst-num"[39m
+            [36m>[39m
+              [0mskipped[0m
+            [36m</code>[39m
+            [0m的时点是窗口外不补跑，不算取数失败。[0m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<section[39m
+        [33mclass[39m=[32m"rounded border border-border bg-surface shadow-card"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex min-h-topbar items-center justify-between gap-3 border-b border-border px-4 py-2"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"min-w-0"[39m
+          [36m>[39m
+            [36m<h2[39m
+              [33mclass[39m=[32m"truncate text-subtitle font-semibold text-text"[39m
+            [36m>[39m
+              [0m当日时点[0m
+            [36m</h2>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"truncate text-caption text-text-secondary"[39m
+            [36m>[39m
+              [0m3/6 个时点有快照 · 状态更新 2026-10-30T15:00:00+08:00[0m
+            [36m</p>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"p-4"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33maria-label[39m=[32m"当日快照时点"[39m
+            [33mclass[39m=[32m"grid grid-cols-3 gap-2 desk:grid-cols-6"[39m
+            [33mrole[39m=[32m"group"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"09:25 已写入"[39m
+              [33maria-pressed[39m=[32m"false"[39m
+              [33mclass[39m=[32m"flex min-w-0 flex-col items-start gap-1.5 rounded border bg-surface p-3 text-left transition-colors focus-visible:shadow-focus focus-visible:outline-none border-ok hover:bg-surface-2"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"ldst-num text-body font-semibold leading-tight text-text"[39m
+              [36m>[39m
+                [0m09:25[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex min-w-0 items-center gap-1.5"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"lu...
+[90m [2m❯[22m waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:[2m163:27[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m86:33[22m[39m
+[36m [2m❯[22m tests/intraday-screen.test.tsx:[2m217:25[22m[39m
+    [90m215| [39m    [35mawait[39m [34mwaitFor[39m(() [33m=>[39m [34mexpect[39m([34mrailCells[39m())[33m.[39m[34mtoHaveLength[39m([34m6[39m))
+    [90m216| [39m    [34mexpect[39m(screen[33m.[39m[34mgetByRole[39m([32m'button'[39m[33m,[39m { name[33m:[39m [32m'11:30 已过窗口，不补跑'[39m…
+    [90m217| [39m    [34mexpect[39m([35mawait[39m screen[33m.[39m[34mfindByText[39m([36m/窗口外不补跑/[39m))[33m.[39m[34mtoBeTruthy[39m()
+    [90m   | [39m                        [31m^[39m
+    [90m218| [39m    [34mexpect[39m(screen[33m.[39m[34mqueryByText[39m([32m'快照取数失败'[39m))[33m.[39m[34mtoBeNull[39m()
+    [90m219| [39m    [34mexpect[39m(screen[33m.[39m[34mqueryByText[39m([32m'盘中快照取数失败'[39m))[33m.[39m[34mtoBeNull[39m()
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m32 passed[39m[22m[90m (33)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m331 passed[39m[22m[90m (332)[39m
+[2m   Start at [22m 01:17:19
+[2m   Duration [22m 10.84s[2m (transform 5.40s, setup 0ms, collect 23.11s, tests 23.12s, environment 29.10s, prepare 10.62s)[22m
+
+npm ERR! code 1
+npm ERR! path C:\Users\Administrator\multica_workspaces\quotafuse-g-066955b36a89\quot-317-c9cfa1f27021\workdir\LadderStock\frontend
+npm ERR! command failed
+npm ERR! command C:\windows\system32\cmd.exe /d /s /c vitest run
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     C:\Users\Administrator\AppData\Local\npm-cache\_logs\2026-11-01T17_17_30_736Z-debug.log

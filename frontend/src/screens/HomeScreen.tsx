@@ -2,22 +2,11 @@ import { useMemo } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 
-import {
-  api,
-  describeApiError,
-  isApiError,
-  type LadderEnvelope,
-  type LadderStock,
-  type SentimentResult,
-} from '../api'
-import { useAsync } from '../lib/useAsync'
+import { describeApiError, isApiError } from '../api'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import {
   MISSING,
-  formatBoards,
   formatChangePct,
-  formatInt,
-  formatRatePct,
   formatTime,
   localDateIso,
 } from '../lib/format'
@@ -26,118 +15,37 @@ import {
   Button,
   Card,
   CardHeader,
-  DataTable,
   EmptyState,
   ErrorBlock,
-  MetricCard,
   SectionCard,
   SignedNumber,
-  SourceBadges,
-  SourceStatusBadge,
   StatusDot,
-  type Column,
   type SourceBadgeMeta,
 } from '../components/ui'
-import { useDensity } from '../lib/prefs'
-import { useReviewDraft } from '../../stores/reviewDraft'
-import { useValidationDraft } from '../../stores/validationDraft'
+import { draftCharCount, selectSlot, useReviewDraft } from '../../stores/reviewDraft'
+import { DEMO_TRADE_DATE } from './home/demo'
+import { HomeIndexStrip } from './home/HomeIndexStrip'
+import { HomePositionsCard } from './home/HomePositionsCard'
+import { HomeSearch } from './home/HomeSearch'
+import { HomeWatchlistCard } from './home/HomeWatchlistCard'
+import { useHomeDemoEnabled, useHomeBlocks } from './home/useHomeSource'
 
 /**
- * 首页（P-01 / DESIGN-SPEC §4.2）。
+ * 首页（SPEC-HOME-V2 v1.0 / QUOT-381 S3 接线）。
  *
- * 3 秒内回答「今天值不值得动手」：5 个指标卡 + 情绪温度条 + 待办 + 连板 Top 10。
- * 数据聚合 `/api/sentiment` `/api/ladder` `/api/watch/snapshot` `/api/validation`；
- * 任何一路缺失都显示 `—` + 原因，**不补 0、不编造**。
- * 五态演示统一走 `?state=empty|loading|error|partial|offline`（§8）。
+ * 从「收盘后的市场体检报告」改成「开盘前 5 分钟的工作台」，四块纵向满宽：
+ * A 大盘与全球指数 → B 今天，想研究什么 → C 我的自选 → D 我的持仓；E 待办 / F 最近异动并排下移。
+ * 情绪温度 / 连板梯队 Top 10 / 题材强度 Top 5 移出首页（信息不丢，都在 `/market` 对应 tab）；
+ * 屏体只负责装配与五路状态合成，块内取数与缺数口径各自收在 `screens/home/` 的块件里。
+ *
+ * 五态演示统一走 `?state=empty|loading|error|partial|offline`；
+ * 演示数据走 `home/useHomeSource`，与真实通道互斥，**真实请求失败不回落到演示数据**（§5.6）。
  */
 
-type Envelope = LadderEnvelope<unknown>
-
-/** 溯源徽标只需要 envelope 的公共字段（§5.5 单一实现），四路 payload 类型不同也能放在同一数组里。 */
-type EnvelopeMeta = SourceBadgeMeta & Pick<Envelope, 'fetched_at'>
-
-/** 五段区间带的透明度分层（同一 `chart.band` 单色，不换色相 —— §6 CH-01）。 */
-const BAND_STEPS = [
-  { label: '冰点', opacity: 0.6 },
-  { label: '低迷', opacity: 0.75 },
-  { label: '中性', opacity: 1 },
-  { label: '活跃', opacity: 0.75 },
-  { label: '过热', opacity: 0.6 },
-]
-
-/** 顶部 8px 情绪温度条：五段单色透明度分层 + 当前位置指针（§4.2 L0）。 */
-function TemperatureBar({ value, label }: { value: number | null; label: string }) {
-  const pct = value === null ? null : Math.min(100, Math.max(0, value))
-  return (
-    <div className="flex flex-col gap-1">
-      <div
-        role="img"
-        aria-label={value === null ? `情绪温度缺失（${label}）` : `情绪温度 ${value}，0 到 100，50 为中性`}
-        className="relative h-2 w-full overflow-hidden rounded-pill border border-border bg-surface-2"
-      >
-        <div className="flex h-full w-full" aria-hidden="true">
-          {BAND_STEPS.map((band) => (
-            <span key={band.label} className="h-full flex-1 bg-chart-band" style={{ opacity: band.opacity }} />
-          ))}
-        </div>
-        {pct !== null && (
-          <span
-            aria-hidden="true"
-            className="absolute inset-y-0 w-half -translate-x-1/2 rounded-pill bg-text transition-all duration-fast ease-ldst"
-            style={{ left: `${pct}%` }}
-          />
-        )}
-      </div>
-      <div className="flex items-center justify-between text-caption text-text-muted">
-        <span>0 冰点</span>
-        <span>50 中性</span>
-        <span>100 过热</span>
-      </div>
-    </div>
-  )
+/** 溯源徽标只需要 envelope 的公共字段（§5.5 单一实现）；平面响应（自选）四键恒为 null。 */
+interface EnvelopeMeta extends SourceBadgeMeta {
+  fetched_at: string | null
 }
-
-/** HHMMSS 字符串 / 时间戳 → `09:30:00`；拿不到就 `—`（不猜）。 */
-function formatSeal(value: string | number | null | undefined): string {
-  if (value === null || value === undefined || value === '') return MISSING
-  const text = String(value)
-  if (/^\d{6}$/.test(text)) return `${text.slice(0, 2)}:${text.slice(2, 4)}:${text.slice(4, 6)}`
-  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(text)) return text
-  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return formatTime(text)
-  return MISSING
-}
-
-interface LadderRow {
-  code: string
-  name: string
-  boards: number
-  firstSeal: string | number | null
-}
-
-const LADDER_COLUMNS: Array<Column<LadderRow>> = [
-  {
-    key: 'code',
-    header: '代码',
-    width: '88px',
-    render: (row) => <span className="ldst-num text-text-secondary">{row.code || MISSING}</span>,
-  },
-  { key: 'name', header: '名称', truncate: true, render: (row) => <span className="font-medium">{row.name || MISSING}</span> },
-  {
-    key: 'boards',
-    header: '连板',
-    width: '88px',
-    numeric: true,
-    sort: (a, b) => a.boards - b.boards,
-    render: (row) => <span className="font-semibold text-up">{formatBoards(row.boards)}</span>,
-  },
-  {
-    key: 'seal',
-    header: '首封',
-    width: '144px',
-    numeric: true,
-    render: (row) => <span className="text-text-secondary">{formatSeal(row.firstSeal)}</span>,
-  },
-]
 
 interface Todo {
   tone: 'warn' | 'danger' | 'accent'
@@ -150,34 +58,36 @@ interface Todo {
 export default function HomeScreen() {
   const forced = useForcedState()
   const navigate = useNavigate()
-  // 行高档位只由用户的密度偏好决定（§11.18「密度只改行高」）：屏内不写死，
-  // 否则「设置 → 表格密度」在这张屏上会是静默失效的。
-  const density = useDensity()
   const [params] = useSearchParams()
-  const tradeDate = params.get('date') || localDateIso()
+  const demoEnabled = useHomeDemoEnabled()
+  // 演示源讲的是同一个交易日的 facts：请求日期跟随它，否则「2026-11-01 的演示数据」这种
+  // 自相矛盾的标题会写在首屏上。`?date=` 优先。
+  const tradeDate = params.get('date') || (demoEnabled ? DEMO_TRADE_DATE : localDateIso())
+  const { views, requests, reloadAll } = useHomeBlocks(tradeDate)
 
-  const sentiment = useAsync((signal) => api.sentiment(tradeDate, signal), [tradeDate])
-  const ladder = useAsync((signal) => api.ladder(tradeDate, signal), [tradeDate])
-  const watch = useAsync((signal) => api.watchSnapshot(signal), [tradeDate])
-  const validation = useAsync((signal) => api.validation(tradeDate, signal), [tradeDate])
+  const indexView = views.indices
+  const watchlistView = views.watchlist
+  const positionsView = views.positions
+  const watchView = views.watch
+  const validationView = views.validation
 
-  const requests = [sentiment, ladder, watch, validation]
-  const reloadAll = () => requests.forEach((request) => request.reload())
+  const watchRows = (watchView.state === 'normal' || watchView.state === 'partial' ? watchView.data?.payload.rows : null) ?? []
+  const conditions =
+    (validationView.state === 'normal' || validationView.state === 'partial'
+      ? validationView.data?.payload.conditions
+      : null) ?? []
+  const reconcile =
+    (validationView.state === 'normal' || validationView.state === 'partial'
+      ? validationView.data?.payload.reconcile
+      : null) ?? null
 
-  const sent: SentimentResult | null = sentiment.data?.payload.sentiment ?? null
-  const ladderPayload = ladder.data?.payload.ladder ?? null
-  const watchRows = watch.data?.payload.rows ?? []
-  const conditions = validation.data?.payload.conditions ?? []
-  const reconcile = validation.data?.payload.reconcile ?? null
-
-  const draftConditions = useValidationDraft((state) => state.conditions)
-  const reviewSections = useReviewDraft((state) => state.sections)
+  const reviewSections = useReviewDraft((state) => selectSlot(state, tradeDate).sections)
   const reviewChars = useMemo(
-    () => Object.values(reviewSections).reduce((total, text) => total + text.trim().length, 0),
+    () => draftCharCount(reviewSections),
     [reviewSections],
   )
 
-  const isEmpty = !sent?.available && !ladderPayload?.available && watchRows.length === 0 && conditions.length === 0
+  // 整屏六态：五路合成（§7）。块级态留在块件里，这里只决定骨架 / 离线条 / 空态。
   const derived = useMemo<PageState>(() => {
     const statuses = requests.map((request) => request.status)
     if (statuses.every((status) => status === 'loading')) return 'loading'
@@ -186,69 +96,50 @@ export default function HomeScreen() {
       return errors.every((error) => isApiError(error) && error.kind === 'not-connected') ? 'offline' : 'error'
     }
     if (errors.length > 0) return 'partial'
-    if (statuses.every((status) => status === 'ready')) return isEmpty ? 'empty' : 'normal'
+    if (statuses.every((status) => status === 'ready')) {
+      const allEmpty = [indexView, watchlistView, positionsView, watchView, validationView].every(
+        (view) => view.state === 'empty' || view.state === 'offline',
+      )
+      return allEmpty ? 'empty' : 'normal'
+    }
     return 'loading'
-  }, [sentiment.status, ladder.status, watch.status, validation.status, isEmpty]) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests, indexView.state, watchlistView.state, positionsView.state, watchView.state, validationView.state])
 
   const state = resolveState(forced, derived)
   const usable = state === 'normal' || state === 'partial'
   const busy = requests.some((request) => request.status === 'loading')
-
-  // 五态下数据一律按「不可用」处理，保证骨架之外的强制态不依赖后端
-  const viewSent = usable ? sent : null
-  const viewLadder = usable ? ladderPayload : null
-  const viewWatch = usable ? watchRows : []
-  const viewConditions = usable ? conditions : []
-
-  const temperature = viewSent?.temperature ?? null
-  const maxBoard = viewSent?.max_board ?? viewLadder?.height ?? null
   const offline = state === 'offline'
-
-  const ladderRows = useMemo<LadderRow[]>(() => {
-    if (!viewLadder?.ladder) return []
-    return viewLadder.ladder
-      .flatMap((level) => level.stocks.map((stock: LadderStock) => ({
-        code: stock.code,
-        name: stock.name,
-        boards: level.boards,
-        firstSeal: stock.first_seal_time,
-      })))
-      .sort((a, b) => b.boards - a.boards)
-      .slice(0, 10)
-  }, [viewLadder])
-
-  const confirmedCount = useMemo(() => {
-    const codes = new Set(viewConditions.map((condition) => condition.code).filter(Boolean))
-    return draftConditions.filter((condition) => condition.confirmed && (codes.size === 0 || codes.has(condition.code))).length
-  }, [draftConditions, viewConditions])
 
   const movers = useMemo(
     () =>
-      [...viewWatch]
+      [...watchRows]
         .filter((row) => row.change_pct !== null)
         .sort((a, b) => Math.abs(b.change_pct ?? 0) - Math.abs(a.change_pct ?? 0))
         .slice(0, 3),
-    [viewWatch],
+    [watchRows],
   )
 
-  // 四路 envelope 的 payload 类型各不相同，只取溯源需要的公共三条字段
+  // 各路信封的 payload 类型不同，只取溯源需要的公共字段
   const envelopes = useMemo<EnvelopeMeta[]>(() => {
-    const list = [sentiment.data, ladder.data, watch.data, validation.data]
+    // 五份 payload 的形状不同（平面 / 信封），这里只按「可能带溯源键」读，缺键即 null
+    const list = [indexView.data, watchlistView.data, positionsView.data, watchView.data, validationView.data] as Array<Partial<EnvelopeMeta>>
     return list.flatMap((item) =>
       item
         ? [{
-            freshness: item.freshness,
-            source_status: item.source_status,
-            source_detail: item.source_detail,
-            data_as_of: item.data_as_of,
-            fetched_at: item.fetched_at,
+            freshness: item.freshness ?? null,
+            source_status: item.source_status ?? null,
+            source_detail: item.source_detail ?? null,
+            data_as_of: item.data_as_of ?? null,
+            fetched_at: item.fetched_at ?? null,
           }]
         : [],
     )
-  }, [sentiment.data, ladder.data, watch.data, validation.data])
-  const degraded = envelopes.filter((envelope) => envelope.source_status !== 'ok')
+  }, [indexView.data, watchlistView.data, positionsView.data, watchView.data, validationView.data])
+  const degraded = envelopes.filter((envelope) => envelope.source_status !== null && envelope.source_status !== 'ok')
   const latestFetch = envelopes
     .map((envelope) => envelope.fetched_at)
+    .filter((value): value is string => Boolean(value))
     .sort()
     .pop()
 
@@ -265,11 +156,11 @@ export default function HomeScreen() {
 
   const todos = useMemo<Todo[]>(() => {
     const list: Todo[] = []
-    if (usable && viewConditions.length > 0 && !reconcile) {
+    if (usable && conditions.length > 0 && !reconcile) {
       list.push({
         tone: 'warn',
         tag: '待对账',
-        title: `${viewConditions.length} 条验证条件等待收盘对账`,
+        title: `${conditions.length} 条验证条件等待收盘对账`,
         to: '/validate',
         action: '去验证',
       })
@@ -293,16 +184,17 @@ export default function HomeScreen() {
       })
     }
     return list.slice(0, 3)
-  }, [usable, viewConditions.length, reconcile, reviewChars, degraded])
+  }, [usable, conditions.length, reconcile, reviewChars, degraded])
 
   const failedLabels = useMemo(() => {
     const labels: string[] = []
-    if (sentiment.status === 'error') labels.push('情绪温度')
-    if (ladder.status === 'error') labels.push('连板天梯')
-    if (watch.status === 'error') labels.push('盯盘快照')
-    if (validation.status === 'error') labels.push('验证条件')
+    if (indexView.state === 'error') labels.push('大盘指数')
+    if (watchlistView.state === 'error') labels.push('我的自选')
+    if (positionsView.state === 'error') labels.push('我的持仓')
+    if (watchView.state === 'error') labels.push('盯盘快照')
+    if (validationView.state === 'error') labels.push('验证条件')
     return labels
-  }, [sentiment.status, ladder.status, watch.status, validation.status])
+  }, [indexView.state, watchlistView.state, positionsView.state, watchView.state, validationView.state])
 
   const header = (
     <PageHeader
@@ -325,9 +217,10 @@ export default function HomeScreen() {
 
   if (state === 'loading') {
     return (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
         {header}
-        <ScreenSkeleton metrics={5} rows={8} />
+        {/* 首页已无 5 卡阵：骨架形状跟着真实版式走（§7 / §11.0） */}
+        <ScreenSkeleton metrics={2} rows={8} />
       </div>
     )
   }
@@ -336,21 +229,32 @@ export default function HomeScreen() {
     const firstError = requests.map((request) => request.error).find(Boolean)
     const info = describeApiError(firstError)
     return (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
         {header}
         <ErrorBlock {...info} onRetry={reloadAll} />
       </div>
     )
   }
 
-  if (state === 'empty') {
-    // §11.5：空态是「今日无数据 + 引导」，不是把整屏渲染成一组「—」
-    return (
-      <div className="flex flex-col gap-5">
-        {header}
+  return (
+    <div className="flex flex-col gap-4">
+      {header}
+
+      {offline && <OfflineBanner onRetry={reloadAll} />}
+      {state === 'partial' && failedLabels.length > 0 && (
+        <ErrorBlock
+          variant="banner"
+          title="部分数据源不可用"
+          detail={`${failedLabels.join('、')} 取数失败；其余块照常展示，缺失处以 ${MISSING} 标注。`}
+          onRetry={reloadAll}
+          retryLabel="重试该段"
+        />
+      )}
+
+      {state === 'empty' && (
         <EmptyState
           title={`${tradeDate} 没有可用数据`}
-          description="情绪温度、连板天梯、盯盘快照、验证条件四路都是空的。先启动本机服务，再同步当日涨停池。"
+          description="五路（指数 / 自选 / 持仓 / 盯盘快照 / 验证条件）都是空的。先启动本机服务，再同步当日数据。"
           action={
             <div className="flex flex-col items-center gap-2">
               <code className="ldst-num rounded border border-border bg-surface-2 px-2 py-1 text-caption text-text-secondary">
@@ -367,173 +271,44 @@ export default function HomeScreen() {
             </div>
           }
         />
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      {header}
-
-      {state === 'offline' && <OfflineBanner onRetry={reloadAll} />}
-      {state === 'partial' && (
-        <ErrorBlock
-          variant="banner"
-          title="部分数据源不可用"
-          detail={`${failedLabels.join('、')} 取数失败；其余指标照常展示，缺失处以 — 标注。`}
-          onRetry={reloadAll}
-          retryLabel="重试该段"
-        />
       )}
 
-      <TemperatureBar
-        value={temperature}
-        label={offline ? '本地服务未连接' : viewSent?.reason ?? '该交易日无情绪数据'}
-      />
+      {/* A/B/C/D 四块各自满宽纵向堆叠（§1.1：持仓六列下限 824px，并排必然叠字） */}
+      <HomeIndexStrip view={indexView} />
+      <HomeSearch />
+      <HomeWatchlistCard view={watchlistView} />
+      <HomePositionsCard view={positionsView} />
 
-      <div className="grid grid-cols-2 gap-4 rail:grid-cols-3 desk:grid-cols-5">
-        <MetricCard
-          label="情绪温度"
-          badge={<SourceBadges envelope={sentiment.data} />}
-          value={formatInt(temperature)}
-          note={
-            temperature !== null ? (
-              <>
-                50 为中性 · 涨停 <span className="ldst-num">{formatInt(viewSent?.limit_up_count)}</span> 家
-              </>
-            ) : (
-              (viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无情绪数据'))
-            )
-          }
-        />
-        <MetricCard
-          label="最高连板"
-          badge={<SourceBadges envelope={sentiment.data ?? ladder.data} />}
-          value={formatBoards(maxBoard)}
-          note={
-            maxBoard !== null ? (
-              <>
-                断层 <span className="ldst-num">{formatInt(viewLadder?.gap_levels.length ?? viewSent?.gap_levels.length)}</span>{' '}
-                档
-              </>
-            ) : (
-              (viewLadder?.reason ?? viewSent?.reason ?? (offline ? '本地服务未连接' : '暂无连板数据'))
-            )
-          }
-        />
-        <MetricCard
-          label="主线题材"
-          badge={<SourceStatusBadge status="missing" detail="本屏没有题材 / 板块数据源" />}
-          value={MISSING}
-          note="本地无板块/题材数据（先运行 ldst sync）"
-        />
-        <MetricCard
-          label="盯盘异动"
-          badge={<SourceBadges envelope={watch.data} />}
-          value={viewWatch.length > 0 ? <>{formatInt(viewWatch.length)} 条</> : MISSING}
-          note={
-            viewWatch.length > 0 ? (
-              <>
-                快照 <span className="ldst-num">{formatTime(watch.data?.fetched_at)}</span>
-              </>
-            ) : offline ? (
-              '本地服务未连接'
-            ) : (
-              '本机没有可用快照'
-            )
-          }
-        />
-        <MetricCard
-          label="待验证"
-          badge={<SourceBadges envelope={validation.data} />}
-          value={viewConditions.length > 0 ? <>{formatInt(viewConditions.length)} 项</> : MISSING}
-          note={
-            viewConditions.length > 0 ? (
-              <>
-                <span className="ldst-num">{formatInt(confirmedCount)}</span> 项已确认
-              </>
-            ) : offline ? (
-              '本地服务未连接'
-            ) : (
-              '还没有验证条件'
-            )
-          }
-        />
-      </div>
-
-      {todos.length > 0 && (
-        <Card>
-          <CardHeader title="待办" subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>} />
-          <ul>
-            {todos.map((todo) => (
-              <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
-                <Link
-                  to={todo.to}
-                  className="flex min-h-control items-center gap-3 px-4 py-2 transition-colors duration-fast ease-ldst hover:bg-surface-3"
-                >
-                  <StatusDot tone={todo.tone}>{todo.tag}</StatusDot>
-                  <span className="min-w-0 flex-1 truncate text-body text-text" title={todo.title}>
-                    {todo.title}
-                  </span>
-                  <span className="shrink-0 text-caption text-text-secondary">{todo.action} →</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-
+      {/* 只有 E/F 并排：7 / 5 */}
       <div className="grid gap-4 desk:grid-cols-12">
-        <SectionCard
-          className="desk:col-span-8"
-          title="今日连板梯队 Top 10"
-          subtitle={
-            viewLadder?.available ? (
-              <>
-                <span className="ldst-num">{tradeDate}</span> · 高度{' '}
-                <span className="ldst-num">{formatBoards(viewLadder.height)}</span> · 共{' '}
-                <span className="ldst-num">{formatInt(viewLadder.count)}</span> 只
-              </>
-            ) : (
-              <>
-                交易日 <span className="ldst-num">{tradeDate}</span>
-              </>
-            )
-          }
-          bodyClassName="p-0"
-        >
-          <DataTable<LadderRow>
-            columns={LADDER_COLUMNS}
-            rows={ladderRows}
-            rowKey={(row) => `${row.code}-${row.boards}`}
-            caption={`连板梯队（${tradeDate}），按板数降序取前 10`}
-            density={density}
-            maxHeight="420px"
-            empty={
-              <EmptyState
-                compact
-                title="还没有连板数据"
-                description={
-                  viewLadder?.reason ??
-                  (offline ? '本地服务未连接，先运行 ldst run。' : '该交易日没有涨停池数据，先运行 ldst sync 再回来。')
-                }
-              />
-            }
-          />
-        </SectionCard>
+        <div className="flex flex-col gap-4 desk:col-span-7">
+          {todos.length > 0 && (
+            <Card>
+              <CardHeader title="待办" subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>} />
+              <ul>
+                {todos.map((todo) => (
+                  <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
+                    <Link
+                      to={todo.to}
+                      className="flex min-h-row items-center gap-3 px-4 transition-colors duration-fast ease-ldst hover:bg-surface-3"
+                    >
+                      <StatusDot tone={todo.tone}>{todo.tag}</StatusDot>
+                      <span className="min-w-0 flex-1 truncate text-body text-text" title={todo.title}>
+                        {todo.title}
+                      </span>
+                      <span className="shrink-0 text-caption text-text-secondary">{todo.action} →</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+        </div>
 
-        <div className="flex flex-col gap-4 desk:col-span-4">
-          <SectionCard title="题材强度 Top 5" subtitle="本地无题材数据集" bodyClassName="p-4">
-            <EmptyState
-              compact
-              title="还没有题材数据"
-              description="情绪温度与连板天梯可用；题材轮动需要先接入板块/概念行情（ldst sync）。"
-            />
-          </SectionCard>
-
+        <div className="desk:col-span-5">
           <SectionCard
             title="最近异动"
-            subtitle={viewWatch.length > 0 ? '按涨跌幅绝对值取前 3' : '快照不可用'}
+            subtitle={watchRows.length > 0 ? '按涨跌幅绝对值取前 3' : '快照不可用'}
             bodyClassName="p-4"
           >
             {movers.length === 0 ? (
@@ -543,13 +318,10 @@ export default function HomeScreen() {
                 {movers.map((row) => {
                   const change = formatChangePct(row.change_pct)
                   return (
-                    <li
-                      key={row.code}
-                      className="flex min-h-row items-center justify-between gap-2 rounded-xs px-1"
-                    >
-                      <span className="min-w-0 truncate text-body text-text" title={`${row.code} ${row.name}`}>
+                    <li key={row.code} className="flex min-h-row items-center justify-between gap-2 rounded-xs px-1">
+                      <span className="min-w-0 truncate text-body text-text" title={`${row.code} ${row.name ?? MISSING}`}>
                         <span className="ldst-num mr-2 text-caption text-text-muted">{row.code}</span>
-                        {row.name}
+                        {row.name ?? MISSING}
                       </span>
                       <SignedNumber text={change.text} tone={change.tone} arrow={change.arrow} className="text-body" />
                     </li>
@@ -565,8 +337,8 @@ export default function HomeScreen() {
       </div>
 
       <p className="text-caption leading-body text-text-muted">
-        指标口径：情绪温度 0–100（50 中性）；晋级率{' '}
-        <span className="ldst-num">{formatRatePct(viewSent?.promotion_rate).text}</span>；一线源见各卡右上徽标。
+        指标口径：指数与自选为行情快照，不是逐笔实时；持仓成本法移动加权平均（DEC-038），当日盈亏不含分红。
+        {todos.length === 0 && ' 今日无待办。'}
       </p>
     </div>
   )

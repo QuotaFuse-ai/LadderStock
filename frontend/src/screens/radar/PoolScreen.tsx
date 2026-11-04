@@ -51,6 +51,17 @@ function weightPct(value: number | null | undefined): string {
   return value === null || value === undefined ? MISSING : `${formatOneDecimal(value * 100)}%`
 }
 
+/**
+ * 资金分项的数据时点（QUOT-372）：`fetched_at` 精确到分钟；回落日线明确标「回放」，
+ * 与「当日实时」区分；没有资金数据就是「—」，不伪造时间。
+ */
+function fundStampLabel(payload: CandidatePoolPayload): string {
+  const hhmm = payload.fund_fetched_at ? payload.fund_fetched_at.slice(11, 16) : null
+  if (payload.fund_freshness === 'realtime') return `当日实时 · ${hhmm ?? MISSING}`
+  if (payload.fund_freshness === 'daily_fallback') return `回放 · ${hhmm ?? MISSING}`
+  return MISSING
+}
+
 function PartCell({ value, compact = false }: { value: number | null; compact?: boolean }) {
   if (value === null) {
     if (compact) {
@@ -74,7 +85,10 @@ function rawFor(part: PoolPart, candidate: PoolCandidate, height: number | null)
     return height === null ? MISSING : `相对高度 ${formatBoards(raw.boards)} / ${formatBoards(height)}`
   }
   if (part === 'capital') {
-    return raw.net_inflow === null ? MISSING : `候选集内净流入 ${formatMoney(raw.net_inflow)}`
+    // QUOT-372 口径：净额（元）+ 净占比（%）两个值都要亮出来；缺数如实「—」，不冒充 0
+    const net = raw.net_inflow === null ? MISSING : formatMoney(raw.net_inflow)
+    const pct = raw.main_net_pct === null ? MISSING : `${formatOneDecimal(raw.main_net_pct)}%`
+    return `主力净额 ${net} · 净占比 ${pct}`
   }
   if (part === 'theme') {
     const tags = raw.theme_tags.length > 0 ? raw.theme_tags.join(' / ') : '无题材标签'
@@ -217,7 +231,8 @@ function BreakdownDrawer({
           </section>
 
           <p className="text-caption leading-body text-text-muted">
-            数据时点 {payload.data_as_of ?? payload.date ?? MISSING} · 来源 {payload.source_detail || MISSING}。
+            数据时点 {payload.data_as_of ?? payload.date ?? MISSING} · 资金数据 {fundStampLabel(payload)} ·
+            来源 {payload.source_detail || MISSING}。
             分数由后端计算，页面只展示依据；导出与查看都在本机完成。
           </p>
         </div>
@@ -307,7 +322,9 @@ export default function PoolScreen() {
       title="候选池"
       subtitle={`${date} · 高度 ${formatBoards(payload?.height)} · ${formatInt(payload?.candidate_count)} 只候选 · 来源 ${
         payload?.source_detail || MISSING
-      } · 数据时点 ${payload?.data_as_of ?? MISSING}`}
+      } · 数据时点 ${payload?.data_as_of ?? MISSING}${
+        payload ? ` · 资金 ${fundStampLabel(payload)}` : ''
+      }`}
       badge={
         <div className="flex flex-wrap items-center gap-2">
           <DemoStateBadge state={forced} />
@@ -452,7 +469,7 @@ export default function PoolScreen() {
         rowKey={(row) => row.code}
         caption={`${payload.date} 候选池（${payload.candidates.length} 只）；点击「展开」看分项依据，分数由后端计算`}
         density="compact"
-        maxHeight="calc(100vh - 360px)"
+        maxHeight="var(--ldst-table-h)"
         onRowClick={(row) => setSelected(row)}
         empty={<EmptyState compact title="没有候选" description="换一个交易日，或先运行 ldst pool。" />}
       />
@@ -460,6 +477,8 @@ export default function PoolScreen() {
       <p className="text-caption leading-body text-text-muted">
         口径：候选分项与总分全部取自后端（SPEC-CANDIDATE-POOL），页面排序只改变展示顺序；
         「—」表示无数据（未核实），不补 0。
+        资金分项是当日实时口径（主力净额单位元、净占比单位%，取自当日实时批量数据），
+        与日线历史口径（fflow/daykline）不混用；数据非当日实时时在「资金」处标「回放 · HH:MM」。
         导出按钮生成的是本地 JSON 文件，不经过网络；文件里不含持仓与任何隐私数据。
       </p>
 

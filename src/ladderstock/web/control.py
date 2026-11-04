@@ -52,13 +52,26 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from ladderstock.ai import checkpoint
+from ladderstock.ai import checkpoint, cli_provider, fallback
 from ladderstock.cli.paths import config_dir, project_root
-from ladderstock.core.boundary import PEER_DIR_ENV, PeerControl, resolve_peer_control
+from ladderstock.core.boundary import (
+    PEER_DIR_ENV,
+    BoundaryViolation,
+    ComponentControl,
+    PeerControl,
+    resolve_components,
+    resolve_peer_control,
+)
 from ladderstock.core.fsguard import (
     AclError,
     harden_file_acl,
     require_local_peer_directories,
+)
+from ladderstock.core.peer_versions import (
+    ReleaseCache,
+    start_release_watcher,
+    upgrade_command,
+    version_status,
 )
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
@@ -140,6 +153,27 @@ AI_JOB_ACTIONS: frozenset[str] = frozenset({"generate", "retry"})
 #: 五段生成可能较慢；单次子进程的硬上限（超时即失败，不无限挂起）
 AI_JOB_TIMEOUT_SEC = 1800.0
 
+#: 页面一键命令白名单：key → (前端路由, 按钮文案, argv)。
+#: 只允许本机只读 / 生成本机数据的 `ldst` 子命令，不接受任何请求参数（DEC-014）；
+#: 唯一的动态值是 `{date}`（执行时替换为本机当天日期），避免前端能改写参数。
+PAGE_COMMANDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "market": ("/market", "拉取行情数据", ("sync",)),
+    "review": ("/review", "生成收盘复盘", ("review", "--date", "{date}")),
+    "review-ai": ("/review/ai", "重新生成 AI 复盘", ("review", "--date", "{date}", "--force")),
+    "weekly": ("/weekly", "生成 AI 周报", ("weekly",)),
+    "news": ("/news", "抓取资讯雷达", ("news",)),
+    "calendar": ("/calendar", "刷新事件日历", ("events",)),
+    "pool": ("/pool", "重算候选池", ("pool",)),
+    "validate": ("/validate", "提交收盘对账", ("validate", "reconcile", "--date", "{date}")),
+    "positions": ("/positions", "查询持仓", ("position", "list")),
+}
+#: argv 占位符：只认当天日期，执行时替换（不把日期存进任务，避免排队跨夜后跑错日）
+PAGE_COMMAND_DATE = "{date}"
+#: 页面命令单次执行的硬上限（与 AI 生成同档：全量同步 / 复盘都可能跑几分钟）
+PAGE_COMMAND_TIMEOUT_SEC = 1800.0
+#: 允许视为「跑完但部分降级」的退出码：0 成功、8 部分数据源失败、9 AI 降级
+PAGE_COMMAND_OK_CODES = frozenset({0, 8, 9})
+
 #: `import <pkg>` 探测超时（PRD §3.1）
 IMPORT_PROBE_TIMEOUT_SEC = 15.0
 #: 健康检查超时（PRD §3.1：2s 内成功才算运行中）
@@ -162,7 +196,6 @@ CONTROL_STATE_FILE = "peer_state.json"
 KNOWN_AVOIDED_PORTS: dict[str, tuple[tuple[int, str], ...]] = {
     "tickhub_us": (
         (8001, "TickHub-US 默认 MCP 端口：被 WSL 转发服务占用，改用 8002"),
-        (8787, "TickHub-US 默认管理端端口：与 TickHub-CN 撞车，改用 8789"),
     ),
 }
 
@@ -651,6 +684,12 @@ def _ldst_command() -> list[str]:
     return [sys.executable, "-m", "ladderstock.cli.main"]
 
 
+def _page_argv(argv: tuple[str, ...]) -> list[str]:
+    """页面命令 argv：只把 `{date}` 换成执行当天的日期，其余原样返回。"""
+    today = datetime.now().date().isoformat()
+    return [today if item == PAGE_COMMAND_DATE else item for item in argv]
+
+
 def _ai_working_dir() -> Path:
     """AI 子进程 cwd：工程根（含 prompts/ 与默认 config/），不随控制面从哪启动而漂移。"""
     return project_root()
@@ -765,16 +804,61 @@ def _no_proxy_opener() -> urllib.request.OpenerDirector:
 
 
 def probe_health(url: str, timeout: float = HEALTH_TIMEOUT_SEC) -> tuple[bool, str]:
-    """HTTP 健康探测：2xx/3xx 视为健康；其余（含连不上）如实返回失败原因。"""
+    """HTTP 健康探测：2xx/3xx 视为健康；其余（含连不上）如实返回失败原因。
+
+    响应体是 JSON 且带非 ok 的 `status`（如 FinanceCoffer 的 degraded，
+    QUOT-403）时，把状态与未通过的检查项**如实**拼进 detail，不做美化：
+    `HTTP 200 · degraded（embedding: unreachable）`。
+    """
     request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
     try:
         with _no_proxy_opener().open(request, timeout=timeout) as response:  # noqa: S310 - 只探回环
             code = int(getattr(response, "status", 200))
-            return 200 <= code < 400, f"HTTP {code}"
+            body = response.read(_HEALTH_BODY_LIMIT).decode("utf-8", "replace")
+            detail = f"HTTP {code}"
+            if 200 <= code < 400:
+                detail += _degraded_suffix(body)
+            return 200 <= code < 400, detail
     except urllib.error.HTTPError as exc:
         return False, f"HTTP {exc.code}"
     except (urllib.error.URLError, OSError, ValueError) as exc:
         return False, f"无法连接：{exc}"
+
+
+#: 健康响应体最多读 64KB：/health 是小 JSON，大响应体不值得为它占内存
+_HEALTH_BODY_LIMIT = 65536
+
+#: `_HEALTH_OK_STATES`：这些状态词视为「这个检查项没问题」，其余原样列出
+_HEALTH_OK_STATES = frozenset({"ok", "healthy", "pass", "passed", "up", ""})
+
+
+def _degraded_suffix(body: str) -> str:
+    """健康响应体里的非 ok 状态 → 人类可读后缀；不是 JSON / 状态正常返回空串。"""
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    # 兼容两种形态：状态在顶层，或包在 data 里（FinanceCoffer 的实际返回）
+    raw_data = payload.get("data")
+    data: dict[Any, Any] = raw_data if isinstance(raw_data, dict) else {}
+    status = payload.get("status") or data.get("status")
+    if not isinstance(status, str) or status.strip().lower() in _HEALTH_OK_STATES:
+        return ""
+    parts = [status]
+    checks = payload.get("checks") or data.get("checks")
+    if isinstance(checks, dict):
+        bad = [
+            f"{key}: {value}"
+            for key, value in checks.items()
+            if str(value).strip().lower() not in _HEALTH_OK_STATES
+        ]
+        if bad:
+            parts.append("；".join(bad))
+    if len(parts) == 1:
+        return f" · {status}"
+    return f" · {parts[0]}（{parts[1]}）"
 
 
 # --------------------------------------------------------------------------- #
@@ -913,6 +997,8 @@ class Job:
     day: str = ""
     section: str | None = None
     force: bool = False
+    #: 页面一键命令的 key（`PAGE_COMMANDS`）；只有 action="command" 时非空
+    command: str = ""
     _log: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -1234,6 +1320,7 @@ class ControlPlane:
         *,
         data_root: Path,
         peers: Mapping[str, PeerControl] | None = None,
+        components: Mapping[str, ComponentControl] | None = None,
         sources_loader: Callable[[], Mapping[str, Any]] | None = None,
         run: Callable[[list[str], Path, float], StepResult] | None = None,
         port_probe: Callable[[int | None], list[PortOwner]] | None = None,
@@ -1245,9 +1332,16 @@ class ControlPlane:
         process_started: Callable[[int], datetime | None] | None = None,
         resolve: Callable[[str], list[str]] | None = None,
         harden_acl: Callable[[Path], None] | None = None,
+        config_root: Path | None = None,
     ) -> None:
         self.data_root = Path(data_root)
+        # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
+        self.config_root = Path(config_root) if config_root is not None else config_dir()
         self.peers: dict[str, PeerControl] = dict(peers or resolve_peer_control())
+        # 工具组件只读观测，不参与 peer 的数据边界与启停任务
+        self.components: dict[str, ComponentControl] = dict(
+            components if components is not None else resolve_components()
+        )
         # 启动即校验 peer 目录（QUOT-194 P1-3）：共享盘上的 peer 等于把执行权
         # 交给别人，命中即抛 SharedPeerDirectoryError，不进入任何动作。
         require_local_peer_directories(
@@ -1274,8 +1368,19 @@ class ControlPlane:
         self._jobs: dict[str, Job] = {}
         self._last_job: dict[str, Job] = {}
         self._ai_job: Job | None = None
+        self._command_job: Job | None = None
+        self._last_command: dict[str, Job] = {}
         self._handles: dict[str, list[Any]] = {}
         self._state: dict[str, Any] = self._load_state()
+        # 期望版本缓存（QUOT-402）：只读缓存文件 + daemon 线程每小时刷一次；
+        # 快照 / doctor 永远不在请求线程里等 GitHub（断网不阻塞、不报错）。
+        self._release_cache = ReleaseCache(
+            self.data_root / CONTROL_STATE_SUBDIR / "github-releases.json"
+        )
+        self._release_thread = start_release_watcher(
+            self._release_cache,
+            sorted({ctl.repo for ctl in self.peers.values() if ctl.repo}),
+        )
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ldst-control")
 
     # ---------------------------------------------------------------- 状态文件
@@ -1419,9 +1524,26 @@ class ControlPlane:
             foreign_ports=[c["port"] for c in conflicts if c.get("foreign")],
         )
 
+        # 模块已在正常服务、占用的又是它自己的声明端口：这不是冲突，只是「控制面没
+        # 亲手拉起它」（手动启动很常见，如 CN 要先加载代理 env）。降级成归属提示，
+        # 保留 PID/进程名与「不接管」的事实，避免整页全红。
+        if status == STATUS_RUNNING:
+            own_ports = {ctl.mcp_port, ctl.web_port}
+            for conflict in conflicts:
+                if conflict.get("foreign") and conflict["port"] in own_ports:
+                    conflict["severity"] = "info"
+                    conflict["note"] = (
+                        "端口由控制面之外的进程监听（手动启动）；"
+                        "控制面不接管启停，也不会终止它"
+                    )
+
         last_job = self._last_job.get(key)
         running_with_web = status == STATUS_RUNNING and bool(ctl.web_port)
         open_url = f"http://127.0.0.1:{ctl.web_port}" if running_with_web else None
+        # 版本三态（QUOT-402）：期望值来自后台线程维护的 GitHub Release 缓存；
+        # 缓存没有 / 任一侧不是 semver 都判 unknown，不许猜。只读，绝不代跑升级。
+        expected_version = self._release_cache.expected(ctl.repo) if ctl.repo else None
+        v_status = version_status(version, expected_version)
         return {
             "id": key,
             "product": self._product_name(key),
@@ -1434,6 +1556,10 @@ class ControlPlane:
             "detail": detail,
             "installed": installed,
             "version": version,
+            "version_expected": expected_version,
+            "version_status": v_status,
+            "upgrade_hint": upgrade_command(ctl.directory) if v_status == "behind" else None,
+            "repo": ctl.repo,
             "venv": str(self._venv_dir(ctl)) if self._venv_dir(ctl).is_dir() else None,
             "ports": {"mcp": ctl.mcp_port, "web": ctl.web_port, "web_label": ctl.web_port_label},
             "listening": {
@@ -1450,9 +1576,13 @@ class ControlPlane:
             "last_job": last_job.view() if last_job is not None else None,
             "open_url": open_url,
             "actions": {
-                "can_install": dir_exists and registered and not installed,
-                "can_start": installed and not listening and not self._job_running(key),
-                "can_stop": bool(state_pids(self._peer_state(key))) or listening,
+                # 未托管的服务（如 WSL 里的 FinanceCoffer，QUOT-403）一律不出
+                # 安装/启停按钮：Windows 侧没有它的进程归属证据，也不能杀。
+                "can_install": ctl.managed and dir_exists and registered and not installed,
+                "can_start": (
+                    ctl.managed and installed and not listening and not self._job_running(key)
+                ),
+                "can_stop": ctl.managed and (bool(state_pids(self._peer_state(key))) or listening),
                 "can_open": open_url is not None,
             },
         }
@@ -1540,7 +1670,13 @@ class ControlPlane:
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
             for owner in self._port_probe(port):
                 conflicts.append(
-                    {"port": port, "pid": owner.pid, "process": owner.process, "note": note}
+                    {
+                        "port": port,
+                        "pid": owner.pid,
+                        "process": owner.process,
+                        "note": note,
+                        "severity": "conflict",
+                    }
                 )
         for bound_port, owners in ((ctl.mcp_port, mcp_owners), (ctl.web_port, web_owners)):
             if not bound_port:
@@ -1555,6 +1691,7 @@ class ControlPlane:
                         "process": owner.process,
                         "note": "端口已被其他进程占用（不自动换端口，DEC-004）",
                         "foreign": True,
+                        "severity": "conflict",
                     }
                 )
         return conflicts
@@ -1571,9 +1708,78 @@ class ControlPlane:
         peer = PEERS.get(key)
         return peer.role if peer else ""
 
+    def component_snapshot(self, key: str) -> dict[str, Any]:
+        """工具组件的只读观测：目录 → 端口 → health。不安装、不启停。"""
+        ctl = self.components[key]
+        directory = Path(ctl.directory)
+        dir_exists = directory.is_dir()
+        console_owners = self._port_probe(ctl.console_port)
+        gateway_owners = (
+            self._port_probe(ctl.gateway_port) if ctl.gateway_port else []
+        )
+        listening = bool(console_owners or gateway_owners)
+
+        health: dict[str, Any] = {"ok": None, "detail": ""}
+        if console_owners:
+            ok, detail = self._health(
+                f"http://127.0.0.1:{ctl.console_port}{ctl.health_path}",
+                HEALTH_TIMEOUT_SEC,
+            )
+            health = {"ok": ok, "detail": detail}
+
+        gateway_hint = f" / {ctl.gateway_port}" if ctl.gateway_port else ""
+        if not dir_exists:
+            status, detail = STATUS_UNCONFIGURED, f"目录不存在：{ctl.directory}"
+        elif not listening:
+            status, detail = (
+                STATUS_STOPPED,
+                f"端口 {ctl.console_port}{gateway_hint} 无监听；{ctl.managed_by}",
+            )
+        elif health["ok"]:
+            status, detail = STATUS_RUNNING, f"端口已监听，健康检查通过（{health['detail']}）"
+        else:
+            status, detail = (
+                STATUS_FAILED,
+                f"端口已监听但健康检查失败（{health['detail'] or '控制台未响应'}）",
+            )
+
+        running = status == STATUS_RUNNING
+        return {
+            "id": key,
+            "kind": "component",
+            "product": ctl.product,
+            "role": ctl.role,
+            "directory": str(directory),
+            "directory_exists": dir_exists,
+            "status": status,
+            "status_label": STATUS_LABELS[status],
+            "detail": detail,
+            "ports": {"console": ctl.console_port, "gateway": ctl.gateway_port},
+            "listening": {
+                "console": [owner.as_dict() for owner in console_owners],
+                "gateway": [owner.as_dict() for owner in gateway_owners],
+            },
+            "health": health,
+            "open_url": (
+                f"http://127.0.0.1:{ctl.console_port}" if running and console_owners else None
+            ),
+            "managed_by": ctl.managed_by,
+            "notes": list(ctl.notes),
+            "actions": {"can_open": running and bool(console_owners)},
+        }
+
     def board(self) -> dict[str, Any]:
-        """四个 peer + 端口占用汇总（`GET /api/control/peers`）。"""
-        snapshots = [self.snapshot(key) for key in self.peers]
+        """模块卡（peers + 组件）+ 端口占用汇总。
+
+        peer 卡列表由 `config/sources.yaml` 的 peers 块驱动（QUOT-403）：
+        只给「PEER_CONTROL 有控制元数据 **且** 在 peers 块登记」的 peer 出卡——
+        yaml 删掉一段并重启，对应卡即消失。peers 块缺失/写坏（解析失败）时
+        `load_sources_peers` 返回空 → 回退全表，不许让面板变空（与 boundary.PEERS
+        的兜底口径一致）。
+        """
+        registered = set(self._sources_peers())
+        keys = [key for key in self.peers if key in registered] or list(self.peers)
+        snapshots = [self.snapshot(key) for key in keys]
         conflicts: list[dict[str, Any]] = []
         for snapshot in snapshots:
             for conflict in snapshot["port_conflicts"]:
@@ -1582,13 +1788,14 @@ class ControlPlane:
             "ok": True,
             "control_enabled": control_enabled(),
             "peers": snapshots,
+            "components": [self.component_snapshot(key) for key in self.components],
             "port_conflicts": conflicts,
             "ports": {
                 "board": 5950,
                 "mcp": 5951,
                 **{
-                    key: {"mcp": ctl.mcp_port, "web": ctl.web_port}
-                    for key, ctl in self.peers.items()
+                    key: {"mcp": self.peers[key].mcp_port, "web": self.peers[key].web_port}
+                    for key in keys
                 },
             },
         }
@@ -1602,6 +1809,9 @@ class ControlPlane:
     def create_job(self, peer: str, action: str, *, dev: bool = False) -> Job:
         if peer not in self.peers:
             raise KeyError(peer)
+        # 未托管的服务（WSL 里的 FinanceCoffer，QUOT-403）不接受安装/启停任务
+        if not self.peers[peer].managed:
+            raise ValueError(f"{peer} 不由控制面托管，只做只读观测")
         if action not in {"install", "start", "stop"}:
             raise ValueError(f"未知动作：{action}")
         if self._job_running(peer):
@@ -1647,6 +1857,39 @@ class ControlPlane:
         self._executor.submit(self._execute, job)
         return job
 
+    def page_commands(self) -> dict[str, Any]:
+        """页面一键命令清单（含各自最近一次任务；前端按当前路由取一条）。"""
+        items: list[dict[str, Any]] = []
+        for key, (route, label, argv) in PAGE_COMMANDS.items():
+            last = self._last_command.get(key)
+            items.append(
+                {
+                    "key": key,
+                    "route": route,
+                    "label": label,
+                    "argv": _page_argv(argv),
+                    "running": last is not None
+                    and last.status in {"queued", "running"},
+                    "last_job": last.view() if last is not None else None,
+                }
+            )
+        return {"ok": True, "commands": items}
+
+    def create_command_job(self, key: str) -> Job:
+        """建页面命令任务：同一时刻只允许一个（避开调度器与彼此的数据写竞争）。"""
+        if key not in PAGE_COMMANDS:
+            raise KeyError(key)
+        with self._lock:
+            active = self._command_job
+            if active is not None and active.status in {"queued", "running"}:
+                raise RuntimeError("已有页面命令在执行，请等待结束")
+            job = Job(id=uuid.uuid4().hex, peer="ldst", action="command", command=key)
+            self._jobs[job.id] = job
+            self._command_job = job
+            self._last_command[key] = job
+        self._executor.submit(self._execute, job)
+        return job
+
     def _execute(self, job: Job) -> None:
         job.status = "running"
         job.started_at = _now_iso()
@@ -1654,6 +1897,8 @@ class ControlPlane:
         try:
             if job.action in AI_JOB_ACTIONS:
                 self._ai_run(job)
+            elif job.action == "command":
+                self._run_page_command(job)
             elif job.action == "install":
                 self._install(job)
             elif job.action == "start":
@@ -1691,6 +1936,22 @@ class ControlPlane:
             if job.section:
                 command += ["--section", job.section]
         return command
+
+    def _run_page_command(self, job: Job) -> None:
+        """跑页面白名单命令；argv 全部来自常量表，不接受请求内容。"""
+        _, label, argv = PAGE_COMMANDS[job.command]
+        args = [*_ldst_command(), *_page_argv(argv)]
+        job.step = label
+        job.log(f"$ {' '.join(args)}")
+        result = self._run(args, _ai_working_dir(), PAGE_COMMAND_TIMEOUT_SEC)
+        for line in tail_lines(result.output, JOB_TAIL_LINES * 2):
+            job.log(f"  {line}")
+        if result.returncode not in PAGE_COMMAND_OK_CODES:
+            last = tail_lines(result.output, 1)
+            hint = f"：{last[0]}" if last else ""
+            raise JobFailure(f"{label}失败（退出码 {result.returncode}）{hint}")
+        if result.returncode != 0:
+            job.log(f"退出码 {result.returncode}：部分数据源失败或 AI 降级，结果已落盘")
 
     def _ai_run(self, job: Job) -> None:
         """跑 `ldst review` / `ldst ai retry`；退出码 9（AI 降级）仍算任务成功。"""
@@ -2165,20 +2426,10 @@ class ControlPlane:
     ) -> dict[str, Any]:
         if peer not in self.peers:
             raise HTTPException(status_code=400, detail=f"未知 peer：{peer}")
-        base = (base_url or "").strip().rstrip("/")
-        parsed_url = urllib.parse.urlsplit(base)
-        if parsed_url.scheme not in {"http", "https"}:
-            raise HTTPException(status_code=400, detail="base_url 必须是 http(s) 地址")
-        target_host = (parsed_url.hostname or "").strip()
-        if not target_host:
-            raise HTTPException(status_code=400, detail="base_url 缺少主机名")
-        if not (model or "").strip():
-            raise HTTPException(status_code=400, detail="model 不能为空")
-
-        ctl = self.peers[peer]
         key = (api_key or "").strip()
         if not key:
             # 已存密钥只在白名单主机上回落，否则要求显式提供（QUOT-123 C10）
+            ctl = self.peers[peer]
             try:
                 stored = read_env_file(Path(ctl.directory) / ctl.env_filename, strict=True)
             except EnvFileUnreadable as exc:
@@ -2190,6 +2441,8 @@ class ControlPlane:
                 (stored[name] for name in ctl.secret_keys if stored.get(name)), ""
             )
             if stored_key:
+                parsed = urllib.parse.urlsplit((base_url or "").strip())
+                target_host = (parsed.hostname or "").strip()
                 allowed = ai_allowed_hosts()
                 if not host_in_allowlist(target_host, allowed):
                     raise HTTPException(
@@ -2200,6 +2453,21 @@ class ControlPlane:
                         ),
                     )
                 key = stored_key
+        return self._probe_chat(base_url=base_url, model=model, api_key=key)
+
+    def _probe_chat(self, *, base_url: str, model: str, api_key: str = "") -> dict[str, Any]:
+        """OpenAI 兼容端点的最小连通性探测（SSRF 判据 + 8 token ping）。"""
+        base = (base_url or "").strip().rstrip("/")
+        parsed_url = urllib.parse.urlsplit(base)
+        if parsed_url.scheme not in {"http", "https"}:
+            raise HTTPException(status_code=400, detail="base_url 必须是 http(s) 地址")
+        target_host = (parsed_url.hostname or "").strip()
+        if not target_host:
+            raise HTTPException(status_code=400, detail="base_url 缺少主机名")
+        if not (model or "").strip():
+            raise HTTPException(status_code=400, detail="model 不能为空")
+
+        key = (api_key or "").strip()
 
         # SSRF 判据：解析后的每一个地址都必须是公网（QUOT-123 C10）。
         # 唯一例外是「不带任何凭据」时探测本机 provider（Ollama 等）——此时没有
@@ -2276,6 +2544,192 @@ class ControlPlane:
             "model_seen": seen,
             "error": mask_secrets(error, [key]) if error else None,
         }
+
+    # ------------------------------------------------------------ 看板自身 AI
+    #
+    # 与 peer 配置分开：这里写的是看板自己 `ldst review` 用的 `config/ai.env`。
+    # 进程环境变量优先（部署/CI 显式注入永远覆盖文件），文件只补空缺，
+    # 这样设置页保存后不用重启服务。
+
+    def _self_ai_env_path(self) -> Path:
+        return fallback.env_file_path(self.config_root)
+
+    def self_ai_status(self) -> dict[str, Any]:
+        try:
+            document = fallback.status_document(fallback.load_config(self.config_root))
+        except BoundaryViolation as exc:
+            raise HTTPException(status_code=400, detail=f"读取 AI 配置失败：{exc}") from None
+        document["env_file"] = str(self._self_ai_env_path())
+        document["writable_keys"] = list(fallback.AI_ENV_KEYS)
+        # 订阅版 CLI（Codex / Claude Code / WorkBuddy）：QUOT-401 起后端真的实现了，
+        # UI 可以给出入口。检测只看 PATH 与固定几个登录态路径，不解析凭据内容。
+        document["subscription_cli"] = True
+        document["cli_channels"] = cli_provider.detect_all()
+        document["active_cli"] = self._active_cli()
+        return document
+
+    def _active_cli(self) -> str | None:
+        """当前生效的订阅通道（进程环境变量优先，`ai.env` 只补空缺）。"""
+        try:
+            config = fallback.load_config(self.config_root)
+        except BoundaryViolation:
+            return None
+        for backend in config.declared_backends:
+            if backend.kind == "cli" and backend.cli:
+                return backend.cli
+        return None
+
+    def self_ai_cli_channels(self) -> dict[str, Any]:
+        """`GET /self-ai/cli`：三条订阅通道的探测结果 + 当前生效的那条。"""
+        channels = cli_provider.detect_all()
+        return {
+            "ok": True,
+            "channels": channels,
+            "active": self._active_cli(),
+            "any_available": any(item["state"] == "ok" for item in channels),
+            "env_file": str(self._self_ai_env_path()),
+        }
+
+    def self_ai_cli_test(self, cli_id: str) -> dict[str, Any]:
+        """`POST /self-ai/cli/test`：用一条「回 ok」的探针真跑一次本机 CLI。
+
+        失败也回 200 —— 这是**探测结果**，不是接口故障；前端按 `ok` 字段分色。
+        """
+        started = time.monotonic()
+        try:
+            spec = cli_provider.cli_spec(cli_id)
+        except KeyError:
+            known_ids = "、".join(s.id for s in cli_provider.CLI_SPECS)
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知的 CLI 通道：{cli_id!r}（可选：{known_ids}）",
+            ) from None
+        status = cli_provider.probe(spec)
+        if status["state"] != "ok":
+            return {
+                "ok": False,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "model_seen": None,
+                "error": str(status["detail"]),
+                "channel": status,
+            }
+        try:
+            provider = cli_provider.CliProvider()
+            target = fallback.ModelTarget(
+                backend=fallback.BackendConfig(
+                    id=f"cli_{spec.id}",
+                    kind="cli",
+                    base_url_env="",
+                    api_key_env="",
+                    models=("default",),
+                    cli=spec.id,
+                ),
+                model="default",
+                label=f"{spec.id}:default",
+            )
+            text = provider.complete(
+                target,
+                "你是连通性探针，只回一个词。",
+                cli_provider.PROBE_PROMPT,
+                json_mode=False,
+                timeout=120.0,
+            )
+        except cli_provider.CliUnavailable as exc:
+            return {
+                "ok": False,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "model_seen": None,
+                "error": mask_secrets(str(exc), []),
+                "channel": status,
+            }
+        return {
+            "ok": True,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "model_seen": (text or "").strip().splitlines()[0][:60] or None,
+            "error": None,
+            "channel": status,
+        }
+
+    def self_ai_update(
+        self, values: Mapping[str, str], clear: Iterable[str]
+    ) -> dict[str, Any]:
+        allowed = set(fallback.AI_ENV_KEYS)
+        unknown = sorted(set(values) - allowed)
+        unknown += sorted(set(clear) - allowed)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"不允许的配置键：{', '.join(sorted(set(unknown)))}"
+                    f"（白名单：{', '.join(fallback.AI_ENV_KEYS)}）"
+                ),
+            )
+        updates: dict[str, str] = {}
+        known_cli = {spec.id for spec in cli_provider.CLI_SPECS}
+        for name, value in values.items():
+            text = "" if value is None else str(value).strip()
+            if text == "":
+                continue
+            if "\n" in text or "\r" in text:
+                raise HTTPException(status_code=400, detail=f"{name} 不允许包含换行")
+            if name == fallback.CLI_ENV and text.lower() not in known_cli:
+                allowed_ids = "/".join(sorted(known_cli))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{fallback.CLI_ENV} 只能是 {allowed_ids}，收到 {text!r}",
+                )
+            if name.endswith("_URL"):
+                parsed = urllib.parse.urlsplit(text)
+                if parsed.scheme not in {"http", "https"} or not (parsed.hostname or "").strip():
+                    raise HTTPException(
+                        status_code=400, detail=f"{name} 必须是 http(s) 地址"
+                    )
+            updates[name] = text
+        removals = [name for name in clear if name not in updates]
+
+        path = self._self_ai_env_path()
+        try:
+            write_env_file(path, updates, removals, harden=self._harden_acl)
+        except EnvFileUnreadable as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from None
+        except (AclError, OSError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"写入 {path.name} 失败或收紧 DACL 失败：{exc}；已中止，未留下半成品文件",
+            ) from None
+        payload = self.self_ai_status()
+        payload["updated"] = sorted(updates)
+        payload["cleared"] = sorted(removals)
+        return payload
+
+    def self_ai_test(
+        self, *, base_url: str, model: str, api_key: str | None = None
+    ) -> dict[str, Any]:
+        """探测看板自己的模型端点；留空密钥时只在同一端点内复用已存密钥。"""
+        key = (api_key or "").strip()
+        if not key:
+            try:
+                stored = read_env_file(self._self_ai_env_path(), strict=True)
+            except EnvFileUnreadable as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"{exc}；无法确认是否已存密钥，为避免退化成无鉴权请求，已中止",
+                ) from None
+            stored_base = (
+                stored.get("LDST_LLM_BASE_URL", "").strip()
+                or os.environ.get("LDST_LLM_BASE_URL", "").strip()
+            )
+            stored_key = (
+                stored.get("LDST_LLM_API_KEY", "").strip()
+                or os.environ.get("LDST_LLM_API_KEY", "").strip()
+            )
+            same_endpoint = (
+                stored_base
+                and stored_base.rstrip("/") == (base_url or "").strip().rstrip("/")
+            )
+            if stored_key and same_endpoint:
+                key = stored_key
+        return self._probe_chat(base_url=base_url, model=model, api_key=key)
 
     # ---------------------------------------------------------------- 日志
 
@@ -2425,6 +2879,18 @@ class AiTestRequest(BaseModel):
     api_key: str | None = None
 
 
+class SelfAiTestRequest(BaseModel):
+    base_url: str
+    model: str
+    api_key: str | None = None
+
+
+class CliTestRequest(BaseModel):
+    """订阅通道探针：`cli` 取 codex / claude / workbuddy。"""
+
+    cli: str
+
+
 class AiGenerateRequest(BaseModel):
     date: str
     force: bool = False
@@ -2524,6 +2990,33 @@ def build_router(plane: ControlPlane) -> APIRouter:
             api_key=body.api_key,
         )
 
+    @router.get("/self-ai")
+    def self_ai_status() -> dict[str, Any]:
+        """看板自己（`ldst review`）的模型配置状态；密钥只回 `set`，不回明文。"""
+        return plane.self_ai_status()
+
+    @router.put("/self-ai")
+    def self_ai_update(body: ConfigUpdate) -> dict[str, Any]:
+        return plane.self_ai_update(body.values, body.clear)
+
+    @router.post("/self-ai/test")
+    def self_ai_test(body: SelfAiTestRequest) -> dict[str, Any]:
+        return plane.self_ai_test(
+            base_url=body.base_url,
+            model=body.model,
+            api_key=body.api_key,
+        )
+
+    @router.get("/self-ai/cli")
+    def self_ai_cli_channels() -> dict[str, Any]:
+        """订阅版 CLI 通道探测（QUOT-401）：装了没 / 跑得起来吗 / 登录态在不在。"""
+        return plane.self_ai_cli_channels()
+
+    @router.post("/self-ai/cli/test")
+    def self_ai_cli_test(body: CliTestRequest) -> dict[str, Any]:
+        """真跑一次本机 CLI 的探针；失败也回 200，由 `ok` 字段区分。"""
+        return plane.self_ai_cli_test(body.cli)
+
     @router.post("/ai/generate")
     def ai_generate(body: AiGenerateRequest) -> dict[str, Any]:
         """生成指定日期的五段复盘（后台任务，前端轮询 `/jobs/{id}`）。"""
@@ -2571,6 +3064,25 @@ def build_router(plane: ControlPlane) -> APIRouter:
         """
         raise HTTPException(status_code=405, headers={"Allow": "PUT"})
 
+    @router.get("/commands")
+    def list_commands() -> dict[str, Any]:
+        """页面一键命令清单（白名单 + 各自最近一次任务）。"""
+        return plane.page_commands()
+
+    @router.post("/commands/{key}")
+    def run_command(key: str) -> dict[str, Any]:
+        """执行一条白名单命令（后台任务，前端轮询 `/jobs/{id}`）。"""
+        if key not in PAGE_COMMANDS:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未知命令：{key}（可选：{', '.join(PAGE_COMMANDS)}）",
+            )
+        try:
+            job = plane.create_command_job(key)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"job_id": job.id, "status": job.status}
+
     @router.get("/jobs/{job_id}")
     def job(job_id: str) -> dict[str, Any]:
         found = plane.get_job(job_id)
@@ -2593,6 +3105,7 @@ __all__ = [
     "KNOWN_AVOIDED_PORTS",
     "MAX_CONDITIONS",
     "MAX_TRIGGER_CHARS",
+    "PAGE_COMMANDS",
     "STATUS_LABELS",
     "StatePersistError",
     "VALIDATION_CONDITION_FIELDS",

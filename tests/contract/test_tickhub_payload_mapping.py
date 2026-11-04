@@ -32,9 +32,11 @@ from ladderstock.data.adapters.tickhub import (
     CODE_POOL_DATASETS,
     FIXED_PARAMS,
     SINCE_PARAM,
+    RateLimited,
     from_tool_response,
     needs_code,
     normalize_records,
+    retry_after_s,
     shape_for,
     tool_params,
 )
@@ -121,9 +123,20 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
         "tencent_quote_batch.json",
         "spot_quote",
         "tencent_quote_batch",
-        3,
-        date(2026, 10, 30),
+        124,
+        date(2026, 11, 4),
         "high",
+    ),
+    # 逐只归属（QUOT-362）：`boards[]` 的 `code` 是东财板块码，必须让位给 `data.code`
+    # （股票代码）——行是「股票↔板块」，`require_code` 校验的就是股票代码还在。
+    # 行内也没有日期，数据日同样由 `fetched_at` 承担。
+    (
+        "stock_concept_blocks.json",
+        "concept_membership",
+        "stock_concept_blocks",
+        3,
+        date(2026, 11, 3),
+        "medium",
     ),
 ]
 
@@ -271,6 +284,27 @@ def test_rows_without_code_are_dropped_not_stored() -> None:
     assert records == []
 
 
+def test_concept_membership_rename_keeps_the_stock_code() -> None:
+    """`data.code`（股票）与 `boards[].code`（东财板块码）同名，透传值不能被盖掉。
+
+    盖掉之后行就不是个股维度的行了：`require_code` 仍然过（BK 码也是码），
+    但 `concept_membership` 从此按板块代码入库，题材归属与候选池再也接不上。
+    """
+    doc = load("stock_concept_blocks.json")
+    records = from_tool_response("concept_membership", doc, tool="stock_concept_blocks").payload[
+        "records"
+    ]
+
+    assert [row["code"] for row in records] == [doc["data"]["code"]] * len(records)
+    assert [row["board_code"] for row in records] == [
+        board["code"] for board in doc["data"]["boards"]
+    ]
+    assert [row["board_name"] for row in records] == [
+        board["name"] for board in doc["data"]["boards"]
+    ]
+    assert all("name" not in row for row in records)
+
+
 # --------------------------------------------------------------------------- #
 # 快照型
 # --------------------------------------------------------------------------- #
@@ -310,6 +344,61 @@ def test_unregistered_dataset_is_rejected() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 限流形状（QUOT-349）：QFSD-7001 要认出「可退避」，不能混进「源坏了」
+# --------------------------------------------------------------------------- #
+
+def test_rate_limited_response_carries_the_upstream_advice() -> None:
+    """`error.detail.retry_after_s` 是这条链唯一的输入：认不出它，退避就无从谈起。"""
+    with pytest.raises(RateLimited) as excinfo:
+        from_tool_response("daily_k", load("tencent_kline_rate_limited.json"))
+
+    assert excinfo.value.retry_after_s == 4.0
+    assert excinfo.value.code == EXIT_SOURCE
+    assert "QFSD-7001" in str(excinfo.value), "报错要留着上游的码，日志才分得清限流与故障"
+    assert "4 秒" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        # 早期草稿的别名（上游 errors.py 的 ALIASES）
+        {"ok": False, "error": {"code": "QF-7001", "message": "限流命中"}},
+        # 只有 name 没有码：`name == "rate_limited"` 也算
+        {"ok": False, "error": {"name": "rate_limited", "message": "太频繁了"}},
+        # 建议时长放在 error 顶层而不是 detail
+        {"ok": False, "error": {"code": "QFSD-7001", "retry_after": 7}},
+    ],
+)
+def test_rate_limit_recognised_from_any_of_its_upstream_spellings(response: dict) -> None:
+    with pytest.raises(RateLimited) as excinfo:
+        from_tool_response("daily_k", response)
+
+    if "retry_after" in response["error"]:
+        assert excinfo.value.retry_after_s == 7.0
+
+
+def test_a_suspicious_retry_after_is_not_trusted() -> None:
+    """非法时长一律回 `None`：猜一个等待时间比不等更糟，交给上层按「没给建议」降级。"""
+    for bad in (-3, "4", True, 999_999, None):
+        response = {
+            "ok": False,
+            "error": {"code": "QFSD-7001", "detail": {"retry_after_s": bad}},
+        }
+        assert retry_after_s(response) is None, bad
+
+
+def test_other_failures_stay_generic() -> None:
+    """限流之外的 `ok: false` 不该被升级成可退避异常——退避只对「等一会儿再来」有意义。"""
+    with pytest.raises(LadderStockError) as excinfo:
+        from_tool_response(
+            "daily_k",
+            {"ok": False, "error": {"code": "QFSD-9003", "name": "source_error"}},
+        )
+
+    assert not isinstance(excinfo.value, RateLimited)
+
+
+# --------------------------------------------------------------------------- #
 # 出参口径（QUOT-233 第 2 步）
 # --------------------------------------------------------------------------- #
 
@@ -324,6 +413,8 @@ def test_code_pool_datasets_are_the_ones_requiring_code() -> None:
             "sw_industry_map",
             "finance_indicators",
             "valuation_history",
+            # QUOT-362：`stock_concept_blocks` 的 `code` 必填，池子来自当日涨停池
+            "concept_membership",
         }
     )
     assert set(CODE_POOL_DATASETS) == {d for d in DATASET_CATALOG if needs_code(d)}

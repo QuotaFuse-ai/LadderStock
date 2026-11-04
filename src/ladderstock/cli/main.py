@@ -37,6 +37,7 @@ from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
+from ladderstock.cli.watchlist import register as register_watchlist
 from ladderstock.cli.weekly import register as register_weekly
 from ladderstock.core.boundary import DATASET_CATALOG
 from ladderstock.core.boundary import audit as boundary_audit
@@ -66,7 +67,9 @@ ladder_app = typer.Typer(no_args_is_help=True, help="连板天梯")
 industry_app = typer.Typer(no_args_is_help=True, help="产业研究（行业景气/资金/估值/动量/拥挤度）")
 sync_app = typer.Typer(no_args_is_help=False, invoke_without_command=True, help="增量同步")
 sources_app = typer.Typer(no_args_is_help=True, help="数据源")
-watch_app = typer.Typer(no_args_is_help=True, help="盘中盯盘")
+watch_app = typer.Typer(
+    no_args_is_help=True, help="盘中盯盘（start|status|stop）与我的自选（add|rm|list）"
+)
 notify_app = typer.Typer(no_args_is_help=True, help="通知与提醒")
 journal_app = typer.Typer(no_args_is_help=True, help="交易日志（仅本机 SQLite）")
 position_app = typer.Typer(no_args_is_help=True, help="我的持仓（仅本机 SQLite，不经 MCP）")
@@ -199,6 +202,9 @@ register_sources(sources_app)
 # 实现体在 cli/watch.py / cli/notify.py：离线单轮信号扫描 + 本机渠道通知
 # （DEC-006：只消费本机样本，不联网、不新增采集）
 register_watch(watch_app)
+# 自选清单（`watch add|rm|list`）与上面的盘中盯盘共用一个组名，实现体在 cli/watchlist.py；
+# 写面只落本机 SQLite，不经 HTTP（DEC-052 §2.3）
+register_watchlist(watch_app)
 register_notify(notify_app)
 
 
@@ -350,7 +356,52 @@ register_schedule(schedule_app)
 # ---------------------------------------------------------------- 体检
 
 @app.command(help="环境体检：Python、依赖、端口、目录、配置、数据源")
-def doctor(output: OutputOption = None) -> None:
+def doctor(
+    peers: bool = typer.Option(
+        False,
+        "--peers",
+        help="只看 peer 版本三态（本机版 vs GitHub 最新）；有落后时退出码非 0，断网/未知不算失败",
+    ),
+    output: OutputOption = None,
+) -> None:
+    if peers:
+        # 版本三态复用控制面快照（QUOT-402）：current 探各 peer 自己的 venv，
+        # expected 读后台线程维护的 GitHub Release 缓存；只读，绝不代跑升级。
+        # CLI 是短命进程，后台线程来不及首刷：缓存为空的 repo 在这里同步补刷，
+        # 但给 15s 总预算——断网时最多等 15s，剩下的如实显示「未知」（退出码仍 0）。
+        import time as _time
+
+        from ladderstock.web.control import ControlPlane
+
+        plane = ControlPlane(data_root=data_dir())
+        empty = [
+            ctl.repo
+            for ctl in plane.peers.values()
+            if ctl.repo and plane._release_cache.expected(ctl.repo) is None
+        ]
+        budget_start = _time.monotonic()
+        for repo in empty:
+            if _time.monotonic() - budget_start > 15.0:
+                break
+            plane._release_cache.refresh(repo)
+        rows = []
+        for key, ctl in plane.peers.items():
+            if ctl.repo is None:
+                continue
+            snap = plane.snapshot(key)
+            rows.append(
+                {
+                    "name": snap["product"] or key,
+                    "current": snap.get("version"),
+                    "expected": snap.get("version_expected"),
+                    "status": snap.get("version_status"),
+                    "upgrade_hint": snap.get("upgrade_hint"),
+                }
+            )
+        behind = any(row["status"] == "behind" for row in rows)
+        emit({"peers": rows, "behind": behind}, output)
+        raise typer.Exit(EXIT_CONFIG if behind else EXIT_OK)
+
     checks: list[dict[str, Any]] = []
 
     def add(name: str, ok: bool, detail: str) -> None:
@@ -380,6 +431,17 @@ def doctor(output: OutputOption = None) -> None:
     for name in CONFIG_FILES:
         present = (base / name).is_file()
         add(f"config:{name}", present, "存在" if present else "缺失")
+    # peer 注册表（QUOT-403）：唯一真源是 sources.yaml 的 peers 块；写坏时回退
+    # 内置默认并给出原因（服务照常起，不算失败，但 warning 必须可见）。
+    from ladderstock.core.boundary import PEER_LOAD_WARNINGS, PEERS
+
+    add(
+        "peers:registry",
+        True,
+        "；".join(PEER_LOAD_WARNINGS)
+        if PEER_LOAD_WARNINGS
+        else f"peers 块加载正常（{len(PEERS)} 个 peer）",
+    )
     cache = data_dir()
     existed = cache.is_dir()
     # 先探可写（会按需建目录），再报 data_dir，避免「目录不存在但可写」的自相矛盾
@@ -420,7 +482,7 @@ def doctor(output: OutputOption = None) -> None:
     # 要么措辞说准「peer 不可达 / 工具不在列表里」，不留「待联调」这种含糊说法。
     # 探测结果不参与 ok 判定，检查项数只由 `CONFIG_FILES` 与依赖表决定
     # （DEC-008：可达性≠配置合法性）。
-    warnings = [*report.warnings, *provisional_tool_warnings()]
+    warnings = [*report.warnings, *PEER_LOAD_WARNINGS, *provisional_tool_warnings()]
     emit({"ok": ok, "checks": checks, "warnings": warnings}, output)
     raise typer.Exit(EXIT_OK if ok else EXIT_CONFIG)
 

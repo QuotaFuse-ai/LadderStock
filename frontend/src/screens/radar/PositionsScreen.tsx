@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Database, FileUp, Lock, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { Database, FileUp, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 
 import { isApiError } from '../../api'
 import {
@@ -25,6 +25,7 @@ import {
   IconButton,
   Input,
   MetricCard,
+  PrivacyNotice,
   SectionCard,
   SourceStatusBadge,
   Textarea,
@@ -79,25 +80,6 @@ function signedClass(value: number | null): string {
 
 function pctText(value: number | null): string {
   return formatChangePct(value).text
-}
-
-function PrivacyNotice() {
-  return (
-    <div
-      role="note"
-      aria-label="隐私说明"
-      className="flex items-start gap-3 rounded border border-accent bg-accent-soft px-3 py-2"
-    >
-      <Lock className="mt-half size-4 shrink-0 text-accent" aria-hidden="true" />
-      <div className="min-w-0 text-body leading-body">
-        <p className="font-semibold text-text">数据只在本机，不上传、不进 AI</p>
-        <p className="text-text-secondary">
-          持仓保存在本机 SQLite（<code className="ldst-num">ldst position</code>），本页只在内存里展示本次请求结果；
-          不写 localStorage / IndexedDB，不进 URL、日志或 AI 上下文，也没有同步 / 分享入口。导出只在你显式运行 CLI 时发生。
-        </p>
-      </div>
-    </div>
-  )
 }
 
 function ValuationCards({ payload }: { payload: PositionsPayload }) {
@@ -335,12 +317,11 @@ function buildColumns(
     {
       key: 'note',
       header: '备注',
-      width: '140px',
+      truncate: true,
+      cellTitle: (row) => row.note ?? '—',
       render: (row) =>
         row.note ? (
-          <span className="block max-w-[140px] truncate text-caption text-text-secondary" title={row.note}>
-            {row.note}
-          </span>
+          <span className="text-caption text-text-secondary">{row.note}</span>
         ) : (
           <span className="text-caption text-text-muted">—</span>
         ),

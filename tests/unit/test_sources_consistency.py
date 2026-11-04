@@ -28,6 +28,7 @@ from fixtures.fake_peers import FakeTransport
 from typer.testing import CliRunner
 
 from ladderstock.cli.main import app
+from ladderstock.core import boundary
 from ladderstock.core.boundary import (
     DATASET_CATALOG,
     ChainProblem,
@@ -283,8 +284,17 @@ def test_doctor_red_when_chain_broken(
 
 
 def test_doctor_green_when_chain_valid_even_if_peers_down(
-    repo: Path, config_copy: Path, peers_down: FakeTransport
+    repo: Path,
+    config_copy: Path,
+    peers_down: FakeTransport,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # QUOT-389：senate 的 `stock_senate_report_query` 已实测确认，`PROVISIONAL_TOOLS`
+    # 清空后 doctor 不再发 `tools/list`。本用例的语义是「chain 合法 + peer 全下线仍绿」，
+    # 探针与「未联调」warning 只是顺带断言，故把待联调集合临时填回，保留原断言强度。
+    monkeypatch.setattr(
+        boundary, "PROVISIONAL_TOOLS", frozenset({"stock_senate_report_query"})
+    )
     result = runner.invoke(app, ["doctor", "--output", "json"])
     payload = json.loads(result.stdout)
     assert _doctor_chain(payload)["ok"] is True, _doctor_chain(payload)
@@ -292,10 +302,25 @@ def test_doctor_green_when_chain_valid_even_if_peers_down(
     # 可达性仍只归 sources validate / health：doctor 唯一的探针是「待联调工具」
     # 那一次 `tools/list`（QUOT-112），只探 senate、只探一次，失败只改 warning 措辞，
     # 不改 ok、不改退出码、不改检查项数（DEC-008）。
-    # 23 = 原 22 项 + R5 的 `config:industry.yaml`（QUOT-143）。
+    # 24 = 原 22 项 + R5 的 `config:industry.yaml`（QUOT-143）
+    #    + peer 注册表检查 `peers:registry`（QUOT-403）。
     assert peers_down.probes == ["senate"]
-    assert len(payload["checks"]) == 23
+    assert len(payload["checks"]) == 24
     assert any("未联调：peer 不可达" in text for text in payload["warnings"])
 
     problems = chain_problems(_load("sources"), _load("sync"))
     assert problems == [], [str(p) for p in problems]
+
+
+def test_doctor_skips_probe_when_no_pending_tool(
+    repo: Path, config_copy: Path, peers_down: FakeTransport
+) -> None:
+    """QUOT-389：登记表里没有待联调工具时，doctor 一次 `tools/list` 都不发。
+
+    这是真实部署下的形态——senate 工具名已确认，探针没有意义，不该为它付一次网络往返。
+    """
+    result = runner.invoke(app, ["doctor", "--output", "json"])
+    payload = json.loads(result.stdout)
+    assert _doctor_chain(payload)["ok"] is True, _doctor_chain(payload)
+    assert peers_down.probes == []
+    assert not any("未联调" in text for text in payload["warnings"])

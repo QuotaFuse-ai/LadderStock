@@ -1,0 +1,57 @@
+{
+  "ok": true,
+  "data": {
+    "total": 3,
+    "succeeded": 3,
+    "failed": 0,
+    "dropped": [],
+    "flows": {
+      "002696": {
+        "code": "002696",
+        "name": "百洋股份",
+        "price": 11.12,
+        "change_pct": -10.03,
+        "main_net": -171530812.0,
+        "main_net_pct": -30.63
+      },
+      "600715": {
+        "code": "600715",
+        "name": "文投控股",
+        "price": 2.62,
+        "change_pct": 6.5,
+        "main_net": -27577456.0,
+        "main_net_pct": -1.54
+      },
+      "600261": {
+        "code": "600261",
+        "name": "阳光照明",
+        "price": 4.46,
+        "change_pct": -9.9,
+        "main_net": -126896430.0,
+        "main_net_pct": -19.61
+      }
+    },
+    "failures": [],
+    "batches": [
+      {
+        "batch": 0,
+        "requested": 3,
+        "returned": 3,
+        "dropped": [],
+        "fetched_at": "2026-11-04T12:44:38+08:00"
+      }
+    ]
+  },
+  "meta": {
+    "source": "eastmoney",
+    "fetched_at": "2026-11-04T12:44:38+08:00",
+    "cache_hit": true,
+    "confidence": "B",
+    "trace_id": "b02d58480d86498a",
+    "scope": "当日实时",
+    "requested": 3,
+    "returned": 3,
+    "batches": 1,
+    "note": "当日实时累计口径（盘中每分钟变化，收盘后为当日终值）；main_net 单位元，main_net_pct 单位 %"
+  }
+}

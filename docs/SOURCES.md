@@ -23,8 +23,9 @@
 | `wire` | QuotaFuse Wire | `qfw` | `LDST_WIRE_MCP_URL` | `http://127.0.0.1:8791/mcp` | 可选消费（题材叙事） |
 | `senate` | StockSenate | `ssenate` | `LDST_SENATE_MCP_URL` | `http://127.0.0.1:8765/mcp` | 只读消费（不复现合议） |
 
-TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 WSL 转发服务
-的固定端口，8787 已被 TickHub-CN 管理端占用，两者都不允许抢占（不自动换端口）。
+TickHub-US 的端口固定为 MCP **8002**（本机构建没有 admin API，不分配管理端端口）——8001 是
+WSL 转发服务的固定端口，8787 已被 TickHub-CN 管理端占用，两者都不允许抢占（不自动换端口）。
+`8788` / `8789` 本机归 ProxyFleet 网关，控制面不再把它们登记成 US 管理端（DEC-047）。
 
 传输层是 MCP Streamable HTTP：首次调用先 `initialize` 握手，拿响应头的
 `Mcp-Session-Id` 回一条 `notifications/initialized`，之后每个请求带
@@ -48,6 +49,7 @@ TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 
 | `yesterday_limit_up` | tickhub | `yesterday_limit_up_pool` | — | replace | `trade_date` |
 | `sentiment` | tickhub | `market_sentiment` | — | replace | `trade_date` |
 | `spot_quote` | tickhub | `tencent_quote_batch` | — | replace | `timestamp`（**非**交易日水位） |
+| `index_quote` | tickhub | `index_quote` | — | replace | `timestamp`（**非**交易日水位） |
 | `dragon_tiger` | tickhub | `dragon_tiger` | `dragon_tiger_backup` | replace | `trade_date` |
 | `dragon_tiger_seats` | tickhub | `dragon_tiger_seats` | — | replace | `trade_date` |
 | `industry_board` | tickhub | `industry_boards` | — | replace | `trade_date` |
@@ -59,7 +61,7 @@ TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 
 | `industry_fund_flow` | tickhub | `board_fund_flow` | — | replace | `trade_date` |
 | `hot_rank` | tickhub | `ths_hot_rank` | `eastmoney_hot_rank` | replace | `trade_date` |
 | `theme_news` | wire | `wire_get_digest` | `wire_timeline`（仅登记，**不进按日链路**，DEC-043） | replace | `data_as_of` |
-| `council_memo` | senate | `report_query` | — | replace | `data_as_of` |
+| `council_memo` | senate | `stock_senate_report_query` | — | replace | `data_as_of` |
 
 `theme_news` / `council_memo` 在 `sync.yaml` 里标了 `optional: true`：peer 不可用时
 只记 `status=skipped`，不拖垮整轮同步，也不影响退出码。
@@ -68,6 +70,23 @@ TickHub-US 的端口固定为：MCP **8002**、管理端 **8789**——8001 是 
 实时报价没有「一天一条」的交易日水位，进 sync 台账会被 `ldst sync` 当成按日落库的
 数据集。调度侧走 `ProviderRegistry.fetch_live()`（链路只按 `sources.yaml` 组装），
 口径见 `docs/specs/SPEC-INTRADAY-SNAPSHOT.md`。
+
+**`index_quote`（首页指数条，QUOT-380 / DEC-052）与 `spot_quote` 同构**：行内没有
+`trade_date`，行情时间是 `timestamp`（`YYYYMMDDHHMMSS`），同样**只在 `sources.yaml` 登记、
+不进 `sync.yaml`**；非交易时段 peer 照旧回上一交易日收盘，接口把 `as_of` 如实带出。
+三条实测出来的取数纪律（口径钉在 `core/indices.py`，不在登记层）：
+
+1. **入参必须带 `sh`/`sz` 前缀，且只允许前缀形式**——裸 `000001` 与点号写法 `000001.SH`
+   都会被上游**静默回平安银行**且照旧标 `is_index: true`（比报错更危险）；
+2. **指数绝不能图省事复用 `spot_quote` / `tencent_quote_batch`**——批量报价工具剥掉前缀后
+   按 6 位代码回键，指数与个股代码撞车时静默给错票（实测四回三、`000001` 成了平安银行、
+   `failed=0`）；
+3. **返回行的 `code` 不带前缀**，匹配必须按 `(market, code)`，按 `code` 建字典会把
+   `sh000001` 与 `sz000001` 撞成一格。
+
+**`index_list` 不能当指数注册表用**：实测回的是按 `change_pct` 降序的 100 条榜，
+不含首页要的四个指数，还混老三板个股（`400224 苏阳光5`）。所以四格白名单由本仓写死
+（`sh000001` / `sh000300` / `sz399001` / `sz399006`），不向 peer 动态要清单。
 
 **R5 产业研究的四路输入**：`sw_industry_map` / `finance_indicators` /
 `valuation_history` 是**逐股**取数（代码池见 §2.3），成分表采用**懒缓存**——
@@ -263,7 +282,9 @@ sync.yaml 的 primary
 
 缓存回放（§2.5）读 `archive.snapshot()`：**Parquet 日分区优先 → DuckDB 兜底**。
 回放出的信封 `freshness=cached`、`source_status=degraded`、`confidence=low`，
-`source_detail` 里写清读的是哪个后端、哪一天。回放**不重写库、不推进水位**。
+`source_detail` 里写清读的是哪个后端、哪一天；限流导致的回放还会在
+`payload.stale` 里写明 `{as_of, requested_as_of, reason, cached_at}`（§4.1）。
+回放**不重写库、不推进水位**。
 
 ## 4. 运行期治理（§2.4）
 
@@ -275,6 +296,7 @@ sync.yaml 的 primary
 | 短窗缓存 | 成功结果按 `cold_hot.intraday_cache_ttl_sec` 内存缓存，命中标 `freshness=cached` | `DEFAULT_TTL_SEC = 60` |
 | 失败冷却 | 工具失败后按 `cooldown_sec` 冷却，冷却期内直接看备源 | 见 `sources.yaml` |
 | 并发上限 + 最小间隔 | 每 peer 独立信号量 + 调用间隔，防重试风暴 | 见下表 |
+| 限流退避 | 上游 `QFSD-7001` 按 `retry_after_s` 等待后重试，次数与单次时长都有上限 | `sync.rate_limit`（§4.1） |
 
 每 peer 限流常量（配置 schema 冻结，故写在代码里）：
 
@@ -287,6 +309,41 @@ sync.yaml 的 primary
 重试有界：`sources.yaml` 的 `retries` 是**额外重试次数**（总尝试 = `retries + 1`），
 用尽即降级，不做无界重试。传输层异常（超时 / 拒连）原样抛出，轨迹里据此区分
 `timeout` 与 `unreachable`；上游业务拒收记 `rejected`。
+
+### 4.1 上游限流（`QFSD-7001 rate_limited`）：退避 → 昨日池 → 整轮 degraded
+
+QUOT-349 / DEC-048。上游命中自身限流或熔断时回 `ok:false` + `error.detail.retry_after_s`，
+**语义是「等几秒再来拿同一批数据」**，与「这个源坏了」是两回事，所以单独一条路：
+
+1. **识别在适配器层**：`adapters/tickhub.py:classify_failure()` 把 `QFSD-7001`
+   （含早期别名 `QF-7001`）与 `error.name == "rate_limited"` 认成 `RateLimited`，
+   带上 `retry_after_s`；其它 `ok:false` 口径不变。`0 ≤ 秒数 ≤ 86400` 之外的值
+   （布尔、负数、字符串、荒谬值）一律当「上游没说」处理，不猜。
+2. **退避预算挂在一次取数上**（不是挂在工具上），`config/sync.yaml`：
+
+   ```yaml
+   sync:
+     rate_limit:
+       max_retries: 2          # 一次取数最多等几次（主备共用这份预算）
+       max_wait_sec: 15        # 单次最多等多久；上游说得更久就不等，直接降级
+       max_cooldown_sec: 900   # 冷却封顶：max(retry_after_s, cooldown_sec) 再取小
+   ```
+
+   单次取数最坏耗时 = `max_retries × max_wait_sec` = **30 秒，与链路里有几个工具无关**——
+   这是盘中高频轮询（30–60 秒节奏）能直接用这条路的前提。
+3. **等待不占 peer 并发闸门**：攥着信号量睡觉会把同 peer 的其它取数一起拖住；
+   退避成功后清掉该源的冷却（这一路刚证明自己通）。
+4. **等不起就直说等不起**：建议时长超过 `max_wait_sec` 或缺失 → 一次都不等、按失败降级，
+   但冷却时长按上游说的来（封顶 `max_cooldown_sec`）。
+5. **降级 = 回放本地昨日池**，并写明是限流造成的：`payload.stale = {as_of,
+   requested_as_of, reason: "rate_limited", cached_at}`，`source_detail` 是
+   「限流降级，回放本地昨日池（backend，数据日 X）」；不重写数据、不推进水位。
+6. **限流不是任务失败**：`ldst sync` 汇总仍是 `degraded`（`GOOD_STATUSES` 里，退出码 0，
+   只有 `failed` 才翻成 4/8）；盘中快照把昨日池的旧 cohort 记进 `source.pool_stale`
+   后照样出快照（报价仍是当天的），报价整批被挡时判 `degraded` 且**不写空快照**。
+7. **冷却期里的跳过也算 pacing**：`health.json` 的冷却条目带 `reason`，本轮若某源因
+   上一轮限流在冷却（一次调用都没发出去），仍按 `rate_limited` 判降级——否则一次
+   pacing 会伪装成「今天没有数据」。
 
 ## 5. 水位线
 
@@ -369,7 +426,7 @@ sync.yaml 的 primary
   "version": 1,
   "cooldowns": {"tickhub_kline": {"until": "2026-10-24T15:33:00+08:00",
                                    "reason": "timeout", "tool": "tencent_kline"}},
-  "events": [{"at": "...", "kind": "failure|fallback|cache_replay|skipped_cooldown",
+  "events": [{"at": "...", "kind": "failure|rate_limited|fallback|cache_replay|skipped_cooldown",
               "dataset": "daily_k", "source": "...", "tool": "...", "detail": "..."}]
 }
 ```
@@ -379,6 +436,10 @@ sync.yaml 的 primary
 - `ldst sources health` 输出 `state_file`、`active_cooldowns`、`events`、
   `sources_in_cooldown`、`peers`；
 - 健康事件是排障入口：`reason` 区分 `timeout` / `unreachable` / `unavailable` / `rejected`。
+- `kind=rate_limited` 与 `cooldowns.reason=rate_limited` 是**上游 pacing**（§4.1）：
+  detail 带 `QFSD-7001` 与建议时长，退避后成功那一路也记一条「退避 X 秒后重试」，
+  不然轨迹里只看到一路顺利、看不出这一轮慢在哪。冷却条目还在生效时，本轮即便
+  **一次调用都没发出去**也算 pacing（判降级，不判「源坏了 / 今天没数据」）。
 
 ### 7.1 控制面的健康与端口预检
 
@@ -433,7 +494,10 @@ sync.yaml 的 primary
 - 覆盖用例：`tests/unit/data/`（水位 / DuckDB 幂等 / 分区读回）、
   `tests/integration/test_provider_fallback.py`（主备切换、冷却、in-flight 合并、跨 peer 违规）、
   `tests/integration/test_sync_incremental.py`（增量 `since`、同日重跑不增长、`--full`、
-  断点续跑、退出码 4/8、缓存回放不推进水位）。
+  断点续跑、退出码 4/8、缓存回放不推进水位）、
+  `tests/integration/test_rate_limit_backoff.py`（限流退避与昨日池降级，QUOT-349；
+  等待由注入的 `sleeper` 记录，用例不真睡）、
+  `scripts/simulate_rate_limit.py`（仿真交易日端到端证据，同离线口径）。
 
 ## 10. 排障
 
@@ -441,6 +505,7 @@ sync.yaml 的 primary
 |---|---|---|
 | `sync` 退出 4 | `ldst sources health` 的 `reason` | peer 未启动 / 地址不对：查环境变量与 `th-cn mcp` |
 | 一直说「链路内工具均在冷却期」 | `sources health` 的 `cooldowns.until` | 等冷却到期，或确认故障已修复后清 `state/health.json` 里对应条目 |
+| 日志里出现「上游限流（QFSD-7001）」 | `sources health` 的 `kind=rate_limited` 事件与建议时长 | 不是故障：数据仍是上一批（`payload.stale` / `source.pool_stale` 写了是哪天的）。要更保守就调小 `sync.rate_limit.max_retries` / `max_wait_sec`，要更激进就调大 `max_cooldown_sec` |
 | 退出 8 | `sync` 输出的 `results[].detail` 与 `trail` | 只补失败的数据集：`sync --dataset <name>` |
 | `validate` 退出 3 | 输出里的 `chains` / `warnings` | 主备不同 peer / 工具未登记：修 `sources.yaml` 或 `sync.yaml` |
 | 数据没更新 | `sync status` 的 `watermarks` 与 `recent_runs` | 水位是否已推进；`empty` 说明 peer 返回空，不应覆盖旧数据 |

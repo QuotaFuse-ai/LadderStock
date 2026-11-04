@@ -75,6 +75,11 @@ export interface DataTableProps<T> {
   sortToggle?: 'cycle' | 'flip'
   /** 给出即多一列展开控制；展开按钮不触发行点击，两者互不干扰 */
   expandable?: Expandable<T>
+  /**
+   * 整行表尾（跨列）。与列级 `summary` 二选一：列级声明存在时以列级为准。
+   * 用于「命中 N / M」这类不适合拆到某一列的结论行。
+   */
+  summaryRow?: (rows: T[]) => ReactNode
 }
 
 const ROW_HEIGHT = {
@@ -125,6 +130,7 @@ export function DataTable<T>({
   initialSort,
   sortToggle = 'cycle',
   expandable,
+  summaryRow,
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(initialSort ?? null)
   const [expanded, setExpanded] = useState<string[]>(expandable?.defaultExpanded ?? [])
@@ -152,6 +158,8 @@ export function DataTable<T>({
   const cellPad = density === 'compact' ? 'px-2' : 'px-3'
   const rowHeight = ROW_HEIGHT[density]
   const hasSummary = columns.some((column) => column.summary)
+  const hasSummaryRow = Boolean(summaryRow) && !hasSummary
+  const showFooter = (hasSummary || hasSummaryRow) && !loading && !error && rows.length > 0
   /** 展开列也是列：四态行的 `colSpan` 要把它算进去 */
   const columnCount = columns.length + (expandable ? 1 : 0)
   /** 数据首列的 `left` 偏移：有展开列时让出它的宽度 */
@@ -364,25 +372,36 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>{body}</tbody>
-        {hasSummary && !loading && !error && rows.length > 0 && (
+        {showFooter && (
           <tfoot>
-            <tr className={cn(rowHeight, 'bg-surface-2 font-medium')}>
-              {expandable && <td className={cn(EXPANDER_PAD, 'border-t border-border-strong', bodySticky(-1))} />}
-              {columns.map((column, columnIndex) => (
+            {hasSummaryRow ? (
+              <tr className="bg-surface-2 font-medium">
                 <td
-                  key={column.key}
-                  className={cn(
-                    cellPad,
-                    'border-t border-border-strong align-middle text-body text-text',
-                    alignClass(alignOf(column)),
-                    column.numeric && 'ldst-num',
-                    bodySticky(columnIndex),
-                  )}
+                  colSpan={columnCount}
+                  className={cn(cellPad, 'border-t border-border-strong py-2 text-body text-text')}
                 >
-                  {column.summary ? column.summary(sorted) : null}
+                  {summaryRow!(sorted)}
                 </td>
-              ))}
-            </tr>
+              </tr>
+            ) : (
+              <tr className={cn(rowHeight, 'bg-surface-2 font-medium')}>
+                {expandable && <td className={cn(EXPANDER_PAD, 'border-t border-border-strong', bodySticky(-1))} />}
+                {columns.map((column, columnIndex) => (
+                  <td
+                    key={column.key}
+                    className={cn(
+                      cellPad,
+                      'border-t border-border-strong align-middle text-body text-text',
+                      alignClass(alignOf(column)),
+                      column.numeric && 'ldst-num',
+                      bodySticky(columnIndex),
+                    )}
+                  >
+                    {column.summary ? column.summary(sorted) : null}
+                  </td>
+                ))}
+              </tr>
+            )}
           </tfoot>
         )}
       </table>

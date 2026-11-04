@@ -34,6 +34,13 @@
 > `docs/specs/SPEC-WEEKLY.md`）。行号续编 44，全表 **44 行**、叶子 **42** 个、
 > `scripts/check_commands.py` 实测可执行 argv **41** 条。见 §A′。
 >
+> **QUOT-380 增量（2026-11-04）**：基线 31 条口径**不变**，新增 3 条自选清单命令
+> `ldst watch add|rm|list`，行号续编 46–48，见 §I。
+> ⚠️ 上面的历史计数**彼此不一致**（R6 那条写「全表 45 行 / 叶子 43 / argv 42」，
+> R11 那条写「44 行 / 42 叶子 / 41 argv」，两者都自称「行号续编 44」），
+> 本单不代为对账；**唯一可复核的计数口径是 `tests/fixtures/command_matrix.py`**
+> （`LEAF_PATHS` 现为 **45** 个叶子路径，含本单新增 3 条）。
+>
 > **前置约束**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
 ## 0. 总览（31 条）
@@ -258,6 +265,32 @@ ldst position list --output json                         # realized.total_pnl（
   （溯源时间来自缓存的入库时间 `_ingested_at`，公式里没有 `now()`）。
 > §D′ 的行 36（`ldst research`）、§E″ 的行 37–41（R7 增量 5 条）、§D‴ 的行 42–43（R5 增量 2 条）、§D″ 的行 44–45（R6 增量 2 条）都在 31 条基线之外，**不计入上面的 31/33/35/32**；全部算上是 45 行 / **43 个叶子** / **42 条可执行 argv**（`scripts/check_commands.py` 现覆盖 42 条）。
 
+## I. 我的自选清单（QUOT-380 增量，3）
+
+> 口径来源：`docs/decisions/DEC-052-watchlist-read-endpoint.md`（自选读面，2026-11-03 拍板）、
+> `docs/specs/SPEC-RADAR-PAGES.md` §9.2。这 3 条**不属于** 31 条 P0 基线，
+> 测试矩阵按「QUOT-380 增量」单独登记（`tests/fixtures/command_matrix.py`：叶子路径 **45** 个）。
+>
+> ⚠️ **同一个 `watch` 组里有两类命令**：`start|status|stop` 是**盘中盯盘**（§C，离线单轮信号扫描），
+> `add|rm|list` 是**我的自选**（本组，本机隐私库 `watchlist` 表）。组名共用是任务书指定的口径，
+> 读写的东西完全不同——`ldst watch --help` 两行帮助里都写明了这一点。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 46 | `ldst watch add` | 加一条自选 | `--code`（必填，6 位数字，可带 `sh`/`sz`/`bj` 前缀） | **仅写本机 `data/journal.sqlite` 的 `watchlist` 表**，不联网、不上传、不经 HTTP；重复 code 更新加入时间 → 0；代码非法 → 2 |
+| 47 | `ldst watch rm` | 删一条自选 | `--code` | code 不在清单里 → **6**（「无结果」，不静默成功） |
+| 48 | `ldst watch list` | 我的自选清单（按加入时间排序） | `--output` | 0 + 结构化载荷；**空清单也是 0**。**只出 `code` 与 `created_at`，不出 `note`**（DEC-052 §2.2 拍板：自由文本不进这个出口） |
+
+**为什么写面只有 CLI、没有 HTTP**：`watchlist` 表此前只有 schema、没有任何生产者，
+数据恒为空——只上 `GET /api/watchlist` 读面就是一张永久空态卡。本组三条就是那个生产者：
+它写的是本机 SQLite，正是 DEC-052「自选的增删**不经 HTTP**」要求走的路，所以**不需要新决策**
+（HTTP 侧仍然只有那一条只读路由；写面要放开是再一次独立决定）。
+
+自选与 `journal` / `position` 同为**本地数据**：清单不进 `LadderEnvelope`、不进 MCP 工具清单、
+不进 AI 上下文。`GET /api/watchlist` 的三条闸门（回环独占 + `Host` 白名单 + `no-store`）
+由 `scripts/check_privacy.py` 第 3 组的第三条授权例外钉住，四项判据缺一不可，
+反例覆盖「自选模块出现在 MCP / AI 出口」——**白名单不能变成后门**。
+
 ## F. 全局约定
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。
@@ -266,7 +299,7 @@ ldst position list --output json                         # realized.total_pnl（
   `10` 不属于对外契约的那 6 个码，也**不复用 4/8**——那两个码的主语是「生态 peer 数据源」，报它们会把排查方向引到换源、重试取数上；库锁争用是本机串行问题，判据见 `docs/decisions/DEC-036-duckdb-cross-process-writes.md`。
 - **端口**：看板 `5950`、MCP http `5951`，默认仅回环监听。**端口被占用直接报错（退出码 3）并提示 `--port`，绝不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会让 M1 状态恢复失效。旧版端口 `5940` / `8770` 仅打印迁移提示。
 - **监听鉴权（R-1，判据唯一份：`core/listener.py`）**：回环（`127.0.0.1` / `localhost` / `::1`）无需配置；非回环**必须同时**设置 `<前缀>_ALLOW_REMOTE=1` 与 `<前缀>_TOKEN`（≥16 字符），否则拒绝启动、退出码 3，绝不静默对外暴露。前缀：web `LDST_WEB_*`，MCP `LDST_MCP_*`。开启后 web 校验 `/api/*`、MCP 校验 `/mcp`，均要求 `Authorization: Bearer <token>`（web 兼容 `X-Web-Token`），`hmac.compare_digest` 常量时间比较，失败 401 且不回显服务端细节。
-- **不撞端口**：Council WebUI `8788` / MCP `8765`、TickHub Admin `8787` / MCP `8000`、TickHub-US MCP `8002` / Admin `8789`、Wire `8790` / `8791`。
+- **不撞端口**：Council WebUI `8786` / MCP `8765`、TickHub Admin `8787` / MCP `8000`、TickHub-US MCP `8002`（本机构建无管理端）、Wire `8790` / `8791`。`8788` / `8789` 归 ProxyFleet（REST/管理台、本地转发网关），见 `docs/decisions/DEC-047-peer-port-ownership.md`。
 - **控制面**：`ldst run` 启动后看板页可在 `/api/control/*` 查看、安装、启停、配置四个 peer，实现落点 `src/ladderstock/web/control.py`。该族接口**只接受回环来源**（非回环 403），`LDST_CONTROL_ENABLED=0` 时整族返回 404 且数据面 7 个只读接口零影响；**写方法（`POST`/`PUT`/`PATCH`/`DELETE`）必须带正向来源证据**——浏览器同源页面由 `Origin` 自动满足，`curl` / CLI / 脚本须显式加 `X-LDST-Client: 1`（否则 403）；安装/启停一律 `subprocess.run([...], shell=False)` 走白名单命令，端口被占用直接报错、**绝不换端口也不杀占用者**；密钥只写目标 peer **真正加载的那个 dotenv**（CN/US/Senate 为 `.env`、Wire 为 `.env.local`，0600），GET 只回 `{"set": true, "preview": "sk-****abcd"}`，日志同样脱敏。**`GET /api/control/validation/conditions` 是写通道探针**（QUOT-287 / DEC-032）：控制面开启时回 `405` + `Allow: PUT`，不返回数据、不落盘；看板靠它判断 `/validate` 的「后端」模式是否就绪，读条件仍走数据面 `GET /api/validation?date=` 的 `payload.conditions`。
 
   ```bash

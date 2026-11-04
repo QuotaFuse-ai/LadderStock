@@ -20,6 +20,12 @@
 三处都为空时**不发空参请求**（那正是把整包压成 1 行、日期取成抓取时间的旧洞），
 直接判该数据集失败并在 detail 里写清去哪配。
 
+**批量池数据集**（`fund_flow_realtime`）是同一条纪律的第三种形状：工具入参是
+`codes`（逗号分隔）而不是 `code`，**一次调用覆盖整个代码池**（≤150 只，超出由工具
+内部自动分批），所以走 `sync_batch_pool` 而不是逐只扇出——这一条正是 QUOT-367 要
+消掉的「200 只票 200 个请求」。代码池解析、落库、水位、降级与逐只分支共用同一套
+语义，差别只在「发几次请求」；上游往返次数由工具自报，写进 detail（DEC-053）。
+
 **赛道池数据集**（`theme_news`，Wire）是同一条纪律的另一个形状：`wire_get_digest`
 的 `topic` 必填且只认**赛道 slug**（`semiconductor`，不是「半导体」），一次调用只覆盖
 一个赛道，所以按 `config/sync.yaml` 的 `topics` 逐个取数再合并落库（QUOT-328）。
@@ -53,8 +59,8 @@ import typer
 from ladderstock.cli.output import OutputOption, emit, error
 from ladderstock.core.boundary import BoundaryViolation, owner_of
 from ladderstock.core.models import LadderEnvelope
-from ladderstock.data import duckdb_store, sqlite_store, watermark
-from ladderstock.data.adapters.tickhub import needs_code, tool_params
+from ladderstock.data import archive, duckdb_store, sqlite_store, watermark
+from ladderstock.data.adapters.tickhub import needs_code, needs_codes_batch, tool_params
 from ladderstock.data.adapters.wire import needs_topic
 from ladderstock.data.adapters.wire import tool_params as wire_tool_params
 from ladderstock.data.db_lock import writer_lock
@@ -78,9 +84,19 @@ MODE_FULL = "full"
 #: 上千只会在一次同步里打爆限流。超了要拆批，而不是悄悄截断。
 MAX_POOL_CODES = 100
 
+#: 批量数据集（`BATCH_DATASETS`）一次上游往返覆盖的只数。`stock_fund_flow_batch`
+#: 的 `max_codes` 默认 150，超出的由工具内部按 25.5 秒间隔自动分批（QUOT-374 实测：
+#: 300 只 = 2 次请求、0 丢失）。所以这里的上限是「一次调用带多少只」，不是「取多少只」。
+BATCH_CODES_PER_CALL = 150
+#: 批量数据集单轮最多取多少只。3 个 150 批 ≈ 450 只：再往上单轮就要 60 秒以上
+#: （每多一批多 25.5 秒闸门间隔），盘中每分钟刷新的诉求撑不住（QUOT-367）。
+MAX_BATCH_POOL_CODES = BATCH_CODES_PER_CALL * 3
+
 #: 池子来源（写进 detail，便于复盘时知道这次是谁提供的代码）
 POOL_CLI = "命令行 --codes"
 POOL_CONFIG = "config/sync.yaml"
+#: `codes_from`：代码池直接取自另一个数据集的**当日归档**（见 `pool_codes_from_archive`）
+POOL_ARCHIVE = "当日归档"
 
 #: 扇出内的连续失败止损上限（QUOT-328）。扇出不吃 source 冷却——一次失败常常只是
 #: 「这个入参上游不认识」，按冷却判下去就是 1 个坏元素废掉整池。代价是 peer 真下线时
@@ -199,15 +215,57 @@ def watchlist_codes(root: Path | None = None) -> list[str]:
     return clean_codes([row["code"] for row in rows])
 
 
-def resolve_code_pool(
-    dataset: str, *, declared: dict[str, Any], cli_codes: list[str], root: Path | None
+def pool_codes_from_archive(
+    source: str, root: Path | None, *, limit: int = MAX_POOL_CODES
 ) -> tuple[list[str], str]:
-    """按 `--codes` → `sync.yaml` 的 `codes` → 本机自选 取代码池，返回 (池子, 来源)。"""
+    """代码池 = `source` 数据集**当日归档**里的代码（QUOT-362 逐只归属）。
+
+    读本机缓存、不扩全市场：`concept_membership` 是「当日候选池那批代码各取一次」的
+    TTL 快照，取全市场就是把 100 只的窗口撑成几千次调用。池子来自归档而不是入参，
+    所以同步顺序很重要——排在 `limit_pool` 之后，同一轮里读到的就是今天刚落的池子。
+
+    `limit` 由调用方决定：逐只扇出按 `MAX_POOL_CODES`（一只一次请求），批量数据集按
+    `MAX_BATCH_POOL_CODES`（150 只一次请求），两者差一个数量级（QUOT-371）。
+
+    超过上限时按池子顺序截断并**在来源里写明**（静默丢尾部才是问题）：
+    少几只票只影响那几只的 `theme` 分项走关键词降级，不会让整轮同步挂掉。
+    """
+    if not source:
+        raise LadderStockError(f"{POOL_CONFIG} 的 codes_from 是空字符串，要写数据集名", EXIT_CONFIG)
+    owner_of(source)  # 未登记的数据集没有「归档」这回事（DEC-006 闸门）
+    snapshot = archive.snapshot(source, date.today(), root=root)
+    codes = clean_codes([duckdb_store.record_code(row) for row in snapshot.records])
+    if not codes:
+        return [], f"{POOL_ARCHIVE} {source}（backend={snapshot.backend}，0 只）"
+    if len(codes) > limit:
+        return (
+            codes[:limit],
+            f"{POOL_ARCHIVE} {source}（截断至 {limit} 只，原 {len(codes)} 只）",
+        )
+    return codes, f"{POOL_ARCHIVE} {source}（{len(codes)} 只）"
+
+
+def resolve_code_pool(
+    dataset: str,
+    *,
+    declared: dict[str, Any],
+    cli_codes: list[str],
+    root: Path | None,
+    limit: int = MAX_POOL_CODES,
+) -> tuple[list[str], str]:
+    """按 `--codes` → `sync.yaml` 的 `codes` → 当日归档 `codes_from` → 本机自选 取代码池。
+
+    `codes` 排在 `codes_from` 前面：手写的池子是明确意图（回补某几只），归档池子是
+    「跟着当天的候选池走」，显式覆盖隐式。`--codes` 同样覆盖两者。
+    """
     if cli_codes:
         return cli_codes, POOL_CLI
     configured = clean_codes(declared.get("codes") or [])
     if configured:
         return configured, POOL_CONFIG
+    source = str(declared.get("codes_from") or "").strip()
+    if source:
+        return pool_codes_from_archive(source, root, limit=limit)
     watched = watchlist_codes(root)
     if watched:
         return watched, POOL_WATCHLIST
@@ -296,11 +354,185 @@ def sync_code_pool(
             dataset, code=code, since=None if full else before
         ),
         empty_detail=(
-            f"代码池为空：`--codes` / config/sync.yaml 的 sync.datasets.{dataset}.codes / "
-            f"本机自选均为空，未发起调用（{binding.tool} 的 code 必填，"
-            "空参实测回 QFSD-9001）"
+            f"代码池为空（本次来源：{pool_source}）：`--codes` / config/sync.yaml 的 "
+            f"sync.datasets.{dataset}.codes / codes_from / 本机自选均为空，未发起调用"
+            f"（{binding.tool} 的 code 必填，空参实测回 QFSD-9001）"
         ),
     )
+
+
+def sync_batch_pool(
+    registry: ProviderRegistry,
+    store: watermark.WatermarkStore,
+    dataset: str,
+    *,
+    binding: Any,
+    declared: dict[str, Any],
+    mode: str,
+    before: str | None,
+    full: bool,
+    optional: bool,
+    started: str,
+    cli_codes: list[str],
+) -> dict[str, Any]:
+    """`codes` 入参的数据集：**一次调用取完整代码池**，不逐只扇出（QUOT-371）。
+
+    与 `sync_code_pool` 的差别只有「发几次请求」这一条。代码池解析、落库、水位、
+    降级全部复用同一套语义：
+
+    - 池子为空 → 一次调用都不发（空参会被 peer 拒回 `QFSD-9001`）；
+    - 全失败 → 沿用既有的 `skipped` / `failed` 判定，本函数不另造降级；
+    - **单批失败不丢另一批** → `stock_fund_flow_batch` 在某批失败时回
+      `ok=false` + `meta.partial=true`，adapter 的 `recoverable` 分支会把已取到的
+      行照常带出来并把 `source_status` 标成 `degraded`，这里据此判 `degraded`；
+    - 上游只回部分行 → `data.dropped` 已经由工具侧列出，不在这里重算。
+
+    请求计数（老板验收 #1 的取数口）：`len(data.batches) + len(data.failures)`，
+    由工具自报，写进 detail，不是从代码里「看起来像批量」推出来的。
+    """
+    codes, pool_source = resolve_code_pool(
+        dataset,
+        declared=declared,
+        cli_codes=cli_codes,
+        root=registry.root,
+        limit=MAX_BATCH_POOL_CODES,
+    )
+    scope = "全量" if full else (f"水位 {before} 之后" if before else "首次全量")
+    pool_desc = f"代码池 {len(codes)} 只（{pool_source}）"
+    _log(f"sync {dataset}（{scope}，{pool_desc}，批量一次调用）")
+
+    if not codes:
+        detail = (
+            f"代码池为空（本次来源：{pool_source}）：`--codes` / config/sync.yaml 的 "
+            f"sync.datasets.{dataset}.codes / codes_from / 本机自选均为空，未发起调用"
+        )
+        _log(f"  {dataset} skipped：{detail}")
+        store.record_run(
+            dataset,
+            mode=mode,
+            status="skipped" if optional else "failed",
+            rows=0,
+            source="-",
+            trail=[detail],
+            started_at=started,
+            watermark_before=before,
+            watermark_after=before,
+            detail=detail,
+        )
+        return _skip_row(
+            dataset,
+            mode=mode,
+            status="skipped" if optional else "failed",
+            detail=detail,
+            before=before,
+            optional=optional,
+            trail=[detail],
+        )
+
+    if len(codes) > MAX_BATCH_POOL_CODES:
+        raise LadderStockError(
+            f"{dataset} 代码池 {len(codes)} 只，超过批量单轮上限 {MAX_BATCH_POOL_CODES} 只；"
+            f"请分批判 `--codes` 同步（批量工具一次往返覆盖 {BATCH_CODES_PER_CALL} 只，"
+            "再多会自动分批但每批要等 25.5 秒闸门间隔）",
+            EXIT_USAGE,
+        )
+
+    try:
+        outcome = registry.fetch(
+            dataset, params=tool_params(dataset, codes=codes), ignore_cooldown=True
+        )
+    except SourceUnavailable as exc:
+        detail = f"{pool_desc}批量调用失败：{_one_line(exc)}"
+        status = "skipped" if optional else "failed"
+        _log(f"  {dataset} {status}：{detail}")
+        store.record_run(
+            dataset,
+            mode=mode,
+            status=status,
+            rows=0,
+            source="-",
+            trail=[detail],
+            started_at=started,
+            watermark_before=before,
+            watermark_after=before,
+            detail=detail,
+        )
+        return _skip_row(
+            dataset,
+            mode=mode,
+            status=status,
+            detail=detail,
+            before=before,
+            optional=optional,
+            trail=[detail],
+        )
+
+    envelope = outcome.envelope
+    rows = envelope_records(envelope)
+    trail = list(outcome.trail)
+    degraded = outcome.used_fallback or envelope.source_status != "ok"
+    requests = _batch_request_count(envelope)
+    partial_note = "" if requests is None else f"，上游往返 {requests} 次"
+
+    result = duckdb_store.write_dataset(
+        dataset,
+        rows,
+        mode=binding.mode,
+        source=outcome.source,
+        default_trade_date=_as_date(envelope.data_as_of),
+    )
+    value = watermark_value(dataset, rows, envelope)
+    if result.empty or not value:
+        status = "empty"
+        after = before
+        detail = f"{pool_desc}返回空记录（{partial_note.lstrip('，')}），未覆盖已有数据，水位保持"
+    else:
+        status = "degraded" if degraded else "ok"
+        after = store.advance(
+            dataset, value, rows=result.rows, source=outcome.source, status=status
+        ).value
+        detail = (
+            f"{result.rows} 行 / {len(result.days)} 天，分区 {len(result.partitions)} 个"
+            f"；{pool_desc}，批量 1 次调用{partial_note}"
+        )
+        if degraded:
+            detail += f"；{envelope.source_detail}（部分批次未取到，已按降级落库）"
+
+    _log(f"  {dataset} {status}：{detail}，水位 {before or '-'} → {after or '-'}")
+    store.record_run(
+        dataset,
+        mode=mode,
+        status=status,
+        rows=result.rows,
+        source=outcome.source,
+        trail=trail,
+        started_at=started,
+        watermark_before=before,
+        watermark_after=after,
+        detail=detail,
+    )
+    return {
+        "dataset": dataset,
+        "status": status,
+        "mode": mode,
+        "rows": result.rows,
+        "total_rows": result.total_rows,
+        "days": list(result.days),
+        "source": outcome.source,
+        "optional": optional,
+        "from_cache": False,
+        "watermark_before": before,
+        "watermark_after": after,
+        "detail": detail,
+        "trail": trail,
+    }
+
+
+def _batch_request_count(envelope: LadderEnvelope) -> int | None:
+    """这一轮上游往返了几次；adapter 没拿到这个数就回 `None`，不猜。"""
+    payload = envelope.payload or {}
+    value = payload.get("batch_requests")
+    return int(value) if isinstance(value, int) else None
 
 
 # --------------------------------------------------------------------------- #
@@ -434,6 +666,7 @@ def sync_per_item(
     halted: list[str] = []
     cache_hits = 0
     degraded = False
+    paced = False
     last_envelope: LadderEnvelope | None = None
     consecutive = 0
 
@@ -447,12 +680,14 @@ def sync_per_item(
             outcome = registry.fetch(dataset, params=params_for(item), ignore_cooldown=True)
         except SourceUnavailable as exc:
             consecutive += 1
+            paced = paced or exc.rate_limited
             failures.append(f"{item}：{_one_line(exc)}")
             continue
         consecutive = 0
         trail.extend(outcome.trail)
         if outcome.from_cache:
             cache_hits += 1
+            paced = paced or outcome.rate_limited
             continue
         envelope = outcome.envelope
         last_envelope = envelope
@@ -469,10 +704,12 @@ def sync_per_item(
     )
     if not succeeded:
         if cache_hits:
-            detail = (
-                f"peer 全部不可用，回放本地缓存（{pool_desc}，freshness=cached，"
-                "未重写、未推进水位）"
+            head = (
+                "上游限流（QFSD-7001）退避后仍取不到，回放本地昨日池"
+                if paced
+                else "peer 全部不可用，回放本地缓存"
             )
+            detail = f"{head}（{pool_desc}，freshness=cached，未重写、未推进水位）"
             status, source = "degraded", "local_cache"
         else:
             detail = f"{pool_desc}全部失败：{_clip('; '.join(failures))}{halt_note}"
@@ -588,6 +825,22 @@ def sync_one(
     before = None if full else store.value(dataset)
     started = _now_iso()
     pool_codes = clean_codes(codes)
+    # 批量数据集先判：它们的工具入参是 `codes` 而不是 `code`，走逐只扇出会一次一并发
+    # 上百个请求，正是 QUOT-367 要消掉的那件事（QUOT-371）。
+    if binding.peer == "tickhub" and needs_codes_batch(dataset):
+        return sync_batch_pool(
+            registry,
+            store,
+            dataset,
+            binding=binding,
+            declared=declared,
+            mode=mode,
+            before=before,
+            full=full,
+            optional=optional,
+            started=started,
+            cli_codes=pool_codes,
+        )
     if binding.peer == "tickhub" and needs_code(dataset):
         return sync_code_pool(
             registry,
@@ -647,7 +900,14 @@ def sync_one(
 
     envelope = outcome.envelope
     if outcome.from_cache:
-        detail = "peer 全部不可用，回放本地缓存（freshness=cached，未重写、未推进水位）"
+        detail = (
+            # 限流降级要说清是「被上游 pacing 挡的」，不是「源坏了」：复盘时这两条的
+            # 处理动作完全不同（QUOT-349）
+            "上游限流（QFSD-7001）退避后仍取不到当日数据，回放本地昨日池"
+            "（freshness=cached，未重写、未推进水位）"
+            if outcome.rate_limited
+            else "peer 全部不可用，回放本地缓存（freshness=cached，未重写、未推进水位）"
+        )
         _log(f"  {dataset} degraded：{detail}")
         store.record_run(
             dataset,

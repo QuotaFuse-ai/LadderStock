@@ -77,6 +77,8 @@ from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
+from ladderstock.web.symbols import SymbolPlane
+from ladderstock.web.symbols import build_router as build_symbols_router
 
 REVIEW_SUBDIR = "review"
 #: 周报产物目录（`ldst weekly` 落盘，QUOT-149）：`<data_dir>/weekly/<week>.json`
@@ -932,6 +934,13 @@ def _static_dir() -> Path:
 # 应用
 # --------------------------------------------------------------------------- #
 
+#: `index.html` 引用的 bundle 名带内容哈希，但浏览器对没有 `Cache-Control` 的
+#: HTML 会做启发式缓存，换 bundle 后仍可能回放旧页（表现为「导航还是老版」）。
+#: 让入口页每次回源校验，带哈希的 `assets/*` 才允许长期缓存。
+INDEX_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
+ASSET_CACHE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
 def create_app(
     *,
     data_root: Path | None = None,
@@ -940,9 +949,10 @@ def create_app(
     research_plane: Any | None = None,
     industry_plane: Any | None = None,
     radar_plane: Any | None = None,
+    symbols_plane: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
-    / `industry_plane` / `radar_plane` 可注入，便于测试。
+    / `industry_plane` / `radar_plane` / `symbols_plane` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -1544,6 +1554,14 @@ def create_app(
     radar = radar_plane if radar_plane is not None else RadarPlane(data_root=root)
     app.include_router(build_radar_router(radar))
 
+    # -------------------------------------------- 标的字典面（QUOT-405）
+    #
+    # `/api/symbols/search` 一个只读接口：本机缓存反查的标的字典（TickHub-CN 无代码表
+    # 类工具，盘点结论见 `web/symbols.py`）。闸门同研究面（回环 + `Host`，纯数据面，
+    # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
+    symbols = symbols_plane if symbols_plane is not None else SymbolPlane(data_root=root)
+    app.include_router(build_symbols_router(symbols))
+
     # ------------------------------------------ 状态索引面（QUOT-288 / UI-SPEC §12.2 第 2 条）
     #
     # `/__state/index` 两个路由（GET 读回 / POST 上报）是前端分片索引的落盘通道，
@@ -1558,7 +1576,7 @@ def create_app(
     def index() -> Any:
         page = dist / "index.html"
         if page.is_file():
-            return FileResponse(page)
+            return FileResponse(page, headers=INDEX_CACHE_HEADERS)
         return HTMLResponse(_hint_page(), status_code=200)
 
     @app.get("/{full_path:path}", include_in_schema=False)
@@ -1572,10 +1590,12 @@ def create_app(
             except ValueError:
                 raise HTTPException(status_code=404, detail="Not Found") from None
             if candidate.is_file():
-                return FileResponse(candidate)
+                is_asset = full_path.startswith("assets/")
+                headers = ASSET_CACHE_HEADERS if is_asset else INDEX_CACHE_HEADERS
+                return FileResponse(candidate, headers=headers)
             index_page = dist / "index.html"
             if index_page.is_file():
-                return FileResponse(index_page)  # SPA 路由回退
+                return FileResponse(index_page, headers=INDEX_CACHE_HEADERS)  # SPA 路由回退
         return HTMLResponse(_hint_page(), status_code=200)
 
     return app

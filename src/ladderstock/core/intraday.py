@@ -29,6 +29,20 @@
   节假日腾讯会回节前收盘价，数字看着完全合理，只有日期能拆穿；
 - 一条新鲜报价都没有 → `status=missing`，不写快照；
 - 抓取抛错 → `status=failed`，只写 `status.json`，不写快照。
+
+## 上游限流（QFSD-7001）是另一回事（QUOT-349 / DEC-048）
+
+限流不是「数据不存在」，是「现在不让这么问」。数据层已经先按 `retry_after_s` 退避、
+退完仍取不到才回放到本地缓存，走到这里的是**带回放池子的降级结果**，所以：
+
+- 昨日涨停池来自缓存回放且日期不是今天 → **只允许在「因限流回放」时**带着
+  `pool_stale` 标记继续，快照照写、`status=degraded`；快照同时写
+  `meta.degraded="stale_cache"` + `meta.pool_as_of`（看板读这一处就知道这批数据是哪天的）；
+  其它原因（空池、形状漂移、对账不上）仍然判 `missing`，不拿旧池子冒充今天的读数；
+- 行情批次被限流打回 → 这一批没有读数但不放弃整个时点，`status=degraded`，
+  不写快照（一条今天的读数都没有，写了就是污染）；
+- 两种情况都**不是 `failed`**：调度器整轮契约是「单任务失败只记 degraded / skipped」，
+  限流不该让定时任务看起来像崩了。
 """
 
 from __future__ import annotations
@@ -44,9 +58,10 @@ from ladderstock.core.ladder import BOARD_KEYS, CODE_KEYS, NAME_KEYS, as_float, 
 
 SLOTS: tuple[str, ...] = ("09:25", "09:35", "10:00", "11:30", "14:00", "15:00")
 
-#: 昨日涨停池里的**昨日**连板数。不能复用 `ladder.BOARD_KEYS`：该工具的
-#: `limit_up_days` 是今天（含今日封板）的连板数，排在 `y_streak` 前面会被先取到，
-#: 分板位与 1进2 都会整体错一档。上游没给 `y_streak` 就记未知，不拿别的字段顶替。
+#: 昨日涨停池里的**昨日**连板数。不能复用 `ladder.BOARD_KEYS`：该工具同时返回
+#: `limit_up_days`（东财 `zttj.days`，「n天m板」的统计窗口天数，QUOT-290 实测
+#: 纯连板时恰好等于连板数，非纯连板时明显偏大），只有 `y_streak` 是昨日连板数。
+#: 上游没给 `y_streak` 就记未知，不拿别的字段顶替。
 YESTERDAY_STREAK_KEYS: tuple[str, ...] = (
     "y_streak",
     "yesterday_streak",
@@ -71,9 +86,20 @@ STATUS_SKIPPED = "skipped"
 STATUS_MISSING = "missing"
 STATUS_FAILED = "failed"
 
+#: `payload["meta"]["degraded"]` 的取值：目前只有一类——昨日池因上游限流回放到本地缓存
+DEGRADED_STALE_CACHE = "stale_cache"
+
 
 class SnapshotUnavailable(Exception):
-    """这一次时点没有可存的读数（日期不符 / 池子为空 / 上游给空）——不是崩溃。"""
+    """这一次时点没有可存的读数（日期不符 / 池子为空 / 上游给空）——不是崩溃。
+
+    `rate_limited=True` 说明是上游限流（QFSD-7001）导致取不到，`run_slot` 据此折成
+    `degraded` 而不是 `missing`：本地昨日池还在，看板不该因为一次 pacing 显示成空白。
+    """
+
+    def __init__(self, message: str, *, rate_limited: bool = False) -> None:
+        super().__init__(message)
+        self.rate_limited = rate_limited
 
 
 # ---------------------------------------------------------------- 时点与窗口
@@ -423,21 +449,43 @@ def _quote_codes(records: Iterable[dict[str, Any]]) -> list[str]:
 
 def _fetch_quotes(
     registry: Any, codes: list[str]
-) -> tuple[list[dict[str, Any]], list[str], str, bool]:
+) -> tuple[list[dict[str, Any]], list[str], str, bool, bool]:
+    """逐批取盘中报价 → (行, 轨迹, 溯源, 是否降级, 是否被限流打回过)。
+
+    `paced` 只有一个用途：一条今天的读数都没有时，用它区分「上游限流，这会儿问不到」
+    （折成 `degraded`）和「今天本来就没有这批读数」（照旧 `missing`）。
+    限流只丢它那一批的读数，不把整个时点判死（QUOT-349）；其它异常照旧向上抛，
+    由 `run_slot` 记 `failed`。
+    """
     rows: list[dict[str, Any]] = []
     trail: list[str] = []
     detail = ""
     degraded = False
+    paced = False
     for chunk in _chunks(codes, QUOTE_CHUNK):
-        outcome = registry.fetch_live(
-            "spot_quote",
-            params={"codes": ",".join(chunk), "max_codes": len(chunk)},
-        )
+        try:
+            outcome = registry.fetch_live(
+                "spot_quote",
+                params={"codes": ",".join(chunk), "max_codes": len(chunk)},
+            )
+        except Exception as exc:  # noqa: BLE001 - 只兜限流，其它失败照旧向上
+            if not getattr(exc, "rate_limited", False):
+                raise
+            degraded = paced = True
+            trail.append(f"spot_quote:rate_limited({len(chunk)}只未取)")
+            continue
         trail.extend(outcome.trail)
         detail = outcome.envelope.source_detail
-        degraded = degraded or outcome.used_fallback or outcome.envelope.source_status != "ok"
+        paced = paced or getattr(outcome, "rate_limited", False)
+        degraded = (
+            degraded
+            or paced
+            or outcome.used_fallback
+            or outcome.from_cache
+            or outcome.envelope.source_status != "ok"
+        )
         rows.extend(_records(outcome.envelope))
-    return rows, trail, detail, degraded
+    return rows, trail, detail, degraded, paced
 
 
 def _one_to_two(registry: Any, day: date, yesterday: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -518,31 +566,55 @@ def _sentiment_block(
 
 def capture(slot: str, day: date, moment: datetime, registry: Any) -> tuple[dict[str, Any], bool]:
     """抓一次时点快照；返回 (载荷, 是否降级)。拿不到可存读数抛 `SnapshotUnavailable`。"""
+    pool_stale: dict[str, Any] | None = None
     try:
         yesterday_outcome = registry.fetch("yesterday_limit_up", params={"date": day.isoformat()})
     except Exception as exc:  # noqa: BLE001 - 取不到池子就没什么可快照的
-        raise SnapshotUnavailable(f"昨日涨停池取数失败：{_one_line(exc)}") from exc
-    if yesterday_outcome.envelope.data_as_of != day:
         raise SnapshotUnavailable(
-            f"昨日涨停池数据日 {yesterday_outcome.envelope.data_as_of} 不是今天 {day}"
-        )
+            f"昨日涨停池取数失败：{_one_line(exc)}",
+            rate_limited=getattr(exc, "rate_limited", False),
+        ) from exc
+    if yesterday_outcome.envelope.data_as_of != day:
+        # 只有一种旧池子可以用：因上游限流回放的本地昨日池，且必须在载荷里写明它是哪天的。
+        # 其它日期对不上的情况（上游发了别的日子、缓存里是旧一轮的账）照旧判 missing——
+        # 用别的 cohort 冒充今天的读数会永久污染快照，从文件里也看不出异样。
+        if not (yesterday_outcome.from_cache and getattr(yesterday_outcome, "rate_limited", False)):
+            raise SnapshotUnavailable(
+                f"昨日涨停池数据日 {yesterday_outcome.envelope.data_as_of} 不是今天 {day}"
+            )
+        pool_stale = _stale_pool(yesterday_outcome)
     yesterday = _records(yesterday_outcome.envelope)
     if not yesterday:
-        raise SnapshotUnavailable("昨日涨停池为空（非交易日或上游未发布）")
+        raise SnapshotUnavailable(
+            "昨日涨停池为空（非交易日或上游未发布）",
+            rate_limited=getattr(yesterday_outcome, "rate_limited", False),
+        )
 
     codes = _quote_codes(yesterday)
-    quotes, trail, detail, degraded = _fetch_quotes(registry, codes)
+    quotes, trail, detail, degraded, paced = _fetch_quotes(registry, codes)
+    degraded = degraded or yesterday_outcome.from_cache or pool_stale is not None
+    paced = paced or pool_stale is not None
     readings = project_readings(slot, yesterday, quotes, day)
     if not readings["fresh"]:
         raise SnapshotUnavailable(
             f"{len(codes)} 只昨日涨停股没有一条今天（{day}）的报价："
-            "行情日期不是今天（节假日回节前收盘价）或上游未更新"
+            "行情日期不是今天（节假日回节前收盘价）或上游未更新",
+            rate_limited=paced,
         )
 
     payload: dict[str, Any] = {
         "date": day.isoformat(),
         "slot": slot,
         "captured_at": moment.isoformat(timespec="seconds"),
+        # 看板只读这一处就能判断「这批是不是今天的」：degraded 是降级的**数据类别**，
+        # pool_as_of 是**实际数据日**。限流回放时 degraded=stale_cache、pool_as_of 是昨天，
+        # 有今天的数据时 degraded=null、pool_as_of 就是今天——两者都不缺，不靠消费方猜。
+        "meta": {
+            "degraded": DEGRADED_STALE_CACHE if pool_stale is not None else None,
+            "pool_as_of": (
+                pool_stale["as_of"] if pool_stale is not None else day.isoformat()
+            ),
+        },
         "price_field": "open" if slot == AUCTION_SLOT else "price",
         "source": {
             "dataset": "spot_quote",
@@ -565,11 +637,26 @@ def capture(slot: str, day: date, moment: datetime, registry: Any) -> tuple[dict
             )
         },
     }
+    if pool_stale is not None:
+        # 看板/复盘读这一项就知道「这批昨日涨停股是 X 日的池子」，不用猜
+        payload["source"]["pool_stale"] = pool_stale
     if slot >= SENTIMENT_FROM:
         payload["sentiment"] = _sentiment_block(registry, day, yesterday)
         if not payload["sentiment"].get("available"):
             degraded = True
     return payload, degraded
+
+
+def _stale_pool(outcome: Any) -> dict[str, Any]:
+    """限流回放的池子要说明白：是哪一天的、为什么是旧的、什么时候存的。"""
+    envelope = outcome.envelope
+    stale = (envelope.payload or {}).get("stale")
+    stale = stale if isinstance(stale, Mapping) else {}
+    return {
+        "as_of": envelope.data_as_of.isoformat() if envelope.data_as_of else None,
+        "reason": stale.get("reason") or "rate_limited",
+        "source_detail": envelope.source_detail,
+    }
 
 
 # ---------------------------------------------------------------- 入口
@@ -623,9 +710,12 @@ def run_slot(
             registry = ProviderRegistry(root=root)
         payload, degraded = capture(slot, day, moment, registry)
     except SnapshotUnavailable as exc:
-        detail = str(exc)
-        record_status(day, slot, STATUS_MISSING, detail=detail, root=root, at=moment)
-        return {**base, "status": STATUS_MISSING, "detail": detail}
+        # 限流不是「今天没有数据」，是「这会儿问不到」：整轮按降级记，
+        # 不判 missing（看板还有上一轮的时点）更不判 failed（调度契约，QUOT-349）
+        status = STATUS_DEGRADED if exc.rate_limited else STATUS_MISSING
+        detail = f"上游限流（QFSD-7001）：{exc}" if exc.rate_limited else str(exc)
+        record_status(day, slot, status, detail=detail, root=root, at=moment)
+        return {**base, "status": status, "detail": detail}
     except Exception as exc:  # noqa: BLE001 - 单点时点失败不拖垮调度器
         detail = f"快照抓取失败：{_one_line(exc)}"
         record_status(day, slot, STATUS_FAILED, detail=detail, root=root, at=moment)
@@ -655,6 +745,7 @@ def run_slot(
         price_field=payload["price_field"],
         stocks=payload["yesterday_limit_up"]["count"],
         fresh=fresh,
+        pool_stale=payload["source"].get("pool_stale"),
     )
     return {**base, "status": status, "detail": detail, "file": target.name}
 

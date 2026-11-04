@@ -106,11 +106,36 @@ def sentiment_records(day: date = date(2026, 10, 30)) -> dict[str, Any]:
 
 
 def limit_pool_records(day: date = date(2026, 10, 30)) -> list[dict[str, Any]]:
-    """今日涨停池（适配器展开后的行形状，`streak` 为今日连板数）。"""
+    """今日涨停池（真实东财行形状）：`streak`=`lbc` 连板数，`limit_up_days`=`zttj.days`。
+
+    两值故意不等（2026-11-02 09:36 实测：002086 streak=3 / limit_up_days=9）。此前只给
+    `streak`，取错键的用例照样通过，1进2 的真实缺陷因此没被抓到（QUOT-290 / DEC-046）。
+    """
     return [
-        {"code": "603703", "name": "盛洋科技", "streak": 2, "trade_date": day.isoformat()},
-        {"code": "600261", "name": "阳光照明", "streak": 2, "trade_date": day.isoformat()},
-        {"code": "603131", "name": "上海沪工", "streak": 3, "trade_date": day.isoformat()},
+        {
+            "code": "603703",
+            "name": "盛洋科技",
+            "streak": 2,
+            "limit_up_days": 5,
+            "limit_up_count": 2,
+            "trade_date": day.isoformat(),
+        },
+        {
+            "code": "600261",
+            "name": "阳光照明",
+            "streak": 2,
+            "limit_up_days": 8,
+            "limit_up_count": 2,
+            "trade_date": day.isoformat(),
+        },
+        {
+            "code": "603131",
+            "name": "上海沪工",
+            "streak": 3,
+            "limit_up_days": 9,
+            "limit_up_count": 3,
+            "trade_date": day.isoformat(),
+        },
     ]
 
 
@@ -125,12 +150,20 @@ def default_payloads(day: date = date(2026, 10, 30)) -> dict[str, Any]:
 
 @dataclass
 class StubRegistry:
-    """按数据集返回固定载荷；`errors` 里的数据集直接抛异常（模拟 peer 不可用）。"""
+    """按数据集返回固定载荷；`errors` 里的数据集直接抛异常（模拟 peer 不可用）。
+
+    `from_cache` / `rate_limited` 模拟「链路全挂之后回放本地昨日池」那次取数的形状
+    （QUOT-349）：信封日期用 `data_as_of` 按数据集覆盖，所以能做到「池子是昨天的、
+    报价是今天的」。
+    """
 
     payloads: dict[str, Any] = field(default_factory=default_payloads)
     day: date = date(2026, 10, 30)
     errors: dict[str, Exception] = field(default_factory=dict)
     used_fallback: bool = False
+    from_cache: bool = False
+    rate_limited: bool = False
+    data_as_of: dict[str, date] = field(default_factory=dict)
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def _outcome(self, dataset: str, params: dict[str, Any] | None) -> FetchOutcome:
@@ -140,28 +173,37 @@ class StubRegistry:
             raise failure
         if dataset not in self.payloads:
             raise LookupError(f"桩里没有 {dataset}")
+        replayed = self.from_cache
+        as_of = self.data_as_of.get(dataset, self.day)
+        payload: dict[str, Any] = {
+            "dataset": dataset,
+            "tool": "cache_replay" if replayed else f"{dataset}_stub",
+            "records": self.payloads[dataset],
+        }
+        if replayed and dataset in self.data_as_of:
+            payload["stale"] = {
+                "as_of": as_of.isoformat(),
+                "reason": "rate_limited" if self.rate_limited else "peer_unavailable",
+            }
         envelope = LadderEnvelope(
             domain="review",
             topic=dataset,
-            data_as_of=self.day,
-            payload={
-                "dataset": dataset,
-                "tool": f"{dataset}_stub",
-                "records": self.payloads[dataset],
-            },
-            source="tickhub_cn",
-            source_detail=f"{dataset}_stub@stub",
+            data_as_of=as_of,
+            payload=payload,
+            source="local_cache" if replayed else "tickhub_cn",
+            source_detail="缓存回放（stub）" if replayed else f"{dataset}_stub@stub",
             fetched_at=datetime.now().astimezone(),
-            freshness="realtime",
-            confidence="high",
-            source_status="ok",
+            freshness="cached" if replayed else "realtime",
+            confidence="low" if replayed else "high",
+            source_status="degraded" if replayed else "ok",
         )
         return FetchOutcome(
             envelope=envelope,
-            source="stub",
+            source="local_cache" if replayed else "stub",
             used_fallback=self.used_fallback,
-            from_cache=False,
-            trail=[f"{dataset}_stub@stub"],
+            from_cache=replayed,
+            trail=[envelope.source_detail],
+            rate_limited=self.rate_limited,
         )
 
     def fetch(

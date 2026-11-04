@@ -2,17 +2,9 @@ import { useCallback, useMemo, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 
-import {
-  api,
-  describeApiError,
-  isApiError,
-  type WeeklyFacts,
-  type WeeklyReport,
-  type WeeklyTrend,
-} from '../api'
+import { describeApiError, isApiError, type WeeklyFacts, type WeeklyReport, type WeeklyTrend } from '../api'
 import { AiErrorNotice } from '../components/kit'
-import { useAsync } from '../lib/useAsync'
-import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { resolveState, type PageState } from '../lib/pageState'
 import {
   MISSING,
   formatBoards,
@@ -39,6 +31,7 @@ import {
   type SectionTone,
 } from '../components/ui'
 import { useDensity } from '../lib/prefs'
+import { useWeeklyView } from './weekly/useWeeklyView'
 
 /**
  * 周度复盘 `/weekly`（R11 / QUOT-149）：复用收盘复盘的报告式版式。
@@ -46,6 +39,9 @@ import { useDensity } from '../lib/prefs'
  * 两层内容严格分开：`facts` 是程序聚合的周度事实包（本页不重算任何数字），
  * `sections` 是 AI 叙述（失败段落由后端补模板，`mode=template` 时给降级提示）。
  * 缺失值一律 `—` + 原因，不补 0；没有产物时走空态而不是 404。
+ *
+ * 演示源（`?demo=1` 或设置页「虚拟数据」）只替换 `/api/weekly` 这一条读接口，
+ * 事实基线与 `/review`、`/limit-up` 是同一份市场事实；真实请求失败绝不回落到 `weekly/demo.ts`。
  */
 
 const SECTION_STATUS: Record<string, { label: string; tone: SectionTone; badge: 'ok' | 'warn' | 'danger' | 'info' | 'neutral' }> = {
@@ -182,7 +178,7 @@ function trendNote(trend: WeeklyTrend | undefined, unit = ''): ReactNode {
   return (
     <>
       周内 {num(value.first)} → {num(value.last)} · 变化 {change} ·{' '}
-      <span className="ldst-num">{value.samples}</span> 天有读数
+      <span className="ldst-num">{value.samples}</span> 天
     </>
   )
 }
@@ -216,7 +212,6 @@ function NoReading({
 }
 
 export default function WeeklyScreen() {
-  const forced = useForcedState()
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   // 行高档位只由用户的密度偏好决定（§11.18「密度只改行高」），屏内不写死
@@ -227,10 +222,10 @@ export default function WeeklyScreen() {
     return raw && parseWeek(raw) ? raw.toUpperCase() : defaultWeek()
   })()
 
-  const request = useAsync(
-    (signal) => api.weekly(week, signal),
-    [week],
-  )
+  const view = useWeeklyView({ week })
+  const forced = view.forced
+  const demo = view.demo
+  const request = view.request
   const reload = useCallback(() => request.reload(), [request.reload]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const envelope = request.data ?? null
@@ -264,17 +259,22 @@ export default function WeeklyScreen() {
     .map((row) => number(row.temperature))
     .filter((value): value is number => value !== null)
 
-  const rows: SentimentDayRow[] = (sentiment?.series ?? []).map((row) => ({
-    date: row.date,
-    temperature: number(row.temperature),
-    promotion_rate: number(row.promotion_rate),
-    seal_rate: number(row.seal_rate),
-    limit_up_count: number(row.limit_up_count),
-    broken_count: number(row.broken_count),
-    max_board: number(row.max_board),
-    gap_levels: Array.isArray(row.gap_levels) ? row.gap_levels : [],
-    source: text(row.source),
-  }))
+  const rows: SentimentDayRow[] = (sentiment?.series ?? []).map((row) => {
+    // §8 / QUOT-319：`available:false` 的那天没有任何读数。后端给计数补的 0 不是「0 家涨停」，
+    // 整行按缺失走 `—`（QUOT-354 BUG-E：温度/最高板已按此，涨停与炸板是漏覆盖列）。
+    const read = (value: number | null) => (row.available === false ? null : number(value))
+    return {
+      date: row.date,
+      temperature: read(row.temperature),
+      promotion_rate: read(row.promotion_rate),
+      seal_rate: read(row.seal_rate),
+      limit_up_count: read(row.limit_up_count),
+      broken_count: read(row.broken_count),
+      max_board: read(row.max_board),
+      gap_levels: row.available === false ? [] : Array.isArray(row.gap_levels) ? row.gap_levels : [],
+      source: text(row.source),
+    }
+  })
 
   const goWeek = (next: string) => {
     const merged = new URLSearchParams(params)
@@ -283,13 +283,17 @@ export default function WeeklyScreen() {
   }
 
   const range = facts?.range ?? report?.range ?? undefined
+  // 周标签以载荷为准（演示周报只有 2026-W44 一份），避免「标题一周 / 正文另一周」的错位
+  const displayWeek = usable ? text(report?.week) ?? week : week
+  const demoSuffix = demo ? ' · 演示数据（非真实行情）' : ''
   const subtitle = usable
-    ? `${week} · ${range?.start ?? MISSING} ~ ${range?.end ?? MISSING} · ${formatInt(sessionDays.length)} 个交易日有数据`
-    : `${week} 周度复盘`
+    ? `${displayWeek} · ${range?.start ?? MISSING} ~ ${range?.end ?? MISSING} · ${formatInt(sessionDays.length)} 个交易日有数据${demoSuffix}`
+    : `${displayWeek} AI周报${demoSuffix}`
 
   const header = (
     <PageHeader
-      title="周度复盘"
+      // 屏内标题跟侧栏一致（QUOT-344 / DEC-046 只改了导航，屏内文案按 §3.7 挂账到 S2，QUOT-354 BUG-A 收口）
+      title="AI周报"
       subtitle={subtitle}
       badge={<DemoStateBadge state={forced} />}
       actions={
@@ -349,25 +353,29 @@ export default function WeeklyScreen() {
   const metricGrid = (
     <div className="grid grid-cols-2 gap-4 desk:grid-cols-4">
       <MetricCard
-        label="周情绪温度均值"
+        label="温度均值"
         hero
         badge={<SourceBadges envelope={usable ? envelope : null} />}
         value={formatOneDecimal(usable ? number(sentiment?.temperature?.avg) : null)}
         note={usable ? trendNote(sentiment?.temperature) : '数据未生成'}
         icon={
           temperatureSeries.length > 1 ? (
-            <Sparkline values={temperatureSeries} ariaLabel={`${week} 每日情绪温度走势`} />
+            <Sparkline
+              values={temperatureSeries}
+              width={44}
+              ariaLabel={`${displayWeek} 每日情绪温度走势`}
+            />
           ) : undefined
         }
       />
       <MetricCard
-        label="周晋级率均值"
+        label="晋级率均值"
         badge={<SourceBadges envelope={usable ? envelope : null} />}
         value={usable ? formatRatePct(number(sentiment?.promotion_rate?.avg)).text : MISSING}
         note={usable ? trendNote(sentiment?.promotion_rate, '%') : '数据未生成'}
       />
       <MetricCard
-        label="周封板率均值"
+        label="封板率均值"
         badge={<SourceBadges envelope={usable ? envelope : null} />}
         value={usable ? formatRatePct(number(sentiment?.seal_rate?.avg)).text : MISSING}
         note={

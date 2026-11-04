@@ -2,6 +2,7 @@ import { Link, Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactElement } from 'react'
 
 import Layout from './components/Layout'
+import AiReviewScreen from './screens/AiReviewScreen'
 import HomeScreen from './screens/HomeScreen'
 import IndustryDetailScreen from './screens/industry/IndustryDetailScreen'
 import IndustryMatrixScreen from './screens/industry/IndustryMatrixScreen'
@@ -55,14 +56,20 @@ function NotFound() {
   )
 }
 
-const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
+/**
+ * 导出给导航一致性测试：`tests/nav-routes.test.tsx` 用它比对两条路径挂的是不是同一个屏
+ * （QUOT-344 / DEC-046 的「不能留两条路径指向同一未拆分屏」）。
+ */
+export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/': <HomeScreen />,
   '/market': <MarketScreen />,
   '/watch': <WatchScreen />,
   // 盯盘第二页：竞价与盘中 6 时点快照（QUOT-302 / DEC-035 §5），`?date=` + `?slot=` 深链
   '/intraday': <IntradayScreen />,
   '/review': <ReviewScreen />,
-  // R11 周度复盘（QUOT-149）：`?week=YYYY-Www`，缺省本周
+  // 复盘三屏之二（QUOT-344 / DEC-046）：AI 段落独立成屏，S1 为占位壳，正文由 S2 落地
+  '/review/ai': <AiReviewScreen />,
+  // R11 AI周报（QUOT-149 交付，导航标签 QUOT-344 更名）：`?week=YYYY-Www`，缺省本周
   '/weekly': <WeeklyScreen />,
   '/journal': <JournalScreen />,
   '/validate': <ValidateScreen />,

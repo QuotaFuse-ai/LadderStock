@@ -19,7 +19,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +36,40 @@ SWITCH_KINDS: frozenset[str] = frozenset({"network", "quota"})
 RETRY_KINDS: frozenset[str] = frozenset({"format"})
 
 # 协议类型 → (默认 base_url_env, 默认 api_key_env)
+# 协议类型 → (默认 base_url_env, 默认 api_key_env)
+# `cli` 是订阅通道（QUOT-401）：不读端点与密钥，凭据在本机 CLI 自己的登录态里，
+# 所以两个环境变量名都是空串，`configured` 由「可执行文件在不在」判定。
 BACKEND_KINDS: dict[str, tuple[str, str]] = {
     "openai": ("LDST_LLM_BASE_URL", "LDST_LLM_API_KEY"),
     "anthropic": ("LDST_LLM_ANTHROPIC_BASE_URL", "LDST_LLM_ANTHROPIC_API_KEY"),
+    "cli": ("", ""),
 }
 #: 旧配置没有 `backends` 时的隐式后端 id（标签不加前缀）
 LEGACY_BACKEND_ID = "default"
+
+#: 看板自己的 AI 凭据文件（与控制面写入的 peer env 分开）。
+#: 进程环境变量优先；文件只补空缺，方便设置页保存后无需重启进程。
+AI_ENV_FILENAME = "ai.env"
+#: 设置页允许写入的键（白名单，不接受自由字符串）
+AI_ENV_KEYS: tuple[str, ...] = (
+    "LDST_LLM_BASE_URL",
+    "LDST_LLM_MODEL",
+    "LDST_LLM_API_KEY",
+    "LDST_LLM_ANTHROPIC_BASE_URL",
+    "LDST_LLM_ANTHROPIC_API_KEY",
+    # 订阅通道（QUOT-401）：`LDST_LLM_CLI` 取 codex / claude / workbuddy；
+    # 置空即回 HTTP 通道。`LDST_LLM_CLI_MODEL` 只在 CLI 需要显式模型名时填。
+    "LDST_LLM_CLI",
+    "LDST_LLM_CLI_MODEL",
+)
+#: 订阅通道选择键（写入 `ai.env` 后下次复盘直接生效，不需要重启）
+CLI_ENV = "LDST_LLM_CLI"
+#: 订阅通道的模型覆盖键（多数 CLI 会自己选模型，留空即可）
+CLI_MODEL_ENV = "LDST_LLM_CLI_MODEL"
+#: OpenAI 兼容后端的模型覆盖键：设置后取代该后端在 ai.yaml 里的默认模型
+MODEL_OVERRIDE_ENV = "LDST_LLM_MODEL"
+
+_ENV_KEY_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 
 
 @dataclass(frozen=True)
@@ -57,25 +87,94 @@ class BackendConfig:
     base_url_env: str
     api_key_env: str
     models: tuple[str, ...] = ()
+    #: `ai.env` 里的值（进程环境变量优先，文件只补空缺）
+    env_file: Mapping[str, str] = field(default_factory=dict)
+    #: `kind == "cli"` 时用哪条订阅通道（codex / claude / workbuddy）
+    cli: str = ""
 
     @property
     def base_url(self) -> str:
-        return os.environ.get(self.base_url_env, "").strip()
+        return _env_value(self.base_url_env, self.env_file)
 
     @property
     def api_key(self) -> str:
-        return os.environ.get(self.api_key_env, "").strip()
+        return _env_value(self.api_key_env, self.env_file)
+
+    @property
+    def base_url_source(self) -> str | None:
+        return _env_source(self.base_url_env, self.env_file)
+
+    @property
+    def api_key_source(self) -> str | None:
+        return _env_source(self.api_key_env, self.env_file)
 
     @property
     def configured(self) -> bool:
+        if self.kind == "cli":
+            return self.cli_available
         return bool(self.base_url and self.api_key)
 
+    @property
+    def cli_available(self) -> bool:
+        """订阅通道：可执行文件在本机 PATH 上就算「配好了」（凭据在 CLI 自己的登录态里）。"""
+        if not self.cli:
+            return False
+        from ladderstock.ai.cli_provider import cli_spec, find_executable
+
+        try:
+            spec = cli_spec(self.cli)
+        except KeyError:
+            return False
+        return find_executable(spec) is not None
+
     def missing_env(self) -> list[str]:
+        if self.kind == "cli":
+            # 没有环境变量可缺：缺的是可执行文件或登录态，由 `cli_provider.probe` 说明
+            return [] if self.cli_available else [f"(CLI:{self.cli or '未指定'} 未安装)"]
         return [
             name
             for name in (self.base_url_env, self.api_key_env)
-            if not os.environ.get(name, "").strip()
+            if not _env_value(name, self.env_file)
         ]
+
+
+def _env_value(name: str, env_file: Mapping[str, str] | None = None) -> str:
+    """进程环境变量优先，`ai.env` 只补空缺（显式 env 永远覆盖文件）。"""
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    if env_file:
+        return str(env_file.get(name, "")).strip()
+    return ""
+
+
+def _env_source(name: str, env_file: Mapping[str, str] | None = None) -> str | None:
+    if os.environ.get(name, "").strip():
+        return "process"
+    if env_file and str(env_file.get(name, "")).strip():
+        return "file"
+    return None
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """读 dotenv 子集（`KEY=VALUE`、`#` 注释、成对引号）；坏行忽略，不抛异常。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = _ENV_KEY_LINE.match(line)
+        if not match:
+            continue
+        value = match.group(2).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[match.group(1)] = value
+    return values
 
 
 @dataclass(frozen=True)
@@ -98,6 +197,8 @@ class AiConfig:
     sections: dict[str, SectionConfig]
     path: Path | None = None
     backends: tuple[BackendConfig, ...] = ()
+    #: `ai.env` 里的值（用于旧配置回退时也能读到文件凭据）
+    env_file: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def declared_backends(self) -> tuple[BackendConfig, ...]:
@@ -111,6 +212,7 @@ class AiConfig:
                 base_url_env=self.base_url_env,
                 api_key_env=self.api_key_env,
                 models=tuple(self._chain_refs),
+                env_file=self.env_file,
             ),
         )
 
@@ -170,6 +272,11 @@ def config_path(config_root: Any = None) -> Path:
     return base / "ai.yaml"
 
 
+def env_file_path(config_root: Any = None) -> Path:
+    """看板自己的 AI 凭据文件（与 `ai.yaml` 同目录）。"""
+    return config_path(config_root).with_name(AI_ENV_FILENAME)
+
+
 def _config_dir() -> Path:
     from ladderstock.cli.paths import config_dir
 
@@ -193,7 +300,8 @@ def load_config(config_root: Any = None) -> AiConfig:
     if not isinstance(ai, dict):
         raise BoundaryViolation("ai.yaml 缺少顶层 ai 配置")
 
-    backends = _parse_backends(ai.get("backends"))
+    env_file = read_env_file(env_file_path(config_root))
+    backends = _parse_backends(ai.get("backends"), env_file)
 
     default_model = str(ai.get("default_model") or "").strip()
     if not default_model:
@@ -205,6 +313,17 @@ def load_config(config_root: Any = None) -> AiConfig:
     if not isinstance(chain_raw, list):
         raise BoundaryViolation("ai.yaml: fallback_chain 必须是数组")
     fallback_chain = tuple(str(model).strip() for model in chain_raw if str(model).strip())
+
+    default_model, fallback_chain = _apply_model_override(
+        default_model, fallback_chain, backends, env_file
+    )
+
+    # 订阅通道（QUOT-401）：`ai.env` 里选了 CLI 就把它排到链首并接管默认模型，
+    # HTTP 后端原样留在链尾——用户想切回去只是把 LDST_LLM_CLI 清空。
+    cli_backend = _cli_backend(env_file)
+    if cli_backend is not None:
+        backends = (cli_backend, *backends)
+        default_model = f"{cli_backend.id}:{cli_backend.models[0]}"
 
     sections_raw = ai.get("sections") or {}
     sections: dict[str, SectionConfig] = {}
@@ -227,12 +346,46 @@ def load_config(config_root: Any = None) -> AiConfig:
         sections=sections,
         path=path,
         backends=backends,
+        env_file=env_file,
     )
     _validate_refs(config)
     return config
 
 
-def _parse_backends(raw: Any) -> tuple[BackendConfig, ...]:
+def _apply_model_override(
+    default_model: str,
+    fallback_chain: tuple[str, ...],
+    backends: tuple[BackendConfig, ...],
+    env_file: Mapping[str, str],
+) -> tuple[str, tuple[str, ...]]:
+    """`LDST_LLM_MODEL` 覆盖首个后端的模型，并把链里指向它的档位收敛到同一个模型。
+
+    设置页只让用户填一个模型名；不这样做的话，`ai.yaml` 里留的
+    `model-a` / `model-b` 占位会变成「换模型后必然失败」的假回退。
+    """
+    override = _env_value(MODEL_OVERRIDE_ENV, env_file)
+    if not override:
+        return default_model, fallback_chain
+
+    if not backends:
+        # 旧配置（隐式 openai 后端）：模型就是覆盖值，不再保留占位链
+        return override, ()
+
+    first_id = backends[0].id
+    rewritten: list[str] = []
+    for ref in (default_model, *fallback_chain):
+        if ":" in ref:
+            prefix, _, _name = ref.partition(":")
+            rewritten.append(f"{first_id}:{override}" if prefix == first_id else ref)
+        else:
+            rewritten.append(f"{first_id}:{override}")
+    ordered = tuple(dict.fromkeys(rewritten))
+    return ordered[0], ordered[1:]
+
+
+def _parse_backends(
+    raw: Any, env_file: Mapping[str, str] | None = None
+) -> tuple[BackendConfig, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
@@ -255,11 +408,19 @@ def _parse_backends(raw: Any) -> tuple[BackendConfig, ...]:
                 f"ai.yaml: backends[{index}].type 必须是 {'/'.join(BACKEND_KINDS)}，收到 {kind!r}"
             )
         default_url, default_key = BACKEND_KINDS[kind]
+        cli_id = str(item.get("cli") or "").strip().lower()
+        if kind == "cli" and not cli_id:
+            raise BoundaryViolation(
+                f"ai.yaml: backends[{index}].cli 不能为空（可选：codex / claude / workbuddy）"
+            )
         models_raw = item.get("models") or []
         if not isinstance(models_raw, list) or not [
             model for model in models_raw if str(model).strip()
         ]:
-            raise BoundaryViolation(f"ai.yaml: backends[{index}].models 必须是非空数组")
+            # 订阅通道多数不需要显式模型名，允许省略；HTTP 通道仍然必须给
+            if kind != "cli":
+                raise BoundaryViolation(f"ai.yaml: backends[{index}].models 必须是非空数组")
+            models_raw = ["default"]
         parsed.append(
             BackendConfig(
                 id=backend_id,
@@ -267,9 +428,28 @@ def _parse_backends(raw: Any) -> tuple[BackendConfig, ...]:
                 base_url_env=str(item.get("base_url_env") or default_url),
                 api_key_env=str(item.get("api_key_env") or default_key),
                 models=tuple(str(model).strip() for model in models_raw if str(model).strip()),
+                env_file=env_file or {},
+                cli=cli_id,
             )
         )
     return tuple(parsed)
+
+
+def _cli_backend(env_file: Mapping[str, str] | None = None) -> BackendConfig | None:
+    """`ai.env` 选了订阅通道时，构造一个 CLI 后端（不存在就不注入）。"""
+    cli_id = _env_value(CLI_ENV, env_file).lower()
+    if not cli_id:
+        return None
+    model = _env_value(CLI_MODEL_ENV, env_file) or "default"
+    return BackendConfig(
+        id=f"cli_{cli_id}",
+        kind="cli",
+        base_url_env="",
+        api_key_env="",
+        models=(model,),
+        env_file=env_file or {},
+        cli=cli_id,
+    )
 
 
 def _validate_refs(config: AiConfig) -> None:
@@ -347,10 +527,14 @@ def status_document(config: AiConfig) -> dict[str, Any]:
             "type": backend.kind,
             "base_url_env": backend.base_url_env,
             "base_url": backend.base_url or None,
+            "base_url_source": backend.base_url_source,
             "api_key_env": backend.api_key_env,
             "api_key_set": bool(backend.api_key),
+            "api_key_source": backend.api_key_source,
             "models": list(backend.models),
             "configured": backend.configured,
+            "cli": backend.cli or None,
+            "cli_available": backend.cli_available if backend.kind == "cli" else None,
         }
         for backend in config.declared_backends
     ]
@@ -369,6 +553,9 @@ def status_document(config: AiConfig) -> dict[str, Any]:
         "on_all_failed": config.on_all_failed,
         "missing_env": missing,
         "config_path": str(config.path) if config.path else None,
+        "env_file": str(env_file_path(config.path.parent)) if config.path else None,
+        "env_file_exists": bool(config.path and env_file_path(config.path.parent).is_file()),
+        "model_override": _env_value(MODEL_OVERRIDE_ENV, config.env_file) or None,
         "sections": list(config.sections),
         "hint": (
             "未配置模型凭据：仅能走纯文本降级（不会崩溃，也不会发请求）"
@@ -379,20 +566,25 @@ def status_document(config: AiConfig) -> dict[str, Any]:
 
 
 __all__ = [
+    "AI_ENV_KEYS",
+    "AI_ENV_FILENAME",
     "AiConfig",
     "BACKEND_KINDS",
     "BackendConfig",
     "LEGACY_BACKEND_ID",
+    "MODEL_OVERRIDE_ENV",
     "ModelTarget",
     "SectionConfig",
     "SWITCH_KINDS",
     "api_key",
     "base_url",
     "config_path",
+    "env_file_path",
     "is_configured",
     "load_config",
     "missing_env",
     "model_chain",
+    "read_env_file",
     "section_config",
     "should_retry",
     "should_switch",

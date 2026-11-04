@@ -6,7 +6,7 @@
  *   1. 起前端（推荐带后端代理的取证配置，`/api` 指向本机 `ldst run` 的 5950）：
  *        cd frontend && npm install && npm run dev -- --config vite.shot.config.ts   # http://127.0.0.1:5199
  *      没有 `ldst run` 时退回 `npm run dev`（http://127.0.0.1:5173），各屏会拍到「未接入 / 降级」态。
- *   2. 拍基线：`node scripts/visual-shot.mjs`            → 19 屏 × 暗/亮 = 38 张
+ *   2. 拍基线：`node scripts/visual-shot.mjs`            → 20 屏 × 暗/亮 = 40 张
  *   3. 改完之后拍 after：`node scripts/visual-shot.mjs --suffix after`
  *
  * 输出：`docs/screenshots/<route>-<before|after>-<dark|light>.png`，视口 1440×900，
@@ -21,10 +21,13 @@
  *   --routes <a,b>     只拍指定 slug，逗号分隔
  *   --query <str>      追加到每个路由的查询串（`demo=1` / `demo=1&variant=partial` / `tab=ports`），
  *                      配合 `--suffix after-demo` 这类后缀拍演示态与缺失态
+ *   --demo-pref        用设置页的同款偏好开启演示源（写 `ldst.demo-data=1`），不依赖 URL 参数
  *   --settle <ms>      load 之后额外等待（默认 1500，留给 React 渲染 + 图表重绘）
  *   --chrome <path>    浏览器可执行文件（默认自动找 Chrome/Edge，或读环境变量 LDST_CHROME）
  *   --width <px>       视口宽（默认 1440；验收 1280 零横向溢出时传 1280）
  *   --height <px>      视口高（默认 900）
+ *   --full-page        截整页（按 `contentSize` 撑高），长页一屏装不下时用；溢出判定仍按视口宽
+ *   --scroll <px>      截图前先滚到纵向 N px（拍首屏之后的分区，不传则停在顶部）
  *
  * 每张图拍完都会量 `documentElement.scrollWidth` 与 `innerWidth`，脚本结束统一报告横向溢出清单
  * （QUOT-304 / QUOT-317 的 1280px 证据就是这条输出的原文）。
@@ -44,7 +47,7 @@ const VIEWPORT = { width: 1440, height: 900 }
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..', '..')
 
-/** 19 屏，以 `src/App.tsx` 路由表为准（radar 四屏实际挂在 `/news` `/calendar` `/pool` `/positions`）。 */
+/** 20 屏，以 `src/App.tsx` 路由表为准（radar 四屏实际挂在 `/news` `/calendar` `/pool` `/positions`）。 */
 const ROUTES = [
   { slug: 'home', path: '/' },
   { slug: 'market', path: '/market' },
@@ -52,6 +55,8 @@ const ROUTES = [
   // QUOT-302 第 19 屏：竞价与盘中（此前漏在巡检脚本之外）
   { slug: 'intraday', path: '/intraday' },
   { slug: 'review', path: '/review' },
+  // QUOT-344 / DEC-046 第 20 屏：AI 复盘独立入口
+  { slug: 'review-ai', path: '/review/ai' },
   { slug: 'weekly', path: '/weekly' },
   { slug: 'journal', path: '/journal' },
   { slug: 'validate', path: '/validate' },
@@ -76,11 +81,14 @@ function parseArgs(argv) {
     themes: ['dark', 'light'],
     routes: null,
     query: null,
+    demoPref: false,
     settle: 1500,
     chrome: process.env.LDST_CHROME ?? null,
     port: 9333,
     width: VIEWPORT.width,
     height: VIEWPORT.height,
+    fullPage: false,
+    scroll: 0,
   }
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]
@@ -91,11 +99,14 @@ function parseArgs(argv) {
     else if (flag === '--themes') options.themes = next().split(',').filter(Boolean)
     else if (flag === '--routes') options.routes = next().split(',').filter(Boolean)
     else if (flag === '--query') options.query = next()
+    else if (flag === '--demo-pref') options.demoPref = true
     else if (flag === '--settle') options.settle = Number(next())
     else if (flag === '--chrome') options.chrome = next()
     else if (flag === '--port') options.port = Number(next())
     else if (flag === '--width') options.width = Number(next())
     else if (flag === '--height') options.height = Number(next())
+    else if (flag === '--full-page') options.fullPage = true
+    else if (flag === '--scroll') options.scroll = Number(next())
     else throw new Error(`未知参数：${flag}（--help 见文件头注释）`)
   }
   for (const theme of options.themes) {
@@ -240,6 +251,11 @@ async function shoot(cdp, base, route, theme, options) {
         source: `try {
           localStorage.setItem('ldst.theme', ${JSON.stringify(theme)});
           localStorage.removeItem('ldst.density');
+          ${
+            options.demoPref
+              ? "localStorage.setItem('ldst.demo-data', '1');"
+              : "localStorage.removeItem('ldst.demo-data');"
+          }
         } catch (e) {}`,
       },
       sessionId,
@@ -249,6 +265,14 @@ async function shoot(cdp, base, route, theme, options) {
     await cdp.send('Page.navigate', { url: `${base}${route.path}${query}` }, sessionId)
     await loaded
     await sleep(options.settle)
+    if (options.scroll > 0) {
+      await cdp.send(
+        'Runtime.evaluate',
+        { expression: `window.scrollTo(0, ${options.scroll}); window.scrollY`, returnByValue: true },
+        sessionId,
+      )
+      await sleep(400)
+    }
     const measured = await cdp.send(
       'Runtime.evaluate',
       {
@@ -258,7 +282,18 @@ async function shoot(cdp, base, route, theme, options) {
       sessionId,
     )
     const { scrollWidth, innerWidth } = JSON.parse(measured.result.value)
-    const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId)
+    // 整页截图：按内容高度扩 clip，`captureBeyondViewport` 才能拍到视口以下的部分
+    let shotParams = { format: 'png' }
+    if (options.fullPage) {
+      const metrics = await cdp.send('Page.getLayoutMetrics', {}, sessionId)
+      const size = metrics.cssContentSize ?? metrics.contentSize
+      shotParams = {
+        format: 'png',
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: options.width, height: Math.ceil(size.height), scale: 1 },
+      }
+    }
+    const { data } = await cdp.send('Page.captureScreenshot', shotParams, sessionId)
     const file = join(options.out, `${route.slug}-${options.suffix}-${theme}.png`)
     writeFileSync(file, Buffer.from(data, 'base64'))
     return { file, scrollWidth, innerWidth, overflow: scrollWidth > innerWidth }

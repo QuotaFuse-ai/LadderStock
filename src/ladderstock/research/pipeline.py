@@ -27,8 +27,9 @@ from datetime import date
 from typing import Any
 
 from ladderstock.ai import fallback, tools
+from ladderstock.ai.cli_provider import build_chat_client
 from ladderstock.ai.error_taxonomy import AiFailure, classify_error
-from ladderstock.ai.orchestrator import ChatClient, HttpChatClient, supports_tools
+from ladderstock.ai.orchestrator import ChatClient, supports_tools
 from ladderstock.core.boundary import (
     BoundaryViolation,
     Provenance,
@@ -108,7 +109,7 @@ class ResearchPipeline:
     ) -> None:
         self.code = checkpoint.normalize_code(code)
         self.config = config or fallback.load_config(config_root)
-        self.client: ChatClient = client or HttpChatClient(self.config)
+        self.client: ChatClient = client or build_chat_client(self.config)
         self.root = root
 
     # ------------------------------------------------------------------ #

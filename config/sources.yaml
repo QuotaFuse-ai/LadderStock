@@ -7,6 +7,13 @@
 # - 备源只能是**同一个 peer 的另一个工具**；peer 整体不可用时降级为缓存回放，
 #   绝不启用自建采集（文档第九节禁区）。
 
+# peers 块是生态 peer 注册表的**唯一真源**（QUOT-403）：core/boundary.py 的
+# PEERS 由此生成，控制面面板的模块卡、ldst doctor 的 peer 行都跟着走。
+# 字段口径：
+#   health_path  —— 该 peer 真实提供的健康检查路径（探测用，不许在代码里写死 /healthz）
+#   default_port —— 该 peer 的主服务端口（MCP 或 HTTP；与 boundary.Peer.default_port 一致）
+#   role         —— 模块卡上显示的一句话职责
+#   repo         —— GitHub 仓库名（owner/name），QUOT-402 版本三态检测的期望版本来源
 peers:
   tickhub:
     product: TickHub-CN
@@ -16,6 +23,10 @@ peers:
     url_env: LDST_TICKHUB_MCP_URL
     default_url: http://127.0.0.1:8000/mcp
     timeout_sec: 10
+    health_path: /healthz
+    default_port: 8000
+    role: 数据底座：行情 / 涨停池 / 龙虎榜 / 情绪指标 / 资金
+    repo: QuotaFuse-ai/TickHub-CN
   # TickHub-US：8001 被 WSL 转发服务占用、admin 8787 与 CN 撞车，
   # 故 MCP 走 8002、admin 走 8789（DEC-013 / DEC-014 §3）。
   tickhub_us:
@@ -26,6 +37,10 @@ peers:
     url_env: LDST_TICKHUB_US_MCP_URL
     default_url: http://127.0.0.1:8002/mcp
     timeout_sec: 10
+    health_path: /healthz
+    default_port: 8002
+    role: 数据底座：美股行情 / 财报 / 监管披露
+    repo: QuotaFuse-ai/TickHub-US
   wire:
     product: QuotaFuse Wire
     package: quotafuse-wire
@@ -34,6 +49,10 @@ peers:
     url_env: LDST_WIRE_MCP_URL
     default_url: http://127.0.0.1:8791/mcp
     timeout_sec: 15
+    health_path: /api/health
+    default_port: 8790
+    role: 资讯感知：新闻 / 政策 / 产业链 / 多源聚合
+    repo: QuotaFuse-ai/quotafuse-wire
   senate:
     product: StockSenate
     package: stocksenate
@@ -42,6 +61,25 @@ peers:
     url_env: LDST_SENATE_MCP_URL
     default_url: http://127.0.0.1:8765/mcp
     timeout_sec: 20
+    health_path: /healthz
+    default_port: 8765
+    role: 投研合议：7 分析师 → 辩论 → 风控 → 终审 / 回测
+    repo: QuotaFuse-ai/StockSenate
+  # FinanceCoffer（QUOT-403）：数据存储，不是取数通道——sources 不允许 via 它，
+  # 只登记注册表让控制面出第 5 张卡。服务跑在 WSL（8100），控制面只读观测不接管启停；
+  # /health 回 status=degraded（如 embedding unreachable）时面板如实显示，不是故障。
+  financecoffer:
+    product: FinanceCoffer
+    package: financecoffer
+    cli: fc
+    mcp_name: null            # FC 当前没有 MCP 面，写 null，探测走 HTTP
+    url_env: LDST_FINANCECOFFER_URL
+    default_url: http://127.0.0.1:8100
+    timeout_sec: 10
+    health_path: /health
+    default_port: 8100
+    role: 数据存储：结构化宽表 / 公告检索 / 风险
+    repo: QuotaFuse-ai/FinanceCoffer
 
 sources:
   # ---------------- 行情与短线数据：TickHub-CN ----------------
@@ -136,6 +174,21 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 首页指数条（QUOT-380）：与 `spot_quote` 同构的实时报价——**不进 sync.yaml / 不进台账**，
+  # 非交易时段 peer 照旧回上一交易日收盘（`as_of` 如实带出），不需要日更。
+  # 无备源：同 peer 的 `index_list` 是「按涨幅排序的 100 条榜」（实测不含这四个指数、
+  # 还混老三板个股），`index_kline` 是历史 K 线，都不是同一口径的换源（DEC-006 主备同口径）。
+  - id: tickhub_index_quote
+    dataset: index_quote
+    via: tickhub
+    tool: index_quote
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   - id: tickhub_dragon_tiger
     dataset: dragon_tiger
     via: tickhub
@@ -191,6 +244,22 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 个股↔概念板块归属（QUOT-362）：逐只实时快照，**不进台账**（水位是取数时刻，
+  # 见 `core/boundary.py` 的 `concept_membership` 登记）。同步入口只取当日候选池那批
+  # 代码（`sync.yaml` 的 `codes_from: limit_pool`），不扩全市场。
+  # `cooldown_sec` 不小于上游 60 秒 TTL：命中限流后立刻重试只会再撞一次同一个
+  # 还没刷新的窗口，等于把一次等待变成两次失败。
+  - id: tickhub_concept_membership
+    dataset: concept_membership
+    via: tickhub
+    tool: stock_concept_blocks
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 90
+    weight: 1.0
+
   - id: tickhub_fund_flow
     dataset: fund_flow
     via: tickhub
@@ -199,6 +268,20 @@ sources:
     fallback: []
     timeout_sec: 10
     retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 当日实时资金流（批量）。与上面的日线 `fund_flow` 是两个口径，不互相顶替：
+  # 日线用于历史对比，这条用于打榜「资金」分项的当日实时值（DEC-049）。
+  # 一个请求覆盖 ≤150 只，超出的由工具内部自动分批，所以 timeout 比逐只那条宽。
+  - id: tickhub_fund_flow_batch
+    dataset: fund_flow_realtime
+    via: tickhub
+    tool: stock_fund_flow_batch
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 1
     cooldown_sec: 60
     weight: 1.0
 
@@ -453,7 +536,7 @@ sources:
   - id: senate_reports
     dataset: council_memo
     via: senate
-    tool: report_query
+    tool: stock_senate_report_query
     primary: true
     fallback: []
     timeout_sec: 20

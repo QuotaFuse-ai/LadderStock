@@ -503,7 +503,7 @@ function SnapshotBody({
         rowKey={(row) => row.code}
         caption={`${slot.slot} 昨日涨停股的逐只客观读数（保持载荷顺序，页面不排序、不评分、不推荐）`}
         density="compact"
-        maxHeight="calc(100vh - 420px)"
+        maxHeight="var(--ldst-table-h)"
         empty={<EmptyState compact title="没有逐只读数" description="载荷里 stocks 为空；页面不伪造样本。" />}
       />
 

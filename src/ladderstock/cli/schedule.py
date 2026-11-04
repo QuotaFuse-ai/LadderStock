@@ -1,16 +1,19 @@
 """`ldst schedule list|run`：定时任务表（APScheduler）与单轮 tick。
 
 调度表落 `config/schedule.yaml`（JSON Schema 校验，`ldst config validate` 一并检查），
-默认 **09:05 盘前提醒**（notify）、**盘中 6 时点快照**（snapshot，QUOT-286）与
-**15:05 收盘对账**（reconcile）。
+默认 **09:05 盘前提醒**（notify）、**盘中 6 时点快照**（snapshot，QUOT-286）、
+**15:05 收盘对账**（reconcile）与 **15:35 收盘全量同步**（sync_close，QUOT-347）。
 
 边界（DEC-006 / DEC-004）：
 
-- 任务只跑本机动作（发本机通知、对账本地已落盘数据、按治理链路取 peer 读数）；
+- 任务只跑本机动作（发本机通知、对账本地已落盘数据、复用 sync 链路按治理取 peer 读数、
+  生成当日复盘）；
 - 单个任务失败只记 `degraded` / `skipped`，不拖垮整轮、不中断调度器；
 - `schedule run --once` 跑一轮就退出（冒烟、手动补跑都靠它）；不带 `--once` 是长驻
   调度器，按 `scheduler.timezone` 的本地时间触发，Ctrl+C 优雅退出。
 - snapshot 的时点窗口在 `core.intraday` 判定：窗口外只记 `skipped`，**不补跑**。
+- sync_close 与 15:05 reconcile 是两个独立触发点，天然解耦：同步失败只折进自己的
+  状态字段，绝不把对账那一轮带崩；落库幂等由 `duckdb_store.write_dataset` 保证。
 """
 
 from __future__ import annotations
@@ -26,11 +29,22 @@ import typer
 
 from ladderstock.cli.output import OutputOption, emit, error
 from ladderstock.cli.paths import config_dir, project_root
-from ladderstock.errors import EXIT_CONFIG, EXIT_OK, EXIT_USAGE, LadderStockError
+from ladderstock.errors import (
+    EXIT_CONFIG,
+    EXIT_OK,
+    EXIT_PARTIAL,
+    EXIT_USAGE,
+    LadderStockError,
+)
 from ladderstock.watch import notifier
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_MISFIRE_GRACE_SECONDS = 300
+
+#: 15:35 收盘全量同步的数据集顺序（QUOT-347）。复用 `cli/sync.py` 已有的取数链路，
+#: 一切取数走 TickHub 缓存、不直打上游（DEC-006 边界）；`fund_flow` 是 code 必填的
+#: 候选池数据集，代码池由 `sync.py` 按 `--codes > sync.yaml > 本机自选` 解析。
+CLOSE_SYNC_DATASETS: tuple[str, ...] = ("limit_pool", "fund_flow", "concept_board")
 
 # 内置默认表：与 config/schedule.yaml 同口径。配置缺失时按此运行并给 warning，
 # 这样「第一次装上就能跑」和「配置坏了不静默」两件事都不牺牲——坏了的那份会
@@ -94,6 +108,13 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "trigger": "15:05",
         "enabled": True,
     },
+    {
+        "id": "close_sync",
+        "name": "15:35 收盘全量同步",
+        "kind": "sync_close",
+        "trigger": "15:35",
+        "enabled": True,
+    },
 )
 
 
@@ -141,8 +162,10 @@ def _structural_problems(data: Mapping[str, Any]) -> list[str]:
                 problems.append(f"{where}/trigger: 需要 HH:MM")
         elif "trigger" in job:
             problems.append(f"{where}/trigger: 需要 HH:MM")
-        if job.get("kind") not in ("notify", "reconcile", "snapshot"):
-            problems.append(f"{where}/kind: 只支持 notify / reconcile / snapshot")
+        if job.get("kind") not in ("notify", "reconcile", "snapshot", "sync_close"):
+            problems.append(
+                f"{where}/kind: 只支持 notify / reconcile / snapshot / sync_close"
+            )
     return problems
 
 
@@ -263,6 +286,102 @@ def _run_reconcile(day: date | None = None) -> dict[str, Any]:
     }
 
 
+def _one_line(exc: BaseException) -> str:
+    return " ".join(str(exc).split())
+
+
+def _sync_close_row_text(row: Mapping[str, Any]) -> str:
+    """一行一个数据集：`dataset=状态(+本次写入/库内总行数)`，给验收留可核对的计数。"""
+    text = f"{row.get('dataset')}={row.get('status')}"
+    rows = row.get("rows")
+    total = row.get("total_rows")
+    if isinstance(rows, int) and rows:
+        suffix = f"+{rows}"
+        if isinstance(total, int) and total:
+            suffix += f"/{total}"
+        text += f"({suffix})"
+    return text
+
+
+def _sync_close_summary(payload: Mapping[str, Any]) -> tuple[str, str]:
+    """把 `run_sync` 的汇总折成 (状态, 明细)。
+
+    状态跟着整轮同步的退出码走：全成 `ok`、部分失败 `degraded`、一个都没成 `failed`；
+    这只描述本任务，不改变调度器「不崩溃」的契约。
+    """
+    summary = payload.get("summary") or {}
+    results = [row for row in payload.get("results") or [] if isinstance(row, Mapping)]
+    per = "、".join(_sync_close_row_text(row) for row in results) or "无数据集"
+    days = sorted({day for row in results for day in (row.get("days") or [])})
+    code = summary.get("exit_code")
+    if code == EXIT_OK:
+        status = "ok"
+    elif code == EXIT_PARTIAL:
+        status = "degraded"
+    else:
+        status = "failed"
+    detail = f"同步 {per}，落库交易日 {len(days)} 个{f'（{days[-1]}）' if days else ''}"
+    return status, detail
+
+
+def _sync_close_review(day: date, root: Path | None) -> tuple[str, str]:
+    """触发当日复盘生成；复盘自身的问题只降级，不把同步结果带崩。"""
+    from ladderstock.review import pipeline
+
+    try:
+        _report, run = pipeline.generate(day.isoformat(), root=root)
+    except Exception as exc:  # noqa: BLE001 - 复盘取数/AI 失败不拖垮同步任务
+        return "failed", f"复盘异常：{_one_line(exc)}"
+    if getattr(run, "failed", False):
+        return "failed", "复盘存在失败小节"
+    if getattr(run, "degraded", False):
+        return "degraded", "复盘 AI 降级完成"
+    return "ok", f"复盘已生成 {pipeline.review_path(day).name}"
+
+
+def _run_sync_close(
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """15:35 收盘全量同步（QUOT-347）。
+
+    顺序拉 `CLOSE_SYNC_DATASETS`（复用 `cli/sync.run_sync`，不新建采集链路，DEC-006），
+    落 `archive/` 的 Parquet 日分区，再触发当日 `review` 生成。**仅交易日动作**：日历判定
+    沿用 `core.intraday.local_moment` + 周末口径，非交易日整轮 `skipped`、不建空目录。
+    幂等由 `duckdb_store.write_dataset` 兜底（replace 整日覆盖、append 按 `(code, trade_date)`
+    upsert，分区按天原子重写），手动补跑 / wake 后 grace 窗口内重复触发都不产生重复分区。
+    与 15:05 对账是两个独立触发点，本任务失败不会把对账那一轮带崩。
+    """
+    from ladderstock.core import intraday
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date()
+    base = {"date": day.isoformat()}
+    if day.weekday() >= 5:
+        return {**base, "status": "skipped", "detail": "非交易日（周末），不跑"}
+
+    from ladderstock.cli import sync as sync_module
+    from ladderstock.data import watermark
+    from ladderstock.data.db_lock import writer_lock
+    from ladderstock.data.provider_registry import ProviderRegistry
+
+    registry = ProviderRegistry(root=root)
+    store = watermark.WatermarkStore(root=registry.root)
+    try:
+        with writer_lock(root, holder="ldst schedule sync_close"):
+            payload = sync_module.run_sync(registry, store, list(CLOSE_SYNC_DATASETS))
+    except LadderStockError as exc:
+        return {**base, "status": "failed", "detail": f"收盘同步中止：{exc.message}"}
+
+    status, detail = _sync_close_summary(payload)
+    review_status, review_detail = _sync_close_review(day, root)
+    if status == "ok" and review_status != "ok":
+        status = "degraded"
+    return {**base, "status": status, "detail": f"{detail}；复盘：{review_detail}"}
+
+
 def run_job(
     job: Mapping[str, Any],
     *,
@@ -309,6 +428,8 @@ def run_job(
                     registry=registry,
                 )
             )
+        elif kind == "sync_close":
+            result.update(_run_sync_close(now=now, timezone=timezone, root=root))
         else:
             result.update(status="failed", detail=f"未知任务类型 {kind!r}")
     except Exception as exc:  # noqa: BLE001 - 单条任务失败不拖垮整轮
@@ -473,6 +594,7 @@ def register(schedule_app: typer.Typer) -> None:
 
 
 __all__ = [
+    "CLOSE_SYNC_DATASETS",
     "DEFAULT_JOBS",
     "DEFAULT_MISFIRE_GRACE_SECONDS",
     "DEFAULT_TIMEZONE",

@@ -1,0 +1,76 @@
+{
+  "name": "P08 归属没覆盖到这只：降级到涨停原因关键词切分",
+  "description": "当日归属表里有股票，但没有本候选（600020 当日没同步到，或池子没覆盖）——题材退回 `reason` 字段按分隔符切词。真实涨停原因是 `水产加工+饲料+跨境物流`，`+` 是主分隔符（QUOT-362 实测），切出三个词，其中「饲料」当日 +5.0%（对 5% 基准截满 100）、「跨境物流」+1.5%、「水产加工」不在概念榜里。命中多个板块取最大涨幅。只有一个样本的资金分位是中位 50。",
+  "datasets": {
+    "limit_pool": [
+      {
+        "code": "600020",
+        "name": "己",
+        "boards": 3,
+        "turnover_rate": 8.0,
+        "reason": "水产加工+饲料+跨境物流"
+      }
+    ],
+    "concept_board": [
+      {
+        "board_name": "跨境物流",
+        "change_pct": 1.5
+      },
+      {
+        "board_name": "饲料",
+        "change_pct": 5.0
+      },
+      {
+        "board_name": "港口",
+        "change_pct": 3.0
+      }
+    ],
+    "concept_membership": [
+      {
+        "code": "600099",
+        "board_name": "饲料",
+        "board_code": "BK1258",
+        "change_pct": 5.0
+      }
+    ],
+    "fund_flow": [
+      {
+        "code": "600020",
+        "net_inflow": 5000000
+      }
+    ]
+  },
+  "expected": {
+    "pool": {
+      "available": true,
+      "reason": null,
+      "height": 3,
+      "candidate_count": 1,
+      "candidates": [
+        {
+          "code": "600020",
+          "score": 69.0,
+          "parts": {
+            "strength": 50.0,
+            "turnover": 40.0,
+            "standing": 100.0,
+            "capital": 50.0,
+            "theme": 100.0
+          },
+          "absent_parts": []
+        }
+      ],
+      "counts": {
+        "limit_pool_rows": 1,
+        "dropped_duplicates": 0,
+        "unknown_code": 0,
+        "theme_boards": 3,
+        "fund_flow_rows": 1,
+        "concept_membership_rows": 1
+      },
+      "missing_datasets": [],
+      "degraded_inputs": [],
+      "fund_data_as_of": "2026-10-27"
+    }
+  }
+}

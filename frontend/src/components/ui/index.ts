@@ -33,7 +33,9 @@ export {
   type ToastItem,
 } from './Feedback'
 export { HBarList, Sparkline, type HBarItem, type HBarListProps, type SparklineProps } from './MiniChart'
-export { ConfirmDialog, Drawer, type ConfirmDialogProps, type DrawerProps } from './Overlay'
+export { NavPills, type NavPillItem, type NavPillsProps } from './NavPills'
+export { PrivacyNotice } from './PrivacyNotice'
+export { ConfirmDialog, Drawer, useModalChrome, type ConfirmDialogProps, type DrawerProps } from './Overlay'
 export {
   asSourceBadgeStatus,
   FRESHNESS_LABEL,

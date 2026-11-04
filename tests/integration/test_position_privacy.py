@@ -31,12 +31,15 @@ from ladderstock.core import pool as pool_module
 from ladderstock.core import privacy
 from ladderstock.data import sqlite_store
 from ladderstock.journal import position as position_module
+from ladderstock.journal import watchlist as watchlist_module
 from ladderstock.mcp.server import TOOL_HANDLERS, dispatch
 from ladderstock.mcp.tools import FORBIDDEN_KEYWORDS, TOOL_SPECS, tool_listing
 
 DATE = "2026-10-22"
 SENTINEL = "隐私哨兵-POSITION-7c4a"
 SENTINEL_CODE = "600519"
+#: 只在**自选**里出现的代码（QUOT-380 / DEC-052：自选清单同样不得进信封 / MCP / AI / 导出）
+WATCH_CODE = "688111"
 #: 只在持仓里出现的列名：对外面上出现任何一个都算泄露
 PRIVATE_ONLY_KEYS = ("entry_date", "avg_price", "cost_basis", "unrealized_pnl", "holdings")
 
@@ -62,6 +65,8 @@ def _private_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo: Path) 
         note=SENTINEL,
         root=tmp_path,
     )
+    # 自选同族断言（QUOT-380 / DEC-052）：一只只在自选里出现的代码
+    watchlist_module.add_watch(WATCH_CODE, root=tmp_path)
     return tmp_path
 
 
@@ -82,8 +87,10 @@ WEB_PRIVILEGED_IMPORTS: dict[str, tuple[str, ...]] = {
     # DEC-015 Tier 1 / QUOT-196：`/api/journal/stats` 只出聚合数字
     "web/server.py": ("def _journal_guard(", "is_loopback_host(", "host_header_allowed("),
     # DEC-030 / QUOT-279：`GET /api/positions` 平面 JSON、回环独占、`no-store`
+    # DEC-052 / QUOT-380：同一条面上的 `GET /api/watchlist` —— 两道闸门都必须在文件里
     "web/radar.py": (
         "def _positions_guard(",
+        "def _watchlist_guard(",
         "is_loopback_host(",
         "host_header_allowed(",
         '"Cache-Control": "no-store"',
@@ -325,3 +332,55 @@ def test_export_failure_keeps_exit_code_3(tmp_path: Path) -> None:
     )
     assert result.exit_code == 3, f"{result.exit_code}\n{result.stdout}\n{result.stderr}"
     assert result.stdout.strip() == ""
+
+
+# --------------------------------------------------------------------------- #
+# 6. 自选（QUOT-380 / DEC-052）：同族断言，只多一条只读回环口
+# --------------------------------------------------------------------------- #
+
+def test_watchlist_reaches_no_dispatched_envelope(tmp_path: Path) -> None:
+    """自选代码不出现在任何 MCP 工具信封里——那条口是平面 JSON，结构上到不了这里。"""
+    seen = 0
+    for name in [spec.name for spec in TOOL_SPECS if spec.read_only]:
+        try:
+            envelope = dispatch(name, {"date": DATE}, root=tmp_path)
+        except Exception as exc:  # noqa: BLE001 - 缓存为空的降级路径也允许
+            assert WATCH_CODE not in str(exc), f"{name} 把自选代码写进了报错"
+            continue
+        blob = json.dumps(envelope, ensure_ascii=False, default=str)
+        assert WATCH_CODE not in blob, f"{name} 的信封里出现自选代码"
+        seen += 1
+    assert seen >= 8, f"只跑通了 {seen} 个工具，断言覆盖面不足"
+
+
+def test_watchlist_keywords_are_privacy_keys() -> None:
+    """`watchlist` / `自选` 必须在 `PRIVATE_KEYS` 里：误用信封出口时会被静默剥掉。"""
+    assert "watchlist" in privacy.PRIVATE_KEYS
+    assert "自选" in privacy.PRIVATE_KEYS
+
+    shaped = {"watchlist": [{"code": WATCH_CODE}], "自选": 1, "items": [{"code": WATCH_CODE}]}
+    stripped = privacy.strip_private(shaped)
+    assert "watchlist" not in stripped and "自选" not in stripped
+    assert set(privacy.private_keys_present(shaped)) >= {"watchlist", "自选"}
+
+
+def test_no_mcp_tool_or_listing_entry_mentions_selfselect() -> None:
+    blob = json.dumps(tool_listing(), ensure_ascii=False).lower()
+    assert "watchlist" not in blob
+    for keyword in FORBIDDEN_KEYWORDS:
+        assert keyword.lower() not in blob, f"MCP 清单出现隐私关键字：{keyword}"
+
+
+def test_watch_list_is_a_local_command_not_an_export(tmp_path: Path) -> None:
+    """本机终端能打印自选（本地命令，不经 MCP）；隐私在闸门与三条出口，不在投影里藏。
+
+    与 `test_no_export_file_without_flag` 同一条判据：跑一次 `ldst watch list`
+    **不得**在磁盘上新增任何 JSON 产物。
+    """
+    listed = runner.invoke(app, ["watch", "list", "--output", "json"])
+    assert listed.exit_code == 0, listed.stderr
+    assert WATCH_CODE in listed.stdout
+
+    added = runner.invoke(app, ["watch", "add", "--code", "000701"])
+    assert added.exit_code == 0, added.stderr
+    assert _json_artifacts(tmp_path) == []

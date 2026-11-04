@@ -280,7 +280,7 @@ export default function LimitUpScreen() {
         rowKey={(row) => row.code}
         caption={`${payload.date || date} 涨停样本（${formatInt(payload.count)} 只）；连板数默认降序，点击表头切换`}
         density="compact"
-        maxHeight="calc(100vh - 280px)"
+        maxHeight="var(--ldst-table-h)"
         initialSort={{ key: 'streak', dir: 'desc' }}
         sortToggle="flip"
         empty={

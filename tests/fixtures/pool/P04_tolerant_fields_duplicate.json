@@ -92,9 +92,14 @@
         "dropped_duplicates": 1,
         "unknown_code": 1,
         "theme_boards": 3,
-        "fund_flow_rows": 2
+        "fund_flow_rows": 2,
+        "concept_membership_rows": 0
       },
-      "missing_datasets": []
+      "missing_datasets": [],
+      "degraded_inputs": [
+        "concept_membership"
+      ],
+      "fund_data_as_of": "2026-10-27"
     }
   }
 }

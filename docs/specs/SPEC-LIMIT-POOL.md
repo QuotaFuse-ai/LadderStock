@@ -77,8 +77,10 @@ GET /api/limit-pool?date=YYYY-MM-DD
 
 - `code` ← `CODE_KEYS`（`code` / `symbol` / `stock_code` / `sec_code` / `ts_code`）
 - `name` ← `NAME_KEYS`
-- `streak` ← `BOARD_KEYS`（`consecutive_boards` / `limit_up_days` / `board_count` /
-  `boards` / `streak` / `连板数` …）按优先级取第一个可解析值，`"3板"` 这类带单位写法照旧容忍
+- `streak` ← `BOARD_KEYS`（`consecutive_boards` / `consecutive_limit_up` / `board_count` /
+  `boards` / `streak` / `连板数` / `limit_up_days`）按优先级取第一个可解析值，`"3板"` 这类带单位写法照旧容忍。
+  **`limit_up_days` 固定排最后**（DEC-046，2026-11-02）：真实东财涨停池里它是 `zttj.days`
+  「n天m板」的 n（统计窗口天数），与 `streak`=`lbc` 并存时取错会让 `streak` 整体虚高
 - `first_seal_time` ← `FIRST_SEAL_KEYS`
 - `last_seal_time` ← `SEAL_KEYS`（天梯对外叫 `seal_time`，本接口照 TickHub 叫
   `last_seal_time`，取的是同一个值）

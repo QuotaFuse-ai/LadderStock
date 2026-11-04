@@ -211,6 +211,24 @@ export interface LadderResult {
   unknown_board: number
 }
 
+/** 标的字典的一条命中（QUOT-405，字段对齐参考库 `symbolSearch`）。 */
+export interface SymbolMatch {
+  symbol: string
+  name: string
+  market: string | null
+  kind: string | null
+  board: string | null
+  /** pypinyin 不在依赖里时为 `null`（拼音匹配待后续单接入） */
+  pinyin: string | null
+}
+
+export interface SymbolsSearchPayload {
+  query: string
+  limit: number
+  count: number
+  matches: SymbolMatch[]
+}
+
 /**
  * 后端 `ai/error_taxonomy.py:FailureKind` 的镜像：四类面向用户的失败 + `internal` 兜底。
  * 前端不重新分类，只按这个 kind 决定呈现与可执行操作。
@@ -637,6 +655,7 @@ export interface PortConflict {
   process: string | null
   note: string
   foreign?: boolean
+  severity?: 'conflict' | 'info'
 }
 
 export interface JobView {
@@ -675,12 +694,48 @@ export interface PeerSnapshot {
   actions: { can_install: boolean; can_start: boolean; can_stop: boolean; can_open: boolean }
 }
 
+/** 工具组件（如 ProxyFleet）：只读观测，不参与 peer 的安装/启停任务。 */
+export interface ComponentSnapshot {
+  id: string
+  kind: 'component'
+  product: string
+  role: string
+  directory: string
+  directory_exists: boolean
+  status: PeerStatus
+  status_label: string
+  detail: string
+  ports: { console: number; gateway: number | null }
+  listening: { console: PortOwner[]; gateway: PortOwner[] }
+  health: { ok: boolean | null; detail: string }
+  open_url: string | null
+  managed_by: string
+  notes: string[]
+  actions: { can_open: boolean }
+}
+
 export interface BoardPayload {
   ok: boolean
   control_enabled: boolean
   peers: PeerSnapshot[]
+  components?: ComponentSnapshot[]
   port_conflicts: Array<PortConflict & { peer: string }>
   ports: { board: number; mcp: number } & Record<string, { mcp: number; web: number | null } | number>
+}
+
+/** 页面一键命令（后端白名单；argv 不接受前端传入）。 */
+export interface PageCommand {
+  key: string
+  route: string
+  label: string
+  argv: string[]
+  running: boolean
+  last_job: JobView | null
+}
+
+export interface PageCommandsPayload {
+  ok: boolean
+  commands: PageCommand[]
 }
 
 export interface ConfigEntry {
@@ -706,6 +761,70 @@ export interface AiTestResult {
   latency_ms: number
   model_seen: string | null
   error: string | null
+}
+
+/** 看板自己（`ldst review`）的模型配置；密钥只回 `api_key_set`，不回明文。 */
+export interface SelfAiBackend {
+  id: string
+  type: string
+  base_url_env: string
+  base_url: string | null
+  base_url_source: 'process' | 'file' | null
+  api_key_env: string
+  api_key_set: boolean
+  api_key_source: 'process' | 'file' | null
+  models: string[]
+  configured: boolean
+}
+
+export interface SelfAiStatus {
+  configured: boolean
+  default_model: string
+  fallback_chain: string[]
+  models: string[]
+  backends: SelfAiBackend[]
+  model_override: string | null
+  env_file: string | null
+  env_file_exists: boolean
+  config_path: string | null
+  sections: string[]
+  missing_env: string[]
+  hint: string
+  writable_keys: string[]
+  subscription_cli: boolean
+  /** 订阅通道探测结果（QUOT-401）；老后端没有这个字段时前端按空数组处理 */
+  cli_channels?: CliChannel[]
+  /** 当前生效的订阅通道 id；`null` 表示走 HTTP 端点 */
+  active_cli?: string | null
+  updated?: string[]
+  cleared?: string[]
+}
+
+/** 订阅通道的四态：只有 `ok` 能点「使用此通道」；其余给出具体原因，不灰不假装。 */
+export type CliState = 'ok' | 'missing' | 'broken' | 'no_login'
+
+export interface CliChannel {
+  id: 'codex' | 'claude' | 'workbuddy' | string
+  label: string
+  blurb: string
+  exe: string | null
+  login_files: string[]
+  version: string | null
+  state: CliState
+  detail: string
+}
+
+export interface CliChannelsPayload {
+  ok: boolean
+  channels: CliChannel[]
+  active: string | null
+  any_available: boolean
+  env_file: string
+}
+
+/** CLI 探针结果：字段与 HTTP 探针同形，多带一条通道快照。 */
+export interface CliTestResult extends AiTestResult {
+  channel?: CliChannel
 }
 
 export interface PeerLogs {
@@ -754,6 +873,15 @@ export const api = {
     request<LadderEnvelope<MarketThemePayload>>(`/market/theme?date=${encodeURIComponent(date)}`, {
       signal,
     }),
+  /**
+   * 标的字典检索（QUOT-405）：本机缓存反查的代码 + 名称，只读。
+   * 未接入（后端 404）或查无此代码时调用方按空结果回落，不编名称。
+   */
+  symbolsSearch: (q: string, limit = 10, signal?: AbortSignal) =>
+    request<LadderEnvelope<SymbolsSearchPayload>>(
+      `/symbols/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+      { signal },
+    ),
   validation: (date: string, signal?: AbortSignal) =>
     request<LadderEnvelope<ValidationPayload>>(`/validation?date=${encodeURIComponent(date)}`, {
       signal,
@@ -813,6 +941,34 @@ export const api = {
         body,
         timeoutMs: 20000,
       }),
+    /** 看板自己的模型配置（`config/ai.env`）；与上面的 peer 目标分开。 */
+    selfAi: (signal?: AbortSignal) =>
+      request<SelfAiStatus>('/control/self-ai', { signal, timeoutMs: CONTROL_TIMEOUT_MS }),
+    saveSelfAi: (values: Record<string, string>, clear: string[] = []) =>
+      request<SelfAiStatus>('/control/self-ai', {
+        method: 'PUT',
+        body: { values, clear },
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    testSelfAi: (body: { base_url: string; model: string; api_key?: string }) =>
+      request<AiTestResult>('/control/self-ai/test', {
+        method: 'POST',
+        body,
+        timeoutMs: 20000,
+      }),
+    /** 订阅版 CLI 通道探测（QUOT-401）：装没装 / 跑得起来 / 登录态在不在。 */
+    selfAiCli: (signal?: AbortSignal) =>
+      request<CliChannelsPayload>('/control/self-ai/cli', {
+        signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 真跑一次本机 CLI 的探针；失败也是 200，按 `ok` 分色。 */
+    testSelfAiCli: (cli: string) =>
+      request<CliTestResult>('/control/self-ai/cli/test', {
+        method: 'POST',
+        body: { cli },
+        timeoutMs: 120000,
+      }),
     /** 生成五段复盘（后台任务，轮询 `control.job` 直到 ok / failed）。 */
     generateAi: (body: { date: string; force?: boolean }) =>
       request<JobHandle>('/control/ai/generate', {
@@ -869,6 +1025,15 @@ export const api = {
     job: (jobId: string, signal?: AbortSignal) =>
       request<JobView>(`/control/jobs/${encodeURIComponent(jobId)}`, {
         signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 页面一键命令清单（白名单 + 最近一次任务）。 */
+    commands: (signal?: AbortSignal) =>
+      request<PageCommandsPayload>('/control/commands', { signal, timeoutMs: CONTROL_TIMEOUT_MS }),
+    runCommand: (key: string) =>
+      request<JobHandle>(`/control/commands/${encodeURIComponent(key)}`, {
+        method: 'POST',
+        body: {},
         timeoutMs: CONTROL_TIMEOUT_MS,
       }),
   },

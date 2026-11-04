@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
   BarChart3,
+  Bot,
   Building2,
   CalendarDays,
   CalendarRange,
@@ -20,12 +21,15 @@ import {
   Radar,
   ScrollText,
   Settings,
+  Sparkles,
   Timer,
   TrendingUp,
   Wallet,
   type LucideIcon,
 } from 'lucide-react'
 
+import AiConnectDialog from './AiConnectDialog'
+import PageCommandBar from './PageCommandBar'
 import PersistenceBanner from './PersistenceBanner'
 import { Segmented } from './ui'
 import { cn } from '../lib/cn'
@@ -33,7 +37,7 @@ import { setTheme, useThemeChoice } from '../lib/prefs'
 import type { ThemeChoice } from '../lib/theme'
 
 /**
- * 应用外壳（DESIGN-SPEC §3.1 / §4.1）。
+ * 应用外壳（UI-SPEC §2「全局外壳」/ §7.3 结构尺寸）。
  *
  * 一级导航 9 组 + 底部固定的「设置」：
  * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
@@ -42,14 +46,21 @@ import type { ThemeChoice } from '../lib/theme'
  *
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
  * - 市场 4 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达）已实现 → 展开为二级；
- * - 复盘 3 段（情绪复盘 / 周度复盘 / 候选池）、我的股票 2 段（持仓 / 事件日历）同样展开；
+ * - 复盘 4 段（每日复盘 / AI复盘 / AI周报 / 候选池）、我的股票 2 段（持仓 / 事件日历）同样展开；
+ *   「AI复盘」由 QUOT-344（DEC-046）从复盘组拆出：三屏各自一条路由，高亮按 pathname 精确匹配，
+ *   `/review` 亮时 `/review/ai` 不跟着亮；
  * - 盯盘 2 段（盘中信号 / 竞价与盘中）都已实现 → 展开为二级；
  *   「竞价与盘中」由 QUOT-302 补上，前置是 QUOT-286（6 时点快照落盘）+ QUOT-301（读接口）。
  * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
  *
- * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进）。
- * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）。
+ * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进 16px）。
+ * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）；
+ *   展平后 20 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
+ *
+ * **胶囊样式**（QUOT-200）：导航仍保持竖排侧栏，只是每个条目本身是横置胶囊（`rounded-pill`）——
+ * 一级组、二级页、底部设置/AI 全部同一形状；当前页整颗填色，不再靠左侧色条或方角区分。
+ * 不改竖排结构、不改展开逻辑，窄屏 rail 下胶囊收成图标胶囊。
  */
 
 export interface NavPage {
@@ -104,11 +115,14 @@ export const NAV_SECTIONS: NavSection[] = [
     key: 'review',
     label: '复盘',
     icon: NotebookPen,
-    // 「每日复盘」是 P1 留位（🟡），本轮不建入口；候选池是复盘的产出
+    // QUOT-344 / DEC-046：复盘拆成三个独立入口，各占一条路由，不再合成一屏
+    // 「每日复盘」= 当日五段数据；「AI复盘」= AI 段落与降级/失败态；「AI周报」= 按周聚合
+    // 候选池是复盘的产出，位置与文案不变
     pages: [
-      { to: '/review', label: '情绪复盘', icon: NotebookPen },
-      // R11 周度复盘（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
-      { to: '/weekly', label: '周度复盘', icon: CalendarRange },
+      { to: '/review', label: '每日复盘', icon: NotebookPen },
+      { to: '/review/ai', label: 'AI复盘', icon: Bot },
+      // R11（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
+      { to: '/weekly', label: 'AI周报', icon: CalendarRange },
       { to: '/pool', label: '候选池', icon: ListChecks },
     ],
   },
@@ -199,11 +213,17 @@ function pageActive(page: NavPage, location: Location): boolean {
   return current === page.tab
 }
 
+/**
+ * 图标栏（1024–1279）下的组间分隔：展平后 19 行图标同形同距，只靠这条 1px 线保留分组可读性。
+ * `ul` 本身已有 `gap-1`，所以这里只加线、不加内距，避免把溢出推得更长。
+ */
+const RAIL_GROUP = 'rail:border-t rail:border-border rail:first:border-t-0'
+
 function navClass(isActive: boolean, secondary = false): string {
   return cn(
-    'group flex h-row items-center gap-2 rounded px-2 text-body transition-colors duration-fast rail:justify-center rail:px-0',
+    'group flex h-row items-center gap-2 rounded-pill px-3 text-body transition-colors duration-fast rail:justify-center rail:px-0',
     isActive
-      ? 'bg-surface-3 font-medium text-text'
+      ? 'bg-accent-soft font-medium text-accent'
       : secondary
         ? 'text-text-secondary hover:bg-surface-3 hover:text-text'
         : 'text-text-secondary hover:bg-surface-3 hover:text-text',
@@ -214,6 +234,19 @@ export default function Layout() {
   const theme = useThemeChoice()
   const location = useLocation()
   const [expanded, setExpanded] = useState<string[]>(readExpanded)
+  // `?ai=1` 是深链（截图与排障用）；首次渲染读取一次，不跟后续导航反复弹窗
+  const [aiOpen, setAiOpen] = useState(() => new URLSearchParams(location.search).get('ai') === '1')
+
+  // 主内容区是滚动容器（QUOT-397），浏览器自带的窗口滚动复原管不到它：换页时手动归顶，
+  // 否则从长页跳到短页会停在空白处。页内 `#anchor` 跳转交给浏览器，这里不拦。
+  const scroller = useRef<HTMLDivElement>(null)
+  // 只滚新页面：`?tab=` / `?date=` 这类同路径的同页查询串变化不应把人拽回顶部
+  const pageKey = location.pathname
+  useEffect(() => {
+    if (location.hash || !scroller.current) return
+    // 用 scrollTop 而不是 `scrollTo`：jsdom 没实现后者（与 SearchPanel 取 scrollIntoView 同一原因）
+    scroller.current.scrollTop = 0
+  }, [pageKey, location.hash])
 
   const toggleGroup = (key: string) => {
     setExpanded((current) => {
@@ -246,7 +279,7 @@ export default function Layout() {
           </div>
         </div>
 
-        <nav aria-label="主导航" className="min-h-0 flex-1 overflow-y-auto p-2">
+        <nav aria-label="主导航" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
           <ul className="flex flex-col gap-1">
             {NAV_SECTIONS.map((section) => {
               const isGroup = section.pages.length > 1
@@ -256,7 +289,7 @@ export default function Layout() {
               if (!isGroup) {
                 const [page] = section.pages
                 return (
-                  <li key={section.key}>
+                  <li key={section.key} className={RAIL_GROUP}>
                     <NavLink
                       to={page.to}
                       end={page.to === '/'}
@@ -279,7 +312,7 @@ export default function Layout() {
               }
 
               return (
-                <li key={section.key}>
+                <li key={section.key} className={RAIL_GROUP}>
                   <button
                     type="button"
                     aria-expanded={isOpen}
@@ -287,8 +320,8 @@ export default function Layout() {
                     title={isOpen ? `收起${section.label}` : `展开${section.label}`}
                     onClick={() => toggleGroup(section.key)}
                     className={cn(
-                      'flex h-row w-full items-center gap-2 rounded px-2 text-body transition-colors duration-fast hover:bg-surface-3 hover:text-text rail:hidden',
-                      childActive ? 'font-medium text-text' : 'text-text-secondary',
+                      'flex h-row w-full items-center gap-2 rounded-pill px-3 text-body transition-colors duration-fast hover:bg-surface-3 hover:text-text rail:hidden',
+                      childActive ? 'bg-accent-soft font-medium text-accent' : 'text-text-secondary',
                     )}
                   >
                     <section.icon
@@ -306,11 +339,13 @@ export default function Layout() {
                     />
                   </button>
 
-                  {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标 */}
+                  {/* 窄侧栏（rail）下二级始终展平显示：一级标题隐藏，子项变成一排图标。
+                      完整侧栏下二级胶囊再缩进 12px，靠缩进而不是导引线表达层级
+                      （胶囊是整条填色，左侧竖线会切进胶囊圆角里）。 */}
                   <ul
                     id={`nav-group-${section.key}`}
                     className={cn(
-                      'mt-1 flex flex-col gap-1 border-l border-border pl-2 rail:mt-0 rail:border-l-0 rail:pl-0',
+                      'mt-1 ml-2 flex flex-col gap-1 pl-2 rail:ml-0 rail:mt-0 rail:pl-0',
                       !isOpen && 'hidden rail:flex',
                     )}
                   >
@@ -354,6 +389,17 @@ export default function Layout() {
               className="w-full justify-between"
             />
           </div>
+          {/* 接入 AI 是动作而不是页面：不占路由、不参与导航一致性断言，放在设置上方。 */}
+          <button
+            type="button"
+            onClick={() => setAiOpen(true)}
+            title="接入 AI"
+            aria-haspopup="dialog"
+            className={navClass(false, true)}
+          >
+            <Sparkles className="size-4 shrink-0 text-accent" strokeWidth={1.75} aria-hidden="true" />
+            <span className="truncate rail:hidden">接入 AI</span>
+          </button>
           {PINNED_NAV.map((page) => (
             <NavLink key={page.to} to={page.to} title={page.label} className={({ isActive }) => navClass(isActive, true)}>
               <page.icon className="size-4 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
@@ -366,12 +412,18 @@ export default function Layout() {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* 主内容区本身是滚动容器（QUOT-397）：窗口不滚，所以页头 `sticky top-0` 才钉得住；
+          同时把 `.page-shell` 的 1440px 上限与横向留白收在这一层，三屏外壳共用一套口径。 */}
+      <div ref={scroller} className="flex h-screen min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain">
         <PersistenceBanner />
-        <main id="main" tabIndex={-1} className="mx-auto w-full max-w-table flex-1 px-5 py-5 focus:outline-none">
+        <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
+          {/* QUOT-200：每页顶部的「运行本页命令」条；没有对应命令或控制面未开启时整条不渲染 */}
+          <PageCommandBar />
           <Outlet />
         </main>
       </div>
+
+      <AiConnectDialog open={aiOpen} onClose={() => setAiOpen(false)} />
     </div>
   )
 }

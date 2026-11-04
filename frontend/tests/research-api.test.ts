@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '../src/api'
 import {
+  classify404,
   describeResearchError,
   isResearchEndpointMissing,
   normalizeResearchCode,
   parseResearchJob,
+  parseResearchOverview,
   parseResearchStatus,
   stageArtifact,
   stageOf,
@@ -118,11 +120,157 @@ describe('研究任务解析', () => {
   })
 })
 
+describe('概览解析（QUOT-400）', () => {
+  const ENVELOPE = {
+    payload: {
+      code: '600000',
+      name: '浦发银行',
+      as_of: '2026-11-03',
+      data_source_status: 'ok',
+      kline: {
+        bars: [
+          { date: '2026-11-02', open: 9.4, high: 9.7, low: 9.3, close: 9.6, volume: 75000 },
+          { date: '2026-11-03', open: 9.6, high: 9.9, low: 9.5, close: 9.8, volume: 80000 },
+        ],
+        count: 2,
+        requested: 120,
+        reason: null,
+      },
+      quote: {
+        price: 9.8,
+        prev_close: 9.6,
+        change_pct: 2.08,
+        volume: 80000,
+        amount: 77566,
+        timestamp: '20261104104221',
+      },
+      quote_reason: null,
+      financials: {
+        report_name: '2026三季报',
+        report_date: '2026-09-30',
+        eps: 4.57,
+        revenue: 264852000000,
+        net_profit: 116476000000,
+        roe: 10.1,
+        revenue_yoy: 5.34,
+        profit_yoy: 2.38,
+      },
+      financials_reason: null,
+    },
+    data_source_status: 'ok',
+    data_as_of: '2026-11-03',
+    meta: { topic: 'research_overview' },
+  }
+
+  it('解析四段信封：K 线 / 快照 / 财务三块齐全', () => {
+    const overview = parseResearchOverview(ENVELOPE, '600000')
+    expect(overview.code).toBe('600000')
+    expect(overview.dataSourceStatus).toBe('ok')
+    expect(overview.kline.bars).toHaveLength(2)
+    expect(overview.kline.bars[1].close).toBe(9.8)
+    expect(overview.quote.quote?.price).toBe(9.8)
+    expect(overview.financials.financials?.report_name).toBe('2026三季报')
+    expect(overview.as_of).toBe('2026-11-03')
+  })
+
+  it('缺数态：三块全缺 → missing + null + reason，不补 0', () => {
+    const overview = parseResearchOverview(
+      {
+        payload: {
+          code: '600000',
+          name: null,
+          as_of: null,
+          data_source_status: 'missing',
+          kline: { bars: [], count: 0, requested: 120, reason: '本地 daily_k 缓存里没有这只代码的行' },
+          quote: null,
+          quote_reason: '本地 spot_quote 缓存里没有这只代码的快照',
+          financials: null,
+          financials_reason: '本地 finance_indicators 无缓存',
+        },
+        data_source_status: 'missing',
+        data_as_of: null,
+        meta: {},
+      },
+      '600000',
+    )
+    expect(overview.dataSourceStatus).toBe('missing')
+    expect(overview.kline.bars).toHaveLength(0)
+    expect(overview.kline.reason).toMatch(/daily_k/)
+    expect(overview.quote.quote).toBeNull()
+    expect(overview.quote.reason).toMatch(/spot_quote/)
+    expect(overview.financials.financials).toBeNull()
+    expect(overview.financials.reason).toMatch(/finance_indicators/)
+    expect(overview.as_of).toBeNull()
+  })
+
+  it('半缺态：K 线有根但 quote/financials 缺 → 主指标 ok，块各自 null', () => {
+    const overview = parseResearchOverview(
+      {
+        payload: {
+          code: '600000',
+          name: null,
+          as_of: '2026-11-03',
+          data_source_status: 'ok',
+          kline: { bars: [{ date: '2026-11-03', open: 1, high: 1, low: 1, close: 1, volume: null }], count: 1, requested: 120, reason: null },
+          quote: null,
+          quote_reason: 'no quote',
+          financials: null,
+          financials_reason: 'no finance',
+        },
+        data_source_status: 'ok',
+        data_as_of: '2026-11-03',
+        meta: {},
+      },
+      '600000',
+    )
+    expect(overview.dataSourceStatus).toBe('ok')
+    expect(overview.quote.quote).toBeNull()
+    expect(overview.financials.financials).toBeNull()
+    expect(overview.kline.bars[0].volume).toBeNull()
+  })
+
+  it('兼容平铺（无 payload 外壳）', () => {
+    const flat = { ...ENVELOPE.payload }
+    const overview = parseResearchOverview(flat, '600000')
+    expect(overview.kline.count).toBe(2)
+  })
+})
+
 describe('错误文案', () => {
-  it('404 是「尚未生成研究产物」，不是页面故障', () => {
-    const error = new ApiError('http', 'not found', 404)
+  it('路由未接（FastAPI 默认 404）→「研究接口未接入」，这是唯一的接口缺失态', () => {
+    const error = new ApiError('http', '研究接口 /api/research/600000 返回 HTTP 404', 404, 'Not Found')
     expect(isResearchEndpointMissing(error)).toBe(true)
-    expect(describeResearchError(error).title).toBe('尚未生成研究产物')
+    expect(classify404(error)).toBe('missing')
+    expect(describeResearchError(error).title).toBe('研究接口未接入')
+  })
+
+  it('业务空态 404（还没有任何研究记录）不是「接口未接入」，是「这只还没跑过研究」', () => {
+    const error = new ApiError(
+      'http',
+      '研究接口 /api/research/600519 返回 HTTP 404：600519 还没有任何研究记录（先运行 ldst research 600519）',
+      404,
+      '600519 还没有任何研究记录（先运行 ldst research 600519）',
+    )
+    expect(isResearchEndpointMissing(error)).toBe(false)
+    expect(classify404(error)).toBe('no-record')
+    expect(describeResearchError(error).title).toBe('这只还没跑过研究')
+  })
+
+  it('「没有研究产物」同属业务空态（按日查询无产物的文案）', () => {
+    const error = new ApiError('http', 'not found', 404, '600001 在 2026-10-30 没有研究产物')
+    expect(classify404(error)).toBe('no-record')
+  })
+
+  it('未知代码 404 →「未知证券代码」，既不是接口缺失也不是空态', () => {
+    const error = new ApiError('http', 'not found', 404, '999999 是未知证券代码（A 股个股只支持…）')
+    expect(isResearchEndpointMissing(error)).toBe(false)
+    expect(classify404(error)).toBe('unknown-code')
+    expect(describeResearchError(error).title).toBe('未知证券代码')
+  })
+
+  it('503 →「研究引擎不可用」', () => {
+    const info = describeResearchError(new ApiError('http', 'down', 503, '研究引擎不可用：读取研究状态失败'))
+    expect(info.title).toBe('研究引擎不可用')
   })
 
   it('未连接 → 研究接口未接入', () => {
