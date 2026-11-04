@@ -16,8 +16,12 @@ import pytest
 from ladderstock.ai import cli_provider, fallback
 
 
-def _write_fake_cli(bin_dir: Path, name: str, *, body: str, version: str = "9.9.9") -> None:
-    """在临时目录里造一个假 CLI：`--version` 回版本，其余把 stdin 原样回显。"""
+def _write_fake_cli(
+    bin_dir: Path, name: str, *, body: str, version: str = "9.9.9", login_ok: bool = True
+) -> None:
+    """在临时目录里造一个假 CLI：`--version` 回版本，`login status` 回登录态，其余回显 stdin。"""
+    login_rc = "0" if login_ok else "1"
+    login_msg = "API key configured - sk-abcdef***" if login_ok else "Not logged in"
     if os.name == "nt":
         target = bin_dir / f"{name}.cmd"
         target.write_text(
@@ -25,6 +29,10 @@ def _write_fake_cli(bin_dir: Path, name: str, *, body: str, version: str = "9.9.
             'if "%~1"=="--version" (\r\n'
             f"  echo {version}\r\n"
             "  exit /b 0\r\n"
+            ")\r\n"
+            'if "%~1"=="login" (\r\n'
+            f"  echo {login_msg}\r\n"
+            f"  exit /b {login_rc}\r\n"
             ")\r\n"
             "setlocal enabledelayedexpansion\r\n"
             "set OUT=\r\n"
@@ -38,6 +46,7 @@ def _write_fake_cli(bin_dir: Path, name: str, *, body: str, version: str = "9.9.
             "#!/bin/sh\n"
             'case "$1" in\n'
             f"  --version) echo {version}; exit 0 ;;\n"
+            f'  login) echo "{login_msg}"; exit {login_rc} ;;\n'
             "esac\n"
             f"{body}\n",
             encoding="utf-8",
@@ -64,15 +73,15 @@ def test_missing_when_not_on_path(isolated: Path) -> None:
     status = cli_provider.probe(spec)
     assert status["state"] == "missing"
     assert status["exe"] is None
-    assert "没有在 PATH 上找到" in status["detail"]
+    assert "没找到" in status["detail"]
 
 
 def test_no_login_when_binary_present_but_no_credentials(isolated: Path) -> None:
-    _write_fake_cli(isolated / "bin", "codex", body="echo ok")
+    _write_fake_cli(isolated / "bin", "codex", body="echo ok", login_ok=False)
     status = cli_provider.probe(cli_provider.cli_spec("codex"))
     assert status["state"] == "no_login"
     assert status["version"] == "9.9.9"
-    assert "没找到登录态" in status["detail"]
+    assert "codex login" in status["detail"]
 
 
 def test_ok_when_binary_and_login_present(isolated: Path) -> None:
@@ -97,6 +106,25 @@ def test_broken_when_version_exits_nonzero(isolated: Path) -> None:
     status = cli_provider.probe(cli_provider.cli_spec("claude"))
     assert status["state"] == "broken"
     assert "返回 3" in status["detail"]
+
+
+def test_finds_cli_in_known_install_location(isolated: Path) -> None:
+    """Codex 桌面版把 CLI 塞在 `%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<hash>`，从不写 PATH。"""
+    target = isolated / "home" / "AppData" / "Local" / "OpenAI" / "Codex" / "bin" / "abc123" / "codex.exe"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"fake")
+    found = cli_provider.find_executable(cli_provider.cli_spec("codex"))
+    assert found is not None
+    assert os.path.normcase(found) == os.path.normcase(str(target))
+
+
+def test_bin_env_overrides_discovery(isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """装在非标准位置时，用 LDST_CLI_CODEX_BIN 直接指定。"""
+    exe = isolated / "weird" / "codex.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"fake")
+    monkeypatch.setenv("LDST_CLI_CODEX_BIN", str(exe))
+    assert cli_provider.find_executable(cli_provider.cli_spec("codex")) == str(exe)
 
 
 def test_complete_pipes_prompt_through_stdin(isolated: Path) -> None:
@@ -167,9 +195,13 @@ ai:
     assert [item.id for item in config.declared_backends] == ["cli_codex", "openai"]
 
 
-def test_cli_backend_without_executable_is_not_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_backend_without_executable_is_not_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     monkeypatch.delenv("LDST_LLM_CLI", raising=False)
+    # 本机可能真的装了 codex：这里显式让它「找不到」，否则用例随环境通过/失败
+    monkeypatch.setattr(cli_provider, "find_executable", lambda spec: None)
     backend = fallback.BackendConfig(
         id="cli_codex",
         kind="cli",
