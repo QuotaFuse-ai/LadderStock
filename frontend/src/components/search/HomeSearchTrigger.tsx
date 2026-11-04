@@ -1,3 +1,4 @@
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Search } from 'lucide-react'
 
 /**
@@ -22,16 +23,23 @@ export interface HomeSearchTriggerProps {
   /** 面板元素 id，供 `aria-controls` 关联 */
   panelId: string
   onOpen: () => void
+  /** 指针按下时的打开：调用方负责先聚焦入口再开面板（QUOT-398 焦点回归） */
+  onPointerOpen: (event: ReactPointerEvent<HTMLElement>) => void
 }
 
-export function HomeSearchTrigger({ expanded, panelId, onOpen }: HomeSearchTriggerProps) {
+export function HomeSearchTrigger({ expanded, panelId, onOpen, onPointerOpen }: HomeSearchTriggerProps) {
   return (
     <button
       type="button"
-      // `onPointerDown` 让入口按下即响应（§4.5 的「不等到 click 才开」）；
-      // `onClick` 是键盘路径的必要补充：Enter / Space 只发 click，只挂 pointerdown 的按钮
-      // 对键盘用户是死的（§7.1 第 1 条要求 Enter/Space 能打开）。两条都只做同一件幂等事。
-      onPointerDown={onOpen}
+      // `onPointerDown` 让入口按下即响应（§4.5 的「不等到 click 才开」）。面板一挂上就接管
+      // 焦点，指针这次抬起后的 click 会落到 BODY 上而不是入口，所以这里 preventDefault
+      // 掐掉这次 click 的合成；点击本身不丢——下面 onClick 照常开（幂等）。
+      onPointerDown={(event) => {
+        event.preventDefault()
+        onPointerOpen(event)
+      }}
+      // `onClick` 是键盘路径的必要补充：Enter / Space 只发 click（`detail === 0`），只挂
+      // pointerdown 的按钮对键盘用户是死的（§7.1 第 1 条要求 Enter/Space 能打开）。
       onClick={onOpen}
       aria-haspopup="dialog"
       aria-expanded={expanded}

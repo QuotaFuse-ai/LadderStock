@@ -124,13 +124,13 @@ const NEWS_DOWN: SearchSource = {
 
 /** 与 `screens/home/HomeSearch.tsx` 同一套装配，只把取数源换成假源。 */
 function TestHomeSearch({ sources, landed }: { sources: readonly SearchSource[]; landed: string[] }) {
-  const { open, model, actions, openPanel } = useHomeSearch({
+  const { open, model, actions, openPanel, openPanelFromPointer } = useHomeSearch({
     sources,
     onNavigate: (href) => landed.push(href),
   })
   return (
     <>
-      <HomeSearchTrigger expanded={open} panelId={PANEL_ID} onOpen={openPanel} />
+      <HomeSearchTrigger expanded={open} panelId={PANEL_ID} onOpen={openPanel} onPointerOpen={openPanelFromPointer} />
       <SearchPanel panelId={PANEL_ID} model={model} actions={actions} />
     </>
   )
@@ -186,6 +186,30 @@ describe('首页搜索入口（QUOT-357）', () => {
     fireEvent.click(trigger())
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(trigger().getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('按下入口即开，指针抬起后的 click 不算「点外面」（§4.5 QUOT-398 回归）', () => {
+    renderHome([LADDER, INDUSTRY, NEWS])
+    const entry = trigger()
+    // 真浏览器：pointerdown → 面板挂上且焦点进输入框 → 浏览器把焦点切回按下目标 → mouseup → click
+    fireEvent.pointerDown(entry, { pointerType: 'mouse' })
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    fireEvent.mouseUp(entry)
+    fireEvent.click(entry)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(entry.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('点遮罩空白处关闭（§5.4）', async () => {
+    renderHome([LADDER, INDUSTRY, NEWS])
+    const entry = trigger()
+    fireEvent.click(entry)
+    await flush(20)
+    const scrim = screen.getByRole('dialog').parentElement!.firstElementChild as HTMLElement
+    fireEvent.pointerDown(scrim, { pointerType: 'mouse' })
+    fireEvent.mouseUp(scrim)
+    fireEvent.click(scrim)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('Tab 焦点经过入口不弹遮罩（§4.5）', async () => {
@@ -340,14 +364,16 @@ describe('首页搜索入口（QUOT-357）', () => {
     expect(JSON.parse(window.localStorage.getItem('ldst.home-search.recent') ?? '[]')).toEqual(['浦发'])
   })
 
-  it('面板是居中模态：水平居中、宽度取 min(86vw, 表宽)，不再钉右上角 640px 浮层（QUOT-398）', async () => {
+  it('面板是居中模态：水平居中、宽度取 min(920px, 视口-48px)，不再钉右上角 640px 浮层（QUOT-398）', async () => {
     renderHome([LADDER, INDUSTRY, NEWS])
     fireEvent.click(trigger())
     await flush(20)
     const dialog = screen.getByRole('dialog')
     expect(dialog.style.left).toBe('50%')
     expect(dialog.style.transform).toBe('translateX(-50%)')
-    expect(dialog.style.width).toBe('min(86vw, var(--ldst-table-max, 1296px))')
+    // jsdom 的 CSSOM 会把 `min(a, b)` 序列化成 `min(a * , * b)`，按片段断言避开序列化差异；
+    // 用 `[^)]*` 而非 `\s*` 是因为序列化后这里还夹着 `* , *`
+    expect(dialog.style.width).toMatch(/^min\([^)]*920px[^)]*calc\(100vw - 48px\)\s*\)$/)
     expect(dialog.style.maxHeight).toBe('73vh')
     // 旧的右上角定位与固定宽档必须退场，否则 `absolute` 仍在左上角起排
     expect(dialog.className).not.toMatch(/right-5|top-16|w-drawer/)

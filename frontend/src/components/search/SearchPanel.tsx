@@ -104,8 +104,8 @@ export const GUIDE_ROWS: Array<{ how: string; to: string }> = [
 ]
 
 /**
- * QUOT-398 居中模态的几何口径（内联 CSS 变量而非方括号任意值 class，同 §5.2 的既有写法）：
- * 宽 = min(86vw, 表宽上线 1296px)——1440 视口下压进内容区（侧栏 232 + 两侧 32 = 296 < 14vw）；
+ * QUOT-398 居中模态的几何口径（内联 style，不走 class——`check:ui` 规则 3 禁方括号任意值）：
+ * 宽 = min(920px, 视口 − 48px)，1440 下 920，窄屏两侧各留 24px；
  * 高 = 视口 − 顶 12vh − 底 15vh，900 高下 ≈ 657px；结果区吃掉输入区与提示条之外的全部高度，
  * 满命中不再被 420px 的固定档截断。
  */
@@ -113,7 +113,7 @@ const PANEL_STYLE: React.CSSProperties = {
   left: '50%',
   top: '12vh',
   transform: 'translateX(-50%)',
-  width: 'min(86vw, var(--ldst-table-max, 1296px))',
+  width: 'min(920px, calc(100vw - 48px))',
   maxHeight: '73vh',
 }
 
@@ -323,7 +323,16 @@ export function SearchPanel({ panelId, model, actions }: SearchPanelProps) {
       <div
         className={cn('absolute inset-0 bg-scrim transition-opacity duration-fast ease-ldst', entered ? 'opacity-100' : 'opacity-0')}
         aria-hidden="true"
-        onClick={actions.onClose}
+        // 关闭以 pointerdown 为准：入口「按下即开」，鼠标点入口时面板在按下那一刻就挂上了，
+        // 随后的 click 会由入口（按下目标）派发到这张新遮罩上。点外面的人按下时遮罩已经在，
+        // target 就是遮罩本身；点入口的那次 target 是入口内部节点，据此分辨。
+        // click 只兜键盘合成的一次（`detail === 0`、没有 pointerdown 阶段）。
+        onPointerDown={(event) => {
+          if (event.target === event.currentTarget) actions.onClose()
+        }}
+        onClick={(event) => {
+          if (event.detail === 0 && event.target === event.currentTarget) actions.onClose()
+        }}
       />
       <div
         ref={panelRef}
