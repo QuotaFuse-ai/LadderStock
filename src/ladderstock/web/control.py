@@ -804,16 +804,61 @@ def _no_proxy_opener() -> urllib.request.OpenerDirector:
 
 
 def probe_health(url: str, timeout: float = HEALTH_TIMEOUT_SEC) -> tuple[bool, str]:
-    """HTTP 健康探测：2xx/3xx 视为健康；其余（含连不上）如实返回失败原因。"""
+    """HTTP 健康探测：2xx/3xx 视为健康；其余（含连不上）如实返回失败原因。
+
+    响应体是 JSON 且带非 ok 的 `status`（如 FinanceCoffer 的 degraded，
+    QUOT-403）时，把状态与未通过的检查项**如实**拼进 detail，不做美化：
+    `HTTP 200 · degraded（embedding: unreachable）`。
+    """
     request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
     try:
         with _no_proxy_opener().open(request, timeout=timeout) as response:  # noqa: S310 - 只探回环
             code = int(getattr(response, "status", 200))
-            return 200 <= code < 400, f"HTTP {code}"
+            body = response.read(_HEALTH_BODY_LIMIT).decode("utf-8", "replace")
+            detail = f"HTTP {code}"
+            if 200 <= code < 400:
+                detail += _degraded_suffix(body)
+            return 200 <= code < 400, detail
     except urllib.error.HTTPError as exc:
         return False, f"HTTP {exc.code}"
     except (urllib.error.URLError, OSError, ValueError) as exc:
         return False, f"无法连接：{exc}"
+
+
+#: 健康响应体最多读 64KB：/health 是小 JSON，大响应体不值得为它占内存
+_HEALTH_BODY_LIMIT = 65536
+
+#: `_HEALTH_OK_STATES`：这些状态词视为「这个检查项没问题」，其余原样列出
+_HEALTH_OK_STATES = frozenset({"ok", "healthy", "pass", "passed", "up", ""})
+
+
+def _degraded_suffix(body: str) -> str:
+    """健康响应体里的非 ok 状态 → 人类可读后缀；不是 JSON / 状态正常返回空串。"""
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    # 兼容两种形态：状态在顶层，或包在 data 里（FinanceCoffer 的实际返回）
+    raw_data = payload.get("data")
+    data: dict[Any, Any] = raw_data if isinstance(raw_data, dict) else {}
+    status = payload.get("status") or data.get("status")
+    if not isinstance(status, str) or status.strip().lower() in _HEALTH_OK_STATES:
+        return ""
+    parts = [status]
+    checks = payload.get("checks") or data.get("checks")
+    if isinstance(checks, dict):
+        bad = [
+            f"{key}: {value}"
+            for key, value in checks.items()
+            if str(value).strip().lower() not in _HEALTH_OK_STATES
+        ]
+        if bad:
+            parts.append("；".join(bad))
+    if len(parts) == 1:
+        return f" · {status}"
+    return f" · {parts[0]}（{parts[1]}）"
 
 
 # --------------------------------------------------------------------------- #
@@ -1531,9 +1576,13 @@ class ControlPlane:
             "last_job": last_job.view() if last_job is not None else None,
             "open_url": open_url,
             "actions": {
-                "can_install": dir_exists and registered and not installed,
-                "can_start": installed and not listening and not self._job_running(key),
-                "can_stop": bool(state_pids(self._peer_state(key))) or listening,
+                # 未托管的服务（如 WSL 里的 FinanceCoffer，QUOT-403）一律不出
+                # 安装/启停按钮：Windows 侧没有它的进程归属证据，也不能杀。
+                "can_install": ctl.managed and dir_exists and registered and not installed,
+                "can_start": (
+                    ctl.managed and installed and not listening and not self._job_running(key)
+                ),
+                "can_stop": ctl.managed and (bool(state_pids(self._peer_state(key))) or listening),
                 "can_open": open_url is not None,
             },
         }
@@ -1720,8 +1769,17 @@ class ControlPlane:
         }
 
     def board(self) -> dict[str, Any]:
-        """五个模块（4 个数据 peer + ProxyFleet 组件）+ 端口占用汇总。"""
-        snapshots = [self.snapshot(key) for key in self.peers]
+        """模块卡（peers + 组件）+ 端口占用汇总。
+
+        peer 卡列表由 `config/sources.yaml` 的 peers 块驱动（QUOT-403）：
+        只给「PEER_CONTROL 有控制元数据 **且** 在 peers 块登记」的 peer 出卡——
+        yaml 删掉一段并重启，对应卡即消失。peers 块缺失/写坏（解析失败）时
+        `load_sources_peers` 返回空 → 回退全表，不许让面板变空（与 boundary.PEERS
+        的兜底口径一致）。
+        """
+        registered = set(self._sources_peers())
+        keys = [key for key in self.peers if key in registered] or list(self.peers)
+        snapshots = [self.snapshot(key) for key in keys]
         conflicts: list[dict[str, Any]] = []
         for snapshot in snapshots:
             for conflict in snapshot["port_conflicts"]:
@@ -1736,8 +1794,8 @@ class ControlPlane:
                 "board": 5950,
                 "mcp": 5951,
                 **{
-                    key: {"mcp": ctl.mcp_port, "web": ctl.web_port}
-                    for key, ctl in self.peers.items()
+                    key: {"mcp": self.peers[key].mcp_port, "web": self.peers[key].web_port}
+                    for key in keys
                 },
             },
         }
@@ -1751,6 +1809,9 @@ class ControlPlane:
     def create_job(self, peer: str, action: str, *, dev: bool = False) -> Job:
         if peer not in self.peers:
             raise KeyError(peer)
+        # 未托管的服务（WSL 里的 FinanceCoffer，QUOT-403）不接受安装/启停任务
+        if not self.peers[peer].managed:
+            raise ValueError(f"{peer} 不由控制面托管，只做只读观测")
         if action not in {"install", "start", "stop"}:
             raise ValueError(f"未知动作：{action}")
         if self._job_running(peer):

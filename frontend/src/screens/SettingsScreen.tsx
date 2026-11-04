@@ -66,8 +66,9 @@ import { cn } from '../lib/cn'
  * 设置页（P-07 / DESIGN-SPEC §4.8 + PRD-SETTINGS-CONTROL-PLANE）。
  *
  * 四个分区（左侧 176px 二级菜单，`?tab=` 深链）：
- *   子模块   —— 五张模块卡（4 个数据 peer + ProxyFleet 代理模块）；状态**只**取后端
- *              `status` / `status_label`，前端不推断。
+ *   子模块   —— 六张模块卡（5 个生态 peer + ProxyFleet 代理模块）；状态**只**取后端
+ *              `status` / `status_label`，前端不推断。peer 列表由后端返回，
+ *              注册表唯一真源是 config/sources.yaml 的 peers 块（QUOT-403）。
  *   AI 接入  —— 端点 / 模型 / 密钥；密钥只写不读回（只显示 `set` + `preview`）。
  *   数据与端口 —— 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
  *   关于     —— 版本、数据目录、DEC-006 边界、主题与密度（与侧栏同一状态）。
@@ -85,7 +86,7 @@ interface SectionMeta {
 }
 
 const SECTIONS: readonly SectionMeta[] = [
-  { value: 'peers', label: '子模块', hint: '五个模块：数据 / 资讯 / 合议 / 代理' },
+  { value: 'peers', label: '子模块', hint: '六个模块：数据 / 资讯 / 合议 / 存储 / 代理' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
   { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
@@ -134,6 +135,7 @@ const PEER_MODULE: Record<string, string> = {
   'tickhub-us': 'tickhub_us',
   wire: 'quotafuse_wire',
   senate: 'stocksenate',
+  financecoffer: 'financecoffer',
 }
 
 /**
@@ -186,6 +188,15 @@ const STATIC_PEERS: readonly StaticPeer[] = [
     mcp: 8765,
     web: 8786,
     webLabel: 'WebUI',
+  },
+  {
+    id: 'financecoffer',
+    product: 'FinanceCoffer',
+    role: '数据存储：宽表 / 公告检索 / 风险（WSL，只读观测）',
+    directory: '[local-path]\\FinanceCoffer',
+    mcp: 8100,
+    web: null,
+    webLabel: 'HTTP 服务（WSL）',
   },
   {
     id: 'proxyfleet',
@@ -1131,7 +1142,7 @@ function PortsSection({
         subtitle={
           <>
             看板 <span className="ldst-num">{countOrMissing(board.data?.ports.board)}</span> / MCP{' '}
-            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 五个模块
+            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 六个模块
           </>
         }
         bodyClassName="p-0"
@@ -1578,7 +1589,7 @@ export default function SettingsScreen() {
                   <li>
                     <EmptyState
                       title="后端没有返回任何子模块"
-                      description="确认 `/api/control/peers` 返回数据模块（tickhub / tickhub_us / wire / senate）与代理模块（proxyfleet），或检查 config/sources.yaml 是否登记。"
+                      description="确认 /api/control/peers 返回数据模块（tickhub / tickhub_us / wire / senate / financecoffer，列表由 config/sources.yaml 的 peers 块驱动）与代理模块（proxyfleet），或检查 config/sources.yaml 是否登记。"
                       action={
                         <Button variant="secondary" onClick={board.reload}>
                           重新读取
@@ -1592,7 +1603,7 @@ export default function SettingsScreen() {
                     <EmptyState
                       compact
                       title="控制面不可用"
-                      description="本地服务未连接或控制面被禁用，五个模块的目录与端口以静态基线展示。"
+                      description="本地服务未连接或控制面被禁用，六个模块的目录与端口以静态基线展示。"
                     />
                   </li>
                 )}

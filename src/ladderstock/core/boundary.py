@@ -40,17 +40,31 @@ class BoundaryViolation(RuntimeError):
 
 @dataclass(frozen=True)
 class Peer:
+    """一个生态 peer 的注册信息。
+
+    QUOT-403：注册表的唯一真源是 `config/sources.yaml` 的 `peers` 块；
+    本 dataclass 只是它的内存形态。`mcp_name` 可为 None（该 peer 没有 MCP 面，
+    如 FinanceCoffer 只提供 HTTP 服务）。
+    """
+
     key: str
     product: str
     package: str
     cli: str
-    mcp_name: str
+    mcp_name: str | None
     default_port: int
     role: str
     consumption: str
+    #: 该 peer 真实提供的健康检查路径（探测用；QUOT-403 起不再写死 /healthz）
+    health_path: str = "/healthz"
+    #: GitHub 仓库名（owner/name），QUOT-402 版本三态检测用；None 表示不检测
+    repo: str | None = None
 
 
-PEERS: dict[str, Peer] = {
+#: 代码内置的最小默认注册表：只在 sources.yaml 缺失 / 写坏时兜底（QUOT-403 验收 2：
+#: 服务不许崩、PEERS 不许变空）。**新增 peer 的正路是改 yaml，不是改这张表**——
+#: 这里的条目只保证「配置坏了控制面还能亮出基线卡片」。
+_PEER_FALLBACKS: dict[str, Peer] = {
     "tickhub": Peer(
         key="tickhub",
         product="TickHub-CN",
@@ -60,6 +74,8 @@ PEERS: dict[str, Peer] = {
         default_port=8000,
         role="数据底座：行情 / 涨停池 / 龙虎榜 / 情绪指标 / 资金",
         consumption="只消费",
+        health_path="/healthz",
+        repo="QuotaFuse-ai/TickHub-CN",
     ),
     "tickhub_us": Peer(
         key="tickhub_us",
@@ -70,6 +86,8 @@ PEERS: dict[str, Peer] = {
         default_port=8002,
         role="数据底座：美股行情 / 财报 / 监管披露",
         consumption="只消费",
+        health_path="/healthz",
+        repo="QuotaFuse-ai/TickHub-US",
     ),
     "wire": Peer(
         key="wire",
@@ -80,6 +98,8 @@ PEERS: dict[str, Peer] = {
         default_port=8790,
         role="资讯感知：新闻 / 政策 / 产业链 / 多源聚合",
         consumption="可选消费",
+        health_path="/api/health",
+        repo="QuotaFuse-ai/quotafuse-wire",
     ),
     "senate": Peer(
         key="senate",
@@ -90,8 +110,118 @@ PEERS: dict[str, Peer] = {
         default_port=8765,
         role="投研合议：7 分析师 → 辩论 → 风控 → 终审 / 回测",
         consumption="只读消费",
+        health_path="/healthz",
+        repo="QuotaFuse-ai/StockSenate",
+    ),
+    "financecoffer": Peer(
+        key="financecoffer",
+        product="FinanceCoffer",
+        package="financecoffer",
+        cli="fc",
+        mcp_name=None,
+        default_port=8100,
+        role="数据存储：结构化宽表 / 公告检索 / 风险",
+        consumption="只消费",
+        health_path="/health",
+        repo="QuotaFuse-ai/FinanceCoffer",
     ),
 }
+
+
+def build_peers(
+    peers_block: Any,
+    *,
+    fallbacks: Mapping[str, Peer] | None = None,
+) -> tuple[dict[str, Peer], list[str]]:
+    """从 sources.yaml 的 peers 块构造注册表（纯函数，测试与模块加载共用）。
+
+    返回 `(peers, warnings)`：块缺失/为空/整体写坏 → 整表回退内置默认并给 warning；
+    单条写坏 → 跳过该条、其余照常、给 warning。任何情形都不抛异常、不返回空表
+    （QUOT-403 验收：不许崩、不许变空）。
+
+    yaml 未携带的字段（consumption、缺省的 default_port / health_path / role）
+    从内置默认按 key 回填；未知 key 的 role 缺省为空串、consumption 缺省「只消费」。
+    """
+    base = _PEER_FALLBACKS if fallbacks is None else fallbacks
+    warnings: list[str] = []
+    if not isinstance(peers_block, Mapping) or not peers_block:
+        return dict(base), ["config/sources.yaml 的 peers 块缺失或为空，回退内置默认注册表"]
+
+    peers: dict[str, Peer] = {}
+    for key, item in peers_block.items():
+        key = str(key)
+        if not isinstance(item, Mapping):
+            warnings.append(f"peers.{key} 不是键值映射，已跳过该条")
+            continue
+        product = str(item.get("product") or "").strip()
+        package = str(item.get("package") or "").strip()
+        cli = str(item.get("cli") or "").strip()
+        if not (product and package and cli):
+            warnings.append(
+                f"peers.{key} 缺 product / package / cli 中的必填字段，已跳过该条"
+            )
+            continue
+        fallback = base.get(key)
+        mcp_name = item.get("mcp_name")
+        port = item.get("default_port")
+        try:
+            default_port = int(port) if port is not None else (
+                fallback.default_port if fallback else 0
+            )
+        except (TypeError, ValueError):
+            warnings.append(f"peers.{key}.default_port 不是整数，回退默认值")
+            default_port = fallback.default_port if fallback else 0
+        role = str(item.get("role") or "").strip() or (fallback.role if fallback else "")
+        health_path = str(item.get("health_path") or "").strip() or (
+            fallback.health_path if fallback else "/healthz"
+        )
+        repo = item.get("repo")
+        peers[key] = Peer(
+            key=key,
+            product=product,
+            package=package,
+            cli=cli,
+            mcp_name=str(mcp_name) if mcp_name else None,
+            default_port=default_port,
+            role=role,
+            consumption=fallback.consumption if fallback else "只消费",
+            health_path=health_path,
+            repo=str(repo) if repo else None,
+        )
+    if not peers:
+        return dict(base), [*warnings, "peers 块没有任何合法条目，回退内置默认注册表"]
+    return peers, warnings
+
+
+def load_peers_from_dir(config_path: Any) -> tuple[dict[str, Peer], list[str]]:
+    """读 `<config_path>/sources.yaml` 的 peers 块并构造注册表。
+
+    文件缺失 / YAML 解析失败都按「块缺失」处理：回退内置默认 + warning 带原因
+    （QUOT-403 验收 2）。模块加载与本测试共用这一个入口。
+    """
+    import yaml
+
+    path = Path(config_path) / "sources.yaml"
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return dict(_PEER_FALLBACKS), [f"config/sources.yaml 读取失败（{exc}），回退内置默认注册表"]
+    block = document.get("peers") if isinstance(document, dict) else None
+    return build_peers(block)
+
+
+def _load_module_peers() -> tuple[dict[str, Peer], tuple[str, ...]]:
+    """模块加载期构造 PEERS：优先真实配置目录，失败兜底内置默认。"""
+    try:
+        from ladderstock.cli.paths import config_dir
+
+        peers, warnings = load_peers_from_dir(config_dir())
+    except Exception as exc:  # noqa: BLE001 - 注册表加载绝不能让 import 崩掉
+        return dict(_PEER_FALLBACKS), (f"peer 注册表加载异常（{exc}），回退内置默认",)
+    return peers, tuple(warnings)
+
+
+PEERS, PEER_LOAD_WARNINGS = _load_module_peers()
 
 
 # --------------------------------------------------------------------------- #
@@ -142,6 +272,9 @@ class PeerControl:
     repo: str | None = None
     #: 本机分发包名（importlib.metadata 的发现名）；None 则退回 import_package
     dist_name: str | None = None
+    #: 控制面是否接管安装/启停（QUOT-403）：False = 只读观测（面板出卡、探健康，
+    #: 不给安装/启动/停止按钮）。WSL 里的服务（FinanceCoffer）归此列。
+    managed: bool = True
 
 
 PEER_CONTROL: dict[str, PeerControl] = {
@@ -248,6 +381,31 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "写 env 不生效（PRD §5 注明「映射到 llm_config.toml」，待 P4 落地）。",
         ),
     ),
+    "financecoffer": PeerControl(
+        key="financecoffer",
+        directory=r"[local-path]\FinanceCoffer",
+        import_package="financecoffer",
+        repo="QuotaFuse-ai/FinanceCoffer",
+        dist_name="financecoffer",
+        mcp_port=8100,
+        # FC 没有 MCP 面，8100 就是唯一的 HTTP 服务端口；健康检查打 /health
+        web_port=None,
+        web_port_label="HTTP 服务（WSL）",
+        health_path="/health",
+        # 服务跑在 WSL 里，Windows 侧的 .venv/Scripts 里没有可拉起的入口：
+        # 控制面只做只读观测与健康探测，绝不接管启停（QUOT-403）。
+        start_commands=(),
+        config_keys=(),
+        has_wheel_dist=False,
+        env_filename=".env",
+        managed=False,
+        config_notes=(
+            "FinanceCoffer 服务跑在 WSL（127.0.0.1:8100），控制面不接管安装/启停；"
+            "启停与治理见 QUOT-404。",
+            "/health 回 status=degraded（如 embedding unreachable）时面板如实显示，"
+            "不是本单要修的故障。",
+        ),
+    ),
 }
 
 
@@ -257,6 +415,7 @@ PEER_DIR_ENV: dict[str, str] = {
     "tickhub_us": "LDST_PEER_DIR_TICKHUB_US",
     "wire": "LDST_PEER_DIR_WIRE",
     "senate": "LDST_PEER_DIR_SENATE",
+    "financecoffer": "LDST_PEER_DIR_FINANCECOFFER",
 }
 
 #: 默认按同级目录探测：把 peer 仓库 clone 到 LadderStock 旁边即可直接安装。
@@ -266,6 +425,7 @@ PEER_SIBLING_DIRS: dict[str, str] = {
     # Wire 实际嵌套一层：D:\workplace\Wire\quotafuse-wire
     "wire": os.path.join("Wire", "quotafuse-wire"),
     "senate": "StockSenate",
+    "financecoffer": "FinanceCoffer",
 }
 
 # --------------------------------------------------------------------------- #

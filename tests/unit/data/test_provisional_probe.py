@@ -130,7 +130,7 @@ def test_probe_error_never_escapes(repo_env: Path) -> None:
     assert "不可达" in warnings[0]
 
 
-def test_doctor_keeps_23_checks_and_warning_does_not_change_exit(
+def test_doctor_keeps_24_checks_and_warning_does_not_change_exit(
     repo_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     unmasked = "council_memo: 未联调：peer 不可达（http://127.0.0.1:8765/mcp）"
@@ -141,7 +141,9 @@ def test_doctor_keeps_23_checks_and_warning_does_not_change_exit(
     result = runner.invoke(app, ["doctor", "--output", "json"])
 
     payload = json.loads(result.stdout)
-    # 22 项 + R5 新增的 `config:industry.yaml`（QUOT-143）：探测仍不参与计数
-    assert len(payload["checks"]) == 23, "检查项数必须仍是 23"
+    # 22 项 + R5 新增的 `config:industry.yaml`（QUOT-143）
+    #    + peers 注册表检查 `peers:registry`（QUOT-403）：探测仍不参与计数
+    assert len(payload["checks"]) == 24, "检查项数必须仍是 24"
+    assert any(c["check"] == "peers:registry" for c in payload["checks"])
     assert unmasked in payload["warnings"]
     assert result.exit_code == (0 if payload["ok"] else 3)
