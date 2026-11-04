@@ -96,7 +96,10 @@ def market_of(code: str) -> str:
 def _pinyin_of(name: str) -> str | None:
     """名称 → 首字母拼音（gzmt）；pypinyin 不在依赖里就 `None`，不手写映射表。"""
     try:
-        from pypinyin import Style, lazy_pinyin  # noqa: PLC0415 - 重依赖按需加载
+        from pypinyin import (  # type: ignore[import-not-found]  # noqa: PLC0415
+            Style,
+            lazy_pinyin,
+        )
     except ImportError:
         return None
     letters = lazy_pinyin(name, style=Style.FIRST_LETTER, errors="ignore")
