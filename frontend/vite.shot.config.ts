@@ -6,6 +6,11 @@ import { defineConfig, mergeConfig } from 'vite'
 
 import base from './vite.config'
 
+// 后端地址默认是常驻的 5950；换端口取证时用环境变量覆盖，免得为了换个实例改这个文件：
+//   LDST_API_TARGET=http://127.0.0.1:5951 npm run dev -- --config vite.shot.config.ts
+// （QUOT-381 的 S3 取证就是指向带 /api/indices + /api/watchlist 的 5951）
+const apiTarget = process.env.LDST_API_TARGET ?? 'http://127.0.0.1:5950'
+
 export default mergeConfig(
   base,
   defineConfig({
@@ -15,7 +20,7 @@ export default mergeConfig(
       strictPort: true,
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:5950',
+          target: apiTarget,
           changeOrigin: true,
         },
       },

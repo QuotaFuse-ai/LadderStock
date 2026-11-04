@@ -352,6 +352,10 @@ def test_metrics_partial_price_coverage_keeps_cost_basis() -> None:
         "unrealized_pnl_pct": None,
         # DEC-038 给每条加了已实现盈亏；这里没传流水，如实是 None 而不是 0
         "realized_pnl": None,
+        # QUOT-380 加了当日盈亏；这里没传 daily，如实是「本次没有算」而不是 0
+        "daily_pnl": None,
+        "daily_pnl_status": "not_computed",
+        "daily_pnl_reason": "本次没有取当日盈亏",
     }
 
     concentration = metrics["concentration"]

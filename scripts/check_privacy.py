@@ -160,7 +160,9 @@ JOURNAL_IMPORT = re.compile(
 #: - `web/server.py` → `journal.stats`：`_journal_guard`（来源回环 + Host 白名单）+ 顶层键白名单
 #:   `JOURNAL_STATS_FIELDS`（聚合数字，永不带明细）；
 #: - `web/radar.py` → `journal.position`：`_positions_guard`（同一套回环 + Host 判据）+
-#:   `Cache-Control: no-store`（SPEC-RADAR-PAGES §6.1 的平面 JSON 只读通道，不进信封、不进 MCP）。
+#:   `Cache-Control: no-store`（SPEC-RADAR-PAGES §6.1 的平面 JSON 只读通道，不进信封、不进 MCP）；
+#: - `web/radar.py` → `journal.watchlist`：`_watchlist_guard`（照抄同一套判据）+
+#:   `Cache-Control: no-store`（DEC-052 批准的自选只读面，只 GET、写面不经 HTTP）。
 #: **其它任何对 `ladderstock.journal` 的引用仍判 FAIL**，规则整体不放开。
 JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
     "src/ladderstock/web/server.py": {
@@ -174,6 +176,14 @@ JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
     "src/ladderstock/web/radar.py": {
         "ladderstock.journal.position": (
             "def _positions_guard(",
+            "is_loopback_host(",
+            "host_header_allowed(",
+            '"Cache-Control": "no-store"',
+        ),
+        # 第三条授权例外（DEC-052 / QUOT-380）：自选只读面。四项判据一个都不能少，
+        # 与 `journal.position` 那条同形——**白名单不能变成后门**。
+        "ladderstock.journal.watchlist": (
+            "def _watchlist_guard(",
             "is_loopback_host(",
             "host_header_allowed(",
             '"Cache-Control": "no-store"',
@@ -264,6 +274,26 @@ def _journal_rule_selftest() -> list[str]:
     caught("carrier-import-mcp", "src/ladderstock/mcp/server.py",
            "import ladderstock.cli.position\n")
 
+    # 反例 9（DEC-052）：自选模块出现在 MCP 出口里 → 必须判 FAIL
+    caught("watchlist-in-mcp", "src/ladderstock/mcp/server.py",
+           "from ladderstock.journal.watchlist import list_watch\n")
+    # 反例 10：自选模块出现在 AI 出口里 → 必须判 FAIL
+    caught("watchlist-in-ai", "src/ladderstock/ai/context.py",
+           "from ladderstock.journal.watchlist import list_watch\n")
+    # 反例 11：白名单在册但少了 `_watchlist_guard`（引用不等于授权）
+    caught("radar-watchlist-without-guard", "src/ladderstock/web/radar.py",
+           "from ladderstock.journal.watchlist import list_watch\n"
+           "def _positions_guard(request) -> None:\n"
+           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+           "    if not host_header_allowed(request): raise ...\n"
+           '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n')
+    # 反例 12：自选闸门在册，但少了 `no-store`
+    caught("radar-watchlist-without-no-store", "src/ladderstock/web/radar.py",
+           "from ladderstock.journal.watchlist import list_watch\n"
+           "def _watchlist_guard(request) -> None:\n"
+           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+           "    if not host_header_allowed(request): raise ...\n")
+
     # 正例：白名单文件 + 白名单模块 + 闸门齐全
     passed("web-server-stats", "src/ladderstock/web/server.py",
            "from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats\n"
@@ -274,6 +304,13 @@ def _journal_rule_selftest() -> list[str]:
     passed("web-radar-positions", "src/ladderstock/web/radar.py",
            "from ladderstock.journal.position import compute_metrics, list_positions\n"
            "def _positions_guard(request) -> None:\n"
+           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+           "    if not host_header_allowed(request): raise ...\n"
+           '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n')
+    # 正例（DEC-052）：自选只读面 —— 闸门 + Host 白名单 + no-store 齐备
+    passed("web-radar-watchlist", "src/ladderstock/web/radar.py",
+           "from ladderstock.journal.watchlist import list_watch\n"
+           "def _watchlist_guard(request) -> None:\n"
            "    if not is_loopback_host(client_host(request.client)): raise ...\n"
            "    if not host_header_allowed(request): raise ...\n"
            '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n')

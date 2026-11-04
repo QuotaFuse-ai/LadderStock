@@ -3,19 +3,55 @@
   "description": "三只候选、题材板块与资金流都在。强度按 6 板基准（复用 METRICS.md §3.3）、换手按 20% 基准、地位按当日最高板（5 板）归一、资金按候选集内分位（3e7 > 8e6 > -5e6 → 100/50/0）、题材按所挂概念板块的最大涨幅对 5% 基准截断。手算对照见 SPEC-CANDIDATE-POOL.md §5。",
   "datasets": {
     "limit_pool": [
-      {"code": "600001", "name": "甲", "boards": 5, "turnover_rate": 12.0, "hot_topic": "机器人"},
-      {"code": "600002", "name": "乙", "boards": 3, "turnover_rate": 25.0, "hot_topic": "中药"},
-      {"code": "600003", "name": "丙", "boards": 1, "turnover_rate": 2.5, "hot_topic": "机器人、光模块"}
+      {
+        "code": "600001",
+        "name": "甲",
+        "boards": 5,
+        "turnover_rate": 12.0,
+        "hot_topic": "机器人"
+      },
+      {
+        "code": "600002",
+        "name": "乙",
+        "boards": 3,
+        "turnover_rate": 25.0,
+        "hot_topic": "中药"
+      },
+      {
+        "code": "600003",
+        "name": "丙",
+        "boards": 1,
+        "turnover_rate": 2.5,
+        "hot_topic": "机器人、光模块"
+      }
     ],
     "concept_board": [
-      {"name": "机器人", "change_pct": 8.0},
-      {"name": "中药", "change_pct": -1.0},
-      {"name": "光模块", "change_pct": 2.0}
+      {
+        "name": "机器人",
+        "change_pct": 8.0
+      },
+      {
+        "name": "中药",
+        "change_pct": -1.0
+      },
+      {
+        "name": "光模块",
+        "change_pct": 2.0
+      }
     ],
     "fund_flow": [
-      {"code": "600001", "net_inflow": 30000000},
-      {"code": "600002", "net_inflow": -5000000},
-      {"code": "600003", "net_inflow": 8000000}
+      {
+        "code": "600001",
+        "net_inflow": 30000000
+      },
+      {
+        "code": "600002",
+        "net_inflow": -5000000
+      },
+      {
+        "code": "600003",
+        "net_inflow": 8000000
+      }
     ]
   },
   "expected": {
@@ -28,19 +64,37 @@
         {
           "code": "600001",
           "score": 91.0,
-          "parts": {"strength": 83.3, "turnover": 60.0, "standing": 100.0, "capital": 100.0, "theme": 100.0},
+          "parts": {
+            "strength": 83.3,
+            "turnover": 60.0,
+            "standing": 100.0,
+            "capital": 100.0,
+            "theme": 100.0
+          },
           "absent_parts": []
         },
         {
           "code": "600002",
           "score": 40.0,
-          "parts": {"strength": 50.0, "turnover": 100.0, "standing": 60.0, "capital": 0.0, "theme": 0.0},
+          "parts": {
+            "strength": 50.0,
+            "turnover": 100.0,
+            "standing": 60.0,
+            "capital": 0.0,
+            "theme": 0.0
+          },
           "absent_parts": []
         },
         {
           "code": "600003",
           "score": 36.3,
-          "parts": {"strength": 16.7, "turnover": 12.5, "standing": 20.0, "capital": 50.0, "theme": 100.0},
+          "parts": {
+            "strength": 16.7,
+            "turnover": 12.5,
+            "standing": 20.0,
+            "capital": 50.0,
+            "theme": 100.0
+          },
           "absent_parts": []
         }
       ],
@@ -49,9 +103,14 @@
         "dropped_duplicates": 0,
         "unknown_code": 0,
         "theme_boards": 3,
-        "fund_flow_rows": 3
+        "fund_flow_rows": 3,
+        "concept_membership_rows": 0
       },
-      "missing_datasets": []
+      "missing_datasets": [],
+      "degraded_inputs": [
+        "concept_membership"
+      ],
+      "fund_data_as_of": "2026-10-27"
     }
   }
 }

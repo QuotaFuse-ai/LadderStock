@@ -6,6 +6,8 @@
  *   GET    /api/news?date=&until=&source=&code=&limit=   资讯流（envelope，domain=news）
  *   GET    /api/events?month=&code=                      事件日历（envelope，domain=news）
  *   GET    /api/pool?date=&limit=                        候选池（envelope，domain=sentiment）
+ *   GET    /api/indices                                  首页指数条（**envelope**，domain=sentiment）
+ *   GET    /api/watchlist                                我的自选（**平面 JSON**，回环独占）
  *   GET    /api/positions?date=                          持仓（**平面 JSON**，隐私数据不进信封）
  *   POST   /api/positions                               按 code upsert 一条持仓
  *   POST   /api/positions/{code}/delete                 硬删除一条持仓
@@ -21,6 +23,7 @@
  */
 
 import { ApiError, isApiError, isEndpointMissing } from '../api'
+import { envelopeMetaOf, type EnvelopeFields } from './envelope'
 
 const READ_TIMEOUT_MS = 8000
 
@@ -256,6 +259,107 @@ export interface CandidatePoolPayload {
   data_as_of: string | null
 }
 
+// ---------------------------------------------------------------- 首页指数条（§9.1，信封）
+
+/**
+ * 一格指数。四格的顺序 / 条数 / 名称由后端 `core/indices.py:INDEX_WHITELIST` 写死
+ * （`index_list` 是按涨幅排序的榜，不含这四个指数，还混老三板个股，所以不能当前端入参）。
+ * `market` 后端给的是 `SH` / `SZ`，不是 SPEC-HOME-V2 §2.2 假设的 `cn/hk/us`。
+ */
+export interface IndexCell {
+  code: string
+  market: string | null
+  name: string | null
+  available: boolean
+  price: number | null
+  change: number | null
+  change_pct: number | null
+  prev_close: number | null
+  /** peer 行里的行情时间（ISO 局部时间，**不带时区猜测**）；非交易时段它就是上一交易日收盘时刻。 */
+  as_of: string | null
+  reason: string | null
+}
+
+export interface IndicesPayload extends EnvelopeFields {
+  available: boolean
+  reason: string | null
+  /** 后端给的口径句（「快照，不是逐笔实时」），前端不重写第二份。 */
+  footnote: string
+  price_source: string
+  datasets: string[]
+  cells: IndexCell[]
+  data_source_status: RadarStatus
+}
+
+/** 市场后缀：这一版白名单只有 A 股四指数，港股 / 美股没接入，档位留着但不猜。 */
+export const INDEX_MARKET_LABEL: Record<string, string> = {
+  SH: 'A 股',
+  SZ: 'A 股',
+  BJ: 'A 股',
+  HK: '港股',
+  US: '美股',
+}
+
+/** 未登记的市场值返回 `null` → 该行不显示后缀（后缀是修饰信息，缺失不阻塞读数）。 */
+export function indexMarketLabel(market: string | null): string | null {
+  if (!market) return null
+  return INDEX_MARKET_LABEL[market.toUpperCase()] ?? null
+}
+
+/** 行情源数据集 → 中文（§8 禁止后端 key 直显）。 */
+export const QUOTE_SOURCE_LABEL: Record<string, string> = {
+  index_quote: '指数快照',
+  spot_quote: '实时行情快照',
+  daily_k: '本机日线缓存',
+}
+
+export function quoteSourceLabel(dataset: string): string {
+  return QUOTE_SOURCE_LABEL[dataset] ?? dataset
+}
+
+// ---------------------------------------------------------------- 我的自选（§9.2，平面）
+
+/** 一条自选：`code` 是主键，其余全部来自 `spot_quote`，取不到就是 `null`。 */
+export interface WatchlistItem {
+  code: string
+  added_at: string | null
+  available: boolean
+  name: string | null
+  market: string | null
+  latest_price: number | null
+  change: number | null
+  change_pct: number | null
+  prev_close: number | null
+  price_as_of: string | null
+  /** `ok` / `unavailable`（这批没取到报价）；未登记值原样保留，文案退到原因。 */
+  price_status: string
+  price_reason: string | null
+}
+
+/**
+ * 平面 JSON：**没有 `payload` / `domain` / `fetched_at` 这三个信封键**（DEC-052），
+ * 所以这里不套 `payloadOf()`，直接读顶层；外壳四键恒为 `null`，徽标据此出「未知」，
+ * 不拿请求日期顶替数据时点。
+ */
+export interface WatchlistPayload {
+  local_only: true
+  store: 'local_sqlite'
+  available: boolean
+  /** 空态文案由接口给，指回本机 CLI（`ldst watch add`），页面不自编。 */
+  reason: string | null
+  /** 只数：后端没给就是 `null`，不 `?? 0`（R-07 家族）。 */
+  watch_count: number | null
+  data_source_status: RadarStatus
+  price_source: string
+  price_as_of: string | null
+  source_detail: string | null
+  items: WatchlistItem[]
+  freshness: null
+  source_status: null
+  data_as_of: string | null
+  fetched_at: null
+}
+
 export interface PositionItem {
   code: string
   cost: number
@@ -267,6 +371,27 @@ export interface PositionItem {
   market_value: number | null
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
+  /**
+   * 持仓表（schema v2）只有 `code/cost/qty/entry_date/industry/note`，**没有名称列**，
+   * 所以这一版后端不给（SPEC-HOME-V2 §5.2）。解析层留字段、不拿 code 或 industry 顶替。
+   */
+  name?: string | null
+  /** 当日盈亏 = `daily_k` 的 `close(T) − close(T−1)` × 股数；算不出是 `null` + 原因（QUOT-380 口径 4）。 */
+  daily_pnl?: number | null
+  daily_pnl_status?: DailyPnlStatus
+  daily_pnl_reason?: string | null
+}
+
+/** `ok` 算得出 / `missing` 缓存里没有 T 或 T−1 日行 / `not_computed` 本次没算 / `partial` 只算出一半。 */
+export type DailyPnlStatus = 'ok' | 'missing' | 'not_computed' | 'partial'
+
+/** 取数水位（`price_lookup` / `daily_lookup`）：都只指本机缓存，`reason` 说清为什么没有。 */
+export interface LookupStatus {
+  dataset: string | null
+  date: string | null
+  prev_date: string | null
+  backend: string | null
+  reason: string | null
 }
 
 export interface PositionHolding {
@@ -290,8 +415,19 @@ export interface PositionsPayload {
     coverage_pct: number | null
     unrealized_pnl: number | null
     unrealized_pnl_pct: number | null
+    /** 半截总数一律 `null`（QUOT-380 口径 5）：只有每条都算得出才给合计。 */
+    daily_pnl?: number | null
+    daily_pnl_status?: DailyPnlStatus
+    /** 恒为 `CNY`：这一版不建「代码→市场→币种→汇率」模型，所以也不做币种汇总。 */
+    currency?: string | null
+    daily_pnl_missing?: Array<{ code: string; reason: string | null }>
   }
   items: PositionItem[]
+  /** 现价水位：只指本机缓存，`reason` 说清那天没有记录。 */
+  price_lookup?: LookupStatus
+  /** 当日盈亏水位：与 `price_lookup` 同一个 T 日，两个出口才算同一个交易日。 */
+  daily_lookup?: LookupStatus
+
   concentration: {
     available: boolean
     reason: string | null
@@ -775,6 +911,109 @@ export function parseCandidatePool(raw: unknown): CandidatePoolPayload {
   }
 }
 
+// ---------------------------------------------------------------- 首页指数条（§9.1，信封）
+
+function parseIndexCell(value: unknown): IndexCell | null {
+  const row = record(value)
+  if (!row) return null
+  const code = text(row.code)
+  if (!code) return null
+  return {
+    code,
+    market: text(row.market) || null,
+    name: text(row.name) || null,
+    available: flag(row.available),
+    price: numberOrNull(row.price),
+    change: numberOrNull(row.change),
+    change_pct: numberOrNull(row.change_pct),
+    prev_close: numberOrNull(row.prev_close),
+    as_of: text(row.as_of) || null,
+    reason: text(row.reason) || null,
+  }
+}
+
+/**
+ * 指数条走信封（与 `/api/news` `/api/pool` 同一条通道）：载荷在 `root.payload`，
+ * 外壳的溯源字段由 `envelopeMetaOf()` 单独读出（QUOT-331），两者不混为一份。
+ * **缺格也在 `cells[]` 里**（`available=false` + 原因），所以前端按数组原序渲染几格就是几格，
+ * 不排序、不补格、不给取不到的格写 0。
+ */
+export function parseIndices(raw: unknown): IndicesPayload {
+  const payload = payloadOf(raw, '指数快照')
+  const meta = envelopeMetaOf(raw)
+  const cells = list(payload.cells)
+    .map(parseIndexCell)
+    .filter((cell): cell is IndexCell => cell !== null)
+  const priced = cells.some((cell) => cell.available && cell.price !== null)
+  return {
+    ...meta,
+    available: flag(payload.available) || priced,
+    reason: text(payload.reason) || null,
+    footnote: text(payload.footnote, '快照，不是逐笔实时'),
+    price_source: text(payload.price_source, 'index_quote'),
+    datasets: stringList(payload.datasets),
+    cells,
+    data_source_status: parseStatus(payload.data_source_status, priced ? 'ok' : 'missing'),
+    data_as_of: text(payload.data_as_of) ?? meta.data_as_of,
+  }
+}
+
+// ---------------------------------------------------------------- 我的自选（§9.2，平面）
+
+function parseWatchlistItem(value: unknown): WatchlistItem | null {
+  const row = record(value)
+  if (!row) return null
+  const code = text(row.code)
+  // 代码是主键：缺主键的行是脏数据不是缺数，整行不渲染（SPEC-HOME-V2 §4.2）
+  if (!code) return null
+  return {
+    code,
+    added_at: text(row.added_at) || null,
+    available: flag(row.available),
+    name: text(row.name) || null,
+    market: text(row.market) || null,
+    latest_price: numberOrNull(row.latest_price),
+    change: numberOrNull(row.change),
+    change_pct: numberOrNull(row.change_pct),
+    prev_close: numberOrNull(row.prev_close),
+    price_as_of: text(row.price_as_of) || null,
+    price_status: text(row.price_status, 'unknown'),
+    price_reason: text(row.price_reason) || null,
+  }
+}
+
+/**
+ * 自选是平面 JSON：**顶层就是载荷，不套 `payloadOf()`**（§9.2 的结构性保证——
+ * `payload` / `domain` / `fetched_at` 这三个信封键一个都不出现，隐私数据才到不了
+ * export / MCP / AI 三条出口，DEC-015）。
+ * 因此没有外壳可读：`freshness` / `source_status` / `fetched_at` 恒为 `null`，
+ * 徽标据此出「未知」而不是猜一个 `cached`；数据时点用载荷里的 `price_as_of`。
+ */
+export function parseWatchlist(raw: unknown): WatchlistPayload {
+  const root = record(raw)
+  if (!root) throw new ApiError('parse', '自选响应不是对象')
+  const items = list(root.items)
+    .map(parseWatchlistItem)
+    .filter((item): item is WatchlistItem => item !== null)
+  const priced = items.some((item) => item.latest_price !== null)
+  return {
+    local_only: true,
+    store: 'local_sqlite',
+    available: flag(root.available) && items.length > 0,
+    reason: text(root.reason) || null,
+    watch_count: numberOrNull(root.watch_count),
+    data_source_status: parseStatus(root.data_source_status, priced ? 'ok' : 'missing'),
+    price_source: text(root.price_source, 'spot_quote'),
+    price_as_of: text(root.price_as_of) || null,
+    source_detail: text(root.source_detail) || null,
+    items,
+    freshness: null,
+    source_status: null,
+    data_as_of: text(root.price_as_of) || null,
+    fetched_at: null,
+  }
+}
+
 // ---------------------------------------------------------------- 我的持仓
 
 function parsePositionItem(value: unknown): PositionItem | null {
@@ -794,6 +1033,27 @@ function parsePositionItem(value: unknown): PositionItem | null {
     market_value: numberOrNull(row.market_value),
     unrealized_pnl: numberOrNull(row.unrealized_pnl),
     unrealized_pnl_pct: numberOrNull(row.unrealized_pnl_pct),
+    name: text(row.name) || null,
+    daily_pnl: numberOrNull(row.daily_pnl),
+    daily_pnl_status: dailyStatusOf(row.daily_pnl_status),
+    daily_pnl_reason: text(row.daily_pnl_reason) || null,
+  }
+}
+
+/** 未登记的当日盈亏状态词按「本次没算」处理：它比 `missing` 更少一层信息，不能合并。 */
+function dailyStatusOf(value: unknown): DailyPnlStatus {
+  return value === 'ok' || value === 'missing' || value === 'partial' ? value : 'not_computed'
+}
+
+function parseLookup(value: unknown): LookupStatus | undefined {
+  const row = record(value)
+  if (!row) return undefined
+  return {
+    dataset: text(row.dataset) || null,
+    date: text(row.date) || null,
+    prev_date: text(row.prev_date) || null,
+    backend: text(row.backend) || null,
+    reason: text(row.reason) || null,
   }
 }
 
@@ -827,8 +1087,21 @@ export function parsePositions(raw: unknown): PositionsPayload {
       coverage_pct: numberOrNull(valuation.coverage_pct),
       unrealized_pnl: numberOrNull(valuation.unrealized_pnl),
       unrealized_pnl_pct: numberOrNull(valuation.unrealized_pnl_pct),
+      daily_pnl: numberOrNull(valuation.daily_pnl),
+      daily_pnl_status: dailyStatusOf(valuation.daily_pnl_status),
+      currency: text(valuation.currency) || null,
+      daily_pnl_missing: list(valuation.daily_pnl_missing)
+        .map((value) => {
+          const row = record(value)
+          const code = text(row?.code)
+          if (!row || !code) return null
+          return { code, reason: text(row.reason) || null }
+        })
+        .filter((entry): entry is { code: string; reason: string | null } => entry !== null),
     },
     items,
+    price_lookup: parseLookup(payload.price_lookup),
+    daily_lookup: parseLookup(payload.daily_lookup),
     concentration: {
       available: flag(concentration.available) && items.length > 0,
       reason: text(concentration.reason) || null,
@@ -960,6 +1233,22 @@ export const httpRadarSource: RadarSource = {
         signal,
       }),
     ),
+}
+
+// ---------------------------------------------------------------- 首页两路取数（§9.1 / §9.2）
+
+/**
+ * 首页指数条与自选没有并进 `RadarSource`：那个接口是雷达四屏的取数契约，
+ * `screens/radar/demo.ts` 按它逐方法给夹具。首页两路是首页的依赖，
+ * 把它们塞进去等于让雷达屏的演示源凭空多出两个自己不用的方法。
+ * 传输仍然复用同一个 `request()`：超时、404、断连的口径全仓只有一套。
+ */
+export async function fetchIndices(signal?: AbortSignal): Promise<IndicesPayload> {
+  return parseIndices(await request<unknown>('/api/indices', { signal }))
+}
+
+export async function fetchWatchlist(signal?: AbortSignal): Promise<WatchlistPayload> {
+  return parseWatchlist(await request<unknown>('/api/watchlist', { signal }))
 }
 
 // ---------------------------------------------------------------- 错误文案

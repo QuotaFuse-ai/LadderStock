@@ -147,8 +147,10 @@ def test_theme_source_labels_the_membership_path(tmp_path: Path) -> None:
     assert row["raw"]["theme_tags"] == ["固态电池"]
     assert row["parts"]["theme"] == 80.0
     assert pool["meta"]["theme_source"] == pool_module.THEME_SOURCE_MEMBERSHIP
-    assert pool["meta"]["theme_membership_codes"] == 1
+    assert pool["meta"]["membership"]["states"][pool_module.MEMBERSHIP_HIT] == 1
+    assert pool["meta"]["membership"]["table_board_matched_codes"] == 1
     assert pool["meta"]["theme_source_counts"][pool_module.THEME_SOURCE_MEMBERSHIP] == 1
+    assert pool["counts"]["concept_membership_rows"] == 1
 
 
 def test_theme_source_labels_the_keyword_fallback(tmp_path: Path) -> None:
@@ -210,8 +212,22 @@ def test_theme_null_when_both_paths_miss(tmp_path: Path) -> None:
         (0.30 * 66.7 + 0.10 * 50.0 + 0.25 * 100.0 + 0.20 * 50.0) / 0.85, 1
     )  # 分母 0.85：题材的 0.15 从分母里剔除，不是补 0
     assert pool["missing"] == []
-    assert pool["meta"]["theme_membership_codes"] == 0
-    assert pool["meta"]["theme_membership_landed_codes"] == 0
+    # 归属整列取不到：不进 `missing`（候选池本身有数），但必须进 `degraded_inputs`
+    # （QUOT-364 B-2：只有 `missing=[]` + `data_source_status=ok` 时，消费方看不见题材缺数）
+    assert pool["degraded_inputs"] == ["concept_membership"]
+    assert pool["meta"]["membership"] == {
+        "rows": 0,
+        "table_codes": 0,
+        "table_board_matched_codes": 0,
+        "candidates": 1,
+        "states": {
+            pool_module.MEMBERSHIP_HIT: 0,
+            pool_module.MEMBERSHIP_LANDED_OFF_BOARD: 0,
+            pool_module.MEMBERSHIP_NOT_FETCHED: 1,
+        },
+        "not_fetched_codes": ["600010"],
+    }
+    assert pool["counts"]["concept_membership_rows"] == 0
 
 
 def test_source_detail_reports_the_membership_backend(tmp_path: Path) -> None:
@@ -268,5 +284,67 @@ def test_membership_landed_but_off_the_board_list_is_reported_separately(
     assert row["raw"]["theme_tags"] == []
     assert row["raw"]["theme_source"] is None
     assert row["parts"]["theme"] is None
-    assert pool["meta"]["theme_membership_landed_codes"] == 1
-    assert pool["meta"]["theme_membership_codes"] == 0
+    membership = pool["meta"]["membership"]
+    assert membership["table_codes"] == 1
+    assert membership["table_board_matched_codes"] == 0
+    # 「落库了但板块不在榜」与「根本没取到归属」是两个不同的锅，state 必须分开点名
+    assert membership["states"] == {
+        pool_module.MEMBERSHIP_HIT: 0,
+        pool_module.MEMBERSHIP_LANDED_OFF_BOARD: 1,
+        pool_module.MEMBERSHIP_NOT_FETCHED: 0,
+    }
+    assert membership["not_fetched_codes"] == []
+    # 归属这路有数（只是这只没命中榜）→ 不算降级
+    assert pool["degraded_inputs"] == []
+
+
+def test_coverage_counts_are_scoped_to_the_emitted_candidates(tmp_path: Path) -> None:
+    """覆盖率的分母是**本次真的返回的那几只**，不是归属表全量（QUOT-364 B-1）。
+
+    2026-11-03 现网就是这样读错的：归属表按全池统计报出 21 只，而 `limit=30` 截断后
+    响应里只有 18 只候选 `theme` 非空。截断之后还留在表里的代码不能算进覆盖数。
+    """
+    write_cache(
+        {
+            "concept_board": [{"board_name": "固态电池", "change_pct": 4.0}],
+            "concept_membership": [
+                {"code": "600010", "board_name": "固态电池"},
+                {"code": "600099", "board_name": "固态电池"},  # 落库了，但不在当日候选池
+            ],
+        },
+        tmp_path,
+    )
+    pool = pool_module.compute_pool(
+        DAY,
+        root=tmp_path,
+        records=[
+            {"code": "600010", "name": "甲", "boards": 4, "turnover_rate": 10.0},
+            {"code": "600011", "name": "乙", "boards": 3, "turnover_rate": 8.0},
+            {"code": "600012", "name": "丙", "boards": 2, "turnover_rate": 6.0},
+        ],
+        limit=2,
+    )
+
+    assert [row["code"] for row in pool["candidates"]] == ["600010", "600011"]
+    membership = pool["meta"]["membership"]
+    assert membership["candidates"] == 2
+    assert membership["states"] == {
+        pool_module.MEMBERSHIP_HIT: 1,
+        pool_module.MEMBERSHIP_LANDED_OFF_BOARD: 0,
+        pool_module.MEMBERSHIP_NOT_FETCHED: 1,
+    }
+    assert membership["not_fetched_codes"] == ["600011"]
+    # 表级口径仍然按整张归属表算，两种口径刻意分名
+    assert membership["table_codes"] == 2
+    assert membership["table_board_matched_codes"] == 2
+    assert pool["meta"]["parts_non_null"] == {
+        "strength": 2,
+        "turnover": 2,
+        "standing": 2,
+        "capital": 0,
+        "theme": 1,
+    }
+    assert pool["meta"]["theme_source_counts"] == {
+        pool_module.THEME_SOURCE_MEMBERSHIP: 1,
+        pool_module.THEME_SOURCE_KEYWORDS: 0,
+    }

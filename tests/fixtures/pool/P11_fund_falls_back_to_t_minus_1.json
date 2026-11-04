@@ -1,0 +1,89 @@
+{
+  "name": "P11 当日无资金分区：回落到最近可用交易日并如实标日期",
+  "description": "QUOT-364 B-3 的复现形状——请求日 2026-10-27 没有 `fund_flow` 分区，只有 T-1（2026-10-26）的 2 行。取数必须回落到 T-1（日线主力净额当日盘后才发布，只读请求日等于把 `capital` 整列判空），并且把口径日期写在明面上：`meta.fund_data_as_of = 2026-10-26`、`fund_is_request_day = false`、`degraded_inputs` 点名 `fund_flow`。六个判据与 P10 完全相同（资金值一模一样 → 名次与分数不变），差别只在日期标注——回落不改变算式，只改口径日期。",
+  "datasets": {
+    "limit_pool": [
+      {
+        "code": "600001",
+        "name": "甲",
+        "boards": 3,
+        "turnover_rate": 8.0,
+        "hot_topic": "机器人"
+      },
+      {
+        "code": "600002",
+        "name": "乙",
+        "boards": 1,
+        "turnover_rate": 20.0,
+        "hot_topic": "机器人"
+      }
+    ],
+    "concept_board": [
+      {
+        "board_name": "机器人",
+        "change_pct": 5.0
+      }
+    ],
+    "concept_membership": [],
+    "fund_flow": [
+      {
+        "code": "600001",
+        "main_net": 506847989.25,
+        "trade_date": "2026-10-26"
+      },
+      {
+        "code": "600002",
+        "main_net": -1200000.0,
+        "trade_date": "2026-10-26"
+      }
+    ]
+  },
+  "expected": {
+    "pool": {
+      "available": true,
+      "reason": null,
+      "height": 3,
+      "candidate_count": 2,
+      "candidates": [
+        {
+          "code": "600001",
+          "score": 79.0,
+          "parts": {
+            "strength": 50.0,
+            "turnover": 40.0,
+            "standing": 100.0,
+            "capital": 100.0,
+            "theme": 100.0
+          },
+          "absent_parts": []
+        },
+        {
+          "code": "600002",
+          "score": 38.3,
+          "parts": {
+            "strength": 16.7,
+            "turnover": 100.0,
+            "standing": 33.3,
+            "capital": 0.0,
+            "theme": 100.0
+          },
+          "absent_parts": []
+        }
+      ],
+      "counts": {
+        "limit_pool_rows": 2,
+        "dropped_duplicates": 0,
+        "unknown_code": 0,
+        "theme_boards": 1,
+        "fund_flow_rows": 2,
+        "concept_membership_rows": 0
+      },
+      "missing_datasets": [],
+      "degraded_inputs": [
+        "concept_membership",
+        "fund_flow"
+      ],
+      "fund_data_as_of": "2026-10-26"
+    }
+  }
+}

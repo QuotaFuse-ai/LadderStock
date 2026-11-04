@@ -130,11 +130,14 @@ def _plane(
     process_info: Any = None,
     process_started: Any = None,
     resolve: Any = None,
+    components: Any = None,
 ) -> ControlPlane:
     runtime = runtime or FakeRuntime()
     return ControlPlane(
         data_root=tmp_path,
         peers=_peers(peer_dirs),
+        # 默认不探测真实组件目录/端口，避免单元测试依赖本机 ProxyFleet
+        components=components if components is not None else {},
         sources_loader=lambda: {key: {"product": key} for key in registered},
         run=runtime.run,
         port_probe=ports or (lambda port: []),
@@ -731,6 +734,100 @@ def test_peer_health_paths_are_the_ones_the_services_serve() -> None:
     for key in ("tickhub", "tickhub_us", "senate"):
         assert PEER_CONTROL[key].health_path == "/healthz"
     assert PEER_CONTROL["wire"].health_path == "/api/health"
+
+
+def _proxyfleet_component(directory: Path) -> Any:
+    from ladderstock.core.boundary import ComponentControl
+
+    return ComponentControl(
+        key="proxyfleet",
+        product="ProxyFleet",
+        role="代理池",
+        directory=str(directory),
+        console_port=8788,
+        gateway_port=8789,
+        health_path="/readyz",
+        managed_by="计划任务 ProxyFleet",
+    )
+
+
+def test_proxyfleet_is_a_component_not_a_peer() -> None:
+    """代理池不提供数据集：必须留在组件表里，不能进 PEERS / PEER_CONTROL。"""
+    from ladderstock.core.boundary import COMPONENTS, PEERS
+
+    ctl = COMPONENTS["proxyfleet"]
+    assert ctl.console_port == 8788
+    assert ctl.gateway_port == 8789
+    assert ctl.health_path == "/readyz"
+    assert "proxyfleet" not in PEERS
+    assert "proxyfleet" not in PEER_CONTROL
+
+
+def test_component_snapshot_running_from_health(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    component = _proxyfleet_component(peer_dirs["alpha"])
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": component},
+        ports=lambda port: [PortOwner(pid=7, process="python.exe")]
+        if port in (8788, 8789)
+        else [],
+        health=lambda url, timeout: (True, "HTTP 200"),
+    )
+
+    snapshot = plane.component_snapshot("proxyfleet")
+
+    assert snapshot["status"] == "running"
+    assert snapshot["status_label"] == "运行中"
+    assert snapshot["open_url"] == "http://127.0.0.1:8788"
+    assert snapshot["actions"]["can_open"] is True
+    assert snapshot["kind"] == "component"
+
+
+def test_component_snapshot_stopped_when_ports_are_free(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": _proxyfleet_component(peer_dirs["alpha"])},
+    )
+
+    snapshot = plane.component_snapshot("proxyfleet")
+
+    assert snapshot["status"] == "stopped"
+    assert snapshot["open_url"] is None
+    assert snapshot["actions"]["can_open"] is False
+    assert "计划任务 ProxyFleet" in snapshot["detail"]
+
+
+def test_component_snapshot_unconfigured_when_directory_missing(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": _proxyfleet_component(tmp_path / "missing")},
+    )
+
+    snapshot = plane.component_snapshot("proxyfleet")
+
+    assert snapshot["status"] == "unconfigured"
+    assert snapshot["directory_exists"] is False
+
+
+def test_board_includes_components(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        components={"proxyfleet": _proxyfleet_component(peer_dirs["alpha"])},
+    )
+
+    payload = plane.board()
+
+    assert [item["id"] for item in payload["components"]] == ["proxyfleet"]
 
 
 def test_config_notes_flag_keys_that_do_not_take_effect() -> None:
