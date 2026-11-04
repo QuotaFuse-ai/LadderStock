@@ -71,10 +71,11 @@
   （`400224 / 0.15 元`）。恒指 / 道指 / 纳指 / 标普命中数 **0**。
   **所以指数白名单必须由 LadderStock 侧写死（`sh000001` 等 4 条），不能向 peer 动态要清单**——
   榜单日单一，首页那 4 格会今天有、明天没。
-- **`senate` 那条登记的工具名是错的**：`boundary.py` 把 `council_memo` 登记为
-  `senate` / `report_query`，但 peer 实际工具名是 `stock_senate_report_query`
-  （`report_query` 在 5 个工具里不存在；`PROVISIONAL_TOOLS` 已自认「未确认」，
-  `boundary.py:404`）。**与本任务无关，但顺手记录，请项目领导人转给后端开发核对。**
+- **`senate` 那条登记的工具名已修正**（QUOT-389）：实测 senate 共 5 个工具，
+  `report_query` 不存在，实名为 `stock_senate_report_query`；`boundary.py` 已改名，
+  `PROVISIONAL_TOOLS` 随之清空。**另有一处未修**：`fund_flow_realtime` 登记的
+  `stock_fund_flow_batch` 也不在 tickhub 工具表里（最接近的 `realtime_fund_flow`
+  是逐只 `code` 入参，不能按批替换），需单独定口径。
 - `tickhub` peer 共 149 个工具，含 `index_quote` / `index_kline` / `index_list` / `index_weights` /
   `index_constituents` / `index_valuation`；`tickhub_us` 41 个（全 `th_us_*`）；`wire` 4 个；`senate` 5 个。
   **`wire` 与 `senate` 全无指数行情能力**。

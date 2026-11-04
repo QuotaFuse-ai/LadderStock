@@ -61,7 +61,7 @@ WSL 转发服务的固定端口，8787 已被 TickHub-CN 管理端占用，两�
 | `industry_fund_flow` | tickhub | `board_fund_flow` | — | replace | `trade_date` |
 | `hot_rank` | tickhub | `ths_hot_rank` | `eastmoney_hot_rank` | replace | `trade_date` |
 | `theme_news` | wire | `wire_get_digest` | `wire_timeline`（仅登记，**不进按日链路**，DEC-043） | replace | `data_as_of` |
-| `council_memo` | senate | `report_query` | — | replace | `data_as_of` |
+| `council_memo` | senate | `stock_senate_report_query` | — | replace | `data_as_of` |
 
 `theme_news` / `council_memo` 在 `sync.yaml` 里标了 `optional: true`：peer 不可用时
 只记 `status=skipped`，不拖垮整轮同步，也不影响退出码。
