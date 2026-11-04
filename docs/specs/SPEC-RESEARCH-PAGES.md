@@ -1,7 +1,8 @@
 # SPEC-RESEARCH-PAGES 个股深挖与六阶段研究报告（前端）
 
-- 版本：v0.2（定稿：页面骨架 + 只读接口契约 + 五态矩阵；v0.2 补 `/research` 入口页与导航）
-- 日期：2026-11-01
+- 版本：v0.3（定稿：页面骨架 + 只读接口契约 + 五态矩阵；v0.2 补 `/research` 入口页与导航；
+  v0.3 补 K 线图端点契约 §2.4 并标注 §2 接口实现状态）
+- 日期：2026-11-05
 - 归属：前端架构
 - 实现：`frontend/src/screens/research/`、`frontend/src/components/research/`、
   `frontend/src/api/research.ts`、`frontend/src/lib/citation.ts`
@@ -26,9 +27,11 @@
 两页共用 `useResearchView()`（取数 / 五态 / 演示变体）与 `useResearchRun()`（续跑与轮询）。
 页面不重算指标、不补齐缺失值、不重排来源，数字与出处原样透传后端产物。
 
-## 2. 只读接口契约（前端提案，后端尚未实现）
+## 2. 只读接口契约
 
-浏览器读不到本机文件，页面只认三个只读接口；载荷与 MCP `research_status` 同形。
+浏览器读不到本机文件，页面只认四个只读接口；载荷与 MCP `research_status` 同形。
+实现状态：§2.1–2.3 是前端提案、后端尚未接（缺口说明见 §2.3 末）；
+§2.4 K 线图已随 QUOT-410 落地（DEC-055），可直接联调。
 
 ### 2.1 `GET /api/research/{code}?date=YYYY-MM-DD`
 
@@ -90,6 +93,66 @@
 **缺口说明**：以上接口当前后端未提供，请求会得到 HTTP 404。前端按
 `isResearchEndpointMissing()` 区分「接口没接」与「产物不存在」，文案明确说明缺口，
 不伪造数据；`?demo=1` 是显式演示开关，页面带水印。
+
+### 2.4 `GET /api/research/{code}/kline`（已实现，QUOT-410 / DEC-055）
+
+K 线主图数据源。三档周期 × 三档复权作为**运行时参数**透传给上游 `tencent_kline`，
+聚合与复权全部由上游完成，前端不做二次计算、不补 0、不拼装。
+
+请求：
+
+```
+GET /api/research/{code}/kline?period=daily|weekly|monthly&adjust=qfq|hfq|none&limit=N
+```
+
+| 参数 | 取值 | 缺省 | 说明 |
+| --- | --- | --- | --- |
+| `code` | 6 位 A 股代码，可带 `.SH`/`.SZ`/`.BJ` | 必填 | 与 §2.1 同一规范化口径；未知代码 404 |
+| `period` | `daily` / `weekly` / `monthly` | `daily` | 非法值 422 |
+| `adjust` | `qfq` / `hfq` / `none` | `qfq` | 非法值 422 |
+| `limit` | 整数 1..500 | `120` | 非法或越界 422 |
+
+响应（四段信封，与 §2.1 同族；HTTP 200 即使无数据）：
+
+```json
+{
+  "payload": {
+    "code": "600000",
+    "period": "daily",
+    "adjust": "qfq",
+    "limit": 120,
+    "bars": [
+      { "date": "2026-10-29", "open": 10.2, "high": 10.6, "low": 10.1,
+        "close": 10.5, "volume": 725800, "amount": 76010.5 },
+      { "date": "2026-10-30", "open": 10.5, "high": 10.9, "low": 10.4,
+        "close": 10.8, "volume": 681000, "amount": null }
+    ],
+    "count": 2,
+    "available": true,
+    "reason": null,
+    "source_detail": "tencent_kline@tencent",
+    "data_source_status": "ok"
+  },
+  "data_source_status": "ok",
+  "data_as_of": "2026-10-30",
+  "meta": { "topic": "research_kline", "source": "ladderstock",
+            "freshness": "realtime", "fetched_at": "2026-11-05T10:00:00+08:00" }
+}
+```
+
+- `bars[]` 按 `date` 升序（上游返回序），每根 `date / open / high / low / close /
+  volume / amount`；`amount` 上游可能为 `null`，**原样透传，不要当 0 画**。
+- `available=false` 时 `bars=[]`，`data_source_status="missing"`，`reason` 给出
+  上游不可达 / 无数据的原因；**HTTP 仍是 200**，不伪造、不补零。
+  peer 不可达、超时、空返回都归入这一态。
+- `data_source_status` 三态：`ok`（有数且上游 `source_status=ok`）/
+  `degraded`（有数但上游降级，如备源接力） / `missing`（无数）。
+  `degraded` 时 `bars` 仍然可用，前端照常画图，仅提示数据源状态。
+- 本端点**现取现回**（不经研究产物落库，60s 进程内 TTL 合并并发）；`freshness`
+  见 `meta`。不落第二份存储，前端拿到只存 React 内存。
+- 仅 GET；响应顶层不出现 `payload`/`domain`/`fetched_at` 以外的信封键，也不含
+  隐私键。禁改 `code`/`period`/`adjust`/`limit` 回显值——它们是请求参数的回显，
+  联调时用来核对透传是否生效。
 
 ## 3. 个股深挖页结构
 
@@ -157,8 +220,9 @@
 
 ## 7. 已知缺口与下一步
 
-1. **后端接口缺失**：`/api/research/*` 三个只读接口尚未合入；需后端按 §2 契约暴露，
-   或先以 MCP `research_status` + 任务接口桥接。前端无需改字段即可切换。
+1. **后端接口缺失**：`/api/research/{code}` / `/run` / `/jobs/{id}` 三个只读接口尚未合入；
+   需后端按 §2 契约暴露，或先以 MCP `research_status` + 任务接口桥接。前端无需改字段即可切换。
+   K 线主图不在此列——`/kline` 已随 QUOT-410 上线（§2.4），可直接联调。
 2. **续跑接口错误语义**：`POST /run` 的 409（已有任务）/ 422（参数）分支待后端定义；
    前端目前统一走 `describeResearchError`，接口上线后可补专门文案。
 3. **估值分位**：依赖 FinanceCoffer 快照提供 `pe_percentile_5y` / `pb_percentile_5y`
@@ -167,6 +231,9 @@
 
 ## 变更记录
 
+- v0.3（2026-11-05，QUOT-410 / DEC-055）：新增 §2.4 K 线图端点契约
+  （`GET /api/research/{code}/kline`，三档周期 × 三档复权运行时透传给 `tencent_kline`）；
+  §2 标注各接口实现状态（§2.4 已上线，§2.1–2.3 仍为前端提案），§7 缺口清单同步。
 - v0.2（2026-11-01，QUOT-300）：新增 `/research` 入口页（`ResearchEntryScreen`）与侧栏「个股深挖」
   一级入口。此前两页只有路由、没有任何入链，用户必须手打带代码的 URL 才能进；
   导航与路由表的一致性由 `frontend/tests/nav-routes.test.tsx` 双向断言。

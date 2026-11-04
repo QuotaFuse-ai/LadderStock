@@ -103,6 +103,10 @@ class RowShape:
 
 ROW_SHAPES: dict[str, RowShape] = {
     "daily_k": RowShape("klines", passthrough=("code", "period", "adjust")),
+    # K 线图端点（QUOT-410）：与 daily_k 同一工具、同一返回形状——
+    # `data.klines` 展开成行，`code/period/adjust` 透传，行内 `date → trade_date`。
+    # period / adjust 的取值随请求变，登记本身与 daily_k 无差别。
+    "kline_chart": RowShape("klines", passthrough=("code", "period", "adjust")),
     "limit_pool": RowShape("items"),
     "broken_board": RowShape("items"),
     "industry_board": RowShape("items", require_code=False),
