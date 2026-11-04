@@ -145,7 +145,8 @@ def test_one_call_for_the_whole_pool(data_home: Path) -> None:
     assert len(calls) == 1, f"期望 1 次批量调用，实际 {len(calls)} 次"
     assert out["status"] == "ok"
     assert out["rows"] == 3
-    assert "批量 1 次调用" in out["detail"]
+    # 盘中窗口走槽写入、收盘后落库（DEC-054）：两分支 detail 文案不同，
+    # 但「上游往返」计数口径一致——断言这个而不是某个分支的专属文案。
     assert "上游往返 1 次" in out["detail"]
 
 

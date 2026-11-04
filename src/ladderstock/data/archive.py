@@ -60,6 +60,29 @@ def snapshot(
     if day is not None and when is None:
         raise ValueError(f"非法日期：{day!r}")
 
+    # 盘中槽优先（QUOT-373 / DEC-054）：`fund_flow_realtime` 这类分钟级批量数据集
+    # 不落 Parquet/DuckDB，只写 `data/intraday/<date>/<dataset>/<HHMM>.json`。
+    # 「某天的值」= 那天最后一条槽；没有槽目录时照旧走下面的分区/DuckDB 链路。
+    # 惰性导入：core.intraday 顶层 import ladder，顶层引回会成环（ladder → 本模块 → intraday）。
+    if when is not None:
+        from ladderstock.core import intraday
+
+        slot = intraday.latest_batch_slot(dataset, when, root=root)
+        if slot is not None:
+            records = slot.get("records") or []
+            if isinstance(records, list) and records:
+                records = [dict(r) for r in records if isinstance(r, dict)]
+                if limit:
+                    records = records[: int(limit)]
+                slot_file = slot.get("_slot_file")
+                return CacheSnapshot(
+                    dataset=dataset,
+                    records=records,
+                    as_of=_max_day(records) or when,
+                    backend="intraday-slot",
+                    cached_at=_mtime(slot_file) if isinstance(slot_file, Path) else None,
+                )
+
     partition = duckdb_store.partition_path(dataset, when, root=root) if when else None
     if partition is not None and partition.is_file():
         records = _read_parquet(partition, limit=limit)
