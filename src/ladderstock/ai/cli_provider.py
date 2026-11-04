@@ -49,7 +49,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ladderstock.ai.fallback import ModelTarget
 
@@ -330,6 +330,9 @@ def _registry_install_dirs() -> list[Path]:
         import winreg
     except ImportError:  # pragma: no cover - 非 Windows 不会走到
         return []
+    # Linux CI 的 mypy 下 typeshed 给 winreg 的是空模块，属性访问全报 attr-defined；
+    # 运行期走到这里必然是 Windows（上面已挡 os.name != "nt"），按 Any 用。
+    winreg = cast("Any", winreg)
 
     roots = (
         (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
