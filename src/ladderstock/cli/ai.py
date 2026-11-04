@@ -18,7 +18,7 @@ import typer
 
 from ladderstock.ai import checkpoint, fallback
 from ladderstock.ai.error_taxonomy import classify_error
-from ladderstock.ai.orchestrator import HttpChatClient
+from ladderstock.ai.cli_provider import build_chat_client
 from ladderstock.cli.output import OutputOption, emit, error
 from ladderstock.core.boundary import BoundaryViolation
 from ladderstock.errors import (
@@ -166,7 +166,7 @@ def ai_chain_test(
         )
         raise typer.Exit(EXIT_CONFIG)
 
-    client = HttpChatClient(config)
+    client = build_chat_client(config)
     results: list[dict[str, Any]] = []
     ok = 0
     for name in chain:

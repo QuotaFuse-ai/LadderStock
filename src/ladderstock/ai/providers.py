@@ -389,13 +389,23 @@ def _as_object(value: Any) -> dict[str, Any]:
     return {}
 
 
-PROVIDERS: dict[str, type[OpenAiProvider] | type[AnthropicProvider]] = {
+PROVIDERS: dict[str, Any] = {
     "openai": OpenAiProvider,
     "anthropic": AnthropicProvider,
 }
 
+#: 订阅通道不在本模块：它不碰 HTTP，只把 prompt 交给本机 CLI（QUOT-401）。
+#: 延迟注册，避免 `cli_provider` ← `fallback` 的导入顺序在模块初始化期形成环。
+_LAZY_PROVIDERS: dict[str, tuple[str, str]] = {
+    "cli": ("ladderstock.ai.cli_provider", "CliProvider"),
+}
 
-def provider_for(kind: str) -> OpenAiProvider | AnthropicProvider:
+
+def provider_for(kind: str) -> Any:
+    if kind in _LAZY_PROVIDERS:
+        module_name, class_name = _LAZY_PROVIDERS[kind]
+        module = __import__(module_name, fromlist=[class_name])
+        return getattr(module, class_name)()
     try:
         return PROVIDERS[kind]()
     except KeyError:

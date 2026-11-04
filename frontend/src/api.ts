@@ -774,8 +774,39 @@ export interface SelfAiStatus {
   hint: string
   writable_keys: string[]
   subscription_cli: boolean
+  /** 订阅通道探测结果（QUOT-401）；老后端没有这个字段时前端按空数组处理 */
+  cli_channels?: CliChannel[]
+  /** 当前生效的订阅通道 id；`null` 表示走 HTTP 端点 */
+  active_cli?: string | null
   updated?: string[]
   cleared?: string[]
+}
+
+/** 订阅通道的四态：只有 `ok` 能点「使用此通道」；其余给出具体原因，不灰不假装。 */
+export type CliState = 'ok' | 'missing' | 'broken' | 'no_login'
+
+export interface CliChannel {
+  id: 'codex' | 'claude' | 'workbuddy' | string
+  label: string
+  blurb: string
+  exe: string | null
+  login_files: string[]
+  version: string | null
+  state: CliState
+  detail: string
+}
+
+export interface CliChannelsPayload {
+  ok: boolean
+  channels: CliChannel[]
+  active: string | null
+  any_available: boolean
+  env_file: string
+}
+
+/** CLI 探针结果：字段与 HTTP 探针同形，多带一条通道快照。 */
+export interface CliTestResult extends AiTestResult {
+  channel?: CliChannel
 }
 
 export interface PeerLogs {
@@ -897,6 +928,19 @@ export const api = {
         method: 'POST',
         body,
         timeoutMs: 20000,
+      }),
+    /** 订阅版 CLI 通道探测（QUOT-401）：装没装 / 跑得起来 / 登录态在不在。 */
+    selfAiCli: (signal?: AbortSignal) =>
+      request<CliChannelsPayload>('/control/self-ai/cli', {
+        signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 真跑一次本机 CLI 的探针；失败也是 200，按 `ok` 分色。 */
+    testSelfAiCli: (cli: string) =>
+      request<CliTestResult>('/control/self-ai/cli/test', {
+        method: 'POST',
+        body: { cli },
+        timeoutMs: 120000,
       }),
     /** 生成五段复盘（后台任务，轮询 `control.job` 直到 ok / failed）。 */
     generateAi: (body: { date: string; force?: boolean }) =>
