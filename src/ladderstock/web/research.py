@@ -102,7 +102,9 @@ def code_exists(code: str) -> bool:
     bare, _, suffix = code.partition(".")
     if suffix:
         prefixes = A_SHARE_PREFIXES.get(suffix.upper())
-        return bool(prefixes) and bare.startswith(prefixes)
+        if prefixes is None:
+            return False
+        return bare.startswith(prefixes)
     return any(
         bare.startswith(prefix) for prefixes in A_SHARE_PREFIXES.values() for prefix in prefixes
     )
