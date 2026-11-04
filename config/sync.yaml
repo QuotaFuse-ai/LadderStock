@@ -76,6 +76,20 @@ sync:
     # `watermark_field: timestamp` 只表「取数时刻」，不是交易日水位（上游 TTL 60 秒，
     # 没有 `since` 入参，每次都整批替换）——口径同 `_b("spot_quote", ...)`。
     # `optional: true`：今天没有涨停池（休市/取数失败）时判 skipped 而不是 failed。
+    #
+    # 当日实时资金流（QUOT-371）：**一次批量调用取完整代码池**，不走逐只扇出。
+    # 与日线 `fund_flow` 双口径并存：这条给打榜「资金」分项的当日实时值，
+    # 日线那条留着做历史对比，两者不互相顶替（DEC-049）。
+    # 水位用 `timestamp`（取数时刻），盘中每轮整批替换；与 `spot_quote` 同一形状。
+    fund_flow_realtime:
+      primary: tickhub_fund_flow_batch
+      fallback: []
+      watermark_field: timestamp
+      mode: replace
+      codes: []
+      codes_from: limit_pool
+      optional: true
+
     concept_membership:
       primary: tickhub_concept_membership
       fallback: []

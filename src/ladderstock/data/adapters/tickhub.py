@@ -108,6 +108,9 @@ ROW_SHAPES: dict[str, RowShape] = {
     "industry_board": RowShape("items", require_code=False),
     "concept_board": RowShape("items", require_code=False),
     "fund_flow": RowShape("flows", passthrough=("code", "name")),
+    # 当日实时资金流（批量）：`stock_fund_flow_batch` 的 `data.flows` 是 {code: row}，
+    # `normalize_records` 已按 `tencent_quote_batch` 的先例把 Mapping 摊成行（QUOT-371）。
+    "fund_flow_realtime": RowShape("flows", passthrough=("code", "name")),
     "dragon_tiger_seats": RowShape("records", passthrough=("code",)),
     # R5 产业研究（QUOT-143）：三只逐股 + 一只板块资金流，形状均为实测（见
     # docs/specs/SPEC-INDUSTRY-METRICS.md §8 探针记录）。
@@ -177,13 +180,35 @@ def needs_code(dataset: str) -> bool:
     return dataset in CODE_POOL_DATASETS
 
 
+#: 一次调用就能取多只的数据集（工具入参是 `codes` 而不是 `code`），**不**逐只扇出。
+#: 目前只有当日实时资金流：`stock_fund_flow_batch` 一个请求覆盖 ≤150 只，
+#: 打榜池 150 只就是 1 次上游往返，而不是 150 次（QUOT-367 验收 #1 / QUOT-371）。
+BATCH_DATASETS: frozenset[str] = frozenset({"fund_flow_realtime"})
+
+
+def needs_codes_batch(dataset: str) -> bool:
+    """该数据集是否走「一次调用取多只」的批量路径。"""
+    return dataset in BATCH_DATASETS
+
+
 def tool_params(
-    dataset: str, *, code: str | None = None, since: str | None = None
+    dataset: str,
+    *,
+    code: str | None = None,
+    codes: Any = None,
+    since: str | None = None,
 ) -> dict[str, Any]:
-    """按工具拼真实入参：口径字段 + 单只代码 + 增量起点。"""
+    """按工具拼真实入参：口径字段 + 单只代码 / 批量代码 + 增量起点。
+
+    `codes` 是批量数据集（`BATCH_DATASETS`）的入参：`stock_fund_flow_batch` 收的是
+    逗号分隔字符串，传列表也能被接受，但**入参形态要跟工具一致**，所以这里统一拼串。
+    单只与批量互斥：同一请求里带上两者，peer 侧语义未定义，不做这种组合。
+    """
     params: dict[str, Any] = dict(FIXED_PARAMS.get(dataset, {}))
     if code:
         params["code"] = code
+    elif codes:
+        params["codes"] = codes if isinstance(codes, str) else ",".join(str(c) for c in codes)
     since_key = SINCE_PARAM.get(dataset)
     if since and since_key:
         params[since_key] = since
@@ -218,7 +243,17 @@ def from_tool_response(
     actual = tool or binding.tool
 
     if not response.get("ok", False):
-        raise classify_failure(actual, response)
+        meta_probe = response.get("meta") or {}
+        data_probe = response.get("data")
+        # 部分成功要能带数据过河：`stock_fund_flow_batch` 在某一批失败时会回
+        # `ok=false` + `meta.partial=true`，但 `data.flows` 里仍然有另一批的结果。
+        # 一律按整体失败抛，等于把取到的那半也丢了（QUOT-371 第 4 条）。
+        # 只在「明确标了 partial 且确实带回了记录」时放行，其余仍然抛，不吞真失败。
+        recoverable = meta_probe.get("partial") is True and isinstance(data_probe, dict) and any(
+            data_probe.get(key) for key in ("records", "flows", "items", "quotes")
+        )
+        if not recoverable:
+            raise classify_failure(actual, response)
 
     meta: dict[str, Any] = response.get("meta") or {}
     data = response.get("data")
@@ -230,6 +265,17 @@ def from_tool_response(
     upstream = str(meta.get("source") or "unknown")
     confidence = CONFIDENCE_MAP.get(str(meta.get("confidence") or "").upper(), "medium")
     freshness: Freshness = "cached" if meta.get("cache_hit") else "realtime"
+    partial = meta.get("partial") is True
+    failed_codes = meta.get("failed") or (data.get("failed") if isinstance(data, dict) else None)
+    partial_note = (
+        f"partial@{failed_codes}只未取到" if partial else ""
+    )
+    # 批量工具的「这一轮上游往返了几次」由工具自报（`data.batches` 成功 +
+    # `data.failures` 失败），是老板验收「一次刷新 ≤2 个请求」唯一的取数口。
+    # 不是所有工具都有这批键，没有就留 None，不猜（QUOT-371 / QUOT-374）。
+    batch_requests: int | None = None
+    if isinstance(data, dict) and ("batches" in data or "failures" in data):
+        batch_requests = len(data.get("batches") or []) + len(data.get("failures") or [])
 
     fetched_at = _parse_dt(meta.get("fetched_at"))
     # 数据属于哪天以 payload 自己说的为准：入参 > 对象顶层日期 > meta 声明的日期 >
@@ -248,13 +294,15 @@ def from_tool_response(
         topic=topic or binding.dataset,
         event_id=meta.get("trace_id"),
         data_as_of=as_of,
-        payload={"dataset": dataset, "tool": actual, "records": records},
+        payload={"dataset": dataset, "tool": actual, "records": records,
+                 "batch_requests": batch_requests},
         source="tickhub_cn",
-        source_detail=f"{actual}@{upstream}",
+        source_detail=f"{actual}@{upstream}{'/' + partial_note if partial_note else ''}",
         fetched_at=fetched_at,
         freshness=freshness,
         confidence=confidence,
-        source_status="ok",
+        # 部分成功要显式降级，不能标成 ok —— 否则池子会以为自己拿到了完整代码池。
+        source_status="degraded" if partial else "ok",
     )
 
 

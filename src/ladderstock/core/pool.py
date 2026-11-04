@@ -262,15 +262,28 @@ def _request_day(day: date | str) -> date | None:
 def fund_flow_snapshot(
     day: date | str, root: Any = None
 ) -> tuple[list[dict[str, Any]], str, date | None, bool]:
-    """资金取数顺序：**先当日分区，缺则回落到最近一个可用交易日**（QUOT-361 / QUOT-364 B-3）。
+    """资金取数顺序：**当日实时 → 当日日线分区 → 最近可用交易日**（QUOT-361 / 364 / 371）。
 
-    返回 `(records, backend, as_of, fell_back)`。日线主力净额是当日盘后才发布的，
-    「请求日没有分区」是常态而不是异常；只读请求日就等于在盘后早段把 `capital`
-    整列判空。`fell_back=True` 时输出侧必须把 `as_of` 写在明面上（`meta.fund_data_as_of`
+    返回 `(records, backend, as_of, fell_back)`。
+
+    第一顺位是 `fund_flow_realtime`（`stock_fund_flow_batch` 落的当日实时分区，
+    QUOT-371）：盘中就能拿到资金分项，不必等盘后发布；一个请求覆盖整个代码池，
+    不再按只 fan-out。它是当日快照，`as_of` 就是取数时刻那天，不是「上一个交易日」，
+    所以这条命中时 `fell_back=False`。
+
+    第二、三顺位是原来的日线路径：日线主力净额是当日盘后才发布的，「请求日没有分区」
+    是常态而不是异常；只读请求日就等于在盘后早段把 `capital` 整列判空。
+    `fell_back=True` 时输出侧必须把 `as_of` 写在明面上（`meta.fund_data_as_of`
     与 `source_detail`），不能让它冒充请求日的数。
     窗口外仍找不到就给空列表，走既有的「`capital=null` + 权重从分母剔除」，不补 0。
     """
     when = _request_day(day)
+    if when is not None:
+        realtime, rt_backend, rt_as_of = dataset_snapshot_as_of(
+            "fund_flow_realtime", when, root
+        )
+        if realtime:
+            return realtime, rt_backend, rt_as_of or when, False
     if when is None:
         records, backend, as_of = dataset_snapshot_as_of("fund_flow", day, root)
         return records, backend, as_of, False

@@ -233,6 +233,20 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 当日实时资金流（批量）。与上面的日线 `fund_flow` 是两个口径，不互相顶替：
+  # 日线用于历史对比，这条用于打榜「资金」分项的当日实时值（DEC-049）。
+  # 一个请求覆盖 ≤150 只，超出的由工具内部自动分批，所以 timeout 比逐只那条宽。
+  - id: tickhub_fund_flow_batch
+    dataset: fund_flow_realtime
+    via: tickhub
+    tool: stock_fund_flow_batch
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 60
+    weight: 1.0
+
   # ---------------- R5 产业研究：行业画像输入（QUOT-143） ----------------
   # 三只逐股取数（代码池见 sync.yaml 的 codes）+ 一只按日整批替换的板块资金流。
   # `board_fund_flow` 的上游 source 会在东财 BK 与新浪行业之间切换，口径由缓存里的
