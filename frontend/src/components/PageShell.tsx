@@ -50,7 +50,14 @@ export interface PageHeaderProps {
 export function PageHeader({ title, subtitle, actions, badge, meta, className }: PageHeaderProps) {
   return (
     <>
-      <header className={cn('flex min-h-topbar flex-wrap items-center justify-between gap-3', className)}>
+      {/* `page-shell-header`（styles/index.css，QUOT-397）：整条页头滚动时钉在主内容区顶部；
+          `-mx`/`px` 抵消 `.page-shell` 的横向留白，让底色与分隔线贴到主栏两边，标题仍与正文对齐。 */}
+      <header
+        className={cn(
+          'page-shell-header flex min-h-topbar flex-wrap items-center justify-between gap-3',
+          className,
+        )}
+      >
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-page font-semibold leading-tight text-text">{title}</h1>
           {badge}
@@ -63,6 +70,8 @@ export function PageHeader({ title, subtitle, actions, badge, meta, className }:
         </div>
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </header>
+      {/* 页签条留在页头（sticky 区）之外，滚走的是它、钉住的是品牌 + 标题 + 操作区：
+          滚动后钉子只占一行标题的高度，不把一整条胶囊页签常驻在视口里（QUOT-397）。 */}
       {/* 页签条挂在页头之后、正文第一张卡片之前：屏幕自己不写导航，位置由骨架件保证一致 */}
       <SectionNavPills />
     </>

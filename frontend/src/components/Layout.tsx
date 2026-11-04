@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import {
   BarChart3,
@@ -237,6 +237,17 @@ export default function Layout() {
   // `?ai=1` 是深链（截图与排障用）；首次渲染读取一次，不跟后续导航反复弹窗
   const [aiOpen, setAiOpen] = useState(() => new URLSearchParams(location.search).get('ai') === '1')
 
+  // 主内容区是滚动容器（QUOT-397），浏览器自带的窗口滚动复原管不到它：换页时手动归顶，
+  // 否则从长页跳到短页会停在空白处。页内 `#anchor` 跳转交给浏览器，这里不拦。
+  const scroller = useRef<HTMLDivElement>(null)
+  // 只滚新页面：`?tab=` / `?date=` 这类同路径的同页查询串变化不应把人拽回顶部
+  const pageKey = location.pathname
+  useEffect(() => {
+    if (location.hash || !scroller.current) return
+    // 用 scrollTop 而不是 `scrollTo`：jsdom 没实现后者（与 SearchPanel 取 scrollIntoView 同一原因）
+    scroller.current.scrollTop = 0
+  }, [pageKey, location.hash])
+
   const toggleGroup = (key: string) => {
     setExpanded((current) => {
       const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
@@ -401,9 +412,11 @@ export default function Layout() {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* 主内容区本身是滚动容器（QUOT-397）：窗口不滚，所以页头 `sticky top-0` 才钉得住；
+          同时把 `.page-shell` 的 1440px 上限与横向留白收在这一层，三屏外壳共用一套口径。 */}
+      <div ref={scroller} className="flex h-screen min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain">
         <PersistenceBanner />
-        <main id="main" tabIndex={-1} className="mx-auto w-full max-w-table flex-1 px-5 py-5 focus:outline-none">
+        <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
           {/* QUOT-200：每页顶部的「运行本页命令」条；没有对应命令或控制面未开启时整条不渲染 */}
           <PageCommandBar />
           <Outlet />
