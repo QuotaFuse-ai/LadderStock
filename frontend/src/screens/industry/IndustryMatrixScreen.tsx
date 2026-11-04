@@ -475,7 +475,7 @@ export default function IndustryMatrixScreen() {
         rowKey={(row) => row.name}
         caption={`${DIMENSION_TITLE[dimension]}维度矩阵（${formatInt(visible.length)} 个行业）；底色为当前列相对位置，仅用于比较`}
         density="default"
-        maxHeight="calc(100vh - 280px)"
+        maxHeight="var(--ldst-table-h)"
         onRowClick={(row) => navigate(industryHref(row.name, { demo, state: forced }))}
         empty={
           <EmptyState

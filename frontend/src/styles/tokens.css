@@ -119,6 +119,13 @@
   --ldst-z-toast: 60;
   --ldst-bp-base: 1280px; /** 设计基准宽度（1280 起设计） */
   --ldst-bp-min: 1024px; /** 1024–1279 为保底宽度：单栏、指标三列，允许内容下移但不横向溢出 */
+  --ldst-table-h-sm: 240px; /** 表体滚动高度固定档 sm（§7.3）：卡内小表（自选 / 持仓 Top 5 容量级） */
+  --ldst-table-h-md: 320px; /** 表体滚动高度固定档 md（§7.3） */
+  --ldst-table-h-lg: 360px; /** 表体滚动高度固定档 lg（§7.3） */
+  --ldst-table-h-xl: 420px; /** 表体滚动高度固定档 xl（§7.3）：Top 10 容量档 */
+  --ldst-table-h-desk: 280px; /** 视口档 desk:（≥1280）的 100vh 减数；280 只在本档成立，rail: 档被 L0 卡折行抬高（QUOT-336 实测） */
+  --ldst-table-h-rail: 360px; /** 视口档 rail:（1024–1279）保底减数：1024×900 实测表体上沿 341（L0 卡折 2×2 +75px），360 落在固定档刻度且 ≥341；硬项 = ≥12 完整行 + 0 横向溢出，允许内容下移 */
+  --ldst-table-h: calc(100vh - var(--ldst-table-h-rail)); /** 表体滚动高度消费变量（§7.3）：:root 取 rail: 档，≥1280 由下方 @media 切 desk: 档 */
   --ldst-sidebar-w: 232px; /** 一级导航固定宽度，不随滚动 */
   --ldst-topbar-h: 56px; /** 页面标题栏高度（含标题 / 状态摘要 / 主操作） */
   --ldst-content-max: 1080px; /** 阅读型内容最大宽，超出居中 */
@@ -143,6 +150,13 @@
   --ldst-z-toast: 60;
   --ldst-bp-base: 1280px; /** 设计基准宽度（1280 起设计） */
   --ldst-bp-min: 1024px; /** 1024–1279 为保底宽度：单栏、指标三列，允许内容下移但不横向溢出 */
+  --ldst-table-h-sm: 240px; /** 表体滚动高度固定档 sm（§7.3）：卡内小表（自选 / 持仓 Top 5 容量级） */
+  --ldst-table-h-md: 320px; /** 表体滚动高度固定档 md（§7.3） */
+  --ldst-table-h-lg: 360px; /** 表体滚动高度固定档 lg（§7.3） */
+  --ldst-table-h-xl: 420px; /** 表体滚动高度固定档 xl（§7.3）：Top 10 容量档 */
+  --ldst-table-h-desk: 280px; /** 视口档 desk:（≥1280）的 100vh 减数；280 只在本档成立，rail: 档被 L0 卡折行抬高（QUOT-336 实测） */
+  --ldst-table-h-rail: 360px; /** 视口档 rail:（1024–1279）保底减数：1024×900 实测表体上沿 341（L0 卡折 2×2 +75px），360 落在固定档刻度且 ≥341；硬项 = ≥12 完整行 + 0 横向溢出，允许内容下移 */
+  --ldst-table-h: calc(100vh - var(--ldst-table-h-rail)); /** 表体滚动高度消费变量（§7.3）：:root 取 rail: 档，≥1280 由下方 @media 切 desk: 档 */
   --ldst-duration-fast: 120ms; /** hover / focus / press / 展开 / 行高亮（UI-SPEC §7.3 过渡唯一档） */
   --ldst-duration-base: 180ms; /** 抽屉滑入、Toast 进出 */
   --ldst-ease: cubic-bezier(0.2, 0, 0, 1);
@@ -204,6 +218,15 @@
 /* 表格密度（localStorage['ldst.density']）：只改行高，不动其它令牌 */
 :root[data-ldst-density='compact'] { --ldst-row-h: 36px; }
 :root[data-ldst-density='comfortable'] { --ldst-row-h: 40px; }
+
+/* 表高视口档切换（§7.3，QUOT-342）：280 这个减数只在 desk: 档成立——
+   1024–1279 下 L0 快照卡 dl 折成 2×2（QUOT-336 实测表体上沿 341），
+   保底减数取固定档刻度上的 360。两档减数 --ldst-table-h-rail/desk 具名，
+   消费变量 --ldst-table-h 在这里换值，因此不需要新增断点档名（DEC-040）。
+   1280px 与 --ldst-bp-base / tailwind screens.desk 同源（@media 内不能用 var()）。 */
+@media (min-width: 1280px) {
+  :root { --ldst-table-h: calc(100vh - var(--ldst-table-h-desk)); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   :root {
