@@ -12,7 +12,7 @@
  * - 竞态（§8.3）：只接受最后一轮，`superseded` 的返回整体丢弃，旧结果不清空。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 
 import { sourceLabel } from '../../api/radar'
 import {
@@ -150,6 +150,15 @@ export function useHomeSearch(options: HomeSearchOptions = {}) {
 
   /** §6.2：面板内截断，组头计数用截断前的总数 */
   const rows = useMemo(() => groups.flatMap((group) => group.hits.slice(0, GROUP_ROW_LIMIT[group.id])), [groups])
+
+  /**
+   * 指针按下时入口还没拿到焦点，`useModalChrome` 记录的「关闭后回哪去」会退化成 body。
+   * 按下即开的同时先把焦点交给入口，Esc 关闭后焦点才回得来（键盘 Enter/Space 原生就会先聚焦）。
+   */
+  const openPanelFromPointer = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    event.currentTarget.focus({ preventScroll: true })
+    setOpen(true)
+  }, [])
 
   const openPanel = useCallback(() => setOpen(true), [])
 
@@ -413,5 +422,5 @@ export function useHomeSearch(options: HomeSearchOptions = {}) {
     [clearQuery, closePanel, moveActive, navigateTo, normalized.text, retry, selectHit, setQuery, submit],
   )
 
-  return { open, model, actions, openPanel }
+  return { open, model, actions, openPanel, openPanelFromPointer }
 }

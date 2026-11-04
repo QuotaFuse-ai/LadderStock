@@ -52,7 +52,7 @@ export function HomeSearch() {
     setParams(next, { replace: true })
   }, [hasDeepLink, params, setParams])
 
-  const { open, model, actions, openPanel } = useHomeSearch({
+  const { open, model, actions, openPanel, openPanelFromPointer } = useHomeSearch({
     initialQuery,
     onNavigate: (href) => navigate(href),
   })
@@ -66,7 +66,7 @@ export function HomeSearch() {
         </div>
         <p className="text-caption text-text-secondary">查数据、找证据、梳理思路</p>
 
-        <HomeSearchTrigger expanded={open} panelId={PANEL_ID} onOpen={openPanel} />
+        <HomeSearchTrigger expanded={open} panelId={PANEL_ID} onOpen={openPanel} onPointerOpen={openPanelFromPointer} />
 
         <ul className="flex flex-col gap-1">
           {GUIDE_ROWS.map((row) => (
