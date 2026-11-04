@@ -134,3 +134,25 @@ def test_compute_reads_limit_pool_dataset(monkeypatch) -> None:
     assert seen["day"] == DAY
     assert result["available"] is True
     assert result["source_detail"] == "limit_pool: duckdb（1 条）"
+
+
+def test_eastmoney_shape_streak_wins_over_limit_up_days() -> None:
+    """真实东财行：`streak`=`lbc` 是连板数，`limit_up_days`=`zttj.days` 是统计窗口天数。
+
+    旧优先级先取到 `limit_up_days`，样本 `streak` 会虚高（DEC-046 / QUOT-290 实测 002086 3→9）。
+    """
+    result = _payload(
+        [
+            {
+                "code": "002086",
+                "name": "东方海洋",
+                "streak": 3,
+                "limit_up_days": 9,
+                "limit_up_count": 3,
+                "trade_date": "2026-10-30",
+            }
+        ]
+    )
+
+    assert result["count"] == 1
+    assert result["rows"][0]["streak"] == 3

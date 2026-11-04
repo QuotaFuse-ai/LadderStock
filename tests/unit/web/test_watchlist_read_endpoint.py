@@ -200,6 +200,19 @@ def test_empty_watchlist_is_200_not_404(tmp_path: Path) -> None:
 
 
 def test_prices_come_from_spot_quote_and_are_not_rescaled(tmp_path: Path) -> None:
+    """上游报什么就回什么：价格 / 涨跌幅 / 昨收 / 时间戳逐字取原值，不换算、不改精度。
+
+    期望值**从 fixture 本身读**，不钉死某一版行情数字——`tencent_quote_batch.json`
+    会随真实整包换代（QUOT-290 已从拼装样本换成 2026-11-04 盘中 124 行真实整包），
+    钉死数字的写法会让「换 fixture」必然打翻一条与口径无关的用例。
+    """
+    #: `_quote_data` 复制 fixture 里第一条报价、只改 `code` / `name`，期望值同源
+    captured = json.loads(FIXTURE.read_text(encoding="utf-8"))["data"]["quotes"]
+    template = captured[next(iter(captured))]
+    stamp = str(template["timestamp"])  # YYYYMMDDHHMMSS
+    hhmmss = f"{stamp[8:10]}:{stamp[10:12]}:{stamp[12:14]}"
+    expected_as_of = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}T{hhmmss}"
+
     _seed_watchlist(tmp_path, PRICED)
     body = _client(tmp_path).get("/api/watchlist").json()
 
@@ -209,10 +222,11 @@ def test_prices_come_from_spot_quote_and_are_not_rescaled(tmp_path: Path) -> Non
     for item in body["items"]:
         assert item["available"] is True
         assert item["price_status"] == "ok"
-        assert item["latest_price"] == pytest.approx(7.92)  # fixture 原值，不换算
-        assert item["change_pct"] == pytest.approx(-3.77)
-        assert item["prev_close"] == pytest.approx(8.23)
-        assert item["price_as_of"] == "2026-10-30T10:00:03"
+        # fixture 原值，不换算
+        assert item["latest_price"] == pytest.approx(float(template["price"]))
+        assert item["change_pct"] == pytest.approx(float(template["change_pct"]))
+        assert item["prev_close"] == pytest.approx(float(template["prev_close"]))
+        assert item["price_as_of"] == expected_as_of
         assert item["added_at"]
 
 
