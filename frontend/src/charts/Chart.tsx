@@ -26,6 +26,11 @@ export interface LineChartProps {
   band?: { lower: number; upper: number }
   threshold?: { value: number; label?: string }
   unit?: string
+  /**
+   * y 轴量程：缺省是 CH-01 情绪温度的历史口径（0 起、上限 ≥60），
+   * 传 `'auto'` 交给 uPlot 自适应（个股收盘价等非 0 起的数据用，QUOT-400）。
+   */
+  yScale?: 'auto'
   /** 画布本身不可读：调用方必须给一句文字结论（§9 图表要有等价文本） */
   ariaLabel?: string
   className?: string
@@ -39,6 +44,7 @@ export function LineChart({
   band,
   threshold,
   unit = '',
+  yScale,
   ariaLabel,
   className,
 }: LineChartProps) {
@@ -91,7 +97,12 @@ export function LineChart({
       padding: [8, 8, 0, 0],
       legend: { show: false },
       cursor: { drag: { x: false, y: false }, points: { show: false } },
-      scales: { x: { time: false }, y: { range: (_u, min, max) => [Math.min(0, min - 2), Math.max(60, max + 2)] } },
+      scales: {
+        x: { time: false },
+        ...(yScale === 'auto'
+          ? {}
+          : { y: { range: (_u, min, max) => [Math.min(0, min - 2), Math.max(60, max + 2)] } }),
+      },
       axes: [
         {
           stroke: palette.axis,
@@ -123,7 +134,7 @@ export function LineChart({
       chart.destroy()
     }
     // pointsKey 覆盖 points 内容；theme 变化时必须重读 CSS 变量重绘
-  }, [pointsKey, height, band?.lower, band?.upper, threshold?.value, threshold?.label, unit, theme]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pointsKey, height, band?.lower, band?.upper, threshold?.value, threshold?.label, unit, yScale, theme]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div

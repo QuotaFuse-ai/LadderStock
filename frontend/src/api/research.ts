@@ -9,10 +9,13 @@
  * `docs/specs/SPEC-RESEARCH-PAGES.md` §2，与 MCP `research_status` 的载荷同形）：
  *
  *   GET  /api/research/{code}?date=YYYY-MM-DD   六段状态 + 各段产物（JSON + Markdown）
+ *   GET  /api/research/{code}/overview          概览：K 线 + 快照 + 财务指标（QUOT-400）
  *   POST /api/research/{code}/run               { date, only } → { job_id, status }
  *   GET  /api/research/jobs/{job_id}            任务进度（1s 轮询，复用设置页模式）
  *
- * 接口尚未合入时后端回 404：界面显示「研究接口未接入」并保留重试，
+ * 404 有三种语义（QUOT-400，后端用 `detail` 文案区分，见 `classify404`）：
+ * 路由没接（FastAPI 默认 Not Found）→「接口未接入」；「还没有任何研究记录」/
+ * 「没有研究产物」→ 业务空态「这只还没跑过研究」；「未知证券代码」→ 代码不存在。
  * **不伪造数据**；`?demo=1` 的演示源是显式开关，且页面带水印。
  */
 
@@ -141,6 +144,8 @@ export interface ResearchRunHandle {
 /** 页面的取数通道：测试与演示可注入，真实通道只有 HTTP。 */
 export interface ResearchSource {
   status: (code: string, date: string, signal?: AbortSignal) => Promise<ResearchStatus>
+  /** 概览（QUOT-400）：K 线 + 快照 + 财务指标，不依赖六段产物 */
+  overview: (code: string, signal?: AbortSignal) => Promise<ResearchOverview>
   run: (code: string, date: string, only: ResearchStageName) => Promise<ResearchRunHandle>
   job: (jobId: string, signal?: AbortSignal) => Promise<ResearchJob>
 }
@@ -357,6 +362,140 @@ export function parseResearchJob(payload: unknown): ResearchJob {
   }
 }
 
+// ---------------------------------------------------------------- 概览（QUOT-400）
+
+export interface KlineBar {
+  date: string
+  open: number | null
+  high: number | null
+  low: number | null
+  close: number | null
+  volume: number | null
+}
+
+export interface OverviewQuote {
+  name?: string | null
+  price: number | null
+  prev_close: number | null
+  change_pct: number | null
+  volume: number | null
+  amount: number | null
+  timestamp: string | null
+}
+
+export interface OverviewFinancials {
+  report_name: string | null
+  report_date: string | null
+  eps: number | null
+  revenue: number | null
+  net_profit: number | null
+  roe: number | null
+  revenue_yoy: number | null
+  profit_yoy: number | null
+}
+
+export interface ResearchOverview {
+  code: string
+  name: string | null
+  as_of: string | null
+  /** `ok`（K 线有根）| `missing`（K 线一根都没有）；quote/financials 的有无看字段是否为 null */
+  dataSourceStatus: 'ok' | 'missing'
+  kline: { bars: KlineBar[]; count: number; requested: number; reason: string | null }
+  quote: { quote: OverviewQuote | null; reason: string | null }
+  financials: { financials: OverviewFinancials | null; reason: string | null }
+}
+
+function asNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function parseKlineBar(value: unknown): KlineBar | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const date = asString(record.date)
+  if (!date) return null
+  return {
+    date,
+    open: asNumberOrNull(record.open),
+    high: asNumberOrNull(record.high),
+    low: asNumberOrNull(record.low),
+    close: asNumberOrNull(record.close),
+    volume: asNumberOrNull(record.volume),
+  }
+}
+
+/**
+ * 解析 `GET /api/research/{code}/overview` 的四段信封
+ * （`payload / data_source_status / data_as_of / meta`，与 data 面同款）。
+ *
+ * 兼容直接下钻：根上没有 `payload` 时按平铺处理。缺键不猜：quote / financials
+ * 没提供就如实标 null + reason，页面据此出缺数态。
+ */
+export function parseResearchOverview(payload: unknown, expectedCode?: string): ResearchOverview {
+  let root = asRecord(payload, '概览响应')
+  if (root.payload && typeof root.payload === 'object' && !Array.isArray(root.payload)) {
+    root = root.payload as Record<string, unknown>
+  }
+
+  const code = asString(root.code) ?? expectedCode ?? ''
+  const klineRaw =
+    root.kline && typeof root.kline === 'object' && !Array.isArray(root.kline)
+      ? (root.kline as Record<string, unknown>)
+      : {}
+  const bars = Array.isArray(klineRaw.bars)
+    ? klineRaw.bars.map(parseKlineBar).filter((bar): bar is KlineBar => bar !== null)
+    : []
+
+  const quoteBlock =
+    root.quote && typeof root.quote === 'object' && !Array.isArray(root.quote)
+      ? (root.quote as Record<string, unknown>)
+      : null
+  const quote: OverviewQuote | null = quoteBlock
+    ? {
+        name: asString(quoteBlock.name),
+        price: asNumberOrNull(quoteBlock.price),
+        prev_close: asNumberOrNull(quoteBlock.prev_close),
+        change_pct: asNumberOrNull(quoteBlock.change_pct),
+        volume: asNumberOrNull(quoteBlock.volume),
+        amount: asNumberOrNull(quoteBlock.amount),
+        timestamp: asString(quoteBlock.timestamp),
+      }
+    : null
+
+  const finBlock =
+    root.financials && typeof root.financials === 'object' && !Array.isArray(root.financials)
+      ? (root.financials as Record<string, unknown>)
+      : null
+  const financials: OverviewFinancials | null = finBlock
+    ? {
+        report_name: asString(finBlock.report_name),
+        report_date: asString(finBlock.report_date),
+        eps: asNumberOrNull(finBlock.eps),
+        revenue: asNumberOrNull(finBlock.revenue),
+        net_profit: asNumberOrNull(finBlock.net_profit),
+        roe: asNumberOrNull(finBlock.roe),
+        revenue_yoy: asNumberOrNull(finBlock.revenue_yoy),
+        profit_yoy: asNumberOrNull(finBlock.profit_yoy),
+      }
+    : null
+
+  const status = root.data_source_status === 'missing' ? 'missing' : 'ok'
+  return {
+    code,
+    name: asString(root.name),
+    as_of: asString(root.as_of),
+    dataSourceStatus: status,
+    kline: {
+      bars,
+      count: bars.length,
+      requested: asNumberOrNull(klineRaw.requested) ?? 120,
+      reason: asString(klineRaw.reason),
+    },
+    quote: { quote, reason: asString(root.quote_reason) },
+    financials: { financials, reason: asString(root.financials_reason) },
+  }
+}
+
 // ---------------------------------------------------------------- 传输
 
 const TIMEOUT_MS = 12000
@@ -427,6 +566,14 @@ function statusPath(code: string, date: string): string {
 export const httpResearchSource: ResearchSource = {
   status: async (code, date, signal) =>
     parseResearchStatus(await request<unknown>(statusPath(code, date), { signal }), code),
+  overview: async (code, signal) =>
+    parseResearchOverview(
+      await request<unknown>(
+        `/api/research/${encodeURIComponent(code)}/overview`,
+        { signal, timeoutMs: 20000 },
+      ),
+      code,
+    ),
   run: (code, date, only) =>
     request<ResearchRunHandle>(`/api/research/${encodeURIComponent(code)}/run`, {
       method: 'POST',
@@ -459,12 +606,36 @@ export function describeResearchError(error: unknown): {
     if (error.kind === 'parse') {
       return { title: '研究响应解析失败', detail: error.message, code: 'E_PARSE' }
     }
-    if (error.status === 404) {
+    if (error.status === 503) {
       return {
-        title: '尚未生成研究产物',
+        title: '研究引擎不可用',
+        detail: error.detail ?? '读取研究状态失败（盘面不可读或服务异常）；稍后重试。',
+        code: 'HTTP 503',
+      }
+    }
+    if (error.status === 404) {
+      const kind = classify404(error)
+      if (kind === 'unknown-code') {
+        return {
+          title: '未知证券代码',
+          detail:
+            error.detail ??
+            '这个代码不是 A 股个股（沪市 60/68、深市 00/30、北交所 43/83/87/92 开头）。',
+          code: 'HTTP 404',
+        }
+      }
+      if (kind === 'no-record') {
+        return {
+          title: '这只还没跑过研究',
+          detail: error.detail ?? '先运行 `ldst research <code> --date <date>` 生成六段产物，再刷新本页。',
+          code: 'HTTP 404',
+        }
+      }
+      return {
+        title: '研究接口未接入',
         detail:
           error.detail ??
-          '该代码在所选日期没有 checkpoint。运行 `ldst research <code> --date <date>` 后再刷新。',
+          '后端尚未提供 /api/research/* 只读接口（HTTP 404 Not Found）；接口上线后本页会自动读取落盘产物。',
         code: 'HTTP 404',
       }
     }
@@ -481,9 +652,30 @@ export function describeResearchError(error: unknown): {
   }
 }
 
-/** 页面用于判断「接口没接」而不是「页面坏了」。 */
+/**
+ * QUOT-400：404 不再一律当「接口没接」——后端用 `detail` 文案区分三种语义：
+ *
+ * - `unknown-code`：detail 含「未知证券代码」→ 这个代码不可能是 A 股个股；
+ * - `no-record`：detail 含「还没有任何研究记录」/「没有研究产物」→ 业务空态，
+ *   这只还没跑过研究（先 `ldst research <code>`）；
+ * - `missing`：FastAPI 默认 `{"detail":"Not Found"}` 或无 detail → 路由本身没接，
+ *   才是「接口未接入」。
+ */
+export type Research404Kind = 'missing' | 'no-record' | 'unknown-code'
+
+const NO_RECORD_MARKERS = ['还没有任何研究记录', '没有研究产物'] as const
+
+export function classify404(error: unknown): Research404Kind | null {
+  if (!(error instanceof ApiError) || error.kind !== 'http' || error.status !== 404) return null
+  const detail = error.detail ?? ''
+  if (detail.includes('未知证券代码')) return 'unknown-code'
+  if (NO_RECORD_MARKERS.some((marker) => detail.includes(marker))) return 'no-record'
+  return 'missing'
+}
+
+/** 页面用于判断「接口没接」而不是「页面坏了」：只有路由本身没接（FastAPI 默认 404）才算。 */
 export function isResearchEndpointMissing(error: unknown): boolean {
-  return error instanceof ApiError && error.kind === 'http' && error.status === 404
+  return classify404(error) === 'missing'
 }
 
 export function stageArtifact(status: ResearchStatus, stage: ResearchStageName): StageArtifact | null {

@@ -322,6 +322,46 @@ def test_status_404_when_code_has_no_record_and_no_date(tmp_path: Path) -> None:
     assert _client(tmp_path).get(f"/api/research/{CODE}").status_code == 404
 
 
+# --------------------------------------------------------------------------- #
+# 2b. QUOT-400：404 的三种语义 + 研究引擎不可用（503）
+# --------------------------------------------------------------------------- #
+
+def test_unknown_code_is_404_with_unknown_code_wording(tmp_path: Path) -> None:
+    """「代码不存在」态：格式合法但前缀不可能是 A 股 → 404 + 未知代码文案（不是空态文案）。"""
+    response = _client(tmp_path).get("/api/research/999999")
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert "未知证券代码" in detail and "999999" in detail
+    assert "还没有任何研究记录" not in detail
+
+
+def test_known_code_without_records_is_404_with_empty_record_wording(tmp_path: Path) -> None:
+    """「从未研究过」态：合法 A 股代码、没有任何记录 → 404 + 空态文案（不是未知代码）。"""
+    response = _client(tmp_path).get(f"/api/research/{CODE}")
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert "还没有任何研究记录" in detail
+    assert "未知证券代码" not in detail
+
+
+def test_unreadable_state_is_503_engine_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """「引擎不可用」态：盘面读不动（OSError）→ 503，不是 404 空态也不是 500。"""
+
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise OSError("盘面不可读")
+
+    monkeypatch.setattr(checkpoint, "latest_day", boom)
+
+    response = _client(tmp_path).get(f"/api/research/{CODE}")
+
+    assert response.status_code == 503
+    assert "研究引擎不可用" in response.json()["detail"]
+
+
 def test_run_404_when_research_absent(tmp_path: Path) -> None:
     run = FakeRun()
     client = _client(tmp_path, run)

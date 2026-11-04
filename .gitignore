@@ -1,5 +1,6 @@
 # 运行与构建产物
 .venv/
+.venv-tmp/
 __pycache__/
 *.py[cod]
 *.egg-info/

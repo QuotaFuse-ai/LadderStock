@@ -13,6 +13,19 @@ import ResearchReportScreen from '../src/screens/research/ResearchReportScreen'
 import SignalsScreen from '../src/screens/signals/SignalsScreen'
 
 /**
+ * uPlot 画在 `<canvas>` 上，jsdom 没有 2D 上下文（同 market-demo.test 的先例）：
+ * 概览 tab（QUOT-400）起 ResearchDetailScreen 间接加载 charts，换成记录入参的替身。
+ */
+vi.mock('../src/charts/Chart', () => ({
+  LineChart: ({ points, ariaLabel }: { points?: unknown[]; ariaLabel?: string }) => (
+    <div data-testid="line-chart" data-points={points?.length ?? 0} aria-label={ariaLabel} />
+  ),
+  BarChart: ({ points, ariaLabel }: { points?: unknown[]; ariaLabel?: string }) => (
+    <div data-testid="bar-chart" data-points={points?.length ?? 0} aria-label={ariaLabel} />
+  ),
+}))
+
+/**
  * QUOT-319-B 屏侧两件事：
  * 1. B 族缺数不冒充真数（§8）：payload 没取到时，副标题写 `—`，不写 `0` / `0 只` / `0 个行业` / `0.0%`。
  * 2. `data_source_status` 上屏（§5.2 / §5.3）：radar 四屏 + research 两屏各一枚独立徽标，与水印并排不合并。
