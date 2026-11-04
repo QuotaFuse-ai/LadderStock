@@ -485,6 +485,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       turnover_rate: 12.0,
       height: 5,
       net_inflow: 30_000_000,
+      main_net_pct: 12.6,
       theme_tags: ['机器人'],
       theme_board_change_pct: 8.0,
     },
@@ -500,6 +501,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       turnover_rate: 16.0,
       height: 4,
       net_inflow: 26_000_000,
+      main_net_pct: 10.2,
       theme_tags: ['锂电'],
       theme_board_change_pct: -1.2,
     },
@@ -515,6 +517,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       turnover_rate: null,
       height: 3,
       net_inflow: 12_000_000,
+      main_net_pct: 6.4,
       theme_tags: ['机器人'],
       theme_board_change_pct: 8.0,
     },
@@ -530,6 +533,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       turnover_rate: 8.0,
       height: 2,
       net_inflow: 8_000_000,
+      main_net_pct: 3.1,
       theme_tags: ['消费电子'],
       theme_board_change_pct: 3.1,
     },
@@ -545,6 +549,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       turnover_rate: 4.0,
       height: 1,
       net_inflow: 5_000_000,
+      main_net_pct: 1.8,
       theme_tags: ['环保'],
       theme_board_change_pct: 2.4,
     },
@@ -574,6 +579,8 @@ export function demoPool(variant: DemoVariant, query: { date?: string } = {}): C
       missing: ['limit_pool'],
       data_source_status: 'missing',
       data_as_of: date,
+      fund_freshness: 'none',
+      fund_fetched_at: null,
     }
   }
   if (variant === 'empty') {
@@ -597,6 +604,8 @@ export function demoPool(variant: DemoVariant, query: { date?: string } = {}): C
       missing: ['limit_pool'],
       data_source_status: 'missing',
       data_as_of: date,
+      fund_freshness: 'none',
+      fund_fetched_at: null,
     }
   }
   return {
@@ -619,6 +628,9 @@ export function demoPool(variant: DemoVariant, query: { date?: string } = {}): C
     missing: variant === 'partial' ? ['fund_flow'] : [],
     data_source_status: variant === 'partial' ? 'partial' : 'ok',
     data_as_of: DEMO_POOL_DATE,
+    // QUOT-372：演示「当日实时」态；partial 演示的是资金流缺失，如实 none + 无时点
+    fund_freshness: variant === 'partial' ? 'none' : 'realtime',
+    fund_fetched_at: variant === 'partial' ? null : '2026-10-30T10:32',
   }
 }
 
