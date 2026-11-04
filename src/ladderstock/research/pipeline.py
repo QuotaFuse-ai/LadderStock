@@ -27,8 +27,8 @@ from datetime import date
 from typing import Any
 
 from ladderstock.ai import fallback, tools
-from ladderstock.ai.error_taxonomy import AiFailure, classify_error
 from ladderstock.ai.cli_provider import build_chat_client
+from ladderstock.ai.error_taxonomy import AiFailure, classify_error
 from ladderstock.ai.orchestrator import ChatClient, supports_tools
 from ladderstock.core.boundary import (
     BoundaryViolation,

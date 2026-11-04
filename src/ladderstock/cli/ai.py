@@ -17,8 +17,8 @@ from typing import Annotated, Any
 import typer
 
 from ladderstock.ai import checkpoint, fallback
-from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.cli_provider import build_chat_client
+from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.cli.output import OutputOption, emit, error
 from ladderstock.core.boundary import BoundaryViolation
 from ladderstock.errors import (

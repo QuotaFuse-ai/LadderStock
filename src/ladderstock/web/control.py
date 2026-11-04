@@ -2515,9 +2515,10 @@ class ControlPlane:
         try:
             spec = cli_provider.cli_spec(cli_id)
         except KeyError:
+            known_ids = "、".join(s.id for s in cli_provider.CLI_SPECS)
             raise HTTPException(
                 status_code=400,
-                detail=f"未知的 CLI 通道：{cli_id!r}（可选：{'、'.join(s.id for s in cli_provider.CLI_SPECS)}）",
+                detail=f"未知的 CLI 通道：{cli_id!r}（可选：{known_ids}）",
             ) from None
         status = cli_provider.probe(spec)
         if status["state"] != "ok":
@@ -2588,9 +2589,10 @@ class ControlPlane:
             if "\n" in text or "\r" in text:
                 raise HTTPException(status_code=400, detail=f"{name} 不允许包含换行")
             if name == fallback.CLI_ENV and text.lower() not in known_cli:
+                allowed_ids = "/".join(sorted(known_cli))
                 raise HTTPException(
                     status_code=400,
-                    detail=f"{fallback.CLI_ENV} 只能是 {'/'.join(sorted(known_cli))}，收到 {text!r}",
+                    detail=f"{fallback.CLI_ENV} 只能是 {allowed_ids}，收到 {text!r}",
                 )
             if name.endswith("_URL"):
                 parsed = urllib.parse.urlsplit(text)

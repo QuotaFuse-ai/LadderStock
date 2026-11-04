@@ -38,6 +38,7 @@ HTTP 通道（`openai` / `anthropic`）要用户自己掏一个 API Key。很多
 Windows 上 `claude` 是 npm 的 `.cmd` 垫片，`CreateProcess` 不能直接执行，
 必须经 `cmd.exe /c`，否则报 `WinError 193`——这条在 `_wrap` 里统一处理。
 """
+
 from __future__ import annotations
 
 import os
@@ -333,7 +334,10 @@ def _registry_install_dirs() -> list[Path]:
     roots = (
         (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
         (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (
+            winreg.HKEY_LOCAL_MACHINE,
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
     )
     found: list[Path] = []
     for hive, sub in roots:
@@ -352,9 +356,13 @@ def _registry_install_dirs() -> list[Path]:
                 try:
                     with winreg.OpenKey(parent, name) as child:
                         display = str(winreg.QueryValueEx(child, "DisplayName")[0] or "")
-                        if "workbuddy" not in display.lower() and "codebuddy" not in display.lower():
+                        if (
+                            "workbuddy" not in display.lower()
+                            and "codebuddy" not in display.lower()
+                        ):
                             continue
-                        # DisplayIcon 形如 `D:\wk\WorkBuddy\WorkBuddy.exe,0`；InstallLocation 常是脏值
+                        # DisplayIcon 形如 `D:\wk\WorkBuddy\WorkBuddy.exe,0`；
+                        # InstallLocation 常是脏值，只有 DisplayIcon 可信。
                         icon = str(winreg.QueryValueEx(child, "DisplayIcon")[0] or "")
                 except OSError:
                     continue
@@ -372,8 +380,12 @@ def install_roots() -> tuple[Path, ...]:
     """可能装着「带 CLI 的桌面客户端」的目录。"""
     roots: list[Path] = list(_registry_install_dirs())
     fixed = [
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "WorkBuddy" if os.environ.get("LOCALAPPDATA") else None,
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "CodeBuddy" if os.environ.get("LOCALAPPDATA") else None,
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "WorkBuddy"
+        if os.environ.get("LOCALAPPDATA")
+        else None,
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "CodeBuddy"
+        if os.environ.get("LOCALAPPDATA")
+        else None,
         Path("C:/Program Files/WorkBuddy"),
         Path("C:/Program Files (x86)/WorkBuddy"),
     ]
@@ -450,9 +462,7 @@ def _command(spec: CliSpec, exe: str, args: list[str]) -> list[str] | None:
     return _wrap(exe, args)
 
 
-def _clean_env(
-    home: Path | None = None, extra: tuple[tuple[str, str], ...] = ()
-) -> dict[str, str]:
+def _clean_env(home: Path | None = None, extra: tuple[tuple[str, str], ...] = ()) -> dict[str, str]:
     """子进程环境：清掉 LadderStock 变量，并把 home 指向解析出的用户目录。"""
     env = {k: v for k, v in os.environ.items() if not k.startswith("LDST_")}
     env["NO_COLOR"] = "1"
@@ -549,7 +559,10 @@ def _probe_by_call(spec: CliSpec, exe: str, home: Path) -> dict[str, Any]:
 
     cmd = _command(spec, exe, spec.build_argv(""))
     if cmd is None:
-        result = {"state": "broken", "detail": f"缺少解释器 {spec.runner}，无法拉起 {Path(exe).name}"}
+        result = {
+            "state": "broken",
+            "detail": f"缺少解释器 {spec.runner}，无法拉起 {Path(exe).name}",
+        }
         _PROBE_CACHE[cache_key] = (time.monotonic(), result)
         return result
     try:
@@ -571,9 +584,10 @@ def _probe_by_call(spec: CliSpec, exe: str, home: Path) -> dict[str, Any]:
         elif proc.returncode == 0 and proc.stdout.strip():
             result = {"state": "ok", "detail": "可用：探针已跑通"}
         else:
+            reason = _friendly(_error_line(text)) or "没有输出"
             result = {
                 "state": "broken",
-                "detail": f"探针退出码 {proc.returncode}：{_friendly(_error_line(text)) or '没有输出'}",
+                "detail": f"探针退出码 {proc.returncode}：{reason}",
             }
     _PROBE_CACHE[cache_key] = (time.monotonic(), result)
     return result
@@ -606,7 +620,9 @@ def probe(spec: CliSpec) -> dict[str, Any]:
     if spec.version_args:
         cmd = _command(spec, exe, list(spec.version_args))
         if cmd is None:
-            base.update(state="broken", detail=f"缺少解释器 {spec.runner}，无法拉起 {Path(exe).name}")
+            base.update(
+                state="broken", detail=f"缺少解释器 {spec.runner}，无法拉起 {Path(exe).name}"
+            )
             return base
         try:
             proc = _run(
@@ -631,8 +647,12 @@ def probe(spec: CliSpec) -> dict[str, Any]:
         if cmd is not None:
             try:
                 proc = _run(
-                cmd, stdin_text=None, timeout=PROBE_TIMEOUT, home=home, extra_env=spec.env_overrides
-            )
+                    cmd,
+                    stdin_text=None,
+                    timeout=PROBE_TIMEOUT,
+                    home=home,
+                    extra_env=spec.env_overrides,
+                )
             except (OSError, subprocess.SubprocessError) as exc:
                 base.update(state="broken", detail=f"登录态检查失败：{exc}")
                 return base
@@ -640,7 +660,8 @@ def probe(spec: CliSpec) -> dict[str, Any]:
             if proc.returncode != 0 or _looks_like_no_login(text):
                 base.update(
                     state="no_login",
-                    detail=spec.login_hint or f"`{Path(exe).name} {' '.join(spec.verify_args)}` 说没登录",
+                    detail=spec.login_hint
+                    or f"`{Path(exe).name} {' '.join(spec.verify_args)}` 说没登录",
                 )
                 return base
             base.update(state="ok", detail=f"可用：{_first_line(proc.stdout) or '登录态正常'}")

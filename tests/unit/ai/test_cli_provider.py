@@ -36,7 +36,7 @@ def _write_fake_cli(
             ")\r\n"
             "setlocal enabledelayedexpansion\r\n"
             "set OUT=\r\n"
-            "for /f \"usebackq delims=\" %%L in (`more`) do set OUT=!OUT!%%L\r\n"
+            'for /f "usebackq delims=" %%L in (`more`) do set OUT=!OUT!%%L\r\n'
             f"{body}\r\n",
             encoding="utf-8",
         )
@@ -110,7 +110,17 @@ def test_broken_when_version_exits_nonzero(isolated: Path) -> None:
 
 def test_finds_cli_in_known_install_location(isolated: Path) -> None:
     """Codex 桌面版把 CLI 塞在 `%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<hash>`，从不写 PATH。"""
-    target = isolated / "home" / "AppData" / "Local" / "OpenAI" / "Codex" / "bin" / "abc123" / "codex.exe"
+    target = (
+        isolated
+        / "home"
+        / "AppData"
+        / "Local"
+        / "OpenAI"
+        / "Codex"
+        / "bin"
+        / "abc123"
+        / "codex.exe"
+    )
     target.parent.mkdir(parents=True)
     target.write_bytes(b"fake")
     found = cli_provider.find_executable(cli_provider.cli_spec("codex"))
@@ -169,7 +179,9 @@ def test_complete_raises_when_channel_unavailable(isolated: Path) -> None:
         provider.complete(target, "s", "u", json_mode=False, timeout=10)
 
 
-def test_env_selects_cli_backend_as_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_selects_cli_backend_as_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`ai.env` 里写了 LDST_LLM_CLI，就该它接管默认模型，HTTP 后端退到链尾。"""
     monkeypatch.delenv("LDST_LLM_CLI", raising=False)
     monkeypatch.delenv("LDST_LLM_MODEL", raising=False)
