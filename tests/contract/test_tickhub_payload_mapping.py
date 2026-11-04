@@ -123,8 +123,8 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
         "tencent_quote_batch.json",
         "spot_quote",
         "tencent_quote_batch",
-        3,
-        date(2026, 10, 30),
+        124,
+        date(2026, 11, 4),
         "high",
     ),
     # 逐只归属（QUOT-362）：`boards[]` 的 `code` 是东财板块码，必须让位给 `data.code`
