@@ -34,6 +34,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ladderstock.cli.paths import project_root
+from ladderstock.core.ladder import as_float, pick
+from ladderstock.core.privacy import strip_private
+from ladderstock.data import archive
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.research import artifacts, checkpoint
 from ladderstock.web import control as control_plane
@@ -45,6 +48,18 @@ RESEARCH_JOB_TIMEOUT_SEC = 1800.0
 
 #: `peer` 位在 `Job` 里只做日志标签（研究任务没有 peer，取本进程产品名）
 RESEARCH_JOB_LABEL = "ldst"
+
+#: 概览接口一次回放的日 K 根数（QUOT-400：最近 ≥120 个交易日；缓存不足时如实给现有的）
+OVERVIEW_BARS = 120
+
+#: 三种 404 / 一种 503 的固定文案（QUOT-400：前端按 `detail` 里的这些词区分语义，
+#: 改词必须同步 `frontend/src/api/research.ts` 的判据）
+EMPTY_RECORD_DETAIL = "{code} 还没有任何研究记录（先运行 ldst research {code}）"
+UNKNOWN_CODE_DETAIL = (
+    "{code} 是未知证券代码（A 股个股只支持沪市 60/68、深市 00/30、"
+    "北交所 43/83/87/92 开头的 6 位代码，可带 .SH/.SZ/.BJ 后缀）"
+)
+ENGINE_UNAVAILABLE_DETAIL = "研究引擎不可用：读取研究状态失败（{reason}）"
 
 #: 六段状态词表（与 `ai/checkpoint.STATUSES` 一致，SPEC §2.1 同形）
 STAGE_STATUSES = frozenset({"ok", "degraded", "failed", "pending"})
@@ -72,6 +87,43 @@ def parse_code(raw: Any) -> str:
         raise _invalid(str(exc)) from None
 
 
+#: A 股现货的交易所前缀（QUOT-400「代码不存在」态的判据）。
+#: 格式合法（6 位数字）但前缀不可能是一只 A 股个股（如 999999）→ 404「未知证券代码」，
+#: 与「格式对、但还没跑过研究」的业务空态区分开。判断只看前缀，**不查任何网络源**。
+A_SHARE_PREFIXES: dict[str, tuple[str, ...]] = {
+    "SH": ("600", "601", "603", "605", "688", "689"),
+    "SZ": ("000", "001", "002", "003", "300", "301"),
+    "BJ": ("43", "83", "87", "92"),
+}
+
+
+def code_exists(code: str) -> bool:
+    """格式合法的代码是否落在 A 股现货的前缀白名单内（纯静态判断，离线可判）。"""
+    bare, _, suffix = code.partition(".")
+    if suffix:
+        prefixes = A_SHARE_PREFIXES.get(suffix.upper())
+        return bool(prefixes) and bare.startswith(prefixes)
+    return any(
+        bare.startswith(prefix) for prefixes in A_SHARE_PREFIXES.values() for prefix in prefixes
+    )
+
+
+def require_known_code(code: str) -> None:
+    """「代码不存在」态：格式合法但前缀不可能是 A 股个股 → 404，与「没跑过研究」区分。"""
+    if not code_exists(code):
+        raise HTTPException(status_code=404, detail=UNKNOWN_CODE_DETAIL.format(code=code))
+
+
+def validate_day_text(text: str) -> str:
+    """`YYYY-MM-DD` 文本 → ISO 日期；不合式 / 不合法 → 422（`parse_day` 与概览共用）。"""
+    if not DAY_PATTERN.match(text):
+        raise _invalid(f"date 需要 YYYY-MM-DD，收到 {text!r}")
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        raise _invalid(f"date 不是合法日期：{text!r}") from None
+
+
 def parse_day(raw: Any, *, code: str, root: Path) -> str:
     """`date` → `YYYY-MM-DD`；缺省取该代码最近一次运行日，一次记录都没有则 404。"""
     if raw is None or (isinstance(raw, str) and not raw.strip()):
@@ -79,16 +131,11 @@ def parse_day(raw: Any, *, code: str, root: Path) -> str:
         if latest is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"{code} 还没有任何研究记录（先运行 ldst research {code}）",
+                detail=EMPTY_RECORD_DETAIL.format(code=code),
             )
         return latest
     text = str(raw).strip()
-    if not DAY_PATTERN.match(text):
-        raise _invalid(f"date 需要 YYYY-MM-DD，收到 {text!r}")
-    try:
-        return date.fromisoformat(text).isoformat()
-    except ValueError:
-        raise _invalid(f"date 不是合法日期：{text!r}") from None
+    return validate_day_text(text)
 
 
 def parse_stage(raw: Any) -> str:
@@ -163,6 +210,134 @@ class ResearchJob(control_plane.Job):
 
 
 # --------------------------------------------------------------------------- #
+# 概览：行级小工具（缓存行的键名沿用 industry/snapshot 的别名口径）
+# --------------------------------------------------------------------------- #
+
+TRADE_DATE_KEYS: tuple[str, ...] = ("trade_date", "date")
+OPEN_KEYS: tuple[str, ...] = ("open", "开盘")
+HIGH_KEYS: tuple[str, ...] = ("high", "最高")
+LOW_KEYS: tuple[str, ...] = ("low", "最低")
+CLOSE_KEYS: tuple[str, ...] = ("close", "收盘")
+VOLUME_KEYS: tuple[str, ...] = ("volume", "vol", "成交量")
+AMOUNT_KEYS: tuple[str, ...] = ("amount", "成交额")
+NAME_KEYS: tuple[str, ...] = ("name", "stock_name", "名称")
+TIMESTAMP_KEYS: tuple[str, ...] = ("timestamp",)
+PRICE_KEYS: tuple[str, ...] = ("price", "last", "现价")
+PREV_CLOSE_KEYS: tuple[str, ...] = ("prev_close", "昨收")
+CHANGE_PCT_KEYS: tuple[str, ...] = ("change_pct", "pct_chg", "涨跌幅")
+REPORT_NAME_KEYS: tuple[str, ...] = ("report_name",)
+EPS_KEYS: tuple[str, ...] = ("eps",)
+REVENUE_KEYS: tuple[str, ...] = ("revenue",)
+NET_PROFIT_KEYS: tuple[str, ...] = ("net_profit",)
+ROE_KEYS: tuple[str, ...] = ("roe", "roe_weighted")
+REVENUE_YOY_KEYS: tuple[str, ...] = ("revenue_yoy", "revenue_growth_yoy")
+PROFIT_YOY_KEYS: tuple[str, ...] = ("profit_yoy", "net_profit_yoy")
+
+#: 概览 quote 块的字段 → 缓存行里的别名键（只投影，不换算单位）
+QUOTE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("name", NAME_KEYS),
+    ("price", PRICE_KEYS),
+    ("prev_close", PREV_CLOSE_KEYS),
+    ("change_pct", CHANGE_PCT_KEYS),
+    ("volume", VOLUME_KEYS),
+    ("amount", AMOUNT_KEYS),
+    ("timestamp", TIMESTAMP_KEYS),
+)
+FINANCIAL_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("report_name", REPORT_NAME_KEYS),
+    ("eps", EPS_KEYS),
+    ("revenue", REVENUE_KEYS),
+    ("net_profit", NET_PROFIT_KEYS),
+    ("roe", ROE_KEYS),
+    ("revenue_yoy", REVENUE_YOY_KEYS),
+    ("profit_yoy", PROFIT_YOY_KEYS),
+)
+
+NO_QUOTE_CACHE = "本地 spot_quote 缓存里没有这只代码的快照（未同步或非盘中时段），不编价"
+NO_FINANCE_CACHE = (
+    "本地 finance_indicators 无缓存，"
+    "需先 `ldst sync --dataset finance_indicators --codes <代码>`，不估算"
+)
+
+
+def _row_code(row: dict[str, Any]) -> str:
+    return str(pick(row, ("code",)) or "").strip()
+
+
+def _row_day(row: dict[str, Any]) -> str:
+    return str(pick(row, TRADE_DATE_KEYS) or "")[:10]
+
+
+def _row_number(row: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    return as_float(pick(row, keys))
+
+
+def _latest_day_of(rows: list[dict[str, Any]]) -> str | None:
+    days = sorted({_row_day(row) for row in rows if _row_day(row)})
+    return days[-1] if days else None
+
+
+def _kline_bars(rows: list[dict[str, Any]], as_of: str | None) -> list[dict[str, Any]]:
+    """该代码的日线序列（升序，最近 `OVERVIEW_BARS` 根）：date/open/high/low/close/volume。
+
+    原值投影：数值读不出来就 `null`，不做单位换算、不插值、不补点。
+    """
+    picked: list[tuple[str, dict[str, Any]]] = []
+    for row in rows:
+        day = _row_day(row)
+        if not day:
+            continue
+        if as_of is not None and day > as_of:
+            continue
+        picked.append((day, row))
+    picked.sort(key=lambda item: item[0])
+    bars: list[dict[str, Any]] = []
+    for day, row in picked[-OVERVIEW_BARS:]:
+        bars.append(
+            {
+                "date": day,
+                "open": _row_number(row, OPEN_KEYS),
+                "high": _row_number(row, HIGH_KEYS),
+                "low": _row_number(row, LOW_KEYS),
+                "close": _row_number(row, CLOSE_KEYS),
+                "volume": _row_number(row, VOLUME_KEYS),
+            }
+        )
+    return bars
+
+
+def _latest_row(rows: list[dict[str, Any]], bare: str, key: str) -> dict[str, Any] | None:
+    """同代码多行取最新一条：quote 按 `timestamp`，财务按 `trade_date`。"""
+    mine = [row for row in rows if _row_code(row) == bare]
+    if not mine:
+        return None
+    return sorted(mine, key=lambda row: str(pick(row, (key,)) or ""))[-1]
+
+
+def _latest_quote(
+    rows: list[dict[str, Any]], bare: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    row = _latest_row(rows, bare, "timestamp")
+    if row is None:
+        return None, NO_QUOTE_CACHE
+    quote = {name: pick(row, keys) for name, keys in QUOTE_FIELDS}
+    return quote, None
+
+
+def _latest_financials(
+    rows: list[dict[str, Any]], bare: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    row = _latest_row(rows, bare, "trade_date")
+    if row is None:
+        return None, NO_FINANCE_CACHE
+    financials: dict[str, Any] = {
+        "report_date": _row_day(row),
+        **{name: pick(row, keys) for name, keys in FINANCIAL_FIELDS},
+    }
+    return financials, None
+
+
+# --------------------------------------------------------------------------- #
 # 研究面
 # --------------------------------------------------------------------------- #
 
@@ -195,10 +370,19 @@ class ResearchPlane:
         状态取 checkpoint，产物取 `artifacts`；两者都查不到 → 404「研究不存在」。
         checkpoint 在但六段没跑齐 → 200 + `available=true / complete=false` + `reason`
         点名缺哪几段（与 MCP `research_status` 同一口径）。
+
+        QUOT-400 的三态语义：未知代码 → 404「未知证券代码」；没跑过研究 →
+        404「还没有任何研究记录」；盘面读不动（OSError）→ 503「研究引擎不可用」。
         """
         code = parse_code(raw_code)
-        day = parse_day(raw_day, code=code, root=self.data_root)
-        summary = self._require_research(code, day)
+        require_known_code(code)
+        try:
+            day = parse_day(raw_day, code=code, root=self.data_root)
+            summary = self._require_research(code, day)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=503, detail=ENGINE_UNAVAILABLE_DETAIL.format(reason=exc)
+            ) from None
         return self._status_payload(code, day, summary)
 
     def _require_research(self, code: str, day: str) -> Mapping[str, Any]:
@@ -278,6 +462,86 @@ class ResearchPlane:
             "source_status": source_status,
             "reason": None if complete else _reason(missing),
             "data_source_status": "ok" if complete else "partial",
+        }
+
+    # ---------------------------------------------------------------- 概览
+
+    def overview(self, raw_code: Any, raw_day: Any = None) -> dict[str, Any]:
+        """`GET /api/research/{code}/overview` 的载荷（QUOT-400，四段信封）。
+
+        概览**不依赖六段产物**：没跑过研究也必须能出数——K 线 / 快照 / 财务指标
+        只读本机缓存（`archive`，Parquet → DuckDB 同一条回放路），读不到的块
+        显式 `null` + reason，不补 0、不联网、不编造。
+
+        信封照 data 面同款四段：`payload / data_source_status / data_as_of / meta`。
+        `data_source_status` 只看主指标（K 线）：有根 → `ok`，一根都没有 → `missing`；
+        quote / financials 的有无在 `payload` 里用 `null` + reason 说明。
+        """
+        code = parse_code(raw_code)
+        require_known_code(code)
+        bare = code.partition(".")[0]
+        try:
+            kline_rows = archive.read_dataset("daily_k", None, root=self.data_root)
+            quote_rows = archive.read_dataset("spot_quote", None, root=self.data_root)
+            finance_rows = archive.read_dataset("finance_indicators", None, root=self.data_root)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"概览数据读取失败：{exc}"
+            ) from None
+
+        mine = [row for row in kline_rows if _row_code(row) == bare]
+        as_of = (
+            validate_day_text(str(raw_day).strip())
+            if raw_day is not None and str(raw_day).strip()
+            else _latest_day_of(mine)
+        )
+        bars = _kline_bars(mine, as_of)
+
+        if as_of is not None and not bars:
+            kline_reason = f"本地 daily_k 缓存在 {as_of} 及之前没有 {bare} 的行（未同步或已停牌）"
+        elif as_of is None:
+            kline_reason = (
+                "本地 daily_k 缓存里没有这只代码的行，"
+                "需先 `ldst sync --dataset daily_k --codes <代码>`"
+            )
+        elif len(bars) < OVERVIEW_BARS:
+            kline_reason = (
+                f"本地缓存只有 {len(bars)} 个交易日（不足 {OVERVIEW_BARS} 个），如实回放、不补点"
+            )
+        else:
+            kline_reason = None
+
+        quote, quote_reason = _latest_quote(quote_rows, bare)
+        financials, financials_reason = _latest_financials(finance_rows, bare)
+        name = quote.get("name") if quote else None
+        available = bool(bars)
+        status = "ok" if available else "missing"
+        payload: dict[str, Any] = {
+            "code": code,
+            "name": name,
+            "as_of": as_of,
+            "quote": quote,
+            "quote_reason": quote_reason,
+            "kline": {
+                "bars": bars,
+                "count": len(bars),
+                "requested": OVERVIEW_BARS,
+                "reason": kline_reason,
+            },
+            "financials": financials,
+            "financials_reason": financials_reason,
+            "data_source_status": status,
+        }
+        return {
+            "payload": strip_private(payload),
+            "data_source_status": status,
+            "data_as_of": as_of,
+            "meta": {
+                "topic": "research_overview",
+                "source": "ladderstock",
+                "freshness": "cached",
+                "fetched_at": _now_iso(),
+            },
         }
 
     # ---------------------------------------------------------------- 续跑
@@ -461,6 +725,14 @@ def build_router(plane: ResearchPlane) -> APIRouter:
     ) -> dict[str, Any]:
         return plane.status(code, date_str)
 
+    @router.get("/{code}/overview")
+    def research_overview(
+        code: str,
+        date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
+    ) -> dict[str, Any]:
+        """概览（QUOT-400）：K 线 + 快照 + 财务指标，只读缓存，不依赖六段产物。"""
+        return plane.overview(code, date_str)
+
     @router.post("/{code}/run")
     def research_run(code: str, body: ResearchRunRequest | None = None) -> dict[str, Any]:
         """单段续跑：等价 `ldst research <code> --date <date> --only <stage>`。"""
@@ -474,15 +746,22 @@ def build_router(plane: ResearchPlane) -> APIRouter:
 
 
 __all__ = [
+    "A_SHARE_PREFIXES",
     "DAY_PATTERN",
+    "ENGINE_UNAVAILABLE_DETAIL",
+    "EMPTY_RECORD_DETAIL",
     "JOB_STATUSES",
+    "OVERVIEW_BARS",
     "RESEARCH_JOB_TIMEOUT_SEC",
     "RESEARCH_PREFIX",
     "ResearchJob",
     "ResearchPlane",
     "STAGE_STATUSES",
+    "UNKNOWN_CODE_DETAIL",
     "build_router",
+    "code_exists",
     "parse_code",
     "parse_day",
     "parse_stage",
+    "require_known_code",
 ]

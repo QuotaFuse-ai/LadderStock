@@ -16,9 +16,11 @@ import {
 import {
   RESEARCH_STAGES,
   STAGE_TITLE,
+  type KlineBar,
   type ProvenanceSlot,
   type ProvenanceSource,
   type ResearchJob,
+  type ResearchOverview,
   type ResearchRunHandle,
   type ResearchSource,
   type ResearchStage,
@@ -511,6 +513,57 @@ export function createDemoValuationLoader(): (
 }
 
 /**
+ * 概览演示数据（QUOT-400）：120 根确定性 K 线 + 快照 + 一期财报。
+ * 只在 `?demo=1` 时使用；真实通道绝不回落到这里。
+ */
+function demoResearchOverview(code: string): ResearchOverview {
+  const bars: KlineBar[] = Array.from({ length: 120 }, (_, index) => {
+    const close = 10 + Math.sin(index / 9) * 1.5 + index * 0.02
+    const day = new Date(2026, 4, 11 + index)
+    return {
+      date: day.toISOString().slice(0, 10),
+      open: Number((close - 0.08).toFixed(2)),
+      high: Number((close + 0.15).toFixed(2)),
+      low: Number((close - 0.2).toFixed(2)),
+      close: Number(close.toFixed(2)),
+      volume: 600000 + index * 1500,
+    }
+  })
+  return {
+    code,
+    name: DEMO_NAME,
+    as_of: bars[bars.length - 1].date,
+    dataSourceStatus: 'ok',
+    kline: { bars, count: bars.length, requested: 120, reason: null },
+    quote: {
+      quote: {
+        name: DEMO_NAME,
+        price: 12.34,
+        prev_close: 11.98,
+        change_pct: 3.0,
+        volume: 781231,
+        amount: 77566,
+        timestamp: '20261031150003',
+      },
+      reason: null,
+    },
+    financials: {
+      financials: {
+        report_name: '2026三季报',
+        report_date: '2026-09-30',
+        eps: 1.49,
+        revenue: 86940000000,
+        net_profit: 37852000000,
+        roe: 3.37,
+        revenue_yoy: 5.34,
+        profit_yoy: 2.38,
+      },
+      reason: null,
+    },
+  }
+}
+
+/**
  * 演示源：状态可重载、重试任务两次轮询后成功（方便截图与测试）。
  * 只在 `?demo=1` 时使用。
  */
@@ -523,6 +576,7 @@ export function createDemoResearchSource(
 
   return {
     status: async () => current,
+    overview: async (code): Promise<ResearchOverview> => demoResearchOverview(code),
     run: async (_code, _date, only): Promise<ResearchRunHandle> => {
       const id = `demo-job-${++seed}`
       jobs.set(id, { stage: only, ticks: 0 })

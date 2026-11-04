@@ -3,8 +3,8 @@ import { useParams, useSearchParams } from 'react-router-dom'
 
 import { isApiError } from '../../api'
 import {
+  classify404,
   httpResearchSource,
-  isResearchEndpointMissing,
   normalizeResearchCode,
   type ResearchSource,
   type ResearchStatus,
@@ -34,6 +34,8 @@ export interface ResearchView {
   /** 原始请求结果（含 error 态），用于取错误文案 */
   data: ResearchStatus | null
   error: unknown
+  /** 404 细分（QUOT-400）：`missing` 路由没接；`no-record` 这只没跑过；`unknown-code` 代码不存在 */
+  notFoundKind: 'missing' | 'no-record' | 'unknown-code' | null
   endpointMissing: boolean
   state: PageState
   usable: boolean
@@ -81,7 +83,7 @@ export function useResearchView(): ResearchView {
     { enabled: Boolean(code) },
   )
 
-  const missing = isResearchEndpointMissing(request.error)
+  const missing = classify404(request.error)
   const failed = request.data?.failed ?? []
   const pending = request.data?.pending ?? []
 
@@ -95,7 +97,9 @@ export function useResearchView(): ResearchView {
       isApiError(request.error) && request.error.kind === 'not-connected'
         ? 'offline'
         : missing
-          ? 'empty'
+          ? missing === 'unknown-code'
+            ? 'error' // 未知代码走错误态文案（QUOT-400）
+            : 'empty' // 路由没接 / 没跑过研究，都按空态给出口
           : 'error'
   } else if (!request.data?.available) {
     derived = 'empty'
@@ -127,7 +131,8 @@ export function useResearchView(): ResearchView {
     status: usable ? request.data : null,
     data: request.data,
     error: request.error,
-    endpointMissing: missing,
+    notFoundKind: missing,
+    endpointMissing: missing === 'missing',
     state,
     usable,
     requesting: request.status === 'loading',

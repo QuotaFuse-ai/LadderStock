@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { FileText, RefreshCw, RotateCcw } from 'lucide-react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Check, Copy, FileText, RefreshCw, RotateCcw } from 'lucide-react'
 
 import {
   RESEARCH_STAGES,
@@ -11,6 +11,7 @@ import {
   type ResearchStage,
   type ResearchStageName,
   type ResearchStatus,
+  type ResearchOverview,
   type StageArtifact,
   type StageDocument,
 } from '../../api/research'
@@ -35,6 +36,7 @@ import {
   SkeletonText,
   SourceStatusBadge,
   Sparkline,
+  Tabs,
   type Column,
 } from '../../components/ui'
 import { MarkdownView } from '../../components/research/MarkdownView'
@@ -55,13 +57,17 @@ import {
 } from './facts'
 import { reportHref } from './links'
 import { useResearchView, type ResearchView } from './useResearchView'
+import { useAsync } from '../../lib/useAsync'
+import OverviewTab from './OverviewTab'
 
 /**
  * `/research/:code` 个股深挖（R8）。
  *
- * 左列三张卡（公司画像 / 财务趋势 / 风险），右列盈利预期 + 六段状态；
- * 估值单独给 FinanceCoffer 面板与「估值分位」。所有数字都来自落盘产物或注入的 facts，
- * 缺失显示 `—` + 原因，不补 0、不计算新比率。
+ * QUOT-400 起拆成两个 tab（记在 `?tab=`，概览默认，照参考实现的块序）：
+ * - 概览：行情快照 + K 线走势 + 财报卡，只读本机缓存，**不依赖六段产物**；
+ * - 深度研究：左列三张卡（公司画像 / 财务趋势 / 风险），右列盈利预期 + 六段状态；
+ *   估值单独给 FinanceCoffer 面板与「估值分位」。
+ * 所有数字都来自落盘产物、缓存或注入的 facts，缺失显示 `—` + 原因，不补 0、不计算新比率。
  */
 
 const FINANCIAL_METRICS = [
@@ -544,10 +550,50 @@ function DetailSkeleton() {
   )
 }
 
+/** 深挖页的两个视角（QUOT-400）：概览（走势 + 财报，不依赖六段）与深度研究（六段）。 */
+type DeepDiveTab = 'overview' | 'research'
+
+const DEEP_DIVE_TABS = [
+  { value: 'overview' as const, label: '概览' },
+  { value: 'research' as const, label: '深度研究' },
+]
+
 export default function ResearchDetailScreen() {
   const view = useResearchView()
   const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
   const [drawer, setDrawer] = useState<DrawerState>(null)
+  const [copied, setCopied] = useState(false)
+
+  // tab 记在地址里（?tab=research），刷新、后退都还在；缺省概览（QUOT-400）
+  const tab: DeepDiveTab = params.get('tab') === 'research' ? 'research' : 'overview'
+  const pickTab = (next: DeepDiveTab) => {
+    const query = new URLSearchParams(params)
+    if (next === 'overview') query.delete('tab')
+    else query.set('tab', next)
+    setParams(query, { replace: true })
+  }
+
+  // 概览不依赖六段产物：拿到数据就渲染，拿不到按缺数态处理
+  const overviewRequest = useAsync<ResearchOverview>(
+    (signal) => view.source.overview(view.code as string, signal),
+    [view.code, view.source],
+    { enabled: Boolean(view.code) && tab === 'overview' },
+  )
+
+  const researchCommand = view.code ? `ldst research ${view.code} --date ${view.date}` : null
+  const copyCommand = () => {
+    if (!researchCommand) return
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+    if (!clipboard?.writeText) return
+    void clipboard
+      .writeText(researchCommand)
+      .then(() => {
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 2000)
+      })
+      .catch(() => setCopied(false))
+  }
 
   const artifacts = useMemo(() => {
     const map = new Map<ResearchStageName, StageArtifact>()
@@ -603,6 +649,15 @@ export default function ResearchDetailScreen() {
             ? `六段齐备 · 更新于 ${formatTime(status.updated_at)}`
             : `部分段落未完成 · 更新于 ${formatTime(status?.updated_at ?? null)}`
 
+  const refreshing =
+    tab === 'overview'
+      ? overviewRequest.status === 'loading'
+      : (view.requesting && view.state !== 'loading')
+
+  const tabsBar = (
+    <Tabs<DeepDiveTab> tabs={DEEP_DIVE_TABS} value={tab} onChange={pickTab} ariaLabel="个股深挖视图" />
+  )
+
   const header = (
     <PageHeader
       title={title}
@@ -623,8 +678,11 @@ export default function ResearchDetailScreen() {
         <>
           <Button
             variant="secondary"
-            onClick={view.reload}
-            loading={view.requesting && view.state !== 'loading'}
+            onClick={() => {
+              if (tab === 'overview') overviewRequest.reload()
+              view.reload()
+            }}
+            loading={refreshing}
             leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
           >
             刷新
@@ -639,10 +697,42 @@ export default function ResearchDetailScreen() {
     />
   )
 
+  if (tab === 'overview') {
+    // 代码不合法是路径级问题，与 tab 无关：概览也直接给错误出口
+    if (!view.code) {
+      return (
+        <div className="flex flex-col gap-5">
+          {header}
+          {tabsBar}
+          <ErrorBlock
+            title="证券代码不合法"
+            detail="路径应为 /research/600000（6 位数字，可带 .SH / .SZ / .BJ 后缀）。"
+            code="E_CODE"
+          />
+        </div>
+      )
+    }
+    // 概览 tab：不依赖六段状态机，六段还没跑过也能出走势与财报（QUOT-400 核心诉求）
+    return (
+      <div className="flex flex-col gap-5">
+        {header}
+        {tabsBar}
+        <OverviewTab
+          overview={overviewRequest.data}
+          code={view.code}
+          error={overviewRequest.status === 'error' ? overviewRequest.error : null}
+          requesting={overviewRequest.status === 'loading'}
+          reload={overviewRequest.reload}
+        />
+      </div>
+    )
+  }
+
   if (view.state === 'loading') {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {tabsBar}
         <DetailSkeleton />
       </div>
     )
@@ -665,6 +755,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {tabsBar}
         <ErrorBlock {...info} onRetry={view.code ? view.reload : undefined} />
         <Link
           to="/"
@@ -680,6 +771,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {tabsBar}
         <OfflineBanner onRetry={view.reload} />
         <EmptyState
           title="离线：暂时读不到研究产物"
@@ -690,27 +782,60 @@ export default function ResearchDetailScreen() {
   }
 
   if (view.state === 'empty') {
+    // QUOT-400：404 三态在空态里的落点——「没跑过研究」给可复制命令；
+    // 只有路由本身没接（FastAPI 默认 404）才说「接口未接入」。
+    const noRecord = view.notFoundKind === 'no-record'
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {tabsBar}
         <EmptyState
           icon={<FileText aria-hidden="true" />}
-          title={view.endpointMissing ? '研究读取接口未接入' : '还没有研究产物'}
+          title={
+            noRecord
+              ? '这只还没跑过研究'
+              : view.endpointMissing
+                ? '研究读取接口未接入'
+                : '还没有研究产物'
+          }
           description={
             view.endpointMissing
-              ? '后端尚未提供 /api/research/* 只读接口（HTTP 404）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
-              : `先运行 ldst research ${view.code ?? '<code>'} --date ${view.date} 生成六段产物，再刷新本页。`
+              ? '后端尚未提供 /api/research/* 只读接口（HTTP 404 Not Found）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
+              : noRecord
+                ? '概览标签已经可以直接看走势与财报；跑一次研究就能看六段深度内容。'
+                : `先运行 ldst research ${view.code ?? '<code>'} --date ${view.date} 生成六段产物，再刷新本页。`
           }
           action={
-            <Button
-              variant="secondary"
-              onClick={view.reload}
-              leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-            >
-              刷新
-            </Button>
+            noRecord && researchCommand ? (
+              <Button
+                variant="secondary"
+                onClick={copyCommand}
+                leadingIcon={
+                  copied ? (
+                    <Check className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-3.5" aria-hidden="true" />
+                  )
+                }
+              >
+                {copied ? '已复制' : '复制命令'}
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={view.reload}
+                leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+              >
+                刷新
+              </Button>
+            )
           }
         />
+        {noRecord && researchCommand && (
+          <code className="ldst-num w-fit rounded-xs bg-surface-3 px-2 py-1 text-caption text-text-secondary">
+            {researchCommand}
+          </code>
+        )}
         {view.demo && (
           <p className="text-caption text-text-muted">
             演示模式：试试 <code className="ldst-num">?demo=1&amp;state=normal</code>。
@@ -730,6 +855,7 @@ export default function ResearchDetailScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+      {tabsBar}
 
       {view.state === 'partial' && problems.length > 0 && (
         <Banner tone="warn" title={`${problems.length} 个段落未完成`}>

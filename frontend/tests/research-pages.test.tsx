@@ -1,10 +1,23 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ResearchDetailScreen from '../src/screens/research/ResearchDetailScreen'
 import ResearchReportScreen from '../src/screens/research/ResearchReportScreen'
+
+/**
+ * uPlot 画在 `<canvas>` 上，jsdom 没有 2D 上下文（同 market-demo.test 的先例），
+ * 概览 tab 的走势图换成记录入参的替身，这里只断言页面结构不断言画布。
+ */
+vi.mock('../src/charts/Chart', () => ({
+  LineChart: ({ points, ariaLabel }: { points?: unknown[]; ariaLabel?: string }) => (
+    <div data-testid="line-chart" data-points={points?.length ?? 0} aria-label={ariaLabel} />
+  ),
+  BarChart: ({ points, ariaLabel }: { points?: unknown[]; ariaLabel?: string }) => (
+    <div data-testid="bar-chart" data-points={points?.length ?? 0} aria-label={ariaLabel} />
+  ),
+}))
 
 afterEach(cleanup)
 
@@ -20,11 +33,18 @@ function renderRoute(path: string) {
 }
 
 describe('个股深挖页', () => {
-  it('展示公司画像、财务、风险与估值分位', async () => {
+  it('概览默认：走势 + 财报卡直接出，深度研究要点 tab 才看', async () => {
     renderRoute('/research/600000?demo=1')
 
-    expect(await screen.findByRole('heading', { name: '浦发银行' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: '公司画像' })).toBeTruthy()
+    // 默认概览：demo 源的 120 根 K 线直接画出来（chart 替身记录入参），不依赖六段
+    expect(await screen.findByRole('tab', { name: '概览' })).toBeTruthy()
+    const chart = await screen.findByTestId('line-chart')
+    expect(Number(chart.getAttribute('data-points'))).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { name: '财报前瞻与复盘' })).toBeTruthy()
+
+    // 切到深度研究：六段内容照旧（回归）
+    fireEvent.click(screen.getByRole('tab', { name: '深度研究' }))
+    expect(await screen.findByRole('heading', { name: '公司画像' })).toBeTruthy()
     expect(screen.getByText('股份制银行')).toBeTruthy()
     expect(screen.getByText('公司金融、零售金融、资金业务')).toBeTruthy()
     expect(screen.getByText('上海国际集团有限公司')).toBeTruthy()
@@ -34,26 +54,26 @@ describe('个股深挖页', () => {
     expect(screen.getAllByRole('link', { name: /研究报告/ }).length).toBeGreaterThan(0)
   })
 
-  it('五态可只靠 URL 演示', async () => {
-    renderRoute('/research/600000?demo=1&state=empty')
+  it('五态可只靠 URL 演示（深度研究 tab）', async () => {
+    renderRoute('/research/600000?demo=1&state=empty&tab=research')
     expect(await screen.findByText(/先运行 ldst research/)).toBeTruthy()
     expect(screen.getByText(/演示态：空态/)).toBeTruthy()
     cleanup()
 
-    renderRoute('/research/600000?demo=1&state=offline')
+    renderRoute('/research/600000?demo=1&state=offline&tab=research')
     expect(await screen.findByText('离线：暂时读不到研究产物')).toBeTruthy()
     expect(screen.getByText(/演示态：离线/)).toBeTruthy()
     cleanup()
 
-    renderRoute('/research/600000?demo=1&state=error')
+    renderRoute('/research/600000?demo=1&state=error&tab=research')
     expect(await screen.findByText(/没有真实错误/)).toBeTruthy()
     cleanup()
 
-    renderRoute('/research/600000?demo=1&state=loading')
+    renderRoute('/research/600000?demo=1&state=loading&tab=research')
     expect(await screen.findByText('正在加载…')).toBeTruthy()
     cleanup()
 
-    renderRoute('/research/600000?demo=1&state=partial')
+    renderRoute('/research/600000?demo=1&state=partial&tab=research')
     expect(await screen.findByText('2 个段落未完成')).toBeTruthy()
     expect(screen.getByText(/演示态：部分失败/)).toBeTruthy()
   })
