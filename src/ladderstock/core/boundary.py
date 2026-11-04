@@ -419,6 +419,12 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         _b("concept_membership", "tickhub", "stock_concept_blocks", "replace", "timestamp",
            note="个股归属的概念板块（逐只快照）；timestamp 只表取数时刻，不作交易日水位"),
         _b("fund_flow", "tickhub", "stock_fund_flow", "replace", "trade_date", note="个股资金流"),
+        # 当日实时资金流（QUOT-371）：`stock_fund_flow_batch` 一次 ≤150 只，超出自动分批。
+        # 与上面的日线 `fund_flow` **是两个数据集**，口径不混用（DEC-049）：
+        # 日线做历史对比，这条供打榜「资金」分项的当日实时值。
+        # `timestamp` 只表取数时刻，不当交易日水位——口径同 `spot_quote`。
+        _b("fund_flow_realtime", "tickhub", "stock_fund_flow_batch", "replace", "timestamp",
+           note="当日实时资金流（批量）；不进 sync 台账，timestamp 不作交易日水位"),
         # ---- R5 产业研究（QUOT-143）：行业画像的四路输入 ----
         _b("sw_industry_map", "tickhub", "sw_industry_history", "append", "trade_date",
            note="申万一级归属（成分表懒缓存，DEC-018）；行内 trade_date = 分类计入日期"),
