@@ -37,6 +37,7 @@ from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
+from ladderstock.cli.watchlist import register as register_watchlist
 from ladderstock.cli.weekly import register as register_weekly
 from ladderstock.core.boundary import DATASET_CATALOG
 from ladderstock.core.boundary import audit as boundary_audit
@@ -66,7 +67,9 @@ ladder_app = typer.Typer(no_args_is_help=True, help="连板天梯")
 industry_app = typer.Typer(no_args_is_help=True, help="产业研究（行业景气/资金/估值/动量/拥挤度）")
 sync_app = typer.Typer(no_args_is_help=False, invoke_without_command=True, help="增量同步")
 sources_app = typer.Typer(no_args_is_help=True, help="数据源")
-watch_app = typer.Typer(no_args_is_help=True, help="盘中盯盘")
+watch_app = typer.Typer(
+    no_args_is_help=True, help="盘中盯盘（start|status|stop）与我的自选（add|rm|list）"
+)
 notify_app = typer.Typer(no_args_is_help=True, help="通知与提醒")
 journal_app = typer.Typer(no_args_is_help=True, help="交易日志（仅本机 SQLite）")
 position_app = typer.Typer(no_args_is_help=True, help="我的持仓（仅本机 SQLite，不经 MCP）")
@@ -199,6 +202,9 @@ register_sources(sources_app)
 # 实现体在 cli/watch.py / cli/notify.py：离线单轮信号扫描 + 本机渠道通知
 # （DEC-006：只消费本机样本，不联网、不新增采集）
 register_watch(watch_app)
+# 自选清单（`watch add|rm|list`）与上面的盘中盯盘共用一个组名，实现体在 cli/watchlist.py；
+# 写面只落本机 SQLite，不经 HTTP（DEC-052 §2.3）
+register_watchlist(watch_app)
 register_notify(notify_app)
 
 

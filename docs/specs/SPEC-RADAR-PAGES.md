@@ -276,3 +276,84 @@
 | 持仓不落浏览器存储 | `tests/positions-privacy.test.tsx` |
 | 持仓写面（白名单 / 闸门 / upsert / 硬删除） | `tests/unit/web/test_positions_write_endpoints.py` |
 | 载荷解析（含缺字段 / null 不补 0） | `tests/radar-api.test.ts` |
+
+## 9. 首页数据面新增两接口（QUOT-380 / DEC-052，2026-11-04）
+
+⚠️ **本节只登记契约，前端接线属 S3（QUOT-381）**；§0 口径不动：数字只由程序算，页面不重算、不补 0。
+
+### 9.1 `GET /api/indices` 首页 A 股指数条
+
+**信封 JSON**（公开行情面，与 `/api/news` `/api/pool` 同一条闸门——**不加回环独占**），
+`domain=sentiment`、`topic=index_quote`、`freshness=realtime`。四格由**后端白名单写死**，
+**无入参**，前端不能指定代码（不向 peer 动态要清单：`index_list` 是按涨幅排序的 100 条榜，
+不含这四个指数，还混老三板个股）。
+
+```jsonc
+{
+  "status": "ok",              // ok（四格齐）/ partial（缺格）/ missing（全缺）
+  "payload": {
+    "available": true, "reason": null,
+    "footnote": "快照，不是逐笔实时",
+    "price_source": "index_quote", "datasets": ["index_quote"],
+    "cells": [                  // 固定顺序、固定 4 条，缺格也在数组里
+      { "code": "sh000001", "market": "SH", "name": "上证指数", "available": true,
+        "price": 3608.1, "change": -29.86, "change_pct": -0.82,
+        "prev_close": 3637.96, "as_of": "2026-11-03T15:00:00", "reason": null }
+    ]
+  }
+}
+```
+
+- `as_of` 是 peer 行里的行情时间（`YYYYMMDDHHMMSS` → ISO 局部时间，**不带时区猜测**）；
+  非交易时段它就是**上一交易日收盘时刻**，页面必须连脚注一起显示，不得当成当日。
+- 某一格取不到 = `available=false` + `price/change/change_pct/prev_close/as_of` 全 `null` +
+  `reason`；**不补 0、不自采、不换供应商**（DEC-006 / DEC-028）。
+- 数字照 `index_quote` 原样投影，页面与后端都不做二次换算。
+
+### 9.2 `GET /api/watchlist` 我的自选（只读）
+
+**平面 JSON、只 GET、回环独占 + `Host` 白名单 + `Cache-Control: no-store`**（DEC-052 照抄
+DEC-033 三条闸门，一字不改）。**没有写路由**——增删只走本机 CLI
+`ldst watch add --code 600000` / `watch rm --code …` / `watch list`。
+
+```jsonc
+{
+  "local_only": true, "store": "local_sqlite",
+  "available": true,                 // 空态是 200 + available=false，不是 404
+  "reason": null,                    // 空态时指向本机 CLI
+  "watch_count": 2,
+  "data_source_status": "ok",        // ok / partial / missing（现价取数）
+  "price_source": "spot_quote",
+  "price_as_of": "2026-11-04T09:35:12",
+  "source_detail": "tencent",
+  "items": [
+    { "code": "600000", "added_at": "2026-11-04T09:30:00", "available": true,
+      "name": "浦发银行", "market": "SH", "latest_price": 10.0, "change": 0.12,
+      "change_pct": 1.21, "prev_close": 9.88, "price_as_of": "2026-11-04T09:35:12",
+      "price_status": "ok", "price_reason": null }
+  ]
+}
+```
+
+- **顶层键是 `items` + `watch_count`，响应里没有 `watchlist` / `自选` 这两个词**：它们在
+  `core/privacy.py` 的 `PRIVATE_KEYS` 里，走任何信封出口会被 `strip_private()` 静默删字段。
+- **`note` 不出**（QUOT-380 拍板口径 2）：投影在 `journal/watchlist.py` 就不读那一列。
+- `payload` / `domain` / `fetched_at` 三个信封键**必须不出现**（结构性保证，不是装饰）。
+- 取不到现价 = `latest_price=null` + `price_status` + `price_reason`，**不拿成本价顶替**。
+
+### 9.3 `GET /api/positions` 只加字段（不改既有形状）
+
+`items[]` 多 `daily_pnl` / `daily_pnl_status`（`ok|missing|not_computed`）/ `daily_pnl_reason`；
+`valuation` 多 `daily_pnl` / `daily_pnl_status` / `currency: "CNY"` / `daily_pnl_missing[]`；
+顶层多 `daily_lookup`。口径：当日盈亏 = `daily_k` 的 `close(T) − close(T−1)` × 股数，
+**只读本机缓存、不联网**，所以持仓现价水位（`price_source: "daily_k"`）**没有变化**。
+
+- 停牌 / 未同步（缓存里没有 T 日行）= `missing` + 原因，**绝不退回更早交易日**假装是当日盈亏；
+- `valuation.daily_pnl` 只在**每条都算得出**时给数，半截总数一律 `null`（半截总数比缺席更容易误读）；
+- **不做币种汇总**（拍板口径 5）：`currency` 恒为 `CNY`，不建「代码→市场→币种→汇率」模型。
+
+### 9.4 §7 缺口清单的状态更新
+
+§7 的 5 条缺口此前都已交付；本版**新增并已交付**两条首页出口（§9.1 / §9.2），
+§7 表不再新增缺口行——自选与指数条的「后端缺口」从本条起关闭，剩下的只有前端接线（S3）。
+
