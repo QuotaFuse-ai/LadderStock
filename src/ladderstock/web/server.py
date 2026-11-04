@@ -77,6 +77,8 @@ from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
+from ladderstock.web.symbols import SymbolPlane
+from ladderstock.web.symbols import build_router as build_symbols_router
 
 REVIEW_SUBDIR = "review"
 #: 周报产物目录（`ldst weekly` 落盘，QUOT-149）：`<data_dir>/weekly/<week>.json`
@@ -947,9 +949,10 @@ def create_app(
     research_plane: Any | None = None,
     industry_plane: Any | None = None,
     radar_plane: Any | None = None,
+    symbols_plane: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
-    / `industry_plane` / `radar_plane` 可注入，便于测试。
+    / `industry_plane` / `radar_plane` / `symbols_plane` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -1550,6 +1553,14 @@ def create_app(
     # 数据，回环独占 + 平面 JSON（`radar._positions_guard`，同 DEC-015 的日志面）。
     radar = radar_plane if radar_plane is not None else RadarPlane(data_root=root)
     app.include_router(build_radar_router(radar))
+
+    # -------------------------------------------- 标的字典面（QUOT-405）
+    #
+    # `/api/symbols/search` 一个只读接口：本机缓存反查的标的字典（TickHub-CN 无代码表
+    # 类工具，盘点结论见 `web/symbols.py`）。闸门同研究面（回环 + `Host`，纯数据面，
+    # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
+    symbols = symbols_plane if symbols_plane is not None else SymbolPlane(data_root=root)
+    app.include_router(build_symbols_router(symbols))
 
     # ------------------------------------------ 状态索引面（QUOT-288 / UI-SPEC §12.2 第 2 条）
     #
