@@ -188,13 +188,13 @@ def _normalize_note(text: Any) -> str:
 def _default_chat() -> ModelChat:
     """延迟构造 HTTP 客户端：没配模型也不该在导入期炸掉。"""
     from ladderstock.ai import fallback
-    from ladderstock.ai.orchestrator import HttpChatClient
+    from ladderstock.ai.cli_provider import build_chat_client
 
     config = fallback.load_config()
     if not fallback.is_configured(config):
         missing = ", ".join(fallback.missing_env(config)) or "ai.yaml 未配置模型链"
         raise RuntimeError(f"未配置模型（{missing}）；资讯叙述默认关闭，需要时加 --ai 并先配置")
-    return ModelChat(HttpChatClient(config), str(config.default_model))
+    return ModelChat(build_chat_client(config), str(config.default_model))
 
 
 def narrative_keys_ok(note: str, event: NewsEvent) -> bool:

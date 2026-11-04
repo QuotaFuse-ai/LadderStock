@@ -36,9 +36,13 @@ SWITCH_KINDS: frozenset[str] = frozenset({"network", "quota"})
 RETRY_KINDS: frozenset[str] = frozenset({"format"})
 
 # 协议类型 → (默认 base_url_env, 默认 api_key_env)
+# 协议类型 → (默认 base_url_env, 默认 api_key_env)
+# `cli` 是订阅通道（QUOT-401）：不读端点与密钥，凭据在本机 CLI 自己的登录态里，
+# 所以两个环境变量名都是空串，`configured` 由「可执行文件在不在」判定。
 BACKEND_KINDS: dict[str, tuple[str, str]] = {
     "openai": ("LDST_LLM_BASE_URL", "LDST_LLM_API_KEY"),
     "anthropic": ("LDST_LLM_ANTHROPIC_BASE_URL", "LDST_LLM_ANTHROPIC_API_KEY"),
+    "cli": ("", ""),
 }
 #: 旧配置没有 `backends` 时的隐式后端 id（标签不加前缀）
 LEGACY_BACKEND_ID = "default"
@@ -53,7 +57,15 @@ AI_ENV_KEYS: tuple[str, ...] = (
     "LDST_LLM_API_KEY",
     "LDST_LLM_ANTHROPIC_BASE_URL",
     "LDST_LLM_ANTHROPIC_API_KEY",
+    # 订阅通道（QUOT-401）：`LDST_LLM_CLI` 取 codex / claude / workbuddy；
+    # 置空即回 HTTP 通道。`LDST_LLM_CLI_MODEL` 只在 CLI 需要显式模型名时填。
+    "LDST_LLM_CLI",
+    "LDST_LLM_CLI_MODEL",
 )
+#: 订阅通道选择键（写入 `ai.env` 后下次复盘直接生效，不需要重启）
+CLI_ENV = "LDST_LLM_CLI"
+#: 订阅通道的模型覆盖键（多数 CLI 会自己选模型，留空即可）
+CLI_MODEL_ENV = "LDST_LLM_CLI_MODEL"
 #: OpenAI 兼容后端的模型覆盖键：设置后取代该后端在 ai.yaml 里的默认模型
 MODEL_OVERRIDE_ENV = "LDST_LLM_MODEL"
 
@@ -77,6 +89,8 @@ class BackendConfig:
     models: tuple[str, ...] = ()
     #: `ai.env` 里的值（进程环境变量优先，文件只补空缺）
     env_file: Mapping[str, str] = field(default_factory=dict)
+    #: `kind == "cli"` 时用哪条订阅通道（codex / claude / workbuddy）
+    cli: str = ""
 
     @property
     def base_url(self) -> str:
@@ -96,9 +110,27 @@ class BackendConfig:
 
     @property
     def configured(self) -> bool:
+        if self.kind == "cli":
+            return self.cli_available
         return bool(self.base_url and self.api_key)
 
+    @property
+    def cli_available(self) -> bool:
+        """订阅通道：可执行文件在本机 PATH 上就算「配好了」（凭据在 CLI 自己的登录态里）。"""
+        if not self.cli:
+            return False
+        from ladderstock.ai.cli_provider import cli_spec, find_executable
+
+        try:
+            spec = cli_spec(self.cli)
+        except KeyError:
+            return False
+        return find_executable(spec) is not None
+
     def missing_env(self) -> list[str]:
+        if self.kind == "cli":
+            # 没有环境变量可缺：缺的是可执行文件或登录态，由 `cli_provider.probe` 说明
+            return [] if self.cli_available else [f"(CLI:{self.cli or '未指定'} 未安装)"]
         return [
             name
             for name in (self.base_url_env, self.api_key_env)
@@ -286,6 +318,13 @@ def load_config(config_root: Any = None) -> AiConfig:
         default_model, fallback_chain, backends, env_file
     )
 
+    # 订阅通道（QUOT-401）：`ai.env` 里选了 CLI 就把它排到链首并接管默认模型，
+    # HTTP 后端原样留在链尾——用户想切回去只是把 LDST_LLM_CLI 清空。
+    cli_backend = _cli_backend(env_file)
+    if cli_backend is not None:
+        backends = (cli_backend, *backends)
+        default_model = f"{cli_backend.id}:{cli_backend.models[0]}"
+
     sections_raw = ai.get("sections") or {}
     sections: dict[str, SectionConfig] = {}
     if isinstance(sections_raw, dict):
@@ -369,11 +408,19 @@ def _parse_backends(
                 f"ai.yaml: backends[{index}].type 必须是 {'/'.join(BACKEND_KINDS)}，收到 {kind!r}"
             )
         default_url, default_key = BACKEND_KINDS[kind]
+        cli_id = str(item.get("cli") or "").strip().lower()
+        if kind == "cli" and not cli_id:
+            raise BoundaryViolation(
+                f"ai.yaml: backends[{index}].cli 不能为空（可选：codex / claude / workbuddy）"
+            )
         models_raw = item.get("models") or []
         if not isinstance(models_raw, list) or not [
             model for model in models_raw if str(model).strip()
         ]:
-            raise BoundaryViolation(f"ai.yaml: backends[{index}].models 必须是非空数组")
+            # 订阅通道多数不需要显式模型名，允许省略；HTTP 通道仍然必须给
+            if kind != "cli":
+                raise BoundaryViolation(f"ai.yaml: backends[{index}].models 必须是非空数组")
+            models_raw = ["default"]
         parsed.append(
             BackendConfig(
                 id=backend_id,
@@ -382,9 +429,27 @@ def _parse_backends(
                 api_key_env=str(item.get("api_key_env") or default_key),
                 models=tuple(str(model).strip() for model in models_raw if str(model).strip()),
                 env_file=env_file or {},
+                cli=cli_id,
             )
         )
     return tuple(parsed)
+
+
+def _cli_backend(env_file: Mapping[str, str] | None = None) -> BackendConfig | None:
+    """`ai.env` 选了订阅通道时，构造一个 CLI 后端（不存在就不注入）。"""
+    cli_id = _env_value(CLI_ENV, env_file).lower()
+    if not cli_id:
+        return None
+    model = _env_value(CLI_MODEL_ENV, env_file) or "default"
+    return BackendConfig(
+        id=f"cli_{cli_id}",
+        kind="cli",
+        base_url_env="",
+        api_key_env="",
+        models=(model,),
+        env_file=env_file or {},
+        cli=cli_id,
+    )
 
 
 def _validate_refs(config: AiConfig) -> None:
@@ -468,6 +533,8 @@ def status_document(config: AiConfig) -> dict[str, Any]:
             "api_key_source": backend.api_key_source,
             "models": list(backend.models),
             "configured": backend.configured,
+            "cli": backend.cli or None,
+            "cli_available": backend.cli_available if backend.kind == "cli" else None,
         }
         for backend in config.declared_backends
     ]

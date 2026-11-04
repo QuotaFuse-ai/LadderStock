@@ -52,7 +52,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from ladderstock.ai import checkpoint, fallback
+from ladderstock.ai import checkpoint, cli_provider, fallback
 from ladderstock.cli.paths import config_dir, project_root
 from ladderstock.core.boundary import (
     PEER_DIR_ENV,
@@ -2477,10 +2477,94 @@ class ControlPlane:
             raise HTTPException(status_code=400, detail=f"读取 AI 配置失败：{exc}") from None
         document["env_file"] = str(self._self_ai_env_path())
         document["writable_keys"] = list(fallback.AI_ENV_KEYS)
-        # 当前后端只实现 HTTP API（OpenAI 兼容 / Anthropic Messages）。
-        # 订阅版 CLI 登录（Codex / Claude Code / WorkBuddy）没有实现，UI 不显示假入口。
-        document["subscription_cli"] = False
+        # 订阅版 CLI（Codex / Claude Code / WorkBuddy）：QUOT-401 起后端真的实现了，
+        # UI 可以给出入口。检测只看 PATH 与固定几个登录态路径，不解析凭据内容。
+        document["subscription_cli"] = True
+        document["cli_channels"] = cli_provider.detect_all()
+        document["active_cli"] = self._active_cli()
         return document
+
+    def _active_cli(self) -> str | None:
+        """当前生效的订阅通道（进程环境变量优先，`ai.env` 只补空缺）。"""
+        try:
+            config = fallback.load_config(self.config_root)
+        except BoundaryViolation:
+            return None
+        for backend in config.declared_backends:
+            if backend.kind == "cli" and backend.cli:
+                return backend.cli
+        return None
+
+    def self_ai_cli_channels(self) -> dict[str, Any]:
+        """`GET /self-ai/cli`：三条订阅通道的探测结果 + 当前生效的那条。"""
+        channels = cli_provider.detect_all()
+        return {
+            "ok": True,
+            "channels": channels,
+            "active": self._active_cli(),
+            "any_available": any(item["state"] == "ok" for item in channels),
+            "env_file": str(self._self_ai_env_path()),
+        }
+
+    def self_ai_cli_test(self, cli_id: str) -> dict[str, Any]:
+        """`POST /self-ai/cli/test`：用一条「回 ok」的探针真跑一次本机 CLI。
+
+        失败也回 200 —— 这是**探测结果**，不是接口故障；前端按 `ok` 字段分色。
+        """
+        started = time.monotonic()
+        try:
+            spec = cli_provider.cli_spec(cli_id)
+        except KeyError:
+            known_ids = "、".join(s.id for s in cli_provider.CLI_SPECS)
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知的 CLI 通道：{cli_id!r}（可选：{known_ids}）",
+            ) from None
+        status = cli_provider.probe(spec)
+        if status["state"] != "ok":
+            return {
+                "ok": False,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "model_seen": None,
+                "error": str(status["detail"]),
+                "channel": status,
+            }
+        try:
+            provider = cli_provider.CliProvider()
+            target = fallback.ModelTarget(
+                backend=fallback.BackendConfig(
+                    id=f"cli_{spec.id}",
+                    kind="cli",
+                    base_url_env="",
+                    api_key_env="",
+                    models=("default",),
+                    cli=spec.id,
+                ),
+                model="default",
+                label=f"{spec.id}:default",
+            )
+            text = provider.complete(
+                target,
+                "你是连通性探针，只回一个词。",
+                cli_provider.PROBE_PROMPT,
+                json_mode=False,
+                timeout=120.0,
+            )
+        except cli_provider.CliUnavailable as exc:
+            return {
+                "ok": False,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+                "model_seen": None,
+                "error": mask_secrets(str(exc), []),
+                "channel": status,
+            }
+        return {
+            "ok": True,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "model_seen": (text or "").strip().splitlines()[0][:60] or None,
+            "error": None,
+            "channel": status,
+        }
 
     def self_ai_update(
         self, values: Mapping[str, str], clear: Iterable[str]
@@ -2497,12 +2581,19 @@ class ControlPlane:
                 ),
             )
         updates: dict[str, str] = {}
+        known_cli = {spec.id for spec in cli_provider.CLI_SPECS}
         for name, value in values.items():
             text = "" if value is None else str(value).strip()
             if text == "":
                 continue
             if "\n" in text or "\r" in text:
                 raise HTTPException(status_code=400, detail=f"{name} 不允许包含换行")
+            if name == fallback.CLI_ENV and text.lower() not in known_cli:
+                allowed_ids = "/".join(sorted(known_cli))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{fallback.CLI_ENV} 只能是 {allowed_ids}，收到 {text!r}",
+                )
             if name.endswith("_URL"):
                 parsed = urllib.parse.urlsplit(text)
                 if parsed.scheme not in {"http", "https"} or not (parsed.hostname or "").strip():
@@ -2710,6 +2801,12 @@ class SelfAiTestRequest(BaseModel):
     api_key: str | None = None
 
 
+class CliTestRequest(BaseModel):
+    """订阅通道探针：`cli` 取 codex / claude / workbuddy。"""
+
+    cli: str
+
+
 class AiGenerateRequest(BaseModel):
     date: str
     force: bool = False
@@ -2825,6 +2922,16 @@ def build_router(plane: ControlPlane) -> APIRouter:
             model=body.model,
             api_key=body.api_key,
         )
+
+    @router.get("/self-ai/cli")
+    def self_ai_cli_channels() -> dict[str, Any]:
+        """订阅版 CLI 通道探测（QUOT-401）：装了没 / 跑得起来吗 / 登录态在不在。"""
+        return plane.self_ai_cli_channels()
+
+    @router.post("/self-ai/cli/test")
+    def self_ai_cli_test(body: CliTestRequest) -> dict[str, Any]:
+        """真跑一次本机 CLI 的探针；失败也回 200，由 `ok` 字段区分。"""
+        return plane.self_ai_cli_test(body.cli)
 
     @router.post("/ai/generate")
     def ai_generate(body: AiGenerateRequest) -> dict[str, Any]:

@@ -101,6 +101,11 @@ class HttpChatClient:
         json_mode: bool,
     ) -> ToolTurn:
         target = self.config.resolve(model)
+        if target.backend.kind == "cli":
+            # CLI 通道没有 tools 协议：明确报错，别让上层以为「工具为空」而静默降级
+            raise providers.ProviderError(
+                f"{target.label} 是订阅版 CLI 通道，不支持 tool calling；这条链路请配 HTTP 模型"
+            )
         provider = providers.provider_for(target.backend.kind)
         return provider.complete_with_tools(
             target,
@@ -165,7 +170,14 @@ class Orchestrator:
         config_root: Any = None,
     ) -> None:
         self.config = config or fallback.load_config(config_root)
-        self.client: ChatClient = client or HttpChatClient(self.config)
+        if client is not None:
+            self.client: ChatClient = client
+        else:
+            # 默认通道按配置选：订阅版 CLI 走 `CliChatClient`（只实现 complete），
+            # HTTP 端点仍走 `HttpChatClient`。QUOT-401。
+            from ladderstock.ai.cli_provider import build_chat_client
+
+            self.client = build_chat_client(self.config)
         self.root = root
         self._prompts: dict[str, str] = {}
 
