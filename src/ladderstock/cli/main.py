@@ -431,6 +431,17 @@ def doctor(
     for name in CONFIG_FILES:
         present = (base / name).is_file()
         add(f"config:{name}", present, "存在" if present else "缺失")
+    # peer 注册表（QUOT-403）：唯一真源是 sources.yaml 的 peers 块；写坏时回退
+    # 内置默认并给出原因（服务照常起，不算失败，但 warning 必须可见）。
+    from ladderstock.core.boundary import PEER_LOAD_WARNINGS, PEERS
+
+    add(
+        "peers:registry",
+        True,
+        "；".join(PEER_LOAD_WARNINGS)
+        if PEER_LOAD_WARNINGS
+        else f"peers 块加载正常（{len(PEERS)} 个 peer）",
+    )
     cache = data_dir()
     existed = cache.is_dir()
     # 先探可写（会按需建目录），再报 data_dir，避免「目录不存在但可写」的自相矛盾
@@ -471,7 +482,7 @@ def doctor(
     # 要么措辞说准「peer 不可达 / 工具不在列表里」，不留「待联调」这种含糊说法。
     # 探测结果不参与 ok 判定，检查项数只由 `CONFIG_FILES` 与依赖表决定
     # （DEC-008：可达性≠配置合法性）。
-    warnings = [*report.warnings, *provisional_tool_warnings()]
+    warnings = [*report.warnings, *PEER_LOAD_WARNINGS, *provisional_tool_warnings()]
     emit({"ok": ok, "checks": checks, "warnings": warnings}, output)
     raise typer.Exit(EXIT_OK if ok else EXIT_CONFIG)
 

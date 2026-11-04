@@ -830,6 +830,109 @@ def test_board_includes_components(tmp_path: Path, peer_dirs: dict[str, Path]) -
     assert [item["id"] for item in payload["components"]] == ["proxyfleet"]
 
 
+# --------------------------------------------------------------------------- #
+# 6a. QUOT-403：模块卡由 sources.yaml peers 块驱动 + FinanceCoffer 只读观测
+# --------------------------------------------------------------------------- #
+
+def test_board_peer_cards_follow_sources_yaml(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """yaml 里删掉一段（重启后）对应卡消失；peers 块读不到时回退全表不许变空。"""
+    plane = _plane(tmp_path, peer_dirs, registered=("alpha",))
+    payload = plane.board()
+    assert [item["id"] for item in payload["peers"]] == ["alpha"]
+    assert set(payload["ports"]) == {"board", "mcp", "alpha"}
+
+    # peers 块缺失/写坏：load_sources_peers 返回 {} → 回退全表（QUOT-403 验收 2）
+    plane_empty = _plane(tmp_path, peer_dirs, registered=())
+    payload_empty = plane_empty.board()
+    assert [item["id"] for item in payload_empty["peers"]] == ["alpha", "beta"]
+
+
+def test_unmanaged_peer_has_no_action_buttons(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """FinanceCoffer（WSL，QUOT-403）：面板出卡、探健康，但不出安装/启停按钮。"""
+    from dataclasses import replace as dc_replace
+
+    peers = _peers(peer_dirs)
+    peers["alpha"] = dc_replace(peers["alpha"], managed=False)
+    _venv(peer_dirs["alpha"])
+    plane = ControlPlane(
+        data_root=tmp_path,
+        peers=peers,
+        components={},
+        sources_loader=lambda: {"alpha": {}},
+        run=FakeRuntime().run,
+        port_probe=lambda port: [],
+        health_probe=lambda url, timeout: (True, "HTTP 200"),
+        spawn=lambda args, *, cwd, log_path: SimpleNamespace(pid=4242),
+    )
+    snapshot = plane.snapshot("alpha")
+    actions = snapshot["actions"]
+    assert actions["can_install"] is False
+    assert actions["can_start"] is False
+    assert actions["can_stop"] is False
+    with pytest.raises(ValueError, match="不由控制面托管"):
+        plane.create_job("alpha", "start")
+
+
+def test_financecoffer_is_registered_as_readonly_peer() -> None:
+    from ladderstock.core.boundary import PEER_SIBLING_DIRS, resolve_peer_control
+
+    assert "financecoffer" in resolve_peer_control()
+    assert PEER_SIBLING_DIRS["financecoffer"] == "FinanceCoffer"
+
+
+def test_degraded_health_is_reported_verbatim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FinanceCoffer /health 回 degraded（如 embedding unreachable）→ 如实显示，不美化。"""
+    import http.server
+    import threading
+
+    body = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "status": "degraded",
+                "version": "0.1.0",
+                "checks": {"database": "ok", "embedding": "unreachable"},
+            },
+        }
+    ).encode("utf-8")
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server 约定
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:  # noqa: D401 - 静音
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        ok, detail = control.probe_health(f"http://127.0.0.1:{port}/health", timeout=2.0)
+    finally:
+        server.shutdown()
+    assert ok is True  # 服务在响应：健康（degraded 不等于 down）
+    assert detail == "HTTP 200 · degraded（embedding: unreachable）"
+
+
+def test_degraded_suffix_only_fires_for_non_ok_status() -> None:
+    from ladderstock.web.control import _degraded_suffix
+
+    assert _degraded_suffix('{"ok": true}') == ""
+    assert _degraded_suffix('{"status": "ok"}') == ""
+    assert _degraded_suffix("not json") == ""
+    assert _degraded_suffix('{"status": "degraded"}') == " · degraded"
+    assert (
+        _degraded_suffix('{"data": {"status": "degraded", "checks": {"db": "ok"}}}')
+        == " · degraded"
+    )
+
+
 def test_config_notes_flag_keys_that_do_not_take_effect() -> None:
     """PRD §5 的键有的当前不生效，控制面必须把话说清楚（DEC-014 不静默降级）。"""
     assert any("MCP_HTTP_PORT" in note for note in PEER_CONTROL["tickhub"].config_notes)

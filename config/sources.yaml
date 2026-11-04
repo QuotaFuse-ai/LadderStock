@@ -7,6 +7,13 @@
 # - 备源只能是**同一个 peer 的另一个工具**；peer 整体不可用时降级为缓存回放，
 #   绝不启用自建采集（文档第九节禁区）。
 
+# peers 块是生态 peer 注册表的**唯一真源**（QUOT-403）：core/boundary.py 的
+# PEERS 由此生成，控制面面板的模块卡、ldst doctor 的 peer 行都跟着走。
+# 字段口径：
+#   health_path  —— 该 peer 真实提供的健康检查路径（探测用，不许在代码里写死 /healthz）
+#   default_port —— 该 peer 的主服务端口（MCP 或 HTTP；与 boundary.Peer.default_port 一致）
+#   role         —— 模块卡上显示的一句话职责
+#   repo         —— GitHub 仓库名（owner/name），QUOT-402 版本三态检测的期望版本来源
 peers:
   tickhub:
     product: TickHub-CN
@@ -16,6 +23,10 @@ peers:
     url_env: LDST_TICKHUB_MCP_URL
     default_url: http://127.0.0.1:8000/mcp
     timeout_sec: 10
+    health_path: /healthz
+    default_port: 8000
+    role: 数据底座：行情 / 涨停池 / 龙虎榜 / 情绪指标 / 资金
+    repo: QuotaFuse-ai/TickHub-CN
   # TickHub-US：8001 被 WSL 转发服务占用、admin 8787 与 CN 撞车，
   # 故 MCP 走 8002、admin 走 8789（DEC-013 / DEC-014 §3）。
   tickhub_us:
@@ -26,6 +37,10 @@ peers:
     url_env: LDST_TICKHUB_US_MCP_URL
     default_url: http://127.0.0.1:8002/mcp
     timeout_sec: 10
+    health_path: /healthz
+    default_port: 8002
+    role: 数据底座：美股行情 / 财报 / 监管披露
+    repo: QuotaFuse-ai/TickHub-US
   wire:
     product: QuotaFuse Wire
     package: quotafuse-wire
@@ -34,6 +49,10 @@ peers:
     url_env: LDST_WIRE_MCP_URL
     default_url: http://127.0.0.1:8791/mcp
     timeout_sec: 15
+    health_path: /api/health
+    default_port: 8790
+    role: 资讯感知：新闻 / 政策 / 产业链 / 多源聚合
+    repo: QuotaFuse-ai/quotafuse-wire
   senate:
     product: StockSenate
     package: stocksenate
@@ -42,6 +61,25 @@ peers:
     url_env: LDST_SENATE_MCP_URL
     default_url: http://127.0.0.1:8765/mcp
     timeout_sec: 20
+    health_path: /healthz
+    default_port: 8765
+    role: 投研合议：7 分析师 → 辩论 → 风控 → 终审 / 回测
+    repo: QuotaFuse-ai/StockSenate
+  # FinanceCoffer（QUOT-403）：数据存储，不是取数通道——sources 不允许 via 它，
+  # 只登记注册表让控制面出第 5 张卡。服务跑在 WSL（8100），控制面只读观测不接管启停；
+  # /health 回 status=degraded（如 embedding unreachable）时面板如实显示，不是故障。
+  financecoffer:
+    product: FinanceCoffer
+    package: financecoffer
+    cli: fc
+    mcp_name: null            # FC 当前没有 MCP 面，写 null，探测走 HTTP
+    url_env: LDST_FINANCECOFFER_URL
+    default_url: http://127.0.0.1:8100
+    timeout_sec: 10
+    health_path: /health
+    default_port: 8100
+    role: 数据存储：结构化宽表 / 公告检索 / 风险
+    repo: QuotaFuse-ai/FinanceCoffer
 
 sources:
   # ---------------- 行情与短线数据：TickHub-CN ----------------
