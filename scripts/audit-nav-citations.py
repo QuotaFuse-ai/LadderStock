@@ -113,7 +113,9 @@ def audit_section0(spec_lines, sections, pinned):
             continue
         if "底部固定" in cell:
             if not any(to.split("?")[0] == path for _, to, _ in pinned):
-                problems.append(f"UI-SPEC.md:{ln} 写「侧栏底部固定项」，但 `{path}` 不在 `PINNED_NAV`")
+                problems.append(
+                    f"UI-SPEC.md:{ln} 写「侧栏底部固定项」，但 `{path}` 不在 `PINNED_NAV`"
+                )
             continue
         gm = re.match(r"^(.+?) · (.+?)$", cell)
         if not gm:
@@ -123,11 +125,15 @@ def audit_section0(spec_lines, sections, pinned):
         label = re.sub(r"（.*?）$", "", gm.group(2).strip()).strip()
         hits = find_entry(sections, path)
         if not hits:
-            problems.append(f"UI-SPEC.md:{ln} 写「{group} · {label}」，侧栏里没有指向 `{path}` 的条目")
+            problems.append(
+                f"UI-SPEC.md:{ln} 写「{group} · {label}」，侧栏里没有指向 `{path}` 的条目"
+            )
         else:
             real_group, real_label, _ = hits[0]
             if real_group != group:
-                problems.append(f"UI-SPEC.md:{ln} 写组「{group}」，`{path}` 现在挂在「{real_group}」")
+                problems.append(
+                    f"UI-SPEC.md:{ln} 写组「{group}」，`{path}` 现在挂在「{real_group}」"
+                )
             if " / " not in label and real_label != label:
                 problems.append(
                     f"UI-SPEC.md:{ln} 写条目「{label}」，`{path}` 在侧栏里的标签是「{real_label}」"
@@ -150,7 +156,9 @@ def audit_screen_rows(spec_lines, sections, nav_span):
         hm = re.search(r"侧栏首项「([^」]+)」", claim)
         plain_group = re.search(r"侧栏「([^」]+)」", claim)
         want_label = gm.group(2) if gm else (hm.group(1) if hm else None)
-        want_group = gm.group(1) if gm else (plain_group.group(1) if plain_group and not hm else None)
+        want_group = (
+            gm.group(1) if gm else (plain_group.group(1) if plain_group and not hm else None)
+        )
 
         if want_label:
             hit = [e for e in entries if e[1] == want_label]
@@ -158,20 +166,22 @@ def audit_screen_rows(spec_lines, sections, nav_span):
                 problems.append(f"UI-SPEC.md:{ln} 侧栏里没有条目「{want_label}」")
             elif want_group and hit[0][0] != want_group:
                 problems.append(
-                    f"UI-SPEC.md:{ln} 条目「{want_label}」现在挂在「{hit[0][0]}」，文档写「{want_group}」"
+                    f"UI-SPEC.md:{ln} 条目「{want_label}」现在挂在「{hit[0][0]}」，"
+                    f"文档写「{want_group}」"
                 )
-
         for a, b in cited_spans(cite):
             if nav_lo is None or b < nav_lo or a > (nav_hi or a):
                 continue  # 指外壳行号，不是侧栏条目引用
             inside = {lab for _, lab, line, _ in entries if a <= line <= b}
             if not inside:
                 problems.append(
-                    f"UI-SPEC.md:{ln} 引用 `Layout.tsx:{a}-{b}` 落进侧栏声明区却没有条目（过期行号）"
+                    f"UI-SPEC.md:{ln} 引用 `Layout.tsx:{a}-{b}` 落进侧栏声明区"
+                    "却没有条目（过期行号）"
                 )
             elif want_label and want_label not in inside:
                 problems.append(
-                    f"UI-SPEC.md:{ln} `Layout.tsx:{a}-{b}` 指的是 {sorted(inside)}，正文说的是「{want_label}」"
+                    f"UI-SPEC.md:{ln} `Layout.tsx:{a}-{b}` 指的是 {sorted(inside)}，"
+                    f"正文说的是「{want_label}」"
                 )
     return problems
 
@@ -210,9 +220,15 @@ def main() -> int:
     if not args.quiet:
         print("真实侧栏：")
         for s in sections:
-            print(f"  [{s['key']}] {s['label']}：", " / ".join(f"{lab}({to})" for _, to, lab in s["entries"]))
+            print(
+                f"  [{s['key']}] {s['label']}：",
+                " / ".join(f"{lab}({to})" for _, to, lab in s["entries"]),
+            )
         print("  [pinned] 底部固定：", " / ".join(f"{lab}({to})" for _, to, lab in pinned))
-    print(f"§0 登记 {len(documented)} 条路由，侧栏 {len(all_entries(sections)) + len(pinned)} 条入口")
+    print(
+        f"§0 登记 {len(documented)} 条路由，"
+        f"侧栏 {len(all_entries(sections)) + len(pinned)} 条入口"
+    )
     if problems:
         print(f"\n发现 {len(problems)} 处文档 ↔ 侧栏不一致：")
         for p in problems:
