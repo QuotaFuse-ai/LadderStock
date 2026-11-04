@@ -1,7 +1,11 @@
 import { Search } from 'lucide-react'
 
 /**
- * C-21 `HomeSearchTrigger`（规格 §4）：首页右上角看起来是输入框、行为是按钮的入口。
+ * C-21 `HomeSearchTrigger`（规格 §4）：看起来是输入框、行为是按钮的搜索入口。
+ *
+ * QUOT-381 起它挂在首页 B 块（「今天，想研究什么？」研究入口卡）里**满栏**显示，
+ * 不再挂 `PageHeader.actions`（SPEC-HOME-V2 §1.1 / §3.1）。宽度改满栏是版式重排，
+ * `h-control-lg` 与下面的三条口径一个字没动。
  *
  * 三条规格口径不要改：
  * - **是 `<button>` 不是 input**（§4.3）：入口内打字等于把面板做两遍，`readonly` input
@@ -32,7 +36,7 @@ export function HomeSearchTrigger({ expanded, panelId, onOpen }: HomeSearchTrigg
       aria-haspopup="dialog"
       aria-expanded={expanded}
       aria-controls={panelId}
-      className="group relative inline-flex h-control-lg w-64 max-w-full items-center rounded border border-border-strong bg-sunken pl-7 pr-2 text-body transition-colors duration-fast ease-ldst hover:border-accent active:translate-y-px focus-visible:border-accent rail:w-44"
+      className="group relative inline-flex h-control-lg w-full items-center rounded border border-border-strong bg-sunken pl-7 pr-2 text-body transition-colors duration-fast ease-ldst hover:border-accent active:translate-y-px focus-visible:border-accent"
     >
       <span aria-hidden="true" className="pointer-events-none absolute left-2 flex text-text-muted">
         <Search className="size-3.5" aria-hidden="true" />

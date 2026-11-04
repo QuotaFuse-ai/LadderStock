@@ -93,6 +93,30 @@ export function formatMoney(value: number | null | undefined): string {
   return value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+/**
+ * 金额 / 点位的原样读数：两位小数 + 千分位，**不折算万 / 亿**（§8）。
+ * `formatMoney` 在 ≥1e4 时改写成「1.26 万」，指数点位（`3,608.10`）与持仓市值
+ * （`12,641.86`）被折成万之后就不再是可复算的原值，所以首页三处 L0/L1 读数用它。
+ */
+export function formatAmount(value: number | null | undefined): string {
+  if (!isFiniteNumber(value)) return MISSING
+  const abs = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return `${value < 0 ? '-' : ''}${abs}`
+}
+
+/** 带方向的金额（持仓盈亏 / 当日盈亏）：正负号 + 千分位两位小数，`0` 是平不是缺。 */
+export function formatSignedAmount(value: number | null | undefined): SignedValue {
+  if (!isFiniteNumber(value)) return { text: MISSING, tone: 'flat', arrow: '', missing: true }
+  const tone: Tone = value > 0 ? 'up' : value < 0 ? 'down' : 'flat'
+  const abs = formatAmount(Math.abs(value))
+  return {
+    text: tone === 'up' ? `+${abs}` : tone === 'down' ? `-${abs}` : abs,
+    tone,
+    arrow: '',
+    missing: false,
+  }
+}
+
 function pad(value: number): string {
   return String(value).padStart(2, '0')
 }
