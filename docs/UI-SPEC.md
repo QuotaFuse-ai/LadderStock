@@ -1,7 +1,7 @@
 # 看板信息架构与视觉规范（20 屏）
 
-- 版本：v1.7
-- 日期：2026-11-03
+- 版本：v1.9
+- 日期：2026-11-04
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -22,6 +22,7 @@
 | v1.4 | 2026-11-02 | 设置页新增「数据来源 → 虚拟数据（演示）」开关（QUOT-200 提速项）：演示源从单一 URL 入口扩为「URL `?demo=1` 或设置开关」二选一，偏好持久化到 `localStorage['ldst.demo-data']`；判定仍唯一收口在 `lib/pageState.ts` 的 `useDemoEnabled`。§5.6 补两条：徽标按来源区分文案；关闭开关时同时摘掉 URL 的 `demo`，保证「关 = 真实数据」。新增 `--demo-pref` 截图开关，取证不依赖 URL。 |
 | v1.7 | 2026-11-03 | 首页 v2 版式立项（QUOT-378，父任务 QUOT-377「首页改版 A」S1，老板拍板 A 案）：首页整页改为参考页四块——**大盘与全球指数条 → 今天，想研究什么？（研究入口卡）→ 我的自选 → 我的持仓**，待办 / 最近异动保留并下移，情绪温度条 + 5 指标卡阵 + 连板梯队 Top 10 + 题材强度 Top 5 从首页移除（`/market?tab=sentiment\|ladder\|theme` 已有同三块，信息不丢）。**逐块线框、字段表（要哪些字段 / 从哪来 / 拿不到显示什么）、块级状态矩阵、整屏六态与块级四态的关系、验收清单全部落在 `docs/specs/SPEC-HOME-V2.md`**，本文件 §3.5 与 §11.5 的首页条目在 S3 接线合入时按该 spec 同步（本行只登记立项，不改旧条目正文）。零新增 token / 依赖 / 断点；四处与参考页的实质偏差（指数条 4 列 × 2 行而非单排 8 格、研究入口不承诺 AI 问答、自选与持仓各自满宽堆叠而非并排、卡头不放「管理自选」）与算术理由见 SPEC-HOME-V2 §12-L01/L02/L06/L07。 |
 | v1.8 | 2026-11-03 | 新增 §3.20「首页搜索/提问面板」（QUOT-348 规格落盘，指针型小节：交互与视觉真源在 `docs/specs/home-search.md` v1.1，本节只登记入口位置 / 面板尺寸 / 分组顺序 / 键盘焦点四件外壳级事实）。§6.1 登记 C-21 `HomeSearchTrigger`、C-22 `SearchPanel`（均为**待实装**，全仓组件编号由 C-20 续到 C-22）。同批落盘 `docs/specs/home-search-prototype.html` 与 `docs/screenshots/home-search-*.png` 10 张规格图。**本节未改任何规范条文**，只补索引；与已落地数据层（`lib/searchCore.ts`，QUOT-356）的口径差异以数据层命名为准，见规格 §9.4。 |
+| v1.9 | 2026-11-04 | 后端数据面新增两个首页出口（QUOT-380，决策 DEC-052；§0「不覆盖」清单只加标注、原文不改）：**`GET /api/indices`** 首页 A 股指数条 4 格（`sh000001` 上证 / `sh000300` 沪深300 / `sz399001` 深证成指 / `sz399006` 创业板指，白名单由后端写死、不向 peer 动态要清单），每格 `price` / `change` / `change_pct` / `prev_close` / `as_of`，取不到是 `available=false` + 原因，不补 0、不自采；**`GET /api/watchlist`** 自选只读面（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，顶层 `items` + `watch_count`，`note` 不出，写面仍不经 HTTP）。`GET /api/positions` 只**加字段**不改既有形状：`items[].daily_pnl` / `daily_pnl_status` / `daily_pnl_reason` 与 `valuation.daily_pnl` / `currency: CNY`（当日盈亏 = `daily_k` 的 `close(T) − close(T−1)`，停牌日显 `missing` 不退回更早交易日；币种汇总本版不做）。前端接线与 §10 路由映射由 S3（QUOT-381）承接。 |
 
 ## 0. 范围与非目标
 
@@ -56,6 +57,11 @@
 
 - 任何行情采集、数据清洗、指标计算逻辑（数字只由程序算，AI 只写叙述）。
 - 交易日志 / 持仓 / 自选的网络读写（隐私数据只进本机 SQLite，`journal*` 不经 HTTP）。
+  **已开的两个回环口子**（不改写上面这句原文，只在清单上标注口径）：
+  **持仓**按 DEC-033 开读写面，**自选**按 DEC-052 只开**一条只读**路由
+  `GET /api/watchlist`（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，只 GET、
+  增删只走本机 CLI `ldst watch add|rm|list`，`note` 不出）。
+  **交易日志仍一条 HTTP 路由都不开**（`/api/journal/stats` 只出聚合数字那条边界不动）。
 - 买卖建议、目标价、收益预测（产品边界：复盘辅助，不输出交易信号）。
 - 新增数据源或"某个 peer 挂了就换一家"的降级（只允许同 peer 备工具 → 缓存回放）。
 - **视口 < 1024px**：v1.0 §2 写的「<1024 侧栏折叠为顶部横向导航」「<720 表格转卡片列表」在 `270caf8` 上没有任何实现（`Layout.tsx:194` 只有 `w-sidebar` / `rail:w-sidebar-rail` 两档，`rail` = `max-width:1279px`）。v1.1 把最低支持视口正式定为 `--ldst-bp-min: 1024px`，窄屏适配移出规范（DEC-040 §3，理由见 §12.4-B）。

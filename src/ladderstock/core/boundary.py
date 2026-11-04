@@ -392,6 +392,15 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # 一条」的水位，硬套 `trade_date` 会让它看起来像可按日增量同步的数据集。
         _b("spot_quote", "tickhub", "tencent_quote_batch", "replace", "timestamp",
            note="实时批量报价（盘中快照用）；不进 sync 台账，timestamp 不作交易日水位"),
+        # 指数实时报价（QUOT-380 / QUOT-379 盘点 A-1）：与 `spot_quote` **同构**——
+        # 行内没有 `trade_date`，行情时间是 `timestamp`（`YYYYMMDDHHMMSS`），硬套
+        # `trade_date` 会让它看起来像可按日增量同步的数据集，所以同样**不进 sync.yaml**。
+        # 入参与 `spot_quote` 有一个实测出来的差别：必须带 `sh`/`sz` 前缀（`000001.SH`
+        # 与裸 `000001` 都会被解析成平安银行且照旧标 `is_index: true`），
+        # 返回行的 `code` 又是**不带前缀**的 6 位，所以按代码匹配要看 `(market, code)`。
+        # 口径由调用方 `core/indices.py` 钉住，登记本身不做任何过滤。
+        _b("index_quote", "tickhub", "index_quote", "replace", "timestamp",
+           note="指数实时报价（首页指数条用）；不进 sync 台账，timestamp 不作交易日水位"),
         _b("dragon_tiger", "tickhub", "dragon_tiger", "replace", "trade_date",
            ("dragon_tiger_backup",), "备源为交易所官方榜"),
         _b("dragon_tiger_seats", "tickhub", "dragon_tiger_seats", "replace", "trade_date",

@@ -47,6 +47,15 @@ POSITION_FIELDS: tuple[str, ...] = (
 #: 没有标注行业的持仓归进这个桶（只在已有标注时出现，避免凭空造行业）
 UNLABELED_INDUSTRY = "未标注"
 
+#: 当日盈亏的三种缺席形态要分开说（QUOT-380）：算得出 / 缓存里没有 T 日行 / 本次没算
+DAILY_OK = "ok"
+DAILY_MISSING = "missing"
+DAILY_NOT_COMPUTED = "not_computed"
+
+#: 币种汇总这一版砍掉（QUOT-380 拍板口径 5）：只做人民币单一汇总，
+#: 不建「代码 → 市场 → 币种 → 汇率」的数据模型。这个字段是把「只有一个币种口径」说明白。
+DAILY_CURRENCY = "CNY"
+
 _COLUMNS = ", ".join(POSITION_FIELDS)
 _SELECT = f"SELECT {_COLUMNS} FROM positions"
 
@@ -399,8 +408,9 @@ def compute_metrics(
     *,
     as_of: str | date | None = None,
     trades: list[dict[str, Any]] | None = None,
+    daily: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """持仓本地计算：浮动盈亏、已实现盈亏、集中度、行业分布（全部只读入参，不碰网络）。
+    """持仓本地计算：浮动盈亏、已实现盈亏、当日盈亏、集中度、行业分布（全部只读入参，不碰网络）。
 
     `prices` 是调用方从**本机行情缓存**取到的最新价（代码 → 价格）；取不到的代码
     一律 `null`，其盈亏如实缺席，并计入 `valuation.unpriced_cost`。
@@ -408,10 +418,17 @@ def compute_metrics(
     `trades` 是调用方用 `list_journal_trades()` 取到的成交流水，用来离线复算
     已实现盈亏（移动加权平均，DEC-038）。缺省 `None` 表示「本次没有载入流水」，
     与「本机没有成交记录」分开说原因——两处出口都必须传同一份入参，才算同一份数字。
+
+    `daily` 是调用方用 `core.quotes.daily_change_map()` 从同一份 `daily_k` 缓存算出的
+    「每股当日涨跌」（代码 → `{status, close, prev_close, change, reason}`，QUOT-380
+    拍板的口径 4：`close(T) − close(T−1)`）。这里只乘股数，**不再算一次差价**；
+    缺省 `None` = 「本次没有算当日盈亏」，与「算了但停牌」分开（`daily_pnl_status`）。
     """
     price_map = prices or {}
     day = sqlite_store.parse_day(as_of)
     realized_block, realized_by_code = _realized_projection(trades, rows)
+    daily_by_code = daily or {}
+    daily_provided = daily is not None
 
     items: list[dict[str, Any]] = []
     cost_weights: list[float] = []
@@ -429,6 +446,9 @@ def compute_metrics(
         market_value = round(price * qty, 2) if price is not None else None
         pnl = round((price - cost) * qty, 2) if price is not None else None
         pnl_pct = _pct(price / cost - 1.0) if price is not None and cost > 0 else None
+        daily_pnl, daily_status, daily_reason = _daily_pnl(
+            daily_by_code.get(code), qty, provided=daily_provided
+        )
 
         cost_weights.append(basis_cost)
         value_weights.append(market_value if market_value is not None else basis_cost)
@@ -451,6 +471,9 @@ def compute_metrics(
                 "unrealized_pnl": pnl,
                 "unrealized_pnl_pct": pnl_pct,
                 "realized_pnl": _round_realized(realized_by_code.get(code)),
+                "daily_pnl": daily_pnl,
+                "daily_pnl_status": daily_status,
+                "daily_pnl_reason": daily_reason,
             }
         )
 
@@ -477,6 +500,7 @@ def compute_metrics(
             "unrealized_pnl_pct": (
                 _pct(unrealized / priced_cost) if priced_cost > 0 else None
             ),
+            **_daily_summary(items, provided=daily_provided),
         },
         "realized": realized_block,
         "items": items,
@@ -485,7 +509,63 @@ def compute_metrics(
     }
 
 
+def _daily_pnl(
+    entry: dict[str, Any] | None, qty: float, *, provided: bool
+) -> tuple[float | None, str, str | None]:
+    """一条持仓的当日盈亏 = 每股差价 × 股数；算不出就是 `null` + 原因，不补 0。"""
+    if entry is None:
+        # 「本次没算」与「算了但缓存里没有这条」要分开，否则页面没法给出对的缺数文案
+        if not provided:
+            return None, DAILY_NOT_COMPUTED, "本次没有取当日盈亏"
+        return None, DAILY_MISSING, "缓存里没有这个代码的 T 日 / T−1 日收盘价"
+    change = entry.get("change")
+    if entry.get("status") != DAILY_OK or change is None:
+        return None, DAILY_MISSING, entry.get("reason") or "缓存里没有 T 日与 T−1 日的收盘价"
+    return round(float(change) * qty, 2), DAILY_OK, None
+
+
+def _daily_summary(
+    items: list[dict[str, Any]], *, provided: bool
+) -> dict[str, Any]:
+    """汇总三格（QUOT-380 拍板口径 5）：**只有人民币单一口径，不做币种汇总**。
+
+    总数只在「每条持仓都算得出」时给——半截总数比缺席更容易被当成全账户的当日盈亏。
+    缺席时 `daily_pnl=null` + `daily_pnl_missing` 逐条列出是谁、为什么。
+    """
+    if not provided:
+        return {
+            "daily_pnl": None,
+            "daily_pnl_status": DAILY_NOT_COMPUTED,
+            "currency": DAILY_CURRENCY,
+            "daily_pnl_missing": [],
+        }
+    missing = [
+        {"code": item["code"], "reason": item["daily_pnl_reason"]}
+        for item in items
+        if item["daily_pnl"] is None
+    ]
+    total = sum(float(item["daily_pnl"]) for item in items if item["daily_pnl"] is not None)
+    complete = bool(items) and not missing
+    if not items or len(missing) == len(items):
+        # 一条都没算出来（或本机根本没持仓）就是 `missing`，不写 `partial` 假装有一半
+        status = DAILY_MISSING
+    elif complete:
+        status = DAILY_OK
+    else:
+        status = "partial"
+    return {
+        "daily_pnl": round(total, 2) if complete else None,
+        "daily_pnl_status": status,
+        "currency": DAILY_CURRENCY,
+        "daily_pnl_missing": missing,
+    }
+
+
 __all__ = [
+    "DAILY_CURRENCY",
+    "DAILY_MISSING",
+    "DAILY_NOT_COMPUTED",
+    "DAILY_OK",
     "POSITION_FIELDS",
     "TRADE_SCAN_LIMIT",
     "UNLABELED_INDUSTRY",
