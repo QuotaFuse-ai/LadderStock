@@ -122,7 +122,7 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
         "spot_quote",
         "tencent_quote_batch",
         124,
-        date(2026, 11, 3),
+        date(2026, 11, 4),
         "high",
     ),
 ]
