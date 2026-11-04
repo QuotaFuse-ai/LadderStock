@@ -43,6 +43,9 @@ const HOLDING_COLUMNS: Array<Column<PositionItem>> = [
   {
     key: 'name',
     header: '名称',
+    // 有 `width` 时以宽度为准（`truncate` 仍负责省略号）：名称列此前吃剩余宽度，
+    // 1280px 下把后面四个数字列挤到换行，这里钉成 §7.3 的 128 刻度
+    width: '128px',
     truncate: true,
     render: (row) => (
       <span className={row.name ? 'font-medium' : 'text-text-muted'}>{row.name ?? '名称未接入'}</span>
@@ -51,11 +54,11 @@ const HOLDING_COLUMNS: Array<Column<PositionItem>> = [
   {
     key: 'code',
     header: '代码 · 股数',
-    width: '176px',
+    width: '168px',
     render: (row) => (
       <span className="ldst-num text-text-secondary">
         {row.code}
-        {row.qty === null ? ` · ${MISSING}` : ` · ${formatAmount(row.qty)} 股`}
+        {row.qty === null ? ` · ${MISSING}` : ` · ${formatAmount(row.qty)}`}
       </span>
     ),
   },
@@ -74,7 +77,7 @@ const HOLDING_COLUMNS: Array<Column<PositionItem>> = [
   {
     key: 'value',
     header: '市值',
-    width: '112px',
+    width: '128px',
     numeric: true,
     sort: (a, b) => (a.market_value ?? Number.NEGATIVE_INFINITY) - (b.market_value ?? Number.NEGATIVE_INFINITY),
     render: (row) => (
@@ -107,10 +110,11 @@ const HOLDING_COLUMNS: Array<Column<PositionItem>> = [
   },
 ]
 
-/** 市值等金额列：`null` 一律 `—`（`formatInt` 会把 null 也渲染成 `—`，这里只要一个入口）。 */
+/** 市值等金额列：`null` 一律 `—`；有值走 `formatAmount` 的原样读数（§8），不用「13.92 万」折算——
+ *  折算带空格，在 112px 列里会折成「13.92 / 万」两行。 */
 function formatIntOrMissing(value: number | null | undefined): string {
   if (value === null || value === undefined) return MISSING
-  return formatMoney(value)
+  return formatAmount(value)
 }
 
 interface SummaryRow {

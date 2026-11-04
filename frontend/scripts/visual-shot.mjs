@@ -26,6 +26,8 @@
  *   --chrome <path>    浏览器可执行文件（默认自动找 Chrome/Edge，或读环境变量 LDST_CHROME）
  *   --width <px>       视口宽（默认 1440；验收 1280 零横向溢出时传 1280）
  *   --height <px>      视口高（默认 900）
+ *   --full-page        截整页（按 `contentSize` 撑高），长页一屏装不下时用；溢出判定仍按视口宽
+ *   --scroll <px>      截图前先滚到纵向 N px（拍首屏之后的分区，不传则停在顶部）
  *
  * 每张图拍完都会量 `documentElement.scrollWidth` 与 `innerWidth`，脚本结束统一报告横向溢出清单
  * （QUOT-304 / QUOT-317 的 1280px 证据就是这条输出的原文）。
@@ -85,6 +87,8 @@ function parseArgs(argv) {
     port: 9333,
     width: VIEWPORT.width,
     height: VIEWPORT.height,
+    fullPage: false,
+    scroll: 0,
   }
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]
@@ -101,6 +105,8 @@ function parseArgs(argv) {
     else if (flag === '--port') options.port = Number(next())
     else if (flag === '--width') options.width = Number(next())
     else if (flag === '--height') options.height = Number(next())
+    else if (flag === '--full-page') options.fullPage = true
+    else if (flag === '--scroll') options.scroll = Number(next())
     else throw new Error(`未知参数：${flag}（--help 见文件头注释）`)
   }
   for (const theme of options.themes) {
@@ -259,6 +265,14 @@ async function shoot(cdp, base, route, theme, options) {
     await cdp.send('Page.navigate', { url: `${base}${route.path}${query}` }, sessionId)
     await loaded
     await sleep(options.settle)
+    if (options.scroll > 0) {
+      await cdp.send(
+        'Runtime.evaluate',
+        { expression: `window.scrollTo(0, ${options.scroll}); window.scrollY`, returnByValue: true },
+        sessionId,
+      )
+      await sleep(400)
+    }
     const measured = await cdp.send(
       'Runtime.evaluate',
       {
@@ -268,7 +282,18 @@ async function shoot(cdp, base, route, theme, options) {
       sessionId,
     )
     const { scrollWidth, innerWidth } = JSON.parse(measured.result.value)
-    const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' }, sessionId)
+    // 整页截图：按内容高度扩 clip，`captureBeyondViewport` 才能拍到视口以下的部分
+    let shotParams = { format: 'png' }
+    if (options.fullPage) {
+      const metrics = await cdp.send('Page.getLayoutMetrics', {}, sessionId)
+      const size = metrics.cssContentSize ?? metrics.contentSize
+      shotParams = {
+        format: 'png',
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: options.width, height: Math.ceil(size.height), scale: 1 },
+      }
+    }
+    const { data } = await cdp.send('Page.captureScreenshot', shotParams, sessionId)
     const file = join(options.out, `${route.slug}-${options.suffix}-${theme}.png`)
     writeFileSync(file, Buffer.from(data, 'base64'))
     return { file, scrollWidth, innerWidth, overflow: scrollWidth > innerWidth }
