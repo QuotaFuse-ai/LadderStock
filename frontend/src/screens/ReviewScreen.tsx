@@ -312,17 +312,13 @@ export default function ReviewScreen() {
       title="每日复盘"
       subtitle={summary}
       badge={<DemoStateBadge state={forced} />}
+      refresh={{
+        onClick: reloadAll,
+        loading: busy && state !== 'loading',
+        disabled: state === 'loading',
+      }}
       actions={
         <>
-          <Button
-            variant="secondary"
-            loading={busy && state !== 'loading'}
-            disabled={state === 'loading'}
-            onClick={reloadAll}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
           {/* 模型面的内容不在这屏，给一个明确出口，避免用户在两屏间来回找「重新生成」 */}
           <LinkButton to="/review/ai">AI复盘</LinkButton>
         </>

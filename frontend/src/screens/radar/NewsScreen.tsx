@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, ExternalLink, Newspaper, RefreshCw, Search } from 'lucide-react'
+import { Database, ExternalLink, Newspaper, Search } from 'lucide-react'
 
 import {
   isRadarEndpointMissing,
@@ -487,16 +487,10 @@ export default function NewsScreen() {
           {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
         </div>
       }
-      actions={
-        <Button
-          variant="primary"
-          onClick={reload}
-          disabled={state === 'loading'}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
     />
   )
 

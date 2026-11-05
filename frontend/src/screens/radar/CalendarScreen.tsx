@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Database, RefreshCw } from 'lucide-react'
+import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Database } from 'lucide-react'
 
 import {
   CALENDAR_SECTION_LABEL,
@@ -403,6 +403,10 @@ export default function CalendarScreen() {
           {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
         </div>
       }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
       actions={
         <div className="flex items-center gap-2">
           <IconButton
@@ -428,14 +432,6 @@ export default function CalendarScreen() {
               setParams(next, { replace: true })
             }}
           />
-          <Button
-            variant="primary"
-            onClick={reload}
-            disabled={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
         </div>
       }
     />

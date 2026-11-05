@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Eye, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Eye, Plus, Trash2 } from 'lucide-react'
 
 import { isApiError } from '../../api'
 import {
@@ -180,16 +180,10 @@ export default function WatchlistScreen() {
           />
         ) : undefined
       }
-      actions={
-        <Button
-          variant="secondary"
-          onClick={view.reload}
-          disabled={view.status === 'loading'}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: view.reload,
+        disabled: view.status === 'loading',
+      }}
     />
   )
 

@@ -351,16 +351,13 @@ export default function WatchScreen() {
       title="盘中盯盘"
       subtitle={subtitle}
       badge={<DemoStateBadge state={forced} />}
+      refresh={{
+        label: '立即取数',
+        onClick: request.reload,
+        loading: request.status === 'loading',
+      }}
       actions={
         <>
-          <Button
-            variant="primary"
-            onClick={request.reload}
-            loading={request.status === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            立即取数
-          </Button>
           <Button
             variant="secondary"
             onClick={() => setConfirmClear(true)}

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Database, FileUp, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { Database, FileUp, Pencil, Plus, Trash2, X } from 'lucide-react'
 
 import { isApiError } from '../../api'
 import {
@@ -635,6 +635,10 @@ export default function PositionsScreen() {
           {payload && <SourceStatusBadge status={payload.data_source_status} />}
         </div>
       }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -655,14 +659,6 @@ export default function PositionsScreen() {
             leadingIcon={<FileUp className="size-3.5" aria-hidden="true" />}
           >
             导入本地 JSON
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={reload}
-            disabled={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
           </Button>
           <Button
             variant="primary"

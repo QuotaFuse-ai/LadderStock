@@ -201,17 +201,12 @@ export default function HomeScreen() {
       title="首页"
       subtitle={summary}
       badge={<DemoStateBadge state={forced} />}
-      actions={
-        <Button
-          variant="primary"
-          loading={busy && state !== 'loading'}
-          disabled={state === 'loading'}
-          onClick={reloadAll}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新全部
-        </Button>
-      }
+      refresh={{
+        onClick: reloadAll,
+        label: '刷新全部',
+        loading: busy && state !== 'loading',
+        disabled: state === 'loading',
+      }}
     />
   )
 

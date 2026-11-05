@@ -151,6 +151,8 @@ export default {
         content: cssVar(tokens.layout.contentMax.cssVar),
         table: cssVar(tokens.layout.tableMax.cssVar),
         measure: cssVar(tokens.layout.measure.cssVar),
+        /* 结构尺寸（非视觉令牌）：顶栏命令浮层的宽度上限，窄屏两侧各留 16px */
+        popover: 'calc(100vw - 2rem)',
       },
       zIndex: {
         /* 表格 sticky 首列 / 首列×表头交叉格：介于 base 0 与 sticky 10 之间，见 tokens.css 注释 */

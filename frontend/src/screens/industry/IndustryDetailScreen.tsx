@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Database, Newspaper, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Database, Newspaper } from 'lucide-react'
 
 import {
   DIMENSION_TITLE,
@@ -521,21 +521,15 @@ export default function IndustryDetailScreen() {
           {payload && !payload.meta.bound && <Badge tone="neutral">未绑定</Badge>}
         </>
       }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
       actions={
-        <>
-          <Link to={backLink} className={LINK_BUTTON_CLASS}>
-            <ArrowLeft className="size-3.5" aria-hidden="true" />
-            产业矩阵
-          </Link>
-          <Button
-            variant="primary"
-            onClick={reload}
-            disabled={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
-        </>
+        <Link to={backLink} className={LINK_BUTTON_CLASS}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          产业矩阵
+        </Link>
       }
     />
   )

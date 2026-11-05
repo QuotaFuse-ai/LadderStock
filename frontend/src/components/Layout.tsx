@@ -9,6 +9,7 @@ import PersistenceBanner from './PersistenceBanner'
 import TopbarTools from './TopbarTools'
 import { cn } from '../lib/cn'
 import { useIsMobile } from '../lib/mediaQuery'
+import { PageToolsSlotContext } from '../lib/pageToolsSlot'
 import {
   BRAND_ICON,
   NAV_SECTIONS,
@@ -42,8 +43,10 @@ export { NAV_SECTIONS, PINNED_NAV, type NavPage, type NavSection } from '../lib/
  *   展平后 20 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
  *
- * **顶栏**（QUOT-442 / DEC-062）：侧栏右侧新增纵向列 = `header.workspace-topbar` + 主内容列。
- * 顶栏左侧是面包屑（`工作空间 /` + 一级栏目名），右侧是工具区（`TopbarTools`）；
+ * **顶栏**（QUOT-442 / DEC-062，QUOT-457 / DEC-063 收敛）：侧栏右侧纵向列 = `header.workspace-topbar` + 主内容列。
+ * 顶栏左侧是面包屑（`工作空间 /` + 一级栏目名）；右侧依次是页面工具槽（`PageHeader` 经 portal 送进来的「刷新」）、
+ * 本页命令（`PageCommandBar`，图标 + 弹层）、全局工具区（`TopbarTools`）。
+ * 全平台只有这一条横栏：页面自己不再渲染标题条，命令也不再占内容区一行。
  * `<768px` 侧栏收起为抽屉（`MobileNavDrawer`），由汉堡按钮打开。
  * 主内容列仍是唯一滚动容器，`PersistenceBanner` 挂在顶栏之下、`main` 之上。
  *
@@ -108,6 +111,8 @@ export default function Layout() {
   // `?ai=1` 是深链（截图与排障用）；首次渲染读取一次，不跟后续导航反复弹窗
   const [aiOpen, setAiOpen] = useState(() => new URLSearchParams(location.search).get('ai') === '1')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // 顶栏右侧给页面主操作（刷新）留的落点，见 `lib/pageToolsSlot.tsx`
+  const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLButtonElement>(null)
 
   const openAi = useCallback(() => setAiOpen(true), [])
@@ -317,15 +322,21 @@ export default function Layout() {
             <strong className="truncate font-semibold">{navTitleFor(location.pathname)}</strong>
           </div>
 
-          <TopbarTools onOpenAi={openAi} />
+          <div className="flex min-w-0 items-center gap-2">
+            {/* 页面主操作落点：`PageHeader` 把「刷新」portal 到这里，页面本身不再出标题条 */}
+            <div ref={setToolsSlot} className="flex items-center gap-2" />
+            {/* QUOT-457：「运行本页命令」收进顶栏（图标 + 弹层）；无命令或控制面未开启时整颗不渲染 */}
+            <PageCommandBar />
+            <TopbarTools onOpenAi={openAi} />
+          </div>
         </header>
 
         <div ref={scroller} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain">
           <PersistenceBanner />
           <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
-            {/* QUOT-200：每页顶部的「运行本页命令」条；没有对应命令或控制面未开启时整条不渲染 */}
-            <PageCommandBar />
-            <Outlet />
+            <PageToolsSlotContext.Provider value={toolsSlot}>
+              <Outlet />
+            </PageToolsSlotContext.Provider>
           </main>
         </div>
       </div>

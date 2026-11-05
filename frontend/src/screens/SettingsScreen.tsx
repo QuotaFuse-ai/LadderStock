@@ -1689,21 +1689,16 @@ export default function SettingsScreen() {
               : '读取模块状态…'
       }
       badge={<DemoStateBadge state={forced} />}
-      actions={
-        <Button
-          variant="primary"
-          loading={board.status === 'loading' && state !== 'loading'}
-          disabled={state === 'loading'}
-          onClick={() => {
-            board.reload()
-            stateConfig.reload()
-            health.reload()
-          }}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新状态
-        </Button>
-      }
+      refresh={{
+        label: '刷新状态',
+        loading: board.status === 'loading' && state !== 'loading',
+        disabled: state === 'loading',
+        onClick: () => {
+          board.reload()
+          stateConfig.reload()
+          health.reload()
+        },
+      }}
     />
   )
 
