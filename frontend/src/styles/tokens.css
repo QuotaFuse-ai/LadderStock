@@ -57,6 +57,12 @@
   --ldst-chart-series-2: #a78bfa; /** 第二序列（晋级率对照线），仅在同一图出现两序列时使用 */
   --ldst-chart-threshold: #f0b429; /** 阈值虚线、昨日参考线 */
   --ldst-chart-empty: #2a3342; /** 空数据时的占位轴（只画轴与网格，不画序列） */
+  --ldst-chart-tooltip-bg: #1b2230; /** 图表提示框底色（DEC-057） */
+  --ldst-chart-tooltip-text: #e8ecf2; /** 图表提示框文字（DEC-057） */
+  --ldst-chart-ma-1: #8b8f98; /** 均线 MA5（灰，避开涨跌红绿） */
+  --ldst-chart-ma-2: #d4a017; /** 均线 MA10（琥珀） */
+  --ldst-chart-ma-3: #a855f7; /** 均线 MA20（紫） */
+  --ldst-chart-ma-4: #3b82f6; /** 均线 MA60（蓝） */
   --ldst-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.40); /** 卡片唯一的阴影档位。卡片之间不叠加阴影，靠 1px border 分界 */
   --ldst-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.45); /** 下拉浮层、Tooltip、Toast（浮在内容之上，不受卡片 1 档限制） */
   --ldst-shadow-dialog: 0 24px 48px rgba(0, 0, 0, 0.55); /** 抽屉、确认框 */
@@ -208,6 +214,12 @@
   --ldst-chart-series-2: #6d3fd4; /** 第二序列（晋级率对照线），仅在同一图出现两序列时使用 */
   --ldst-chart-threshold: #8a5a00; /** 阈值虚线、昨日参考线 */
   --ldst-chart-empty: #d8dee7; /** 空数据时的占位轴（只画轴与网格，不画序列） */
+  --ldst-chart-tooltip-bg: #ffffff; /** 图表提示框底色（DEC-057） */
+  --ldst-chart-tooltip-text: #141a22; /** 图表提示框文字（DEC-057） */
+  --ldst-chart-ma-1: #6b7280; /** 均线 MA5（灰，避开涨跌红绿） */
+  --ldst-chart-ma-2: #8a5a00; /** 均线 MA10（琥珀） */
+  --ldst-chart-ma-3: #7c3aed; /** 均线 MA20（紫） */
+  --ldst-chart-ma-4: #1d4ed8; /** 均线 MA60（蓝） */
   --ldst-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.08); /** 卡片唯一的阴影档位。卡片之间不叠加阴影，靠 1px border 分界 */
   --ldst-shadow-overlay: 0 8px 24px rgba(16, 24, 40, 0.12); /** 下拉浮层、Tooltip、Toast（浮在内容之上，不受卡片 1 档限制） */
   --ldst-shadow-dialog: 0 24px 48px rgba(16, 24, 40, 0.18); /** 抽屉、确认框 */

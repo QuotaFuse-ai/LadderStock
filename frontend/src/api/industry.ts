@@ -989,7 +989,7 @@ export function describeIndustryError(error: unknown): {
     if (error.kind === 'not-connected') {
       return {
         title: '产业接口未接入',
-        detail: '先运行 `ldst run` 启动本机 API；产业读取接口（/api/industry/*、/api/signals）由后端提供。',
+        detail: '本机 API 未连接（ldst run 未启动）；产业读取接口（/api/industry/*、/api/signals）由后端提供。',
         code: null,
       }
     }

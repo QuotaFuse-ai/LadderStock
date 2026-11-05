@@ -86,7 +86,7 @@ export default function ResearchEntryScreen() {
           </form>
 
           <p className="border-t border-border pt-3 text-caption leading-body text-text-muted">
-            还没有研究产物时，先在本机运行 <code className="ldst-num">ldst research &lt;code&gt;</code> 生成六段产物；
+            还没有研究产物时，进入个股深挖后在报告页按段点「运行本段」生成；
             页面只读已落盘的产物，不会现场取数或补数据。
           </p>
         </CardBody>

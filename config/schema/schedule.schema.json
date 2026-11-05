@@ -24,12 +24,34 @@
         "properties": {
           "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
           "name": { "type": "string", "minLength": 1 },
-          "kind": { "enum": ["notify", "reconcile", "snapshot", "sync_close"] },
-          "trigger": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+          "kind": {
+            "enum": [
+              "notify",
+              "reconcile",
+              "snapshot",
+              "sync_close",
+              "snapshot_fast",
+              "sync_batch"
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "pattern": "^(([01][0-9]|2[0-3]):[0-5][0-9]|[1-9][0-9]*s)$"
+          },
           "enabled": { "type": "boolean" },
           "channel": { "enum": ["console", "desktop"] },
-          "message": { "type": "string" }
-        }
+          "message": { "type": "string" },
+          "dataset": { "type": "string", "minLength": 1 }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "kind": { "const": "sync_batch" } },
+              "required": ["kind"]
+            },
+            "then": { "required": ["dataset"] }
+          }
+        ]
       }
     }
   }

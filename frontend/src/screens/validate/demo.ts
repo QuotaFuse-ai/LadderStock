@@ -193,7 +193,7 @@ const EMPTY: LadderEnvelope<ValidationPayload> = {
     data_source_status: 'missing',
   },
   source: 'ladderstock',
-  source_detail: `local validation cache 不存在：${DEMO_VALIDATION_DATE}.json（先运行 ldst review --date ${DEMO_VALIDATION_DATE}）`,
+  source_detail: `local validation cache 不存在：${DEMO_VALIDATION_DATE}.json（当日收盘复盘尚未生成）`,
   fetched_at: DEMO_VALIDATION_FETCHED_AT,
   freshness: 'cached',
   confidence: 'low',

@@ -45,6 +45,27 @@ jobs:
     kind: snapshot
     trigger: "15:00"
     enabled: true
+  # 盘中高频关键快照（QUOT-352 / DEC-056）：交易日连续竞价时段（09:30–11:30、
+  # 13:00–15:00）每 30 秒抓一次「昨日涨停股 × 此刻报价」，落
+  # `data/intraday/<date>/fast/<HHMMSS>.json`（与 6 个定点时点分开，互不覆盖），
+  # 每轮一行观测记录进 `fast/rounds.jsonl`。只读 TickHub 缓存、不直打上游（DEC-006），
+  # 限流退避复用 S2 的适配器（QUOT-349）。时段外一律 skipped，不落盘。
+  - id: intraday_fast
+    name: 盘中 30s 关键快照
+    kind: snapshot_fast
+    trigger: "30s"
+    enabled: true
+  # 盘中资金流批量（QUOT-352）：同样只在连续竞价时段跑，60 秒一轮调
+  # `stock_fund_flow_batch`（一次覆盖整个涨停池），结果照 DEC-054 落
+  # `data/intraday/<date>/fund_flow_realtime/<HHMM>.json`，看板资金时点随之更新。
+  # 选 60s 而不是 30s：批量工具走东财 push2，端点闸门 3 次/60s，60s 已是
+  # 「每轮都出网」的上限节拍；把 30s 让给更便宜的报价批（腾讯源 180 次/60s）。
+  - id: fund_flow_fast
+    name: 盘中 60s 资金流批量
+    kind: sync_batch
+    trigger: "60s"
+    enabled: true
+    dataset: fund_flow_realtime
   - id: close_reconcile
     name: 15:05 收盘对账
     kind: reconcile
