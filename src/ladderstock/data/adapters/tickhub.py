@@ -211,8 +211,11 @@ CODE_POOL_DATASETS: frozenset[str] = frozenset(
 #: - `index_daily` 一次回溯 800 个交易日（上游上限 2000），覆盖「回看 3 年 ×
 #:   前 5 后 20 交易日」的事件窗口；
 #: - `lockup_expiry` 的 `forward_days` 取上游上限 730 天，未来解禁尽量看全。
+#: `daily_k` 的 `limit` 也显式带上：工具箱默认 320 根 ≈ 1.3 年，事件窗口的窗口边界
+#: 收盘价会因此缺失（QUOT-446 实测 600000 只有 2025-07 起）。取上游上限 2000，
+#: 腾讯侧实测回 ~640 根（≈2.5 年），再长就要换盘后包备源。
 FIXED_PARAMS: dict[str, dict[str, Any]] = {
-    "daily_k": {"period": "daily", "adjust": "qfq"},
+    "daily_k": {"period": "daily", "adjust": "qfq", "limit": 2000},
     "industry_fund_flow": {"board_type": "industry", "page": 1, "page_size": 300},
     "index_daily": {"days": 800},
     "lockup_calendar": {"forward_days": 730},

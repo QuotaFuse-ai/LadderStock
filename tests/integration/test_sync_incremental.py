@@ -25,7 +25,7 @@ DAY1 = "2026-10-24"
 DAY2 = "2026-10-25"
 
 #: daily_k 走代码池分支后的真实入参（`tencent_kline` 的 code 必填，口径显式带上）
-KLINE_PARAMS = {"code": "600000", "period": "daily", "adjust": "qfq"}
+KLINE_PARAMS = {"code": "600000", "period": "daily", "adjust": "qfq", "limit": 2000}
 
 
 @pytest.fixture()

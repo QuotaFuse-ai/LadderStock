@@ -582,7 +582,7 @@ def test_industry_board_flow_is_a_whole_board_request() -> None:
 @pytest.mark.parametrize(
     ("dataset", "expected"),
     [
-        ("daily_k", {"period": "daily", "adjust": "qfq", "code": "600000"}),
+        ("daily_k", {"period": "daily", "adjust": "qfq", "limit": 2000, "code": "600000"}),
         ("fund_flow", {"code": "600000"}),
         ("dragon_tiger_seats", {"code": "600000"}),
     ],
@@ -601,6 +601,7 @@ def test_incremental_start_uses_the_tools_real_argument_name() -> None:
     assert tool_params("daily_k", code="600000", since="2026-10-27") == {
         "period": "daily",
         "adjust": "qfq",
+        "limit": 2000,
         "code": "600000",
         "start": "2026-10-27",
     }
