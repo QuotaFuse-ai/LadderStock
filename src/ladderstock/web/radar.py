@@ -653,7 +653,9 @@ class RadarPlane:
         """`GET /api/watchlist`：**平面 JSON、只 GET、回环独占**（DEC-052 拍板口径 1）。
 
         载荷 = 本机自选清单（`code` + 加入时间）+ 每条的现价与涨跌
-        （`core.watch_prices` 复用已登记的 `spot_quote`）。四条纪律都落在这个形状里：
+        （`core.watch_prices` 复用已登记的 `spot_quote`）。QUOT-427 起每条再多
+        `pe_ttm` / `pb` / `turnover_pct` 三列与逐条 `metrics_reason`：上游给什么就
+        投影什么，缺的列固定 `null`，不补 0、不估算。四条纪律都落在这个形状里：
 
         - **不进 `LadderEnvelope`**：`payload` / `domain` / `fetched_at` 一个键都不出现。
           这是隐私数据到不了 export / MCP / AI 三条出口的**结构性**原因（DEC-015），
@@ -685,6 +687,10 @@ class RadarPlane:
                 "price_as_of": None,
                 "price_status": "unavailable",
                 "price_reason": "这批自选没有取到报价",
+                "pe_ttm": None,
+                "pb": None,
+                "turnover_pct": None,
+                "metrics_reason": "这批自选没有取到报价",
             }
             items.append({"code": code, "added_at": row.get("created_at"), **quote})
 
