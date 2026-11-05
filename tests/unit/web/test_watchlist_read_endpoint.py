@@ -280,9 +280,8 @@ def test_write_surface_is_only_post(tmp_path: Path) -> None:
         item for path, item in spec["paths"].items() if path.endswith("/api/watchlist")
     )
     assert set(collection) == {"get", "post"}
-    delete = next(
-        item for path, item in spec["paths"].items() if path.endswith("/api/watchlist/{code}/delete")
-    )
+    delete_path = "/api/watchlist/{code}/delete"
+    delete = next(item for path, item in spec["paths"].items() if path.endswith(delete_path))
     assert set(delete) == {"post"}
 
 
