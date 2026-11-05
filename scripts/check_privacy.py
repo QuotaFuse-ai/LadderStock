@@ -189,6 +189,14 @@ JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
             "host_header_allowed(",
             '"Cache-Control": "no-store"',
         ),
+        # 第四条授权例外（QUOT-430 / DEC-056）：持仓账本（流水重放 + 旧仓迁移）。
+        # 读写共用 `_positions_guard` / `_positions_write_guard`，判据与持仓完全同一条。
+        "ladderstock.journal.portfolio": (
+            "def _positions_guard(",
+            "is_loopback_host(",
+            "host_header_allowed(",
+            '"Cache-Control": "no-store"',
+        ),
     },
 }
 
@@ -281,6 +289,9 @@ def _journal_rule_selftest() -> list[str]:
     # 反例 10：自选模块出现在 AI 出口里 → 必须判 FAIL
     caught("watchlist-in-ai", "src/ladderstock/ai/context.py",
            "from ladderstock.journal.watchlist import list_watch\n")
+    # 反例 10b（QUOT-430）：持仓账本出现在 MCP 出口里 → 必须判 FAIL
+    caught("portfolio-in-mcp", "src/ladderstock/mcp/server.py",
+           "from ladderstock.journal.portfolio import list_trades\n")
     # 反例 11：白名单在册但少了 `_watchlist_guard`（引用不等于授权）
     caught("radar-watchlist-without-guard", "src/ladderstock/web/radar.py",
            "from ladderstock.journal.watchlist import list_watch\n"

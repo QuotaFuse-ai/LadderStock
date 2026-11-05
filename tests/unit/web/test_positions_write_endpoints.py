@@ -304,7 +304,16 @@ def test_delete_is_hard_and_leaves_no_marker(tmp_path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
         }
-        assert tables == {"schema_meta", "trades", "positions", "watchlist"}
+        assert tables == {
+            "schema_meta",
+            "trades",
+            "positions",
+            "watchlist",
+            # QUOT-426 / schema v3：账本、旧仓迁移标记与收件箱
+            "portfolio_trades",
+            "portfolio_legacy_marks",
+            "inbox",
+        }
         columns = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
         assert columns == {
             "id",
