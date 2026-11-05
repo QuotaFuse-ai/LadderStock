@@ -59,8 +59,11 @@ from ladderstock.core.models import (
     LadderEnvelope,
     SourceStatus,
 )
+from ladderstock.core.portfolio import COST_METHODS as PORTFOLIO_METHODS
+from ladderstock.core.portfolio import HoldingRow, round4
+from ladderstock.core.portfolio import replay as replay_portfolio
 from ladderstock.core.privacy import strip_private
-from ladderstock.core.quotes import daily_change_map, price_map
+from ladderstock.core.quotes import PRICE_DATASET, daily_change_map, price_map
 from ladderstock.core.watch_prices import DATASET as SPOT_QUOTE_DATASET
 from ladderstock.core.watch_prices import fetch_prices
 from ladderstock.data import archive
@@ -74,6 +77,14 @@ from ladderstock.errors import (
     EXIT_USAGE,
     LadderStockError,
 )
+from ladderstock.journal.portfolio import add_trade as add_portfolio_trade
+from ladderstock.journal.portfolio import adopt_legacy as adopt_portfolio_legacy
+from ladderstock.journal.portfolio import delete_trade as delete_portfolio_trade
+from ladderstock.journal.portfolio import dismiss_legacy as dismiss_portfolio_legacy
+from ladderstock.journal.portfolio import legacy_rows as portfolio_legacy_rows
+from ladderstock.journal.portfolio import list_trades as list_portfolio_trades
+from ladderstock.journal.portfolio import migrate_legacy as migrate_portfolio_legacy
+from ladderstock.journal.portfolio import trade_as_dict as portfolio_trade_dict
 from ladderstock.journal.position import (
     add_position,
     compute_metrics,
@@ -336,6 +347,146 @@ def watch_write_code(raw: Any) -> str:
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         raise _bad_body(f"code 必须是 6 位数字（可带 sh/sz/bj 前缀），收到 {value!r}")
     return str(value)
+
+
+# --------------------------------------------------------------------------- #
+# 持仓账本（QUOT-430 / DEC-056）：成本法、数字口径与平面投影
+# --------------------------------------------------------------------------- #
+
+PORTFOLIO_DEFAULT_METHOD = "average"
+
+
+def portfolio_method(raw: str | None) -> Literal["average", "fifo"]:
+    """`?method=` → 成本法；缺省移动加权平均，非法值是 422。"""
+    text = str(raw or "").strip().lower() or PORTFOLIO_DEFAULT_METHOD
+    if text == "average":
+        return "average"
+    if text == "fifo":
+        return "fifo"
+    raise _invalid(f"成本法只能是 fifo（先进先出）或 average（移动加权平均），收到 {raw!r}")
+
+
+def portfolio_id(raw: Any, name: str) -> int:
+    """路径参数 / 请求体里的整数 id；不是正整数就是 400。"""
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise _bad_body(f"{name} 必须是整数，收到 {raw!r}") from None
+    if value <= 0:
+        raise _bad_body(f"{name} 必须是正整数，收到 {raw!r}")
+    return value
+
+
+def _empty_migration() -> dict[str, Any]:
+    return {
+        "backup": None,
+        "migrated": [],
+        "removed_stale": [],
+        "failed": [],
+        "error": None,
+    }
+
+
+def _price_reason(
+    symbol: str, price_lookup: Mapping[str, Any]
+) -> str:
+    day = price_lookup.get("date")
+    if day:
+        return f"{PRICE_DATASET} 在 {day} 没有 {symbol} 的收盘价（停牌或未同步）"
+    return str(price_lookup.get("reason") or f"本机缓存里没有 {PRICE_DATASET} 数据")
+
+
+def holding_item(
+    row: HoldingRow,
+    prices: Mapping[str, float],
+    daily: Mapping[str, Mapping[str, Any]],
+    price_lookup: Mapping[str, Any],
+) -> dict[str, Any]:
+    """重放出来的一行 + 现价拼接。取不到现价就是 `null` + 原因，**不拿成本价顶替**。"""
+    price = prices.get(row.symbol)
+    daily_row = daily.get(row.symbol) or {}
+    change = daily_row.get("change")
+    prev_close = daily_row.get("prev_close")
+    change_pct = (
+        round4(float(change) / float(prev_close) * 100.0)
+        if change is not None and prev_close
+        else None
+    )
+    market_value = round4(price * row.shares) if price is not None else None
+    pnl = round4(market_value - row.cost_total) if market_value is not None else None
+    pnl_pct = (
+        round4(pnl / row.cost_total * 100.0)
+        if pnl is not None and row.cost_total > 0
+        else None
+    )
+    return {
+        "symbol": row.symbol,
+        "name": row.name,
+        "shares": row.shares,
+        "unit_cost": row.unit_cost,
+        "cost_total": row.cost_total,
+        "opened_at": row.opened_at,
+        "lots": [
+            {
+                "trade_id": lot.trade_id,
+                "date": lot.date,
+                "shares": lot.shares,
+                "unit_cost": lot.unit_cost,
+            }
+            for lot in row.lots
+        ],
+        "realized_pnl": row.realized_pnl,
+        "dividends": row.dividends,
+        "fees": row.fees,
+        "trade_count": row.trade_count,
+        "latest_price": price,
+        "change": change,
+        "change_pct": change_pct,
+        "market_value": market_value,
+        "pnl": pnl,
+        "pnl_pct": pnl_pct,
+        "price_reason": None if price is not None else _price_reason(row.symbol, price_lookup),
+    }
+
+
+def cny_totals(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """人民币合计：只汇总取到现价的行；缺价的不计入，原因由调用方写进 `price_lookup`。"""
+    priced = [item for item in items if item.get("latest_price") is not None]
+    unpriced = len(items) - len(priced)
+    if not items:
+        reason: str | None = "本机还没有持仓流水"
+    elif not priced:
+        reason = "持仓都还没有现价，人民币合计算不出来"
+    elif unpriced:
+        reason = f"{unpriced} 只持仓没有现价，未计入人民币合计"
+    else:
+        reason = None
+    if not priced:
+        return {
+            "currency": "CNY",
+            "available": False,
+            "market_value": None,
+            "cost": None,
+            "pnl": None,
+            "pnl_pct": None,
+            "priced_count": 0,
+            "unpriced_count": unpriced,
+            "reason": reason,
+        }
+    cost = round4(sum(float(item["cost_total"]) for item in priced))
+    market_value = round4(sum(float(item["market_value"]) for item in priced))
+    pnl = round4(market_value - cost)
+    return {
+        "currency": "CNY",
+        "available": True,
+        "market_value": market_value,
+        "cost": cost,
+        "pnl": pnl,
+        "pnl_pct": round4(pnl / cost * 100.0) if cost > 0 else None,
+        "priced_count": len(priced),
+        "unpriced_count": unpriced,
+        "reason": reason,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -647,13 +798,178 @@ class RadarPlane:
         payload["daily_lookup"] = daily_lookup
         return payload
 
+    # ------------------------------------------------- 持仓账本 §6.2（QUOT-430 / DEC-056）
+
+    def portfolio_view(self, raw_method: str | None) -> dict[str, Any]:
+        """`GET /api/portfolio`：流水重放 + 行情拼接 + 旧仓分类 + 迁移结果。
+
+        平面 JSON（**不进 `LadderEnvelope`**）、`no-store`、回环独占。
+        顶层键刻意避开 `holdings` / `positions` / `trades`——它们在
+        `core/privacy.py` 的 `PRIVATE_KEYS` 里，走任何信封出口会被静默抹掉。
+
+        GET 会先尝试自动迁移 `pending` 的旧记录（这是本接口唯一会写库的分支，
+        且只在确实要迁移时才 `create=True`）；迁移失败不拖垮读面，原因放进
+        `migration.error`。本机没有账本时返回空视图，不建空库。
+        """
+        method = portfolio_method(raw_method)
+        migration = self._auto_migrate()
+        trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
+        legacy = self._read(lambda: portfolio_legacy_rows(root=self.data_root))
+        result = replay_portfolio(trades, method)
+
+        codes = [row.symbol for row in result.holdings]
+        prices, price_lookup = self._read(
+            lambda: price_map(codes, None, root=self.data_root)
+        )
+        daily, daily_lookup = self._read(
+            lambda: daily_change_map(codes, price_lookup["date"], root=self.data_root)
+        )
+        items = [holding_item(row, prices, daily, price_lookup) for row in result.holdings]
+        totals = cny_totals(items)
+        if totals["unpriced_count"]:
+            note = f"{totals['unpriced_count']} 只持仓没有现价，未计入人民币合计"
+            price_lookup = {
+                **price_lookup,
+                "reason": (
+                    f"{price_lookup['reason']}；{note}"
+                    if price_lookup.get("reason")
+                    else note
+                ),
+            }
+
+        return {
+            "local_only": True,
+            "store": "local_sqlite",
+            "method": method,
+            "method_label": PORTFOLIO_METHODS[method],
+            "methods": [
+                {"id": key, "label": label}
+                for key, label in PORTFOLIO_METHODS.items()
+            ],
+            "today": date.today().isoformat(),
+            "price_lookup": price_lookup,
+            "daily_lookup": daily_lookup,
+            "items": items,
+            "closed": [
+                {
+                    "symbol": row.symbol,
+                    "name": row.name,
+                    "realized_pnl": row.realized_pnl,
+                    "dividends": row.dividends,
+                    "fees": row.fees,
+                    "last_date": row.last_date,
+                }
+                for row in result.closed
+            ],
+            "realized": [
+                {
+                    "trade_id": row.trade_id,
+                    "symbol": row.symbol,
+                    "date": row.date,
+                    "shares": row.shares,
+                    "proceeds": row.proceeds,
+                    "cost": row.cost,
+                    "pnl": row.pnl,
+                }
+                for row in result.realized
+            ],
+            "dividends": [
+                {
+                    "trade_id": row.trade_id,
+                    "symbol": row.symbol,
+                    "date": row.date,
+                    "amount": row.amount,
+                }
+                for row in result.dividends
+            ],
+            "issues": [
+                {
+                    "id": row.id,
+                    "symbol": row.symbol,
+                    "date": row.date,
+                    "type": row.type,
+                    "why": row.why,
+                }
+                for row in result.issues
+            ],
+            "ledger": [portfolio_trade_dict(trade) for trade in trades],
+            "legacy": legacy,
+            "migration_pending": sum(1 for row in legacy if row["state"] == "pending"),
+            "migration": migration,
+            "totals_cny": totals,
+        }
+
+    def _auto_migrate(self) -> dict[str, Any]:
+        """自动迁移旧记录；失败不拖垮读面，原因写进 `migration.error`。"""
+        try:
+            result = migrate_portfolio_legacy(root=self.data_root)
+            return {**_empty_migration(), **result}
+        except LadderStockError as exc:
+            return {**_empty_migration(), "error": exc.message}
+        except (OSError, sqlite3.Error) as exc:
+            return {**_empty_migration(), "error": str(exc)}
+
+    def portfolio_add_ledger(self, body: Any) -> dict[str, Any]:
+        """`POST /api/portfolio/ledger`：新增一笔流水（只写 `portfolio_trades`）。"""
+        trade = self._write(lambda: add_portfolio_trade(body, root=self.data_root))
+        return {
+            "ok": True,
+            "local_only": True,
+            "store": "local_sqlite",
+            "trade": trade,
+        }
+
+    def portfolio_delete_ledger(self, raw_id: Any) -> dict[str, Any]:
+        """`POST /api/portfolio/ledger/{id}/delete`：硬删一笔流水，删前先备份。"""
+        trade_id = portfolio_id(raw_id, "流水 id")
+        removed = self._write(
+            lambda: delete_portfolio_trade(trade_id, root=self.data_root)
+        )
+        return {
+            "ok": True,
+            "local_only": True,
+            "store": "local_sqlite",
+            **removed,
+        }
+
+    def portfolio_adopt(self, raw_id: Any) -> dict[str, Any]:
+        """`POST /api/portfolio/legacy/{position_id}/adopt`：确认转成期初流水。
+
+        已经按它转过一笔的**原地替换**那一笔，不新增第二笔。
+        """
+        position_id = portfolio_id(raw_id, "旧记录 id")
+        migration = self._write(
+            lambda: adopt_portfolio_legacy(position_id, root=self.data_root)
+        )
+        return {
+            "ok": True,
+            "local_only": True,
+            "store": "local_sqlite",
+            "migration": migration,
+        }
+
+    def portfolio_dismiss(self, raw_id: Any) -> dict[str, Any]:
+        """`POST /api/portfolio/legacy/{position_id}/dismiss`：只写 mark，不删旧行。"""
+        position_id = portfolio_id(raw_id, "旧记录 id")
+        mark = self._write(
+            lambda: dismiss_portfolio_legacy(position_id, root=self.data_root)
+        )
+        return {
+            "ok": True,
+            "local_only": True,
+            "store": "local_sqlite",
+            "mark": mark,
+        }
+
     # ---------------------------------------------------------------- 我的自选 §9.2
 
     def watchlist_view(self) -> dict[str, Any]:
         """`GET /api/watchlist`：**平面 JSON、只 GET、回环独占**（DEC-052 拍板口径 1）。
 
         载荷 = 本机自选清单（`code` + 加入时间）+ 每条的现价与涨跌
-        （`core.watch_prices` 复用已登记的 `spot_quote`）。四条纪律都落在这个形状里：
+        （`core.watch_prices` 复用已登记的 `spot_quote`）。QUOT-427 起每条再多
+        `pe_ttm` / `pb` / `turnover_pct` 三列与逐条 `metrics_reason`：上游给什么就
+        投影什么，缺的列固定 `null`，不补 0、不估算。四条纪律都落在这个形状里：
 
         - **不进 `LadderEnvelope`**：`payload` / `domain` / `fetched_at` 一个键都不出现。
           这是隐私数据到不了 export / MCP / AI 三条出口的**结构性**原因（DEC-015），
@@ -685,6 +1001,10 @@ class RadarPlane:
                 "price_as_of": None,
                 "price_status": "unavailable",
                 "price_reason": "这批自选没有取到报价",
+                "pe_ttm": None,
+                "pb": None,
+                "turnover_pct": None,
+                "metrics_reason": "这批自选没有取到报价",
             }
             items.append({"code": code, "added_at": row.get("created_at"), **quote})
 
@@ -1253,6 +1573,62 @@ def build_router(plane: RadarPlane) -> APIRouter:
         """硬删除一条持仓：不留软删除标记、不加审计链。"""
         return JSONResponse(
             plane.position_delete(code), headers={"Cache-Control": "no-store"}
+        )
+
+    @router.get("/portfolio", dependencies=[Depends(_positions_guard)])
+    def portfolio(
+        method: Annotated[
+            str | None,
+            Query(description="成本法：average（移动加权平均，缺省）/ fifo（先进先出）"),
+        ] = None,
+    ) -> JSONResponse:
+        """持仓账本（隐私数据）：流水重放 + 行情拼接 + 旧仓分类，平面 JSON、`no-store`。"""
+        return JSONResponse(
+            plane.portfolio_view(method), headers={"Cache-Control": "no-store"}
+        )
+
+    @router.post(
+        "/portfolio/ledger", dependencies=[Depends(_positions_write_guard)]
+    )
+    def portfolio_ledger_add(
+        body: Annotated[Any, Body(description="一笔流水；十个字段白名单，多一个就 400")],
+    ) -> JSONResponse:
+        """新增一笔流水：平面 JSON、`no-store`、不进信封。"""
+        return JSONResponse(
+            plane.portfolio_add_ledger(body), headers={"Cache-Control": "no-store"}
+        )
+
+    @router.post(
+        "/portfolio/ledger/{trade_id}/delete",
+        dependencies=[Depends(_positions_write_guard)],
+    )
+    def portfolio_ledger_delete(trade_id: str) -> JSONResponse:
+        """硬删除一笔流水（写前先备份）；不存在就是 404。"""
+        return JSONResponse(
+            plane.portfolio_delete_ledger(trade_id),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post(
+        "/portfolio/legacy/{position_id}/adopt",
+        dependencies=[Depends(_positions_write_guard)],
+    )
+    def portfolio_legacy_adopt(position_id: str) -> JSONResponse:
+        """确认把旧 `positions` 记录转成期初流水；已转过的原地替换，不新增第二笔。"""
+        return JSONResponse(
+            plane.portfolio_adopt(position_id),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post(
+        "/portfolio/legacy/{position_id}/dismiss",
+        dependencies=[Depends(_positions_write_guard)],
+    )
+    def portfolio_legacy_dismiss(position_id: str) -> JSONResponse:
+        """确认不要这条旧记录：只写 mark，不删 `positions` 行。"""
+        return JSONResponse(
+            plane.portfolio_dismiss(position_id),
+            headers={"Cache-Control": "no-store"},
         )
 
     @router.get("/watchlist", dependencies=[Depends(_watchlist_guard)])

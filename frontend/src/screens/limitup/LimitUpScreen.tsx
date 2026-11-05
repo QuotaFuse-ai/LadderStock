@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, RefreshCw } from 'lucide-react'
+import { Database } from 'lucide-react'
 
 import { isLimitPoolEndpointMissing, type LimitPoolRow } from '../../api/limitPool'
 import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
@@ -174,16 +174,10 @@ export default function LimitUpScreen() {
           )}
         </>
       }
-      actions={
-        <Button
-          variant="primary"
-          onClick={reload}
-          disabled={state === 'loading'}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
     />
   )
 
@@ -207,8 +201,8 @@ export default function LimitUpScreen() {
             title="当日涨停池未同步"
             description={
               <>
-                数据源暂缺：本机只读 API 未连接。先运行 <code className="ldst-num">ldst run</code>，再执行{' '}
-                <code className="ldst-num">ldst sync</code> 后回来。
+                数据源暂缺：本机只读 API 未连接（<code className="ldst-num">ldst run</code> 未启动）。连接后可点「重新检查」；
+                当日涨停池需在行情页用「拉取行情数据」同步。
               </>
             }
             action={
@@ -250,7 +244,7 @@ export default function LimitUpScreen() {
                 {endpointMissing
                   ? '数据源暂缺：本机只读接口 GET /api/limit-pool 尚未接入，接入后自动生效；当前不展示任何数据。'
                   : (payload?.reason ?? '本机没有该交易日的涨停池数据。')}{' '}
-                先执行 <code className="ldst-num">ldst sync</code> 再回来。
+                当日行情需在行情页用「拉取行情数据」同步后，点「刷新」重新读取。
               </>
             }
             action={
@@ -287,7 +281,7 @@ export default function LimitUpScreen() {
           <EmptyState
             compact
             title="当日涨停池未同步"
-            description="先执行 ldst sync 再回来。"
+            description="当日行情尚未同步：在行情页用「拉取行情数据」同步后点「刷新」。"
             action={
               <Button variant="secondary" onClick={reload}>
                 刷新

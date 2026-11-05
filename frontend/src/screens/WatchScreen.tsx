@@ -334,7 +334,7 @@ export default function WatchScreen() {
         ? {
             title: '盯盘还没有取过数',
             description:
-              '后端没有盯盘状态文件：先运行 ldst watch start 产出状态文件，再点「立即取数」。本页不编造任何数值。',
+              '后端没有盯盘状态文件（盯盘守护进程未启动）：在设置页启动盯盘后点「立即取数」。本页不编造任何数值。',
           }
         : state === 'partial'
           ? {
@@ -351,16 +351,13 @@ export default function WatchScreen() {
       title="盘中盯盘"
       subtitle={subtitle}
       badge={<DemoStateBadge state={forced} />}
+      refresh={{
+        label: '立即取数',
+        onClick: request.reload,
+        loading: request.status === 'loading',
+      }}
       actions={
         <>
-          <Button
-            variant="primary"
-            onClick={request.reload}
-            loading={request.status === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            立即取数
-          </Button>
           <Button
             variant="secondary"
             onClick={() => setConfirmClear(true)}
@@ -479,7 +476,7 @@ export default function WatchScreen() {
               <EmptyState
                 icon={<RefreshCw aria-hidden="true" />}
                 title="当前没有可信快照"
-                description="先运行 ldst watch start 让盯盘守护进程产出状态文件，再点「立即取数」。本页不编造任何数值。"
+                description="后端没有盯盘状态文件（盯盘守护进程未启动）：在设置页启动盯盘后点「立即取数」。本页不编造任何数值。"
                 action={
                   <Button variant="secondary" onClick={request.reload}>
                     立即取数

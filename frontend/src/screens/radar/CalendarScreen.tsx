@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Database, RefreshCw } from 'lucide-react'
+import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Database } from 'lucide-react'
 
 import {
   CALENDAR_SECTION_LABEL,
@@ -403,6 +403,10 @@ export default function CalendarScreen() {
           {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
         </div>
       }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
       actions={
         <div className="flex items-center gap-2">
           <IconButton
@@ -428,14 +432,6 @@ export default function CalendarScreen() {
               setParams(next, { replace: true })
             }}
           />
-          <Button
-            variant="primary"
-            onClick={reload}
-            disabled={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
         </div>
       }
     />
@@ -498,8 +494,8 @@ export default function CalendarScreen() {
                 </>
               ) : (
                 <>
-                  {payload?.reason ?? '五个小节都没有数据源，也没有规则抽取事件。'}
-                  。先运行 <code className="ldst-num">ldst events --month {month}</code> 生成本地结果，再点「刷新」。
+                  {payload?.reason ?? '五个小节都没有数据源，也没有规则抽取事件。'}{' '}
+                  事件日历在请求时由本机库与 peer 现算，不读取命令产物；可点「刷新」重新取数，缺失处不估算日期。
                 </>
               )
             }

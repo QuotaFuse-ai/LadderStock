@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { CircleCheck, CircleX, Loader2, Play, SquareTerminal } from 'lucide-react'
 
 import { api, describeApiError, type JobView, type PageCommand } from '../api'
+import { cn } from '../lib/cn'
 import { useDemoEnabled } from '../lib/pageState'
 import { Badge, Button } from './ui'
 
@@ -23,21 +24,25 @@ function statusLabel(job: JobView): string {
 }
 
 /**
- * 页面顶部的一键命令条（QUOT-200）：按路由列出本页对应的 `ldst` 命令，
- * 直接复用控制面的 Job 队列（`/control/commands`），与设置页的启停任务同一套
- * 线程池与日志口径。
+ * 「运行本页命令」（QUOT-200 建，QUOT-457 收进顶栏）。
  *
- * 控制面未开启时整条不渲染——按钮失效不能挡住页面本身的数据展示。
+ * 按路由列出本页对应的 `ldst` 命令，复用控制面的 Job 队列（`/control/commands`），
+ * 与设置页的启停任务同一套线程池与日志口径。
+ *
+ * 形状：顶栏一颗图标按钮 + 点击展开的面板。命令的 argv、上次结果与日志尾部都在面板里，
+ * 不在页面上占一行。控制面未开启或本页没有命令时整颗不渲染——按钮失效不能挡住页面数据。
  * 同一时刻只允许一条页面命令在跑，后端 409 兜底，这里只做按钮禁用。
  */
 export default function PageCommandBar() {
   const { pathname } = useLocation()
-  // 演示态约定「全程不碰网络」：控制面清单也不请求，整条不渲染
+  // 演示态约定「全程不碰网络」：控制面清单也不请求，整颗不渲染
   const demo = useDemoEnabled()
   const [commands, setCommands] = useState<PageCommand[]>([])
   const [job, setJob] = useState<JobView | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -58,6 +63,7 @@ export default function PageCommandBar() {
   useEffect(() => {
     setJob(command?.last_job ?? null)
     setError(null)
+    setOpen(false)
   }, [command?.key, pathname])
 
   const activeId = job && ACTIVE.has(job.status) ? job.id : null
@@ -78,6 +84,23 @@ export default function PageCommandBar() {
     return () => window.clearInterval(timer)
   }, [activeId, refresh])
 
+  // 面板是浮层：点外面与 Esc 都收起（与 Drawer / ConfirmDialog 的键盘口径一致）
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
   if (demo || !command) return null
 
   const running = Boolean(activeId)
@@ -87,6 +110,7 @@ export default function PageCommandBar() {
   const run = async (): Promise<void> => {
     setBusy(true)
     setError(null)
+    setOpen(true)
     try {
       const handle = await api.control.runCommand(command.key)
       setJob({
@@ -109,75 +133,104 @@ export default function PageCommandBar() {
   }
 
   return (
-    <section
-      aria-label="本页命令"
-      className="mb-4 flex flex-col gap-2 rounded border border-border bg-surface px-3 py-2"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span className="inline-flex items-center gap-1 text-caption text-text-muted">
-          <SquareTerminal className="size-4" aria-hidden="true" />
-          {command.label}
-        </span>
-        <code className="ldst-num truncate rounded-xs bg-sunken px-2 py-0.5 text-caption text-text-secondary">
-          {argv}
-        </code>
-        <div className="ml-auto flex items-center gap-2">
-          {job && job.status !== 'queued' && (
-            <Badge tone={job.status === 'ok' ? 'ok' : job.status === 'failed' ? 'danger' : 'neutral'} title={job.error ?? job.step}>
-              {statusLabel(job)}
-            </Badge>
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="page-command-panel"
+        aria-label="本页命令"
+        title={`${command.label} · ${argv}`}
+        className={cn(
+          'relative rounded p-1.5 transition-colors duration-fast hover:bg-surface-3',
+          job?.status === 'failed' ? 'text-danger' : running ? 'text-accent' : 'text-text-muted hover:text-text',
+        )}
+      >
+        {running ? (
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <SquareTerminal className="size-4" strokeWidth={1.75} aria-hidden="true" />
+        )}
+      </button>
+
+      {open && (
+        <div
+          id="page-command-panel"
+          role="dialog"
+          aria-label="本页命令"
+          className="absolute right-0 top-full z-overlay mt-2 w-dialog max-w-popover rounded border border-border bg-surface p-3 shadow-overlay"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-body font-medium text-text">{command.label}</p>
+              <code className="ldst-num mt-1 block truncate rounded-xs bg-sunken px-2 py-0.5 text-caption text-text-secondary">
+                {argv}
+              </code>
+            </div>
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              leadingIcon={
+                running ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Play className="size-4" aria-hidden="true" />
+                )
+              }
+              loading={busy}
+              disabled={running}
+              disabledReason={running ? '已有页面命令在执行' : undefined}
+              onClick={() => void run()}
+            >
+              {running ? '执行中' : '运行'}
+            </Button>
+          </div>
+
+          {job && (
+            <div className="mt-2 flex items-center gap-2">
+              <Badge
+                tone={job.status === 'ok' ? 'ok' : job.status === 'failed' ? 'danger' : 'neutral'}
+                title={job.error ?? job.step}
+              >
+                {statusLabel(job)}
+              </Badge>
+            </div>
           )}
-          {job?.status === 'queued' && <Badge tone="neutral">{statusLabel(job)}</Badge>}
-          <Button
-            variant="secondary"
-            leadingIcon={
-              running ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Play className="size-4" aria-hidden="true" />
-              )
-            }
-            loading={busy}
-            disabled={running}
-            disabledReason={running ? '已有页面命令在执行' : undefined}
-            onClick={() => void run()}
-          >
-            {running ? '执行中' : '运行'}
-          </Button>
+
+          {error && (
+            <p className="mt-2 flex items-start gap-1 text-caption text-danger">
+              <CircleX className="mt-half size-3.5 shrink-0" aria-hidden="true" />
+              {error}
+            </p>
+          )}
+
+          {job?.status === 'failed' && job.error && (
+            <p className="mt-2 flex items-start gap-1 text-caption text-danger">
+              <CircleX className="mt-half size-3.5 shrink-0" aria-hidden="true" />
+              {job.error}
+            </p>
+          )}
+
+          {log && (
+            <details className="group mt-2" open={running}>
+              <summary className="cursor-pointer select-none text-caption text-text-muted">
+                {running ? '执行输出' : '上次输出'}（{log.length} 行）
+              </summary>
+              <pre className="mt-1 max-h-64 overflow-auto rounded-xs bg-sunken p-2 text-caption leading-body text-text-secondary">
+                {log.join('\n')}
+              </pre>
+            </details>
+          )}
+
+          {job?.status === 'ok' && (
+            <p className="mt-2 flex items-center gap-1 text-caption text-text-muted">
+              <CircleCheck className="size-3.5" aria-hidden="true" />
+              已完成，数据已落盘
+            </p>
+          )}
         </div>
-      </div>
-
-      {error && (
-        <p className="flex items-start gap-1 text-caption text-danger">
-          <CircleX className="mt-half size-3.5 shrink-0" aria-hidden="true" />
-          {error}
-        </p>
       )}
-
-      {job?.status === 'failed' && job.error && (
-        <p className="flex items-start gap-1 text-caption text-danger">
-          <CircleX className="mt-half size-3.5 shrink-0" aria-hidden="true" />
-          {job.error}
-        </p>
-      )}
-
-      {log && (
-        <details className="group" open={running}>
-          <summary className="cursor-pointer select-none text-caption text-text-muted">
-            {running ? '执行输出' : '上次输出'}（{log.length} 行）
-          </summary>
-          <pre className="mt-1 max-h-64 overflow-auto rounded-xs bg-sunken p-2 text-caption leading-body text-text-secondary">
-            {log.join('\n')}
-          </pre>
-        </details>
-      )}
-
-      {job?.status === 'ok' && (
-        <p className="flex items-center gap-1 text-caption text-text-muted">
-          <CircleCheck className="size-3.5" aria-hidden="true" />
-          已完成，数据已落盘
-        </p>
-      )}
-    </section>
+    </div>
   )
 }

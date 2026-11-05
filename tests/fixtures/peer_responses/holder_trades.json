@@ -1,0 +1,67 @@
+{
+ "ok": true,
+ "data": [
+  {
+   "code": "600000",
+   "name": "浦发银行",
+   "holder": "上海国有资产经营有限公司",
+   "direction": "增持",
+   "change_shares_10k": 8642.4505,
+   "change_pct_total": 0.294439833769,
+   "change_pct_float": 0.29,
+   "after_shares_10k": 9399.9979,
+   "after_pct_total": 0.32,
+   "after_float_shares_10k": null,
+   "after_pct_float": null,
+   "avg_price": null,
+   "channel": "二级市场",
+   "start_date": "2024-12-20",
+   "end_date": "2025-03-04",
+   "notice_date": "2025-03-05"
+  },
+  {
+   "code": "600000",
+   "name": "浦发银行",
+   "holder": "上海国有资产经营有限公司",
+   "direction": "增持",
+   "change_shares_10k": 757.5474,
+   "change_pct_total": 0.025808899433,
+   "change_pct_float": 0.03,
+   "after_shares_10k": 757.5474,
+   "after_pct_total": 0.03,
+   "after_float_shares_10k": null,
+   "after_pct_float": null,
+   "avg_price": null,
+   "channel": "二级市场",
+   "start_date": "2024-12-19",
+   "end_date": "2024-12-19",
+   "notice_date": "2024-12-20"
+  },
+  {
+   "code": "600000",
+   "name": "浦发银行",
+   "holder": "上海锦江国际旅游股份有限公司",
+   "direction": "减持",
+   "change_shares_10k": -186.57,
+   "change_pct_total": 0.006356278583,
+   "change_pct_float": 0.01,
+   "after_shares_10k": 0.0,
+   "after_pct_total": null,
+   "after_float_shares_10k": 0.0,
+   "after_pct_float": null,
+   "avg_price": null,
+   "channel": "二级市场",
+   "start_date": "2018-12-14",
+   "end_date": "2018-12-14",
+   "notice_date": "2018-12-18"
+  }
+ ],
+ "meta": {
+  "source": "eastmoney",
+  "fetched_at": "2026-11-05T19:58:05+08:00",
+  "cache_hit": true,
+  "confidence": "B",
+  "trace_id": "trace-fixture-446",
+  "count": 125
+ }
+}

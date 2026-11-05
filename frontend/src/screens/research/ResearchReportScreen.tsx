@@ -218,16 +218,12 @@ export default function ResearchReportScreen() {
         </div>
       }
       meta={<span className="text-caption text-text-secondary">{summary}</span>}
+      refresh={{
+        onClick: view.reload,
+        loading: view.requesting && view.state !== 'loading',
+      }}
       actions={
         <>
-          <Button
-            variant="secondary"
-            onClick={view.reload}
-            loading={view.requesting && view.state !== 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
           {view.code && (
             <LinkButton
               to={detailHref(view.code, view)}
@@ -295,7 +291,7 @@ export default function ResearchReportScreen() {
           description={
             view.endpointMissing
               ? '后端尚未提供 /api/research/* 只读接口（HTTP 404）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
-              : `先运行 ldst research ${view.code ?? '<code>'} --date ${view.date} 生成六段产物，再刷新本页。`
+              : `本机还没有 ${view.code ?? '<code>'} 在 ${view.date} 的六段深度产物；生成后点「刷新」重新读取。`
           }
           action={
             <Button

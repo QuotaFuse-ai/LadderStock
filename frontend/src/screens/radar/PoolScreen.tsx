@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, Download, ListChecks, RefreshCw } from 'lucide-react'
+import { Database, Download, ListChecks } from 'lucide-react'
 
 import {
   isRadarEndpointMissing,
@@ -349,27 +349,22 @@ export default function PoolScreen() {
           {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
         </div>
       }
-      actions={
-        <div className="flex items-center gap-2">
-          {!demo && (
-            <span
-              className="text-caption text-text-muted"
-              title="面板每 30 秒自动重取一次；显示最近一次成功取数的本机时刻"
-            >
-              {refreshing ? '正在刷新…' : updatedAt === null ? '自动刷新 · 30 秒' : `更新于 ${clockLabel(updatedAt)}`}
-            </span>
-          )}
-          {payload && payload.available && <DownloadButton payload={payload} />}
-          <Button
-            variant="primary"
-            onClick={payload ? refresh : reload}
-            disabled={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+      meta={
+        !demo ? (
+          <span
+            className="text-caption text-text-muted"
+            title="面板每 30 秒自动重取一次；显示最近一次成功取数的本机时刻"
           >
-            刷新
-          </Button>
-        </div>
+            {refreshing ? '正在刷新…' : updatedAt === null ? '自动刷新 · 30 秒' : `更新于 ${clockLabel(updatedAt)}`}
+          </span>
+        ) : undefined
       }
+      refresh={{
+        onClick: payload ? () => refresh({ manual: true }) : reload,
+        disabled: state === 'loading',
+        loading: refreshing,
+      }}
+      actions={payload && payload.available ? <DownloadButton payload={payload} /> : undefined}
     />
   )
 
@@ -434,7 +429,7 @@ export default function PoolScreen() {
                   {payload && payload.missing.length > 0 && (
                     <> 缺：{payload.missing.join('、')}。</>
                   )}{' '}
-                  先运行 <code className="ldst-num">ldst pool</code> 生成本地结果，再点「刷新」。
+                  可用页内顶部「重算候选池」生成后，再点「刷新」。
                 </>
               )
             }
@@ -497,7 +492,7 @@ export default function PoolScreen() {
         density="compact"
         maxHeight="var(--ldst-table-h)"
         onRowClick={(row) => setSelected(row)}
-        empty={<EmptyState compact title="没有候选" description="换一个交易日，或先运行 ldst pool。" />}
+        empty={<EmptyState compact title="没有候选" description="换一个交易日，或点页内顶部「重算候选池」。" />}
       />
 
       <p className="text-caption leading-body text-text-muted">

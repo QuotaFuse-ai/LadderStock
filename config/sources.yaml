@@ -518,6 +518,69 @@ sources:
     cooldown_sec: 120
     weight: 1.0
 
+  # ---------------- 财报前瞻 / 事件回看（QUOT-446）----------------
+  # 五个事件/一致预期工具，全部是 TickHub-CN 已注册的只读工具（实测 2026-11-05）：
+  # earnings_forecast 6 条 / holder_trades 125 条 / institution_survey 0 条（真实空）/
+  # share_buyback 0 条（真实空）/ ths_eps_forecast 快照 / lockup_expiry history+upcoming。
+  # 无备源：同 peer 没有第二种口径的同类工具（DEC-006 主备同口径），取不到就按
+  # 缓存回放处理，不自建采集。
+  - id: tickhub_consensus_forecast
+    dataset: consensus_forecast
+    via: tickhub
+    tool: ths_eps_forecast
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 300
+    weight: 1.0
+
+  # 股东增减持：上游是半静态事件表（ttl=semi_static），cooldown 比行情类宽。
+  - id: tickhub_holder_trades
+    dataset: holder_trades
+    via: tickhub
+    tool: holder_trades
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0
+
+  - id: tickhub_institution_survey
+    dataset: institution_survey
+    via: tickhub
+    tool: institution_survey
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0
+
+  - id: tickhub_share_buyback
+    dataset: share_buyback
+    via: tickhub
+    tool: share_buyback
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0
+
+  # 指数日线（沪深300）：一次回溯 ≥3 年（days=800 交易日），落 append 分区。
+  - id: tickhub_index_daily
+    dataset: index_daily
+    via: tickhub
+    tool: index_kline
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
   # ---------------- 题材叙事：QuotaFuse Wire（可选） ----------------
   #
   # 这里登记 `wire_timeline` 是**能力登记**（同 peer 备源，DEC-006 闸门 3 合规），

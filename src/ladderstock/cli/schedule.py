@@ -4,6 +4,10 @@
 默认 **09:05 盘前提醒**（notify）、**盘中 6 时点快照**（snapshot，QUOT-286）、
 **15:05 收盘对账**（reconcile）与 **15:35 收盘全量同步**（sync_close，QUOT-347）。
 
+`trigger` 支持两种写法：`HH:MM` 定点（cron）与 `Ns` 间隔（如 `30s` / `60s`）。
+盘中高频（QUOT-352 / DEC-056）就是两条间隔任务：`snapshot_fast`（关键盘面快照）与
+`sync_batch`（批量数据集，目前是 `fund_flow_realtime`），二者都只在连续竞价时段出网。
+
 边界（DEC-006 / DEC-004）：
 
 - 任务只跑本机动作（发本机通知、对账本地已落盘数据、复用 sync 链路按治理取 peer 读数、
@@ -41,10 +45,42 @@ from ladderstock.watch import notifier
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_MISFIRE_GRACE_SECONDS = 300
 
+#: 任务类型白名单。`snapshot_fast` / `sync_batch` 是盘中高频（QUOT-352）：
+#: 前者按秒级间隔抓「昨日涨停股 × 此刻报价」，后者按间隔刷一条批量数据集。
+JOB_KINDS: tuple[str, ...] = (
+    "notify",
+    "reconcile",
+    "snapshot",
+    "sync_close",
+    "snapshot_fast",
+    "sync_batch",
+)
+
+
+def trigger_interval_seconds(trigger: Any) -> int | None:
+    """`"30s"` → 30；`"HH:MM"` 或其它写法 → None（定点触发，走 cron）。"""
+    text = str(trigger or "").strip()
+    if len(text) > 1 and text.endswith("s") and text[:-1].isdigit():
+        seconds = int(text[:-1])
+        if seconds > 0:
+            return seconds
+    return None
+
 #: 15:35 收盘全量同步的数据集顺序（QUOT-347）。复用 `cli/sync.py` 已有的取数链路，
 #: 一切取数走 TickHub 缓存、不直打上游（DEC-006 边界）；`fund_flow` 是 code 必填的
 #: 候选池数据集，代码池由 `sync.py` 按 `--codes > sync.yaml > 本机自选` 解析。
-CLOSE_SYNC_DATASETS: tuple[str, ...] = ("limit_pool", "fund_flow", "concept_board")
+CLOSE_SYNC_DATASETS: tuple[str, ...] = (
+    "limit_pool",
+    "fund_flow",
+    "concept_board",
+    # QUOT-446：财报前瞻 / 事件回看的事件类数据集（semi_static），随 15:35 收盘一起
+    # 按日落 Parquet。排在候选池之后——当日池子先落，后续若要从池子取代码才拿得到。
+    "consensus_forecast",
+    "holder_trades",
+    "institution_survey",
+    "share_buyback",
+    "index_daily",
+)
 
 # 内置默认表：与 config/schedule.yaml 同口径。配置缺失时按此运行并给 warning，
 # 这样「第一次装上就能跑」和「配置坏了不静默」两件事都不牺牲——坏了的那份会
@@ -100,6 +136,21 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "kind": "snapshot",
         "trigger": "15:00",
         "enabled": True,
+    },
+    {
+        "id": "intraday_fast",
+        "name": "盘中 30s 关键快照",
+        "kind": "snapshot_fast",
+        "trigger": "30s",
+        "enabled": True,
+    },
+    {
+        "id": "fund_flow_fast",
+        "name": "盘中 60s 资金流批量",
+        "kind": "sync_batch",
+        "trigger": "60s",
+        "enabled": True,
+        "dataset": "fund_flow_realtime",
     },
     {
         "id": "close_reconcile",
@@ -159,13 +210,14 @@ def _structural_problems(data: Mapping[str, Any]) -> list[str]:
         if isinstance(trigger, str) and len(trigger) == 5 and trigger[2] == ":":
             hour, minute = trigger[:2], trigger[3:]
             if not (hour.isdigit() and minute.isdigit()):
-                problems.append(f"{where}/trigger: 需要 HH:MM")
-        elif "trigger" in job:
-            problems.append(f"{where}/trigger: 需要 HH:MM")
-        if job.get("kind") not in ("notify", "reconcile", "snapshot", "sync_close"):
-            problems.append(
-                f"{where}/kind: 只支持 notify / reconcile / snapshot / sync_close"
-            )
+                problems.append(f"{where}/trigger: 需要 HH:MM 或 Ns")
+        elif trigger_interval_seconds(trigger) is None and "trigger" in job:
+            problems.append(f"{where}/trigger: 需要 HH:MM（定点）或 Ns（间隔）")
+        kind = job.get("kind")
+        if kind not in JOB_KINDS:
+            problems.append(f"{where}/kind: 只支持 {' / '.join(JOB_KINDS)}")
+        if kind == "sync_batch" and not job.get("dataset"):
+            problems.append(f"{where}/dataset: sync_batch 必须声明数据集")
     return problems
 
 
@@ -382,6 +434,58 @@ def _run_sync_close(
     return {**base, "status": status, "detail": f"{detail}；复盘：{review_detail}"}
 
 
+def _run_sync_batch(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """盘中按间隔刷一条批量数据集（QUOT-352，目前只有 `fund_flow_realtime`）。
+
+    取数、降级、水位全部复用 `cli/sync.sync_one` 与 S2 的退避链路（QUOT-349），
+    这里只加交易时段门控：非交易时段一次上游都不打。
+    """
+    from ladderstock.core import intraday
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date()
+    dataset = str(job.get("dataset") or "")
+    if not dataset:
+        return {"status": "failed", "detail": "sync_batch 缺少 dataset"}
+    if day.weekday() >= 5:
+        return {"status": "skipped", "detail": "非交易日（周末），不跑", "quiet": True}
+    if not intraday.in_trading_session(moment):
+        return {
+            "status": "skipped",
+            "detail": "不在连续竞价时段（09:30–11:30 / 13:00–15:00），不跑",
+            "quiet": True,
+        }
+
+    from ladderstock.cli import sync as sync_module
+    from ladderstock.data import watermark
+    from ladderstock.data.provider_registry import ProviderRegistry
+
+    if registry is None:
+        registry = ProviderRegistry(root=root)
+    store = watermark.WatermarkStore(root=getattr(registry, "root", root))
+    row = sync_module.sync_one(registry, store, dataset)
+    mapped = {
+        "ok": "ok",
+        "degraded": "degraded",
+        "empty": "degraded",
+        "skipped": "skipped",
+        "failed": "failed",
+    }.get(str(row.get("status") or ""), "degraded")
+    return {
+        "status": mapped,
+        "detail": str(row.get("detail") or ""),
+        "dataset": dataset,
+        "rows": row.get("rows"),
+    }
+
+
 def run_job(
     job: Mapping[str, Any],
     *,
@@ -430,6 +534,20 @@ def run_job(
             )
         elif kind == "sync_close":
             result.update(_run_sync_close(now=now, timezone=timezone, root=root))
+        elif kind == "snapshot_fast":
+            from ladderstock.core import intraday
+
+            result.update(
+                intraday.run_fast(
+                    now=now, timezone=timezone, root=root, registry=registry
+                )
+            )
+        elif kind == "sync_batch":
+            result.update(
+                _run_sync_batch(
+                    job, now=now, timezone=timezone, root=root, registry=registry
+                )
+            )
         else:
             result.update(status="failed", detail=f"未知任务类型 {kind!r}")
     except Exception as exc:  # noqa: BLE001 - 单条任务失败不拖垮整轮
@@ -441,6 +559,10 @@ def run_job(
 
 def _run_job_logged(job: Mapping[str, Any], *, timezone: str | None = None) -> None:
     outcome = run_job(job, timezone=timezone)
+    # 间隔任务在非交易时段每 30/60 秒返回一次 skipped；一天几千行会把真正的告警淹掉。
+    # 只有「本来就不该跑」的轮次带 quiet 标记；时段内的 skipped（如代码池为空）照常记。
+    if outcome.get("quiet"):
+        return
     error(
         f"定时任务 {outcome.get('id')}（{outcome.get('trigger')}）"
         f"-> {outcome.get('status')}：{outcome.get('detail')}"
@@ -472,17 +594,34 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
         job_defaults={"misfire_grace_time": grace, "coalesce": True},
     )
     for job in jobs:
+        interval = trigger_interval_seconds(job.get("trigger"))
+        common: dict[str, Any] = {
+            "id": str(job.get("id")),
+            "name": str(job.get("name")),
+            "args": [job],
+            "kwargs": {"timezone": timezone},
+            "replace_existing": True,
+        }
+        if interval is not None:
+            # 高频任务：`max_instances=1` 防重叠（一轮 2.5–3.5s，远小于 30s），
+            # grace 收到一个周期内，避免休眠唤醒后按错过的轮数连环补跑。
+            scheduler.add_job(
+                _run_job_logged,
+                "interval",
+                seconds=interval,
+                max_instances=1,
+                misfire_grace_time=min(grace, interval),
+                coalesce=True,
+                **common,
+            )
+            continue
         hour, minute = _trigger_time(str(job.get("trigger")))
         scheduler.add_job(
             _run_job_logged,
             "cron",
             hour=hour,
             minute=minute,
-            id=str(job.get("id")),
-            name=str(job.get("name")),
-            args=[job],
-            kwargs={"timezone": timezone},
-            replace_existing=True,
+            **common,
         )
     error(
         f"定时任务已启动（{timezone}）："
@@ -598,6 +737,7 @@ __all__ = [
     "DEFAULT_JOBS",
     "DEFAULT_MISFIRE_GRACE_SECONDS",
     "DEFAULT_TIMEZONE",
+    "JOB_KINDS",
     "jobs_view",
     "load_schedule",
     "register",
@@ -606,5 +746,6 @@ __all__ = [
     "schedule_list",
     "schedule_run",
     "start_daemon",
+    "trigger_interval_seconds",
     "validate_table",
 ]

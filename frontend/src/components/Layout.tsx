@@ -1,41 +1,26 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
-import {
-  BarChart3,
-  Bot,
-  Building2,
-  CalendarDays,
-  CalendarRange,
-  CandlestickChart,
-  ChevronDown,
-  ClipboardCheck,
-  Eye,
-  Flame,
-  Gauge,
-  Home,
-  Layers,
-  ListChecks,
-  Microscope,
-  Newspaper,
-  NotebookPen,
-  Radio,
-  Radar,
-  ScrollText,
-  Settings,
-  Sparkles,
-  Timer,
-  TrendingUp,
-  Wallet,
-  type LucideIcon,
-} from 'lucide-react'
+import { ChevronDown, Menu, Sparkles } from 'lucide-react'
 
 import AiConnectDialog from './AiConnectDialog'
+import MobileNavDrawer from './MobileNavDrawer'
 import PageCommandBar from './PageCommandBar'
 import PersistenceBanner from './PersistenceBanner'
-import { Segmented } from './ui'
+import TopbarTools from './TopbarTools'
 import { cn } from '../lib/cn'
-import { setTheme, useThemeChoice } from '../lib/prefs'
-import type { ThemeChoice } from '../lib/theme'
+import { useIsMobile } from '../lib/mediaQuery'
+import { PageToolsSlotContext } from '../lib/pageToolsSlot'
+import {
+  BRAND_ICON,
+  NAV_SECTIONS,
+  PINNED_NAV,
+  navTitleFor,
+  type NavPage,
+} from '../lib/nav'
+
+// 导航数据搬到 `lib/nav.ts`（DEC-062 §3）：顶栏面包屑与侧栏必须同一个真源。
+// 导出名与顺序保持不变——`tests/nav-routes.test.tsx` 直接从这里 import。
+export { NAV_SECTIONS, PINNED_NAV, type NavPage, type NavSection } from '../lib/nav'
 
 /**
  * 应用外壳（UI-SPEC §2「全局外壳」/ §7.3 结构尺寸）。
@@ -43,7 +28,7 @@ import type { ThemeChoice } from '../lib/theme'
  * 一级导航 9 组 + 底部固定的「设置」：
  * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
  * 「我的股票」由 QUOT-304 从「市场 / 日志」抽出（DEC-044）：持仓与事件日历同属"我自己相关"，
- * 聚成一组但不改路由、不新建页面；自选与提醒没有已交付页面，登记为范围外。
+ * 聚成一组但不改路由、不新建页面；提醒仍无已交付页面，登记为范围外。
  *
  * **二级导航只在「真的有两页以上」时展开**（QUOT-198 就绪表）：
  * - 市场 4 段（情绪温度 / 连板梯队 / 题材轮动 / 资讯雷达）已实现 → 展开为二级；
@@ -51,137 +36,24 @@ import type { ThemeChoice } from '../lib/theme'
  *   「AI复盘」由 QUOT-344（DEC-046）从复盘组拆出：三屏各自一条路由，高亮按 pathname 精确匹配，
  *   `/review` 亮时 `/review/ai` 不跟着亮；
  * - 盯盘 2 段（盘中信号 / 竞价与盘中）都已实现 → 展开为二级；
- *   「竞价与盘中」由 QUOT-302 补上，前置是 QUOT-286（6 时点快照落盘）+ QUOT-301（读接口）。
- * 判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
+ *   判定是数据驱动的（`pages.length > 1`），后端口径补上后只加数据、不改组件。
  *
  * - 1280 起：232px 完整侧栏（图标 + 文字 + 二级缩进 16px）。
  * - 1024–1279：收窄为 56px 图标栏，二级展平为图标行（不做嵌套，避免挤压）；
  *   展平后 20 行图标同形同距，分组靠组间 1px 分隔线保留可读性（QUOT-316）。
  * - 展开状态写 localStorage（`ldst.nav.expanded`），刷新后原样恢复。
  *
+ * **顶栏**（QUOT-442 / DEC-062，QUOT-457 / DEC-063 收敛）：侧栏右侧纵向列 = `header.workspace-topbar` + 主内容列。
+ * 顶栏左侧是面包屑（`工作空间 /` + 一级栏目名）；右侧依次是页面工具槽（`PageHeader` 经 portal 送进来的「刷新」）、
+ * 本页命令（`PageCommandBar`，图标 + 弹层）、全局工具区（`TopbarTools`）。
+ * 全平台只有这一条横栏：页面自己不再渲染标题条，命令也不再占内容区一行。
+ * `<768px` 侧栏收起为抽屉（`MobileNavDrawer`），由汉堡按钮打开。
+ * 主内容列仍是唯一滚动容器，`PersistenceBanner` 挂在顶栏之下、`main` 之上。
+ *
  * **胶囊样式**（QUOT-200）：导航仍保持竖排侧栏，只是每个条目本身是横置胶囊（`rounded-pill`）——
  * 一级组、二级页、底部设置/AI 全部同一形状；当前页整颗填色，不再靠左侧色条或方角区分。
  * 不改竖排结构、不改展开逻辑，窄屏 rail 下胶囊收成图标胶囊。
  */
-
-export interface NavPage {
-  to: string
-  label: string
-  icon: LucideIcon
-  /** 同路由多入口时用于判高亮（`/market?tab=…`） */
-  tab?: string
-}
-
-export interface NavSection {
-  key: string
-  label: string
-  icon: LucideIcon
-  pages: NavPage[]
-}
-
-/**
- * 导出给导航一致性测试（`tests/nav-routes.test.ts`，QUOT-300）：
- * 每条 `to` 必须在 `App.tsx` 的 `APP_ROUTES` 里命中，反之每条已交付路由也要有入口。
- * 「做了页面忘接导航」已经发生过一次（产业研究 / 个股深挖四页），断言比人肉检查可靠。
- */
-export const NAV_SECTIONS: NavSection[] = [
-  {
-    key: 'home',
-    label: '首页',
-    icon: Home,
-    pages: [{ to: '/', label: '首页', icon: Home }],
-  },
-  {
-    key: 'market',
-    label: '市场',
-    icon: CandlestickChart,
-    pages: [
-      { to: '/market?tab=sentiment', label: '情绪温度', icon: Gauge, tab: 'sentiment' },
-      { to: '/market?tab=ladder', label: '连板梯队', icon: BarChart3, tab: 'ladder' },
-      { to: '/market?tab=theme', label: '题材轮动', icon: Layers, tab: 'theme' },
-      { to: '/news', label: '资讯雷达', icon: Newspaper },
-    ],
-  },
-  {
-    key: 'watch',
-    label: '盯盘',
-    icon: Radar,
-    // 实时动态（阈值信号）+ 竞价与盘中（当日 6 时点快照，QUOT-302 / DEC-035 §5）
-    pages: [
-      { to: '/watch', label: '盘中信号', icon: Radar },
-      { to: '/intraday', label: '竞价与盘中', icon: Timer },
-    ],
-  },
-  {
-    key: 'review',
-    label: '复盘',
-    icon: NotebookPen,
-    // QUOT-344 / DEC-046：复盘拆成三个独立入口，各占一条路由，不再合成一屏
-    // 「每日复盘」= 当日五段数据；「AI复盘」= AI 段落与降级/失败态；「AI周报」= 按周聚合
-    // 候选池是复盘的产出，位置与文案不变
-    pages: [
-      { to: '/review', label: '每日复盘', icon: NotebookPen },
-      { to: '/review/ai', label: 'AI复盘', icon: Bot },
-      // R11（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
-      { to: '/weekly', label: 'AI周报', icon: CalendarRange },
-      { to: '/pool', label: '候选池', icon: ListChecks },
-    ],
-  },
-  {
-    key: 'journal',
-    label: '日志',
-    icon: ScrollText,
-    // 交易日志留在「日志」；我的持仓按 QUOT-304 移入「我的股票」
-    pages: [{ to: '/journal', label: '交易日志', icon: ScrollText }],
-  },
-  // QUOT-304 / DEC-044：把「我自己相关」的持仓与事件日历聚成一组。
-  // QUOT-419：自选有了独立页面（`/watchlist`），补进同一组；提醒仍无已交付页面，不建占位入口。
-  {
-    key: 'my-stocks',
-    label: '我的股票',
-    icon: Wallet,
-    pages: [
-      { to: '/watchlist', label: '我的自选', icon: Eye },
-      { to: '/positions', label: '我的持仓', icon: Wallet },
-      { to: '/calendar', label: '事件日历', icon: CalendarDays },
-    ],
-  },
-  {
-    key: 'validate',
-    label: '验证',
-    icon: ClipboardCheck,
-    pages: [
-      { to: '/validate', label: '验证', icon: ClipboardCheck },
-      { to: '/limit-up', label: '涨停样本', icon: Flame },
-    ],
-  },
-  // QUOT-300：R9 产业研究两页已交付却进不去，补一级入口（新组排在验证之后、设置之前）
-  {
-    key: 'industry',
-    label: '产业研究',
-    icon: Building2,
-    pages: [
-      { to: '/industry', label: '产业研究', icon: Building2 },
-      { to: '/signals', label: '产业信号', icon: Radio },
-    ],
-  },
-  {
-    key: 'deep-dive',
-    label: '个股深挖',
-    icon: Microscope,
-    // 落地页收 6 位代码后才跳 `/research/:code`：侧栏本身没有代码可带
-    pages: [{ to: '/research', label: '个股深挖', icon: Microscope }],
-  },
-]
-
-/** 侧栏底部固定项：不进 `NAV_SECTIONS`（不参与展开分组），但仍是一等入口，一致性测试要覆盖。 */
-export const PINNED_NAV: NavPage[] = [{ to: '/settings', label: '设置', icon: Settings }]
-
-const THEME_OPTIONS: ReadonlyArray<{ value: ThemeChoice; label: string }> = [
-  { value: 'system', label: '系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-]
 
 const EXPANDED_KEY = 'ldst.nav.expanded'
 const GROUP_KEYS = NAV_SECTIONS.filter((section) => section.pages.length > 1).map((section) => section.key)
@@ -216,7 +88,7 @@ function pageActive(page: NavPage, location: Location): boolean {
 }
 
 /**
- * 图标栏（1024–1279）下的组间分隔：展平后 19 行图标同形同距，只靠这条 1px 线保留分组可读性。
+ * 图标栏（1024–1279）下的组间分隔：展平后 20 行图标同形同距，只靠这条 1px 线保留分组可读性。
  * `ul` 本身已有 `gap-1`，所以这里只加线、不加内距，避免把溢出推得更长。
  */
 const RAIL_GROUP = 'rail:border-t rail:border-border rail:first:border-t-0'
@@ -233,11 +105,18 @@ function navClass(isActive: boolean, secondary = false): string {
 }
 
 export default function Layout() {
-  const theme = useThemeChoice()
   const location = useLocation()
+  const isMobile = useIsMobile()
   const [expanded, setExpanded] = useState<string[]>(readExpanded)
   // `?ai=1` 是深链（截图与排障用）；首次渲染读取一次，不跟后续导航反复弹窗
   const [aiOpen, setAiOpen] = useState(() => new URLSearchParams(location.search).get('ai') === '1')
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  // 顶栏右侧给页面主操作（刷新）留的落点，见 `lib/pageToolsSlot.tsx`
+  const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null)
+  const menuRef = useRef<HTMLButtonElement>(null)
+
+  const openAi = useCallback(() => setAiOpen(true), [])
+  const closeDrawer = useCallback(() => setDrawerOpen(false), [])
 
   // 主内容区是滚动容器（QUOT-397），浏览器自带的窗口滚动复原管不到它：换页时手动归顶，
   // 否则从长页跳到短页会停在空白处。页内 `#anchor` 跳转交给浏览器，这里不拦。
@@ -250,6 +129,11 @@ export default function Layout() {
     scroller.current.scrollTop = 0
   }, [pageKey, location.hash])
 
+  // 抽屉是「临时覆盖层」：换页（含点抽屉里的链接）与回到桌面宽度都自动收起
+  useEffect(() => {
+    setDrawerOpen(false)
+  }, [location.pathname, isMobile])
+
   const toggleGroup = (key: string) => {
     setExpanded((current) => {
       const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
@@ -257,6 +141,8 @@ export default function Layout() {
       return next
     })
   }
+
+  const Brand = BRAND_ICON
 
   return (
     <div className="flex min-h-screen bg-bg text-text">
@@ -267,13 +153,20 @@ export default function Layout() {
         跳到主内容
       </a>
 
-      <aside className="sticky top-0 flex h-screen w-sidebar shrink-0 flex-col border-r border-border bg-surface rail:w-sidebar-rail">
+      {/* `<768px` 侧栏让位给抽屉（DEC-062 §2）：两套导航同屏既挤又重复。
+          断点由 JS 判断而不是 `hidden md:flex`——本仓 `screens` 只登记了 sm/lg/rail/desk。 */}
+      <aside
+        className={cn(
+          'sticky top-0 h-screen w-sidebar shrink-0 flex-col border-r border-border bg-surface rail:w-sidebar-rail',
+          isMobile ? 'hidden' : 'flex',
+        )}
+      >
         <div className="flex h-topbar items-center gap-2 border-b border-border px-3 rail:justify-center rail:px-0">
           <span
             aria-hidden="true"
             className="flex size-7 shrink-0 items-center justify-center rounded bg-accent-soft text-accent"
           >
-            <TrendingUp className="size-4" strokeWidth={1.75} />
+            <Brand className="size-4" strokeWidth={1.75} />
           </span>
           <div className="min-w-0 rail:hidden">
             <p className="truncate text-body font-semibold text-text">天梯股复盘台</p>
@@ -381,20 +274,12 @@ export default function Layout() {
         </nav>
 
         <div className="mt-auto flex flex-col gap-2 border-t border-border p-2">
-          <div className="rail:hidden">
-            <Segmented
-              ariaLabel="主题"
-              size="sm"
-              options={THEME_OPTIONS}
-              value={theme}
-              onChange={setTheme}
-              className="w-full justify-between"
-            />
-          </div>
+          {/* 主题入口已上移到顶栏（DEC-062 §2 / QUOT-442），侧栏不再放第二份 Segmented，
+              避免两个入口同屏；设置页的入口照旧。 */}
           {/* 接入 AI 是动作而不是页面：不占路由、不参与导航一致性断言，放在设置上方。 */}
           <button
             type="button"
-            onClick={() => setAiOpen(true)}
+            onClick={openAi}
             title="接入 AI"
             aria-haspopup="dialog"
             className={navClass(false, true)}
@@ -414,17 +299,49 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* 主内容区本身是滚动容器（QUOT-397）：窗口不滚，所以页头 `sticky top-0` 才钉得住；
-          同时把 `.page-shell` 的 1440px 上限与横向留白收在这一层，三屏外壳共用一套口径。 */}
-      <div ref={scroller} className="flex h-screen min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain">
-        <PersistenceBanner />
-        <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
-          {/* QUOT-200：每页顶部的「运行本页命令」条；没有对应命令或控制面未开启时整条不渲染 */}
-          <PageCommandBar />
-          <Outlet />
-        </main>
+      {/* 侧栏右侧纵向列（DEC-062 §1）：顶栏固定，主内容列是唯一滚动容器。
+          窗口本身不滚，所以页头 `sticky top-0` 才钉得住（QUOT-397）。 */}
+      <div className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="workspace-topbar flex h-topbar shrink-0 items-center justify-between gap-3 border-b border-border bg-bg px-4">
+          <div className="flex min-w-0 items-center gap-2 text-body">
+            {isMobile && (
+              <button
+                ref={menuRef}
+                type="button"
+                onClick={() => setDrawerOpen(true)}
+                aria-label="打开导航"
+                aria-expanded={drawerOpen}
+                aria-controls="mobile-nav-drawer"
+                className="-ml-1 rounded p-1.5 text-text-muted transition-colors duration-fast hover:bg-surface-3 hover:text-text"
+              >
+                <Menu className="size-4" strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            )}
+            {/* `sm` 以下只留栏目名：面包屑在手机上把标题挤没了（DEC-062 §2 断点表） */}
+            <span className="hidden text-text-muted sm:inline">工作空间 /</span>
+            <strong className="truncate font-semibold">{navTitleFor(location.pathname)}</strong>
+          </div>
+
+          <div className="flex min-w-0 items-center gap-2">
+            {/* 页面主操作落点：`PageHeader` 把「刷新」portal 到这里，页面本身不再出标题条 */}
+            <div ref={setToolsSlot} className="flex items-center gap-2" />
+            {/* QUOT-457：「运行本页命令」收进顶栏（图标 + 弹层）；无命令或控制面未开启时整颗不渲染 */}
+            <PageCommandBar />
+            <TopbarTools onOpenAi={openAi} />
+          </div>
+        </header>
+
+        <div ref={scroller} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+          <PersistenceBanner />
+          <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
+            <PageToolsSlotContext.Provider value={toolsSlot}>
+              <Outlet />
+            </PageToolsSlotContext.Provider>
+          </main>
+        </div>
       </div>
 
+      <MobileNavDrawer open={drawerOpen} onClose={closeDrawer} returnFocusTo={menuRef} />
       <AiConnectDialog open={aiOpen} onClose={() => setAiOpen(false)} />
     </div>
   )

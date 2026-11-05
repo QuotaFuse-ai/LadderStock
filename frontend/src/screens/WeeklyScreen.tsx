@@ -1,6 +1,6 @@
 import { useCallback, useMemo, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { describeApiError, isApiError, type WeeklyFacts, type WeeklyReport, type WeeklyTrend } from '../api'
 import { AiErrorNotice } from '../components/kit'
@@ -296,6 +296,11 @@ export default function WeeklyScreen() {
       title="AI周报"
       subtitle={subtitle}
       badge={<DemoStateBadge state={forced} />}
+      refresh={{
+        onClick: reload,
+        loading: request.status === 'loading' && state !== 'loading',
+        disabled: state === 'loading',
+      }}
       actions={
         <>
           <Button
@@ -313,15 +318,6 @@ export default function WeeklyScreen() {
             leadingIcon={<ChevronRight className="size-3.5" aria-hidden="true" />}
           >
             下周
-          </Button>
-          <Button
-            variant="secondary"
-            loading={request.status === 'loading' && state !== 'loading'}
-            disabled={state === 'loading'}
-            onClick={reload}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
           </Button>
         </>
       }

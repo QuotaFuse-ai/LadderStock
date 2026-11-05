@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 import threading
 import uuid
+from bisect import bisect_left
+from collections import Counter
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -37,8 +39,9 @@ from ladderstock.cli.paths import project_root
 from ladderstock.core.ladder import as_float, pick
 from ladderstock.core.models import LadderEnvelope
 from ladderstock.core.privacy import strip_private
-from ladderstock.data import archive
+from ladderstock.data import archive, duckdb_store
 from ladderstock.data.provider_registry import ProviderRegistry, SourceUnavailable
+from ladderstock.data.watermark import WatermarkStore
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.research import artifacts, checkpoint
 from ladderstock.web import control as control_plane
@@ -78,6 +81,66 @@ KLINE_ADJUSTS = frozenset({"qfq", "hfq", "none"})
 #: 根数缺省与硬上限：上游按 `limit` 自行截断，本层不再截一次、也不分页
 KLINE_LIMIT_DEFAULT = 120
 KLINE_LIMIT_MAX = 500
+
+# ---- 财报前瞻 / 事件回看（QUOT-446）----
+
+#: 财报明细一次回放的报告期数（缺省 6 期，上限 12 期）
+EARNINGS_PERIODS_DEFAULT = 6
+EARNINGS_PERIODS_MAX = 12
+
+#: 事件窗口参数：事件日前 / 后各取几个交易日（0..60）
+EVENT_WINDOW_BEFORE_DEFAULT = 5
+EVENT_WINDOW_AFTER_DEFAULT = 20
+EVENT_WINDOW_MAX = 60
+
+#: 事件收益的基准指数；本地 `index_daily` 必须覆盖到窗口两端
+BENCHMARK_CODE = "000300"
+
+#: 样本不足就不给均值（前端统计句直接用这个判据，不自己做除法）
+EVENT_SAMPLE_MIN = 8
+
+#: 事件类型 → 本地数据集（顺序即返回顺序，`sources` 参数用键名）
+EVENT_SOURCES: tuple[tuple[str, str], ...] = (
+    ("holder_trades", "增持减持"),
+    ("dragon_tiger", "龙虎榜"),
+    ("earnings_preview", "业绩预告"),
+    ("institution_survey", "调研"),
+    ("share_buyback", "回购"),
+    ("lockup_calendar", "解禁"),
+)
+EVENT_SOURCE_LABELS: dict[str, str] = dict(EVENT_SOURCES)
+
+#: 三处缺口的原因文案：宁可显式 null，也不拿报告期末 / 抓取日冒充发布日
+NO_PUBLISH_DATE = (
+    "finance_indicators 没有公告日字段（TickHub 财务工具只回报告期），"
+    "本地没有这只个股的报告披露日；不拿报告期末或抓取日冒充"
+)
+NO_REACTION_DATE = "缺发布日，无法定位披露后的首个交易日，反应日与当天涨跌不可得"
+NO_FORECAST = "本地 earnings_preview 没有该报告期的业绩预告（该期未预告或未同步）"
+NO_STOCK_BARS = (
+    "本地 daily_k 在窗口边界日没有这只代码的收盘价（个股日线覆盖不足或停牌），不估算收益"
+)
+
+#: 周期 / 复权 / 市场的展示标签：纯静态映射，不查库、不联网（QUOT-428）。
+KLINE_PERIOD_LABELS: dict[str, str] = {"daily": "日线", "weekly": "周线", "monthly": "月线"}
+KLINE_ADJUST_LABELS: dict[str, str] = {"qfq": "前复权", "hfq": "后复权", "none": "不复权"}
+#: 本端点只放行 A 股个股（`require_known_code`），市场固定一档。
+KLINE_MARKET = "a_share"
+KLINE_MARKET_LABEL = "A 股"
+#: 载荷 `source` 给人看的上游口径；逐请求的 `source_detail` 仍在 payload 里。
+KLINE_SOURCE = "TickHub-CN / tencent_kline"
+
+#: 上游 `tencent_kline` 的 volume 单位是**手**：TickHub-CN 的 `crawler/store.py`
+#: 明写 "Tencent's K-line sends volume in 手 and an A-share lot is 100 shares;
+#: the warehouse column is 股"，入库时才 ×100 换成股。本端点现取现回，拿到的
+#: 就是手——如实标注 `volume_unit`，不替上游换算（QUOT-428）。
+KLINE_VOLUME_UNIT = "手"
+#: 均线窗口：简单移动平均，只按本次返回的 bar 序列计算，不足窗口为 null。
+KLINE_MA_WINDOWS: tuple[int, ...] = (5, 10, 20, 60)
+KLINE_MA_NOTE = "均线按本次返回的窗口计算，窗口不足的值为空"
+KLINE_VOLUME_NOTE = (
+    "volume 单位为手（1 手 = 100 股）：上游 tencent_kline 原样透传，本接口不换算"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -191,6 +254,47 @@ def parse_limit(raw: Any) -> int:
     if not 1 <= limit <= KLINE_LIMIT_MAX:
         raise _invalid(f"limit 必须在 1..{KLINE_LIMIT_MAX} 内，收到 {raw!r}")
     return limit
+
+
+def parse_periods(raw: Any) -> int:
+    """财报明细期数：缺省 6，范围 1..12。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return EARNINGS_PERIODS_DEFAULT
+    try:
+        periods = int(raw)
+    except (TypeError, ValueError):
+        raise _invalid(
+            f"periods 必须是整数（1..{EARNINGS_PERIODS_MAX}），收到 {raw!r}"
+        ) from None
+    if not 1 <= periods <= EARNINGS_PERIODS_MAX:
+        raise _invalid(f"periods 必须在 1..{EARNINGS_PERIODS_MAX} 内，收到 {raw!r}")
+    return periods
+
+
+def parse_sources(raw: Any) -> list[str]:
+    """事件类型过滤：逗号分隔；缺省全部六类，未知类型 422。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return [key for key, _label in EVENT_SOURCES]
+    names = [part.strip() for part in str(raw).split(",") if part.strip()]
+    unknown = [name for name in names if name not in EVENT_SOURCE_LABELS]
+    if unknown:
+        raise _invalid(
+            f"sources 只允许 {', '.join(EVENT_SOURCE_LABELS)}，收到 {', '.join(unknown)}"
+        )
+    return list(dict.fromkeys(names))
+
+
+def parse_window(raw: Any, *, name: str, default: int) -> int:
+    """窗口交易日数：缺省 5 / 20，范围 0..60。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise _invalid(f"{name} 必须是整数（0..{EVENT_WINDOW_MAX}），收到 {raw!r}") from None
+    if not 0 <= value <= EVENT_WINDOW_MAX:
+        raise _invalid(f"{name} 必须在 0..{EVENT_WINDOW_MAX} 内，收到 {raw!r}")
+    return value
 
 
 # --------------------------------------------------------------------------- #
@@ -393,6 +497,309 @@ def _latest_financials(
         **{name: pick(row, keys) for name, keys in FINANCIAL_FIELDS},
     }
     return financials, None
+
+
+# --------------------------------------------------------------------------- #
+# 财报前瞻 / 事件回看：缓存行 → 载荷（QUOT-446）
+# --------------------------------------------------------------------------- #
+
+#: 财报明细里的「实际」字段：只投影、不换算单位
+ACTUAL_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("eps", EPS_KEYS),
+    ("bps", ("bps",)),
+    ("revenue", REVENUE_KEYS),
+    ("net_profit", NET_PROFIT_KEYS),
+    ("roe", ROE_KEYS),
+    ("gross_margin", ("gross_margin",)),
+    ("net_margin", ("net_margin",)),
+    ("revenue_yoy", REVENUE_YOY_KEYS),
+    ("profit_yoy", PROFIT_YOY_KEYS),
+)
+
+#: 业绩预告里原样回给前端的字段（实际/预期对比用；金额单位沿用上游）
+FORECAST_FIELDS: tuple[str, ...] = (
+    "indicator",
+    "forecast_type",
+    "report_date",
+    "notice_date",
+    "amount_lower",
+    "amount_upper",
+    "change_pct_lower",
+    "change_pct_upper",
+    "prior_year_amount",
+    "content",
+    "reason",
+)
+
+
+def _consensus_view(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """最新一份一致预期快照；嵌套的 consensus / history 原样带回，不摊平。"""
+    if not rows:
+        return None
+    row = max(rows, key=_row_day)
+    return {
+        "as_of": _row_day(row),
+        "name": pick(row, NAME_KEYS),
+        "current_year": row.get("current_year"),
+        "eps_current_year": row.get("eps_current_year"),
+        "eps_next_year": row.get("eps_next_year"),
+        "analyst_count": row.get("analyst_count"),
+        "ratings": row.get("ratings"),
+        "consensus": row.get("consensus") or [],
+        "history": row.get("history") or [],
+    }
+
+
+def _forecast_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """报告期 → 该期最新一条业绩预告（同一期多条时按公告日取最新）。"""
+    index: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        report_date = str(pick(row, ("report_date",)) or "")[:10]
+        if not report_date:
+            continue
+        picked = {name: row.get(name) for name in FORECAST_FIELDS if name in row}
+        picked["report_date"] = report_date
+        current = index.get(report_date)
+        if current is None or str(picked.get("notice_date") or "") >= str(
+            current.get("notice_date") or ""
+        ):
+            index[report_date] = picked
+    return index
+
+
+def _event_detail(dataset: str, row: dict[str, Any]) -> dict[str, Any]:
+    """事件行里对页面有用的字段（只挑存在的键，原值透传）。"""
+    keys: dict[str, tuple[str, ...]] = {
+        "holder_trades": (
+            "direction",
+            "holder",
+            "change_shares_10k",
+            "change_pct_total",
+            "change_pct_float",
+            "avg_price",
+            "channel",
+            "start_date",
+            "end_date",
+        ),
+        "dragon_tiger": (
+            "reason",
+            "close",
+            "change_pct",
+            "turnover_rate",
+            "net_amount",
+            "net_ratio",
+        ),
+        "earnings_preview": (
+            "indicator",
+            "forecast_type",
+            "report_date",
+            "amount_upper",
+            "change_pct_upper",
+        ),
+        "institution_survey": (
+            "institution",
+            "survey_date",
+            "receivers",
+            "receive_way",
+            "content",
+        ),
+        "share_buyback": (
+            "buyback_type",
+            "amount",
+            "shares",
+            "price_lower",
+            "price_upper",
+            "progress",
+        ),
+        "lockup_calendar": (
+            "type",
+            "shares_10k",
+            "able_shares_10k",
+            "ratio_pct",
+            "lift_status",
+        ),
+    }
+    return {name: row.get(name) for name in keys.get(dataset, ()) if name in row}
+
+
+def _events_for(dataset: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """缓存行 → 事件列表；业绩预告按 (公告日, 报告期, 指标) 去重，其余逐行算一条。"""
+    events: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        day = _row_day(row)
+        if not day:
+            continue
+        if dataset == "earnings_preview":
+            key = (
+                day,
+                str(row.get("report_date") or ""),
+                str(row.get("indicator") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+        events.append({"date": day, "detail": _event_detail(dataset, row)})
+    events.sort(key=lambda item: item["date"])
+    return events
+
+
+def _window_for(
+    event_day: str,
+    *,
+    stock_close: Mapping[str, float | None],
+    bench_days: list[str],
+    bench_close: Mapping[str, float | None],
+    before: int,
+    after: int,
+) -> dict[str, Any]:
+    """单个事件的窗口收益与对 000300 的超额（交易日按基准日历对齐）。
+
+    公式固定为 `close[end] / close[start] - 1`：`start` 是事件日所在交易日前
+    `before` 个交易日、`end` 是其后 `after` 个交易日；两端任一缺价就显式 null + reason。
+    """
+    window: dict[str, Any] = {
+        "start": None,
+        "end": None,
+        "stock_return": None,
+        "benchmark_return": None,
+        "excess_return": None,
+        "reason": None,
+    }
+    if not bench_days:
+        window["reason"] = "本地 index_daily 没有 000300 的日线，回放不了事件窗口"
+        return window
+    index = bisect_left(bench_days, event_day)
+    if index >= len(bench_days):
+        window["reason"] = (
+            f"事件日 {event_day} 晚于本地 000300 最后交易日 {bench_days[-1]}，窗口未发生完"
+        )
+        return window
+    start_i, end_i = index - before, index + after
+    if start_i < 0:
+        window["reason"] = (
+            f"事件日 {event_day} 之前本地 000300 只有 {index} 个交易日（需要 {before} 个；"
+            f"本地基准自 {bench_days[0]} 起）"
+        )
+        return window
+    if end_i >= len(bench_days):
+        window["reason"] = (
+            f"事件日 {event_day} 之后本地 000300 只有 {len(bench_days) - 1 - index} 个交易日"
+            f"（需要 {after} 个）"
+        )
+        return window
+    start_day, end_day = bench_days[start_i], bench_days[end_i]
+    stock_start, stock_end = stock_close.get(start_day), stock_close.get(end_day)
+    bench_start, bench_end = bench_close.get(start_day), bench_close.get(end_day)
+    window.update({"start": start_day, "end": end_day})
+    if stock_start is None or stock_end is None or not stock_start:
+        window["reason"] = NO_STOCK_BARS
+        return window
+    if bench_start is None or bench_end is None or not bench_start:
+        window["reason"] = "本地 000300 在窗口边界日缺收盘价"
+        return window
+    stock_return = stock_end / stock_start - 1
+    benchmark_return = bench_end / bench_start - 1
+    window.update(
+        {
+            "stock_return": round(stock_return, 6),
+            "benchmark_return": round(benchmark_return, 6),
+            "excess_return": round(stock_return - benchmark_return, 6),
+        }
+    )
+    return window
+
+
+def _last_run_status(dataset: str, root: Path) -> str | None:
+    """该数据集最近一次同步状态（用于区分「未同步」与「上游真实为空」）。"""
+    try:
+        runs = WatermarkStore(root=root).runs(limit=0)
+    except Exception:  # noqa: BLE001 - 状态文件坏了不影响行情回放
+        return None
+    matched = [run for run in runs if str(run.get("dataset") or "") == dataset]
+    return str(matched[-1].get("status") or "") if matched else None
+
+
+def _empty_event_reason(dataset: str, root: Path) -> str:
+    status = _last_run_status(dataset, root)
+    if status is None:
+        return f"本地 {dataset} 没有任何同步记录（未同步）"
+    if status in ("ok", "degraded"):
+        return f"本地 {dataset} 已同步（上次 {status}），但上游对该代码返回 0 条（真实空）"
+    if status == "empty":
+        return f"本地 {dataset} 上次同步即 0 条（上游真实为空）"
+    return f"本地 {dataset} 上次同步状态 {status}，没有可用记录"
+
+
+# --------------------------------------------------------------------------- #
+# K 线图：载荷纯函数（QUOT-428，参考库 klineView.ts 的消费形状）
+# --------------------------------------------------------------------------- #
+
+def _bar_float(bar: dict[str, Any], key: str) -> float | None:
+    """已投影的 bar 里的数值；缺失 / null 如实为 None，不补 0。"""
+    value = bar.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _change_series(
+    closes: list[float | None], upstream_pct: list[float | None]
+) -> list[float | None]:
+    """涨跌幅序列（**小数**，`0.0123` = +1.23%）。
+
+    优先上游 `change_pct`（百分数 → 除以 100）；缺失时用
+    `close[i] / close[i-1] - 1` 推导。首根没有前收，恒为 `None`；缺前收同样为
+    `None`——不补 0（0 会被前端读成「平盘」，与「没有数据」不是一回事）。
+    """
+    changes: list[float | None] = []
+    for index, close in enumerate(closes):
+        if index == 0:
+            changes.append(None)
+            continue
+        upstream = upstream_pct[index] if index < len(upstream_pct) else None
+        if upstream is not None:
+            changes.append(upstream / 100.0)
+            continue
+        prev = closes[index - 1]
+        if close is None or prev is None or prev == 0:
+            changes.append(None)
+            continue
+        changes.append(close / prev - 1)
+    return changes
+
+
+def _moving_average(values: list[float | None], window: int) -> list[float | None]:
+    """简单移动平均：不足 `window` 根、或窗口内有缺值 → `None`，不跳空补算。"""
+    averages: list[float | None] = []
+    for index in range(len(values)):
+        if index + 1 < window:
+            averages.append(None)
+            continue
+        chunk = values[index + 1 - window : index + 1]
+        numbers = [value for value in chunk if value is not None]
+        if len(numbers) < window:
+            averages.append(None)
+            continue
+        averages.append(sum(numbers) / window)
+    return averages
+
+
+def _kline_series(
+    bars: list[dict[str, Any]], upstream_pct: list[float | None]
+) -> dict[str, Any]:
+    """`bars` → 参考库 `KlineSeries`：列式数组 + `change` + `ma`（窗口 5/10/20/60）。"""
+    closes = [_bar_float(bar, "close") for bar in bars]
+    return {
+        "dates": [str(bar.get("date") or "") for bar in bars],
+        "open": [_bar_float(bar, "open") for bar in bars],
+        "high": [_bar_float(bar, "high") for bar in bars],
+        "low": [_bar_float(bar, "low") for bar in bars],
+        "close": closes,
+        "volume": [_bar_float(bar, "volume") for bar in bars],
+        "change": _change_series(closes, upstream_pct),
+        "ma": {str(window): _moving_average(closes, window) for window in KLINE_MA_WINDOWS},
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -656,7 +1063,10 @@ class ResearchPlane:
             maybe = envelope.payload.get("records")
             if isinstance(maybe, list):
                 records = maybe
-        bars = [_bar_from_record(row) for row in records if isinstance(row, dict)]
+        bar_rows = [row for row in records if isinstance(row, dict)]
+        bars = [_bar_from_record(row) for row in bar_rows]
+        upstream_pct = [as_float(pick(row, CHANGE_PCT_KEYS)) for row in bar_rows]
+        series = _kline_series(bars, upstream_pct)
         available = bool(bars)
         if reason is None and not available:
             reason = (
@@ -672,17 +1082,27 @@ class ResearchPlane:
             if envelope is not None and envelope.data_as_of is not None
             else None
         )
+        fetched_at = _now_iso()
         payload: dict[str, Any] = {
             "code": code,
             "period": period,
             "adjust": adjust,
             "limit": limit,
+            "market": KLINE_MARKET,
+            "market_label": KLINE_MARKET_LABEL,
+            "period_label": KLINE_PERIOD_LABELS[period],
+            "adjust_label": KLINE_ADJUST_LABELS[adjust],
+            "source": KLINE_SOURCE,
+            "fetched_at": fetched_at,
+            "volume_unit": KLINE_VOLUME_UNIT,
             "bars": bars,
             "count": len(bars),
             "available": available,
             "reason": reason,
             "source_detail": envelope.source_detail if envelope is not None else None,
             "data_source_status": status,
+            "series": series,
+            "notes": [KLINE_MA_NOTE, KLINE_VOLUME_NOTE],
         }
         return {
             "payload": strip_private(payload),
@@ -692,6 +1112,276 @@ class ResearchPlane:
                 "topic": "research_kline",
                 "source": "ladderstock",
                 "freshness": envelope.freshness if envelope is not None else "realtime",
+                "fetched_at": fetched_at,
+            },
+        }
+
+    # ---------------------------------------------------------------- 财报前瞻
+
+    def earnings_brief(self, raw_code: Any, raw_periods: Any = None) -> dict[str, Any]:
+        """`GET /{code}/earnings-brief`：一致预期 + 最近 N 期财报明细（只读缓存）。
+
+        「实际」取 `finance_indicators`（EPS / 营收 / 净利 / ROE 等原值），「预期」取
+        同报告期的 `earnings_preview` 业绩预告。**发布日 / 反应日 / 当天涨跌**当前
+        无源（财务工具不带公告日字段），一律 `null` + reason——不拿报告期末或抓取日顶替。
+        """
+        code = parse_code(raw_code)
+        require_known_code(code)
+        bare = code.partition(".")[0]
+        periods = parse_periods(raw_periods)
+        try:
+            finance_rows = duckdb_store.query_dataset(
+                "finance_indicators", None, code=bare, root=self.data_root
+            )
+            preview_rows = duckdb_store.query_dataset(
+                "earnings_preview", None, code=bare, root=self.data_root
+            )
+            consensus_rows = duckdb_store.query_dataset(
+                "consensus_forecast", None, code=bare, root=self.data_root
+            )
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"财报数据读取失败：{exc}"
+            ) from None
+
+        consensus = _consensus_view(consensus_rows)
+        forecasts = _forecast_index(preview_rows)
+        ordered = sorted(finance_rows, key=_row_day, reverse=True)[:periods]
+        name = (consensus or {}).get("name")
+        earnings: list[dict[str, Any]] = []
+        for row in ordered:
+            report_date = _row_day(row)
+            forecast = forecasts.get(report_date)
+            if name is None:
+                name = pick(row, NAME_KEYS)
+            earnings.append(
+                {
+                    "report_date": report_date,
+                    "report_name": pick(row, REPORT_NAME_KEYS),
+                    "actual": {
+                        field: pick(row, source) for field, source in ACTUAL_FIELDS
+                    },
+                    "forecast": forecast,
+                    "forecast_reason": None if forecast else NO_FORECAST,
+                    "publish_date": None,
+                    "publish_date_reason": NO_PUBLISH_DATE,
+                    "reaction_date": None,
+                    "reaction_date_reason": NO_REACTION_DATE,
+                    "reaction_change_pct": None,
+                    "reaction_change_pct_reason": NO_REACTION_DATE,
+                }
+            )
+        latest = earnings[0] if earnings else None
+        stats = {
+            "periods": len(earnings),
+            "with_forecast": sum(1 for item in earnings if item["forecast"]),
+            "with_publish_date": 0,
+            "with_reaction": 0,
+            "latest_report_date": latest["report_date"] if latest else None,
+            "latest_report_eps": latest["actual"].get("eps") if latest else None,
+            "consensus_analyst_count": (consensus or {}).get("analyst_count"),
+            "consensus_eps_current_year": (consensus or {}).get("eps_current_year"),
+            "consensus_eps_next_year": (consensus or {}).get("eps_next_year"),
+        }
+        as_of_candidates = [
+            value
+            for value in ((consensus or {}).get("as_of"), stats["latest_report_date"])
+            if value
+        ]
+        as_of = max(as_of_candidates) if as_of_candidates else None
+        available = bool(earnings) or consensus is not None
+        status = "ok" if available else "missing"
+        consensus_reason = (
+            None
+            if consensus is not None
+            else "本地 consensus_forecast 无这只代码的缓存（未同步或上游无数据）"
+        )
+        earnings_reason = (
+            None
+            if earnings
+            else f"本地 finance_indicators 没有 {bare} 的报告期记录（未同步）"
+        )
+        payload: dict[str, Any] = {
+            "code": code,
+            "name": name,
+            "periods": periods,
+            "consensus": consensus,
+            "consensus_reason": consensus_reason,
+            "earnings": earnings,
+            "earnings_reason": earnings_reason,
+            "stats": stats,
+            "data_source_status": status,
+        }
+        return {
+            "payload": strip_private(payload),
+            "data_source_status": status,
+            "data_as_of": as_of,
+            "meta": {
+                "topic": "research_earnings_brief",
+                "source": "ladderstock",
+                "freshness": "cached",
+                "fetched_at": _now_iso(),
+            },
+        }
+
+    # ---------------------------------------------------------------- 事件回看
+
+    def event_study(
+        self,
+        raw_code: Any,
+        raw_sources: Any = None,
+        raw_before: Any = None,
+        raw_after: Any = None,
+    ) -> dict[str, Any]:
+        """`GET /{code}/event-study`：六类事件的日期序列 + 每事件对 000300 的窗口超额。
+
+        交易日按本地 `index_daily`（000300）对齐；个股缺窗口边界收盘价时该事件
+        `excess_return=null` + reason。可计算样本 < `EVENT_SAMPLE_MIN`（8）时
+        `sample.status=insufficient_sample`、均值为 `null`——统计句不在前端做除法。
+        """
+        code = parse_code(raw_code)
+        require_known_code(code)
+        bare = code.partition(".")[0]
+        sources = parse_sources(raw_sources)
+        before = parse_window(
+            raw_before, name="window_before", default=EVENT_WINDOW_BEFORE_DEFAULT
+        )
+        after = parse_window(
+            raw_after, name="window_after", default=EVENT_WINDOW_AFTER_DEFAULT
+        )
+        try:
+            stock_rows = duckdb_store.query_dataset(
+                "daily_k", None, code=bare, root=self.data_root
+            )
+            index_rows = archive.read_dataset("index_daily", None, root=self.data_root)
+            event_rows = {
+                dataset: duckdb_store.query_dataset(dataset, None, code=bare, root=self.data_root)
+                for dataset in sources
+            }
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"事件数据读取失败：{exc}"
+            ) from None
+
+        bench_rows = [row for row in index_rows if _row_code(row) == BENCHMARK_CODE]
+        bench_days = sorted({_row_day(row) for row in bench_rows if _row_day(row)})
+        bench_close = {_row_day(row): _row_number(row, CLOSE_KEYS) for row in bench_rows}
+        stock_close = {_row_day(row): _row_number(row, CLOSE_KEYS) for row in stock_rows}
+        name = next(
+            (
+                value
+                for rows in event_rows.values()
+                for row in rows
+                if (value := pick(row, NAME_KEYS))
+            ),
+            None,
+        )
+
+        types: list[dict[str, Any]] = []
+        computed_any = False
+        for dataset, label in EVENT_SOURCES:
+            if dataset not in event_rows:
+                continue
+            rows = event_rows[dataset]
+            events = _events_for(dataset, rows)
+            for event in events:
+                event["window"] = _window_for(
+                    event["date"],
+                    stock_close=stock_close,
+                    bench_days=bench_days,
+                    bench_close=bench_close,
+                    before=before,
+                    after=after,
+                )
+            windows = [
+                event["window"]
+                for event in events
+                if event["window"]["excess_return"] is not None
+            ]
+            computed_any = computed_any or bool(windows)
+            count = len(events)
+            date_series = sorted({event["date"] for event in events})
+            sample: dict[str, Any] = {
+                "required": EVENT_SAMPLE_MIN,
+                "window_available": len(windows),
+                "status": (
+                    "ok" if len(windows) >= EVENT_SAMPLE_MIN else "insufficient_sample"
+                ),
+                "mean_stock_return": None,
+                "mean_benchmark_return": None,
+                "mean_excess_return": None,
+                "reason": None,
+            }
+            if len(windows) >= EVENT_SAMPLE_MIN:
+                sample.update(
+                    {
+                        "mean_stock_return": round(
+                            sum(w["stock_return"] for w in windows) / len(windows), 6
+                        ),
+                        "mean_benchmark_return": round(
+                            sum(w["benchmark_return"] for w in windows) / len(windows), 6
+                        ),
+                        "mean_excess_return": round(
+                            sum(w["excess_return"] for w in windows) / len(windows), 6
+                        ),
+                    }
+                )
+            elif count == 0:
+                sample["reason"] = _empty_event_reason(dataset, self.data_root)
+            else:
+                # 把「为什么算不出来」的原因带出来：只有「0 < 8」等于没说，
+                # 页面要能看出是基准覆盖不到还是个股缺收盘价（QUOT-446 缺口清单）。
+                causes = Counter(
+                    event["window"]["reason"]
+                    for event in events
+                    if event["window"]["reason"]
+                )
+                top = causes.most_common(1)[0] if causes else None
+                sample["reason"] = (
+                    f"可计算窗口 {len(windows)} < {EVENT_SAMPLE_MIN}，按契约不给均值"
+                    + (f"；{top[0]}（{top[1]}/{count} 个事件）" if top else "")
+                )
+            types.append(
+                {
+                    "dataset": dataset,
+                    "label": label,
+                    "count": count,
+                    "dates": date_series,
+                    "events": events,
+                    "sample": sample,
+                }
+            )
+
+        if not bench_days:
+            status = "missing"
+        elif computed_any:
+            status = "ok"
+        elif any(item["count"] for item in types):
+            status = "partial"
+        else:
+            status = "missing"
+        as_of = bench_days[-1] if bench_days else None
+        payload: dict[str, Any] = {
+            "code": code,
+            "name": name,
+            "window_before": before,
+            "window_after": after,
+            "benchmark": BENCHMARK_CODE,
+            "formula": "窗口收益 = close[end] / close[start] - 1；超额 = 个股 - 000300",
+            "trading_days": len(bench_days),
+            "benchmark_rows": len(bench_rows),
+            "event_types": types,
+            "counts": {item["dataset"]: item["count"] for item in types},
+            "data_source_status": status,
+        }
+        return {
+            "payload": strip_private(payload),
+            "data_source_status": status,
+            "data_as_of": as_of,
+            "meta": {
+                "topic": "research_event_study",
+                "source": "ladderstock",
+                "freshness": "cached",
                 "fetched_at": _now_iso(),
             },
         }
@@ -901,6 +1591,34 @@ def build_router(plane: ResearchPlane) -> APIRouter:
         """K 线图（QUOT-410）：三档周期 × 三档复权运行时透传给 `tencent_kline`。"""
         return plane.kline(code, period, adjust, limit)
 
+    @router.get("/{code}/earnings-brief")
+    def research_earnings_brief(
+        code: str,
+        periods: Annotated[
+            int | None,
+            Query(gt=0, le=EARNINGS_PERIODS_MAX, description="报告期数，缺省 6，上限 12"),
+        ] = None,
+    ) -> dict[str, Any]:
+        """财报前瞻（QUOT-446）：一致预期 + 最近 N 期财报明细，只读缓存。"""
+        return plane.earnings_brief(code, periods)
+
+    @router.get("/{code}/event-study")
+    def research_event_study(
+        code: str,
+        sources: Annotated[
+            str | None,
+            Query(description="事件类型，逗号分隔；缺省全部六类"),
+        ] = None,
+        window_before: Annotated[
+            int | None, Query(ge=0, le=EVENT_WINDOW_MAX, description="事件日前交易日数")
+        ] = None,
+        window_after: Annotated[
+            int | None, Query(ge=0, le=EVENT_WINDOW_MAX, description="事件日后交易日数")
+        ] = None,
+    ) -> dict[str, Any]:
+        """事件回看（QUOT-446）：各类型日期序列 + 每事件对 000300 的窗口超额。"""
+        return plane.event_study(code, sources, window_before, window_after)
+
     @router.post("/{code}/run")
     def research_run(code: str, body: ResearchRunRequest | None = None) -> dict[str, Any]:
         """单段续跑：等价 `ldst research <code> --date <date> --only <stage>`。"""
@@ -915,9 +1633,18 @@ def build_router(plane: ResearchPlane) -> APIRouter:
 
 __all__ = [
     "A_SHARE_PREFIXES",
+    "BENCHMARK_CODE",
     "DAY_PATTERN",
+    "EARNINGS_PERIODS_DEFAULT",
+    "EARNINGS_PERIODS_MAX",
     "ENGINE_UNAVAILABLE_DETAIL",
     "EMPTY_RECORD_DETAIL",
+    "EVENT_SAMPLE_MIN",
+    "EVENT_SOURCES",
+    "EVENT_SOURCE_LABELS",
+    "EVENT_WINDOW_AFTER_DEFAULT",
+    "EVENT_WINDOW_BEFORE_DEFAULT",
+    "EVENT_WINDOW_MAX",
     "JOB_STATUSES",
     "KLINE_ADJUSTS",
     "KLINE_LIMIT_DEFAULT",
@@ -937,6 +1664,9 @@ __all__ = [
     "parse_day",
     "parse_limit",
     "parse_period",
+    "parse_periods",
+    "parse_sources",
     "parse_stage",
+    "parse_window",
     "require_known_code",
 ]

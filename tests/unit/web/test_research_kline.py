@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ladderstock.core.models import Freshness, LadderEnvelope, SourceStatus
+from ladderstock.core.privacy import PRIVATE_KEYS, strip_private
 from ladderstock.data.provider_registry import SourceUnavailable
 from ladderstock.web.research import KLINE_LIMIT_DEFAULT, KLINE_LIMIT_MAX, ResearchPlane
 from ladderstock.web.server import create_app
@@ -65,20 +66,28 @@ class _FakeRegistry:
         return SimpleNamespace(envelope=self.envelope)
 
 
-def _bar(day: str, close: float, amount: float | None = None) -> dict[str, Any]:
+def _bar(
+    day: str,
+    close: float | None,
+    amount: float | None = None,
+    change_pct: float | None = None,
+) -> dict[str, Any]:
     """一行上游记录（`klines` 形状归一化后）：date 已改键为 trade_date，amount 可空。"""
-    return {
+    row: dict[str, Any] = {
         "code": "600000",
         "period": "daily",
         "adjust": "qfq",
         "trade_date": day,
-        "open": close - 0.2,
-        "high": close + 0.3,
-        "low": close - 0.4,
+        "open": None if close is None else close - 0.2,
+        "high": None if close is None else close + 0.3,
+        "low": None if close is None else close - 0.4,
         "close": close,
-        "volume": 75000.0 + close,
+        "volume": 75000.0 if close is None else 75000.0 + close,
         "amount": amount,
     }
+    if change_pct is not None:
+        row["change_pct"] = change_pct
+    return row
 
 
 def _envelope(
@@ -339,3 +348,83 @@ def test_kline_degraded_when_upstream_source_status_is_not_ok(tmp_path: Path) ->
     assert body["data_source_status"] == "degraded"
     assert body["payload"]["data_source_status"] == "degraded"
     assert body["payload"]["available"] is True, "降级仍有数据，不装成空态"
+
+
+# --------------------------------------------------------------------------- #
+# 5. 载荷补齐（QUOT-428）：series / 涨跌幅 / 均线 / 单位与标签
+# --------------------------------------------------------------------------- #
+
+def test_kline_series_columns_labels_and_units(tmp_path: Path) -> None:
+    client, _ = _ok_registry(tmp_path)
+
+    payload = client.get(KLINE_URL).json()["payload"]
+
+    assert payload["market"] == "a_share" and payload["market_label"] == "A 股"
+    assert payload["period"] == "daily" and payload["period_label"] == "日线"
+    assert payload["adjust"] == "qfq" and payload["adjust_label"] == "前复权"
+    assert payload["source"] == "TickHub-CN / tencent_kline"
+    assert payload["volume_unit"] == "手", "上游 tencent_kline 按手返回，如实标注不换算"
+    assert payload["fetched_at"]
+
+    series = payload["series"]
+    assert series["dates"] == [bar["date"] for bar in payload["bars"]]
+    assert series["close"] == [bar["close"] for bar in payload["bars"]]
+    assert series["volume"] == [bar["volume"] for bar in payload["bars"]]
+    assert set(series["ma"]) == {"5", "10", "20", "60"}
+    assert all(len(column) == payload["count"] for column in series["ma"].values())
+
+    assert any("窗口" in note for note in payload["notes"])
+    assert any("手" in note for note in payload["notes"])
+
+
+def test_kline_change_prefers_upstream_then_derives_from_prev_close(tmp_path: Path) -> None:
+    records = [
+        _bar("2026-10-27", 10.0),
+        _bar("2026-10-28", 11.0, change_pct=5.0),
+        _bar("2026-10-29", 11.55),
+        _bar("2026-10-30", None),
+    ]
+    client = _client(tmp_path, _FakeRegistry(_envelope(records)))
+
+    changes = client.get(KLINE_URL).json()["payload"]["series"]["change"]
+
+    assert changes[0] is None, "首根没有前收，不补 0"
+    assert changes[1] == pytest.approx(0.05), "优先上游 change_pct（百分数除以 100）"
+    assert changes[2] == pytest.approx(0.05), "缺失时用 close[i]/close[i-1]-1 推导"
+    assert changes[3] is None, "缺前收是 null，不是 0"
+
+
+def test_kline_ma5_first_four_null_then_mean(tmp_path: Path) -> None:
+    records = [_bar(f"2026-10-{day:02d}", float(day)) for day in range(1, 6)]
+    client = _client(tmp_path, _FakeRegistry(_envelope(records)))
+
+    series = client.get(KLINE_URL).json()["payload"]["series"]
+
+    assert series["ma"]["5"] == [None, None, None, None, 3.0]
+    assert series["ma"]["10"] == [None] * 5, "窗口不足一律为空，不拿现有根数凑"
+    assert series["ma"]["20"] == [None] * 5
+    assert series["ma"]["60"] == [None] * 5
+
+
+def test_kline_empty_upstream_series_is_empty_not_fabricated(tmp_path: Path) -> None:
+    client = _client(tmp_path, _FakeRegistry(_envelope([], freshness="cached")))
+
+    response = client.get(KLINE_URL)
+
+    assert response.status_code == 200
+    payload = response.json()["payload"]
+    assert payload["available"] is False and payload["bars"] == []
+    assert payload["reason"]
+    series = payload["series"]
+    assert series["dates"] == [] and series["close"] == [] and series["change"] == []
+    assert series["ma"] == {"5": [], "10": [], "20": [], "60": []}
+
+
+def test_strip_private_keeps_kline_series(tmp_path: Path) -> None:
+    client, _ = _ok_registry(tmp_path)
+
+    payload = client.get(KLINE_URL).json()["payload"]
+
+    assert "series" not in {key.lower() for key in PRIVATE_KEYS}
+    assert "series" in payload
+    assert strip_private(payload) == payload, "series 不是隐私键，出口不得剥掉"

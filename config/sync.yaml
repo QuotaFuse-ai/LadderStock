@@ -290,6 +290,10 @@ sync:
       fallback: []
       watermark_field: trade_date
       mode: replace
+      # 逐只必填（lockup_expiry 的 code 是 required）：代码池同 daily_k 的 base_pool。
+      # 每只回 history（最近 15 批）+ upcoming（forward_days 内），两个数组都展开成行，
+      # 行内 `lift_status` 区分来源数组（QUOT-446）。
+      codes: *base_pool
       optional: true
 
     earnings_preview:
@@ -297,7 +301,56 @@ sync:
       fallback: []
       watermark_field: notice_date
       mode: replace
+      # 不带 code 的全市场请求被上游 limit=500 截断，正是「生产库 2000 行里 0 行 600000」
+      # 的根因（QUOT-446）。改为逐只代码池：和 daily_k 同一份 base_pool。
+      codes: *base_pool
       optional: true
+
+    # ---------------- 财报前瞻 / 事件回看（QUOT-446）----------------
+    # 事件类（semi_static）按日更落 Parquet；行内 trade_date 取事件自己的公告日
+    # （notice_date / latest_notice），所以重跑只覆盖当天分区、旧事件不会重复堆积。
+    # 代码池复用 base_pool（约 76 只），研究页按代码本地回放。
+    consensus_forecast:
+      primary: tickhub_consensus_forecast
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    holder_trades:
+      primary: tickhub_holder_trades
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    institution_survey:
+      primary: tickhub_institution_survey
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    share_buyback:
+      primary: tickhub_share_buyback
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    # 沪深300 日线：事件窗口超额收益的基准。`days=800` 交易日 ≈ 3.3 年，
+    # 覆盖「回看 3 年 × 前 5 后 20 交易日」的窗口需求；append 按 (code, trade_date) 幂等。
+    index_daily:
+      primary: tickhub_index_daily
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes:
+        - "000300"
 
     # 可选：未安装 Wire 时整段跳过，题材段降级为纯指标叙述
     #

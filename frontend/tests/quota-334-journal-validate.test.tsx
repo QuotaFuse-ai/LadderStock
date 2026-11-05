@@ -96,7 +96,8 @@ describe('交易日志演示源', () => {
     renderRoute('/journal', <JournalScreen />)
 
     expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
-    expect(within(screen.getByRole('table')).getAllByRole('row').length - 1).toBeGreaterThanOrEqual(12)
+    const table = await screen.findByRole('table')
+    expect(within(table).getAllByRole('row').length - 1).toBeGreaterThanOrEqual(12)
     expect(urls).toHaveLength(0)
   })
 })

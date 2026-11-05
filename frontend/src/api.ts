@@ -55,7 +55,7 @@ export function describeApiError(error: unknown): { title: string; detail: strin
     if (error.kind === 'not-connected') {
       return {
         title: '本地服务未连接',
-        detail: '先运行 `ldst run` 启动本机只读 API（默认 127.0.0.1:5950），再点重试。',
+        detail: '本机只读 API 未连接（ldst run 未启动，默认 127.0.0.1:5950）；启动后点重试。',
         code: null,
       }
     }
@@ -718,9 +718,38 @@ export interface BoardPayload {
   ok: boolean
   control_enabled: boolean
   peers: PeerSnapshot[]
+  /** `config/sources.yaml` 的 peers: 块原文（QUOT-420）：注册表唯一真源。 */
+  registry?: RegistryEntry[]
   components?: ComponentSnapshot[]
   port_conflicts: Array<PortConflict & { peer: string }>
   ports: { board: number; mcp: number } & Record<string, { mcp: number; web: number | null } | number>
+}
+
+/** 注册表里的一条 peer（来自 yaml；控制面未纳管时也照样列出）。 */
+export interface RegistryEntry {
+  id: string
+  product: string
+  package: string
+  default_url: string
+  health_path: string
+  default_port: number | null
+  role: string
+  repo: string | null
+  installed: boolean
+  status: PeerStatus
+  status_label: string
+}
+
+/** 导入一条 peer 定义（QUOT-420）：只写 config/sources.yaml，不执行任何命令。 */
+export interface PeerImportPayload {
+  id: string
+  product: string
+  package: string
+  default_url: string
+  health_path: string
+  default_port: number
+  role: string
+  repo: string
 }
 
 /** 页面一键命令（后端白名单；argv 不接受前端传入）。 */
@@ -905,6 +934,12 @@ export const api = {
     peer: (id: string, signal?: AbortSignal) =>
       request<PeerSnapshot>(`/control/peers/${encodeURIComponent(id)}`, {
         signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    importPeer: (body: PeerImportPayload) =>
+      request<BoardPayload & { imported: string; backup: string }>('/control/peers/import', {
+        method: 'POST',
+        body,
         timeoutMs: CONTROL_TIMEOUT_MS,
       }),
     install: (id: string) =>

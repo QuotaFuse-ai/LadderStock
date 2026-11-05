@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Database, Newspaper, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Database, Newspaper } from 'lucide-react'
 
 import {
   DIMENSION_TITLE,
@@ -426,7 +426,7 @@ function DetailEmpty({
             <>
               {payload.reason ?? '六个输入数据集没有可用记录，字段全部显式 null。'}
               {dims.length > 0 && ` 缺失维度：${dims.map((dimension) => DIMENSION_TITLE[dimension]).join('、')}。`}
-              先运行 <code className="ldst-num">ldst industry show {payload.meta.name}</code> 检查本地缓存。
+              行业快照由总览页生成；回行业总览页点「重算行业快照」后重试。
             </>
           }
           action={<Button variant="secondary" onClick={reload}>刷新</Button>}
@@ -521,21 +521,15 @@ export default function IndustryDetailScreen() {
           {payload && !payload.meta.bound && <Badge tone="neutral">未绑定</Badge>}
         </>
       }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
       actions={
-        <>
-          <Link to={backLink} className={LINK_BUTTON_CLASS}>
-            <ArrowLeft className="size-3.5" aria-hidden="true" />
-            产业矩阵
-          </Link>
-          <Button
-            variant="primary"
-            onClick={reload}
-            disabled={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
-        </>
+        <Link to={backLink} className={LINK_BUTTON_CLASS}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          产业矩阵
+        </Link>
       }
     />
   )

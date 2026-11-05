@@ -22,6 +22,7 @@
  *   --query <str>      追加到每个路由的查询串（`demo=1` / `demo=1&variant=partial` / `tab=ports`），
  *                      配合 `--suffix after-demo` 这类后缀拍演示态与缺失态
  *   --demo-pref        用设置页的同款偏好开启演示源（写 `ldst.demo-data=1`），不依赖 URL 参数
+ *   --prefs k=v,k=v    截图前写入任意本机偏好（如 `ldst.privacy=on`），与主题同一注入时机
  *   --settle <ms>      load 之后额外等待（默认 1500，留给 React 渲染 + 图表重绘）
  *   --chrome <path>    浏览器可执行文件（默认自动找 Chrome/Edge，或读环境变量 LDST_CHROME）
  *   --width <px>       视口宽（默认 1440；验收 1280 零横向溢出时传 1280）
@@ -84,6 +85,7 @@ function parseArgs(argv) {
     routes: null,
     query: null,
     demoPref: false,
+    prefs: {},
     settle: 1500,
     chrome: process.env.LDST_CHROME ?? null,
     port: 9333,
@@ -102,6 +104,12 @@ function parseArgs(argv) {
     else if (flag === '--routes') options.routes = next().split(',').filter(Boolean)
     else if (flag === '--query') options.query = next()
     else if (flag === '--demo-pref') options.demoPref = true
+    else if (flag === '--prefs') {
+      for (const pair of next().split(',')) {
+        const [key, ...rest] = pair.split('=')
+        if (key && rest.length > 0) options.prefs[key.trim()] = rest.join('=').trim()
+      }
+    }
     else if (flag === '--settle') options.settle = Number(next())
     else if (flag === '--chrome') options.chrome = next()
     else if (flag === '--port') options.port = Number(next())
@@ -258,6 +266,9 @@ async function shoot(cdp, base, route, theme, options) {
               ? "localStorage.setItem('ldst.demo-data', '1');"
               : "localStorage.removeItem('ldst.demo-data');"
           }
+          ${Object.entries(options.prefs)
+            .map(([key, value]) => `localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)});`)
+            .join('\n          ')}
         } catch (e) {}`,
       },
       sessionId,

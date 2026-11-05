@@ -1,5 +1,9 @@
 import { useState, type ReactNode } from 'react'
 
+import type { KlineLoader, KlineRequest } from '../../api/research'
+import type { KlineNum, KlineView } from '../../charts/klineView'
+import { PERIOD_LABEL, ADJUST_LABEL } from '../../charts/klineView'
+import { KlineCard } from '../KlineCard'
 import { Badge, SignedNumber, StatusDot } from './Badge'
 import { Button, IconButton } from './Button'
 import { Card, CardHeader, MetricCard, SectionCard } from './Card'
@@ -123,6 +127,95 @@ function Section({ title, note, children }: { title: string; note: string; child
   )
 }
 
+/* ---------------------------------------------------------------- K 线卡片自证
+ * fixture 演示数据（非真实行情）：只用来证明 ECharts 运行时、4 条均线、
+ * 独立成交量副图与双 dataZoom 在深浅两套令牌下都能画出来。
+ * 生产取数走 `GET /api/research/{code}/kline`，指标由后端算好，前端不重算。
+ */
+
+const DEMO_DATES: string[] = (() => {
+  const dates: string[] = []
+  const cursor = new Date(Date.UTC(2025, 0, 2))
+  while (dates.length < 160) {
+    const day = cursor.getUTCDay()
+    if (day !== 0 && day !== 6) dates.push(cursor.toISOString().slice(0, 10))
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+  return dates
+})()
+
+function movingAverage(values: number[], window: number): KlineNum[] {
+  const out: KlineNum[] = []
+  let sum = 0
+  for (let index = 0; index < values.length; index += 1) {
+    sum += values[index]
+    if (index >= window) sum -= values[index - window]
+    out.push(index >= window - 1 ? Number((sum / window).toFixed(3)) : null)
+  }
+  return out
+}
+
+function demoKlineView(request: KlineRequest): KlineView {
+  let seed = 20260102
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296
+    return seed / 4294967296
+  }
+  const open: number[] = []
+  const high: number[] = []
+  const low: number[] = []
+  const close: number[] = []
+  const volume: number[] = []
+  let previous = 1680
+  for (let index = 0; index < DEMO_DATES.length; index += 1) {
+    const next = Number((previous * (1 + (random() - 0.5) * 0.03)).toFixed(2))
+    const start = Number((previous * (1 + (random() - 0.5) * 0.008)).toFixed(2))
+    open.push(start)
+    close.push(next)
+    high.push(Number((Math.max(start, next) * (1 + random() * 0.008)).toFixed(2)))
+    low.push(Number((Math.min(start, next) * (1 - random() * 0.008)).toFixed(2)))
+    volume.push(Math.round(4_000_000 + random() * 20_000_000))
+    previous = next
+  }
+  const change: KlineNum[] = close.map((value, index) =>
+    index === 0 ? null : Number((value / close[index - 1] - 1).toFixed(4)),
+  )
+  return {
+    symbol: request.symbol,
+    market: 'a_share',
+    marketLabel: 'A 股',
+    period: request.period,
+    periodLabel: PERIOD_LABEL[request.period] ?? '',
+    adjust: request.adjust ?? 'qfq',
+    adjustLabel: ADJUST_LABEL[request.adjust ?? 'qfq'] ?? '',
+    source: '组件自证 fixture（非真实行情）',
+    fetchedAt: null,
+    volumeUnit: '股',
+    bars: DEMO_DATES.length,
+    first: DEMO_DATES[0],
+    last: DEMO_DATES[DEMO_DATES.length - 1],
+    notes: ['fixture 演示数据，仅用于组件自证；真实行情由 /api/research/{code}/kline 提供'],
+    series: {
+      dates: DEMO_DATES,
+      open,
+      high,
+      low,
+      close,
+      volume,
+      change,
+      ma: {
+        '5': movingAverage(close, 5),
+        '10': movingAverage(close, 10),
+        '20': movingAverage(close, 20),
+        '60': movingAverage(close, 60),
+      },
+    },
+  }
+}
+
+/** 页面内注入的取数替身：不联网，切周期 / 复权只换标签。 */
+const demoKlineLoader: KlineLoader = async (request) => ({ ok: true, view: demoKlineView(request) })
+
 function StateBox({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2 rounded border border-border bg-surface p-4">
@@ -145,9 +238,10 @@ export function Gallery({ initialDrawerOpen = false }: { initialDrawerOpen?: boo
         <div className="flex flex-col gap-1">
           <h1 className="text-page font-semibold">组件层能力自证 · QUOT-310</h1>
           <p className="max-w-measure text-body leading-body text-text-secondary">
-            本页只使用 <code className="ldst-num">components/ui</code> 的组件与 token 类名：没有硬编码
-            hex、没有 arbitrary-value、过渡一律挂 <code className="ldst-num">duration-fast</code>（抽屉与
-            Toast 是 §7.3 唯一的 <code className="ldst-num">duration-base</code> 例外）。
+            本页只使用 <code className="ldst-num">components/ui</code> 的组件与 token 类名（K 线卡片一节
+            额外用到 <code className="ldst-num">charts/EChart</code>）：没有硬编码 hex、没有
+            arbitrary-value、过渡一律挂 <code className="ldst-num">duration-fast</code>（抽屉与 Toast 是
+            §7.3 唯一的 <code className="ldst-num">duration-base</code> 例外）。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -157,6 +251,17 @@ export function Gallery({ initialDrawerOpen = false }: { initialDrawerOpen?: boo
           <Badge tone="info">1440 × 900 起</Badge>
         </div>
       </header>
+
+      <section id="kline" className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h2 className="text-section font-semibold text-text">零 · K 线卡片（ECharts / DEC-057）</h2>
+          <p className="text-caption text-text-muted">
+            蜡烛 + 4 条均线 + 独立成交量副图 + 双 dataZoom（Ctrl 滚轮缩放 / 拖动平移）；
+            fixture 演示数据，非真实行情。
+          </p>
+        </div>
+        <KlineCard symbol="600519" title="贵州茅台（演示）" loader={demoKlineLoader} />
+      </section>
 
       <Section title="一 · DataTable" note="列宽策略 / 数字基线 / sticky 表头与首列 / 合计行 / 展开行，全在组件里定死">
         <Card>

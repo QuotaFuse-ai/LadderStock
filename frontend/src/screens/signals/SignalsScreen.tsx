@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Radar, RefreshCw, ScrollText } from 'lucide-react'
+import { Radar, ScrollText } from 'lucide-react'
 
 import type { IndustrySignal, SignalEvidence, SignalRule } from '../../api/industry'
 import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
@@ -258,16 +258,10 @@ export default function SignalsScreen() {
       title="产业信号"
       subtitle={`规则判定基于 R5 指标 · 数据时点 ${payload?.as_of ?? MISSING} · 命中 ${formatInt(payload?.counts.total)} 条`}
       badge={<DemoStateBadge state={forced} />}
-      actions={
-        <Button
-          variant="primary"
-          onClick={reload}
-          disabled={state === 'loading'}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
     />
   )
 

@@ -60,5 +60,21 @@ R5 产业研究新增的四只（`sw_industry_history` / `eastmoney_finance_indi
 
 拿到真实限流返回后应原样替换本文件，形状不应变化。
 
+## 财报前瞻 / 事件回看（QUOT-446，2026-11-05）
+
+七只工具各一份 `th-cn tool call` 原文（600000 为样本，指数为 000300）：
+`earnings_forecast` / `ths_eps_forecast` / `holder_trades` / `institution_survey` /
+`share_buyback` / `lockup_expiry` / `index_kline`。同一套裁剪规则：记录数组留前 3 行，
+`meta.count` 保留上游原值（所以 125 行的增减持样本会显示 count=125、数组 3 行）；
+`ths_eps_forecast` 的 `consensus/history/eps/years` 与 `index_kline.klines` 同按 3 行裁。
+
+- `earnings_forecast`：`data` **直接是数组**，事件日 `notice_date`；
+- `holder_trades` / `institution_survey`：`data` 是数组，事件日 `notice_date`；
+  `institution_survey` 对 600000 的真实返回为空数组（不是缺 fixture）；
+- `share_buyback`：数组，事件日 `latest_notice`，600000 真实返回为空；
+- `lockup_expiry`：对象，`history` / `upcoming` 两个数组，事件日 `date`；
+- `ths_eps_forecast`：整包快照（无行概念），`as_of` 是数据日；
+- `index_kline`：`{code, klines}`，与 `tencent_kline` 同形状但没有 `period/adjust`。
+
 契约测试：`tests/contract/test_tickhub_payload_mapping.py`。
 新增/更换工具必须在这里补一份真实返回，并在 `adapters/tickhub.py:ROW_SHAPES` 登记形状。

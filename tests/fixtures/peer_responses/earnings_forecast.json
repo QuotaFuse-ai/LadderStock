@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "data": [
+  {
+   "code": "600000",
+   "name": "浦发银行",
+   "notice_date": "2008-10-30",
+   "report_date": "2008-12-31",
+   "indicator": "归属于上市公司股东的净利润",
+   "forecast_type": "预增",
+   "amount_lower": null,
+   "amount_upper": 0.0,
+   "change_pct_lower": null,
+   "change_pct_upper": 0.0,
+   "prior_year_amount": 5498775402.98,
+   "content": "预计与上年同期相比发生大幅度变动。",
+   "reason": null
+  },
+  {
+   "code": "600000",
+   "name": "浦发银行",
+   "notice_date": "2008-10-14",
+   "report_date": "2008-09-30",
+   "indicator": "归属于上市公司股东的净利润",
+   "forecast_type": "预增",
+   "amount_lower": null,
+   "amount_upper": 0.0,
+   "change_pct_lower": null,
+   "change_pct_upper": 150.0,
+   "prior_year_amount": 3923104068.25,
+   "content": "预计公司2008年一至三季度净利润与上年同期相比增长150%左右。",
+   "reason": null
+  },
+  {
+   "code": "600000",
+   "name": "浦发银行",
+   "notice_date": "2008-07-04",
+   "report_date": "2008-06-30",
+   "indicator": "归属于上市公司股东的净利润",
+   "forecast_type": "预增",
+   "amount_lower": null,
+   "amount_upper": 0.0,
+   "change_pct_lower": null,
+   "change_pct_upper": 140.0,
+   "prior_year_amount": 2553792630.57,
+   "content": "预计公司2008年中期净利润与上年同期相比增长140%以上。",
+   "reason": null
+  }
+ ],
+ "meta": {
+  "source": "eastmoney",
+  "fetched_at": "2026-11-05T19:58:03+08:00",
+  "cache_hit": true,
+  "confidence": "B",
+  "trace_id": "trace-fixture-446",
+  "count": 6
+ }
+}

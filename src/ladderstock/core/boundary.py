@@ -155,10 +155,12 @@ def build_peers(
             continue
         product = str(item.get("product") or "").strip()
         package = str(item.get("package") or "").strip()
+        # cli 只用于文档/手工启动提示，控制面不执行它；设置页导入（QUOT-420）
+        # 不允许携带命令字段，因此这里允许缺省为空，不把已登记的新 peer 丢掉。
         cli = str(item.get("cli") or "").strip()
-        if not (product and package and cli):
+        if not (product and package):
             warnings.append(
-                f"peers.{key} 缺 product / package / cli 中的必填字段，已跳过该条"
+                f"peers.{key} 缺 product / package 中的必填字段，已跳过该条"
             )
             continue
         fallback = base.get(key)
@@ -643,6 +645,24 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
            note="限售解禁日历：日历「解禁」段的唯一来源"),
         _b("earnings_preview", "tickhub", "earnings_forecast", "replace", "notice_date",
            note="业绩预告（notice_date 为披露日）——不是「财报预约披露日」，两者不混用（DEC-018）"),
+        # ---- 财报前瞻 / 事件回看的数据面（QUOT-446）----
+        # 一致预期是**整包快照**（data 里是 consensus / history 两个嵌套数组，不是行列表），
+        # 一行 = 一只票某次取数；`replace` 按 trade_date（= 上游 as_of）整日覆盖。
+        _b("consensus_forecast", "tickhub", "ths_eps_forecast", "replace", "trade_date",
+           note="机构一致预期快照（同花顺）：当期/下期 EPS、区间、机构数、评级；整包一行"),
+        # 三只事件型数据集都是「行列表 + 公告日」，`replace` 按公告日分区——
+        # 同一天可能有多行（多个股东 / 多次调研 / 多份回购方案），不能用 append 的
+        # (code, trade_date) 折叠，否则同一天的事件会被压成一条。
+        _b("holder_trades", "tickhub", "holder_trades", "replace", "trade_date",
+           note="股东增减持：trade_date = 公告日（notice_date），方向在 payload.direction"),
+        _b("institution_survey", "tickhub", "institution_survey", "replace", "trade_date",
+           note="机构调研：trade_date = 公告日（notice_date）"),
+        _b("share_buyback", "tickhub", "share_buyback", "replace", "trade_date",
+           note="股票回购：trade_date = 最新公告日（latest_notice）"),
+        # 指数日线（沪深300 等）：事件窗口超额收益的基准。`append` + (code, trade_date)
+        # 幂等，增量入参是 `days`（上游按根数回溯），水位仍是 trade_date。
+        _b("index_daily", "tickhub", "index_kline", "append", "trade_date",
+           note="指数日线（事件窗口超额收益基准）；code 为指数代码，如 000300"),
         # ---- QuotaFuse Wire：题材段叙事（可选）----
         # 摘要为主、时间线为同 peer 备源（DEC-008）：两者都是 Wire 的只读工具，
         # 不跨供应商，符合 DEC-006「主备同 peer」。
