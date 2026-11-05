@@ -155,7 +155,7 @@ describe('首页演示源', () => {
     renderAt('/?demo=1&variant=empty')
 
     expect(await screen.findByText(/没有可用数据/)).toBeTruthy()
-    expect(screen.getByText('ldst sync --date 2026-10-30')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '去行情页同步' })).toBeTruthy()
     expect(document.body.textContent).not.toContain('上证指数')
     expect(dataRowCount()).toBe(0)
   })

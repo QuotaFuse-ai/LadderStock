@@ -373,7 +373,7 @@ function watchPayload(variant: HomeDemoVariant): LadderEnvelope<WatchSnapshotPay
       { trade_date: null, rows: [], data_source_status: 'missing' },
       {
         available: false,
-        sourceDetail: 'watch/status.py: 未找到状态文件（先运行 ldst watch start）',
+        sourceDetail: 'watch/status.py: 未找到状态文件（盯盘守护进程未启动）',
       },
     )
   }
@@ -403,7 +403,7 @@ function validationPayload(date: string, variant: HomeDemoVariant): LadderEnvelo
       { trade_date: date, conditions: [], reconcile: null, data_source_status: 'missing' },
       {
         available: false,
-        sourceDetail: `local validation cache 不存在：validation-${date}.json（先运行 ldst review --date ${date}）`,
+        sourceDetail: `local validation cache 不存在：validation-${date}.json（当日收盘复盘尚未生成）`,
       },
     )
   }

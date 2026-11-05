@@ -55,7 +55,7 @@ export function describeApiError(error: unknown): { title: string; detail: strin
     if (error.kind === 'not-connected') {
       return {
         title: '本地服务未连接',
-        detail: '先运行 `ldst run` 启动本机只读 API（默认 127.0.0.1:5950），再点重试。',
+        detail: '本机只读 API 未连接（ldst run 未启动，默认 127.0.0.1:5950）；启动后点重试。',
         code: null,
       }
     }

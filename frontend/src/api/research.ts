@@ -638,7 +638,7 @@ export function describeResearchError(error: unknown): {
     if (error.kind === 'not-connected') {
       return {
         title: '研究接口未接入',
-        detail: '先运行 `ldst run` 启动本机 API；研究读取/续跑接口（/api/research/*）由后端提供。',
+        detail: '本机 API 未连接（ldst run 未启动）；研究读取/续跑接口（/api/research/*）由后端提供。',
         code: null,
       }
     }
@@ -669,7 +669,7 @@ export function describeResearchError(error: unknown): {
       if (kind === 'no-record') {
         return {
           title: '这只还没跑过研究',
-          detail: error.detail ?? '先运行 `ldst research <code> --date <date>` 生成六段产物，再刷新本页。',
+          detail: error.detail ?? '本机还没有这只的六段研究产物；生成后点「刷新」重新读取。',
           code: 'HTTP 404',
         }
       }

@@ -188,7 +188,7 @@ function StageProblem({
       title={failed ? `${stage.title}段生成失败` : `${stage.title}段尚未运行`}
       description={
         detail ??
-        `运行 ldst research ${view.code} --date ${view.date} --only ${stage.name} 生成这一段。`
+        `这一段还没有落盘产物；去报告页点「${failed ? '重试本段' : '运行本段'}」生成，概览不受影响。`
       }
       action={
         view.code ? (
@@ -803,7 +803,7 @@ export default function ResearchDetailScreen() {
               ? '后端尚未提供 /api/research/* 只读接口（HTTP 404 Not Found）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
               : noRecord
                 ? '概览标签已经可以直接看走势与财报；跑一次研究就能看六段深度内容。'
-                : `先运行 ldst research ${view.code ?? '<code>'} --date ${view.date} 生成六段产物，再刷新本页。`
+                : `本机还没有 ${view.code ?? '<code>'} 在 ${view.date} 的六段深度产物；概览标签可直接查看走势与财报，点「刷新」重新读取。`
           }
           action={
             noRecord && researchCommand ? (

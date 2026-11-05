@@ -131,7 +131,7 @@ function SourceLine({ envelope, extra }: { envelope: EnvelopeMeta | null; extra:
 }
 
 /**
- * 统一的「数据未同步」空态：结论 → 原因 → 下一步命令 → 重新检查。
+ * 统一的「数据未同步」空态：结论 → 原因 → 页内同步入口 → 重新检查。
  * 三段共用，保证五态演示与真实缺数据时长一个样。
  */
 function NotSynced({
@@ -157,9 +157,9 @@ function NotSynced({
       }
       action={
         <div className="flex flex-col items-center gap-2">
-          <code className="ldst-num rounded border border-border bg-surface-2 px-2 py-1 text-caption text-text-secondary">
-            ldst sync --date {tradeDate}
-          </code>
+          <span className="text-caption text-text-muted">
+            可用页内顶部「拉取行情数据」同步 {tradeDate} 行情。
+          </span>
           <Button variant="secondary" onClick={onRetry}>
             重新检查
           </Button>
@@ -499,7 +499,7 @@ export default function MarketScreen() {
       )}
       {state === 'empty' && (
         <Banner tone="info" title={`${tradeDate} 尚未同步行情数据`}>
-          先执行 <code className="ldst-num">ldst sync --date {tradeDate}</code> 生成涨停池，再点「刷新」；本页不会用 0 或假数据填空。
+          用页内顶部「拉取行情数据」生成涨停池，再点「刷新」；本页不会用 0 或假数据填空。
         </Banner>
       )}
 
