@@ -94,6 +94,22 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # K 线图端点（QUOT-410）：与 `tickhub_kline` 同一工具，但 period / adjust 是
+  # **运行时参数**（请求透传，三档周期 × 三档复权），不能挂 sync 的写死口径，
+  # 所以是独立数据集 `kline_chart` 的独立登记。不进 sync.yaml、不落库。
+  # 无备源：`tdx_daily_package` 是日线全市场包，不收 period / adjust，挂了必败
+  # （同 peer 无第二个支持周 / 月 / 复权的 K 线工具，DEC-006 主备同口径）。
+  - id: tickhub_kline_chart
+    dataset: kline_chart
+    via: tickhub
+    tool: tencent_kline
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   - id: tickhub_tdx_package
     dataset: daily_k
     via: tickhub
