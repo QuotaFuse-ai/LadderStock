@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, matchRoutes } from 'react-router-dom'
+import { MemoryRouter, Navigate, Route, Routes, matchRoutes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import Layout, { NAV_SECTIONS, PINNED_NAV } from '../src/components/Layout'
@@ -133,6 +133,22 @@ describe('复盘组三独立入口（QUOT-344 / DEC-046）', () => {
   }, 15000)
 })
 
+/** QUOT-431：旧收藏夹里的 `/watchlist`、`/positions` 不能 404，统一落到合并后的两标签页。 */
+describe('旧深链重定向（QUOT-431）', () => {
+  it('`/watchlist` 与 `/positions` 都挂 `Navigate`，落点带对应 `?tab=`', async () => {
+    stubMatchMedia()
+    const { ROUTE_ELEMENTS } = await import('../src/App')
+    for (const [path, tab] of [
+      ['/watchlist', 'watch'],
+      ['/positions', 'hold'],
+    ] as const) {
+      const element = ROUTE_ELEMENTS[path]
+      expect(element.type).toBe(Navigate)
+      expect((element.props as { to?: string }).to).toBe(`/my-stocks?tab=${tab}`)
+    }
+  }, 15000)
+})
+
 describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
   it('既有分组顺序保留，QUOT-304 的「我的股票」插在「日志」之后', () => {
     expect(NAV_SECTIONS.map((section) => section.key)).toEqual([
@@ -148,10 +164,10 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     ])
   })
 
-  it('「我的股票」聚合已有路由：自选 + 持仓 + 事件日历（DEC-044 / QUOT-419）', () => {
+  it('「我的股票」= 一页两标签 + 事件日历（QUOT-431）', () => {
     const group = NAV_SECTIONS.find((section) => section.key === 'my-stocks')
-    expect(group?.pages.map((page) => page.to)).toEqual(['/watchlist', '/positions', '/calendar'])
-    // 聚合是移动不是复制：原分组里不再重复出现
+    // 自选 / 持仓合成 `/my-stocks?tab=watch|hold`，侧栏只留一颗入口；旧地址只做重定向
+    expect(group?.pages.map((page) => page.to)).toEqual(['/my-stocks', '/calendar'])
     const other = NAV_SECTIONS.filter((section) => section.key !== 'my-stocks')
     const moved = other.flatMap((section) => section.pages.map((page) => page.to))
     expect(moved).not.toContain('/watchlist')
@@ -170,7 +186,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
       '/weekly',
       '/pool',
       '/journal',
-      '/positions',
+      '/my-stocks',
       '/calendar',
       '/validate',
       '/limit-up',
@@ -183,12 +199,17 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     for (const to of NAV_TO_KEYS) expect(ROUTE_PATHS).toContain(pathOf(to))
   })
 
-  it('自选已有独立页（QUOT-419），提醒仍无已交付页面、不许出现占位入口', () => {
-    // QUOT-419 把自选做成独立页并接入侧栏；DEC-044 §2.4 对「没页面就建占位入口」的禁令仍然有效
-    expect(NAV_PATHS).toContain('/watchlist')
+  it('自选 / 持仓合并进 `/my-stocks`，旧地址只做重定向；提醒仍无已交付页面、不许占位', () => {
+    // QUOT-431：页面在 `/my-stocks?tab=watch|hold`，`/watchlist`、`/positions` 只保留深链兼容
+    expect(NAV_PATHS).toContain('/my-stocks')
+    expect(NAV_PATHS).not.toContain('/watchlist')
+    expect(NAV_PATHS).not.toContain('/positions')
+    expect(NON_PAGE_ROUTES).toContain('/watchlist')
+    expect(NON_PAGE_ROUTES).toContain('/positions')
+    const stocks = NAV_SECTIONS.flatMap((section) => section.pages).find((page) => page.to === '/my-stocks')
+    expect(stocks?.label).toBe('我的股票')
+    // DEC-044 §2.4 对「没页面就建占位入口」的禁令仍然有效
     expect(NAV_PATHS.filter((path) => /inbox|remind/.test(path))).toEqual([])
-    const watch = NAV_SECTIONS.flatMap((section) => section.pages).find((page) => page.to === '/watchlist')
-    expect(watch?.label).toBe('我的自选')
     const labels = NAV_SECTIONS.flatMap((section) => [section.label, ...section.pages.map((page) => page.label)])
     expect(labels.filter((label) => /提醒/.test(label))).toEqual([])
   })

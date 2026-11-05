@@ -31,7 +31,8 @@ export const ROUTE_PATHS = [
   '/news',
   '/calendar',
   '/pool',
-  // QUOT-419 / DEC-055：自选从首页卡片拆成独立页，和持仓并列两个入口
+  // QUOT-431：自选与持仓合成一页两标签（`?tab=watch|hold`），旧地址只做重定向
+  '/my-stocks',
   '/watchlist',
   '/positions',
   '/industry',
@@ -48,4 +49,10 @@ export const ROUTE_PATHS = [
 export type RoutePath = (typeof ROUTE_PATHS)[number]
 
 /** 不是「页面」的路径：404 兜底 + 旧地址重定向，本来就不该有侧栏入口。 */
-export const NON_PAGE_ROUTES: readonly RoutePath[] = ['*', '/index.html']
+export const NON_PAGE_ROUTES: readonly RoutePath[] = [
+  '*',
+  '/index.html',
+  // QUOT-431：旧深链保留可用，但落点是 `/my-stocks?tab=watch|hold`，不再单独挂屏
+  '/watchlist',
+  '/positions',
+]

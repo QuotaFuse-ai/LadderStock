@@ -10,6 +10,7 @@
  *   GET    /api/watchlist                                我的自选（**平面 JSON**，回环独占）
  *   POST   /api/watchlist                                加一条自选（幂等，DEC-055）
  *   POST   /api/watchlist/{code}/delete                  删一条自选（DEC-055）
+ *   GET    /api/portfolio?method=                        持仓账本（**平面 JSON**，只用于「是否持有」标记）
  *   GET    /api/positions?date=                          持仓（**平面 JSON**，隐私数据不进信封）
  *   POST   /api/positions                               按 code upsert 一条持仓
  *   POST   /api/positions/{code}/delete                 硬删除一条持仓
@@ -348,6 +349,15 @@ export interface WatchlistItem {
   /** `ok` / `unavailable`（这批没取到报价）；未登记值原样保留，文案退到原因。 */
   price_status: string
   price_reason: string | null
+  /**
+   * 三个指标列（QUOT-427 / DEC-060）：上游 `spot_quote` 只做投影，不算、不缓存。
+   * `0` 是有效读数（亏损股 PE 可以为负、停牌换手可以是 0），`null` 才是「没有」。
+   */
+  pe_ttm: number | null
+  pb: number | null
+  turnover_pct: number | null
+  /** 三项里缺哪一项就写哪一项的中文名；全齐时是 `null`，行 tooltip 用它解释 `—`。 */
+  metrics_reason: string | null
 }
 
 /**
@@ -1001,6 +1011,10 @@ function parseWatchlistItem(value: unknown): WatchlistItem | null {
     price_as_of: text(row.price_as_of) || null,
     price_status: text(row.price_status, 'unknown'),
     price_reason: text(row.price_reason) || null,
+    pe_ttm: numberOrNull(row.pe_ttm),
+    pb: numberOrNull(row.pb),
+    turnover_pct: numberOrNull(row.turnover_pct),
+    metrics_reason: text(row.metrics_reason) || null,
   }
 }
 
@@ -1317,6 +1331,24 @@ export async function removeWatch(code: string, signal?: AbortSignal): Promise<W
       signal,
     }),
   )
+}
+
+/**
+ * 「是否持有」标记（QUOT-431）：只读 `GET /api/portfolio` 的 `items[].symbol`。
+ *
+ * `items` 是流水重放后仍有份额的持仓（清仓的进 `closed`，不算持有）；
+ * 这里只要代码集合，不把数量 / 成本带进自选页。接口失败时调用方保留
+ * 「标记暂缺」，自选表格本身照常展示（两个数据面互不拖累）。
+ */
+export async function fetchPortfolioSymbols(signal?: AbortSignal): Promise<Set<string>> {
+  const raw = await request<unknown>(withParams('/api/portfolio', [['method', 'average']]), {
+    signal,
+  })
+  const root = record(raw)
+  const symbols = list(root?.items)
+    .map((item) => text(record(item)?.symbol).trim().toUpperCase())
+    .filter(Boolean)
+  return new Set(symbols)
 }
 
 // ---------------------------------------------------------------- 错误文案
