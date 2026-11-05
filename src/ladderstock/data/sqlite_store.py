@@ -31,11 +31,18 @@ from ladderstock.errors import EXIT_CONFIG, LadderStockError
 DB_FILENAME = "journal.sqlite"
 
 #: 隐私库 schema 版本；与 config/schema 的整数版本号同口径
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_META_TABLE = "schema_meta"
 
-TABLES: tuple[str, ...] = ("trades", "positions", "watchlist")
+TABLES: tuple[str, ...] = (
+    "trades",
+    "positions",
+    "watchlist",
+    "portfolio_trades",
+    "portfolio_legacy_marks",
+    "inbox",
+)
 
 
 def db_path(root: Path | None = None) -> Path:
@@ -127,7 +134,7 @@ def migrate(conn: sqlite3.Connection, *, backup: bool = True) -> int:
             _backup_before_migration(conn, version)
         conn.execute("BEGIN IMMEDIATE")
         try:
-            _apply(conn)
+            _apply(conn, version)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("COMMIT")
         except Exception:
@@ -158,12 +165,16 @@ def _connection_path(conn: sqlite3.Connection) -> Path | None:
     return Path(value) if value else None
 
 
-def _apply(conn: sqlite3.Connection) -> None:
-    """把库结构推到 `SCHEMA_VERSION`；`IF NOT EXISTS` 保证重复执行不改变已有数据。
+def _apply(conn: sqlite3.Connection, from_version: int) -> None:
+    """把库结构从 `from_version` 推到 `SCHEMA_VERSION`。
 
-    只在 `version < SCHEMA_VERSION` 时被调用（`migrate()` 负责判版本），所以
-    v1 → v2 的 `ALTER` 天然只跑一次：整个 `_apply` 处在外层 `BEGIN IMMEDIATE`
-    事务里，任一条失败都回滚，不会出现「改了一半结构却没有版本号」的库。
+    v1 是纯 `CREATE ... IF NOT EXISTS`，永远执行（顺手补上老库缺的
+    `schema_meta`）；v2 / v3 按版本跳步——`_SCHEMA_V2` 的 `RENAME COLUMN`
+    不是幂等的，v2 库升 v3 时再跑一次会报 “no such column: avg_price”。
+
+    只在 `version < SCHEMA_VERSION` 时被调用（`migrate()` 负责判版本），整个
+    `_apply` 处在外层 `BEGIN IMMEDIATE` 事务里，任一条失败都回滚，不会出现
+    「改了一半结构却没有版本号」的库。
 
     注意：这里逐条 `execute()` 而不用 `executescript()`——后者会先隐式提交，
     把外层 `BEGIN IMMEDIATE` 事务拆散，导致随后的 `COMMIT` 报
@@ -171,8 +182,12 @@ def _apply(conn: sqlite3.Connection) -> None:
     """
     for statement in _split_statements(_SCHEMA_V1):
         conn.execute(statement)
-    for statement in _split_statements(_SCHEMA_V2):
-        conn.execute(statement)
+    if from_version < 2:
+        for statement in _split_statements(_SCHEMA_V2):
+            conn.execute(statement)
+    if from_version < 3:
+        for statement in _split_statements(_SCHEMA_V3):
+            conn.execute(statement)
     conn.execute(
         f"INSERT INTO {SCHEMA_META_TABLE} (key, value) VALUES ('schema_version', ?) "
         f"ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -239,6 +254,59 @@ ALTER TABLE positions ADD COLUMN entry_date TEXT;
 ALTER TABLE positions ADD COLUMN industry TEXT NOT NULL DEFAULT '';
 ALTER TABLE positions ADD COLUMN note TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_positions_entry_date ON positions (entry_date, code);
+"""
+
+#: v3（QUOT-426 / DEC-056、DEC-058）：持仓 = 交易流水重放，提醒 = 收件箱。
+#:
+#: - `portfolio_trades` 是持仓账本，与交易纪律日志 `trades` **是两张表**：
+#:   后者 `CHECK (side IN ('buy','sell'))`，混进来会污染历史语义；
+#: - `positions` 原样保留、迁移只读它；`portfolio_legacy_marks` 只记「用户明确
+#:   不要这条旧记录」，不删行，保证可回滚；
+#: - 本期只支持 A 股、人民币（DEC-056），故不建货币 / 汇率列；
+#: - `inbox.read_at` 用时间戳而非布尔 `read`：避开 SQL 关键字，且能显示何时读的。
+_SCHEMA_V3 = """
+CREATE TABLE IF NOT EXISTS portfolio_trades (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol        TEXT NOT NULL,
+    name          TEXT NOT NULL DEFAULT '',
+    type          TEXT NOT NULL CHECK (type IN ('opening', 'buy', 'sell', 'dividend', 'split')),
+    trade_date    TEXT NOT NULL,
+    shares        REAL CHECK (shares IS NULL OR shares > 0),
+    price         REAL,                               -- 期初持仓的每股成本允许为负
+    fee           REAL CHECK (fee IS NULL OR fee >= 0),
+    amount        REAL CHECK (amount IS NULL OR amount > 0),
+    ratio         REAL CHECK (ratio IS NULL OR ratio > 0),
+    note          TEXT NOT NULL DEFAULT '',
+    migrated_from INTEGER,
+    undated       INTEGER NOT NULL DEFAULT 0 CHECK (undated IN (0, 1)),
+    created_at    TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_portfolio_trades_migrated
+    ON portfolio_trades (migrated_from) WHERE migrated_from IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_portfolio_trades_date ON portfolio_trades (trade_date, id);
+CREATE INDEX IF NOT EXISTS idx_portfolio_trades_symbol ON portfolio_trades (symbol, trade_date);
+CREATE INDEX IF NOT EXISTS idx_portfolio_trades_created ON portfolio_trades (created_at);
+
+CREATE TABLE IF NOT EXISTS portfolio_legacy_marks (
+    position_id  INTEGER PRIMARY KEY,
+    dismissed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS inbox (
+    id          TEXT PRIMARY KEY,
+    job         TEXT NOT NULL,
+    job_label   TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL DEFAULT 'digest',
+    title       TEXT NOT NULL,
+    lines_json  TEXT NOT NULL DEFAULT '[]',
+    link        TEXT,
+    dedupe_key  TEXT,
+    read_at     TEXT,
+    created_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_dedupe
+    ON inbox (dedupe_key) WHERE dedupe_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inbox_created ON inbox (created_at DESC);
 """
 
 

@@ -1,7 +1,8 @@
 # SPEC-RESEARCH-PAGES 个股深挖与六阶段研究报告（前端）
 
-- 版本：v0.3（定稿：页面骨架 + 只读接口契约 + 五态矩阵；v0.2 补 `/research` 入口页与导航；
-  v0.3 补 K 线图端点契约 §2.4 并标注 §2 接口实现状态）
+- 版本：v0.4（定稿：页面骨架 + 只读接口契约 + 五态矩阵；v0.2 补 `/research` 入口页与导航；
+  v0.3 补 K 线图端点契约 §2.4 并标注 §2 接口实现状态；v0.4 补 §2.4 的 `series` /
+  涨跌幅 / 均线 / 成交量单位与标签）
 - 日期：2026-11-05
 - 归属：前端架构
 - 实现：`frontend/src/screens/research/`、`frontend/src/components/research/`、
@@ -121,6 +122,13 @@ GET /api/research/{code}/kline?period=daily|weekly|monthly&adjust=qfq|hfq|none&l
     "period": "daily",
     "adjust": "qfq",
     "limit": 120,
+    "market": "a_share",
+    "market_label": "A 股",
+    "period_label": "日线",
+    "adjust_label": "前复权",
+    "source": "TickHub-CN / tencent_kline",
+    "fetched_at": "2026-11-05T15:36:00+08:00",
+    "volume_unit": "手",
     "bars": [
       { "date": "2026-10-29", "open": 10.2, "high": 10.6, "low": 10.1,
         "close": 10.5, "volume": 725800, "amount": 76010.5 },
@@ -131,7 +139,19 @@ GET /api/research/{code}/kline?period=daily|weekly|monthly&adjust=qfq|hfq|none&l
     "available": true,
     "reason": null,
     "source_detail": "tencent_kline@tencent",
-    "data_source_status": "ok"
+    "data_source_status": "ok",
+    "series": {
+      "dates": ["2026-10-29", "2026-10-30"],
+      "open": [10.2, 10.5], "high": [10.6, 10.9],
+      "low": [10.1, 10.4], "close": [10.5, 10.8],
+      "volume": [725800, 681000],
+      "change": [null, 0.0286],
+      "ma": { "5": [null, null], "10": [null, null], "20": [null, null], "60": [null, null] }
+    },
+    "notes": [
+      "均线按本次返回的窗口计算，窗口不足的值为空",
+      "volume 单位为手（1 手 = 100 股）：上游 tencent_kline 原样透传，本接口不换算"
+    ]
   },
   "data_source_status": "ok",
   "data_as_of": "2026-10-30",
@@ -144,7 +164,23 @@ GET /api/research/{code}/kline?period=daily|weekly|monthly&adjust=qfq|hfq|none&l
   volume / amount`；`amount` 上游可能为 `null`，**原样透传，不要当 0 画**。
 - `available=false` 时 `bars=[]`，`data_source_status="missing"`，`reason` 给出
   上游不可达 / 无数据的原因；**HTTP 仍是 200**，不伪造、不补零。
-  peer 不可达、超时、空返回都归入这一态。
+  peer 不可达、超时、空返回都归入这一态。空态下 `series` 的各列与 `ma` 各窗口
+  都是空数组，**不出现伪造的 bar**。
+- `series` 是参考库 `klineView.ts`（`KlineSeries`）可直接消费的列式形状，前端不重算：
+  - `change` 是**小数**（`0.0123` = +1.23%）。优先上游 `change_pct`（百分数 ÷ 100）；
+    缺失时用 `close[i] / close[i-1] - 1` 推导。首根、缺前收为 `null`，**不补 0**。
+  - `ma` 的键是 `"5" / "10" / "20" / "60"`，简单移动平均，**只按本次返回的 bar 序列
+    计算**；窗口不足或窗口内有缺值为 `null`（口径同时写在 `notes`）。
+- `volume_unit` 如实等于 `"手"`：上游 `tencent_kline` 的 `volume` 按手返回
+  （TickHub-CN `crawler/store.py` 明写「Tencent's K-line sends volume in 手 …
+  the warehouse column is 股」，入库才 ×100），本端点现取现回、不替上游换算。
+  1 手 = 100 股，换算口径写在 `notes`。
+- `market` / `market_label` / `period_label` / `adjust_label` 由固定枚举映射得到
+  （`a_share` / A 股、`daily|weekly|monthly` → 日线|周线|月线、`qfq|hfq|none` →
+  前复权|后复权|不复权），不查库、不联网。
+- `fetched_at` 与 `meta.fetched_at` 同值（本次现取的时刻）。
+- `period` / `adjust` 仍回显请求参数（`daily|weekly|monthly`），**不是**参考库的
+  `day|week|month`；展示用 `period_label`。
 - `data_source_status` 三态：`ok`（有数且上游 `source_status=ok`）/
   `degraded`（有数但上游降级，如备源接力） / `missing`（无数）。
   `degraded` 时 `bars` 仍然可用，前端照常画图，仅提示数据源状态。
@@ -288,6 +324,9 @@ GET /api/research/{code}/event-study?sources=holder_trades,dragon_tiger&window_b
 
 ## 变更记录
 
+- v0.4（2026-11-05，QUOT-428）：§2.4 载荷补齐 `series`（列式 OHLCV + `change` +
+  `ma` 5/10/20/60）、`volume_unit`、市场/周期/复权标签与 `notes`；明确 `change` 为小数、
+  首根不补 0，成交量单位如实为手（1 手 = 100 股，不换算）。
 - v0.3（2026-11-05，QUOT-410 / DEC-055）：新增 §2.4 K 线图端点契约
   （`GET /api/research/{code}/kline`，三档周期 × 三档复权运行时透传给 `tencent_kline`）；
   §2 标注各接口实现状态（§2.4 已上线，§2.1–2.3 仍为前端提案），§7 缺口清单同步。

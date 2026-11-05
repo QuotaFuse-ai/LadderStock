@@ -111,6 +111,41 @@ def _seed_watchlist(root: Path, codes: tuple[str, ...], *, note: str = "") -> No
         sqlite_store.close(conn)
 
 
+def _base_quote(code: str) -> dict[str, Any]:
+    """fixture 里的一条真实报价指纹，只改 `code` / `name`。"""
+    captured = json.loads(FIXTURE.read_text(encoding="utf-8"))["data"]["quotes"]
+    row = copy.deepcopy(captured[next(iter(captured))])
+    row["code"] = code
+    row["name"] = f"自选{code}"
+    return row
+
+
+def _client_with_quotes(root: Path, quotes: dict[str, dict[str, Any]]) -> TestClient:
+    def spot(params: dict[str, Any]) -> dict[str, Any]:
+        asked = [c for c in str(params.get("codes", "")).split(",") if c]
+        rows = {code: copy.deepcopy(quotes[code]) for code in asked if code in quotes}
+        return tickhub_payload(
+            {
+                "total": len(asked),
+                "succeeded": len(rows),
+                "failed": len(asked) - len(rows),
+                "quotes": rows,
+                "failures": [],
+            },
+            source="tencent",
+        )
+
+    transport = FakeTransport(
+        handlers={"tencent_quote_batch": spot}, tools=["tencent_quote_batch"]
+    )
+    registry = make_registry(
+        transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC)
+    )
+    plane = RadarPlane(data_root=root, registry=registry)
+    app = create_app(data_root=root, dist_dir=root / "no-dist", radar_plane=plane)
+    return TestClient(app, client=LOOPBACK)
+
+
 # --------------------------------------------------------------------- 闸门
 
 
@@ -267,7 +302,113 @@ def test_missing_row_for_one_code_only_drops_that_line(tmp_path: Path) -> None:
     assert by_code[PRICED[0]]["available"] is True
     assert by_code[UNPRICED]["latest_price"] is None
     assert UNPRICED in by_code[UNPRICED]["price_reason"]
+    # 报价行缺席时三列指标同样只能是 null，原因里点名代码
+    assert by_code[UNPRICED]["pe_ttm"] is None
+    assert by_code[UNPRICED]["pb"] is None
+    assert by_code[UNPRICED]["turnover_pct"] is None
+    assert UNPRICED in by_code[UNPRICED]["metrics_reason"]
     assert body["data_source_status"] == "partial"
+
+
+# ---------------------------------------------------- 七列指标（QUOT-427 / DEC-060）
+
+#: 上游可能出现的全部指标键名（容忍表并集）；造「三列都缺」时要一起剔掉
+METRIC_UPSTREAM_KEYS = (
+    "pe",
+    "pe_ttm",
+    "pb",
+    "pb_mrq",
+    "turnover_rate",
+    "turnover",
+    "换手率",
+    "换手",
+)
+
+
+def _item_with_quote(root: Path, row: dict[str, Any]) -> dict[str, Any]:
+    code = str(row["code"])
+    _seed_watchlist(root, (code,))
+    return _client_with_quotes(root, {code: row}).get("/api/watchlist").json()["items"][0]
+
+
+def test_metrics_pass_through_and_reason_is_null(tmp_path: Path) -> None:
+    """上游三列都在 → 原值透传，`metrics_reason` 为 `null`。"""
+    row = _base_quote(PRICED[0])
+    row.update({"pe": 12.34, "pb": 1.23, "turnover_rate": 4.56})
+
+    item = _item_with_quote(tmp_path, row)
+
+    assert item["pe_ttm"] == pytest.approx(12.34)
+    assert item["pb"] == pytest.approx(1.23)
+    assert item["turnover_pct"] == pytest.approx(4.56)
+    assert item["metrics_reason"] is None
+
+
+def test_metric_key_aliases_are_accepted(tmp_path: Path) -> None:
+    """`pe_ttm` / `pb_mrq` / `换手率` 与现网名同权，按容忍表取第一个有限数值。"""
+    row = _base_quote(PRICED[0])
+    for key in METRIC_UPSTREAM_KEYS:
+        row.pop(key, None)
+    row.update({"pe_ttm": 8.8, "pb_mrq": 2.2, "换手率": 3.3})
+
+    item = _item_with_quote(tmp_path, row)
+
+    assert item["pe_ttm"] == pytest.approx(8.8)
+    assert item["pb"] == pytest.approx(2.2)
+    assert item["turnover_pct"] == pytest.approx(3.3)
+    assert item["metrics_reason"] is None
+
+
+def test_missing_metrics_are_null_with_reason_and_other_fields_survive(
+    tmp_path: Path,
+) -> None:
+    """上游三列都不给 → `null` + 逐条原因；现价/涨跌等其它列照旧透传。"""
+    row = _base_quote(PRICED[0])
+    for key in METRIC_UPSTREAM_KEYS:
+        row.pop(key, None)
+
+    item = _item_with_quote(tmp_path, row)
+
+    assert item["pe_ttm"] is None
+    assert item["pb"] is None
+    assert item["turnover_pct"] is None
+    reason = item["metrics_reason"]
+    assert reason and "tencent_quote_batch" in reason
+    for label in ("PE(TTM)", "PB", "换手%"):
+        assert label in reason
+
+    assert item["available"] is True
+    assert item["price_status"] == "ok"
+    assert item["latest_price"] == pytest.approx(float(row["price"]))
+    assert item["change_pct"] == pytest.approx(float(row["change_pct"]))
+    assert item["prev_close"] == pytest.approx(float(row["prev_close"]))
+
+
+def test_partial_metrics_reason_names_only_the_missing_columns(tmp_path: Path) -> None:
+    row = _base_quote(PRICED[0])
+    for key in METRIC_UPSTREAM_KEYS:
+        row.pop(key, None)
+    row["pe"] = -5.5  # 亏损股 PE 为负也是有效读数
+
+    item = _item_with_quote(tmp_path, row)
+
+    assert item["pe_ttm"] == pytest.approx(-5.5)
+    assert item["pb"] is None and item["turnover_pct"] is None
+    assert "PE(TTM)" not in item["metrics_reason"]
+    assert "PB" in item["metrics_reason"] and "换手%" in item["metrics_reason"]
+
+
+def test_zero_metric_is_a_real_reading_not_missing(tmp_path: Path) -> None:
+    """`0` 是上游真实读数，不是缺失：保留 0，且不产生 `metrics_reason`。"""
+    row = _base_quote(PRICED[0])
+    row.update({"pe": 0, "pb": 0, "turnover_rate": 0})
+
+    item = _item_with_quote(tmp_path, row)
+
+    assert item["pe_ttm"] == 0.0
+    assert item["pb"] == 0.0
+    assert item["turnover_pct"] == 0.0
+    assert item["metrics_reason"] is None
 
 
 def test_write_surface_is_only_post(tmp_path: Path) -> None:

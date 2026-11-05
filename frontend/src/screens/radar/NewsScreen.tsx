@@ -558,7 +558,7 @@ export default function NewsScreen() {
               ) : (
                 <>
                   {payload?.reason ?? '本机缓存里没有这个窗口的资讯。'}
-                  。先运行 <code className="ldst-num">ldst news</code> 抓取并入库，再点「刷新」。
+                  。可用页内顶部「抓取资讯雷达」抓取并入库，再点「刷新」。
                 </>
               )
             }

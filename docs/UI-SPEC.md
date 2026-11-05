@@ -1,7 +1,7 @@
 # 看板信息架构与视觉规范（20 屏）
 
-- 版本：v1.12
-- 日期：2026-11-04
+- 版本：v1.13
+- 日期：2026-11-05
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -26,6 +26,7 @@
 | v1.10 | 2026-11-04 | QUOT-354 走查 7 项缺陷收口（QUOT-353 修复轮，只改口径不加新功能，DEC-049 §3 落地细则补充）。**BUG-A**：`/weekly` 屏内 h1 由「周度复盘」改为**「AI周报」**，与 v1.6 侧栏改名对齐（当时只改了导航，屏内文案挂账到 S2）。**BUG-B/BUG-C**（BUG-B 是 P1，会串日）：交易日**只认 URL**，`review_draft` 分片删除 `tradeDate` 字段并按交易日分槽 `slots[date]`——`?date=` 深链不再被本机草稿日期反向覆盖，切日期不互相覆盖笔记，「清空草稿」改名**「清空当日草稿」**且只清当前一天；旧单槽分片在读取时归入它自己记录的日期（`sanitize` 归一，不升 `SCHEMA_VERSION`，避免同时动 `stores/manifest.json` 与 `tests/unit/test_state_contract.py` 的三处版本约定）。**BUG-D**：缺数兜底文案点名的按钮真叫「重试取数」（`ErrorBlock retryLabel`）。**BUG-E**：`/weekly` 每日序列 `available:false` 整行按缺失走 `—`，后端给计数补的 0 不再被读成「0 家涨停」，真实 0 照旧显示。**BUG-F**：行数口径改为**按来源后端判定**——`review/pipeline._row_count` 只在 `parquet`/`duckdb`（确实读到过数据源）时返回行数，`none` 返回 `None`；缺数据的原因复用已有的「数据来源」行，不新增契约字段。**BUG-G**：拆屏决策的注释引用统一改为 `DEC-049`（走查报 17 处，按 `grep -rn "DEC-047" frontend/` 复核为 15 处命中，现已**归零**；`src/ladderstock/core/boundary.py` 与 `tests/unit/web/test_control_plane.py` 里的 `DEC-047` 是端口归属那一份决策，编号正确，不改）。规范落点：§8 新增「整行无读数」「分源行数」「文案点名的按钮」三条口径；§3.1 新增「交易日与草稿的归属」；§3.7 / §11.7 随 BUG-A 改名并补断言；§10 每日复盘与 AI周报两行映射更新；§11.1 补 4 条走查项。证据：`tests/quota-354-defects.test.tsx`（BUG-B/C/D 行为断言 + BUG-F 屏侧口径）+ `tests/weekly-screen.test.tsx`（BUG-A/E）+ `tests/persistence.test.ts`·`tests/migrate.test.ts`（分槽与旧分片归一往返）+ `tests/unit/review/test_row_count_caliber.py`（BUG-F 两种后端）+ `docs/screenshots/review-{before,after}-353fix-bugb-dark.png`·`docs/screenshots/weekly-{before,after}-353fix-buge-{dark,light}.png`（5950 实机，前端 5199 代理）；`typecheck` / `test`（43 files / 434 例）/ `check:ui`（6/6）全绿。 |
 | v1.11 | 2026-11-05 | 屏数口径对齐到 20 屏（QUOT-396，父任务 QUOT-306 阶段三；只改下列位置）：§0 原则 6「全 18 屏」→「全 20 屏」、原则 7「在 18 屏里」→「在 20 屏里」；§4.5 标题改「全 20 屏的持久化面（v1.1 新增；v1.7 按 20 屏对齐）」并重算表——拆出「盯盘·竞价与盘中」（`/intraday`）与「AI复盘」（`/review/ai`）两行（均无本机写入，快照归「盯盘」），原「其余 10 屏」行收敛为 12 屏，合计 6 + 2 + 12 = 20；§6 组件清单 7 处「全 18 屏」→「全 20 屏」；§10 标题改「全 20 屏与后端契约映射」。§3.19 早已存在（`:463`），本版不重写；§12.4 A 行等历史记录按当时事实保留，Q 行末尾追加处理说明。同批补 `/review/ai` 的 before 双主题图 `docs/screenshots/review-ai-before-{dark,light}.png`（5950 实机 + 5199 代理，`?date=2026-11-03`）。 |
 | v1.12 | 2026-11-04 | 表高刻度落地 `--ldst-table-h-*`（QUOT-342，共享层；源头 `frontend/tokens.json` + 生成口径 `styles/tokens.css`）：固定档 `sm/md/lg/xl = {240,320,360,420}`；视口档两档具名减数 `--ldst-table-h-rail: 360px`（1024–1279 保底；1024×900 实测表体上沿 341，减数起点 ≥341，360 落在固定档刻度上）与 `--ldst-table-h-desk: 280px`（≥1280；280 这个减数只在 desk: 档成立——1024 下 L0 快照卡 `dl` 折 2×2 抬高上沿 75px，QUOT-336 实测），消费变量 `--ldst-table-h` 在 `styles/tokens.css` 由 `@media (min-width: 1280px)` 换值，不新增断点档名（DEC-040 断点词汇仍只有 `rail:`/`desk:`；`mid:` 是否增设另行决策）。产业矩阵 / 连板梯队 / 验证 / 候选池 / 产业信号 / 分时 6 处 `calc(100vh - Npx)` 减数（280×3 / 360 / 380 / 420）收口为 `var(--ldst-table-h)`，不动各屏信息架构与 L0 卡布局；§10 R-02 表高计数随之核减（剩 watch/journal 2 处 280 档合法字面量，不在本单 6 处清单，登记待随下一单收口）；§7.3 表高刻度行同步为具名集。 |
+| v1.13 | 2026-11-05 | 只读页进入即取数、命令条只留有副作用或耗时长的操作（QUOT-441，决策 DEC-061）：`PageCommandBar` 白名单删 `calendar`（`ldst events` 请求时现算、不落盘，页面 mount 直接 `GET /api/events`）、加 `industry`（`ldst industry list` 重算 R5 快照，属「耗时 + 写盘」，按钮文案「重算行业快照」，精确匹配使 `/industry/:name` 不命中）。`/positions`、`/watchlist`、`/calendar` 三屏挂载即取数并有测试断言（`frontend/tests/readonly-mount-fetch.test.tsx`）；`/`、`/watch`、`/limit-up`、`/calendar`、`/industry*`、`/research*`、`/settings` 等只读页的空态去掉「先运行 `ldst …`」，改为「缺什么 + 为什么 + 页内重试 / 指向命令条按钮」；服务未启动文案（`PageShell.tsx`、`SearchPanel.tsx`）不在本单范围。缺数仍 `available=false` + `reason` 显示 `—`；隐私边界（`PRIVATE_KEYS`、只读守卫、`no-store`）与 CLI 命令表零变更。 |
 
 ## 0. 范围与非目标
 
@@ -726,11 +727,11 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | `--ldst-scrim` | `rgba(4,6,9,.68)` | `rgba(16,24,40,.40)` | 抽屉 / 确认框遮罩 |
 | `--ldst-skeleton` / `-shine` | `#1d2530` / `#26303d` | `#e7ecf3` / `#f2f5f9` | 骨架底 / 扫光 |
 | `--ldst-focus` | `#6ba1ff` | `#1a5fd0` | 焦点环外圈 |
-| `--ldst-chart-*` | 见 `tokens.css:51-59` | 见 `tokens.css:173-181` | 图表专用（grid/axis/band/line/bar-up/bar-down/series-2/threshold/empty） |
+| `--ldst-chart-*` | 见 `tokens.css:51-65` | 见 `tokens.css:208-222` | 图表专用（grid/axis/band/line/bar-up/bar-down/series-2/threshold/empty/tooltip-bg/tooltip-text/ma-1..4） |
 
 **两套色互不复用**：涨跌色只作用于数字/箭头；状态色只作用于徽标/提示条。浅色主题通过 `:root[data-ldst-theme='light']` 覆盖；色盲模式 `:root[data-ldst-colorblind='true']` 把涨/跌换成蓝/橙。
 
-**允许出现色字面量的位置（穷举）**：`styles/tokens.css`（生成物）、`charts/cssVar.ts:11-22` 的 jsdom 兜底与 `:24` 的 `TRANSPARENT`、`tailwind.config.ts` 中 `width.sidebar-rail/menu/drawer/dialog` 等结构尺寸（非颜色）。除此之外业务代码出现 hex/rgba 即为违规——**v1.1 全量扫描结果：18 屏 + `industry/heat.ts` + 各 `demo.ts` 零处真颜色字面量**（QUOT-306 待办里那条"硬编码 hex"是 `IndustryDetailScreen.tsx:410` 的 `&#123;` 实体误报，可直接划掉）。
+**允许出现色字面量的位置（穷举）**：`styles/tokens.css`（生成物）、`charts/cssVar.ts:12-31` 的 jsdom 兜底与 `:34` 的 `TRANSPARENT`、`tailwind.config.ts` 中 `width.sidebar-rail/menu/drawer/dialog` 等结构尺寸（非颜色）。除此之外业务代码出现 hex/rgba 即为违规——**v1.1 全量扫描结果：18 屏 + `industry/heat.ts` + 各 `demo.ts` 零处真颜色字面量**（QUOT-306 待办里那条"硬编码 hex"是 `IndustryDetailScreen.tsx:410` 的 `&#123;` 实体误报，可直接划掉）。
 
 ### 7.2 字体与数字
 

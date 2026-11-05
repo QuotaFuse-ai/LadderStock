@@ -535,7 +535,7 @@ export default function JournalScreen() {
             compact
             icon={<Lock aria-hidden="true" />}
             title="逐笔明细不通过网页接口"
-            description="逐笔明细端点（DEC-015 Tier 2）经决策为「不开」，因此这里不展示单笔日期 / 标的 / 价格，也不编造示例行。需要逐笔数据请在终端运行 ldst journal list。"
+            description="逐笔明细端点（DEC-015 Tier 2）经决策为「不开」，因此这里不展示单笔日期 / 标的 / 价格，也不编造示例行。逐笔明细仅在本地 CLI 可见。"
           />
         </SectionCard>
       )}

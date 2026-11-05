@@ -1332,7 +1332,7 @@ export function describeRadarError(error: unknown, subject: string): RadarError 
     if (error.kind === 'not-connected') {
       return {
         title: `${subject}接口未接入`,
-        detail: '先运行 `ldst run` 启动本机只读 API（默认 127.0.0.1:5950），再点重试。',
+        detail: '本机只读 API 未连接（ldst run 未启动，默认 127.0.0.1:5950）；启动后点重试。',
         code: null,
       }
     }

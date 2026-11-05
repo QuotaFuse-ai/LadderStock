@@ -56,7 +56,7 @@ export const DEMO_WATCH_ROWS: WatchSnapshotRow[] = [
 /** 演示态的快照来源行：与 `watch_status.status_detail()` 同口径的一行说明。 */
 const FULL_DETAIL = 'watch/status.py: 本机状态文件（14 条，事件按 code 合并为每股一行）'
 const EMPTY_DETAIL =
-  'watch/status.py: 未找到状态文件（先运行 ldst watch start 产出 watch/status.py）'
+  'watch/status.py: 未找到状态文件（盯盘守护进程未启动）'
 
 /**
  * `LadderEnvelope` 外壳，逐键对齐 `web/server.py:_envelope`：

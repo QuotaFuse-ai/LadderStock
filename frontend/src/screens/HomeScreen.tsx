@@ -254,20 +254,18 @@ export default function HomeScreen() {
       {state === 'empty' && (
         <EmptyState
           title={`${tradeDate} 没有可用数据`}
-          description="五路（指数 / 自选 / 持仓 / 盯盘快照 / 验证条件）都是空的。先启动本机服务，再同步当日数据。"
+          description="五路（指数 / 自选 / 持仓 / 盯盘快照 / 验证条件）都是空的。到行情页用「拉取行情数据」同步当日数据，或先确认本机服务已启动。"
           action={
-            <div className="flex flex-col items-center gap-2">
-              <code className="ldst-num rounded border border-border bg-surface-2 px-2 py-1 text-caption text-text-secondary">
-                ldst sync --date {tradeDate}
-              </code>
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button variant="secondary" onClick={reloadAll} leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}>
-                  重新检查
-                </Button>
-                <Button variant="ghost" onClick={() => navigate('/settings?tab=peers')}>
-                  看数据源
-                </Button>
-              </div>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button variant="primary" onClick={() => navigate('/market')}>
+                去行情页同步
+              </Button>
+              <Button variant="secondary" onClick={reloadAll} leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}>
+                重新检查
+              </Button>
+              <Button variant="ghost" onClick={() => navigate('/settings?tab=peers')}>
+                看数据源
+              </Button>
             </div>
           }
         />

@@ -295,7 +295,7 @@ export default function ResearchReportScreen() {
           description={
             view.endpointMissing
               ? '后端尚未提供 /api/research/* 只读接口（HTTP 404）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
-              : `先运行 ldst research ${view.code ?? '<code>'} --date ${view.date} 生成六段产物，再刷新本页。`
+              : `本机还没有 ${view.code ?? '<code>'} 在 ${view.date} 的六段深度产物；生成后点「刷新」重新读取。`
           }
           action={
             <Button

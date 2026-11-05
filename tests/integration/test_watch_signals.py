@@ -218,7 +218,7 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
 
     assert result.exit_code == 0, result.stderr
     payload = _json(result)
-    assert payload["job_count"] == 9
+    assert payload["job_count"] == 11
     assert payload["timezone"] == "Asia/Shanghai"
     assert [job["trigger"] for job in payload["jobs"]] == [
         "09:05",
@@ -230,6 +230,8 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "15:00",
         "15:05",
         "15:35",
+        "30s",
+        "60s",
     ]
     assert [job["kind"] for job in payload["jobs"]] == [
         "notify",
@@ -241,6 +243,8 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "snapshot",
         "reconcile",
         "sync_close",
+        "snapshot_fast",
+        "sync_batch",
     ]
 
 
@@ -263,7 +267,7 @@ def test_schedule_list_falls_back_to_builtin_table(
     assert result.exit_code == 0
     payload = _json(result)
     assert payload["config"] == "builtin"
-    assert payload["job_count"] == 9
+    assert payload["job_count"] == 11
     assert payload["warnings"] and "内置默认表" in payload["warnings"][0]
 
 

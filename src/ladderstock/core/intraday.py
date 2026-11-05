@@ -78,6 +78,15 @@ SNAPSHOT_DIR = "intraday"
 #: `tencent_quote_batch` 单次上限（工具默认 max_codes=50）
 QUOTE_CHUNK = 50
 
+#: 盘中高频关键快照（QUOT-352）：与 6 个定点时点分开存，秒级文件名，互不覆盖。
+FAST_SLOT = "fast"
+FAST_DIR = "fast"
+#: 高频轮询只在连续竞价时段跑（左闭右开）；竞价前的集合竞价仍交给 09:25 定点快照。
+TRADING_WINDOWS: tuple[tuple[time, time], ...] = (
+    (time(9, 30), time(11, 30)),
+    (time(13, 0), time(15, 0)),
+)
+
 #: status 取值：ok / degraded / already / skipped / missing / failed
 STATUS_OK = "ok"
 STATUS_DEGRADED = "degraded"
@@ -128,6 +137,12 @@ def in_window(slot: str, moment: datetime) -> bool:
 def window_text(slot: str) -> str:
     start, end = slot_window(slot)
     return f"{_clock(start)}–{_clock(end - 1)}"
+
+
+def in_trading_session(moment: datetime) -> bool:
+    """是否落在连续竞价时段（09:30–11:30 / 13:00–15:00，左闭右开）。"""
+    clock = moment.time().replace(microsecond=0)
+    return any(start <= clock < end for start, end in TRADING_WINDOWS)
 
 
 def resolve_timezone(name: str | None) -> tzinfo | None:
@@ -564,8 +579,20 @@ def _sentiment_block(
     }
 
 
-def capture(slot: str, day: date, moment: datetime, registry: Any) -> tuple[dict[str, Any], bool]:
-    """抓一次时点快照；返回 (载荷, 是否降级)。拿不到可存读数抛 `SnapshotUnavailable`。"""
+def capture(
+    slot: str,
+    day: date,
+    moment: datetime,
+    registry: Any,
+    *,
+    fast: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """抓一次时点快照；返回 (载荷, 是否降级)。拿不到可存读数抛 `SnapshotUnavailable`。
+
+    `fast=True` 走盘中高频轮询（QUOT-352）：只取「昨日涨停池 + 此刻报价」两样，
+    **不附情绪面**——情绪面要再打 `sentiment` / `limit_pool` 两个上游，30 秒节拍下
+    这笔钱不值得花；情绪面仍由 6 个定点时点负责（DEC-035 §2.6 不变）。
+    """
     pool_stale: dict[str, Any] | None = None
     try:
         yesterday_outcome = registry.fetch("yesterday_limit_up", params={"date": day.isoformat()})
@@ -640,7 +667,7 @@ def capture(slot: str, day: date, moment: datetime, registry: Any) -> tuple[dict
     if pool_stale is not None:
         # 看板/复盘读这一项就知道「这批昨日涨停股是 X 日的池子」，不用猜
         payload["source"]["pool_stale"] = pool_stale
-    if slot >= SENTIMENT_FROM:
+    if not fast and slot >= SENTIMENT_FROM:
         payload["sentiment"] = _sentiment_block(registry, day, yesterday)
         if not payload["sentiment"].get("available"):
             degraded = True
@@ -748,6 +775,157 @@ def run_slot(
         pool_stale=payload["source"].get("pool_stale"),
     )
     return {**base, "status": status, "detail": detail, "file": target.name}
+
+
+# ---------------------------------------------------------------- 盘中高频快照
+#
+# QUOT-352：把「昨日涨停股 × 此刻报价」这一份关键快照的采样从 6 个定点收紧到
+# 30 秒级。**另起目录、秒级文件名**：`data/intraday/<date>/fast/<HHMMSS>.json`。
+# 6 个定点时点（`<HHMM>.json`）的语义一个字都不动——它们是历史证据，高频读数
+# 只是「最新盘面」，两者混写会让「09:35 那一刻的快照」被 09:35:30 的读数污染。
+
+
+def fast_snapshot_dir(day: date, root: Path | None = None) -> Path:
+    from ladderstock.cli.paths import data_dir
+
+    base = Path(root) if root is not None else data_dir()
+    return base / SNAPSHOT_DIR / day.isoformat() / FAST_DIR
+
+
+def fast_snapshot_path(
+    moment: datetime, day: date, root: Path | None = None
+) -> Path:
+    return fast_snapshot_dir(day, root) / f"{moment.strftime('%H%M%S')}.json"
+
+
+def append_fast_round(day: date, entry: Mapping[str, Any], root: Path | None = None) -> Path:
+    """追加一行轮询观测记录到 `fast/rounds.jsonl`（改前 vs 改后的数据来源）。
+
+    同一进程内串行写（调度器每个 job `max_instances=1`），不需要额外加锁；
+    写失败不拖垮快照本身，调用方吞掉 OSError。
+    """
+    path = fast_snapshot_dir(day, root) / "rounds.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(dict(entry), ensure_ascii=False, default=str) + "\n")
+    return path
+
+
+def latest_fast_snapshot(day: date, root: Path | None = None) -> dict[str, Any] | None:
+    """读某天最新一份高频快照；没有就 None。看板/复盘可据此取「最新盘面」。"""
+    directory = fast_snapshot_dir(day, root)
+    if not directory.is_dir():
+        return None
+    for path in sorted(
+        (p for p in directory.glob("*.json") if p.stem.isdigit() and len(p.stem) == 6),
+        reverse=True,
+    ):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            payload.setdefault("_slot_file", path)
+            return payload
+    return None
+
+
+def run_fast(
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """跑一轮盘中高频关键快照（QUOT-352）：只读 peer 缓存，不直打上游。
+
+    交易时段外（含周末、午休、盘前盘后）一律 `skipped` 且**不落盘**——30 秒节拍
+    下一整天写 `skipped` 只会制造噪音；`/api/intraday` 的 6 时点语义也不受影响。
+    返回字段与 `run_slot` 同名，供 `schedule.run_job` 直接合并。
+    """
+    started = datetime.now()
+    moment = local_moment(now, timezone)
+    day = moment.date()
+    base = {"date": day.isoformat(), "slot": FAST_SLOT}
+
+    if day.weekday() >= 5:
+        return {
+            **base,
+            "status": STATUS_SKIPPED,
+            "detail": "非交易日（周末），不跑",
+            "quiet": True,
+        }
+    if not in_trading_session(moment):
+        return {
+            **base,
+            "status": STATUS_SKIPPED,
+            "detail": "不在连续竞价时段（09:30–11:30 / 13:00–15:00），不跑",
+            "quiet": True,
+        }
+
+    try:
+        if registry is None:
+            from ladderstock.data.provider_registry import ProviderRegistry
+
+            registry = ProviderRegistry(root=root)
+        payload, degraded = capture(FAST_SLOT, day, moment, registry, fast=True)
+    except SnapshotUnavailable as exc:
+        status = STATUS_DEGRADED if exc.rate_limited else STATUS_MISSING
+        detail = f"上游限流（QFSD-7001）：{exc}" if exc.rate_limited else str(exc)
+        _record_fast_round(day, moment, status, detail, started, root=root)
+        return {**base, "status": status, "detail": detail}
+    except Exception as exc:  # noqa: BLE001 - 单轮失败不拖垮调度器
+        detail = f"高频快照抓取失败：{_one_line(exc)}"
+        _record_fast_round(day, moment, STATUS_FAILED, detail, started, root=root)
+        return {**base, "status": STATUS_FAILED, "detail": detail}
+
+    target = fast_snapshot_path(moment, day, root)
+    if not write_new_json(target, payload):
+        detail = f"同一秒的快照已存在（并发写入），不覆盖：{target.name}"
+        _record_fast_round(day, moment, STATUS_ALREADY, detail, started, root=root)
+        return {**base, "status": STATUS_ALREADY, "detail": detail, "file": target.name}
+
+    status = STATUS_DEGRADED if degraded else STATUS_OK
+    fresh = payload["yesterday_limit_up"]["fresh"]
+    detail = (
+        f"{fresh}/{payload['yesterday_limit_up']['count']} 只昨日涨停股有今天读数，"
+        f"写入 {target.name}"
+    )
+    _record_fast_round(
+        day,
+        moment,
+        status,
+        detail,
+        started,
+        root=root,
+        fresh=fresh,
+        stocks=payload["yesterday_limit_up"]["count"],
+        degraded=degraded,
+    )
+    return {**base, "status": status, "detail": detail, "file": target.name}
+
+
+def _record_fast_round(
+    day: date,
+    moment: datetime,
+    status: str,
+    detail: str,
+    started: datetime,
+    *,
+    root: Path | None = None,
+    **fields: Any,
+) -> None:
+    entry: dict[str, Any] = {
+        "at": moment.isoformat(timespec="seconds"),
+        "status": status,
+        "detail": detail,
+        "elapsed_ms": int((datetime.now() - started).total_seconds() * 1000),
+    }
+    entry.update({key: value for key, value in fields.items() if value is not None})
+    try:
+        append_fast_round(day, entry, root=root)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- 批量槽存储
@@ -874,14 +1052,22 @@ def _one_line(exc: BaseException) -> str:
 __all__ = [
     "AUCTION_SLOT",
     "DEFAULT_TIMEZONE",
+    "FAST_DIR",
+    "FAST_SLOT",
     "SENTIMENT_FROM",
     "SLOTS",
     "SnapshotUnavailable",
+    "TRADING_WINDOWS",
+    "append_fast_round",
     "batch_slot_dir",
     "batch_slot_path",
     "capture",
+    "fast_snapshot_dir",
+    "fast_snapshot_path",
+    "in_trading_session",
     "in_window",
     "latest_batch_slot",
+    "latest_fast_snapshot",
     "local_moment",
     "project_readings",
     "purge_batch_slots",
@@ -889,6 +1075,7 @@ __all__ = [
     "read_status",
     "record_status",
     "resolve_timezone",
+    "run_fast",
     "run_slot",
     "slot_window",
     "snapshot_dir",

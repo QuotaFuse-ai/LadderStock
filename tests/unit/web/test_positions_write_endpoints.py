@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from ladderstock.data import sqlite_store
 from ladderstock.journal import position as position_module
 from ladderstock.web import radar
 from ladderstock.web.radar import (
@@ -304,7 +305,7 @@ def test_delete_is_hard_and_leaves_no_marker(tmp_path: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
         }
-        assert tables == {"schema_meta", "trades", "positions", "watchlist"}
+        assert tables == {sqlite_store.SCHEMA_META_TABLE, *sqlite_store.TABLES}
         columns = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
         assert columns == {
             "id",

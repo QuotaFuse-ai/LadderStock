@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ladderstock.ai import checkpoint, cli_provider, fallback
 from ladderstock.cli.paths import config_dir, project_root
@@ -75,6 +75,7 @@ from ladderstock.core.peer_versions import (
 )
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
+from ladderstock.web import peer_registry
 
 # --------------------------------------------------------------------------- #
 # 常量
@@ -162,11 +163,13 @@ PAGE_COMMANDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "review-ai": ("/review/ai", "重新生成 AI 复盘", ("review", "--date", "{date}", "--force")),
     "weekly": ("/weekly", "生成 AI 周报", ("weekly",)),
     "news": ("/news", "抓取资讯雷达", ("news",)),
-    "calendar": ("/calendar", "刷新事件日历", ("events",)),
     "pool": ("/pool", "重算候选池", ("pool",)),
     "validate": ("/validate", "提交收盘对账", ("validate", "reconcile", "--date", "{date}")),
+    "industry": ("/industry", "重算行业快照", ("industry", "list")),
     # `/positions` 不再挂命令条（QUOT-419 / DEC-055）：持仓页改为自动加载本机持仓，
     # 「查询持仓 ldst position list」不再是页面入口。CLI 本身仍在，只是不在页面上当主角。
+    # `/calendar` 同理移除（QUOT-441 / DEC-061）：`ldst events` 是请求时现算的只读取数、
+    # 跑完不落盘，页面打开即调 `GET /api/events`，不需要命令条。CLI 命令保留。
 }
 #: argv 占位符：只认当天日期，执行时替换（不把日期存进任务，避免排队跨夜后跑错日）
 PAGE_COMMAND_DATE = "{date}"
@@ -1769,6 +1772,100 @@ class ControlPlane:
             "actions": {"can_open": running and bool(console_owners)},
         }
 
+    def registry_entry_snapshot(self, key: str, item: Mapping[str, Any]) -> dict[str, Any]:
+        """注册表里有、控制面没有安装元数据的 peer：只读观测，绝不冒充「运行中」。
+
+        导入的 peer 先落 `config/sources.yaml`，控制面白名单（`PEER_CONTROL`）里
+        还没有它的目录与启动命令。这里按注册表声明的端口 + health_path 做一次
+        只读探测：端口在听且健康通过才算运行中，否则如实标「未安装」并给原因。
+        """
+        try:
+            port = int(item.get("default_port") or 0)
+        except (TypeError, ValueError):
+            port = 0
+        health_path = str(item.get("health_path") or "").strip() or "/healthz"
+        owners = self._port_probe(port) if port else []
+        health: dict[str, Any] = {"ok": None, "detail": "未探测：注册表未声明 default_port"}
+        status = STATUS_NOT_INSTALLED
+        if port:
+            ok, detail = self._health(f"http://127.0.0.1:{port}{health_path}", HEALTH_TIMEOUT_SEC)
+            health = {"ok": ok, "detail": detail}
+        if owners and health["ok"]:
+            status = STATUS_RUNNING
+            detail = f"端口 {port} 已监听，健康检查通过；控制面未纳管，只读观测"
+        elif owners:
+            status = STATUS_FAILED
+            detail = (
+                f"端口 {port} 已监听但健康检查失败：{health['detail'] or '未知'}；"
+                "控制面未纳管，不会终止占用者"
+            )
+        elif port:
+            detail = (
+                f"已登记于 config/sources.yaml，端口 {port} 未监听；"
+                "控制面没有该 peer 的安装目录与启动白名单"
+            )
+        else:
+            detail = "已登记于 config/sources.yaml，但未声明 default_port，无法探测"
+        return {
+            "id": key,
+            "product": str(item.get("product") or key),
+            "role": str(item.get("role") or ""),
+            "directory": "",
+            "directory_exists": False,
+            "registered": True,
+            "registry_only": True,
+            "status": status,
+            "status_label": STATUS_LABELS[status],
+            "detail": detail,
+            "installed": False,
+            "version": None,
+            "version_expected": None,
+            "version_status": "unknown",
+            "upgrade_hint": None,
+            "repo": str(item.get("repo") or "") or None,
+            "venv": None,
+            "ports": {"mcp": port, "web": None, "web_label": "未配置"},
+            "listening": {"mcp": [owner.as_dict() for owner in owners], "web": []},
+            "health": health,
+            "dist": {"wheel": None, "editable": False, "env_file": ""},
+            "port_conflicts": [],
+            "last_job": None,
+            "open_url": None,
+            "actions": {
+                "can_install": False,
+                "can_start": False,
+                "can_stop": False,
+                "can_open": False,
+            },
+        }
+
+    def _registry_row(
+        self, key: str, item: Mapping[str, Any], snapshot: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        try:
+            port: int | None = int(item.get("default_port") or 0) or None
+        except (TypeError, ValueError):
+            port = None
+        if snapshot:
+            status = str(snapshot.get("status"))
+            status_label = str(snapshot.get("status_label"))
+        else:
+            status = STATUS_NOT_INSTALLED
+            status_label = STATUS_LABELS[STATUS_NOT_INSTALLED]
+        return {
+            "id": key,
+            "product": str(item.get("product") or key),
+            "package": str(item.get("package") or ""),
+            "default_url": str(item.get("default_url") or ""),
+            "health_path": str(item.get("health_path") or ""),
+            "default_port": port,
+            "role": str(item.get("role") or ""),
+            "repo": str(item.get("repo") or "") or None,
+            "installed": bool(snapshot.get("installed")) if snapshot else False,
+            "status": status,
+            "status_label": status_label,
+        }
+
     def board(self) -> dict[str, Any]:
         """模块卡（peers + 组件）+ 端口占用汇总。
 
@@ -1777,10 +1874,21 @@ class ControlPlane:
         yaml 删掉一段并重启，对应卡即消失。peers 块缺失/写坏（解析失败）时
         `load_sources_peers` 返回空 → 回退全表，不许让面板变空（与 boundary.PEERS
         的兜底口径一致）。
+
+        QUOT-420：注册表里还有「控制面尚未纳管」的条目（设置页导入的新 peer）时，
+        它们也出一张只读卡（未安装/只读探测），并在 `registry` 里给出完整清单，
+        页面数字与注册表条目始终同源。
         """
-        registered = set(self._sources_peers())
+        registry = self._sources_peers()
+        registered = set(registry)
         keys = [key for key in self.peers if key in registered] or list(self.peers)
         snapshots = [self.snapshot(key) for key in keys]
+        by_id = {snapshot["id"]: snapshot for snapshot in snapshots}
+        for key, item in registry.items():
+            if key not in by_id and isinstance(item, Mapping):
+                snapshot = self.registry_entry_snapshot(key, item)
+                snapshots.append(snapshot)
+                by_id[key] = snapshot
         conflicts: list[dict[str, Any]] = []
         for snapshot in snapshots:
             for conflict in snapshot["port_conflicts"]:
@@ -1789,6 +1897,11 @@ class ControlPlane:
             "ok": True,
             "control_enabled": control_enabled(),
             "peers": snapshots,
+            "registry": [
+                self._registry_row(key, item, by_id.get(key))
+                for key, item in registry.items()
+                if isinstance(item, Mapping)
+            ],
             "components": [self.component_snapshot(key) for key in self.components],
             "port_conflicts": conflicts,
             "ports": {
@@ -1802,6 +1915,16 @@ class ControlPlane:
         }
 
     # ---------------------------------------------------------------- 任务编排
+
+    def import_peer(self, payload: Mapping[str, Any]) -> Path:
+        """把一条 peer 定义追加进 `config/sources.yaml`（QUOT-420）。
+
+        只写配置、不执行命令；写前备份、写后校验由 `peer_registry` 负责。
+        返回备份文件路径，调用方用 `board()` 拿写入后的完整注册表。
+        """
+        with self._lock:
+            _, backup = peer_registry.import_peer(self.config_root / "sources.yaml", payload)
+        return backup
 
     def _job_running(self, key: str) -> bool:
         job = self._last_job.get(key)
@@ -2873,6 +2996,21 @@ class ConfigUpdate(BaseModel):
     clear: list[str] = Field(default_factory=list)
 
 
+class PeerImportRequest(BaseModel):
+    """导入一条 peer 定义（QUOT-420）：只有注册表字段，不接受命令/路径字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    product: str
+    package: str
+    default_url: str
+    health_path: str
+    default_port: int
+    role: str
+    repo: str
+
+
 class AiTestRequest(BaseModel):
     peer: str
     base_url: str
@@ -2933,6 +3071,19 @@ def build_router(plane: ControlPlane) -> APIRouter:
     @router.get("/peers")
     def list_peers() -> dict[str, Any]:
         return plane.board()
+
+    @router.post("/peers/import")
+    def import_peer(body: PeerImportRequest) -> dict[str, Any]:
+        """导入一条 peer 定义到 `config/sources.yaml`，返回写入后的完整注册表。
+
+        只做配置写入（写前备份、写后校验、冲突 409），不新增命令执行通道；
+        路由级 `_guard` 保证只有本机回环页面/脚本能调用。
+        """
+        try:
+            backup = plane.import_peer(body.model_dump())
+        except peer_registry.PeerImportError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+        return {**plane.board(), "imported": body.id, "backup": str(backup)}
 
     @router.get("/peers/{peer_id}")
     def get_peer(peer_id: str) -> dict[str, Any]:

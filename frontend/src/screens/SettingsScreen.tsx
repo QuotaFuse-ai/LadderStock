@@ -11,6 +11,7 @@ import {
   Sliders,
   Square,
   Terminal,
+  Upload,
 } from 'lucide-react'
 
 import {
@@ -20,9 +21,11 @@ import {
   type BoardPayload,
   type ComponentSnapshot,
   type JobView,
+  type PeerImportPayload,
   type PeerLogs,
   type PeerSnapshot,
   type PeerStatus,
+  type RegistryEntry,
   type SelfAiStatus,
   type HealthPayload,
   type PortConflict,
@@ -66,9 +69,9 @@ import { cn } from '../lib/cn'
  * 设置页（P-07 / DESIGN-SPEC §4.8 + PRD-SETTINGS-CONTROL-PLANE）。
  *
  * 四个分区（左侧 176px 二级菜单，`?tab=` 深链）：
- *   子模块   —— 六张模块卡（5 个生态 peer + ProxyFleet 代理模块）；状态**只**取后端
- *              `status` / `status_label`，前端不推断。peer 列表由后端返回，
- *              注册表唯一真源是 config/sources.yaml 的 peers 块（QUOT-403）。
+ *   子模块   —— 模块卡（生态 peer + 工具组件）+ 模块注册表；状态**只**取后端
+ *              `status` / `status_label`，前端不推断。模块清单与数量一律来自后端
+ *              注册表（唯一真源是 config/sources.yaml 的 peers 块，QUOT-403/420）。
  *   AI 接入  —— 端点 / 模型 / 密钥；密钥只写不读回（只显示 `set` + `preview`）。
  *   数据与端口 —— 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
  *   关于     —— 版本、数据目录、DEC-006 边界、主题与密度（与侧栏同一状态）。
@@ -86,7 +89,7 @@ interface SectionMeta {
 }
 
 const SECTIONS: readonly SectionMeta[] = [
-  { value: 'peers', label: '子模块', hint: '六个模块：数据 / 资讯 / 合议 / 存储 / 代理' },
+  { value: 'peers', label: '子模块', hint: '模块清单来自 config/sources.yaml 的 peers: 块' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
   { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
@@ -209,7 +212,7 @@ const STATIC_PEERS: readonly StaticPeer[] = [
   },
 ]
 
-const CONTROL_ABSENT_NOTE = '控制面接口未接入（本轮不实现）：先运行 `ldst run`，或确认 LDST_CONTROL_ENABLED=1。'
+const CONTROL_ABSENT_NOTE = '控制面接口未接入（本轮不实现）：需本机 API 已启动（ldst run），或确认 LDST_CONTROL_ENABLED=1。'
 
 function trimSlash(path: string): string {
   return path.replace(/[\\/]+$/, '')
@@ -604,6 +607,48 @@ const PORT_COLUMNS: Array<Column<PortRow>> = [
   },
 ]
 
+const REGISTRY_COLUMNS: Array<Column<RegistryEntry>> = [
+  {
+    key: 'id',
+    header: 'ID',
+    width: '128px',
+    render: (row) => <span className="ldst-num">{row.id}</span>,
+  },
+  { key: 'product', header: '产品', width: '148px', truncate: true, render: (row) => row.product },
+  {
+    key: 'package',
+    header: '包名',
+    width: '168px',
+    truncate: true,
+    render: (row) => <span className="ldst-num">{row.package || MISSING}</span>,
+  },
+  {
+    key: 'port',
+    header: '端口',
+    width: '80px',
+    numeric: true,
+    render: (row) => (row.default_port === null ? MISSING : row.default_port),
+  },
+  {
+    key: 'role',
+    header: '职责',
+    truncate: true,
+    render: (row) => <span className="text-caption text-text-secondary">{row.role || MISSING}</span>,
+  },
+  {
+    key: 'installed',
+    header: '安装状态',
+    width: '96px',
+    render: (row) => {
+      // 「已安装」只看后端 install 探测；WSL 托管（只读观测）等服务可能未装 venv 却在运行，
+      // 如实写「运行中」，不冒充已安装。
+      if (row.installed) return <Badge tone="ok">已安装</Badge>
+      if (row.status === 'running') return <Badge tone="ok">运行中</Badge>
+      return <Badge tone="warn">未安装</Badge>
+    },
+  },
+]
+
 function buildPortRows(board: BoardPayload | null, probed: boolean): PortRow[] {
   const conflicts = new Map<number, PortConflict & { peer?: string }>()
   board?.port_conflicts.forEach((conflict) => conflicts.set(conflict.port, conflict))
@@ -886,6 +931,162 @@ function ConfigDrawer({
   )
 }
 
+// ---------------------------------------------------------------- 导入模块
+
+interface ImportDraft {
+  id: string
+  product: string
+  package: string
+  default_url: string
+  health_path: string
+  default_port: string
+  role: string
+  repo: string
+}
+
+const EMPTY_IMPORT: ImportDraft = {
+  id: '',
+  product: '',
+  package: '',
+  default_url: 'http://127.0.0.1:',
+  health_path: '/healthz',
+  default_port: '',
+  role: '',
+  repo: '',
+}
+
+/**
+ * QUOT-420「导入模块」：只提交一条 peer 定义，后端写 config/sources.yaml
+ * （写前备份、冲突 409、不执行任何命令）；成功后立即重绘，无需重启。
+ */
+function ImportPeerDrawer({
+  open,
+  onClose,
+  onImported,
+  push,
+}: {
+  open: boolean
+  onClose: () => void
+  onImported: () => void
+  push: (message: string, tone?: ToastItem['tone']) => void
+}) {
+  const [draft, setDraft] = useState<ImportDraft>(EMPTY_IMPORT)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    setDraft(EMPTY_IMPORT)
+    setError(null)
+  }, [open])
+
+  const setField = (key: keyof ImportDraft) => (event: { target: { value: string } }) => {
+    setDraft((current) => ({ ...current, [key]: event.target.value }))
+  }
+
+  const port = Number(draft.default_port)
+  const complete = Object.values(draft).every((value) => value.trim() !== '') && Number.isInteger(port)
+
+  const submit = async (): Promise<void> => {
+    if (!complete) return
+    const body: PeerImportPayload = {
+      id: draft.id.trim(),
+      product: draft.product.trim(),
+      package: draft.package.trim(),
+      default_url: draft.default_url.trim(),
+      health_path: draft.health_path.trim(),
+      default_port: port,
+      role: draft.role.trim(),
+      repo: draft.repo.trim(),
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await api.control.importPeer(body)
+      push(`已导入模块：${body.product}（${body.id}）`, 'ok')
+      onImported()
+      onClose()
+    } catch (caught) {
+      setError(describeApiError(caught).detail)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width="lg"
+      title="导入模块"
+      subtitle="写入 config/sources.yaml 的 peers: 块；只追加，不覆盖已有条目"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => void submit()}
+            loading={busy}
+            disabled={!complete}
+            disabledReason={complete ? undefined : '八个字段都要填写，端口必须是整数'}
+          >
+            导入
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="ID" htmlFor="import-id" hint="小写字母开头，可含数字与下划线" required>
+            <Input id="import-id" spellCheck={false} value={draft.id} onChange={setField('id')} placeholder="例如 mypeer" />
+          </Field>
+          <Field label="产品名" htmlFor="import-product" required>
+            <Input id="import-product" value={draft.product} onChange={setField('product')} placeholder="例如 MyPeer" />
+          </Field>
+          <Field label="包名" htmlFor="import-package" required>
+            <Input id="import-package" spellCheck={false} value={draft.package} onChange={setField('package')} placeholder="例如 mypeer" />
+          </Field>
+          <Field label="默认端口" htmlFor="import-port" hint="1-65535" required>
+            <Input
+              id="import-port"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={65535}
+              value={draft.default_port}
+              onChange={setField('default_port')}
+              placeholder="例如 8123"
+            />
+          </Field>
+          <Field label="默认地址" htmlFor="import-url" hint="http(s) URL" required>
+            <Input id="import-url" spellCheck={false} value={draft.default_url} onChange={setField('default_url')} />
+          </Field>
+          <Field label="健康检查路径" htmlFor="import-health" hint="以 / 开头" required>
+            <Input id="import-health" spellCheck={false} value={draft.health_path} onChange={setField('health_path')} />
+          </Field>
+          <Field label="仓库" htmlFor="import-repo" hint="owner/name" required>
+            <Input id="import-repo" spellCheck={false} value={draft.repo} onChange={setField('repo')} placeholder="例如 QuotaFuse-ai/MyPeer" />
+          </Field>
+          <Field label="职责" htmlFor="import-role" hint="模块卡上显示的一句话" required>
+            <Input id="import-role" value={draft.role} onChange={setField('role')} placeholder="例如 数据源：示例模块" />
+          </Field>
+        </div>
+        {error && (
+          <Banner tone="danger" title="导入失败">
+            {error}
+          </Banner>
+        )}
+        <p className="text-caption text-text-muted">
+          写前会备份为 <span className="ldst-num">sources.yaml.bak.&lt;时间戳&gt;</span>，原有注释与条目顺序保留；
+          只接受注册表字段，不接受命令或可执行路径。导入后新模块按「未安装」展示，安装/启动仍需后端任务。
+        </p>
+      </div>
+    </Drawer>
+  )
+}
+
 // ---------------------------------------------------------------- 分区二：AI 接入
 
 interface AiTarget {
@@ -1135,6 +1336,8 @@ function PortsSection({
   stateConfig: AsyncResult<StateConfigPayload>
 }) {
   const density = useDensity()
+  // 同一屏的数字口径：端口区也按注册表实际出卡数走，不写死模块个数
+  const moduleCount = board.data ? board.data.peers.length + (board.data.components?.length ?? 0) : null
   return (
     <div className="flex flex-col gap-4">
       <SectionCard
@@ -1142,12 +1345,13 @@ function PortsSection({
         subtitle={
           <>
             看板 <span className="ldst-num">{countOrMissing(board.data?.ports.board)}</span> / MCP{' '}
-            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 六个模块
+            <span className="ldst-num">{countOrMissing(board.data?.ports.mcp)}</span> · 模块清单当前{' '}
+            <span className="ldst-num">{moduleCount === null ? MISSING : moduleCount}</span> 个
           </>
         }
         bodyClassName="p-0"
         actions={
-          <Button variant="secondary" disabled disabledReason="本轮无体检接口，请运行 ldst doctor">
+          <Button variant="secondary" disabled disabledReason="本轮无体检接口，网页暂不提供一键体检">
             一键体检
           </Button>
         }
@@ -1348,6 +1552,7 @@ export default function SettingsScreen() {
   const [logsPeer, setLogsPeer] = useState<PeerSnapshot | null>(null)
   const [configPeer, setConfigPeer] = useState<PeerSnapshot | null>(null)
   const [metaPeer, setMetaPeer] = useState<PeerSnapshot | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
 
   const tabParam = params.get('tab')
@@ -1364,6 +1569,13 @@ export default function SettingsScreen() {
 
   const peers = useMemo(() => board.data?.peers ?? [], [board.data])
   const components = useMemo(() => board.data?.components ?? [], [board.data])
+  const registry = useMemo(() => board.data?.registry ?? [], [board.data])
+  // 标题、侧栏说明、端口区用同一个数字：模块 = 注册表里出卡的 peer + 工具组件
+  const moduleCount = board.data ? peers.length + components.length : null
+  const moduleHint =
+    moduleCount === null
+      ? '模块清单来自 config/sources.yaml 的 peers: 块'
+      : `模块清单来自 config/sources.yaml 的 peers: 块，当前 ${moduleCount} 个`
   const controlError = board.error
   const notConnected = isApiError(controlError) && controlError.kind === 'not-connected'
   const httpStatus = isApiError(controlError) && controlError.kind === 'http' ? controlError.status : null
@@ -1470,7 +1682,7 @@ export default function SettingsScreen() {
           : controlOff
             ? '控制面未启用（LDST_CONTROL_ENABLED=0）'
             : board.data
-              ? `${peers.length + components.length} 个模块 · 运行中 ${
+              ? `${moduleCount} 个模块 · 运行中 ${
                   peers.filter((peer) => peer.status === 'running').length +
                   components.filter((item) => item.status === 'running').length
                 }`
@@ -1512,7 +1724,9 @@ export default function SettingsScreen() {
                 )}
               >
                 <span className={cn('text-body', active && 'font-medium')}>{item.label}</span>
-                <span className="text-caption text-text-muted">{item.hint}</span>
+                <span className="text-caption text-text-muted">
+                  {item.value === 'peers' ? moduleHint : item.hint}
+                </span>
               </button>
             </li>
           )
@@ -1580,16 +1794,59 @@ export default function SettingsScreen() {
         {section === 'peers' && (
           <>
             <SectionCard
+              title="模块注册表"
+              subtitle="唯一真源 config/sources.yaml 的 peers: 块；刷新只读探测，不执行命令"
+              bodyClassName="p-0"
+              actions={
+                <Button
+                  variant="secondary"
+                  leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+                  onClick={() => board.reload()}
+                  disabled={board.status === 'loading'}
+                >
+                  刷新探测
+                </Button>
+              }
+            >
+              <DataTable<RegistryEntry>
+                columns={REGISTRY_COLUMNS}
+                rows={registry}
+                rowKey={(row) => row.id}
+                caption="模块注册表：id / product / package / 端口 / 职责 / 是否已安装"
+                density="compact"
+                loading={board.status === 'loading'}
+                empty={
+                  <EmptyState
+                    compact
+                    title="注册表不可读"
+                    description="没有从 config/sources.yaml 的 peers: 块读到条目；检查文件是否存在、YAML 是否合法。"
+                  />
+                }
+              />
+            </SectionCard>
+
+            <SectionCard
               title="子模块"
               subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；前端不推断"
               bodyClassName="p-0"
+              actions={
+                <Button
+                  variant="primary"
+                  leadingIcon={<Upload className="size-3.5" aria-hidden="true" />}
+                  onClick={() => setImportOpen(true)}
+                  disabled={!controlReady}
+                  disabledReason={controlReady ? undefined : '控制面不可用'}
+                >
+                  导入模块
+                </Button>
+              }
             >
               <ul className="flex flex-col gap-3 p-4">
                 {state === 'empty' && (
                   <li>
                     <EmptyState
                       title="后端没有返回任何子模块"
-                      description="确认 /api/control/peers 返回数据模块（tickhub / tickhub_us / wire / senate / financecoffer，列表由 config/sources.yaml 的 peers 块驱动）与代理模块（proxyfleet），或检查 config/sources.yaml 是否登记。"
+                      description="确认 /api/control/peers 返回数据模块，或检查 config/sources.yaml 的 peers: 块是否登记。"
                       action={
                         <Button variant="secondary" onClick={board.reload}>
                           重新读取
@@ -1603,7 +1860,7 @@ export default function SettingsScreen() {
                     <EmptyState
                       compact
                       title="控制面不可用"
-                      description="本地服务未连接或控制面被禁用，六个模块的目录与端口以静态基线展示。"
+                      description="本地服务未连接或控制面被禁用，模块目录与端口以静态基线展示。"
                     />
                   </li>
                 )}
@@ -1628,6 +1885,15 @@ export default function SettingsScreen() {
                 {components.map((component) => (
                   <ComponentCard key={component.id} component={component} />
                 ))}
+                {components.length === 0 && state !== 'empty' && (
+                  <li>
+                    <EmptyState
+                      compact
+                      title="当前注册表未声明工具组件"
+                      description="工具组件（如 ProxyFleet）单独观测、不登记为 peer；为空时只显示 peer 模块。"
+                    />
+                  </li>
+                )}
                 {(state === 'offline' || peers.length === 0) &&
                   STATIC_PEERS.map((peer) => (
                     <StaticPeerCard key={peer.id} peer={peer} reason={CONTROL_ABSENT_NOTE} />
@@ -1689,6 +1955,13 @@ export default function SettingsScreen() {
       </ConfirmDialog>
 
       <LogsDrawer peer={logsPeer} onClose={() => setLogsPeer(null)} />
+
+      <ImportPeerDrawer
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => board.reload()}
+        push={push}
+      />
 
       <ConfigDrawer
         peer={configPeer}

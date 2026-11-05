@@ -165,7 +165,7 @@ export default function SectionMetrics({ sectionName, metrics, className }: Sect
 
       {!available && (
         <p className="text-caption text-warn">
-          本段数据缺失：{reason ?? '本机没有该数据集，先运行 ldst sync 后重新检查。'}
+          本段数据缺失：{reason ?? '本机没有该数据集（行情尚未同步），同步后点重试重新检查。'}
         </p>
       )}
       {summary && <p className="text-caption leading-body text-text-secondary">{summary}</p>}

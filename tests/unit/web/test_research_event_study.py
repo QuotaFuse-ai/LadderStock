@@ -232,11 +232,14 @@ def test_event_study_window_edges_are_explained(tmp_path: Path) -> None:
     early = _type(payload, "earnings_preview")["events"][0]
     assert early["window"]["start"] is None and early["window"]["excess_return"] is None
     assert "只有 1 个交易日" in early["window"]["reason"]
+    assert "本地基准自" in early["window"]["reason"]
 
     late = _type(payload, "lockup_calendar")["events"][0]
     assert late["window"]["end"] is None and late["window"]["excess_return"] is None
     assert "之后本地 000300 只有 1 个交易日" in late["window"]["reason"]
     assert _type(payload, "lockup_calendar")["sample"]["status"] == "insufficient_sample"
+    # 样本不足时必须带出最常见的不算原因，页面才能把缺口说清（QUOT-446）
+    assert "个事件）" in _type(payload, "earnings_preview")["sample"]["reason"]
 
 
 def test_event_study_window_params_are_used(tmp_path: Path) -> None:

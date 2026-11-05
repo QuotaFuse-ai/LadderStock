@@ -498,8 +498,8 @@ export default function CalendarScreen() {
                 </>
               ) : (
                 <>
-                  {payload?.reason ?? '五个小节都没有数据源，也没有规则抽取事件。'}
-                  。先运行 <code className="ldst-num">ldst events --month {month}</code> 生成本地结果，再点「刷新」。
+                  {payload?.reason ?? '五个小节都没有数据源，也没有规则抽取事件。'}{' '}
+                  事件日历在请求时由本机库与 peer 现算，不读取命令产物；可点「刷新」重新取数，缺失处不估算日期。
                 </>
               )
             }

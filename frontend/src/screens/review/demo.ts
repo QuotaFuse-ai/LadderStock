@@ -125,7 +125,7 @@ function sectionMetrics(name: string, variant: ReviewDemoVariant): Record<string
     available: false,
     board_rows: 0,
     seat_rows: 0,
-    reason: '本地缓存没有龙虎榜数据（先运行 ldst sync）',
+    reason: '本地缓存没有龙虎榜数据（行情同步未覆盖该数据集）',
     source_detail: 'dragon_tiger: none; dragon_tiger_seats: none',
   }
 }

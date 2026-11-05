@@ -24,6 +24,7 @@ import re
 import threading
 import uuid
 from bisect import bisect_left
+from collections import Counter
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -118,6 +119,27 @@ NO_REACTION_DATE = "缺发布日，无法定位披露后的首个交易日，反
 NO_FORECAST = "本地 earnings_preview 没有该报告期的业绩预告（该期未预告或未同步）"
 NO_STOCK_BARS = (
     "本地 daily_k 在窗口边界日没有这只代码的收盘价（个股日线覆盖不足或停牌），不估算收益"
+)
+
+#: 周期 / 复权 / 市场的展示标签：纯静态映射，不查库、不联网（QUOT-428）。
+KLINE_PERIOD_LABELS: dict[str, str] = {"daily": "日线", "weekly": "周线", "monthly": "月线"}
+KLINE_ADJUST_LABELS: dict[str, str] = {"qfq": "前复权", "hfq": "后复权", "none": "不复权"}
+#: 本端点只放行 A 股个股（`require_known_code`），市场固定一档。
+KLINE_MARKET = "a_share"
+KLINE_MARKET_LABEL = "A 股"
+#: 载荷 `source` 给人看的上游口径；逐请求的 `source_detail` 仍在 payload 里。
+KLINE_SOURCE = "TickHub-CN / tencent_kline"
+
+#: 上游 `tencent_kline` 的 volume 单位是**手**：TickHub-CN 的 `crawler/store.py`
+#: 明写 "Tencent's K-line sends volume in 手 and an A-share lot is 100 shares;
+#: the warehouse column is 股"，入库时才 ×100 换成股。本端点现取现回，拿到的
+#: 就是手——如实标注 `volume_unit`，不替上游换算（QUOT-428）。
+KLINE_VOLUME_UNIT = "手"
+#: 均线窗口：简单移动平均，只按本次返回的 bar 序列计算，不足窗口为 null。
+KLINE_MA_WINDOWS: tuple[int, ...] = (5, 10, 20, 60)
+KLINE_MA_NOTE = "均线按本次返回的窗口计算，窗口不足的值为空"
+KLINE_VOLUME_NOTE = (
+    "volume 单位为手（1 手 = 100 股）：上游 tencent_kline 原样透传，本接口不换算"
 )
 
 
@@ -656,7 +678,8 @@ def _window_for(
     start_i, end_i = index - before, index + after
     if start_i < 0:
         window["reason"] = (
-            f"事件日 {event_day} 之前本地 000300 只有 {index} 个交易日（需要 {before} 个）"
+            f"事件日 {event_day} 之前本地 000300 只有 {index} 个交易日（需要 {before} 个；"
+            f"本地基准自 {bench_days[0]} 起）"
         )
         return window
     if end_i >= len(bench_days):
@@ -706,6 +729,77 @@ def _empty_event_reason(dataset: str, root: Path) -> str:
     if status == "empty":
         return f"本地 {dataset} 上次同步即 0 条（上游真实为空）"
     return f"本地 {dataset} 上次同步状态 {status}，没有可用记录"
+
+
+# --------------------------------------------------------------------------- #
+# K 线图：载荷纯函数（QUOT-428，参考库 klineView.ts 的消费形状）
+# --------------------------------------------------------------------------- #
+
+def _bar_float(bar: dict[str, Any], key: str) -> float | None:
+    """已投影的 bar 里的数值；缺失 / null 如实为 None，不补 0。"""
+    value = bar.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _change_series(
+    closes: list[float | None], upstream_pct: list[float | None]
+) -> list[float | None]:
+    """涨跌幅序列（**小数**，`0.0123` = +1.23%）。
+
+    优先上游 `change_pct`（百分数 → 除以 100）；缺失时用
+    `close[i] / close[i-1] - 1` 推导。首根没有前收，恒为 `None`；缺前收同样为
+    `None`——不补 0（0 会被前端读成「平盘」，与「没有数据」不是一回事）。
+    """
+    changes: list[float | None] = []
+    for index, close in enumerate(closes):
+        if index == 0:
+            changes.append(None)
+            continue
+        upstream = upstream_pct[index] if index < len(upstream_pct) else None
+        if upstream is not None:
+            changes.append(upstream / 100.0)
+            continue
+        prev = closes[index - 1]
+        if close is None or prev is None or prev == 0:
+            changes.append(None)
+            continue
+        changes.append(close / prev - 1)
+    return changes
+
+
+def _moving_average(values: list[float | None], window: int) -> list[float | None]:
+    """简单移动平均：不足 `window` 根、或窗口内有缺值 → `None`，不跳空补算。"""
+    averages: list[float | None] = []
+    for index in range(len(values)):
+        if index + 1 < window:
+            averages.append(None)
+            continue
+        chunk = values[index + 1 - window : index + 1]
+        numbers = [value for value in chunk if value is not None]
+        if len(numbers) < window:
+            averages.append(None)
+            continue
+        averages.append(sum(numbers) / window)
+    return averages
+
+
+def _kline_series(
+    bars: list[dict[str, Any]], upstream_pct: list[float | None]
+) -> dict[str, Any]:
+    """`bars` → 参考库 `KlineSeries`：列式数组 + `change` + `ma`（窗口 5/10/20/60）。"""
+    closes = [_bar_float(bar, "close") for bar in bars]
+    return {
+        "dates": [str(bar.get("date") or "") for bar in bars],
+        "open": [_bar_float(bar, "open") for bar in bars],
+        "high": [_bar_float(bar, "high") for bar in bars],
+        "low": [_bar_float(bar, "low") for bar in bars],
+        "close": closes,
+        "volume": [_bar_float(bar, "volume") for bar in bars],
+        "change": _change_series(closes, upstream_pct),
+        "ma": {str(window): _moving_average(closes, window) for window in KLINE_MA_WINDOWS},
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -969,7 +1063,10 @@ class ResearchPlane:
             maybe = envelope.payload.get("records")
             if isinstance(maybe, list):
                 records = maybe
-        bars = [_bar_from_record(row) for row in records if isinstance(row, dict)]
+        bar_rows = [row for row in records if isinstance(row, dict)]
+        bars = [_bar_from_record(row) for row in bar_rows]
+        upstream_pct = [as_float(pick(row, CHANGE_PCT_KEYS)) for row in bar_rows]
+        series = _kline_series(bars, upstream_pct)
         available = bool(bars)
         if reason is None and not available:
             reason = (
@@ -985,17 +1082,27 @@ class ResearchPlane:
             if envelope is not None and envelope.data_as_of is not None
             else None
         )
+        fetched_at = _now_iso()
         payload: dict[str, Any] = {
             "code": code,
             "period": period,
             "adjust": adjust,
             "limit": limit,
+            "market": KLINE_MARKET,
+            "market_label": KLINE_MARKET_LABEL,
+            "period_label": KLINE_PERIOD_LABELS[period],
+            "adjust_label": KLINE_ADJUST_LABELS[adjust],
+            "source": KLINE_SOURCE,
+            "fetched_at": fetched_at,
+            "volume_unit": KLINE_VOLUME_UNIT,
             "bars": bars,
             "count": len(bars),
             "available": available,
             "reason": reason,
             "source_detail": envelope.source_detail if envelope is not None else None,
             "data_source_status": status,
+            "series": series,
+            "notes": [KLINE_MA_NOTE, KLINE_VOLUME_NOTE],
         }
         return {
             "payload": strip_private(payload),
@@ -1005,7 +1112,7 @@ class ResearchPlane:
                 "topic": "research_kline",
                 "source": "ladderstock",
                 "freshness": envelope.freshness if envelope is not None else "realtime",
-                "fetched_at": _now_iso(),
+                "fetched_at": fetched_at,
             },
         }
 
@@ -1222,8 +1329,17 @@ class ResearchPlane:
             elif count == 0:
                 sample["reason"] = _empty_event_reason(dataset, self.data_root)
             else:
+                # 把「为什么算不出来」的原因带出来：只有「0 < 8」等于没说，
+                # 页面要能看出是基准覆盖不到还是个股缺收盘价（QUOT-446 缺口清单）。
+                causes = Counter(
+                    event["window"]["reason"]
+                    for event in events
+                    if event["window"]["reason"]
+                )
+                top = causes.most_common(1)[0] if causes else None
                 sample["reason"] = (
                     f"可计算窗口 {len(windows)} < {EVENT_SAMPLE_MIN}，按契约不给均值"
+                    + (f"；{top[0]}（{top[1]}/{count} 个事件）" if top else "")
                 )
             types.append(
                 {

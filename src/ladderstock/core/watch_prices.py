@@ -10,17 +10,39 @@ QUOT-380 第 5 项（约 2h）+ DEC-052 §2.2 的字段口径。三条硬约束�
 3. **只用于个股**。`tencent_quote_batch` 会把 `sh`/`sz` 前缀剥掉再按 6 位代码回键，
    指数与个股代码撞车时**静默给错票**——指数条走的是 `core/indices.py` + `index_quote`，
    这里不接指数代码，也不接受带前缀的入参（`journal/watchlist.py` 存的就是裸 6 位）。
+
+指标列（QUOT-427 / DEC-060）：`pe_ttm` / `pb` / `turnover_pct` 同样只做投影，不算、
+不缓存。上游命名不统一，按 `PE_TTM_KEYS` / `PB_KEYS` / `TURNOVER_PCT_KEYS` 的优先级取
+第一个**有限数值**；`0` 是有效读数（亏损股 PE 可以为负，停牌换手可以是 0），**不当缺失**。
+三项里缺哪一项就写进该条的 `metrics_reason`，全齐时为 `null`。
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from ladderstock.core.indices import iso_timestamp
+from ladderstock.core.ladder import as_float
 
 DATASET = "spot_quote"
+QUOTE_TOOL = "tencent_quote_batch"
+
+#: PE(TTM) 的键名容忍表（顺序即优先级；`pe` 是腾讯批量报价的现网名）
+PE_TTM_KEYS: tuple[str, ...] = ("pe_ttm", "pe")
+#: PB 的键名容忍表（`pb_mrq` 是部分上游的市净率口径名）
+PB_KEYS: tuple[str, ...] = ("pb", "pb_mrq")
+#: 换手率的键名容忍表（单位是 %，与 `spot_quote.turnover_rate` 一致，不做换算）
+TURNOVER_PCT_KEYS: tuple[str, ...] = ("turnover_rate", "turnover", "换手率", "换手")
+
+#: (输出字段, 容忍键, 缺省原因里的列名)
+_METRIC_FIELDS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("pe_ttm", PE_TTM_KEYS, "PE(TTM)"),
+    ("pb", PB_KEYS, "PB"),
+    ("turnover_pct", TURNOVER_PCT_KEYS, "换手%"),
+)
 
 #: 一次请求最多带多少只票（与盘中快照同一档，`core/intraday.py:QUOTE_CHUNK`）
 PRICE_CHUNK = 50
@@ -57,6 +79,43 @@ def _chunks(items: list[str], size: int) -> Iterable[list[str]]:
         yield items[start : start + size]
 
 
+def _finite(value: Any) -> float | None:
+    """只认有限数值；`0` 原样保留，`nan` / `inf` / 空值都是缺。"""
+    number = as_float(value)
+    if number is None or not math.isfinite(number):
+        return None
+    return number
+
+
+def _metric(record: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        number = _finite(record.get(key))
+        if number is not None:
+            return number
+    return None
+
+
+def _metrics(record: dict[str, Any] | None, *, code: str) -> dict[str, Any]:
+    """投影三列指标 + 逐条原因；三项全齐时 `metrics_reason` 为 `null`。"""
+    values: dict[str, Any] = {}
+    missing: list[str] = []
+    for name, keys, label in _METRIC_FIELDS:
+        value = _metric(record or {}, keys)
+        values[name] = value
+        if value is None:
+            missing.append(label)
+
+    if not missing:
+        values["metrics_reason"] = None
+    elif record is None:
+        values["metrics_reason"] = (
+            f"上游 {QUOTE_TOOL} 没有返回 {code}，{' / '.join(missing)} 无法投影"
+        )
+    else:
+        values["metrics_reason"] = f"上游 {QUOTE_TOOL} 不返回 {' / '.join(missing)}"
+    return values
+
+
 def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
     """按批取现价，返回 `code -> 读数字段`；**任何异常都不向上抛**。
 
@@ -79,6 +138,7 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
             "price_as_of": None,
             "price_status": PRICE_UNAVAILABLE,
             "price_reason": "这批自选没有取到报价",
+            **_metrics(None, code=code),
         }
         for code in wanted
     }
@@ -99,6 +159,7 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
                     if limited
                     else f"{DATASET} 取数失败：{reason}"
                 )
+                prices[code].update(_metrics(None, code=code))
             continue
 
         detail = detail or str(getattr(outcome.envelope, "source_detail", "") or "")
@@ -113,10 +174,12 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
             quoted = by_code.get(code)
             if quoted is None:
                 prices[code]["price_reason"] = f"{DATASET} 没有返回 {code} 的报价"
+                prices[code].update(_metrics(None, code=code))
                 continue
             price = quoted.get("price")
             if price is None or float(price) <= 0:
                 prices[code]["price_reason"] = f"{code} 的现价为空（停牌或上游没给）"
+                prices[code].update(_metrics(quoted, code=code))
                 continue
             prices[code] = {
                 "available": True,
@@ -129,6 +192,7 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
                 "price_as_of": iso_timestamp(str(quoted.get("timestamp") or "")),
                 "price_status": PRICE_OK,
                 "price_reason": None,
+                **_metrics(quoted, code=code),
             }
             ok_codes.add(code)
 
@@ -145,9 +209,13 @@ def _rows(envelope: Any) -> list[dict[str, Any]]:
 
 __all__ = [
     "DATASET",
+    "PB_KEYS",
+    "PE_TTM_KEYS",
     "PRICE_CHUNK",
     "PRICE_OK",
     "PRICE_UNAVAILABLE",
     "PriceStrip",
+    "QUOTE_TOOL",
+    "TURNOVER_PCT_KEYS",
     "fetch_prices",
 ]

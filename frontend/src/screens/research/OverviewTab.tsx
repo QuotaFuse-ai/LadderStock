@@ -221,7 +221,7 @@ export default function OverviewTab({
           title="概览数据缺失"
           description={
             overview.kline.reason ??
-            `本地缓存里没有 ${code ?? overview.code} 的日线数据；先运行 ldst sync --dataset daily_k --codes ${code ?? overview.code}，当前不会伪造任何数据。`
+            `本地缓存里没有 ${code ?? overview.code} 的日线数据（该标的行情尚未同步），当前不会伪造任何数据；可在行情页同步后点「重试」。`
           }
           action={
             <Button variant="secondary" onClick={reload} loading={requesting}>

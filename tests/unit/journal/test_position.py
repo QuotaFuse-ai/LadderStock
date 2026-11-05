@@ -68,7 +68,7 @@ def test_fresh_database_has_v2_position_columns(tmp_path: Path) -> None:
     conn = sqlite_store.connect(root=tmp_path, create=True)
     assert conn is not None
     try:
-        assert sqlite_store.schema_version(conn) == sqlite_store.SCHEMA_VERSION == 2
+        assert sqlite_store.schema_version(conn) == sqlite_store.SCHEMA_VERSION
         rows = conn.execute("PRAGMA table_info (positions)").fetchall()
         assert [str(row[1]) for row in rows] == COLUMNS
         indexes = {
@@ -108,7 +108,7 @@ def test_v1_database_upgrades_without_losing_rows(tmp_path: Path) -> None:
     conn = sqlite_store.connect(root=tmp_path, create=True)  # 打开即迁移
     assert conn is not None
     try:
-        assert sqlite_store.schema_version(conn) == 2
+        assert sqlite_store.schema_version(conn) == sqlite_store.SCHEMA_VERSION
         assert [str(row[1]) for row in conn.execute("PRAGMA table_info (positions)")] == COLUMNS
         row = conn.execute("SELECT * FROM positions").fetchone()
         assert row is not None
@@ -133,8 +133,8 @@ def test_second_open_does_not_rebuild_or_rebackup(tmp_path: Path) -> None:
     conn = sqlite_store.connect(root=tmp_path, create=True)
     assert conn is not None
     try:
-        assert sqlite_store.migrate(conn) == 2
-        assert sqlite_store.migrate(conn) == 2
+        assert sqlite_store.migrate(conn) == sqlite_store.SCHEMA_VERSION
+        assert sqlite_store.migrate(conn) == sqlite_store.SCHEMA_VERSION
     finally:
         sqlite_store.close(conn)
 
