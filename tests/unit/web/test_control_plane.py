@@ -1678,6 +1678,11 @@ def test_page_commands_cover_routes_and_resolve_date(
     today = datetime.now().date().isoformat()
     assert by_key["review"]["argv"] == ["review", "--date", today]
     assert by_key["validate"]["argv"] == ["validate", "reconcile", "--date", today]
+    # QUOT-441 / DEC-061：`events` 是请求时现算的只读取数，页面打开即取数，命令条下架
+    assert "calendar" not in by_key
+    assert by_key["industry"]["route"] == "/industry"
+    assert by_key["industry"]["label"] == "重算行业快照"
+    assert by_key["industry"]["argv"] == ["industry", "list"]
     assert all(
         item["last_job"] is None and item["running"] is False for item in payload["commands"]
     )
@@ -1710,9 +1715,9 @@ def test_page_command_exit_codes_map_to_status(
     assert _wait(plane, plane.create_command_job("news").id).status == "ok"
 
     runtime.default = StepResult(1, "boom\n")
-    done = _wait(plane, plane.create_command_job("calendar").id)
+    done = _wait(plane, plane.create_command_job("industry").id)
     assert done.status == "failed"
-    assert "刷新事件日历失败" in (done.error or "")
+    assert "重算行业快照失败" in (done.error or "")
 
 
 def test_page_command_is_exclusive_and_rejects_unknown(
@@ -1763,6 +1768,8 @@ def test_command_endpoints_expose_whitelist(
     assert client.post("/api/control/commands/nope").status_code == 404
     # `/positions` 的命令条已移除（QUOT-419 / DEC-055）：持仓页自动加载，不再靠 `position list`
     assert client.post("/api/control/commands/positions").status_code == 404
+    # `/calendar` 的命令条已移除（QUOT-441 / DEC-061）：`GET /api/events` 打开即取数
+    assert client.post("/api/control/commands/calendar").status_code == 404
     started = client.post("/api/control/commands/pool")
     assert started.status_code == 200
     assert started.json()["job_id"]

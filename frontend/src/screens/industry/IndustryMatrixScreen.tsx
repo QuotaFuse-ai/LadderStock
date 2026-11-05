@@ -160,8 +160,8 @@ function MatrixEmpty({
         title="本机暂无产业数据"
         description={
           <>
-            {payload?.reason ?? '六个输入数据集在本机缓存里都没有可用记录，矩阵不出伪行。'}
-            先运行 <code className="ldst-num">ldst industry list</code> 生成本地快照，再点「刷新」。
+            {payload?.reason ?? '六个输入数据集在本机缓存里都没有可用记录，矩阵不出伪行。'}{' '}
+            行业快照由六个输入数据集汇总生成；可用页内顶部「重算行业快照」生成后，再点「刷新」。
           </>
         }
         action={

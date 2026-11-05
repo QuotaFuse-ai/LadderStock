@@ -56,7 +56,7 @@ describe('个股深挖页', () => {
 
   it('五态可只靠 URL 演示（深度研究 tab）', async () => {
     renderRoute('/research/600000?demo=1&state=empty&tab=research')
-    expect(await screen.findByText(/先运行 ldst research/)).toBeTruthy()
+    expect(await screen.findByText(/六段深度产物/)).toBeTruthy()
     expect(screen.getByText(/演示态：空态/)).toBeTruthy()
     cleanup()
 

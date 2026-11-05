@@ -408,7 +408,7 @@ export default function PoolScreen() {
                   {payload && payload.missing.length > 0 && (
                     <> 缺：{payload.missing.join('、')}。</>
                   )}{' '}
-                  先运行 <code className="ldst-num">ldst pool</code> 生成本地结果，再点「刷新」。
+                  可用页内顶部「重算候选池」生成后，再点「刷新」。
                 </>
               )
             }
@@ -471,7 +471,7 @@ export default function PoolScreen() {
         density="compact"
         maxHeight="var(--ldst-table-h)"
         onRowClick={(row) => setSelected(row)}
-        empty={<EmptyState compact title="没有候选" description="换一个交易日，或先运行 ldst pool。" />}
+        empty={<EmptyState compact title="没有候选" description="换一个交易日，或点页内顶部「重算候选池」。" />}
       />
 
       <p className="text-caption leading-body text-text-muted">

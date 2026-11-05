@@ -138,7 +138,7 @@ function sentimentEnvelope(variant: MarketDemoVariant, date: string): SentimentE
       ? {
           date,
           available: false,
-          reason: '涨停池为空，无法计算情绪指标（先运行 ldst sync）',
+          reason: '涨停池为空，无法计算情绪指标（当日行情尚未同步）',
           temperature: null,
           promotion_rate: null,
           seal_rate: null,
@@ -229,7 +229,7 @@ function historyEnvelope(variant: MarketDemoVariant, date: string): HistoryEnvel
   const payload: HistoryEnvelope['payload'] = {
     date,
     available: !empty,
-    reason: empty ? '本机没有更早的交易日缓存（先运行 ldst sync）' : null,
+    reason: empty ? '本机没有更早的交易日缓存（行情同步未覆盖）' : null,
     points,
     window: 20,
     data_source_status: empty ? 'missing' : 'ok',
@@ -242,7 +242,7 @@ function historyEnvelope(variant: MarketDemoVariant, date: string): HistoryEnvel
     payload,
     source: 'ladderstock',
     source_detail: empty
-      ? 'limit_pool 缓存: 0/0 个交易日; 本机没有更早的交易日缓存（先运行 ldst sync）'
+      ? 'limit_pool 缓存: 0/0 个交易日; 本机没有更早的交易日缓存（行情同步未覆盖）'
       : `limit_pool 缓存: 20/20 个交易日（${points[0].date}~${DEMO_MARKET_DATE}); 可用点: 20`,
     fetched_at: DEMO_FETCHED_AT,
     freshness: 'cached',

@@ -426,7 +426,7 @@ function DetailEmpty({
             <>
               {payload.reason ?? '六个输入数据集没有可用记录，字段全部显式 null。'}
               {dims.length > 0 && ` 缺失维度：${dims.map((dimension) => DIMENSION_TITLE[dimension]).join('、')}。`}
-              先运行 <code className="ldst-num">ldst industry show {payload.meta.name}</code> 检查本地缓存。
+              行业快照由总览页生成；回行业总览页点「重算行业快照」后重试。
             </>
           }
           action={<Button variant="secondary" onClick={reload}>刷新</Button>}

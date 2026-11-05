@@ -209,7 +209,7 @@ const STATIC_PEERS: readonly StaticPeer[] = [
   },
 ]
 
-const CONTROL_ABSENT_NOTE = '控制面接口未接入（本轮不实现）：先运行 `ldst run`，或确认 LDST_CONTROL_ENABLED=1。'
+const CONTROL_ABSENT_NOTE = '控制面接口未接入（本轮不实现）：需本机 API 已启动（ldst run），或确认 LDST_CONTROL_ENABLED=1。'
 
 function trimSlash(path: string): string {
   return path.replace(/[\\/]+$/, '')
@@ -1147,7 +1147,7 @@ function PortsSection({
         }
         bodyClassName="p-0"
         actions={
-          <Button variant="secondary" disabled disabledReason="本轮无体检接口，请运行 ldst doctor">
+          <Button variant="secondary" disabled disabledReason="本轮无体检接口，网页暂不提供一键体检">
             一键体检
           </Button>
         }

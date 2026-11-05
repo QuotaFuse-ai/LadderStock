@@ -162,11 +162,13 @@ PAGE_COMMANDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "review-ai": ("/review/ai", "重新生成 AI 复盘", ("review", "--date", "{date}", "--force")),
     "weekly": ("/weekly", "生成 AI 周报", ("weekly",)),
     "news": ("/news", "抓取资讯雷达", ("news",)),
-    "calendar": ("/calendar", "刷新事件日历", ("events",)),
     "pool": ("/pool", "重算候选池", ("pool",)),
     "validate": ("/validate", "提交收盘对账", ("validate", "reconcile", "--date", "{date}")),
+    "industry": ("/industry", "重算行业快照", ("industry", "list")),
     # `/positions` 不再挂命令条（QUOT-419 / DEC-055）：持仓页改为自动加载本机持仓，
     # 「查询持仓 ldst position list」不再是页面入口。CLI 本身仍在，只是不在页面上当主角。
+    # `/calendar` 同理移除（QUOT-441 / DEC-061）：`ldst events` 是请求时现算的只读取数、
+    # 跑完不落盘，页面打开即调 `GET /api/events`，不需要命令条。CLI 命令保留。
 }
 #: argv 占位符：只认当天日期，执行时替换（不把日期存进任务，避免排队跨夜后跑错日）
 PAGE_COMMAND_DATE = "{date}"
