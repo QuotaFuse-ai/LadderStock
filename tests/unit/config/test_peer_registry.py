@@ -37,6 +37,7 @@ def _sources_doc() -> dict[str, Any]:
 # 1. yaml 登记了 financecoffer
 # --------------------------------------------------------------------------- #
 
+
 def test_yaml_peers_block_registers_financecoffer() -> None:
     block = _sources_doc()["peers"]
     assert "financecoffer" in block
@@ -76,6 +77,7 @@ def test_all_registered_peers_have_repo_for_version_check() -> None:
 # 2. boundary.PEERS 与 yaml 一致
 # --------------------------------------------------------------------------- #
 
+
 def test_boundary_peers_match_yaml_block() -> None:
     built, warnings = build_peers(_sources_doc()["peers"])
     assert warnings == []
@@ -93,6 +95,7 @@ def test_boundary_peers_include_financecoffer() -> None:
 # --------------------------------------------------------------------------- #
 # 3. 配置三态：合法 / 非法 / 缺文件（都不许崩、不许变空）
 # --------------------------------------------------------------------------- #
+
 
 def test_build_peers_falls_back_when_block_missing() -> None:
     for block in (None, {}, "not-a-mapping"):
@@ -127,6 +130,23 @@ def test_build_peers_skips_broken_entry_and_keeps_the_rest() -> None:
     assert len(warnings) == 2
 
 
+def test_build_peers_accepts_entry_without_cli_for_import() -> None:
+    """QUOT-420 导入的 peer 不带命令字段：缺 cli 不能把已登记条目丢掉。"""
+    block = {
+        "gamma": {
+            "product": "Gamma",
+            "package": "gamma-pkg",
+            "default_port": 8123,
+            "health_path": "/healthz",
+            "repo": "QuotaFuse-ai/Gamma",
+        }
+    }
+    peers, warnings = build_peers(block, fallbacks={})
+    assert warnings == []
+    assert peers["gamma"].cli == ""
+    assert peers["gamma"].default_port == 8123
+
+
 def test_build_peers_empty_after_skips_falls_back() -> None:
     peers, warnings = build_peers({"bad": "oops"})
     assert peers == build_peers(None)[0]
@@ -145,6 +165,7 @@ def test_yaml_fields_backfill_from_fallbacks() -> None:
 # --------------------------------------------------------------------------- #
 # 4. 控制面元数据（PeerControl）与注册表对齐
 # --------------------------------------------------------------------------- #
+
 
 def test_financecoffer_control_metadata() -> None:
     ctl = PEER_CONTROL["financecoffer"]
@@ -168,6 +189,7 @@ def test_every_controlled_peer_has_dir_env_and_sibling() -> None:
 # --------------------------------------------------------------------------- #
 # 5. `ldst config validate` 的 Schema 接受现行 yaml
 # --------------------------------------------------------------------------- #
+
 
 def test_sources_yaml_passes_its_schema() -> None:
     schema = json.loads((CONFIG / "schema" / "sources.schema.json").read_text(encoding="utf-8"))

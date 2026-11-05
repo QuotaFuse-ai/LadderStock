@@ -155,10 +155,12 @@ def build_peers(
             continue
         product = str(item.get("product") or "").strip()
         package = str(item.get("package") or "").strip()
+        # cli 只用于文档/手工启动提示，控制面不执行它；设置页导入（QUOT-420）
+        # 不允许携带命令字段，因此这里允许缺省为空，不把已登记的新 peer 丢掉。
         cli = str(item.get("cli") or "").strip()
-        if not (product and package and cli):
+        if not (product and package):
             warnings.append(
-                f"peers.{key} 缺 product / package / cli 中的必填字段，已跳过该条"
+                f"peers.{key} 缺 product / package 中的必填字段，已跳过该条"
             )
             continue
         fallback = base.get(key)
