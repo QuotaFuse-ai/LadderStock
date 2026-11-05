@@ -218,16 +218,12 @@ export default function ResearchReportScreen() {
         </div>
       }
       meta={<span className="text-caption text-text-secondary">{summary}</span>}
+      refresh={{
+        onClick: view.reload,
+        loading: view.requesting && view.state !== 'loading',
+      }}
       actions={
         <>
-          <Button
-            variant="secondary"
-            onClick={view.reload}
-            loading={view.requesting && view.state !== 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
           {view.code && (
             <LinkButton
               to={detailHref(view.code, view)}

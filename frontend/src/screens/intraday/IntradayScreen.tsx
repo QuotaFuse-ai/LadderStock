@@ -11,7 +11,6 @@ import {
   Layers,
   MinusCircle,
   Radar,
-  RefreshCw,
   Timer,
   XCircle,
   type LucideIcon,
@@ -618,16 +617,10 @@ export default function IntradayScreen() {
         </>
       }
       badge={<DemoStateBadge state={view.forced} />}
-      actions={
-        <Button
-          variant="primary"
-          onClick={reload}
-          disabled={state === 'loading'}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
     />
   )
 

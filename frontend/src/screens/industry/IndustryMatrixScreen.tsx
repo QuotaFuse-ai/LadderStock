@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Database, RefreshCw, Search } from 'lucide-react'
+import { Database, Search } from 'lucide-react'
 
 import {
   DIMENSION_TITLE,
@@ -355,16 +355,10 @@ export default function IndustryMatrixScreen() {
         </span>
       }
       badge={<DemoStateBadge state={forced} />}
-      actions={
-        <Button
-          variant="primary"
-          onClick={reload}
-          disabled={state === 'loading'}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
     />
   )
 

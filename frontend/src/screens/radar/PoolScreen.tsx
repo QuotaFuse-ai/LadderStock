@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, Download, ListChecks, RefreshCw } from 'lucide-react'
+import { Database, Download, ListChecks } from 'lucide-react'
 
 import {
   isRadarEndpointMissing,
@@ -331,19 +331,11 @@ export default function PoolScreen() {
           {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
         </div>
       }
-      actions={
-        <div className="flex items-center gap-2">
-          {payload && payload.available && <DownloadButton payload={payload} />}
-          <Button
-            variant="primary"
-            onClick={reload}
-            disabled={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
-        </div>
-      }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
+      actions={payload && payload.available ? <DownloadButton payload={payload} /> : undefined}
     />
   )
 

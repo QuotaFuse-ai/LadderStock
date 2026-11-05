@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Lock, NotebookPen, RefreshCw } from 'lucide-react'
+import { Copy, Lock, NotebookPen } from 'lucide-react'
 
 import { describeApiError, type JournalStatsPayload } from '../api'
 import { useForcedState } from '../lib/pageState'
@@ -276,16 +276,12 @@ export default function JournalScreen() {
       title="交易日志"
       subtitle={summary}
       badge={<DemoStateBadge state={forced} />}
+      refresh={{
+        onClick: reload,
+        loading: state === 'loading',
+      }}
       actions={
         <>
-          <Button
-            variant="primary"
-            onClick={reload}
-            loading={state === 'loading'}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
           <Button
             variant="secondary"
             disabled

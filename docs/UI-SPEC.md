@@ -29,6 +29,7 @@
 | v1.13 | 2026-11-05 | 只读页进入即取数、命令条只留有副作用或耗时长的操作（QUOT-441，决策 DEC-061）：`PageCommandBar` 白名单删 `calendar`（`ldst events` 请求时现算、不落盘，页面 mount 直接 `GET /api/events`）、加 `industry`（`ldst industry list` 重算 R5 快照，属「耗时 + 写盘」，按钮文案「重算行业快照」，精确匹配使 `/industry/:name` 不命中）。`/positions`、`/watchlist`、`/calendar` 三屏挂载即取数并有测试断言（`frontend/tests/readonly-mount-fetch.test.tsx`）；`/`、`/watch`、`/limit-up`、`/calendar`、`/industry*`、`/research*`、`/settings` 等只读页的空态去掉「先运行 `ldst …`」，改为「缺什么 + 为什么 + 页内重试 / 指向命令条按钮」；服务未启动文案（`PageShell.tsx`、`SearchPanel.tsx`）不在本单范围。缺数仍 `available=false` + `reason` 显示 `—`；隐私边界（`PRIVATE_KEYS`、只读守卫、`no-store`）与 CLI 命令表零变更。 |
 | v1.15 | 2026-11-05 | 工作区顶栏（QUOT-442 / DEC-062）：侧栏右侧新增纵向列 = `header.workspace-topbar`（`h-topbar`，面包屑 + 工具区）+ 主内容列，主内容区仍是唯一滚动容器（QUOT-397 的归顶逻辑与页头 sticky 不变）。面包屑取一级栏目名（`lib/nav.ts` `navTitleFor()`，导航数据同时搬到该模块并由 `Layout.tsx` 原样再导出）。右侧工具区抽成 `TopbarTools`：工作台小字（`lg`）→ 隐私开关 → 深浅色 → AI 入口（复用 `AiConnectDialog`）；侧栏底部主题 `Segmented` 移除，避免重复入口。隐私模式 `lib/privacy.ts`（`MASK` / `hideIf` / `usePrivacyMode`，键 `ldst.privacy`）：只遮自己的数量 / 成本 / 市值 / 盈亏，百分比与公开行情不遮，`—` 不遮；初版消费方为持仓页明细表 + 汇总卡 + 成本提示。`<768` 新增左侧导航抽屉（`MobileNavDrawer`：遮罩、Escape 还焦点、`aria-expanded`/`aria-controls`、body 滚动锁定、换页自动关闭），汉堡在 ≥768 **不渲染**，`<768` 侧栏让位给抽屉（两套导航不同屏）。断点词汇补 `sm`（640px）/ `lg`（1024px）两档，`rail:` / `desk:` 原义与 1024–1279 rail 行为不变。§2 示意图同步，并补顶栏三层结构、工具区顺序与断点表三行。证据：`tests/topbar.test.tsx` / `tests/privacy.test.ts`、`docs/screenshots/positions-442-{dark,light}.png` 与 `positions-442-privacy-*.png`。 |
 | v1.16 | 2026-11-05 | 补 S3 合入后首页条目同步（QUOT-409；v1.7 变更行承诺的「§3.5 与 §11.5 在 S3 接线合入时按 SPEC-HOME-V2 同步」）。**只改文档、不改代码 / token / 组件**。**§3.5 整节重写**：旧「摘要 + TemperatureBar + 5 张指标卡」「连板梯队 Top 10 + 题材强度 Top 5」条目及其失效行号全部替换为 S3 实际落地的四块（A 大盘与全球指数 → B 今天，想研究什么？→ C 我的自选 → D 我的持仓）+ E 待办 / F 最近异动下移，行号按 `997c769` 的 `HomeScreen.tsx` 与 `screens/home/*` 逐条复核；「禁止」条款的数据链路清单由旧四接口改为代码实际五路：`GET /api/indices` / `GET /api/watchlist` / `GET /api/positions?date=` / `GET /api/watch/snapshot` / `GET /api/validation?date=`，并明写不再调用 `/api/sentiment` `/api/ladder`。**§10 首页行**（本单正文称「§8 路由映射表」，该表 v1.1 起编号为 §10）接口清单同步为上述五路，B 块注明走本机 `lib/searchCore` 检索、不发请求。**§11.5** 六条旧首页验收全部作废，替换为对四块可执行的 12 条整屏级条目，逐块细节指向 `SPEC-HOME-V2` §9。**模块数口径核对**：§3.5 不登记模块数（首页块集合按 `HomeScreen.tsx` 装配顺序读，不是注册表），§3.18 设置页 `N 个模块 · 运行中 M` 补注来源 = 注册表实际出卡数（`peers:` 条数 + 工具组件数，DEC-056 / QUOT-420），全文件无写死的模块个数或模块名清单。**随 main 同步**：QUOT-441 把首页空态的 `ldst sync --date` 命令提示改为「去行情页同步」，本版 §3.5 六态与 §11.5 相应条目按新代码更新；QUOT-412 的 K 线规格（`docs/specs/SPEC-KLINE-MODULE.md`）与 §7.1 图表 token 行属 main 既有内容，本版未覆盖、未删除。版本号说明：本单原定登记 v1.10，v1.10–v1.12 已被 QUOT-354 / QUOT-396 / QUOT-342 占用、v1.13 被 QUOT-441 占用、v1.14/v1.15 被 QUOT-442 占用，顺延为 v1.16。两处**已知偏差按代码登记、本版不改代码**：① A 块网格实现为 `grid-cols-2 … desk:grid-cols-4`（1024–1279 档 2 列 × 4 行），与 SPEC-HOME-V2 §2.1/§9 的「1024 起 4 列 × 2 行」不一致，待确认后另立单；② C 块卡头「管理自选 →」与 `/watchlist` 页已由 QUOT-419 落地，SPEC-HOME-V2 §4.4 / §12-L07「v2 首版不放」的前提（当时无自选页）已不成立。§0 不覆盖清单的 DEC-052 标注 v1.9 已加，本版不动。 |
+| v1.17 | 2026-11-05 | 单顶栏（QUOT-457 / DEC-063）：全平台由「顶栏 + 命令条 + 页头条」三条横栏收敛为**只留顶栏**。`PageHeader` 不再渲染横栏（去掉底色 / 分隔线 / sticky / `min-h-topbar`），标题改为 `h1.sr-only`（视觉标题由面包屑承担，读屏与测试仍有一级标题）；`subtitle` / `badge` / `meta` 与次级 `actions` 合成内容第一行的状态行；主操作「刷新」经 `PageToolsSlotContext` 用 `createPortal` 送进顶栏（无外壳时就地渲染），全屏只有一颗。`PageCommandBar` 从 `main` 移到顶栏、由「一行」改为「图标按钮 + `role="dialog"` 浮层」（命令名 / `ldst <argv>` / 运行 / 状态 / 日志尾），演示态或本页无命令时整颗不渲染（DEC-061 白名单不变）；页签 `SectionNavPills` 仍在内容区第一行，数据源仍是 `NAV_SECTIONS`。§2 示意图、标题层级 / 内容状态行 / 页签位置 / 顶栏高度 / 单顶栏 / 顶栏工具区六行同步重写。**§3 各屏「工具栏」行中「右侧唯一刷新」「主操作在最右」的表述按本版失效**：刷新在顶栏，次级操作留在内容状态行，其余字段与用例不变。证据：`tests/topbar-single-bar.test.tsx`（4 例）、`tests/page-command-bar.test.tsx`（4 例）；`typecheck` / `test`（53 文件 515 例）/ `build` 全绿。 |
 
 ## 0. 范围与非目标
 
@@ -89,22 +90,22 @@
 
 ```
 ┌──────────────┬──────────────────────────────────────────────┐
-│ 品牌 h-topbar│ workspace-topbar（h-topbar，固定不滚）       │
-│              │ 工作空间 / 我的股票          [工具区 ……]    │
+│ 品牌 h-topbar│ workspace-topbar（h-topbar，固定不滚，唯一横栏）│
+│              │ 工作空间 / 我的股票   [刷新][命令] [工具区…] │
 │              │  ☰ <768 抽屉 │ 隐私 │ 深浅色 │ AI           │
 │ ───────────  ├──────────────────────────────────────────────┤
 │ 首页         │ PersistenceBanner（迁移/恢复失败，条件出现） │
 │ 市场  ▾      ├──────────────────────────────────────────────┤
 │  情绪温度    │ main#main：max-w-table · px-5 py-5           │
 │  资讯雷达    │  ┌────────────────────────────────────────┐  │
-│ 盯盘         │  │ PageHeader：h1 + badge + subtitle      │  │
-│ 复盘  ▾      │  │              + meta + actions（右）    │  │
+│ 盯盘         │  │ h1.sr-only + badge + subtitle + meta   │  │
+│ 复盘  ▾      │  │                    + actions（次级，右）│  │
 │  每日复盘    │  ├────────────────────────────────────────┤  │
-│  AI复盘      │  │ 提示条区（Banner，最多同类 2 条）      │  │
+│  AI复盘      │  │ 页签：横向胶囊（NavPills）             │  │
 │  AI周报      │  ├────────────────────────────────────────┤  │
-│  候选池      │  │ 主内容（卡 / 表 / 列表 / 图）          │  │
-│ 日志  ▾      │  │                                        │  │
-│ 验证  ▾      │  │                                        │  │
+│  候选池      │  │ 提示条区（Banner，最多同类 2 条）      │  │
+│ 日志  ▾      │  ├────────────────────────────────────────┤  │
+│ 验证  ▾      │  │ 主内容（卡 / 表 / 列表 / 图）          │  │
 │ ───────────  │  └────────────────────────────────────────┘  │
 │ 接入 AI      │                                              │
 │ 设置         │  ← 主内容列是唯一滚动容器（QUOT-397）        │
@@ -120,15 +121,16 @@
 | 阅读型内容 | 段落 / 叙述块再收一层 `--ldst-content-max: 1080px`，中文正文度量 `45–75ch` | §8、R-24 |
 | 断点词汇 | 导航/布局用两档命名变体：`rail:` = `max-width 1279px`、`desk:` = `min-width 1280px`（`--ldst-bp-base`）；外壳顶栏另补 `sm:` = `min-width 640px`、`lg:` = `min-width 1024px`（DEC-062，仅顶栏使用） | `tailwind.config.ts:40-58` |
 | 断点用法 | `desk:` 用于 ≥1280 的多栏与指标列；`rail:` 用于图标栏下的隐藏/降级；**禁止** `min-[1024px]:` / `min-[1100px]:` / `min-[640px]:` 这类临时断点（10 处，R-04） | 现状：`WeeklyScreen.tsx:381,506,554`、`MarketScreen.tsx:529`、`research/ResearchDetailScreen.tsx:94,262,394` |
-| 标题层级 | 页面 `h1` = `text-page`（28px/600，每屏唯一）；页内分区 `h2` = `text-section`（20px/600）；卡片标题 = `text-subtitle`（16px/600）；正文/单元格/按钮 = `text-body`（14px）；表头/时间戳/徽标/说明 = `text-caption`（12px）；主指标数值 = `text-hero`（36px，每屏 ≤1 处） | `styles/tokens.css:67-78`、`PageShell.tsx:28`、`ui/Card.tsx` |
-| 工具栏 | 统一 `PageHeader`：左 `h1 + badge + subtitle + meta`，右 `actions`（`gap-2`，主操作实心在最右） | `PageShell.tsx:24-36` |
-| 顶栏高度 | 侧栏品牌行、顶栏与 `PageHeader` 的 `min-h` 都取 `--ldst-topbar-h: 56px` | `tokens.css:98`、`PageShell.tsx:26`、`Layout.tsx` |
-| 顶栏三层（DEC-062） | ① 定位层：`header.workspace-topbar`（`h-topbar`、`bg-bg`、下边 1px `border-border`）＝ 面包屑 + `TopbarTools`；② 全局提示层：`PersistenceBanner`（条件出现，顶栏之下）；③ 页面层：`main#main`（`PageHeader` 自带 `h1`，与面包屑两层并存）。顶栏固定不滚，②③ 所在主内容列是唯一滚动容器 | `Layout.tsx`、`TopbarTools.tsx` |
-| 顶栏工具区（DEC-062） | 从左到右：`本地 A 股短线工作台`（`lg+`）→ 隐私开关（`Eye`/`EyeOff`，`aria-pressed`）→ 深浅色（`Moon`/`Sun`）→ AI 图标入口（复用 `AiConnectDialog`）。独立组件 `TopbarTools`，服务状态灯后续插在其最左 | `TopbarTools.tsx` |
+| 标题层级 | 页面 `h1` = `text-page`（28px/600，每屏唯一，**`sr-only`** 不占版面，视觉标题由顶栏面包屑承担，DEC-063）；页内分区 `h2` = `text-section`（20px/600）；卡片标题 = `text-subtitle`（16px/600）；正文/单元格/按钮 = `text-body`（14px）；表头/时间戳/徽标/说明 = `text-caption`（12px）；主指标数值 = `text-hero`（36px，每屏 ≤1 处） | `styles/tokens.css:67-78`、`PageShell.tsx` `PageHeader`、`ui/Card.tsx` |
+| 内容状态行 | `PageHeader` 不再渲染横栏：一行 `badge + subtitle + meta`（12px 次级文本），次级 `actions` 靠右；无底色 / 分隔线 / sticky。主操作「刷新」经 `PageToolsSlotContext` 送进顶栏，无外壳时就地渲染（组件单测） | `PageShell.tsx` `PageHeader`、`lib/pageToolsSlot.tsx` |
+| 页签位置 | 横向胶囊 `NavPills` 由骨架件 `SectionNavPills` 渲染在内容第一行（状态行之后），数据源仍是 `NAV_SECTIONS`；组内只有一页时不渲染 | `PageShell.tsx` `SectionNavPills`、`ui/NavPills.tsx` |
+| 顶栏高度 | 侧栏品牌行与顶栏取 `--ldst-topbar-h: 56px`；`PageHeader` 不再有 `min-h`（DEC-063） | `tokens.css:98`、`Layout.tsx` |
+| 单顶栏（DEC-063） | 全平台只有一条横栏：`header.workspace-topbar`（`h-topbar`、`bg-bg`、下边 1px `border-border`）＝ 面包屑 + 页面级操作（刷新 / 本页命令）+ `TopbarTools`。`main#main` 内不再有 `header`、页头条或命令条；主内容列是唯一滚动容器。全局提示 `PersistenceBanner` 在顶栏之下、`main` 之上，条件出现，不算第二条常驻横栏 | `Layout.tsx`、`TopbarTools.tsx`、`PageCommandBar.tsx` |
+| 顶栏工具区（DEC-062 / DEC-063） | 从左到右：页面级操作 `刷新` → `本页命令`（图标按钮 + 浮层面板）→ `本地 A 股短线工作台`（`lg+`）→ 隐私开关（`Eye`/`EyeOff`，`aria-pressed`）→ 深浅色（`Moon`/`Sun`）→ AI 图标入口（复用 `AiConnectDialog`）。本页命令在演示态或本页无命令时整颗不渲染（DEC-061） | `Layout.tsx`、`PageCommandBar.tsx`、`TopbarTools.tsx` |
 | 顶栏断点 | `<640` 汉堡 + 栏目名 + 工具区（无 `工作空间 /`）；`640–767` 同左但显示 `工作空间 /`；`768–1023` 汉堡不渲染、图标栏侧栏、无工作台小字；`1024–1279` 同上但显示工作台小字；`≥1280` 完整侧栏。`<768` 侧栏让位给抽屉，两套导航不同屏 | `Layout.tsx`、`lib/mediaQuery.ts`、`tailwind.config.ts` |
 | 键盘 | 首元素「跳到主内容」（`Layout.tsx:191`）；Tab 顺序与视觉顺序一致；`main` 可聚焦（`tabIndex=-1`） | `Layout.tsx:191,328` |
 | 焦点可见 | `:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible` 走 `--ldst-focus-ring` | `styles/index.css:30` |
-| 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx:327`），页面级 `Banner` 在 `PageHeader` 之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
+| 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx`），页面级 `Banner` 在内容状态行之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
 | 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（每日复盘 / AI复盘 / AI周报 / 候选池，QUOT-344 / DEC-046 拆三独立入口）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；「接入 AI」动作与设置固定在侧栏底部（主题入口在顶栏，侧栏不再放第二份，DEC-062）（QUOT-304 / DEC-044；接入 AI 见 v1.5） | `Layout.tsx` `NAV_SECTIONS` |
 | 侧栏本机说明 | 「仅监听本机回环 · 草稿只存本机 IndexedDB」常驻 | `Layout.tsx:320-322` |
 

@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, RefreshCw } from 'lucide-react'
+import { Database } from 'lucide-react'
 
 import {
   describeApiError,
@@ -451,17 +451,11 @@ export default function MarketScreen() {
       title="市场"
       subtitle={summary}
       badge={<DemoStateBadge state={forced} />}
-      actions={
-        <Button
-          variant="primary"
-          loading={busy && state !== 'loading'}
-          disabled={state === 'loading'}
-          onClick={reloadAll}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: reloadAll,
+        loading: busy && state !== 'loading',
+        disabled: state === 'loading',
+      }}
     />
   )
 

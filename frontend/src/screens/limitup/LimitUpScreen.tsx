@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, RefreshCw } from 'lucide-react'
+import { Database } from 'lucide-react'
 
 import { isLimitPoolEndpointMissing, type LimitPoolRow } from '../../api/limitPool'
 import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
@@ -174,16 +174,10 @@ export default function LimitUpScreen() {
           )}
         </>
       }
-      actions={
-        <Button
-          variant="primary"
-          onClick={reload}
-          disabled={state === 'loading'}
-          leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-        >
-          刷新
-        </Button>
-      }
+      refresh={{
+        onClick: reload,
+        disabled: state === 'loading',
+      }}
     />
   )
 

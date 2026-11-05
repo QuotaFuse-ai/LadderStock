@@ -674,19 +674,15 @@ export default function ResearchDetailScreen() {
         </div>
       }
       meta={<span className="ldst-num text-caption text-text-secondary">{summary}</span>}
+      refresh={{
+        loading: refreshing,
+        onClick: () => {
+          if (tab === 'overview') overviewRequest.reload()
+          view.reload()
+        },
+      }}
       actions={
         <>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (tab === 'overview') overviewRequest.reload()
-              view.reload()
-            }}
-            loading={refreshing}
-            leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-          >
-            刷新
-          </Button>
           {view.code && (
             <LinkButton to={reportHref(view.code, view)} variant="primary" leadingIcon={<FileText className="size-3.5" aria-hidden="true" />}>
               研究报告
