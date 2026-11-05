@@ -159,7 +159,7 @@ function NotSynced({
       action={
         <div className="flex flex-col items-center gap-2">
           <span className="text-caption text-text-muted">
-            可用页内顶部「拉取行情数据」同步 {tradeDate} 行情。
+            可用顶部「本页命令」中的「拉取行情数据」同步 {tradeDate} 行情。
           </span>
           <Button variant="secondary" onClick={onRetry}>
             重新检查
@@ -498,7 +498,7 @@ export default function MarketScreen() {
       )}
       {state === 'empty' && (
         <Banner tone="info" title={`${tradeDate} 尚未同步行情数据`}>
-          用页内顶部「拉取行情数据」生成涨停池，再点「刷新」；本页不会用 0 或假数据填空。
+          用顶部「本页命令」中的「拉取行情数据」生成涨停池，再点「刷新」；本页不会用 0 或假数据填空。
         </Banner>
       )}
 
