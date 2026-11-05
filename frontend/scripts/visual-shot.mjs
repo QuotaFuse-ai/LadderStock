@@ -68,6 +68,8 @@ const ROUTES = [
   { slug: 'positions', path: '/positions' },
   // QUOT-419：我的自选独立页（DEC-055 写面）
   { slug: 'watchlist', path: '/watchlist' },
+  // QUOT-435：提醒（本机收件箱 + 只读定时任务 + 本机投递渠道）
+  { slug: 'inbox', path: '/inbox' },
   { slug: 'industry', path: '/industry' },
   { slug: 'industry-name', path: `/industry/${encodeURIComponent('电子')}` },
   { slug: 'signals', path: '/signals' },

@@ -135,6 +135,24 @@ export function formatTime(iso: string | null | undefined, now = new Date()): st
 }
 
 /**
+ * 提醒时间：当日 `HH:mm`，跨日 `MM-DD HH:mm`（本地时区）。
+ *
+ * 与参考库 `formatInboxTime` 同口径——收件箱一行一条，秒数只增加噪音；
+ * 读不到时间显示 `—`，不拿「今天」冒充。
+ */
+export function formatInboxTime(iso: string | null | undefined, now = new Date()): string {
+  if (!iso) return MISSING
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return MISSING
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  if (sameDay) return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/**
  * 封板时间：后端裸值 `HHMMSS` / 数字 `93000` → `HH:mm:ss`；已是 `H:mm:ss` 原样返回，
  * ISO 走 `formatTime`，其余不猜、不换算时区，一律 `—`（UI-SPEC §8「后端裸值必须格式化」）。
  */
