@@ -62,6 +62,9 @@ from ladderstock.core.models import (
 from ladderstock.core.portfolio import COST_METHODS as PORTFOLIO_METHODS
 from ladderstock.core.portfolio import HoldingRow, round4
 from ladderstock.core.portfolio import replay as replay_portfolio
+from ladderstock.core.portfolio_perf import DEFAULT_DAYS as PERF_DEFAULT_DAYS
+from ladderstock.core.portfolio_perf import MAX_DAYS as PERF_MAX_DAYS
+from ladderstock.core.portfolio_perf import build_perf
 from ladderstock.core.privacy import strip_private
 from ladderstock.core.quotes import PRICE_DATASET, daily_change_map, price_map
 from ladderstock.core.watch_prices import DATASET as SPOT_QUOTE_DATASET
@@ -243,6 +246,17 @@ def parse_sources(values: Sequence[str] | None) -> list[str]:
             raise _invalid(exc.message) from None
         raise
     return list(resolved)
+
+
+def parse_days(raw: int | None) -> int:
+    """`?days=`：缺省 365；`0` 表示全历史，其余负数 / 超上限都是调用方写错 → 422。"""
+    if raw is None:
+        return PERF_DEFAULT_DAYS
+    if raw < 0 or raw > PERF_MAX_DAYS:
+        raise _invalid(
+            f"非法 days：{raw}（需要在 0~{PERF_MAX_DAYS} 之间；0 表示全历史）"
+        )
+    return raw
 
 
 def parse_limit(raw: int | None, *, default: int) -> int:
@@ -898,6 +912,22 @@ class RadarPlane:
             "migration": migration,
             "totals_cny": totals,
         }
+
+    # --------------------------------------------- 持仓收益率（QUOT-433 / DEC-064）
+
+    def portfolio_perf_view(self, raw_days: int | None) -> dict[str, Any]:
+        """`GET /api/portfolio/perf`：TWR / 资金加权 / 净值序列。
+
+        平面 JSON、`no-store`、回环独占（与 `/api/portfolio` 同一条闸门）。
+        只读本机 `daily_k` 缓存：不联网、不落盘、不调模型。流水为空 → `groups=[]`
+        + `notes` 说明，不报 500；缺行情 → `gaps` 逐条原因，不补价、不插值。
+
+        `days` 只裁剪走势序列的回看天数（缺省 365，0 = 全历史）；收益指标始终按
+        全部流水计算，`start / end / span_days` 也是全部流水的区间。
+        """
+        days = parse_days(raw_days)
+        trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
+        return self._read(lambda: build_perf(trades, root=self.data_root, days=days))
 
     def _auto_migrate(self) -> dict[str, Any]:
         """自动迁移旧记录；失败不拖垮读面，原因写进 `migration.error`。"""
@@ -1576,6 +1606,18 @@ def build_router(plane: RadarPlane) -> APIRouter:
         """持仓账本（隐私数据）：流水重放 + 行情拼接 + 旧仓分类，平面 JSON、`no-store`。"""
         return JSONResponse(
             plane.portfolio_view(method), headers={"Cache-Control": "no-store"}
+        )
+
+    @router.get("/portfolio/perf", dependencies=[Depends(_positions_guard)])
+    def portfolio_perf(
+        days: Annotated[
+            int | None,
+            Query(description=f"走势回看天数（缺省 {PERF_DEFAULT_DAYS}，0=全历史）"),
+        ] = None,
+    ) -> JSONResponse:
+        """持仓收益率（隐私数据）：平面 JSON、`no-store`、只 GET、只读本机日线。"""
+        return JSONResponse(
+            plane.portfolio_perf_view(days), headers={"Cache-Control": "no-store"}
         )
 
     @router.post(
