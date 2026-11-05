@@ -213,12 +213,12 @@ def test_notify_test_unavailable_channel_exits_4(
 # --------------------------------------------------------------------------- #
 
 def test_schedule_list_shows_default_jobs(repo: Path) -> None:
-    """仓库自带 config/schedule.yaml：盘前提醒 + 6 时点快照 + 收盘对账 + 收盘全量同步。"""
+    """仓库自带 config/schedule.yaml：三份摘要 + 6 时点快照 + 收盘对账 + 收盘全量同步。"""
     result = runner.invoke(app, ["schedule", "list", "--output", "json"])
 
     assert result.exit_code == 0, result.stderr
     payload = _json(result)
-    assert payload["job_count"] == 11
+    assert payload["job_count"] == 13
     assert payload["timezone"] == "Asia/Shanghai"
     assert [job["trigger"] for job in payload["jobs"]] == [
         "09:05",
@@ -230,11 +230,13 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "15:00",
         "15:05",
         "15:35",
+        "15:40",
+        "16:15",
         "30s",
         "60s",
     ]
     assert [job["kind"] for job in payload["jobs"]] == [
-        "notify",
+        "digest",
         "snapshot",
         "snapshot",
         "snapshot",
@@ -243,6 +245,8 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "snapshot",
         "reconcile",
         "sync_close",
+        "digest",
+        "digest",
         "snapshot_fast",
         "sync_batch",
     ]
@@ -254,7 +258,7 @@ def test_schedule_list_table_output(repo: Path) -> None:
     assert result.exit_code == 0
     assert "09:05" in result.stdout
     assert "15:05" in result.stdout
-    assert "盘前提醒" in result.stdout
+    assert "盘前摘要" in result.stdout
 
 
 def test_schedule_list_falls_back_to_builtin_table(
@@ -267,7 +271,7 @@ def test_schedule_list_falls_back_to_builtin_table(
     assert result.exit_code == 0
     payload = _json(result)
     assert payload["config"] == "builtin"
-    assert payload["job_count"] == 11
+    assert payload["job_count"] == 13
     assert payload["warnings"] and "内置默认表" in payload["warnings"][0]
 
 

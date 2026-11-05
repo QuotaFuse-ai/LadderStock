@@ -31,7 +31,8 @@
               "snapshot",
               "sync_close",
               "snapshot_fast",
-              "sync_batch"
+              "sync_batch",
+              "digest"
             ]
           },
           "trigger": {
@@ -41,6 +42,7 @@
           "enabled": { "type": "boolean" },
           "channel": { "enum": ["console", "desktop"] },
           "message": { "type": "string" },
+          "summary": { "enum": ["premarket", "close", "watch"] },
           "dataset": { "type": "string", "minLength": 1 }
         },
         "allOf": [
@@ -50,6 +52,13 @@
               "required": ["kind"]
             },
             "then": { "required": ["dataset"] }
+          },
+          {
+            "if": {
+              "properties": { "kind": { "const": "digest" } },
+              "required": ["kind"]
+            },
+            "then": { "required": ["summary"] }
           }
         ]
       }

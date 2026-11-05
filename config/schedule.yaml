@@ -6,13 +6,16 @@ scheduler:
   misfire_grace_seconds: 300
 
 jobs:
-  - id: premarket_reminder
-    name: 09:05 盘前提醒
-    kind: notify
+  # 09:05 盘前摘要（QUOT-432 / DEC-058）：按真实行情生成「自选 + 持仓」的现价 / 昨收 /
+  # 涨跌，写完 inbox 再投递本机通知。旧 `premarket_reminder`（静态口播文案）退役——
+  # 自己的配置里若还留着 `kind: notify` 的它，照常生效（notify 类型没删）。
+  - id: premarket_digest
+    name: 09:05 盘前摘要
+    kind: digest
+    summary: premarket
     trigger: "09:05"
     enabled: true
     channel: console
-    message: 盘前提醒：核对今日盯盘阈值、昨日晋级率与自选池，09:25 前把下单计划定下来
   # 盘中 6 时点快照（QUOT-286）：只读 peer 的 `spot_quote` / 昨日涨停池 / 情绪，
   # 落 `data/intraday/<date>/<HHMM>.json`（只创建不覆盖），窗口外记 skipped 不补跑。
   - id: snapshot_0925
@@ -81,3 +84,21 @@ jobs:
     kind: sync_close
     trigger: "15:35"
     enabled: true
+  # 15:40 收盘摘要（QUOT-432 / DEC-058）：持仓当日盈亏（close(T) − close(T−1) 口径）、
+  # 自选涨跌榜、当日已实现 / 分红。只读本机 daily_k 与 portfolio_trades，不联网。
+  - id: close_digest
+    name: 15:40 收盘摘要
+    kind: digest
+    summary: close
+    trigger: "15:40"
+    enabled: true
+    channel: console
+  # 16:15 自选变化（QUOT-432 / DEC-058）：自选与上一交易日的收盘价 / 成交量变化。
+  # 本机只有一天缓存时明确写「没有上一交易日可比」，不编。
+  - id: watch_changes
+    name: 16:15 自选变化
+    kind: digest
+    summary: watch
+    trigger: "16:15"
+    enabled: true
+    channel: console

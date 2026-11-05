@@ -198,6 +198,16 @@ JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
             '"Cache-Control": "no-store"',
         ),
     },
+    # 第五条授权例外（QUOT-432 / DEC-058）：提醒收件箱（读写都只落本机 SQLite）。
+    # 读 / 写面复用 `privacy_read_guard` / `privacy_write_guard`（与持仓、自选同一份
+    # 回环 + Host 判据，写面再加来源证据），平面 JSON + `no-store`，不进信封 / MCP / AI。
+    "src/ladderstock/web/inbox.py": {
+        "ladderstock.journal.inbox": (
+            "privacy_read_guard(",
+            "privacy_write_guard(",
+            '"Cache-Control": "no-store"',
+        ),
+    },
 }
 
 

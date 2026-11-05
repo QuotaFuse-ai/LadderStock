@@ -95,6 +95,13 @@ WEB_PRIVILEGED_IMPORTS: dict[str, tuple[str, ...]] = {
         "host_header_allowed(",
         '"Cache-Control": "no-store"',
     ),
+    # QUOT-432 / DEC-058：提醒收件箱读 / 写面复用同一份隐私闸门（回环 + Host，
+    # 写面再加来源证据），平面 JSON + `no-store`，不进信封 / MCP / AI。
+    "web/inbox.py": (
+        "privacy_read_guard(",
+        "privacy_write_guard(",
+        '"Cache-Control": "no-store"',
+    ),
 }
 
 

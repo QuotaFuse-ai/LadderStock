@@ -69,6 +69,7 @@ from ladderstock.web.control import (
     is_control_path,
     is_loopback_host,
 )
+from ladderstock.web.inbox import build_router as build_inbox_router
 from ladderstock.web.industry import IndustryPlane
 from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.radar import RadarPlane
@@ -1553,6 +1554,12 @@ def create_app(
     # 数据，回环独占 + 平面 JSON（`radar._positions_guard`，同 DEC-015 的日志面）。
     radar = radar_plane if radar_plane is not None else RadarPlane(data_root=root)
     app.include_router(build_radar_router(radar))
+
+    # -------------------------------------------- 提醒收件箱面（QUOT-432 / DEC-058）
+    #
+    # `/api/inbox`（GET 读 / 两条 POST 标已读）：本机隐私数据，平面 JSON + `no-store`，
+    # 闸门复用雷达面的同一份实现（回环 + Host；写面再加同源来源证据），不新增鉴权。
+    app.include_router(build_inbox_router(data_root=root))
 
     # -------------------------------------------- 标的字典面（QUOT-405）
     #
