@@ -6,6 +6,7 @@ import {
   isRadarEndpointMissing,
   parseCandidatePool,
   parseEventCalendar,
+  parseEventTimeline,
   parseNewsStream,
   parsePositions,
 } from '../src/api/radar'
@@ -187,6 +188,64 @@ describe('事件日历解析', () => {
       },
     })
     expect(missing.data_source_status).toBe('missing')
+  })
+})
+
+describe('事件时间轴解析', () => {
+  it('平面 JSON：事件、来源顺序、gaps 与状态原样保留', () => {
+    const payload = parseEventTimeline({
+      local_only: true,
+      store: 'local_sqlite',
+      window: { from: '2026-11-06', to: '2026-12-06', days: 30 },
+      generated_at: '2026-11-06T09:00:00+00:00',
+      symbols: [{ symbol: '600519', name: '贵州茅台', origin: ['自选', '持有'] }],
+      events: [
+        {
+          date: '2026-11-16',
+          kind: 'lockup',
+          symbol: '600519',
+          name: '贵州茅台',
+          title: '限售解禁：股权激励限售股份',
+          detail: ['可流通(万股) 411.2'],
+          source: 'lockup_calendar',
+          fetched_at: '2026-11-06T09:00:00+08:00',
+          estimated: false,
+          ref: 'lockup_calendar:2026-11-16:600519',
+        },
+        // 不认识 / 缺日期的行直接丢弃，不猜
+        { date: '2026-11-17', kind: 'macro', title: '宏观' },
+        { kind: 'lockup', title: '缺日期' },
+      ],
+      overdue: [],
+      gaps: ['财报预约披露日：上游没有预约披露时间表'],
+      data_source_status: 'ok',
+      notice: '时间轴没有不代表真的没有',
+    })
+
+    expect(payload.window).toEqual({ from: '2026-11-06', to: '2026-12-06', days: 30 })
+    expect(payload.symbols[0].origin).toEqual(['自选', '持有'])
+    expect(payload.events).toHaveLength(1)
+    expect(payload.events[0].kind).toBe('lockup')
+    expect(payload.events[0].estimated).toBe(false)
+    expect(payload.gaps).toHaveLength(1)
+    expect(payload.data_source_status).toBe('ok')
+  })
+
+  it('没有标的时状态回落到 missing', () => {
+    const payload = parseEventTimeline({ window: { days: 7 }, symbols: [], events: [] })
+    expect(payload.data_source_status).toBe('missing')
+    expect(payload.window.days).toBe(7)
+  })
+
+  it('httpRadarSource.timeline 请求 /api/events/timeline?days=', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+      new Response(JSON.stringify({ symbols: [] }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await httpRadarSource.timeline({ days: 90 })
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/events/timeline?days=90')
   })
 })
 

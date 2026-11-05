@@ -380,14 +380,23 @@ def list_events(
     conn: sqlite3.Connection,
     *,
     month: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
     event_type: str | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
+    """按月份或日期区间读抽取事件；`event_date` 为 NULL 的行不落在任何区间里。"""
     sql = ["SELECT * FROM news_events WHERE 1 = 1"]
     args: list[Any] = []
     if month:
         sql.append("AND event_date LIKE ?")
         args.append(f"{month}-%")
+    if start is not None:
+        sql.append("AND event_date >= ?")
+        args.append(start.isoformat())
+    if end is not None:
+        sql.append("AND event_date <= ?")
+        args.append(end.isoformat())
     if event_type:
         sql.append("AND type = ?")
         args.append(event_type)

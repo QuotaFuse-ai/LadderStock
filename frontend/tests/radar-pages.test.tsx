@@ -50,9 +50,9 @@ const PAGES = [
   {
     path: '/calendar',
     title: '事件日历',
-    empty: '这个月没有可用事件',
-    error: '事件日历取数失败',
-    partial: '部分小节降级',
+    empty: '还没有自选或持仓',
+    error: '事件时间轴取数失败',
+    partial: '部分来源取数失败',
   },
   {
     path: '/pool',
@@ -168,45 +168,73 @@ describe('资讯雷达 /news', () => {
 })
 
 describe('事件日历 /calendar', () => {
-  it('月历定位到 10-28，当日面板列出解禁与规则抽取事件', async () => {
+  it('按日时间轴：解禁 / 业绩预告 / 公告分组，类型 chip 带数量', async () => {
     renderAt('/calendar?demo=1')
     expect(await screen.findByRole('heading', { name: '事件日历' })).toBeTruthy()
 
-    const grid = await screen.findByRole('group', { name: '2026-10 月历' })
-    fireEvent.click(within(grid).getByRole('button', { name: /2026-10-28/ }))
+    expect(await screen.findByText('11月3日 周二')).toBeTruthy()
+    expect(screen.getByText('4 天后')).toBeTruthy()
+    expect(screen.getByText('限售解禁：股权激励限售股份')).toBeTruthy()
+    expect(screen.getByText('关于召开 2026 年第三次临时股东会的通知')).toBeTruthy()
 
-    expect(await screen.findByText('限售解禁：定增机构配售股份')).toBeTruthy()
-    expect(screen.getByText('贵州茅台：2026 年第一次临时股东大会决议公告')).toBeTruthy()
-    expect(screen.getByText('非日历数据源')).toBeTruthy()
-    expect(screen.getByRole('link', { name: /当日资讯/ }).getAttribute('href')).toBe(
-      '/news?date=2026-10-28&demo=1',
-    )
+    expect(screen.getByRole('button', { name: /解禁 1/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /业绩预告 2/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /公告 1/ })).toBeTruthy()
   })
 
-  it('no_source 小节写明原因与上游补法', async () => {
+  it('类型筛选隐藏对应事件，再点恢复', async () => {
     renderAt('/calendar?demo=1')
-    expect(
-      await screen.findByText('上游没有「财报预约披露时间表」工具，无法给出确切披露日期。'),
-    ).toBeTruthy()
-    expect(
-      screen.getByText(
-        '上游需求：TickHub-CN 增加 disclosure_schedule 数据集（预约披露日 + 变更标记）。',
-      ),
-    ).toBeTruthy()
-    expect(screen.getAllByText('暂无数据源')).toHaveLength(3)
+    const chip = await screen.findByRole('button', { name: /解禁 1/ })
+    expect(screen.getByText('限售解禁：股权激励限售股份')).toBeTruthy()
+
+    fireEvent.click(chip)
+    expect(screen.queryByText('限售解禁：股权激励限售股份')).toBeNull()
+    expect(screen.getByText('关于召开 2026 年第三次临时股东会的通知')).toBeTruthy()
+
+    fireEvent.click(chip)
+    expect(await screen.findByText('限售解禁：股权激励限售股份')).toBeTruthy()
   })
 
-  it('empty 态仍有五个小节的「暂无数据源」说明，不画空白格', async () => {
+  it('过了日子的事件进「已经过了日子、还没处理」', async () => {
+    renderAt('/calendar?demo=1')
+    expect(await screen.findByText('已经过了日子、还没处理（1）')).toBeTruthy()
+    expect(screen.getByText('业绩预告：预减')).toBeTruthy()
+  })
+
+  it('没查到的写明三类无源与补法，并提示时间轴没有不代表真的没有', async () => {
+    renderAt('/calendar?demo=1')
+    expect(await screen.findByText('没查到的（3）')).toBeTruthy()
+    expect(screen.getByText(/财报预约披露日：/)).toBeTruthy()
+    expect(screen.getByText(/股东大会：/)).toBeTruthy()
+    expect(screen.getByText(/政策发布窗口：/)).toBeTruthy()
+    expect(screen.getByText(/时间轴没有不代表真的没有/)).toBeTruthy()
+  })
+
+  it('empty 态：没有自选持仓时给出去加自选的入口', async () => {
     renderAt('/calendar?demo=1&state=empty')
-    expect(await screen.findByText('这个月没有可用事件')).toBeTruthy()
-    expect(screen.getAllByText('暂无数据源')).toHaveLength(5)
+    expect(await screen.findByText('还没有自选或持仓')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '去加自选' }).getAttribute('href')).toBe(
+      '/my-stocks?tab=watch',
+    )
+    expect(screen.getByText('没查到的（3）')).toBeTruthy()
+  })
+
+  it('7 / 30 / 90 天切换并持久化到 ldst.calendar.days', async () => {
+    window.localStorage.removeItem('ldst.calendar.days')
+    renderAt('/calendar?demo=1')
+    fireEvent.click(await screen.findByRole('radio', { name: '7 天' }))
+
+    await waitFor(() => expect(window.localStorage.getItem('ldst.calendar.days')).toBe('7'))
+    // 7 天窗口内只剩 11-03 的业绩预告
+    await waitFor(() => expect(screen.queryByText('限售解禁：股权激励限售股份')).toBeNull())
+    window.localStorage.removeItem('ldst.calendar.days')
   })
 
   it('接口 404：空态写「接口未接入」', async () => {
     stubNotFound()
     renderAt('/calendar')
     expect(await screen.findByText('接口未接入')).toBeTruthy()
-    expect(screen.getByText(/GET \/api\/events/)).toBeTruthy()
+    expect(screen.getByText(/GET \/api\/events\/timeline/)).toBeTruthy()
   })
 })
 

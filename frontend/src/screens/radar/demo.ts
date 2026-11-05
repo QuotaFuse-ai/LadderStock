@@ -17,6 +17,7 @@ import {
   type CalendarExtractedEvent,
   type CandidatePoolPayload,
   type EventCalendarPayload,
+  type EventTimelinePayload,
   type ExtractedEvent,
   type NewsItem,
   type NewsSourceStatus,
@@ -26,6 +27,9 @@ import {
   type PositionsPayload,
   type RadarSource,
   type RadarStatus,
+  type TimelineDays,
+  type TimelineEvent,
+  type TimelineSymbol,
 } from '../../api/radar'
 
 export type DemoVariant = 'full' | 'partial' | 'empty'
@@ -471,6 +475,122 @@ export function demoCalendar(
   }
 }
 
+// ---------------------------------------------------------------- 事件时间轴
+
+const TIMELINE_SYMBOLS: TimelineSymbol[] = [
+  { symbol: '600519', name: '贵州茅台', origin: ['自选', '持有'] },
+  { symbol: '000001', name: '平安银行', origin: ['自选'] },
+]
+
+const TIMELINE_EVENTS: TimelineEvent[] = [
+  {
+    date: '2026-11-03',
+    kind: 'earnings',
+    symbol: '600519',
+    name: '贵州茅台',
+    title: '业绩预告：预增',
+    detail: ['归属于上市公司股东的净利润 预计同比增长约 8.5%'],
+    source: 'earnings_preview',
+    fetched_at: '2026-10-30T15:05:00+08:00',
+    estimated: false,
+    ref: 'demo-timeline-earnings-1',
+  },
+  {
+    date: '2026-11-16',
+    kind: 'lockup',
+    symbol: '600519',
+    name: '贵州茅台',
+    title: '限售解禁：股权激励限售股份',
+    detail: ['可流通(万股) 411.2', '占总股本 0.0328'],
+    source: 'lockup_calendar',
+    fetched_at: '2026-10-30T15:05:00+08:00',
+    estimated: false,
+    ref: 'demo-timeline-lockup-1',
+  },
+  {
+    date: '2026-11-16',
+    kind: 'disclosure',
+    symbol: '600519',
+    name: '贵州茅台',
+    title: '关于召开 2026 年第三次临时股东会的通知',
+    detail: ['原文：公司定于 2026 年 11 月 16 日召开临时股东会'],
+    source: 'cninfo_announcements',
+    fetched_at: null,
+    estimated: false,
+    ref: 'demo-timeline-disclosure-1',
+  },
+  {
+    date: '2026-11-24',
+    kind: 'earnings',
+    symbol: '000001',
+    name: '平安银行',
+    title: '业绩预告：预增',
+    detail: ['营业收入 预计同比增长约 12%'],
+    source: 'earnings_preview',
+    fetched_at: '2026-10-30T15:05:00+08:00',
+    estimated: false,
+    ref: 'demo-timeline-earnings-2',
+  },
+]
+
+const TIMELINE_OVERDUE: TimelineEvent[] = [
+  {
+    date: '2026-10-28',
+    kind: 'earnings',
+    symbol: '000001',
+    name: '平安银行',
+    title: '业绩预告：预减',
+    detail: ['归属于上市公司股东的净利润 预计同比下降约 3%'],
+    source: 'earnings_preview',
+    fetched_at: '2026-10-30T15:05:00+08:00',
+    estimated: false,
+    ref: 'demo-timeline-overdue-1',
+  },
+]
+
+const TIMELINE_GAPS = [
+  '财报预约披露日：TickHub-CN 没有「预约披露时间表」工具；业绩预告的 notice_date 不是预约披露日，不能替代（补源：上游需求：th-cn 增加交易所预约披露时间表）',
+  '股东大会：公告抽取只收原文写了日期的条目，没有结构化会议日历（补源：上游需求：公告抽取增加 meeting_date 字段）',
+  '政策发布窗口：政策发布没有固定日历，事件发生后才可确认（补源：上游需求：QuotaFuse Wire 提供 policy_calendar 数据集）',
+]
+
+function addDays(iso: string, days: number): string {
+  const date = new Date(`${iso}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return iso
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
+export function demoTimeline(
+  variant: DemoVariant,
+  query: { days: TimelineDays },
+): EventTimelinePayload {
+  const from = DEMO_NEWS_DATE
+  const to = addDays(from, query.days)
+  const inWindow = (event: TimelineEvent) => event.date >= from && event.date <= to
+  const symbols = variant === 'empty' ? [] : TIMELINE_SYMBOLS
+  const events = variant === 'empty' ? [] : TIMELINE_EVENTS.filter(inWindow)
+  const gaps =
+    variant === 'partial'
+      ? [...TIMELINE_GAPS, '业绩预告（earnings_preview）：本轮取数失败，上游超时；没有补日期']
+      : TIMELINE_GAPS
+  const status: RadarStatus =
+    variant === 'empty' ? 'missing' : variant === 'partial' ? 'partial' : 'ok'
+
+  return {
+    local_only: true,
+    store: 'local_sqlite',
+    window: { from, to, days: query.days },
+    generated_at: '2026-10-30T15:05:00+08:00',
+    symbols,
+    events,
+    overdue: variant === 'empty' ? [] : TIMELINE_OVERDUE.filter(event => event.date >= addDays(from, -query.days)),
+    gaps,
+    data_source_status: status,
+    notice: '只列来源给出的日期；没查到的写进 gaps，时间轴没有不代表真的没有（DEC-018 R6）',
+  }
+}
+
 // ---------------------------------------------------------------- 候选池
 
 const POOL_CANDIDATES: PoolCandidate[] = [
@@ -788,6 +908,7 @@ export function demoSource(variant: DemoVariant): RadarSource {
   return {
     news: async (query) => demoNews(variant, query),
     calendar: async (query) => demoCalendar(variant, query),
+    timeline: async (query) => demoTimeline(variant, query),
     pool: async (query) => demoPool(variant, query),
     positions: async () => positionsFrom(holdings),
     addPosition: async (input) => {

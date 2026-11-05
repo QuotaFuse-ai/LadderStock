@@ -138,40 +138,33 @@ function watchlistPayload(withItems: boolean) {
 
 function calendarPayload(withEntries: boolean) {
   return {
-    payload: {
-      month: '2026-11',
-      window: { start: '2026-11-01', end: '2026-11-30' },
-      codes: [],
-      sections: [
-        {
-          key: 'earnings_disclosure',
-          label: '财报预约披露日',
-          status: withEntries ? 'sourced' : 'no_source',
-          entries: withEntries
-            ? [
-                {
-                  id: 'evt-1',
-                  date: '2026-11-10',
-                  code: '600000',
-                  section: 'earnings_disclosure',
-                  label: '预约披露三季报',
-                  detail: null,
-                  source: 'tickhub_cn',
-                },
-              ]
-            : [],
-          note: withEntries ? null : '上游没有预约披露时间表工具',
-          data_source: withEntries ? 'tickhub_cn' : null,
-          degraded: false,
-          reason: withEntries ? null : '上游没有「财报预约披露时间表」工具',
-          ask: null,
-        },
-      ],
-      extracted_events: [],
-      data_source_status: withEntries ? 'ok' : 'missing',
-      reason: withEntries ? null : '五个小节都没有数据源',
-      data_as_of: '2026-11-01',
-    },
+    local_only: true,
+    store: 'local_sqlite',
+    window: { from: '2026-11-01', to: '2026-12-01', days: 30 },
+    generated_at: '2026-11-01T09:00:00+08:00',
+    symbols: withEntries
+      ? [{ symbol: '600000', name: '浦发银行', origin: ['自选'] }]
+      : [],
+    events: withEntries
+      ? [
+          {
+            date: '2026-11-10',
+            kind: 'lockup',
+            symbol: '600000',
+            name: '浦发银行',
+            title: '限售解禁：首发原股东限售股份',
+            detail: ['可流通(万股) 100'],
+            source: 'lockup_calendar',
+            fetched_at: '2026-11-01T09:00:00+08:00',
+            estimated: false,
+            ref: 'lockup_calendar:2026-11-10:600000',
+          },
+        ]
+      : [],
+    overdue: [],
+    gaps: ['财报预约披露日：上游没有「财报预约披露时间表」工具，无法给出确切披露日期。'],
+    data_source_status: withEntries ? 'ok' : 'missing',
+    notice: '只列来源给出的日期；没查到的写进 gaps，时间轴没有不代表真的没有',
   }
 }
 
@@ -196,13 +189,13 @@ describe('只读页进入即取数（QUOT-441）', () => {
     expect(document.body.textContent).not.toContain('先运行')
   })
 
-  it('/calendar：挂载后立即 GET /api/events，不需要先跑命令', async () => {
-    const calls = stubApi({ '/api/events': calendarPayload(true) })
+  it('/calendar：挂载后立即 GET /api/events/timeline，不需要先跑命令', async () => {
+    const calls = stubApi({ '/api/events/timeline': calendarPayload(true) })
     renderAt('/calendar', <CalendarScreen />)
 
     expect(await screen.findByRole('heading', { name: '事件日历', level: 1 })).toBeTruthy()
-    expect((await screen.findAllByText(/财报预约披露日/)).length).toBeGreaterThan(0)
-    expect(calls.filter((url) => url.startsWith('/api/events')).length).toBeGreaterThanOrEqual(1)
+    expect(await screen.findByText('限售解禁：首发原股东限售股份')).toBeTruthy()
+    expect(calls.filter((url) => url.startsWith('/api/events/timeline')).length).toBeGreaterThanOrEqual(1)
     expect(document.body.textContent).not.toContain('先运行')
   })
 })
@@ -227,10 +220,10 @@ describe('只读页空态：缺什么 + 为什么 + 页内重试（QUOT-441）',
   })
 
   it('/calendar 空态不出现终端指令，保留页内刷新', async () => {
-    stubApi({ '/api/events': calendarPayload(false) })
+    stubApi({ '/api/events/timeline': calendarPayload(false) })
     renderAt('/calendar', <CalendarScreen />)
 
-    expect(await screen.findByText('这个月没有可用事件')).toBeTruthy()
+    expect(await screen.findByText('还没有自选或持仓')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: '刷新' }).length).toBeGreaterThan(0)
     expect(document.body.textContent).not.toContain('先运行')
   })

@@ -5,6 +5,7 @@
  *
  *   GET    /api/news?date=&until=&source=&code=&limit=   资讯流（envelope，domain=news）
  *   GET    /api/events?month=&code=                      事件日历（envelope，domain=news）
+ *   GET    /api/events/timeline?days=7|30|90             按日事件时间轴（**平面 JSON**，回环独占）
  *   GET    /api/pool?date=&limit=                        候选池（envelope，domain=sentiment）
  *   GET    /api/indices                                  首页指数条（**envelope**，domain=sentiment）
  *   GET    /api/watchlist                                我的自选（**平面 JSON**，回环独占）
@@ -79,6 +80,15 @@ export const CALENDAR_SECTION_LABEL: Record<string, string> = {
   shareholder_meeting: '股东大会',
   policy_window: '政策发布窗口',
   earnings_preview: '业绩预告',
+}
+
+/** 时间轴三类 kind 的固定顺序与文案（QUOT-436）。 */
+export const TIMELINE_KIND_ORDER = ['lockup', 'earnings', 'disclosure'] as const
+
+export const TIMELINE_KIND_LABEL: Record<TimelineKind, string> = {
+  lockup: '解禁',
+  earnings: '业绩预告',
+  disclosure: '公告',
 }
 
 /** 候选池五个分项：固定顺序、固定键名（SPEC-CANDIDATE-POOL §3.1）。 */
@@ -229,6 +239,41 @@ export interface EventCalendarPayload {
   data_source_status: RadarStatus
   reason: string | null
   data_as_of: string | null
+}
+
+/** QUOT-436：按日事件时间轴。只收来源写出来的日期，没查到的在 `gaps` 里。 */
+export type TimelineKind = 'lockup' | 'earnings' | 'disclosure'
+
+export interface TimelineEvent {
+  date: string
+  kind: TimelineKind
+  symbol: string
+  name: string
+  title: string
+  detail: string[]
+  source: string
+  fetched_at: string | null
+  estimated: boolean
+  ref: string
+}
+
+export interface TimelineSymbol {
+  symbol: string
+  name: string
+  origin: Array<'自选' | '持有'>
+}
+
+export interface EventTimelinePayload {
+  local_only: true
+  store: string
+  window: { from: string; to: string; days: number }
+  generated_at: string
+  symbols: TimelineSymbol[]
+  events: TimelineEvent[]
+  overdue: TimelineEvent[]
+  gaps: string[]
+  data_source_status: RadarStatus
+  notice: string
 }
 
 export interface PoolCandidate {
@@ -501,6 +546,12 @@ export interface CalendarQuery {
   limit?: number
 }
 
+export type TimelineDays = 7 | 30 | 90
+
+export interface TimelineQuery {
+  days: TimelineDays
+}
+
 export interface PoolQuery {
   date: string
   limit?: number
@@ -513,6 +564,7 @@ export interface PositionsQuery {
 export interface RadarSource {
   news(query: NewsQuery, signal?: AbortSignal): Promise<NewsStreamPayload>
   calendar(query: CalendarQuery, signal?: AbortSignal): Promise<EventCalendarPayload>
+  timeline(query: TimelineQuery, signal?: AbortSignal): Promise<EventTimelinePayload>
   pool(query: PoolQuery, signal?: AbortSignal): Promise<CandidatePoolPayload>
   positions(query: PositionsQuery, signal?: AbortSignal): Promise<PositionsPayload>
   addPosition(input: PositionInput, signal?: AbortSignal): Promise<PositionMutation>
@@ -867,6 +919,75 @@ export function parseEventCalendar(raw: unknown): EventCalendarPayload {
       text(payload.reason) ||
       (failed.length > 0 ? failed.map((section) => `${section.label}：${section.reason}`).join('；') : null),
     data_as_of: text(payload.data_as_of) || text(window.start) || null,
+  }
+}
+
+// ---------------------------------------------------------------- 事件时间轴
+
+const TIMELINE_KINDS: readonly TimelineKind[] = ['lockup', 'earnings', 'disclosure']
+
+function parseTimelineEvent(value: unknown): TimelineEvent | null {
+  const row = record(value)
+  if (!row) return null
+  const date = text(row.date).slice(0, 10)
+  const title = text(row.title)
+  const kind = text(row.kind) as TimelineKind
+  if (!date || !title || !TIMELINE_KINDS.includes(kind)) return null
+  const raw = text(row.fetched_at)
+  return {
+    date,
+    kind,
+    symbol: text(row.symbol),
+    name: text(row.name),
+    title,
+    detail: stringList(row.detail),
+    source: text(row.source),
+    fetched_at: raw || null,
+    estimated: flag(row.estimated),
+    ref: text(row.ref),
+  }
+}
+
+function parseTimelineSymbol(value: unknown): TimelineSymbol | null {
+  const row = record(value)
+  if (!row) return null
+  const symbol = text(row.symbol)
+  if (!symbol) return null
+  const origin = stringList(row.origin).filter(
+    (item): item is '自选' | '持有' => item === '自选' || item === '持有',
+  )
+  return { symbol, name: text(row.name), origin }
+}
+
+export function parseEventTimeline(raw: unknown): EventTimelinePayload {
+  const payload = payloadOf(raw, '事件时间轴')
+  const window = record(payload.window) ?? {}
+  const symbols = list(payload.symbols)
+    .map(parseTimelineSymbol)
+    .filter((item): item is TimelineSymbol => item !== null)
+  const parseEvents = (value: unknown): TimelineEvent[] =>
+    list(value)
+      .map(parseTimelineEvent)
+      .filter((item): item is TimelineEvent => item !== null)
+
+  return {
+    local_only: true,
+    store: text(payload.store),
+    window: {
+      from: text(window.from),
+      to: text(window.to),
+      days: numberOrNull(window.days) ?? 30,
+    },
+    generated_at: text(payload.generated_at),
+    symbols,
+    events: parseEvents(payload.events),
+    overdue: parseEvents(payload.overdue),
+    gaps: stringList(payload.gaps),
+    data_source_status: parseStatus(
+      payload.data_source_status,
+      symbols.length === 0 ? 'missing' : 'ok',
+    ),
+    notice: text(payload.notice),
   }
 }
 
@@ -1272,6 +1393,13 @@ export const httpRadarSource: RadarSource = {
           ['code', query.codes],
           ['limit', query.limit],
         ]),
+        { signal },
+      ),
+    ),
+  timeline: async (query, signal) =>
+    parseEventTimeline(
+      await request<unknown>(
+        withParams('/api/events/timeline', [['days', query.days]]),
         { signal },
       ),
     ),
