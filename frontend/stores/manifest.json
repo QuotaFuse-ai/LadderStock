@@ -40,6 +40,15 @@
       "persist": true,
       "recoverable": true,
       "description": "盯盘阈值设置：涨幅阈值 / 冷却时间 / 封板检测开关，刷新、重启、多窗口共用；越界值拒绝写入"
+    },
+    {
+      "id": "thesisNotes",
+      "persistKey": "thesis_notes",
+      "module": "stores/thesisNotes.ts",
+      "kind": "draft",
+      "persist": true,
+      "recoverable": true,
+      "description": "我的论点与判断：论点 + 到期必判的裁决点 + 判定留痕；私有内容只存本机，刷新、重启、多窗口共用"
     }
   ]
 }

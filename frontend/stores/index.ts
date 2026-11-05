@@ -22,6 +22,26 @@ export { useWatchSettings } from './watchSettings'
 export type { WatchSettingsState, WatchSettingsValues } from './watchSettings'
 
 export {
+  useThesisNotes,
+  overdueCount,
+  overduePoints,
+  daysPastDue,
+  VERDICT_LABEL,
+  THESIS_NOTES_CHANNEL,
+  THESIS_NOTES_MESSAGE,
+} from './thesisNotes'
+export type {
+  DecisionPoint,
+  JudgeInput,
+  NewPointInput,
+  NewThesisInput,
+  ThesisNotesState,
+  ThesisRecord,
+  Verdict,
+  VerdictEntry,
+} from './thesisNotes'
+
+export {
   STORE_META_LIST,
   STATE_BACKEND,
   STATE_INDEX_FILE,
@@ -34,6 +54,7 @@ import { useWatchSnapshot } from './watchSnapshot'
 import { useReviewDraft } from './reviewDraft'
 import { useValidationDraft } from './validationDraft'
 import { useWatchSettings } from './watchSettings'
+import { useThesisNotes } from './thesisNotes'
 
 /** 供启动流程 / 测试一次性拿到全部分片。 */
 export const ALL_STORES = [
@@ -41,4 +62,5 @@ export const ALL_STORES = [
   useReviewDraft,
   useValidationDraft,
   useWatchSettings,
+  useThesisNotes,
 ] as const

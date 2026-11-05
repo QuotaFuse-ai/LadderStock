@@ -30,7 +30,13 @@ PERSISTED_STORE_PATH = FRONTEND / "persist" / "persistedStore.ts"
 runner = CliRunner()
 
 #: 前端已实现分片（journal_draft 仍只在配置里预留）；顺序与 config/state.yaml 一致。
-IMPLEMENTED_STORES = ("watch_snapshot", "review_draft", "validation_draft", "watch_settings")
+IMPLEMENTED_STORES = (
+    "watch_snapshot",
+    "review_draft",
+    "validation_draft",
+    "watch_settings",
+    "thesis_notes",
+)
 
 
 def _state_config() -> dict[str, Any]:
