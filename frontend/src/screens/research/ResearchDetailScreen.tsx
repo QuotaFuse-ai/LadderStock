@@ -41,8 +41,14 @@ import {
 } from '../../components/ui'
 import { MarkdownView } from '../../components/research/MarkdownView'
 import { ProvenanceDrawer } from '../../components/research/ProvenanceDrawer'
+import { ResearchSymbolBar } from '../../components/research/ResearchSymbolBar'
 import { StageRail } from '../../components/research/StageRail'
 import { LinkButton, NUMBER_CHIP, PercentileBar } from '../../components/research/bits'
+import { CompareSection } from '../../components/research/sections/CompareSection'
+import { EventSection } from '../../components/research/sections/EventSection'
+import { ReportSection } from '../../components/research/sections/ReportSection'
+import { ThesisSection } from '../../components/research/sections/ThesisSection'
+import { ResearchAiDock } from '../../components/research/sections/AiDock'
 import { ValuationBasisPanel } from '../../components/valuation/ValuationBasisPanel'
 import { createDemoValuationLoader } from './demo'
 import {
@@ -61,12 +67,14 @@ import { useAsync } from '../../lib/useAsync'
 import OverviewTab from './OverviewTab'
 
 /**
- * `/research/:code` 个股深挖（R8）。
+ * `/research/:code` 个股深挖（R8 / QUOT-448）。
  *
- * QUOT-400 起拆成两个 tab（记在 `?tab=`，概览默认，照参考实现的块序）：
- * - 概览：行情快照 + K 线走势 + 财报卡，只读本机缓存，**不依赖六段产物**；
- * - 深度研究：左列三张卡（公司画像 / 财务趋势 / 风险），右列盈利预期 + 六段状态；
- *   估值单独给 FinanceCoffer 面板与「估值分位」。
+ * 页头是标的搜索（两个分页共用，换股只改代码、保留 `demo / variant / date / state`）：
+ * - 概览（默认）：行情条 → 走势 K 线 → 财报前瞻（`OverviewTab` 内的 `TrendSection` / `EarningsSection`）。
+ * - 深度研究：六段状态卡 + 估值（既有产物，入口不删）。
+ * 两个 tab 之后是共用的 `pageTail`：事件回看 → 我的论点与判断 → 研究报告 →
+ * 报告对比 / 分享卡 → 研究助手抽屉；块序与 tab 无关，照参考库 `pages/Research.tsx`。
+ * 各块都是独立组件文件，后续任务只改自己那一个。
  * 所有数字都来自落盘产物、缓存或注入的 facts，缺失显示 `—` + 原因，不补 0、不计算新比率。
  */
 
@@ -92,6 +100,12 @@ const RISK_METRICS = [
 ]
 
 type DrawerState = { stage: ResearchStageName; citation: number | null } | null
+
+/**
+ * 换标的时原样带走的取证参数（QUOT-448）。`tab` 不在此列：换股票后回到概览，
+ * 免得刚输完代码就落到上一只的深度研究里。
+ */
+const CARRIED_PARAMS = ['demo', 'variant', 'date', 'state'] as const
 
 function stageBadgeTone(stage: ResearchStage): 'ok' | 'warn' | 'danger' | 'neutral' {
   if (stage.status === 'ok') return 'ok'
@@ -574,6 +588,20 @@ export default function ResearchDetailScreen() {
     setParams(query, { replace: true })
   }
 
+  /**
+   * 顶部搜索选中一只后换页（QUOT-448）：只改路径里的代码，当前 `demo / variant /
+   * date / state` 原样带过去，取证链接不会因为换股断掉。
+   */
+  const openResearch = (next: string) => {
+    const query = new URLSearchParams()
+    for (const key of CARRIED_PARAMS) {
+      const value = params.get(key)
+      if (value !== null) query.set(key, value)
+    }
+    const search = query.toString()
+    navigate(`/research/${encodeURIComponent(next)}${search ? `?${search}` : ''}`)
+  }
+
   // 概览不依赖六段产物：拿到数据就渲染，拿不到按缺数态处理
   const overviewRequest = useAsync<ResearchOverview>(
     (signal) => view.source.overview(view.code as string, signal),
@@ -658,6 +686,10 @@ export default function ResearchDetailScreen() {
     <Tabs<DeepDiveTab> tabs={DEEP_DIVE_TABS} value={tab} onChange={pickTab} ariaLabel="个股深挖视图" />
   )
 
+  // 顶部标的搜索两个分页共用（参考库页头口径）：换股只改代码，不改 tab
+  const displayName = view.name ?? overviewRequest.data?.name ?? null
+  const symbolBar = <ResearchSymbolBar code={view.code} name={displayName} onOpen={openResearch} />
+
   const header = (
     <PageHeader
       title={title}
@@ -693,12 +725,37 @@ export default function ResearchDetailScreen() {
     />
   )
 
+  /**
+   * 页脚的共用块（QUOT-448 整页编排）：事件回看 → 我的论点与判断 →
+   * 研究报告 → 报告对比（含分享卡）→ 研究助手抽屉。
+   *
+   * 放在分页之外、两个 tab 共用同一份，块序不随 tab 变化；每个块按验收要求
+   * 独立成文件，后续任务（QUOT-451/452/453…）只改自己那一个文件。
+   */
+  const pageTail = (
+    <>
+      <EventSection code={view.code} date={view.date} />
+      <ThesisSection code={view.code} name={displayName} />
+      <ReportSection
+        code={view.code}
+        href={view.code ? reportHref(view.code, view) : null}
+        stages={{ total: stages.length, ready: artifacts.size }}
+      />
+      <CompareSection
+        code={view.code}
+        reportHref={view.code ? reportHref(view.code, view) : null}
+      />
+      <ResearchAiDock code={view.code} name={displayName} scope={{ tab, date: view.date }} />
+    </>
+  )
+
   if (tab === 'overview') {
     // 代码不合法是路径级问题，与 tab 无关：概览也直接给错误出口
     if (!view.code) {
       return (
         <div className="flex flex-col gap-5">
           {header}
+          {symbolBar}
           {tabsBar}
           <ErrorBlock
             title="证券代码不合法"
@@ -712,6 +769,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {symbolBar}
         {tabsBar}
         <OverviewTab
           overview={overviewRequest.data}
@@ -720,6 +778,7 @@ export default function ResearchDetailScreen() {
           requesting={overviewRequest.status === 'loading'}
           reload={overviewRequest.reload}
         />
+        {pageTail}
       </div>
     )
   }
@@ -728,6 +787,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {symbolBar}
         {tabsBar}
         <DetailSkeleton />
       </div>
@@ -751,6 +811,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {symbolBar}
         {tabsBar}
         <ErrorBlock {...info} onRetry={view.code ? view.reload : undefined} />
         <Link
@@ -767,6 +828,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {symbolBar}
         {tabsBar}
         <OfflineBanner onRetry={view.reload} />
         <EmptyState
@@ -784,6 +846,7 @@ export default function ResearchDetailScreen() {
     return (
       <div className="flex flex-col gap-5">
         {header}
+        {symbolBar}
         {tabsBar}
         <EmptyState
           icon={<FileText aria-hidden="true" />}
@@ -851,6 +914,7 @@ export default function ResearchDetailScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+      {symbolBar}
       {tabsBar}
 
       {view.state === 'partial' && problems.length > 0 && (
@@ -914,6 +978,8 @@ export default function ResearchDetailScreen() {
           </SectionCard>
         </div>
       </div>
+
+      {pageTail}
 
       <p className="text-caption leading-body text-text-muted">
         口径：六段产物只读自本机落盘文件；`facts` 缺失显示 —，不补 0、不重算比率。
