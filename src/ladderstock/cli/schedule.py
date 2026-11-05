@@ -1,8 +1,9 @@
 """`ldst schedule list|run`：定时任务表（APScheduler）与单轮 tick。
 
 调度表落 `config/schedule.yaml`（JSON Schema 校验，`ldst config validate` 一并检查），
-默认 **09:05 盘前提醒**（notify）、**盘中 6 时点快照**（snapshot，QUOT-286）、
-**15:05 收盘对账**（reconcile）与 **15:35 收盘全量同步**（sync_close，QUOT-347）。
+默认 **09:05 盘前摘要**（digest）、**盘中 6 时点快照**（snapshot，QUOT-286）、
+**15:05 收盘对账**（reconcile）、**15:35 收盘全量同步**（sync_close，QUOT-347）、
+**15:40 收盘摘要**与 **16:15 自选变化**（digest，DEC-058）。
 
 `trigger` 支持两种写法：`HH:MM` 定点（cron）与 `Ns` 间隔（如 `30s` / `60s`）。
 盘中高频（QUOT-352 / DEC-056）就是两条间隔任务：`snapshot_fast`（关键盘面快照）与
@@ -11,8 +12,10 @@
 边界（DEC-006 / DEC-004）：
 
 - 任务只跑本机动作（发本机通知、对账本地已落盘数据、复用 sync 链路按治理取 peer 读数、
-  生成当日复盘）；
+  生成当日复盘、生成三类本机摘要）；
 - 单个任务失败只记 `degraded` / `skipped`，不拖垮整轮、不中断调度器；
+- 摘要任务（`kind: digest`）先写 `inbox` 行再投递通知：通知失败只把 `delivery` 记为
+  `degraded`，收件箱里那条**仍然在**；同一 `dedupe_key` 重跑只更新同一条。
 - `schedule run --once` 跑一轮就退出（冒烟、手动补跑都靠它）；不带 `--once` 是长驻
   调度器，按 `scheduler.timezone` 的本地时间触发，Ctrl+C 优雅退出。
 - snapshot 的时点窗口在 `core.intraday` 判定：窗口外只记 `skipped`，**不补跑**。
@@ -47,6 +50,7 @@ DEFAULT_MISFIRE_GRACE_SECONDS = 300
 
 #: 任务类型白名单。`snapshot_fast` / `sync_batch` 是盘中高频（QUOT-352）：
 #: 前者按秒级间隔抓「昨日涨停股 × 此刻报价」，后者按间隔刷一条批量数据集。
+#: `digest` 是三类本机摘要（DEC-058）：生成正文 + 写 `inbox` + 投递通知。
 JOB_KINDS: tuple[str, ...] = (
     "notify",
     "reconcile",
@@ -54,6 +58,7 @@ JOB_KINDS: tuple[str, ...] = (
     "sync_close",
     "snapshot_fast",
     "sync_batch",
+    "digest",
 )
 
 
@@ -87,13 +92,17 @@ CLOSE_SYNC_DATASETS: tuple[str, ...] = (
 # 解析失败并按退出码 3 报出来。
 DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
     {
-        "id": "premarket_reminder",
-        "name": "09:05 盘前提醒",
-        "kind": "notify",
+        # QUOT-432 / DEC-058：`premarket_reminder`（静态口播文案）退役，换成
+        # `premarket_digest`——同一触发时刻（09:05）改为按真实行情生成摘要并写收件箱。
+        # 旧 id 不再出现在默认表里；用户自己的 schedule.yaml 里若还留着
+        # `kind: notify` 的 `premarket_reminder`，照常生效（`notify` 类型没有删除）。
+        "id": "premarket_digest",
+        "name": "09:05 盘前摘要",
+        "kind": "digest",
+        "summary": "premarket",
         "trigger": "09:05",
         "enabled": True,
         "channel": notifier.CHANNEL_CONSOLE,
-        "message": "盘前提醒：核对今日盯盘阈值、昨日晋级率与自选池，09:25 前把下单计划定下来",
     },
     {
         "id": "snapshot_0925",
@@ -166,6 +175,24 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "trigger": "15:35",
         "enabled": True,
     },
+    {
+        "id": "close_digest",
+        "name": "15:40 收盘摘要",
+        "kind": "digest",
+        "summary": "close",
+        "trigger": "15:40",
+        "enabled": True,
+        "channel": notifier.CHANNEL_CONSOLE,
+    },
+    {
+        "id": "watch_changes",
+        "name": "16:15 自选变化",
+        "kind": "digest",
+        "summary": "watch",
+        "trigger": "16:15",
+        "enabled": True,
+        "channel": notifier.CHANNEL_CONSOLE,
+    },
 )
 
 
@@ -186,6 +213,13 @@ def _schema_path() -> Path:
     if local.is_file():
         return local
     return project_root() / "config" / "schema" / "schedule.schema.json"
+
+
+def _digest_summaries() -> tuple[str, ...]:
+    """摘要类型取值（懒导入：`watch.digest` 会拉行情缓存模块，配置校验不该为它付费）。"""
+    from ladderstock.watch.digest import SUMMARIES
+
+    return SUMMARIES
 
 
 def _structural_problems(data: Mapping[str, Any]) -> list[str]:
@@ -218,6 +252,12 @@ def _structural_problems(data: Mapping[str, Any]) -> list[str]:
             problems.append(f"{where}/kind: 只支持 {' / '.join(JOB_KINDS)}")
         if kind == "sync_batch" and not job.get("dataset"):
             problems.append(f"{where}/dataset: sync_batch 必须声明数据集")
+        if kind == "digest":
+            summary = job.get("summary")
+            if summary not in _digest_summaries():
+                problems.append(
+                    f"{where}/summary: digest 必须是 {' / '.join(_digest_summaries())}"
+                )
     return problems
 
 
@@ -486,6 +526,72 @@ def _run_sync_batch(
     }
 
 
+def _run_digest(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """生成摘要 → 写 `inbox` → 投递本机通知（DEC-058）。
+
+    顺序是刻意的：**先落库再投递**。桌面后端缺失 / 通知命令失败只把结果记成
+    `degraded`，收件箱里那条仍然可读（页面是比通知更可靠的查看入口）。
+    摘要本身 skipped（周末、过 11:30 的盘前补跑）时不写库——不给用户塞空提醒。
+    """
+    from ladderstock.journal import inbox as inbox_store
+    from ladderstock.watch import digest as digest_module
+
+    summary = str(job.get("summary") or "")
+    outcome = digest_module.build(
+        str(job.get("id") or ""),
+        summary,
+        now=now,
+        timezone=timezone,
+        root=root,
+        registry=registry,
+    )
+    base = {
+        "date": outcome.trade_day,
+        "summary": summary,
+        "dedupe_key": outcome.dedupe_key,
+    }
+    if outcome.status == digest_module.STATUS_SKIPPED:
+        return {**base, "status": "skipped", "detail": outcome.detail}
+    if outcome.status != digest_module.STATUS_OK:
+        return {**base, "status": "failed", "detail": outcome.detail}
+
+    item = inbox_store.add_item(
+        str(job.get("id") or ""),
+        str(job.get("name") or ""),
+        outcome.title,
+        outcome.lines,
+        outcome.link,
+        outcome.dedupe_key,
+        "digest",
+        root=root,
+        now=now,
+    )
+    delivery = notifier.send(
+        job.get("channel"),
+        outcome.title,
+        "\n".join(outcome.lines),
+    )
+    status = "ok" if delivery.ok else "degraded"
+    detail = (
+        f"收件箱已写入 {item['id']}（{len(outcome.lines)} 行）；"
+        f"通知[{delivery.channel}]：{delivery.detail}"
+    )
+    return {
+        **base,
+        "status": status,
+        "detail": detail,
+        "inbox_id": item["id"],
+        "delivery": delivery.as_dict(),
+    }
+
+
 def run_job(
     job: Mapping[str, Any],
     *,
@@ -545,6 +651,12 @@ def run_job(
         elif kind == "sync_batch":
             result.update(
                 _run_sync_batch(
+                    job, now=now, timezone=timezone, root=root, registry=registry
+                )
+            )
+        elif kind == "digest":
+            result.update(
+                _run_digest(
                     job, now=now, timezone=timezone, root=root, registry=registry
                 )
             )

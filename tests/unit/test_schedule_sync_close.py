@@ -325,7 +325,7 @@ def test_schedule_schema_enum_contains_sync_close() -> None:
 
 
 def test_default_table_declares_sync_close_at_1535() -> None:
-    assert len(DEFAULT_JOBS) == 11
+    assert len(DEFAULT_JOBS) == 13
     jobs = [job for job in _default_table()["jobs"] if job.get("kind") == "sync_close"]
     assert len(jobs) == 1
     assert jobs[0]["trigger"] == "15:35"

@@ -1422,36 +1422,38 @@ def _envelope(
 # 闸门与路由
 # --------------------------------------------------------------------------- #
 
-async def _positions_guard(request: Request) -> None:
-    """持仓的回环独占闸门（SPEC-RADAR-PAGES §6.1 / 同 DEC-015 §3.1）。
+async def privacy_read_guard(request: Request, *, denied: str, subject: str) -> None:
+    """本机隐私读面的回环独占闸门（持仓 / 自选 / 收件箱共用这一份实现）。
 
     判据与控制面 / 日志面同一套函数；**不看 `LDST_CONTROL_ENABLED`**（那是写面总开关），
     也**不看远程访问 Token**——Token 管「谁连得进来」，不管「隐私数据该不该出去」。
     """
     if not control_plane.is_loopback_host(control_plane.client_host(request.client)):
-        raise HTTPException(status_code=403, detail=POSITIONS_DENIED)
+        raise HTTPException(status_code=403, detail=denied)
     if not control_plane.host_header_allowed(request):
         raise HTTPException(
             status_code=403,
             detail=(
                 f"Host 不在白名单内：{request.headers.get('host') or '(空)'}"
-                "（持仓只接受 127.0.0.1 / localhost / ::1）"
+                f"（{subject}只接受 127.0.0.1 / localhost / ::1）"
             ),
         )
 
 
-async def _positions_write_guard(request: Request) -> None:
-    """持仓写面闸门 = 读面闸门 + 写方法来源证据（QUOT-285）。
+async def privacy_write_guard(
+    request: Request, *, denied: str, subject: str, write_denied: str
+) -> None:
+    """本机隐私写面闸门 = 读面闸门 + 写方法来源证据（QUOT-285 / DEC-055）。
 
     写方法必须是同源 `Origin` 或显式 `X-LDST-Client: 1`（复用控制面的
     `write_source_allowed`，不新增第二种鉴权）；带 `Sec-Fetch-Site` 时只认
     `same-origin` / `none`。删除也走 `POST`，所以这条判据覆盖全部写操作。
     """
-    await _positions_guard(request)
+    await privacy_read_guard(request, denied=denied, subject=subject)
     if request.method.upper() not in control_plane.WRITE_METHODS:
         return
     if not control_plane.write_source_allowed(request):
-        raise HTTPException(status_code=403, detail=POSITIONS_WRITE_DENIED)
+        raise HTTPException(status_code=403, detail=write_denied)
     site = request.headers.get("sec-fetch-site")
     if site is not None and site.strip().lower() not in control_plane.SAME_ORIGIN_SITES:
         raise HTTPException(
@@ -1461,47 +1463,36 @@ async def _positions_write_guard(request: Request) -> None:
                 "（只接受 same-origin / none）"
             ),
         )
+
+
+async def _positions_guard(request: Request) -> None:
+    """持仓的回环独占闸门（SPEC-RADAR-PAGES §6.1 / 同 DEC-015 §3.1）。"""
+    await privacy_read_guard(request, denied=POSITIONS_DENIED, subject="持仓")
+
+
+async def _positions_write_guard(request: Request) -> None:
+    """持仓写面闸门 = 读面闸门 + 写方法来源证据（QUOT-285）。"""
+    await privacy_write_guard(
+        request,
+        denied=POSITIONS_DENIED,
+        subject="持仓",
+        write_denied=POSITIONS_WRITE_DENIED,
+    )
 
 
 async def _watchlist_guard(request: Request) -> None:
-    """自选读面的回环独占闸门：**照抄 `_positions_guard`，一条闸门都不改**（DEC-052 §2.1）。
-
-    同样**不看 `LDST_CONTROL_ENABLED`**（关的是控制面，不是本机数据面），
-    也**不看远程访问 Token**——Token 管「谁连得进来」，不管「隐私数据该不该出去」。
-    """
-    if not control_plane.is_loopback_host(control_plane.client_host(request.client)):
-        raise HTTPException(status_code=403, detail=WATCHLIST_DENIED)
-    if not control_plane.host_header_allowed(request):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Host 不在白名单内：{request.headers.get('host') or '(空)'}"
-                "（自选只接受 127.0.0.1 / localhost / ::1）"
-            ),
-        )
+    """自选读面的回环独占闸门：**照抄 `_positions_guard` 的判据，一条都不改**（DEC-052 §2.1）。"""
+    await privacy_read_guard(request, denied=WATCHLIST_DENIED, subject="自选")
 
 
 async def _watchlist_write_guard(request: Request) -> None:
-    """自选写面闸门 = 读面闸门 + 写方法来源证据（QUOT-419 / DEC-055）。
-
-    与 `_positions_write_guard` 同一条判据，一步都不放宽：写方法必须是同源
-    `Origin` 或显式 `X-LDST-Client: 1`；带 `Sec-Fetch-Site` 时只认
-    `same-origin` / `none`。删除同样走 `POST`，这条闸门覆盖全部写操作。
-    """
-    await _watchlist_guard(request)
-    if request.method.upper() not in control_plane.WRITE_METHODS:
-        return
-    if not control_plane.write_source_allowed(request):
-        raise HTTPException(status_code=403, detail=WATCHLIST_WRITE_DENIED)
-    site = request.headers.get("sec-fetch-site")
-    if site is not None and site.strip().lower() not in control_plane.SAME_ORIGIN_SITES:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"跨站来源被拒绝：Sec-Fetch-Site={site}"
-                "（只接受 same-origin / none）"
-            ),
-        )
+    """自选写面闸门 = 读面闸门 + 写方法来源证据（QUOT-419 / DEC-055）。"""
+    await privacy_write_guard(
+        request,
+        denied=WATCHLIST_DENIED,
+        subject="自选",
+        write_denied=WATCHLIST_WRITE_DENIED,
+    )
 
 
 def build_router(plane: RadarPlane) -> APIRouter:
@@ -1687,5 +1678,7 @@ __all__ = [
     "parse_limit",
     "parse_month_param",
     "parse_sources",
+    "privacy_read_guard",
+    "privacy_write_guard",
     "stream_status",
 ]
