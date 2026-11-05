@@ -444,8 +444,14 @@ def sync_batch_pool(
         )
 
     try:
+        # `trade_date` 必须带上：缓存回放按 `data/intraday/<date>/<dataset>/` 槽目录找，
+        # 缺了日期就看不到今天写下的槽，全挂时只会判「无缓存可回放」（QUOT-422）。
+        # 日期取槽写入用的同一个口径，保证「写进哪个目录」和「从哪个目录回放」一致。
         outcome = registry.fetch(
-            dataset, params=tool_params(dataset, codes=codes), ignore_cooldown=True
+            dataset,
+            trade_date=intraday.local_moment(None, None).date(),
+            params=tool_params(dataset, codes=codes),
+            ignore_cooldown=True,
         )
     except SourceUnavailable as exc:
         detail = f"{pool_desc}批量调用失败：{_one_line(exc)}"
@@ -504,7 +510,12 @@ def sync_batch_pool(
         )
         if not slot["written"]:
             detail += "；本分钟槽已存在，按先到先得未覆盖"
-        if degraded:
+        if outcome.from_cache:
+            detail += (
+                f"；{envelope.source_detail}"
+                "（上游不可用，已按当日盘中槽回放，槽内数据非本轮实测）"
+            )
+        elif degraded:
             detail += f"；{envelope.source_detail}（部分批次未取到，已按降级落槽）"
 
     _log(f"  {dataset} {status}：{detail}，水位 {before or '-'} → {after or '-'}")
@@ -529,7 +540,7 @@ def sync_batch_pool(
         "days": [envelope.data_as_of] if envelope.data_as_of else [],
         "source": outcome.source,
         "optional": optional,
-        "from_cache": False,
+        "from_cache": outcome.from_cache,
         "watermark_before": before,
         "watermark_after": after,
         "detail": detail,
