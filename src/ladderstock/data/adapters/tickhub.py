@@ -99,6 +99,12 @@ class RowShape:
     require_code: bool = True
     date_keys: tuple[str, ...] = ()
     rename: tuple[tuple[str, str], ...] = ()
+    #: 同一 `data` 里的**第二个记录数组**：`(键, 标签字段, 标签值)`。
+    #: `lockup_expiry` 把「历史解禁」和「未来解禁」分成 `history` / `upcoming` 两个数组，
+    #: 两者是同一种事件、只是状态不同；不合并就只剩一半的日期序列。
+    extra_rows: tuple[tuple[str, str, str], ...] = ()
+    #: 主数组行的标签 `(字段, 值)`，与 `extra_rows` 的标签同构（`history` / `upcoming`）。
+    row_tag: tuple[str, str] | None = None
 
 
 ROW_SHAPES: dict[str, RowShape] = {
@@ -135,6 +141,29 @@ ROW_SHAPES: dict[str, RowShape] = {
         passthrough=("code",),
         rename=(("name", "board_name"), ("code", "board_code")),
     ),
+    # ---- 财报前瞻 / 事件回看（QUOT-446，2026-11-05 实测）----
+    # 五个事件工具里四个回的是**行列表**（data 直接是数组），形状表只用来钉
+    # 「哪一列是事件日」：上游的公告日有 notice_date / latest_notice 两种叫法，
+    # 不统一到 trade_date 的话，按日分区会把 2008 年的事件全写进今天。
+    # `rows_key=""` 表示「data 本身是列表」——normalize_records 用它区分「没登记形状」。
+    "earnings_preview": RowShape("", date_keys=("notice_date",)),
+    "holder_trades": RowShape("", date_keys=("notice_date",)),
+    "institution_survey": RowShape("", date_keys=("notice_date",)),
+    "share_buyback": RowShape("", date_keys=("latest_notice",)),
+    # 一致预期是整包快照（consensus / history 两个嵌套数组，无行概念）：
+    # 整包落一行，`as_of → trade_date`，payload 保留嵌套结构给接口按需取。
+    "consensus_forecast": RowShape("", date_keys=("as_of",)),
+    # 限售解禁：history + upcoming 两个数组都展开，`lift_status` 标来源。
+    "lockup_calendar": RowShape(
+        "history",
+        passthrough=("code",),
+        date_keys=("date",),
+        extra_rows=(("upcoming", "lift_status", "upcoming"),),
+        row_tag=("lift_status", "history"),
+    ),
+    # 指数日线：`data.klines` 与 daily_k 同形状，但指数行没有 `period/adjust`
+    # 这类口径字段可透传；`code` 从 `data.code` 透传（000300）。
+    "index_daily": RowShape("klines", passthrough=("code",), date_keys=("date",)),
 }
 
 #: `tdx_daily_package` 是 daily_k 的备源工具，形状按工具名登记（同数据集两种形状）
@@ -161,6 +190,16 @@ CODE_POOL_DATASETS: frozenset[str] = frozenset(
         # QUOT-362：`stock_concept_blocks` 的 `code` 必填，且是**当日候选池那批代码**
         # 的逐只快照（上游 TTL 60 秒），不扩全市场。
         "concept_membership",
+        # QUOT-446：财报前瞻 / 事件回看六个工具全部要 `code`（`lockup_expiry` 的
+        # schema 是 required）。`earnings_preview` 早先按全市场取，被上游 limit=500
+        # 截断，正是「2000 行里没有 600000」的根因，所以一并纳入代码池。
+        "earnings_preview",
+        "consensus_forecast",
+        "holder_trades",
+        "institution_survey",
+        "share_buyback",
+        "lockup_calendar",
+        "index_daily",
     }
 )
 
@@ -168,9 +207,15 @@ CODE_POOL_DATASETS: frozenset[str] = frozenset(
 #: 显式带上是为了让请求里的口径和落库口径是同一句话，不靠 peer 默认值。
 #: `industry_fund_flow` 必须显式带 `board_type=industry`：该工具默认虽然也是行业，
 #: 但概念板块与行业板块是两套榜（DEC-018 的口径标注不允许靠默认值）。
+#: QUOT-446 的两个窗口参数同样是口径、不是默认值：
+#: - `index_daily` 一次回溯 800 个交易日（上游上限 2000），覆盖「回看 3 年 ×
+#:   前 5 后 20 交易日」的事件窗口；
+#: - `lockup_expiry` 的 `forward_days` 取上游上限 730 天，未来解禁尽量看全。
 FIXED_PARAMS: dict[str, dict[str, Any]] = {
     "daily_k": {"period": "daily", "adjust": "qfq"},
     "industry_fund_flow": {"board_type": "industry", "page": 1, "page_size": 300},
+    "index_daily": {"days": 800},
+    "lockup_calendar": {"forward_days": 730},
 }
 
 #: 增量水位在各工具里的入参名。`tencent_kline` 没有 `since`，只有 `start`（含当日，
@@ -193,6 +238,17 @@ BATCH_DATASETS: frozenset[str] = frozenset({"fund_flow_realtime"})
 def needs_codes_batch(dataset: str) -> bool:
     """该数据集是否走「一次调用取多只」的批量路径。"""
     return dataset in BATCH_DATASETS
+
+
+#: `code` **可选**的数据集：不带代码时是当日全市场榜（`dragon_tiger` 的日常口径），
+#: 显式 `--codes` 时按代码回补历史（QUOT-446 的事件回看要 600000 的多年龙虎榜）。
+#: 只有显式代码才切到逐只扇出——调度上的默认口径仍是全市场，不能被回补动作改掉。
+CODE_OPTIONAL_DATASETS: frozenset[str] = frozenset({"dragon_tiger"})
+
+
+def accepts_optional_code(dataset: str) -> bool:
+    """显式给了代码池时，该数据集是否应该改走逐只取数。"""
+    return dataset in CODE_OPTIONAL_DATASETS
 
 
 def tool_params(
@@ -315,15 +371,20 @@ def normalize_records(
 ) -> tuple[Any, date | None]:
     """真实 `data` → 待落库记录（列表或快照对象）+ payload 自己声明的日期。
 
-    - 列表：原样返回（旧行为，桩测试不受影响）；
+    - 列表：**登记了形状**的按形状处理（行内日期归一、代码必填、标记字段），
+      没登记的（`dragon_tiger` 这类旧形状）原样返回，保持 QUOT-233 的既有口径；
     - 对象且登记了形状：展开 `rows_key`，透传口径字段（先按 `rename` 改记录行的键，
-      避免同名字段盖掉透传值），`date → trade_date`，
-      丢弃没有代码的个股行；
+      避免同名字段盖掉透传值），`date → trade_date`，丢弃没有代码的个股行；
+      `rows_key` 为空串时整包落**一行**（快照型数据集，如一致预期）；
+      声明了 `extra_rows` 的，把其余数组按标签合并进同一批行（限售解禁 history/upcoming）；
     - 对象但没登记形状（`market_sentiment` 这类快照）：整包返回，由 `sync` 落一行。
     """
     header_date = _first_date(data, HEADER_DATE_KEYS) if isinstance(data, dict) else None
     if isinstance(data, list):
-        return data, header_date
+        shape = shape_for(dataset, tool)
+        if shape is None or shape.rows_key:
+            return data, header_date
+        return _shape_rows(shape, data, {}, header_date, header_date), header_date
     if not isinstance(data, dict):
         raise LadderStockError(
             f"{dataset}：TickHub 返回的 data 既不是列表也不是对象（{type(data).__name__}）",
@@ -333,6 +394,11 @@ def normalize_records(
     shape = shape_for(dataset, tool)
     if shape is None:
         return data, header_date
+
+    defaults = {key: data[key] for key in shape.passthrough if key in data}
+    if shape.rows_key == "":
+        rows = _shape_rows(shape, [data], defaults, header_date, header_date)
+        return rows, header_date
 
     raw_rows = data.get(shape.rows_key)
     if isinstance(raw_rows, Mapping):
@@ -345,12 +411,40 @@ def normalize_records(
             EXIT_SOURCE,
         )
 
-    defaults = {key: data[key] for key in shape.passthrough if key in data}
+    rows = _shape_rows(shape, raw_rows, defaults, header_date, header_date)
+    for key, field, value in shape.extra_rows:
+        extra = data.get(key)
+        if isinstance(extra, Mapping):
+            extra = list(extra.values())
+        if not isinstance(extra, list):
+            continue
+        rows.extend(
+            _shape_rows(
+                shape, extra, defaults, header_date, header_date,
+                tag=(field, value),
+            )
+        )
+    return rows, header_date
+
+
+def _shape_rows(
+    shape: RowShape,
+    raw_rows: list[Any],
+    defaults: dict[str, Any],
+    header_date: date | None,
+    payload_date: date | None,
+    *,
+    tag: tuple[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """把一批原始行按形状归一成记录行（`trade_date` / 透传字段 / 代码过滤 / 标签）。"""
+    label = tag or shape.row_tag
     rows: list[dict[str, Any]] = []
     for item in raw_rows:
         if not isinstance(item, dict):
             continue
         row = {**defaults, **_renamed(item, shape.rename)}
+        if label is not None:
+            row[label[0]] = label[1]
         date_keys = shape.date_keys or ROW_DATE_KEYS
         if (day := _row_date(row, date_keys)) is not None:
             row["trade_date"] = day.isoformat()
@@ -359,7 +453,7 @@ def normalize_records(
         if shape.require_code and not record_code(row):
             continue
         rows.append(row)
-    return rows, header_date
+    return rows
 
 
 # --------------------------------------------------------------------------- #

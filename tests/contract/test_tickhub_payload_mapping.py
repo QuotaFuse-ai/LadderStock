@@ -138,6 +138,68 @@ RECORD_CASES: list[tuple[str, str, str, int, date, str]] = [
         date(2026, 11, 3),
         "medium",
     ),
+    # ---- 财报前瞻 / 事件回看（QUOT-446，2026-11-05 实测）----
+    # 四只事件工具回的是**行列表**：`data` 本身是数组，行内公告日叫 `notice_date`
+    # （回购叫 `latest_notice`），统一归一到 `trade_date` 才能按日分区。
+    (
+        "earnings_forecast.json",
+        "earnings_preview",
+        "earnings_forecast",
+        3,
+        date(2008, 10, 30),
+        "medium",
+    ),
+    (
+        "holder_trades.json",
+        "holder_trades",
+        "holder_trades",
+        3,
+        date(2025, 3, 5),
+        "medium",
+    ),
+    (
+        "institution_survey.json",
+        "institution_survey",
+        "institution_survey",
+        0,
+        date(2026, 11, 5),
+        "medium",
+    ),
+    (
+        "share_buyback.json",
+        "share_buyback",
+        "share_buyback",
+        0,
+        date(2026, 11, 5),
+        "medium",
+    ),
+    # 一致预期是整包快照（consensus / history 嵌套数组）：整包一行，`as_of` 是数据日
+    (
+        "ths_eps_forecast.json",
+        "consensus_forecast",
+        "ths_eps_forecast",
+        1,
+        date(2026, 11, 5),
+        "low",
+    ),
+    # 限售解禁：history + upcoming 两个数组都展开成行，`lift_status` 标来源
+    (
+        "lockup_expiry.json",
+        "lockup_calendar",
+        "lockup_expiry",
+        3,
+        date(2026, 11, 5),
+        "medium",
+    ),
+    # 指数日线：`data.klines` 与 daily_k 同形状，`code` 由 `data.code` 透传
+    (
+        "index_kline.json",
+        "index_daily",
+        "index_kline",
+        3,
+        date(2026, 5, 15),
+        "high",
+    ),
 ]
 
 #: 快照型：整包一行，不硬凑记录
@@ -306,6 +368,79 @@ def test_concept_membership_rename_keeps_the_stock_code() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 财报前瞻 / 事件回看（QUOT-446）
+# --------------------------------------------------------------------------- #
+
+def test_event_rows_land_on_the_announcement_day() -> None:
+    """事件行的日期是公告日，不是抓取日：`holder_trades` 的 `notice_date` 必须归一。"""
+    records = from_tool_response(
+        "holder_trades", load("holder_trades.json"), tool="holder_trades"
+    ).payload["records"]
+
+    assert [row["trade_date"] for row in records] == [row["notice_date"] for row in records]
+    assert [row["direction"] for row in records] == ["增持", "增持", "减持"]
+
+
+def test_earnings_preview_uses_notice_date_not_report_date() -> None:
+    """业绩预告的日期是披露日（`notice_date`），`report_date` 是报告期，两者不能混。"""
+    records = from_tool_response(
+        "earnings_preview", load("earnings_forecast.json"), tool="earnings_forecast"
+    ).payload["records"]
+
+    assert [row["trade_date"] for row in records] == [row["notice_date"] for row in records]
+    assert all(row["trade_date"] != row["report_date"] for row in records)
+
+
+def test_share_buyback_uses_latest_notice_as_event_day() -> None:
+    """回购工具的事件日是 `latest_notice`（真实返回里 600000 为空，这里锁日期键）。"""
+    row = {"code": "600000", "latest_notice": "2025-04-01", "buyback_amount": 1.2}
+
+    records, _ = normalize_records("share_buyback", "share_buyback", [row])
+
+    assert records[0]["trade_date"] == "2025-04-01"
+
+
+def test_lockup_calendar_merges_history_and_upcoming_with_status_tags() -> None:
+    """限售解禁的 `history` / `upcoming` 是同一种事件，两个数组都要展开并带状态标签。"""
+    doc = copy.deepcopy(load("lockup_expiry.json"))
+    doc["data"]["upcoming"] = [
+        {"date": "2027-03-01", "type": "定向增发机构配售股份", "shares_10k": 100.0}
+    ]
+
+    records = from_tool_response("lockup_calendar", doc, tool="lockup_expiry").payload["records"]
+
+    assert [row["lift_status"] for row in records] == ["history"] * 3 + ["upcoming"]
+    assert records[-1]["trade_date"] == "2027-03-01"
+    assert all(row["code"] == "600000" for row in records)
+
+
+def test_consensus_forecast_is_one_snapshot_row_with_nested_arrays() -> None:
+    """一致预期整包一行，嵌套的 consensus/history 原样留在 payload 里给接口取。"""
+    records = from_tool_response(
+        "consensus_forecast", load("ths_eps_forecast.json"), tool="ths_eps_forecast"
+    ).payload["records"]
+
+    assert len(records) == 1
+    row = records[0]
+    assert row["code"] == "600000"
+    assert row["trade_date"] == row["as_of"] == "2026-11-05"
+    assert len(row["consensus"]) == 3
+    assert row["consensus"][0]["mean"] == 1.53
+    assert row["analyst_count"] == 12
+
+
+def test_index_daily_passes_the_index_code_and_uses_kline_dates() -> None:
+    """指数日线没有 period/adjust 可透传，只有指数代码；日期与 daily_k 同一口径。"""
+    envelope = from_tool_response("index_daily", load("index_kline.json"), tool="index_kline")
+    records = envelope.payload["records"]
+
+    assert len(records) == 3
+    assert all(row["code"] == "000300" for row in records)
+    assert [row["trade_date"] for row in records] == ["2026-05-13", "2026-05-14", "2026-05-15"]
+    assert envelope.data_as_of == date(2026, 5, 15)
+
+
+# --------------------------------------------------------------------------- #
 # 快照型
 # --------------------------------------------------------------------------- #
 
@@ -415,6 +550,16 @@ def test_code_pool_datasets_are_the_ones_requiring_code() -> None:
             "valuation_history",
             # QUOT-362：`stock_concept_blocks` 的 `code` 必填，池子来自当日涨停池
             "concept_membership",
+            # QUOT-446：财报前瞻 / 事件回看七只全部是逐股工具（`lockup_expiry` 的
+            # schema 里 `code` 是 required）；`earnings_preview` 原先按全市场取，
+            # 被上游 limit=500 截断——600000 不在返回里就是那条 0 行的根因。
+            "earnings_preview",
+            "consensus_forecast",
+            "holder_trades",
+            "institution_survey",
+            "share_buyback",
+            "lockup_calendar",
+            "index_daily",
         }
     )
     assert set(CODE_POOL_DATASETS) == {d for d in DATASET_CATALOG if needs_code(d)}
