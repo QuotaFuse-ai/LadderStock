@@ -146,15 +146,15 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
     cleanup()
     renderBoth('/weekly?demo=1&variant=partial')
     await screen.findByText('演示数据 · ?demo=1')
-    // §5.2：`partial`=数据集缺项 → danger；缺的那段写原因，不画空图
-    expect(bodyText()).toContain('部分缺失')
+    // 演示源是异步 load：必须等变体内容落地，只等徽标会在慢机上抢跑（CI 实测）
+    await waitFor(() => expect(bodyText()).toContain('部分缺失'))
     expect(bodyText()).toContain('样本不足')
 
     cleanup()
     renderBoth('/weekly?demo=1&variant=empty')
     await screen.findByText('演示数据 · ?demo=1')
     // empty 分支仍是「头部 + 指标卡阵」，卡片值一律 `—` 而不是 0
-    expect(bodyText()).toContain('还没有可用周报')
+    await waitFor(() => expect(bodyText()).toContain('还没有可用周报'))
     expect(screen.getByText('温度均值')).toBeTruthy()
   })
 
