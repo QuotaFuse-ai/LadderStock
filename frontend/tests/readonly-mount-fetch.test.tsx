@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import CalendarScreen from '../src/screens/radar/CalendarScreen'
 import PositionsScreen from '../src/screens/radar/PositionsScreen'
-import WatchlistScreen from '../src/screens/watchlist/WatchlistScreen'
+import MyStocksScreen from '../src/screens/my-stocks/MyStocksScreen'
 
 /**
  * QUOT-441 / DEC-061：只读页进入即取数。
  *
- * 三屏（`/positions` `/watchlist` `/calendar`）挂载后必须立刻调用各自只读 GET，
+ * 三屏（`/positions` `/my-stocks?tab=watch` `/calendar`）挂载后必须立刻调用各自只读 GET，
  * 不允许出现「先跑命令才出数」的路径；空态只写缺什么 + 为什么 + 页内重试，
  * 也不再出现「先运行 ldst …」式终端指令。
  */
@@ -38,10 +38,12 @@ function stubApi(routes: Record<string, unknown>) {
 }
 
 function renderAt(path: string, element: ReactElement) {
+  // 查询串只进 initialEntries，`Route path` 只认 pathname（`/my-stocks?tab=watch`）
+  const pathname = path.split('?')[0]
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path={path} element={element} />
+        <Route path={pathname} element={element} />
       </Routes>
     </MemoryRouter>,
   )
@@ -184,9 +186,9 @@ describe('只读页进入即取数（QUOT-441）', () => {
     expect(document.body.textContent).not.toContain('先运行')
   })
 
-  it('/watchlist：挂载后立即 GET /api/watchlist，不需要先跑命令', async () => {
-    const calls = stubApi({ '/api/watchlist': watchlistPayload(true) })
-    renderAt('/watchlist', <WatchlistScreen />)
+  it('/my-stocks?tab=watch：挂载后立即 GET /api/watchlist，不需要先跑命令', async () => {
+    const calls = stubApi({ '/api/watchlist': watchlistPayload(true), '/api/portfolio': { items: [] } })
+    renderAt('/my-stocks?tab=watch', <MyStocksScreen />)
 
     expect(await screen.findByRole('heading', { name: '我的自选', level: 1 })).toBeTruthy()
     expect(await screen.findByText('600000')).toBeTruthy()
@@ -215,9 +217,9 @@ describe('只读页空态：缺什么 + 为什么 + 页内重试（QUOT-441）',
     expect(document.body.textContent).not.toContain('先运行')
   })
 
-  it('/watchlist 空态不出现终端指令，保留页内刷新', async () => {
-    stubApi({ '/api/watchlist': watchlistPayload(false) })
-    renderAt('/watchlist', <WatchlistScreen />)
+  it('/my-stocks?tab=watch 空态不出现终端指令，保留页内刷新', async () => {
+    stubApi({ '/api/watchlist': watchlistPayload(false), '/api/portfolio': { items: [] } })
+    renderAt('/my-stocks?tab=watch', <MyStocksScreen />)
 
     expect(await screen.findByText('还没有自选')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: '刷新' }).length).toBeGreaterThan(0)

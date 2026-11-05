@@ -45,7 +45,7 @@ import { withParams } from '../industry/links'
 import { useDemoEnabled, usePositionsView } from './useRadarView'
 
 /**
- * P-R10-04 我的持仓（`/positions`）。
+ * P-R10-04 我的持仓（QUOT-431 起挂在 `/my-stocks?tab=hold`；旧的 `/positions` 只做重定向）。
  *
  * 隐私边界（DEC-006 / DEC-020 / SPEC §6.3）：
  * - 持仓只存在于本机 SQLite 与本次请求的 React 内存里；页面不写 localStorage / IndexedDB，
@@ -803,7 +803,7 @@ export default function PositionsScreen() {
                 <Button variant="secondary" onClick={reload}>刷新</Button>
                 {!demo && (
                   <a
-                    href={withParams('/positions', { demo: '1', state: forced })}
+                    href={withParams('/my-stocks', { tab: 'hold', demo: '1', state: forced })}
                     className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
                   >
                     查看演示数据

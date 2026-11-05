@@ -117,13 +117,18 @@ type WatchSeed = {
   prevClose: number
   price: number | null
   priceReason?: string
+  /** 估值三项：不给即「这项没取到」，页面显示 `—` 并用 `metrics_reason` 解释 */
+  pe?: number | null
+  pb?: number | null
+  turnover?: number | null
 }
 
 const WATCH_SEEDS: WatchSeed[] = [
-  { code: '600000', name: '浦发银行', market: 'SH', prevClose: 10.06, price: 10.09 },
-  { code: '300750', name: '宁德时代', market: 'SZ', prevClose: 240.19, price: 249.32 },
-  { code: '002594', name: '比亚迪', market: 'SZ', prevClose: 100, price: 103.5 },
-  { code: '600519', name: '贵州茅台', market: 'SH', prevClose: 1255.84, price: 1263 },
+  { code: '600000', name: '浦发银行', market: 'SH', prevClose: 10.06, price: 10.09, pe: 5.8, pb: 0.52, turnover: 0.61 },
+  { code: '300750', name: '宁德时代', market: 'SZ', prevClose: 240.19, price: 249.32, pe: 21.6, pb: 4.18, turnover: 1.24 },
+  { code: '002594', name: '比亚迪', market: 'SZ', prevClose: 100, price: 103.5, pe: 23.4, pb: 4.92, turnover: 1.03 },
+  // 三项里只取到市盈率：PB / 换手同样按缺省 `—`，不折成 0
+  { code: '600519', name: '贵州茅台', market: 'SH', prevClose: 1255.84, price: 1263, pe: 24.9 },
   // 停牌 / 没进这批报价：现价就是取不到，不拿成本价顶替（§4.2）
   {
     code: '688981',
@@ -134,6 +139,20 @@ const WATCH_SEEDS: WatchSeed[] = [
     priceReason: 'spot_quote 这批响应里没有 688981 的行',
   },
 ]
+
+/** 缺哪项就写哪项的中文名；三项齐全返回 `null`（与后端 `metrics_reason` 同口径）。 */
+function missingMetricNames(
+  pe: number | null | undefined,
+  pb: number | null | undefined,
+  turnover: number | null | undefined,
+): string | null {
+  const missing = [
+    pe == null ? '市盈率' : null,
+    pb == null ? '市净率' : null,
+    turnover == null ? '换手率' : null,
+  ].filter((name): name is string => name !== null)
+  return missing.length === 0 ? null : `${missing.join('、')}没有取到`
+}
 
 function watchlistOf(seed: WatchSeed) {
   const price = seed.price
@@ -151,6 +170,10 @@ function watchlistOf(seed: WatchSeed) {
     price_as_of: price === null ? null : DEMO_QUOTE_AT,
     price_status: price === null ? 'unavailable' : 'ok',
     price_reason: price === null ? (seed.priceReason ?? '现价未取到') : null,
+    pe_ttm: seed.pe ?? null,
+    pb: seed.pb ?? null,
+    turnover_pct: seed.turnover ?? null,
+    metrics_reason: missingMetricNames(seed.pe, seed.pb, seed.turnover),
   }
 }
 

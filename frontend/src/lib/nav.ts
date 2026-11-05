@@ -6,7 +6,6 @@ import {
   CalendarRange,
   CandlestickChart,
   ClipboardCheck,
-  Eye,
   Flame,
   Gauge,
   Home,
@@ -19,6 +18,7 @@ import {
   Radar,
   ScrollText,
   Settings,
+  Star,
   Timer,
   TrendingUp,
   Wallet,
@@ -107,14 +107,14 @@ export const NAV_SECTIONS: NavSection[] = [
     pages: [{ to: '/journal', label: '交易日志', icon: ScrollText }],
   },
   // QUOT-304 / DEC-044：把「我自己相关」的持仓与事件日历聚成一组。
-  // QUOT-419：自选有了独立页面（`/watchlist`），补进同一组；提醒仍无已交付页面，不建占位入口。
+  // QUOT-431：自选与持仓合成一页两标签（`/my-stocks?tab=watch|hold`），侧栏只留一个入口；
+  // 提醒（`/inbox`）由 Stage 4 的 I 任务交付后追加，现在不建占位入口。
   {
     key: 'my-stocks',
     label: '我的股票',
     icon: Wallet,
     pages: [
-      { to: '/watchlist', label: '我的自选', icon: Eye },
-      { to: '/positions', label: '我的持仓', icon: Wallet },
+      { to: '/my-stocks', label: '我的股票', icon: Star },
       { to: '/calendar', label: '事件日历', icon: CalendarDays },
     ],
   },

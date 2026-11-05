@@ -65,8 +65,8 @@ afterEach(() => {
 })
 
 describe('顶栏面包屑', () => {
-  it('`/positions` 显示所属一级栏目「我的股票」', () => {
-    renderLayout('/positions')
+  it('`/my-stocks` 显示所属一级栏目「我的股票」', () => {
+    renderLayout('/my-stocks')
     expect(within(topbar()).getByText('我的股票')).toBeTruthy()
     expect(within(topbar()).getByText('工作空间 /')).toBeTruthy()
   })
@@ -78,12 +78,12 @@ describe('顶栏面包屑', () => {
   })
 
   it('顶栏路径与页内大标题是两层：面包屑不替代 PageHeader', () => {
-    renderLayout('/positions')
+    renderLayout('/my-stocks')
     expect(within(topbar()).queryByRole('heading')).toBeNull()
   })
 
   it('navTitleFor 只看 pathname，子路径归到最长前缀', () => {
-    expect(navTitleFor('/positions')).toBe('我的股票')
+    expect(navTitleFor('/my-stocks')).toBe('我的股票')
     expect(navTitleFor('/market?tab=theme')).toBe('市场')
     expect(navTitleFor('/review/ai')).toBe('复盘')
     expect(navTitleFor('/research/600519')).toBe('个股深挖')
@@ -94,7 +94,7 @@ describe('顶栏面包屑', () => {
 
 describe('顶栏隐私开关', () => {
   it('开合时切图标与 aria-pressed，并写本机存储', () => {
-    renderLayout('/positions')
+    renderLayout('/my-stocks')
     const button = within(topbar()).getByRole('button', { name: '打开隐私模式' })
     expect(button.getAttribute('aria-pressed')).toBe('false')
     expect(button.querySelector('svg')?.getAttribute('class')).toContain('lucide-eye')
@@ -160,7 +160,7 @@ describe('移动端抽屉（<768px）', () => {
 
     const dialog = screen.getByRole('dialog', { name: '导航菜单' })
     expect(dialog.getAttribute('id')).toBe('mobile-nav-drawer')
-    expect(within(dialog).getByRole('link', { name: /我的持仓/ })).toBeTruthy()
+    expect(within(dialog).getByRole('link', { name: /事件日历/ })).toBeTruthy()
     expect(within(dialog).getByRole('link', { name: /设置/ })).toBeTruthy()
   })
 
@@ -198,7 +198,7 @@ describe('移动端抽屉（<768px）', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
     const dialog = screen.getByRole('dialog', { name: '导航菜单' })
-    fireEvent.click(within(dialog).getByRole('link', { name: /我的持仓/ }))
+    fireEvent.click(within(dialog).getByRole('link', { name: /事件日历/ }))
 
     expect(screen.queryByRole('dialog', { name: '导航菜单' })).toBeNull()
     expect(within(topbar()).getByText('我的股票')).toBeTruthy()

@@ -10,10 +10,10 @@ import IntradayScreen from './screens/intraday/IntradayScreen'
 import LimitUpScreen from './screens/limitup/LimitUpScreen'
 import JournalScreen from './screens/JournalScreen'
 import MarketScreen from './screens/MarketScreen'
+import MyStocksScreen from './screens/my-stocks/MyStocksScreen'
 import CalendarScreen from './screens/radar/CalendarScreen'
 import NewsScreen from './screens/radar/NewsScreen'
 import PoolScreen from './screens/radar/PoolScreen'
-import PositionsScreen from './screens/radar/PositionsScreen'
 import ResearchDetailScreen from './screens/research/ResearchDetailScreen'
 import ResearchEntryScreen from './screens/research/ResearchEntryScreen'
 import ResearchReportScreen from './screens/research/ResearchReportScreen'
@@ -22,7 +22,6 @@ import SettingsScreen from './screens/SettingsScreen'
 import SignalsScreen from './screens/signals/SignalsScreen'
 import ValidateScreen from './screens/ValidateScreen'
 import WatchScreen from './screens/WatchScreen'
-import WatchlistScreen from './screens/watchlist/WatchlistScreen'
 import WeeklyScreen from './screens/WeeklyScreen'
 import { ROUTE_PATHS, type RoutePath } from './routes'
 
@@ -80,9 +79,12 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/news': <NewsScreen />,
   '/calendar': <CalendarScreen />,
   '/pool': <PoolScreen />,
-  // QUOT-419：自选独立成屏，与持仓并列挂在「我的股票」下
-  '/watchlist': <WatchlistScreen />,
-  '/positions': <PositionsScreen />,
+  // QUOT-431：自选与持仓合成一页两标签（`?tab=watch|hold`）；持仓内容由 Stage 4 G 替换，
+  // 本单先把 `hold` 指向现有持仓屏，路径与导入口径保持不变
+  '/my-stocks': <MyStocksScreen />,
+  // 旧深链保留可用：只重定向，不再单独挂屏（`routes.ts` 的 `NON_PAGE_ROUTES` 同步）
+  '/watchlist': <Navigate to="/my-stocks?tab=watch" replace />,
+  '/positions': <Navigate to="/my-stocks?tab=hold" replace />,
   // R9 产业研究：矩阵 / 单行业 / 规则信号（QUOT-300 起有侧栏一级入口）
   '/industry': <IndustryMatrixScreen />,
   '/industry/:name': <IndustryDetailScreen />,
