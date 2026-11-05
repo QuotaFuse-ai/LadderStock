@@ -726,11 +726,11 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | `--ldst-scrim` | `rgba(4,6,9,.68)` | `rgba(16,24,40,.40)` | 抽屉 / 确认框遮罩 |
 | `--ldst-skeleton` / `-shine` | `#1d2530` / `#26303d` | `#e7ecf3` / `#f2f5f9` | 骨架底 / 扫光 |
 | `--ldst-focus` | `#6ba1ff` | `#1a5fd0` | 焦点环外圈 |
-| `--ldst-chart-*` | 见 `tokens.css:51-59` | 见 `tokens.css:173-181` | 图表专用（grid/axis/band/line/bar-up/bar-down/series-2/threshold/empty） |
+| `--ldst-chart-*` | 见 `tokens.css:51-65` | 见 `tokens.css:208-222` | 图表专用（grid/axis/band/line/bar-up/bar-down/series-2/threshold/empty/tooltip-bg/tooltip-text/ma-1..4） |
 
 **两套色互不复用**：涨跌色只作用于数字/箭头；状态色只作用于徽标/提示条。浅色主题通过 `:root[data-ldst-theme='light']` 覆盖；色盲模式 `:root[data-ldst-colorblind='true']` 把涨/跌换成蓝/橙。
 
-**允许出现色字面量的位置（穷举）**：`styles/tokens.css`（生成物）、`charts/cssVar.ts:11-22` 的 jsdom 兜底与 `:24` 的 `TRANSPARENT`、`tailwind.config.ts` 中 `width.sidebar-rail/menu/drawer/dialog` 等结构尺寸（非颜色）。除此之外业务代码出现 hex/rgba 即为违规——**v1.1 全量扫描结果：18 屏 + `industry/heat.ts` + 各 `demo.ts` 零处真颜色字面量**（QUOT-306 待办里那条"硬编码 hex"是 `IndustryDetailScreen.tsx:410` 的 `&#123;` 实体误报，可直接划掉）。
+**允许出现色字面量的位置（穷举）**：`styles/tokens.css`（生成物）、`charts/cssVar.ts:12-31` 的 jsdom 兜底与 `:34` 的 `TRANSPARENT`、`tailwind.config.ts` 中 `width.sidebar-rail/menu/drawer/dialog` 等结构尺寸（非颜色）。除此之外业务代码出现 hex/rgba 即为违规——**v1.1 全量扫描结果：18 屏 + `industry/heat.ts` + 各 `demo.ts` 零处真颜色字面量**（QUOT-306 待办里那条"硬编码 hex"是 `IndustryDetailScreen.tsx:410` 的 `&#123;` 实体误报，可直接划掉）。
 
 ### 7.2 字体与数字
 

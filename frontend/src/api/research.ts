@@ -20,6 +20,7 @@
  */
 
 import { ApiError } from '../api'
+import { parseKline, type KlineResult } from '../charts/klineView'
 
 export const RESEARCH_STAGES = [
   'company',
@@ -494,6 +495,47 @@ export function parseResearchOverview(payload: unknown, expectedCode?: string): 
     quote: { quote, reason: asString(root.quote_reason) },
     financials: { financials, reason: asString(root.financials_reason) },
   }
+}
+
+// ---------------------------------------------------------------- K 线图（QUOT-410 / QUOT-429）
+
+/**
+ * 周期 / 复权是**后端枚举**：`daily|weekly|monthly`、`qfq|hfq|none`。
+ * 与页面上的「日/周/月」「前/后/不复权」一一对应，原样透传，前端不做聚合与复权。
+ */
+export type KlinePeriod = 'daily' | 'weekly' | 'monthly'
+export type KlineAdjust = 'qfq' | 'hfq' | 'none'
+
+export interface KlineRequest {
+  symbol: string
+  period: KlinePeriod
+  /** 只有 A 股要传；港美股传了只会换来上游一句看不懂的提示，所以不传 */
+  adjust?: KlineAdjust
+}
+
+/**
+ * K 线取数通道：默认走 HTTP，组件自证页与测试可注入替身。
+ * 返回的是解析好的 `KlineResult`，调用方不再碰原始 JSON。
+ */
+export type KlineLoader = (
+  request: KlineRequest,
+  signal?: AbortSignal,
+) => Promise<KlineResult>
+
+const KLINE_TIMEOUT_MS = 20000
+
+/** `GET /api/research/{code}/kline` → 解析后的视图（载荷契约见 SPEC-RESEARCH-PAGES §2.4）。 */
+export async function loadKline(
+  input: KlineRequest,
+  signal?: AbortSignal,
+): Promise<KlineResult> {
+  const params = new URLSearchParams({ period: input.period })
+  if (input.adjust) params.set('adjust', input.adjust)
+  const payload = await request<unknown>(
+    `/api/research/${encodeURIComponent(input.symbol)}/kline?${params.toString()}`,
+    { signal, timeoutMs: KLINE_TIMEOUT_MS },
+  )
+  return parseKline(payload, input.symbol)
 }
 
 // ---------------------------------------------------------------- 传输
