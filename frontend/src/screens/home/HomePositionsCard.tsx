@@ -251,7 +251,7 @@ export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> 
                 <EmptyState
                   compact
                   title="本机还没有持仓"
-                  description="导入 / 新增都在我的持仓页，首页不放新增表单。"
+                  description="在「我的持仓」页点「新增持仓」录入第一条，保存后这里自动出现。"
                 />
               }
             />
@@ -278,10 +278,10 @@ export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> 
             <EmptyState
               compact
               title="本机还没有持仓"
-              description="导入 / 新增都在我的持仓页，首页不放新增表单。"
+              description="在「我的持仓」页点「新增持仓」录入第一条，保存后这里自动出现。"
               action={
                 <Button variant="secondary" onClick={() => navigate('/positions')}>
-                  去我的持仓
+                  去我的持仓新增
                 </Button>
               }
             />

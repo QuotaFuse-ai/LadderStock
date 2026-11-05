@@ -162,7 +162,8 @@ JOURNAL_IMPORT = re.compile(
 #: - `web/radar.py` → `journal.position`：`_positions_guard`（同一套回环 + Host 判据）+
 #:   `Cache-Control: no-store`（SPEC-RADAR-PAGES §6.1 的平面 JSON 只读通道，不进信封、不进 MCP）；
 #: - `web/radar.py` → `journal.watchlist`：`_watchlist_guard`（照抄同一套判据）+
-#:   `Cache-Control: no-store`（DEC-052 批准的自选只读面，只 GET、写面不经 HTTP）。
+#:   `Cache-Control: no-store`（DEC-052 批准的自选读面；写面由 DEC-055 开在本机页面，
+#:   同样是回环独占 + `_watchlist_write_guard` 的来源证据，不进信封 / MCP / AI）。
 #: **其它任何对 `ladderstock.journal` 的引用仍判 FAIL**，规则整体不放开。
 JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
     "src/ladderstock/web/server.py": {

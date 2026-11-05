@@ -21,8 +21,9 @@
 3. **闸门**：`/api/news`、`/api/events`、`/api/pool` 是公开数据，跟 `/api/sentiment` 一样
    属于数据面，不加回环独占；`/api/positions` 是隐私数据，**回环 + `Host` 白名单独占、
    平面 JSON 不进信封**（SPEC-RADAR-PAGES §6.1 / DEC-015 同一条例外）。
-4. **写面只有两条、全是 POST**（QUOT-285）：`POST /api/positions` 按 `code` upsert，
-   `POST /api/positions/{code}/delete` 硬删除。不提供 `PUT` / `PATCH` / `DELETE` 动词，
+4. **写面四条、全是 POST**（QUOT-285 / QUOT-419）：`POST /api/positions` 按 `code` upsert、
+   `POST /api/positions/{code}/delete` 硬删除；`POST /api/watchlist` 加一条自选（幂等）、
+   `POST /api/watchlist/{code}/delete` 删一条。不提供 `PUT` / `PATCH` / `DELETE` 动词，
    也不留软删除标记与审计链——本地 SQLite 就是唯一副本，要留底由用户自己导出。
    写方法在回环 + `Host` 之外还要**同源 `Origin` 或 `X-LDST-Client: 1`**（复用控制面
    的 `write_source_allowed`，不新增第二种鉴权）。
@@ -80,7 +81,7 @@ from ladderstock.journal.position import (
     list_positions,
     remove_position,
 )
-from ladderstock.journal.watchlist import list_watch
+from ladderstock.journal.watchlist import add_watch, list_watch, remove_watch
 from ladderstock.news import store as news_store
 from ladderstock.news import stream as news_stream
 from ladderstock.news.calendar import DEFAULT_LIMIT as CALENDAR_DEFAULT_LIMIT
@@ -144,8 +145,10 @@ WRITE_FAILURE = "本机持仓写入失败"
 POSITIONS_DENIED = "持仓只接受回环来源"
 #: 自选读面（DEC-052）：闸门判据与持仓一模一样，只是文案指向本单编号
 WATCHLIST_DENIED = "自选只接受回环来源（DEC-052）"
-EMPTY_WATCHLIST = "本机还没有自选：用 ldst watch add --code 600000 加一条（写入只在本机）"
+EMPTY_WATCHLIST = "本机还没有自选：在「我的自选」页加一只 6 位代码（只写本机 SQLite）"
 POSITIONS_WRITE_DENIED = "持仓写入缺少来源证据：需要本机页面 Origin，或显式头 X-LDST-Client: 1"
+#: 自选写面（QUOT-419 / DEC-055）：与持仓写面同一条来源证据判据，不改宽松度
+WATCHLIST_WRITE_DENIED = "自选写入缺少来源证据：需要本机页面 Origin，或显式头 X-LDST-Client: 1"
 
 #: `POST /api/positions` 的请求体白名单（**多一个键就 400**，不做模糊匹配）。
 #: 券商账号 / 资金密码类字段不在其中，白名单本身就是拒绝清单。
@@ -314,6 +317,25 @@ def position_write_fields(raw: Any) -> dict[str, Any]:
         "industry": _position_text(raw.get("industry"), "industry"),
         "note": _position_text(raw.get("note"), "note"),
     }
+
+
+def watch_write_code(raw: Any) -> str:
+    """把 `POST /api/watchlist` 的请求体收成一只代码。
+
+    只认 `code` 一个键（多一个就 400）；值接受 6 位数字的字符串或 JSON 整数，
+    前缀归一化交给 `journal.watchlist.clean_code()`——HTTP 层不另写一套代码规则。
+    """
+    if not isinstance(raw, dict):
+        raise _bad_body("请求体必须是 JSON 对象")
+    extra = sorted(set(raw) - {"code"})
+    if extra:
+        raise _bad_body("不接受的字段：" + ", ".join(extra) + "（自选只认 code）")
+    if "code" not in raw:
+        raise _bad_body("缺少必填字段：code")
+    value = raw["code"]
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise _bad_body(f"code 必须是 6 位数字（可带 sh/sz/bj 前缀），收到 {value!r}")
+    return str(value)
 
 
 # --------------------------------------------------------------------------- #
@@ -640,7 +662,7 @@ class RadarPlane:
           `PRIVATE_KEYS` 里，走任何信封出口会被 `strip_private()` 静默删字段。
           顶层用 `items` + `watch_count`；
         - **`note` 不出**（QUOT-380 拍板口径 2）：投影在 `journal/watchlist.py` 就不读那一列；
-        - **空态是 200**：本机没有自选就回 `available=false` + 指向本机 CLI 的文案，
+        - **空态是 200**：本机没有自选就回 `available=false` + 指向「我的自选」页的文案，
           不是 404、不伪造行。
         """
         rows = self._read(lambda: list_watch(root=self.data_root))
@@ -677,6 +699,36 @@ class RadarPlane:
             "price_as_of": strip.as_of,
             "source_detail": strip.source_detail,
             "items": items,
+        }
+
+    # -------------------------------------------------------------- 自选写入 §9.2
+
+    def watch_add(self, body: Any) -> dict[str, Any]:
+        """`POST /api/watchlist`：加一条自选，平面 JSON、不进信封（QUOT-419 / DEC-055）。
+
+        落库走 `journal.watchlist.add_watch()`，与 CLI `ldst watch add` 同一个函数：
+        已存在就原样返回，不刷新 `created_at`、不报错。
+        """
+        code = watch_write_code(body)
+        row = self._write(lambda: add_watch(code, root=self.data_root))
+        return {
+            "ok": True,
+            "local_only": True,
+            "store": "local_sqlite",
+            "watch": row,
+        }
+
+    def watch_delete(self, raw_code: str) -> dict[str, Any]:
+        """`POST /api/watchlist/{code}/delete`：硬删除一条自选；不在清单里就是 404。"""
+        code = str(raw_code or "").strip()
+        if not code:
+            raise _bad_body("code 不能为空")
+        removed = self._write(lambda: remove_watch(code, root=self.data_root))
+        return {
+            "ok": True,
+            "local_only": True,
+            "store": "local_sqlite",
+            "removed": {"code": removed},
         }
 
     # -------------------------------------------------------------- 持仓写入 §6.2
@@ -1109,8 +1161,31 @@ async def _watchlist_guard(request: Request) -> None:
         )
 
 
+async def _watchlist_write_guard(request: Request) -> None:
+    """自选写面闸门 = 读面闸门 + 写方法来源证据（QUOT-419 / DEC-055）。
+
+    与 `_positions_write_guard` 同一条判据，一步都不放宽：写方法必须是同源
+    `Origin` 或显式 `X-LDST-Client: 1`；带 `Sec-Fetch-Site` 时只认
+    `same-origin` / `none`。删除同样走 `POST`，这条闸门覆盖全部写操作。
+    """
+    await _watchlist_guard(request)
+    if request.method.upper() not in control_plane.WRITE_METHODS:
+        return
+    if not control_plane.write_source_allowed(request):
+        raise HTTPException(status_code=403, detail=WATCHLIST_WRITE_DENIED)
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site.strip().lower() not in control_plane.SAME_ORIGIN_SITES:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"跨站来源被拒绝：Sec-Fetch-Site={site}"
+                "（只接受 same-origin / none）"
+            ),
+        )
+
+
 def build_router(plane: RadarPlane) -> APIRouter:
-    """SPEC §3–§6.2 + §9：只读路由（含首页指数条、自选读面）+ 两条持仓写入路由。"""
+    """SPEC §3–§6.2 + §9：只读路由（含首页指数条、自选读面）+ 两对持仓 / 自选写入路由。"""
     router = APIRouter(prefix=RADAR_PREFIX)
 
     @router.get("/news")
@@ -1184,10 +1259,26 @@ def build_router(plane: RadarPlane) -> APIRouter:
     def watchlist() -> JSONResponse:
         """我的自选（只读）：平面 JSON、`no-store`、只 GET。
 
-        **没有配套的写路由**（DEC-052 §2.3）：增删只走本机 CLI `ldst watch add|rm`，
-        写面若要把「不经 HTTP」这条改掉，是再一次独立决定，不与本单捆绑。
+        写面是下面两条 `POST`（QUOT-419 / DEC-055 修订 DEC-052 §2.3）：
+        增删仍只写本机 SQLite，只是入口从 CLI 扩到本机页面。
         """
         return JSONResponse(plane.watchlist_view(), headers={"Cache-Control": "no-store"})
+
+    @router.post("/watchlist", dependencies=[Depends(_watchlist_write_guard)])
+    def watchlist_add(
+        body: Annotated[Any, Body(description="一只自选；只认 code 一个字段")],
+    ) -> JSONResponse:
+        """加一条自选（幂等）：平面 JSON、`no-store`、不进信封。"""
+        return JSONResponse(plane.watch_add(body), headers={"Cache-Control": "no-store"})
+
+    @router.post(
+        "/watchlist/{code}/delete", dependencies=[Depends(_watchlist_write_guard)]
+    )
+    def watchlist_delete(code: str) -> JSONResponse:
+        """硬删除一条自选：不在本机清单里返回 404，不静默成功。"""
+        return JSONResponse(
+            plane.watch_delete(code), headers={"Cache-Control": "no-store"}
+        )
 
     return router
 

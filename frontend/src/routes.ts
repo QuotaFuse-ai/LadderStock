@@ -31,6 +31,8 @@ export const ROUTE_PATHS = [
   '/news',
   '/calendar',
   '/pool',
+  // QUOT-419 / DEC-055：自选从首页卡片拆成独立页，和持仓并列两个入口
+  '/watchlist',
   '/positions',
   '/industry',
   '/industry/:name',

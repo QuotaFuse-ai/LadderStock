@@ -50,8 +50,9 @@ import { useDemoEnabled, usePositionsView } from './useRadarView'
  * - 持仓只存在于本机 SQLite 与本次请求的 React 内存里；页面不写 localStorage / IndexedDB，
  *   不把持仓放进 URL、日志或 AI 上下文，也没有同步 / 分享入口。
  * - 盈亏、集中度、行业分布全部来自接口载荷，页面不重算；`null` 显示 `—` + 原因。
- * - 接口缺失时的兜底：导入用户自己 `ldst position list --export` 的 JSON（只读），
- *   以及在写失败时给出等价 CLI 命令。
+ * - 页面打开即自动加载本机持仓（`GET /api/positions`），新增 / 编辑走 `POST /api/positions`，
+ *   删除走 `POST /api/positions/{code}/delete`（QUOT-419：不再把 CLI 当页面主路径）。
+ *   导入本地 JSON 只作只读核对用。
  */
 
 interface EditorState {
@@ -354,32 +355,6 @@ function buildColumns(
   return columns
 }
 
-/** CLI 兜底命令的入参：`PositionInput` 可直接传；校验失败的表单值走占位符。 */
-interface CliHintInput {
-  code: string
-  cost: number | string
-  qty: number | string
-}
-
-/**
- * 非法输入渲染成 `<成本>` / `<数量>`，不渲染成看似可执行的 `0`
- * ——照着 `--cost 0` 敲下去会把真实成本覆盖成 0（UI-SPEC §8 缺失不写 0）。
- */
-function numericOrPlaceholder(raw: string, placeholder: string): number | string {
-  const value = Number(raw)
-  return raw.trim() !== '' && Number.isFinite(value) && value > 0 ? value : placeholder
-}
-
-function cliHint(mode: 'add' | 'edit' | 'delete', item: PositionItem | null, input?: CliHintInput): string {
-  if (mode === 'add' && input) {
-    return `ldst position add --code ${input.code} --cost ${input.cost} --qty ${input.qty}`
-  }
-  if (mode === 'edit' && item && input) {
-    return `ldst position update --code ${item.code} --cost ${input.cost} --qty ${input.qty}`
-  }
-  return `ldst position remove --code ${item?.code ?? '<code>'}`
-}
-
 function PositionForm({
   initial,
   submitting,
@@ -499,14 +474,7 @@ function PositionForm({
           <p>{shown}</p>
           {error?.code && <p className="text-caption">{error.code}</p>}
           <p className="mt-1 text-caption text-text-secondary">
-            写接口不可用时，可直接在本机终端执行：
-            <code className="ldst-num mt-1 block break-all rounded bg-sunken px-2 py-1 text-text">
-              {cliHint(initial ? 'edit' : 'add', initial, {
-                code: initial?.code ?? code.trim(),
-                cost: numericOrPlaceholder(cost, '<成本>'),
-                qty: numericOrPlaceholder(qty, '<数量>'),
-              })}
-            </code>
+            数据只写入本机 SQLite；写接口不可用时请确认本机看板仍在运行，再重试。
           </p>
         </div>
       )}
@@ -793,15 +761,11 @@ export default function PositionsScreen() {
             description={
               endpointMissing ? (
                 <>
-                  页面已按 <code className="ldst-num">GET /api/positions</code> 契约实现。接口上线前，可以点右上角
-                  「导入本地 JSON」查看自己 <code className="ldst-num">ldst position list --export</code> 出来的文件
-                  （只读，不上传）。
+                  页面已按 <code className="ldst-num">GET /api/positions</code> 契约实现，接口上线后
+                  会自动加载本机持仓；也可以导入本地持仓 JSON 先做只读核对（不上传）。
                 </>
               ) : (
-                <>
-                  持仓存在本机 SQLite 里。点「新增持仓」逐条录入，或在终端运行{' '}
-                  <code className="ldst-num">ldst position add</code>。
-                </>
+                <>持仓存在本机 SQLite 里。点「新增持仓」逐条录入，保存后列表会自动刷新。</>
               )
             }
             action={

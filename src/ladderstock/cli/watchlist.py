@@ -5,8 +5,8 @@
 表）。两者只是共用一个组名，读写的东西完全不同——名字由 QUOT-380 任务书指定，
 歧义已在 PR 里登记。
 
-自选的增删**只写本机 SQLite，不经 HTTP**（DEC-052 拍板：HTTP 侧只有 `GET /api/watchlist`
-一条只读路由）。这张表此前只有 schema、没有任何生产者，所以本模块就是那个生产者。
+自选的增删只写本机 SQLite：本机页面（`POST /api/watchlist` 等，DEC-055）与这里的两条
+命令，落的是同一张表、同一组函数。HTTP 写面是回环独占 + 来源证据，非回环出口一条都不开。
 """
 
 from __future__ import annotations

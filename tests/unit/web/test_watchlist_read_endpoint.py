@@ -27,7 +27,6 @@ from fastapi.testclient import TestClient
 from fixtures.fake_peers import SOURCES_DOC, SYNC_DOC, FakeTransport, make_registry, tickhub_payload
 
 from ladderstock.data import sqlite_store
-from ladderstock.journal import watchlist as watchlist_module
 from ladderstock.web.radar import WATCHLIST_DENIED, RadarPlane
 from ladderstock.web.server import create_app
 
@@ -147,11 +146,14 @@ def test_control_switch_does_not_close_the_read_face(
     assert _client(tmp_path).get("/api/watchlist").status_code == 200
 
 
-def test_only_get_is_routed(tmp_path: Path) -> None:
+def test_only_get_and_post_are_routed(tmp_path: Path) -> None:
+    """GET 读、POST 写（DEC-055）；其它动词不提供（删除也不换 DELETE）。"""
     _seed_watchlist(tmp_path, PRICED)
     client = _client(tmp_path)
-    assert client.post("/api/watchlist", json={"code": "600000"}).status_code == 405
+    # 写方法没有来源证据 → 403，不是 405（路由在，闸门先拦）
+    assert client.post("/api/watchlist", json={"code": "600000"}).status_code == 403
     assert client.delete("/api/watchlist").status_code == 405
+    assert client.put("/api/watchlist", json={"code": "600000"}).status_code == 405
 
 
 # ------------------------------------------------------------------ 平面 JSON
@@ -192,7 +194,7 @@ def test_empty_watchlist_is_200_not_404(tmp_path: Path) -> None:
     assert body["available"] is False
     assert body["watch_count"] == 0
     assert body["items"] == []
-    assert "ldst watch add" in body["reason"]
+    assert "我的自选" in body["reason"]
     assert (tmp_path / sqlite_store.DB_FILENAME).exists() is False
 
 
@@ -268,20 +270,19 @@ def test_missing_row_for_one_code_only_drops_that_line(tmp_path: Path) -> None:
     assert body["data_source_status"] == "partial"
 
 
-def test_writes_never_go_through_http(tmp_path: Path) -> None:
-    """DEC-052 §2.3：写面不经 HTTP —— 这条路径上只有 `GET`，加一条自选只能走本机模块/CLI。"""
-    spec = _client(tmp_path).app.openapi()  # type: ignore[attr-defined]
-    methods = {
-        verb
-        for path, item in spec["paths"].items()
-        if path.endswith("/api/watchlist")
-        for verb in item
-    }
-    assert methods == {"get"}
+def test_write_surface_is_only_post(tmp_path: Path) -> None:
+    """DEC-052 §2.3 经 QUOT-419 / DEC-055 修订：写面是一条 POST + 一条 POST delete。
 
-    assert watchlist_module.add_watch("sh600519", root=tmp_path)["code"] == "600519"
-    body = _client(tmp_path).get("/api/watchlist").json()
-    assert [item["code"] for item in body["items"]] == ["600519"]
+    没有 `PUT` / `PATCH` / `DELETE` 动词——换动词会绕开「写方法必须有来源证据」这条防线。
+    """
+    spec = _client(tmp_path).app.openapi()  # type: ignore[attr-defined]
+    collection = next(
+        item for path, item in spec["paths"].items() if path.endswith("/api/watchlist")
+    )
+    assert set(collection) == {"get", "post"}
+    delete_path = "/api/watchlist/{code}/delete"
+    delete = next(item for path, item in spec["paths"].items() if path.endswith(delete_path))
+    assert set(delete) == {"post"}
 
 
 def test_private_keys_are_stripped_if_anything_leaks_into_an_envelope(tmp_path: Path) -> None:

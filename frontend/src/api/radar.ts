@@ -8,11 +8,13 @@
  *   GET    /api/pool?date=&limit=                        候选池（envelope，domain=sentiment）
  *   GET    /api/indices                                  首页指数条（**envelope**，domain=sentiment）
  *   GET    /api/watchlist                                我的自选（**平面 JSON**，回环独占）
+ *   POST   /api/watchlist                                加一条自选（幂等，DEC-055）
+ *   POST   /api/watchlist/{code}/delete                  删一条自选（DEC-055）
  *   GET    /api/positions?date=                          持仓（**平面 JSON**，隐私数据不进信封）
  *   POST   /api/positions                               按 code upsert 一条持仓
  *   POST   /api/positions/{code}/delete                 硬删除一条持仓
  *
- * 写面只有这两条、都是 `POST`（删除也不换 `DELETE` 动词）：换动词会绕开
+ * 写面四条、都是 `POST`（删除也不换 `DELETE` 动词）：换动词会绕开
  * 「写方法必须带同源 Origin 或 `X-LDST-Client: 1`」这条防线。
  *
  * 三条硬规矩：
@@ -1034,6 +1036,35 @@ export function parseWatchlist(raw: unknown): WatchlistPayload {
   }
 }
 
+// ---------------------------------------------------------------- 自选写入（DEC-055）
+
+/** `POST /api/watchlist` 与 `…/{code}/delete` 的平面响应：**没有信封键**。 */
+export interface WatchMutation {
+  ok: true
+  local_only: true
+  store: 'local_sqlite'
+  watch?: { code: string; created_at: string | null }
+  removed?: { code: string }
+}
+
+export function parseWatchMutation(raw: unknown): WatchMutation {
+  const row = record(raw)
+  if (!row || row.ok === false) throw new ApiError('parse', '自选写入响应缺少 ok=true')
+  const watch = record(row.watch)
+  const removed = record(row.removed)
+  const watchCode = text(watch?.code)
+  const removedCode = text(removed?.code)
+  return {
+    ok: true,
+    local_only: true,
+    store: 'local_sqlite',
+    ...(watchCode
+      ? { watch: { code: watchCode, created_at: text(watch?.created_at) || null } }
+      : {}),
+    ...(removedCode ? { removed: { code: removedCode } } : {}),
+  }
+}
+
 // ---------------------------------------------------------------- 我的持仓
 
 function parsePositionItem(value: unknown): PositionItem | null {
@@ -1269,6 +1300,23 @@ export async function fetchIndices(signal?: AbortSignal): Promise<IndicesPayload
 
 export async function fetchWatchlist(signal?: AbortSignal): Promise<WatchlistPayload> {
   return parseWatchlist(await request<unknown>('/api/watchlist', { signal }))
+}
+
+/** 加一条自选（幂等）：写本机 SQLite，回环独占 + 来源证据（DEC-055）。 */
+export async function addWatch(code: string, signal?: AbortSignal): Promise<WatchMutation> {
+  return parseWatchMutation(
+    await request<unknown>('/api/watchlist', { method: 'POST', body: { code }, signal }),
+  )
+}
+
+/** 删一条自选：不在清单里后端回 404，不静默成功。 */
+export async function removeWatch(code: string, signal?: AbortSignal): Promise<WatchMutation> {
+  return parseWatchMutation(
+    await request<unknown>(`/api/watchlist/${encodeURIComponent(code)}/delete`, {
+      method: 'POST',
+      signal,
+    }),
+  )
 }
 
 // ---------------------------------------------------------------- 错误文案

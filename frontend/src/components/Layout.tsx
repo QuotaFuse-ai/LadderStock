@@ -9,6 +9,7 @@ import {
   CandlestickChart,
   ChevronDown,
   ClipboardCheck,
+  Eye,
   Flame,
   Gauge,
   Home,
@@ -134,12 +135,13 @@ export const NAV_SECTIONS: NavSection[] = [
     pages: [{ to: '/journal', label: '交易日志', icon: ScrollText }],
   },
   // QUOT-304 / DEC-044：把「我自己相关」的持仓与事件日历聚成一组。
-  // 自选、提醒没有已交付页面，登记为范围外，不建占位入口。
+  // QUOT-419：自选有了独立页面（`/watchlist`），补进同一组；提醒仍无已交付页面，不建占位入口。
   {
     key: 'my-stocks',
     label: '我的股票',
     icon: Wallet,
     pages: [
+      { to: '/watchlist', label: '我的自选', icon: Eye },
       { to: '/positions', label: '我的持仓', icon: Wallet },
       { to: '/calendar', label: '事件日历', icon: CalendarDays },
     ],
