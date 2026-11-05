@@ -147,7 +147,14 @@ export function useCalendarView(query: { month: string; codes: string[] }): Requ
   }
 }
 
-export function usePoolView(query: { date: string }): RequestView<CandidatePoolPayload> {
+/** 候选池比其它雷达页多一组静默重取字段：面板要按 QUOT-421 每 30 秒自动刷新。 */
+export interface PoolView extends RequestView<CandidatePoolPayload> {
+  refresh: () => void
+  refreshing: boolean
+  updatedAt: number | null
+}
+
+export function usePoolView(query: { date: string }): PoolView {
   const { demo, variant, source } = useRadarSource()
   const forced = useForcedState()
   const request = useAsync(
@@ -171,6 +178,9 @@ export function usePoolView(query: { date: string }): RequestView<CandidatePoolP
     payload,
     error: request.error,
     reload: request.reload,
+    refresh: request.refresh,
+    refreshing: request.refreshing,
+    updatedAt: request.updatedAt,
   }
 }
 
