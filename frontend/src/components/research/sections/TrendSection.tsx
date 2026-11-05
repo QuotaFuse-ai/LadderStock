@@ -1,10 +1,12 @@
-import { ChartLine } from 'lucide-react'
+import { useState } from 'react'
+import { ChartLine, RotateCw } from 'lucide-react'
 
 import type { ResearchOverview } from '../../../api/research'
 import { MISSING, formatChangePct, formatMoney } from '../../../lib/format'
-import { BarChart, LineChart } from '../../../charts/Chart'
+import { fmtPrice, fmtVolume } from '../../../charts/klineView'
+import { KlineCard } from '../../KlineCard'
 import {
-  Badge,
+  Button,
   EmptyState,
   MetricCard,
   SectionCard,
@@ -12,17 +14,14 @@ import {
 } from '../../ui'
 
 /**
- * 区块 E：行情条 + 走势（QUOT-448 只落容器与挂载点）。
+ * 区块 E：行情条 + 走势（QUOT-449）。
  *
- * props 契约（后续 QUOT-449 只改本文件，不动页面文件）：
- * - `overview`：`/api/research/{code}/overview` 的完整载荷；`null` = 还没取回；
- * - `code`：当前规范代码，缺数文案用；
- * - `className`：页面给的栅格类。
- * 取数失败时的「重试」由页面 `OverviewTab` 的 ErrorBlock 统一给，本区块不重复挂。
+ * 数据面来自 `/api/research/{code}/overview`（`payload.quote` 实时快照）与
+ * `KlineCard` 自取的 `/api/research/{code}/kline`。取不到的字段一律 `—`，
+ * 不补 0、不拿上一根 K 线倒填实时行情。
  *
- * 本单**不实现** K 线本体（QUOT-429/449 负责）。这里保留页面原有的
- * 「收盘价折线 + 成交额副图」（QUOT-400 已交付的临时实现，不新增图表能力），
- * 等 `KlineCard` 合入后由 QUOT-449 在同一位置替换 —— 见文件内 `KLINE_SLOT` 标记。
+ * 周期 / 复权选择记在 `KlineCard` 组件状态里：同一标的内切换保留，刷新页面或
+ * 切到别的代码后回到「日线 / 前复权」默认值（不做跨会话持久化）。
  */
 
 export const KLINE_SLOT = 'kline-card-slot'
@@ -33,63 +32,58 @@ export interface TrendSectionProps {
   className?: string
 }
 
-function KlineChart({ overview }: { overview: ResearchOverview }) {
-  const bars = overview.kline.bars
-  const closes = bars.map((bar) => bar.close)
-  const volumes = bars.map((bar) => bar.volume)
-
-  if (closes.filter((value) => value !== null).length < 2) {
+/** 当日行情条：收盘 / 涨跌 / 开 / 高 / 低 / 量，全部取自实时快照。 */
+function QuoteBar({ overview }: { overview: ResearchOverview }) {
+  const quote = overview.quote.quote
+  if (!quote) {
     return (
-      <EmptyState
-        compact
-        icon={<ChartLine aria-hidden="true" />}
-        title="数据点不足，暂不绘制走势"
-        description={overview.kline.reason ?? '本地日线缓存不足 2 根，页面不会拼一条假趋势线。'}
-      />
+      <p role="status" className="mb-3 text-caption leading-body text-text-muted">
+        实时快照未取到：{overview.quote.reason ?? '上游没有返回该标的的报价'}。读数留 —，不补 0。
+      </p>
     )
   }
 
-  const points = bars.map((bar) => ({ label: bar.date, value: bar.close }))
-  const volumeOk = volumes.every((value) => value !== null)
-  const volumePoints = volumeOk
-    ? bars.map((bar) => ({ label: bar.date, value: bar.volume as number }))
-    : []
-  const firstDate = bars[0].date
-  const lastDate = bars[bars.length - 1].date
-  const first = closes[0]
-  const last = closes[closes.length - 1]
-  const trend =
-    first !== null && last !== null ? (last > first ? '上涨' : last < first ? '下跌' : '持平') : '缺收盘价'
-  const stroke = trend === '上涨' ? 'text-up' : trend === '下跌' ? 'text-down' : 'text-text-secondary'
+  const change = formatChangePct(quote.change_pct)
+  const tone =
+    change.tone === 'up' ? 'text-up' : change.tone === 'down' ? 'text-down' : 'text-text-secondary'
+  const source = quote.source_detail
+  const fetchedAt = source?.fetched_at
+    ? source.fetched_at.slice(0, 16).replace('T', ' ')
+    : null
+  const sourceLabel = [source?.peer, source?.tool].filter(Boolean).join(' · ')
 
   return (
-    <figure className="flex flex-col gap-2">
-      <div className={stroke}>
-        <LineChart
-          points={points}
-          height={220}
-          yScale="auto"
-          ariaLabel={`${overview.name ?? overview.code} 收盘价走势，${bars.length} 个交易日，从 ${firstDate} 到 ${lastDate}，区间内${trend}`}
-        />
+    <div className="mb-3 flex flex-col gap-0.5">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-caption">
+        <span className="text-text-muted">
+          收盘 <b className={`ldst-num text-body ${tone}`}>{fmtPrice(quote.price)}</b>
+        </span>
+        <span className={`ldst-num ${tone}`}>{change.text}</span>
+        <span className="text-text-muted">
+          开 <span className="ldst-num text-text">{fmtPrice(quote.open)}</span>
+        </span>
+        <span className="text-text-muted">
+          高 <span className="ldst-num text-text">{fmtPrice(quote.high)}</span>
+        </span>
+        <span className="text-text-muted">
+          低 <span className="ldst-num text-text">{fmtPrice(quote.low)}</span>
+        </span>
+        <span className="text-text-muted">
+          量 <span className="ldst-num text-text">{fmtVolume(quote.volume)}</span> 手
+        </span>
       </div>
-      {volumeOk && (
-        <BarChart points={volumePoints} height={72} ariaLabel={`成交额副图，${bars.length} 个交易日`} />
-      )}
-      <figcaption className="flex flex-wrap items-center justify-between gap-2 text-caption text-text-muted">
-        <span className="ldst-num">
-          {firstDate} → {lastDate}
-        </span>
-        <span className="ldst-num">
-          {bars.length} 个交易日{volumeOk ? ' · 成交额副图' : ' · 成交额缺数，副图不绘'}
-        </span>
-      </figcaption>
-    </figure>
+      <p className="text-caption text-text-muted">
+        来源：{sourceLabel || MISSING}
+        {fetchedAt ? ` · 取数 ${fetchedAt}` : ''}
+      </p>
+    </div>
   )
 }
 
 function QuoteStrip({ overview }: { overview: ResearchOverview }) {
   const { quote } = overview.quote
   const change = formatChangePct(quote?.change_pct ?? null)
+  const note = quote ? undefined : '实时快照未取到'
   return (
     <SectionCard
       title={overview.name ?? overview.code}
@@ -107,33 +101,34 @@ function QuoteStrip({ overview }: { overview: ResearchOverview }) {
     >
       {/* rail 是「≤1279px」的收窄档，宽度 ≥1280 必须显式写 desk，否则宽屏反而停回两列 */}
       <div className="grid grid-cols-2 gap-3 rail:grid-cols-4 desk:grid-cols-4">
-        <MetricCard
-          label="现价"
-          value={quote?.price !== null && quote?.price !== undefined ? String(quote.price) : MISSING}
-          note={quote ? undefined : '实时快照未取到'}
-        />
+        <MetricCard label="现价" value={fmtPrice(quote?.price ?? null)} note={note} />
         <MetricCard
           label="涨跌幅"
           value={`${change.text}${change.arrow ? ` ${change.arrow}` : ''}`}
-          note={quote ? undefined : '实时快照未取到'}
+          note={note}
         />
         <MetricCard
           label="成交量"
-          value={quote?.volume !== null && quote?.volume !== undefined ? String(quote.volume) : MISSING}
-          unit={quote?.volume !== null && quote?.volume !== undefined ? '手' : undefined}
-          note={quote ? undefined : '实时快照未取到'}
+          value={fmtVolume(quote?.volume ?? null)}
+          unit={quote ? '手' : undefined}
+          note={note}
         />
         <MetricCard
           label="成交额"
           value={quote?.amount !== null && quote?.amount !== undefined ? formatMoney(quote.amount) : MISSING}
-          note={quote ? undefined : '实时快照未取到'}
+          note={note}
         />
+      </div>
+      <div className="mt-3 border-t border-border pt-2">
+        <QuoteBar overview={overview} />
       </div>
     </SectionCard>
   )
 }
 
 export function TrendSection({ overview, code, className }: TrendSectionProps) {
+  const [retryKey, setRetryKey] = useState(0)
+
   if (!overview) {
     return (
       <SectionCard className={className} title="走势" subtitle="加载中">
@@ -147,24 +142,46 @@ export function TrendSection({ overview, code, className }: TrendSectionProps) {
     )
   }
 
+  const retry = (
+    <Button
+      variant="ghost"
+      onClick={() => setRetryKey((value) => value + 1)}
+      leadingIcon={<RotateCw aria-hidden="true" className="h-3.5 w-3.5" />}
+    >
+      重试
+    </Button>
+  )
+
+  const enoughBars = overview.kline.count >= 2
+
   return (
     <div className={className}>
       <QuoteStrip overview={overview} />
-      <SectionCard
-        className="mt-4"
-        title="走势"
-        subtitle="日线收盘价 + 成交额副图（本地 daily_k 原值回放）"
-        actions={
-          overview.kline.reason ? <Badge tone="warn">部分数据</Badge> : <Badge tone="ok">日线</Badge>
-        }
-      >
-        <div data-slot={KLINE_SLOT}>
-          <KlineChart overview={overview} />
-        </div>
-        {overview.kline.reason && (
-          <p className="mt-2 text-caption leading-body text-text-muted">{overview.kline.reason}</p>
+      <div className="mt-4" data-slot={KLINE_SLOT}>
+        {enoughBars ? (
+          <KlineCard key={retryKey} symbol={code ?? overview.code} action={retry} />
+        ) : (
+          <SectionCard
+            title="走势"
+            subtitle={`${code ?? overview.code} · K 线`}
+            actions={retry}
+          >
+            <QuoteBar overview={overview} />
+            <EmptyState
+              compact
+              icon={<ChartLine aria-hidden="true" />}
+              title="K 线不足 2 根，暂不绘图"
+              description={
+                overview.kline.reason ??
+                '上游没有返回足够的日线（未上市 / 长期停牌 / 取数失败），页面不会拼一条假走势。'
+              }
+            />
+          </SectionCard>
         )}
-      </SectionCard>
+      </div>
+      {overview.kline.reason && enoughBars && (
+        <p className="mt-2 text-caption leading-body text-text-muted">{overview.kline.reason}</p>
+      )}
     </div>
   )
 }

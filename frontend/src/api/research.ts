@@ -374,14 +374,25 @@ export interface KlineBar {
   volume: number | null
 }
 
+export interface OverviewQuoteSource {
+  peer: string | null
+  tool: string | null
+  fetched_at: string | null
+}
+
 export interface OverviewQuote {
   name?: string | null
   price: number | null
   prev_close: number | null
+  change: number | null
   change_pct: number | null
+  open: number | null
+  high: number | null
+  low: number | null
   volume: number | null
   amount: number | null
   timestamp: string | null
+  source_detail: OverviewQuoteSource | null
 }
 
 export interface OverviewFinancials {
@@ -408,6 +419,16 @@ export interface ResearchOverview {
 
 function asNumberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function parseQuoteSource(value: unknown): OverviewQuoteSource | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  return {
+    peer: asString(record.peer),
+    tool: asString(record.tool),
+    fetched_at: asString(record.fetched_at),
+  }
 }
 
 function parseKlineBar(value: unknown): KlineBar | null {
@@ -456,10 +477,15 @@ export function parseResearchOverview(payload: unknown, expectedCode?: string): 
         name: asString(quoteBlock.name),
         price: asNumberOrNull(quoteBlock.price),
         prev_close: asNumberOrNull(quoteBlock.prev_close),
+        change: asNumberOrNull(quoteBlock.change),
         change_pct: asNumberOrNull(quoteBlock.change_pct),
+        open: asNumberOrNull(quoteBlock.open),
+        high: asNumberOrNull(quoteBlock.high),
+        low: asNumberOrNull(quoteBlock.low),
         volume: asNumberOrNull(quoteBlock.volume),
         amount: asNumberOrNull(quoteBlock.amount),
         timestamp: asString(quoteBlock.timestamp),
+        source_detail: parseQuoteSource(quoteBlock.source_detail),
       }
     : null
 
