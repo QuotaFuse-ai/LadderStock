@@ -22,6 +22,7 @@ import SettingsScreen from './screens/SettingsScreen'
 import SignalsScreen from './screens/signals/SignalsScreen'
 import ValidateScreen from './screens/ValidateScreen'
 import WatchScreen from './screens/WatchScreen'
+import WatchlistScreen from './screens/watchlist/WatchlistScreen'
 import WeeklyScreen from './screens/WeeklyScreen'
 import { ROUTE_PATHS, type RoutePath } from './routes'
 
@@ -79,6 +80,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/news': <NewsScreen />,
   '/calendar': <CalendarScreen />,
   '/pool': <PoolScreen />,
+  // QUOT-419：自选独立成屏，与持仓并列挂在「我的股票」下
+  '/watchlist': <WatchlistScreen />,
   '/positions': <PositionsScreen />,
   // R9 产业研究：矩阵 / 单行业 / 规则信号（QUOT-300 起有侧栏一级入口）
   '/industry': <IndustryMatrixScreen />,

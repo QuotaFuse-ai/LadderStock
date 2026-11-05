@@ -1761,6 +1761,8 @@ def test_command_endpoints_expose_whitelist(
     assert {item["key"] for item in listed.json()["commands"]} == set(control.PAGE_COMMANDS)
 
     assert client.post("/api/control/commands/nope").status_code == 404
-    started = client.post("/api/control/commands/positions")
+    # `/positions` 的命令条已移除（QUOT-419 / DEC-055）：持仓页自动加载，不再靠 `position list`
+    assert client.post("/api/control/commands/positions").status_code == 404
+    started = client.post("/api/control/commands/pool")
     assert started.status_code == 200
     assert started.json()["job_id"]

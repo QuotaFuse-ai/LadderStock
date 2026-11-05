@@ -124,12 +124,13 @@ describe('复盘组三独立入口（QUOT-344 / DEC-046）', () => {
     }
   })
 
+  // 冷导入整张路由表（含全部屏幕）在慢机上会超过默认 5s，这里只放宽这一条的预算。
   it('`/review` 与 `/review/ai` 挂的不是同一个组件', async () => {
     stubMatchMedia()
     const { ROUTE_ELEMENTS } = await import('../src/App')
     expect(ROUTE_ELEMENTS['/review'].type).not.toBe(ROUTE_ELEMENTS['/review/ai'].type)
     expect(ROUTE_ELEMENTS['/review/ai'].type).toBeTruthy()
-  })
+  }, 15000)
 })
 
 describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
@@ -147,12 +148,13 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     ])
   })
 
-  it('「我的股票」只聚合已有路由：持仓 + 事件日历（DEC-044）', () => {
+  it('「我的股票」聚合已有路由：自选 + 持仓 + 事件日历（DEC-044 / QUOT-419）', () => {
     const group = NAV_SECTIONS.find((section) => section.key === 'my-stocks')
-    expect(group?.pages.map((page) => page.to)).toEqual(['/positions', '/calendar'])
+    expect(group?.pages.map((page) => page.to)).toEqual(['/watchlist', '/positions', '/calendar'])
     // 聚合是移动不是复制：原分组里不再重复出现
     const other = NAV_SECTIONS.filter((section) => section.key !== 'my-stocks')
     const moved = other.flatMap((section) => section.pages.map((page) => page.to))
+    expect(moved).not.toContain('/watchlist')
     expect(moved).not.toContain('/positions')
     expect(moved).not.toContain('/calendar')
   })
@@ -181,10 +183,14 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     for (const to of NAV_TO_KEYS) expect(ROUTE_PATHS).toContain(pathOf(to))
   })
 
-  it('提醒 / 自选没有已交付页面：导航里不许出现点进去是空页的占位入口（DEC-044 §2.4）', () => {
-    expect(NAV_PATHS.filter((path) => /inbox|remind|watchlist/.test(path))).toEqual([])
+  it('自选已有独立页（QUOT-419），提醒仍无已交付页面、不许出现占位入口', () => {
+    // QUOT-419 把自选做成独立页并接入侧栏；DEC-044 §2.4 对「没页面就建占位入口」的禁令仍然有效
+    expect(NAV_PATHS).toContain('/watchlist')
+    expect(NAV_PATHS.filter((path) => /inbox|remind/.test(path))).toEqual([])
+    const watch = NAV_SECTIONS.flatMap((section) => section.pages).find((page) => page.to === '/watchlist')
+    expect(watch?.label).toBe('我的自选')
     const labels = NAV_SECTIONS.flatMap((section) => [section.label, ...section.pages.map((page) => page.label)])
-    expect(labels.filter((label) => /提醒|自选/.test(label))).toEqual([])
+    expect(labels.filter((label) => /提醒/.test(label))).toEqual([])
   })
 
   it('单页组不挂二级（`pages.length > 1` 才展开）：持仓移出后日志只剩交易日志', () => {

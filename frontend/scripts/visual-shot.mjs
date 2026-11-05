@@ -65,6 +65,8 @@ const ROUTES = [
   { slug: 'calendar', path: '/calendar' },
   { slug: 'pool', path: '/pool' },
   { slug: 'positions', path: '/positions' },
+  // QUOT-419：我的自选独立页（DEC-055 写面）
+  { slug: 'watchlist', path: '/watchlist' },
   { slug: 'industry', path: '/industry' },
   { slug: 'industry-name', path: `/industry/${encodeURIComponent('电子')}` },
   { slug: 'signals', path: '/signals' },

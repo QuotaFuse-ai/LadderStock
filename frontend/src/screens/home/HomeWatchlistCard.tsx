@@ -102,6 +102,11 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
           '自选只存本机'
         )
       }
+      actions={
+        <Button variant="ghost" onClick={() => navigate('/watchlist')}>
+          管理自选 →
+        </Button>
+      }
       bodyClassName="p-0"
     >
       {view.state === 'loading' && (
@@ -142,7 +147,7 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
             <EmptyState
               compact
               title="还没有自选"
-              description="自选只写本机 SQLite（ldst watch add）；在自选页加一只，这里就会出现。"
+              description="在「我的自选」页加一只 6 位代码，这里就会出现。"
             />
           }
         />
@@ -154,7 +159,7 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
             <EmptyState
               compact
               title="自选接口未接入"
-              description="本机隐私库已有 watchlist 表，缺的是读接口 GET /api/watchlist；接入后此块自动出现。"
+              description="本机看板没有注册 GET /api/watchlist；升级到当前版本后，这块会自动出现。"
               action={
                 <Button variant="secondary" onClick={view.onRetry} leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}>
                   重新检查
@@ -167,10 +172,10 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
             <EmptyState
               compact
               title="还没有自选"
-              description={payload?.reason ?? '自选只写本机 SQLite（ldst watch add）；在自选页加一只，这里就会出现。'}
+              description={payload?.reason ?? '在「我的自选」页加一只 6 位代码，这里就会出现。'}
               action={
-                <Button variant="secondary" onClick={() => navigate('/positions')}>
-                  去我的持仓
+                <Button variant="secondary" onClick={() => navigate('/watchlist')}>
+                  管理自选
                 </Button>
               }
             />

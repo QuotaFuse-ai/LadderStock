@@ -1,4 +1,4 @@
-"""我的自选：本机隐私库 `watchlist` 表的读写（DEC-052 批准的读面 + 本机 CLI 写面）。
+"""我的自选：本机隐私库 `watchlist` 表的读写（DEC-052 读面 + DEC-055 写面修订）。
 
 表结构只有三列（`data/sqlite_store.py:221`）：`code`（UNIQUE）/ `note` / `created_at`。
 
@@ -7,8 +7,10 @@
 1. **只依赖本机隐私库**：`data/sqlite_store` + 标准库。不 import 适配器、行情缓存、
    MCP、AI，不产生任何网络请求——「自选在看什么」与「行情可不可用」是两个问题，
    不混在同一个出口里。
-2. **写面不经 HTTP**（DEC-052 §2.3）：增删只走本机 CLI `ldst watch add|rm`，
-   直接写本机 SQLite。HTTP 侧只有 `GET /api/watchlist` 一条只读路由。
+2. **写面只写本机 SQLite**（DEC-052 §2.3 经 QUOT-419 / DEC-055 修订）：增删有两个入口——
+   本机页面 `POST /api/watchlist` / `…/{code}/delete`（回环独占 + 来源证据）和 CLI
+   `ldst watch add|rm`，两者落到同一个函数、同一张表。写面仍然只有回环一条路，
+   不进信封、不上传、不进 AI 上下文。
    这张表此前**只有 schema、没有生产者**，数据恒为空——本模块就是那个生产者。
 3. **`note` 这一版不出**（QUOT-380 拍板 / DEC-052 §2.2）：自由文本不进任何对外载荷，
    所以 `list_watch()` 根本不读这一列，而不是读出来再由上层抹。要出得重开一次决定。

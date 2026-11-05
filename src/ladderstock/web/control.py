@@ -165,7 +165,8 @@ PAGE_COMMANDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "calendar": ("/calendar", "刷新事件日历", ("events",)),
     "pool": ("/pool", "重算候选池", ("pool",)),
     "validate": ("/validate", "提交收盘对账", ("validate", "reconcile", "--date", "{date}")),
-    "positions": ("/positions", "查询持仓", ("position", "list")),
+    # `/positions` 不再挂命令条（QUOT-419 / DEC-055）：持仓页改为自动加载本机持仓，
+    # 「查询持仓 ldst position list」不再是页面入口。CLI 本身仍在，只是不在页面上当主角。
 }
 #: argv 占位符：只认当天日期，执行时替换（不把日期存进任务，避免排队跨夜后跑错日）
 PAGE_COMMAND_DATE = "{date}"

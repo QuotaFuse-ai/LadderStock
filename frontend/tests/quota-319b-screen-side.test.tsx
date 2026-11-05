@@ -157,7 +157,7 @@ describe('B 族缺数不写 0（UI-SPEC §8）', () => {
     expect(within(dialog).getByText('100.0%')).toBeTruthy()
   })
 
-  it('/positions 输入非法：CLI 兜底命令给占位符，不给看似可执行的 0', async () => {
+  it('/positions 输入非法：页面内报错，不再把 CLI 当兜底主路径（QUOT-419）', async () => {
     renderAt('/positions?demo=1')
     fireEvent.click(await screen.findByRole('button', { name: /新增持仓/ }))
     const dialog = await screen.findByRole('dialog')
@@ -167,9 +167,7 @@ describe('B 族缺数不写 0（UI-SPEC §8）', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /新增持仓|保存修改/ }))
 
     expect(await within(dialog).findByText(/成本价必须大于 0/)).toBeTruthy()
-    const hint = within(dialog).findByText(/ldst position add/)
-    expect((await hint).textContent).toContain('<成本>')
-    expect((await hint).textContent).not.toContain('--cost 0')
+    expect(within(dialog).queryByText(/ldst position/)).toBeNull()
   })
 })
 
