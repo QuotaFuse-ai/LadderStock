@@ -36,6 +36,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ladderstock.cli.paths import project_root
+from ladderstock.core.boundary import owner_of
 from ladderstock.core.ladder import as_float, pick
 from ladderstock.core.models import LadderEnvelope
 from ladderstock.core.privacy import strip_private
@@ -369,11 +370,6 @@ LOW_KEYS: tuple[str, ...] = ("low", "最低")
 CLOSE_KEYS: tuple[str, ...] = ("close", "收盘")
 VOLUME_KEYS: tuple[str, ...] = ("volume", "vol", "成交量")
 AMOUNT_KEYS: tuple[str, ...] = ("amount", "成交额")
-NAME_KEYS: tuple[str, ...] = ("name", "stock_name", "名称")
-TIMESTAMP_KEYS: tuple[str, ...] = ("timestamp",)
-PRICE_KEYS: tuple[str, ...] = ("price", "last", "现价")
-PREV_CLOSE_KEYS: tuple[str, ...] = ("prev_close", "昨收")
-CHANGE_PCT_KEYS: tuple[str, ...] = ("change_pct", "pct_chg", "涨跌幅")
 REPORT_NAME_KEYS: tuple[str, ...] = ("report_name",)
 EPS_KEYS: tuple[str, ...] = ("eps",)
 REVENUE_KEYS: tuple[str, ...] = ("revenue",)
@@ -382,16 +378,12 @@ ROE_KEYS: tuple[str, ...] = ("roe", "roe_weighted")
 REVENUE_YOY_KEYS: tuple[str, ...] = ("revenue_yoy", "revenue_growth_yoy")
 PROFIT_YOY_KEYS: tuple[str, ...] = ("profit_yoy", "net_profit_yoy")
 
-#: 概览 quote 块的字段 → 缓存行里的别名键（只投影，不换算单位）
-QUOTE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("name", NAME_KEYS),
-    ("price", PRICE_KEYS),
-    ("prev_close", PREV_CLOSE_KEYS),
-    ("change_pct", CHANGE_PCT_KEYS),
-    ("volume", VOLUME_KEYS),
-    ("amount", AMOUNT_KEYS),
-    ("timestamp", TIMESTAMP_KEYS),
-)
+#: 概览 quote 块：已登记的实时链路（`spot_quote` → TickHub-CN `tencent_quote_batch`）。
+#: 该数据集是**实时类**（`config/sources.yaml` 明确不进 sync 台账），archive 里没有表，
+#: 所以 quote 只能现取，不能按 `daily_k` 那样回放缓存。
+QUOTE_DATASET = "spot_quote"
+#: 上游 `amount` 以「万元」给出，对外统一「元」（QUOT-445 口径）；`volume` 上游已是「手」
+QUOTE_AMOUNT_SCALE = 10_000.0
 FINANCIAL_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("report_name", REPORT_NAME_KEYS),
     ("eps", EPS_KEYS),
@@ -402,7 +394,7 @@ FINANCIAL_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("profit_yoy", PROFIT_YOY_KEYS),
 )
 
-NO_QUOTE_CACHE = "本地 spot_quote 缓存里没有这只代码的快照（未同步或非盘中时段），不编价"
+NO_QUOTE_LIVE = "实时 spot_quote 取数失败：{reason}"
 NO_FINANCE_CACHE = (
     "本地 finance_indicators 无缓存，"
     "需先 `ldst sync --dataset finance_indicators --codes <代码>`，不估算"
@@ -469,21 +461,19 @@ def _bar_from_record(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _latest_row(rows: list[dict[str, Any]], bare: str, key: str) -> dict[str, Any] | None:
-    """同代码多行取最新一条：quote 按 `timestamp`，财务按 `trade_date`。"""
+    """同代码多行取最新一条：财务按 `trade_date`。"""
     mine = [row for row in rows if _row_code(row) == bare]
     if not mine:
         return None
     return sorted(mine, key=lambda row: str(pick(row, (key,)) or ""))[-1]
 
 
-def _latest_quote(
-    rows: list[dict[str, Any]], bare: str
-) -> tuple[dict[str, Any] | None, str | None]:
-    row = _latest_row(rows, bare, "timestamp")
-    if row is None:
-        return None, NO_QUOTE_CACHE
-    quote = {name: pick(row, keys) for name, keys in QUOTE_FIELDS}
-    return quote, None
+def _plain_number(value: Any) -> float | int | None:
+    """上游数值原样投影：读不出来一律 `None`（不补 0）；整数值回 `int` 便于上屏。"""
+    number = as_float(value)
+    if number is None:
+        return None
+    return int(number) if number.is_integer() else number
 
 
 def _latest_financials(
@@ -936,9 +926,10 @@ class ResearchPlane:
     def overview(self, raw_code: Any, raw_day: Any = None) -> dict[str, Any]:
         """`GET /api/research/{code}/overview` 的载荷（QUOT-400，四段信封）。
 
-        概览**不依赖六段产物**：没跑过研究也必须能出数——K 线 / 快照 / 财务指标
-        只读本机缓存（`archive`，Parquet → DuckDB 同一条回放路），读不到的块
-        显式 `null` + reason，不补 0、不联网、不编造。
+        概览**不依赖六段产物**：没跑过研究也必须能出数——K 线 / 财务指标只读本机
+        缓存（`archive`，Parquet → DuckDB 同一条回放路），quote 走已登记的实时链路
+        （`spot_quote` → `tencent_quote_batch`，见 `_live_quote`）。读不到的块
+        显式 `null` + reason，不补 0、不编造。
 
         信封照 data 面同款四段：`payload / data_source_status / data_as_of / meta`。
         `data_source_status` 只看主指标（K 线）：有根 → `ok`，一根都没有 → `missing`；
@@ -949,7 +940,6 @@ class ResearchPlane:
         bare = code.partition(".")[0]
         try:
             kline_rows = archive.read_dataset("daily_k", None, root=self.data_root)
-            quote_rows = archive.read_dataset("spot_quote", None, root=self.data_root)
             finance_rows = archive.read_dataset("finance_indicators", None, root=self.data_root)
         except OSError as exc:
             raise HTTPException(
@@ -978,7 +968,7 @@ class ResearchPlane:
         else:
             kline_reason = None
 
-        quote, quote_reason = _latest_quote(quote_rows, bare)
+        quote, quote_reason = self._live_quote(bare)
         financials, financials_reason = _latest_financials(finance_rows, bare)
         name = quote.get("name") if quote else None
         available = bool(bars)
@@ -1011,10 +1001,64 @@ class ResearchPlane:
             },
         }
 
+    def _live_quote(self, bare: str) -> tuple[dict[str, Any] | None, str | None]:
+        """经已登记链路现取一条实时报价；取不到 → `(None, 原因)`，不编价、不补 0。
+
+        为什么不能读 archive：`spot_quote` 在 `config/sources.yaml` 里登记为**实时数据集**
+        （不进 sync 台账），库里没有这张表，读缓存永远为空。口径对齐 `core/watch_prices.py`
+        / `core/intraday.py`：只走 `fetch_live`，不换供应商（DEC-006）。
+        """
+        try:
+            outcome = self._live_registry().fetch_live(
+                QUOTE_DATASET, params={"codes": bare, "max_codes": 1}
+            )
+        except Exception as exc:  # noqa: BLE001 - 上游取不到只降级 quote，不让概览 500
+            detail = str(getattr(exc, "message", None) or exc) or type(exc).__name__
+            return None, NO_QUOTE_LIVE.format(reason=detail)
+
+        envelope = outcome.envelope
+        payload = getattr(envelope, "payload", {}) or {}
+        records = payload.get("records") if isinstance(payload, Mapping) else None
+        row = next(
+            (
+                item
+                for item in records or []
+                if isinstance(item, Mapping)
+                and str(item.get("code") or "").strip() == bare
+            ),
+            None,
+        )
+        binding = owner_of(QUOTE_DATASET)
+        if row is None:
+            return None, f"{binding.tool} 没有返回 {bare} 的报价（停牌或上游未更新），不编价"
+        price = _plain_number(row.get("price"))
+        if price is None or price <= 0:
+            return None, f"{bare} 的现价为空（停牌或上游没给），不编价"
+        amount = _plain_number(row.get("amount"))
+        quote = {
+            "name": row.get("name") or None,
+            "price": price,
+            "prev_close": _plain_number(row.get("prev_close")),
+            "open": _plain_number(row.get("open")),
+            "high": _plain_number(row.get("high")),
+            "low": _plain_number(row.get("low")),
+            "volume": _plain_number(row.get("volume")),
+            "amount": None if amount is None else _plain_number(amount * QUOTE_AMOUNT_SCALE),
+            "change": _plain_number(row.get("change")),
+            "change_pct": _plain_number(row.get("change_pct")),
+            "timestamp": str(row.get("timestamp") or "") or None,
+            "source_detail": {
+                "peer": binding.peer,
+                "tool": binding.tool,
+                "fetched_at": _now_iso(),
+            },
+        }
+        return quote, None
+
     # ---------------------------------------------------------------- K 线图
 
-    def _kline_registry(self) -> ProviderRegistry:
-        """K 线图端点的现取出口；测试注入假 registry，不联网。"""
+    def _live_registry(self) -> ProviderRegistry:
+        """现取出口（quote / K 线共用）；测试注入假 registry，不联网。"""
         if self._registry is not None:
             return self._registry
         return ProviderRegistry(root=self.data_root)
@@ -1049,7 +1093,7 @@ class ResearchPlane:
         envelope: LadderEnvelope | None = None
         reason: str | None = None
         try:
-            outcome = self._kline_registry().fetch_live(
+            outcome = self._live_registry().fetch_live(
                 "kline_chart", params=params, allow_cache=False
             )
             envelope = outcome.envelope
