@@ -552,6 +552,15 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # ---- TickHub-CN：行情与短线数据（工具名见 th-cn tools/list）----
         _b("daily_k", "tickhub", "tencent_kline", "append", "trade_date",
            ("tdx_daily_package",), "日 K 前复权；盘后全市场包为备源"),
+        # K 线图端点（QUOT-410）：与 daily_k 同一工具，但 period / adjust 是
+        # **运行时参数**（前端三档周期 × 三档复权按请求透传），不是 sync 写死的
+        # `daily + qfq` 口径，所以是独立数据集、独立登记，不共用 daily_k 的链路。
+        # 不进 sync.yaml、不落库（现取现回，失败显式空态，见 web/research 的 kline）。
+        # 无备源：daily_k 的备工具 `tdx_daily_package` 是盘后全市场**日线**包，
+        # 不收 period / adjust 入参，周 / 月 / 复权档挂它当备源必然一起失败
+        # （同 DEC-043 拒绝 wire_timeline 进按日链路的理由），fallback 留空。
+        _b("kline_chart", "tickhub", "tencent_kline", "replace", "trade_date",
+           note="K 线图端点专用出口（period/adjust 运行时透传）；不进 sync 台账、不落库"),
         _b("limit_pool", "tickhub", "limit_up_pool", "replace", "trade_date",
            ("ths_limit_up_pool",), "涨停池：连板数参与天梯，封板时间随个股透传（缺失为 null）"),
         _b("broken_board", "tickhub", "broken_board_pool", "replace", "trade_date", note="炸板池"),

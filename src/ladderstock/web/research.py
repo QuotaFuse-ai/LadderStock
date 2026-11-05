@@ -35,8 +35,10 @@ from pydantic import BaseModel
 
 from ladderstock.cli.paths import project_root
 from ladderstock.core.ladder import as_float, pick
+from ladderstock.core.models import LadderEnvelope
 from ladderstock.core.privacy import strip_private
 from ladderstock.data import archive
+from ladderstock.data.provider_registry import ProviderRegistry, SourceUnavailable
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.research import artifacts, checkpoint
 from ladderstock.web import control as control_plane
@@ -68,6 +70,14 @@ JOB_STATUSES = frozenset({"queued", "running", "ok", "degraded", "failed"})
 
 #: `date` 必须严格 `YYYY-MM-DD`（`date.fromisoformat` 还认 `20261029`）
 DAY_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+#: K 线图端点（QUOT-410）的三档周期 × 三档复权：随请求**运行时透传**给
+#: `tencent_kline`，本层不重实现周 / 月聚合、不臆算复权（DEC-055）。
+KLINE_PERIODS = frozenset({"daily", "weekly", "monthly"})
+KLINE_ADJUSTS = frozenset({"qfq", "hfq", "none"})
+#: 根数缺省与硬上限：上游按 `limit` 自行截断，本层不再截一次、也不分页
+KLINE_LIMIT_DEFAULT = 120
+KLINE_LIMIT_MAX = 500
 
 
 # --------------------------------------------------------------------------- #
@@ -148,6 +158,39 @@ def parse_stage(raw: Any) -> str:
             f"only 只能是六段之一：{', '.join(checkpoint.STAGES)}，收到 {raw!r}"
         )
     return text
+
+
+def parse_period(raw: Any) -> str:
+    """K 线周期：三档之一，缺省 `daily`；非法 422（SPEC §2.4 定的）。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return "daily"
+    text = str(raw).strip().lower()
+    if text not in KLINE_PERIODS:
+        raise _invalid(f"period 只允许 daily / weekly / monthly，收到 {raw!r}")
+    return text
+
+
+def parse_adjust(raw: Any) -> str:
+    """复权档：三档之一，缺省 `qfq`（与 daily_k 的 sync 口径一致）。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return "qfq"
+    text = str(raw).strip().lower()
+    if text not in KLINE_ADJUSTS:
+        raise _invalid(f"adjust 只允许 qfq / hfq / none，收到 {raw!r}")
+    return text
+
+
+def parse_limit(raw: Any) -> int:
+    """根数：缺省 120，范围 1..500；上游按它截断，本层不二次截断。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return KLINE_LIMIT_DEFAULT
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        raise _invalid(f"limit 必须是整数（1..{KLINE_LIMIT_MAX}），收到 {raw!r}") from None
+    if not 1 <= limit <= KLINE_LIMIT_MAX:
+        raise _invalid(f"limit 必须在 1..{KLINE_LIMIT_MAX} 内，收到 {raw!r}")
+    return limit
 
 
 # --------------------------------------------------------------------------- #
@@ -308,6 +351,19 @@ def _kline_bars(rows: list[dict[str, Any]], as_of: str | None) -> list[dict[str,
     return bars
 
 
+def _bar_from_record(row: dict[str, Any]) -> dict[str, Any]:
+    """上游一行（`klines` 形状归一化后）→ 蜡烛点；amount 上游可能为 null，如实透传、不补 0。"""
+    return {
+        "date": _row_day(row),
+        "open": _row_number(row, OPEN_KEYS),
+        "high": _row_number(row, HIGH_KEYS),
+        "low": _row_number(row, LOW_KEYS),
+        "close": _row_number(row, CLOSE_KEYS),
+        "volume": _row_number(row, VOLUME_KEYS),
+        "amount": _row_number(row, AMOUNT_KEYS),
+    }
+
+
 def _latest_row(rows: list[dict[str, Any]], bare: str, key: str) -> dict[str, Any] | None:
     """同代码多行取最新一条：quote 按 `timestamp`，财务按 `trade_date`。"""
     mine = [row for row in rows if _row_code(row) == bare]
@@ -353,11 +409,13 @@ class ResearchPlane:
         run: Callable[[list[str], Path, float], control_plane.StepResult] | None = None,
         command: list[str] | None = None,
         timeout: float = RESEARCH_JOB_TIMEOUT_SEC,
+        registry: ProviderRegistry | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         self._run = run or control_plane.run_step
         self._command = command
         self._timeout = timeout
+        self._registry = registry
         self._lock = threading.Lock()
         self._jobs: dict[str, ResearchJob] = {}
         #: 「同标的同日只允许一个任务」的登记表：键 `(code, day)`
@@ -542,6 +600,98 @@ class ResearchPlane:
                 "topic": "research_overview",
                 "source": "ladderstock",
                 "freshness": "cached",
+                "fetched_at": _now_iso(),
+            },
+        }
+
+    # ---------------------------------------------------------------- K 线图
+
+    def _kline_registry(self) -> ProviderRegistry:
+        """K 线图端点的现取出口；测试注入假 registry，不联网。"""
+        if self._registry is not None:
+            return self._registry
+        return ProviderRegistry(root=self.data_root)
+
+    def kline(
+        self,
+        raw_code: Any,
+        raw_period: Any = None,
+        raw_adjust: Any = None,
+        raw_limit: Any = None,
+    ) -> dict[str, Any]:
+        """`GET /{code}/kline`（QUOT-410，SPEC §2.4）：K 线图数据，现取现回。
+
+        `period / adjust / limit` 随请求**运行时透传**给 `tencent_kline`，不沿用
+        sync 写死的 `daily + qfq` 口径——周 / 月聚合与复权全部由上游完成，本层
+        不聚合、不臆算复权、不落库（`kline_chart` 数据集，DEC-055）。
+
+        取不到数（peer 不可达 / 超时 / 返回空）是显式空态：`available=false` +
+        `data_source_status="missing"` + `reason`，200 正常响应，不编造、不补零。
+        """
+        code = parse_code(raw_code)
+        require_known_code(code)
+        period = parse_period(raw_period)
+        adjust = parse_adjust(raw_adjust)
+        limit = parse_limit(raw_limit)
+        params = {
+            "code": code.partition(".")[0],
+            "period": period,
+            "adjust": adjust,
+            "limit": limit,
+        }
+        envelope: LadderEnvelope | None = None
+        reason: str | None = None
+        try:
+            outcome = self._kline_registry().fetch_live(
+                "kline_chart", params=params, allow_cache=False
+            )
+            envelope = outcome.envelope
+        except SourceUnavailable as exc:
+            reason = f"TickHub-CN 现取不可用：{exc}"
+        except Exception as exc:  # noqa: BLE001 - 取不到数是空态，不是 500
+            reason = f"现取失败（{type(exc).__name__}）：{exc}"
+
+        records: list[Any] = []
+        if envelope is not None and isinstance(envelope.payload, dict):
+            maybe = envelope.payload.get("records")
+            if isinstance(maybe, list):
+                records = maybe
+        bars = [_bar_from_record(row) for row in records if isinstance(row, dict)]
+        available = bool(bars)
+        if reason is None and not available:
+            reason = (
+                f"tencent_kline 在 period={period} / adjust={adjust} 下没有返回任何 K 线"
+                "（上游没有这批数据：未上市 / 已退市 / 长期停牌）"
+            )
+        if available and envelope is not None and envelope.source_status != "ok":
+            status = "degraded"
+        else:
+            status = "ok" if available else "missing"
+        data_as_of = (
+            envelope.data_as_of.isoformat()
+            if envelope is not None and envelope.data_as_of is not None
+            else None
+        )
+        payload: dict[str, Any] = {
+            "code": code,
+            "period": period,
+            "adjust": adjust,
+            "limit": limit,
+            "bars": bars,
+            "count": len(bars),
+            "available": available,
+            "reason": reason,
+            "source_detail": envelope.source_detail if envelope is not None else None,
+            "data_source_status": status,
+        }
+        return {
+            "payload": strip_private(payload),
+            "data_source_status": status,
+            "data_as_of": data_as_of,
+            "meta": {
+                "topic": "research_kline",
+                "source": "ladderstock",
+                "freshness": envelope.freshness if envelope is not None else "realtime",
                 "fetched_at": _now_iso(),
             },
         }
@@ -735,6 +885,22 @@ def build_router(plane: ResearchPlane) -> APIRouter:
         """概览（QUOT-400）：K 线 + 快照 + 财务指标，只读缓存，不依赖六段产物。"""
         return plane.overview(code, date_str)
 
+    @router.get("/{code}/kline")
+    def research_kline(
+        code: str,
+        period: Annotated[
+            str | None, Query(description="daily / weekly / monthly，缺省 daily")
+        ] = None,
+        adjust: Annotated[
+            str | None, Query(description="qfq / hfq / none，缺省 qfq")
+        ] = None,
+        limit: Annotated[
+            int | None, Query(gt=0, description="根数，缺省 120，上限 500")
+        ] = None,
+    ) -> dict[str, Any]:
+        """K 线图（QUOT-410）：三档周期 × 三档复权运行时透传给 `tencent_kline`。"""
+        return plane.kline(code, period, adjust, limit)
+
     @router.post("/{code}/run")
     def research_run(code: str, body: ResearchRunRequest | None = None) -> dict[str, Any]:
         """单段续跑：等价 `ldst research <code> --date <date> --only <stage>`。"""
@@ -753,6 +919,10 @@ __all__ = [
     "ENGINE_UNAVAILABLE_DETAIL",
     "EMPTY_RECORD_DETAIL",
     "JOB_STATUSES",
+    "KLINE_ADJUSTS",
+    "KLINE_LIMIT_DEFAULT",
+    "KLINE_LIMIT_MAX",
+    "KLINE_PERIODS",
     "OVERVIEW_BARS",
     "RESEARCH_JOB_TIMEOUT_SEC",
     "RESEARCH_PREFIX",
@@ -762,8 +932,11 @@ __all__ = [
     "UNKNOWN_CODE_DETAIL",
     "build_router",
     "code_exists",
+    "parse_adjust",
     "parse_code",
     "parse_day",
+    "parse_limit",
+    "parse_period",
     "parse_stage",
     "require_known_code",
 ]
