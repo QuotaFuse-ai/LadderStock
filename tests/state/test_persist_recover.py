@@ -137,7 +137,7 @@ def test_stale_snapshot_rows_are_hidden_not_rendered() -> None:
 # --------------------------------------------------------------------------- #
 
 
-#: v2 之后才引入的分片：不存在 v1 数据，不写 v1→v2 迁移（watch_settings，DEC-037；thesis_notes，QUOT-452）。
+#: v2 之后才引入的分片：无 v1 数据，不写迁移（watch_settings=DEC-037，thesis_notes=QUOT-452）。
 POST_V2_STORES = {"watchSettings", "thesisNotes"}
 
 
