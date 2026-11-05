@@ -178,3 +178,48 @@ schema：`config/schema/schedule.schema.json` 的 `kind` 枚举加入 `snapshot`
 读面**不回写、不补跑、不重算**：窗口语义（§2、§5）全部留在 `core/intraday.py`，
 接口只是把已经落盘的东西投影出去。回环独占（非回环 403），与 `/api/limit-pool` 那条
 「公开数据面不加闸门」有意不同，理由见 DEC-039 §2.4。
+
+## 10. 盘中高频轮询（QUOT-352 / DEC-056，2026-11-05 追加）
+
+6 个定点时点（§2）继续负责「那一刻的历史证据」，新增一条并行的**高频采集**：
+
+| job | kind | 间隔 | 取数 | 落盘 |
+|---|---|---|---|---|
+| `intraday_fast` | `snapshot_fast` | 30s | 昨日涨停池 + 此刻报价（不取情绪面） | `fast/<HHMMSS>.json` + `fast/rounds.jsonl` |
+| `fund_flow_fast` | `sync_batch` | 60s | `stock_fund_flow_batch` 一次取整池 | `fund_flow_realtime/<HHMM>.json`（DEC-054） |
+
+### 10.1 时段与门控
+
+- 只在 `09:30–11:30`、`13:00–15:00`（左闭右开）跑；周末、午休、盘前盘后一律
+  `skipped`，**不落盘、不打上游**；
+- 交易日历仍沿用「行情行内日期 = 今天」的兜底（§5），没有独立的节假日表。
+
+### 10.2 存储
+
+```
+data/intraday/<YYYY-MM-DD>/
+  ├── 0925.json … 1500.json      # 定点时点（§3，语义不变）
+  ├── status.json
+  └── fast/
+      ├── 093003.json …          # 秒级快照，O_CREAT|O_EXCL 只创建不覆盖
+      └── rounds.jsonl           # {"at","status","elapsed_ms","stocks","fresh","degraded"}
+```
+
+- 高频读数**不写** `<HHMM>.json`，读面 6 时点的文件与状态不受影响；
+- `fast/` 与 `fund_flow_realtime/` 同属「数据集子目录」，由
+  `purge_batch_slots()` 按天清理（默认保留最近 3 天）；
+- 读口：`core.intraday.latest_fast_snapshot(day)` 返回当天最新一份（暂未接 HTTP）。
+
+### 10.3 状态与失败
+
+`run_fast()` 返回 `ok / degraded / missing / already / failed / skipped`：
+
+- 上游限流（QFSD-7001）→ `degraded`，与定点时点同一口径（DEC-048）；
+- 没有一条今天的读数 → `missing`，不拿旧价写快照；
+- 任何单轮异常只折进本轮结果与 `rounds.jsonl`，不让调度器倒下。
+
+### 10.4 明确不做
+
+- 修改 6 个定点时点的窗口 / 只创建不覆盖 / 不补跑语义；
+- 高频轮抓情绪面（30 秒内横截面几乎不变，多打两个上游不划算）；
+- 前端「最新高频盘面」入口：本次只落数据与读取口。
