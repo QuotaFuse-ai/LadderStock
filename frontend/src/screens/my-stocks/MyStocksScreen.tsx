@@ -3,15 +3,15 @@ import { Star, Wallet } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 
 import { Tabs, type TabOption } from '../../components/ui'
-import PositionsScreen from '../radar/PositionsScreen'
+import { PortfolioPanel } from './PortfolioPanel'
 import { WatchlistPanel } from './WatchlistPanel'
 
 /**
  * 我的股票（QUOT-431）：一页两标签 `/my-stocks?tab=watch|hold`。
  *
  * 地址里的 `?tab=` 说了算——旧的 `/watchlist`、`/positions` 重定向过来时会带上；
- * 没带就回到上次看的那一页（本机 localStorage）。`hold` 暂时渲染现有持仓屏，
- * Stage 4 的 G 任务会把它换成新持仓页，本页的路由与标签不变。
+ * 没带就回到上次看的那一页（本机 localStorage）。`hold` 由 QUOT-434 的
+ * 流水驱动持仓页（`PortfolioPanel`）渲染，本页的路由与标签不变。
  */
 
 export type MyStocksTab = 'watch' | 'hold'
@@ -66,7 +66,7 @@ export default function MyStocksScreen() {
   return (
     <div className="flex flex-col gap-5">
       <Tabs ariaLabel="我的股票" tabs={TABS} value={tab} onChange={pick} />
-      {tab === 'watch' ? <WatchlistPanel /> : <PositionsScreen />}
+      {tab === 'watch' ? <WatchlistPanel /> : <PortfolioPanel />}
     </div>
   )
 }
