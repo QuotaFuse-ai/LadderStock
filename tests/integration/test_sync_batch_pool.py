@@ -181,6 +181,32 @@ def test_partial_failure_keeps_the_good_batch(data_home: Path) -> None:
     assert "部分批次未取到" in out["detail"]
 
 
+def test_peer_outage_replays_todays_batch_slot(data_home: Path) -> None:
+    """QUOT-422：批量路径全挂时按当日盘中槽回放，不再误报「无缓存可回放」。"""
+    _run(data_home, payload=batch_payload(_flows()), calls=[])
+
+    down = FakeTransport(
+        errors={"stock_fund_flow_batch": ConnectionError("peer unreachable")}
+    )
+    registry = make_registry(down, root=data_home, sources=SOURCES, sync=SYNC)
+    out = sync_module.run_sync(
+        registry,
+        watermark.WatermarkStore(root=data_home),
+        ["fund_flow_realtime"],
+        codes=list(CODES),
+    )["results"][0]
+
+    assert out["status"] == "degraded"
+    assert out["source"] == "local_cache"
+    assert out["from_cache"] is True
+    assert out["rows"] == len(CODES)
+    assert "缓存回放" in out["detail"]
+    assert "无缓存可回放" not in out["detail"]
+    assert any(t.startswith("cache:intraday-slot@") for t in out["trail"])
+    replay_events = [e for e in registry.health.events(limit=0) if e["kind"] == "cache_replay"]
+    assert replay_events and replay_events[-1]["dataset"] == "fund_flow_realtime"
+
+
 def test_pool_reads_the_realtime_partition_first(data_home: Path) -> None:
     """落库后 `fund_flow_snapshot` 优先读实时分区，且 as_of 是请求日、不算回落。"""
     _run(data_home, payload=batch_payload(_flows()), calls=[])
