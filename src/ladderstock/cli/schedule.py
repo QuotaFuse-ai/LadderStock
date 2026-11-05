@@ -69,7 +69,18 @@ def trigger_interval_seconds(trigger: Any) -> int | None:
 #: 15:35 收盘全量同步的数据集顺序（QUOT-347）。复用 `cli/sync.py` 已有的取数链路，
 #: 一切取数走 TickHub 缓存、不直打上游（DEC-006 边界）；`fund_flow` 是 code 必填的
 #: 候选池数据集，代码池由 `sync.py` 按 `--codes > sync.yaml > 本机自选` 解析。
-CLOSE_SYNC_DATASETS: tuple[str, ...] = ("limit_pool", "fund_flow", "concept_board")
+CLOSE_SYNC_DATASETS: tuple[str, ...] = (
+    "limit_pool",
+    "fund_flow",
+    "concept_board",
+    # QUOT-446：财报前瞻 / 事件回看的事件类数据集（semi_static），随 15:35 收盘一起
+    # 按日落 Parquet。排在候选池之后——当日池子先落，后续若要从池子取代码才拿得到。
+    "consensus_forecast",
+    "holder_trades",
+    "institution_survey",
+    "share_buyback",
+    "index_daily",
+)
 
 # 内置默认表：与 config/schedule.yaml 同口径。配置缺失时按此运行并给 warning，
 # 这样「第一次装上就能跑」和「配置坏了不静默」两件事都不牺牲——坏了的那份会
