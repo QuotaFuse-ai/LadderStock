@@ -258,13 +258,13 @@ export default function PoolScreen() {
   const [selected, setSelected] = useState<PoolCandidate | null>(null)
 
   const view = usePoolView({ date })
-  const { forced, state, payload, error, reload, refresh, refreshing, updatedAt } = view
+  const { forced, state, payload, error, reload, refresh, refreshing, refreshError, updatedAt } = view
 
   // 定时静默重取：不回到 loading、不清屏，失败也保留上一帧数据等下一拍。
   // 演示源是静态夹具、`?state=` 是强制态，两者都不需要也没必要轮询。
   useEffect(() => {
     if (demo || forced) return
-    const timer = window.setInterval(refresh, POOL_AUTO_REFRESH_MS)
+    const timer = window.setInterval(() => refresh(), POOL_AUTO_REFRESH_MS)
     return () => window.clearInterval(timer)
   }, [demo, forced, refresh])
 
@@ -455,6 +455,21 @@ export default function PoolScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {refreshError !== null && (
+        <Banner
+          tone="danger"
+          title="刷新失败"
+          action={
+            <Button variant="secondary" onClick={() => refresh({ manual: true })}>
+              重试
+            </Button>
+          }
+        >
+          未能取到最新数据，下面仍是上一次成功的快照（更新于 {updatedAt === null ? MISSING : clockLabel(updatedAt)}）：
+          {refreshError instanceof Error ? refreshError.message : '未知错误'}
+        </Banner>
+      )}
 
       {state === 'partial' && (
         <Banner tone="warn" title="部分输入数据集缺失">

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -85,7 +85,8 @@ async function tick(ms: number) {
 }
 
 function headerText(text: RegExp): HTMLElement {
-  const node = screen.getByText(text, { selector: 'header p' })
+  // v1.17 单顶栏后 PageHeader 不再渲染 <header>，副标题是内容状态行里的 <p>
+  const node = screen.getByText(text, { selector: 'p' })
   return node as HTMLElement
 }
 
@@ -155,5 +156,35 @@ describe('QUOT-421 候选池 30 秒自动刷新', () => {
     await tick(90_000)
 
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('手动刷新失败保留旧数据，并给出可见反馈；重试成功后反馈消失', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(poolResponse(`${POOL_DATE}T10:31`, 41.7))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(poolResponse(`${POOL_DATE}T10:32`, 93.2))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderPool()
+    await tick(0)
+    expect(headerText(/当日实时 · 10:31/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await tick(0)
+
+    // 失败必须可见，且不能把已上屏的数据换成错误页
+    expect(screen.getByText('刷新失败')).toBeTruthy()
+    expect(screen.getByText(/本机接口不可达/)).toBeTruthy()
+    expect(screen.queryByText('候选池取数失败')).toBeNull()
+    expect(headerText(/当日实时 · 10:31/)).toBeTruthy()
+    expect(screen.getByText('41.7')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await tick(0)
+
+    expect(screen.queryByText('刷新失败')).toBeNull()
+    expect(headerText(/当日实时 · 10:32/)).toBeTruthy()
+    expect(screen.getByText('93.2')).toBeTruthy()
   })
 })
