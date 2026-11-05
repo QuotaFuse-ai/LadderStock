@@ -40,6 +40,7 @@ import {
   formatRatePct,
   MISSING,
 } from '../../lib/format'
+import { hideIf, usePrivacyMode } from '../../lib/privacy'
 import { withParams } from '../industry/links'
 import { useDemoEnabled, usePositionsView } from './useRadarView'
 
@@ -85,6 +86,7 @@ function pctText(value: number | null): string {
 
 function ValuationCards({ payload }: { payload: PositionsPayload }) {
   const { valuation, concentration } = payload
+  const privacy = usePrivacyMode()
   const unpriced = valuation.unpriced_cost > 0
   const coverage = valuation.coverage_pct === null ? MISSING : formatOneDecimal(valuation.coverage_pct)
   const basisLabel = concentration.basis === 'market_value' ? '市值' : '成本'
@@ -100,15 +102,18 @@ function ValuationCards({ payload }: { payload: PositionsPayload }) {
       />
       <MetricCard
         label="总成本"
-        value={formatMoney(valuation.total_cost)}
+        value={hideIf(privacy.on, formatMoney(valuation.total_cost))}
         note={`价格来源 ${payload.price_source || MISSING}`}
       />
       <MetricCard
         label="市值"
-        value={valuation.market_value === null ? MISSING : formatMoney(valuation.market_value)}
+        value={hideIf(
+          privacy.on,
+          valuation.market_value === null ? MISSING : formatMoney(valuation.market_value),
+        )}
         note={
           valuation.market_value === null
-            ? `${formatMoney(valuation.unpriced_cost)} 成本未取到价格，退回成本口径`
+            ? `${hideIf(privacy.on, formatMoney(valuation.unpriced_cost))} 成本未取到价格，退回成本口径`
             : `覆盖 ${coverage}% 成本`
         }
       />
@@ -116,14 +121,17 @@ function ValuationCards({ payload }: { payload: PositionsPayload }) {
         label="浮动盈亏"
         value={
           <span className={cn('ldst-num', signedClass(valuation.unrealized_pnl))}>
-            {valuation.unrealized_pnl === null
-              ? MISSING
-              : `${valuation.unrealized_pnl > 0 ? '+' : ''}${formatMoney(valuation.unrealized_pnl)}`}
+            {hideIf(
+              privacy.on,
+              valuation.unrealized_pnl === null
+                ? MISSING
+                : `${valuation.unrealized_pnl > 0 ? '+' : ''}${formatMoney(valuation.unrealized_pnl)}`,
+            )}
           </span>
         }
         note={
           unpriced
-            ? `仅统计已取价部分 · 未取价 ${formatMoney(valuation.unpriced_cost)}`
+            ? `仅统计已取价部分 · 未取价 ${hideIf(privacy.on, formatMoney(valuation.unpriced_cost))}`
             : `盈亏率 ${pctText(valuation.unrealized_pnl_pct)} · 覆盖 ${coverage}%`
         }
       />
@@ -144,6 +152,7 @@ function ValuationCards({ payload }: { payload: PositionsPayload }) {
 
 function ConcentrationCards({ payload }: { payload: PositionsPayload }) {
   const { concentration, sector_distribution: sector } = payload
+  const privacy = usePrivacyMode()
   const basisLabel = concentration.basis === 'market_value' ? '市值' : '成本'
   return (
     <div className="grid grid-cols-1 gap-3 desk:grid-cols-2">
@@ -157,7 +166,7 @@ function ConcentrationCards({ payload }: { payload: PositionsPayload }) {
             items={concentration.holdings.map((holding) => ({
               label: holding.code,
               value: holding.weight_pct,
-              hint: `成本 ${formatMoney(holding.cost)}`,
+              hint: `成本 ${hideIf(privacy.on, formatMoney(holding.cost))}`,
             }))}
             unit="%"
             format={(value) => value.toFixed(2)}
@@ -183,7 +192,7 @@ function ConcentrationCards({ payload }: { payload: PositionsPayload }) {
               items={sector.industries.map((row) => ({
                 label: row.industry,
                 value: row.weight_pct,
-                hint: `成本 ${formatMoney(row.cost)}`,
+                hint: `成本 ${hideIf(privacy.on, formatMoney(row.cost))}`,
               }))}
               unit="%"
               format={(value) => value.toFixed(2)}
@@ -208,14 +217,14 @@ function ConcentrationCards({ payload }: { payload: PositionsPayload }) {
   )
 }
 
-function SignedMoney({ value }: { value: number | null }) {
+function SignedMoney({ value, privacy }: { value: number | null; privacy: boolean }) {
   if (value === null) {
     return <span className="text-text-muted" title="未取到价格，无法计算">—</span>
   }
+  const text = `${value > 0 ? '+' : ''}${formatMoney(value)}`
   return (
-    <span className={cn('ldst-num', signedClass(value))}>
-      {value > 0 ? '+' : ''}
-      {formatMoney(value)}
+    <span className={cn('ldst-num', signedClass(value))} title={privacy ? '隐私模式：金额已隐藏' : undefined}>
+      {hideIf(privacy, text)}
     </span>
   )
 }
@@ -224,6 +233,8 @@ function buildColumns(
   editable: boolean,
   onEdit: (item: PositionItem) => void,
   onDelete: (item: PositionItem) => void,
+  /** 隐私模式（DEC-062 §4）：只遮自己的数量 / 成本 / 市值 / 盈亏，百分比与公开行情不遮 */
+  privacy: boolean,
 ): Array<Column<PositionItem>> {
   const columns: Array<Column<PositionItem>> = [
     {
@@ -252,7 +263,11 @@ function buildColumns(
       align: 'right',
       width: '96px',
       sort: (a, b) => a.cost - b.cost,
-      render: (row) => <span className="ldst-num text-text">{formatMoney(row.cost)}</span>,
+      render: (row) => (
+        <span className="ldst-num text-text" title={privacy ? '隐私模式：成本已隐藏' : undefined}>
+          {hideIf(privacy, formatMoney(row.cost))}
+        </span>
+      ),
     },
     {
       key: 'qty',
@@ -260,7 +275,11 @@ function buildColumns(
       align: 'right',
       width: '80px',
       sort: (a, b) => a.qty - b.qty,
-      render: (row) => <span className="ldst-num text-text">{formatInt(row.qty)}</span>,
+      render: (row) => (
+        <span className="ldst-num text-text" title={privacy ? '隐私模式：数量已隐藏' : undefined}>
+          {hideIf(privacy, formatInt(row.qty))}
+        </span>
+      ),
     },
     {
       key: 'price',
@@ -284,7 +303,9 @@ function buildColumns(
         row.market_value === null ? (
           <span className="text-caption text-text-muted" title="未取到价格">—</span>
         ) : (
-          <span className="ldst-num text-text">{formatMoney(row.market_value)}</span>
+          <span className="ldst-num text-text" title={privacy ? '隐私模式：市值已隐藏' : undefined}>
+            {hideIf(privacy, formatMoney(row.market_value))}
+          </span>
         ),
     },
     {
@@ -293,7 +314,7 @@ function buildColumns(
       align: 'right',
       width: '112px',
       sort: (a, b) => (a.unrealized_pnl ?? Number.NEGATIVE_INFINITY) - (b.unrealized_pnl ?? Number.NEGATIVE_INFINITY),
-      render: (row) => <SignedMoney value={row.unrealized_pnl} />,
+      render: (row) => <SignedMoney value={row.unrealized_pnl} privacy={privacy} />,
     },
     {
       key: 'pnl_pct',
@@ -545,7 +566,11 @@ export default function PositionsScreen() {
     setDeleteTarget(item)
   }
 
-  const columns = useMemo(() => buildColumns(editable, onEdit, onDelete), [editable])
+  const privacy = usePrivacyMode()
+  const columns = useMemo(
+    () => buildColumns(editable, onEdit, onDelete, privacy.on),
+    [editable, privacy.on],
+  )
 
   const submit = async (input: PositionInput) => {
     if (!editor) return
