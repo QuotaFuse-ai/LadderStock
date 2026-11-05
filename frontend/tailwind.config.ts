@@ -43,6 +43,18 @@ export default {
       desk: tokens.layout.breakpointBase.value,
     },
     extend: {
+      /**
+       * 移动端断点（DEC-062 §2）：参考实现顶栏用 `sm` / `lg` 控制面包屑与工作台小字，
+       * 而本仓 `screens` 覆盖了 Tailwind 默认值（只剩 `rail` / `desk`）。
+       * 这里只补外壳用得到的两档，不新增任何其它命名断点：
+       * - `sm` = 640px：`工作空间 /` 在此及以上显示；
+       * - `lg` = 1024px：`本地 A 股短线工作台` 小字在此及以上显示。
+       * `<768` 的抽屉由 `lib/mediaQuery.ts` 在 JS 里判断（汉堡按钮必须「不渲染」而不是 CSS 隐藏）。
+       */
+      screens: {
+        sm: '640px',
+        lg: '1024px',
+      },
       colors: {
         ...colors,
         chart: {
