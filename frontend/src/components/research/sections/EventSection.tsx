@@ -34,7 +34,7 @@ import {
  * 对齐本地 000300 交易日历，每个事件给「事件日前 N 个交易日 → 后 M 个交易日」的
  * 窗口收益与超额。页面只展示接口算好的数：
  * - 均值只在 `sample.status === 'ok'` 时出现，样本不足如实写「不给平均」；
- * - 沪深300 基准缺失（`data_source_status = missing`）时拒绝出平均并说明缺什么；
+ * - 沪深300 基准缺失（`trading_days` 或 `benchmark_rows` 为 0）时拒绝出平均并说明缺什么；
  * - 增持 / 减持由同一份 `holder_trades` 按 `detail.direction` 拆成两枚 chip，
  *   接口只按「增持减持」合计给样本，拆方向后不自己求平均。
  *
