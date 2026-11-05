@@ -14,6 +14,7 @@ peer 全由 `tests/fixtures/fake_peers.py` 的离线桩扮演，不发任何网�
 from __future__ import annotations
 
 import copy
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +23,12 @@ from fixtures.fake_peers import SOURCES_DOC, SYNC_DOC, FakeTransport, make_regis
 
 from ladderstock.cli import sync as sync_module
 from ladderstock.core import pool
+from ladderstock.core.intraday import local_moment
 from ladderstock.data import watermark
 
-DAY = "2026-11-04"
+# 槽文件按调度时区（Asia/Shanghai）的「今天」建目录，写死日期会在跨日后必挂。
+DAY = local_moment(None, None).date().isoformat()
+NEXT_DAY = (local_moment(None, None).date() + timedelta(days=1)).isoformat()
 CODES = ["002696", "600261", "600715"]
 
 SOURCES: dict[str, Any] = copy.deepcopy(SOURCES_DOC)
@@ -196,7 +200,7 @@ def test_next_day_does_not_reuse_yesterdays_realtime(data_home: Path) -> None:
     """实时数据集只在当日有分区：跨日不许拿昨天的实时数冒充今天（DEC-053 后果）。"""
     _run(data_home, payload=batch_payload(_flows()), calls=[])
 
-    records, backend, _as_of, _fell_back = pool.fund_flow_snapshot("2026-11-05", data_home)
+    records, backend, _as_of, _fell_back = pool.fund_flow_snapshot(NEXT_DAY, data_home)
 
     assert records == []
     assert backend == "none"
