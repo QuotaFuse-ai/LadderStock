@@ -154,6 +154,63 @@ GET /api/research/{code}/kline?period=daily|weekly|monthly&adjust=qfq|hfq|none&l
   隐私键。禁改 `code`/`period`/`adjust`/`limit` 回显值——它们是请求参数的回显，
   联调时用来核对透传是否生效。
 
+### 2.5 `GET /api/research/{code}/earnings-brief`（已实现，QUOT-446）
+
+财报前瞻：一致预期 + 最近 N 期财报明细。只读本机缓存
+（`consensus_forecast` / `finance_indicators` / `earnings_preview`），不联网、
+不补 0；统计量全部后端算，前端不做除法。
+
+```
+GET /api/research/{code}/earnings-brief?periods=6
+```
+
+| 参数 | 取值 | 缺省 | 说明 |
+| --- | --- | --- | --- |
+| `code` | 6 位 A 股代码 | 必填 | 未知代码 404 |
+| `periods` | 整数 1..12 | `6` | 最近 N 个报告期，越界 422 |
+
+`payload` 关键字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `consensus` | 最新一致预期快照（`as_of` / `name` / `eps_current_year` / `eps_next_year` / `analyst_count` / `consensus[]` / `history[]`）；无缓存时 `null` + `consensus_reason` |
+| `earnings[]` | 按 `report_date` 倒序；每项含 `actual`（EPS/营收/净利/ROE 等原值）与同报告期 `forecast`（`earnings_preview` 最新一条） |
+| `earnings[].publish_date` / `reaction_date` / `reaction_change_pct` | **当前无源**：`finance_indicators` 只回报告期、没有公告日，一律 `null` + `*_reason`，不拿报告期末或抓取日冒充 |
+| `stats` | `periods` / `with_forecast` / `with_publish_date` / `with_reaction` / `latest_report_*` / `consensus_*`；统计句所需数字都在这里 |
+| `data_as_of` | `max(consensus.as_of, 最新报告期)`；全缺时 `null` |
+
+`data_source_status`：有一致预期或有任一报告期 → `ok`；两者都没有 → `missing`。
+
+### 2.6 `GET /api/research/{code}/event-study`（已实现，QUOT-446）
+
+事件回看：六类事件的日期序列 + 每个事件对沪深300（`000300`）的窗口超额收益。
+交易日历取本地 `index_daily`；个股收盘取 `daily_k`。每事件窗口固定为
+`close[end] / close[start] - 1`，`excess_return = stock_return - benchmark_return`。
+
+```
+GET /api/research/{code}/event-study?sources=holder_trades,dragon_tiger&window_before=5&window_after=20
+```
+
+| 参数 | 取值 | 缺省 | 说明 |
+| --- | --- | --- | --- |
+| `code` | 6 位 A 股代码 | 必填 | 未知代码 404 |
+| `sources` | 逗号分隔：`holder_trades` / `dragon_tiger` / `earnings_preview` / `institution_survey` / `share_buyback` / `lockup_calendar` | 全部六类 | 未知类型 422 |
+| `window_before` / `window_after` | 整数 0..60 | `5` / `20` | 事件日前后的交易日数，越界 422 |
+
+`payload` 关键字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `event_types[]` | 每类含 `dataset` / `label` / `count` / `dates`（去重升序）/ `events[]`（`date` + `detail` + `window`）/ `sample` |
+| `window` | `start` / `end` / `stock_return` / `benchmark_return` / `excess_return` / `reason`；窗口不齐或缺价时逐项 `null` + `reason`，不估算 |
+| `sample` | `required=8`、`window_available`、`status`、三个均值、`reason`；**可计算窗口 < 8 时 `status=insufficient_sample` 且三个均值恒为 `null`**，统计句由后端给数 |
+| `counts` | 各数据集事件条数（同一公告日多行会各算一条，`dates` 去重） |
+| `trading_days` / `benchmark_rows` | 本地 000300 交易日历长度与原始行数 |
+| `data_source_status` | 无基准日历 → `missing`；有可计算窗口 → `ok`；有事件但窗口全不可算 → `partial` |
+
+空事件类型的 `reason` 区分「未同步」与「上游真实为空」（读最近一次同步运行状态）。
+`data_as_of` 为本地 000300 最后交易日。
+
 ## 3. 个股深挖页结构
 
 | 区块 | 数据来源 | 降级表现 |
