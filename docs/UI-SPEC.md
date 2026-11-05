@@ -30,6 +30,8 @@
 | v1.15 | 2026-11-05 | 工作区顶栏（QUOT-442 / DEC-062）：侧栏右侧新增纵向列 = `header.workspace-topbar`（`h-topbar`，面包屑 + 工具区）+ 主内容列，主内容区仍是唯一滚动容器（QUOT-397 的归顶逻辑与页头 sticky 不变）。面包屑取一级栏目名（`lib/nav.ts` `navTitleFor()`，导航数据同时搬到该模块并由 `Layout.tsx` 原样再导出）。右侧工具区抽成 `TopbarTools`：工作台小字（`lg`）→ 隐私开关 → 深浅色 → AI 入口（复用 `AiConnectDialog`）；侧栏底部主题 `Segmented` 移除，避免重复入口。隐私模式 `lib/privacy.ts`（`MASK` / `hideIf` / `usePrivacyMode`，键 `ldst.privacy`）：只遮自己的数量 / 成本 / 市值 / 盈亏，百分比与公开行情不遮，`—` 不遮；初版消费方为持仓页明细表 + 汇总卡 + 成本提示。`<768` 新增左侧导航抽屉（`MobileNavDrawer`：遮罩、Escape 还焦点、`aria-expanded`/`aria-controls`、body 滚动锁定、换页自动关闭），汉堡在 ≥768 **不渲染**，`<768` 侧栏让位给抽屉（两套导航不同屏）。断点词汇补 `sm`（640px）/ `lg`（1024px）两档，`rail:` / `desk:` 原义与 1024–1279 rail 行为不变。§2 示意图同步，并补顶栏三层结构、工具区顺序与断点表三行。证据：`tests/topbar.test.tsx` / `tests/privacy.test.ts`、`docs/screenshots/positions-442-{dark,light}.png` 与 `positions-442-privacy-*.png`。 |
 | v1.16 | 2026-11-05 | 补 S3 合入后首页条目同步（QUOT-409；v1.7 变更行承诺的「§3.5 与 §11.5 在 S3 接线合入时按 SPEC-HOME-V2 同步」）。**只改文档、不改代码 / token / 组件**。**§3.5 整节重写**：旧「摘要 + TemperatureBar + 5 张指标卡」「连板梯队 Top 10 + 题材强度 Top 5」条目及其失效行号全部替换为 S3 实际落地的四块（A 大盘与全球指数 → B 今天，想研究什么？→ C 我的自选 → D 我的持仓）+ E 待办 / F 最近异动下移，行号按 `997c769` 的 `HomeScreen.tsx` 与 `screens/home/*` 逐条复核；「禁止」条款的数据链路清单由旧四接口改为代码实际五路：`GET /api/indices` / `GET /api/watchlist` / `GET /api/positions?date=` / `GET /api/watch/snapshot` / `GET /api/validation?date=`，并明写不再调用 `/api/sentiment` `/api/ladder`。**§10 首页行**（本单正文称「§8 路由映射表」，该表 v1.1 起编号为 §10）接口清单同步为上述五路，B 块注明走本机 `lib/searchCore` 检索、不发请求。**§11.5** 六条旧首页验收全部作废，替换为对四块可执行的 12 条整屏级条目，逐块细节指向 `SPEC-HOME-V2` §9。**模块数口径核对**：§3.5 不登记模块数（首页块集合按 `HomeScreen.tsx` 装配顺序读，不是注册表），§3.18 设置页 `N 个模块 · 运行中 M` 补注来源 = 注册表实际出卡数（`peers:` 条数 + 工具组件数，DEC-056 / QUOT-420），全文件无写死的模块个数或模块名清单。**随 main 同步**：QUOT-441 把首页空态的 `ldst sync --date` 命令提示改为「去行情页同步」，本版 §3.5 六态与 §11.5 相应条目按新代码更新；QUOT-412 的 K 线规格（`docs/specs/SPEC-KLINE-MODULE.md`）与 §7.1 图表 token 行属 main 既有内容，本版未覆盖、未删除。版本号说明：本单原定登记 v1.10，v1.10–v1.12 已被 QUOT-354 / QUOT-396 / QUOT-342 占用、v1.13 被 QUOT-441 占用、v1.14/v1.15 被 QUOT-442 占用，顺延为 v1.16。两处**已知偏差按代码登记、本版不改代码**：① A 块网格实现为 `grid-cols-2 … desk:grid-cols-4`（1024–1279 档 2 列 × 4 行），与 SPEC-HOME-V2 §2.1/§9 的「1024 起 4 列 × 2 行」不一致，待确认后另立单；② C 块卡头「管理自选 →」与 `/watchlist` 页已由 QUOT-419 落地，SPEC-HOME-V2 §4.4 / §12-L07「v2 首版不放」的前提（当时无自选页）已不成立。§0 不覆盖清单的 DEC-052 标注 v1.9 已加，本版不动。 |
 | v1.17 | 2026-11-05 | 单顶栏（QUOT-457 / DEC-063）：全平台由「顶栏 + 命令条 + 页头条」三条横栏收敛为**只留顶栏**。`PageHeader` 不再渲染横栏（去掉底色 / 分隔线 / sticky / `min-h-topbar`），标题改为 `h1.sr-only`（视觉标题由面包屑承担，读屏与测试仍有一级标题）；`subtitle` / `badge` / `meta` 与次级 `actions` 合成内容第一行的状态行；主操作「刷新」经 `PageToolsSlotContext` 用 `createPortal` 送进顶栏（无外壳时就地渲染），全屏只有一颗。`PageCommandBar` 从 `main` 移到顶栏、由「一行」改为「图标按钮 + `role="dialog"` 浮层」（命令名 / `ldst <argv>` / 运行 / 状态 / 日志尾），演示态或本页无命令时整颗不渲染（DEC-061 白名单不变）；页签 `SectionNavPills` 仍在内容区第一行，数据源仍是 `NAV_SECTIONS`。§2 示意图、标题层级 / 内容状态行 / 页签位置 / 顶栏高度 / 单顶栏 / 顶栏工具区六行同步重写。**§3 各屏「工具栏」行中「右侧唯一刷新」「主操作在最右」的表述按本版失效**：刷新在顶栏，次级操作留在内容状态行，其余字段与用例不变。证据：`tests/topbar-single-bar.test.tsx`（4 例）、`tests/page-command-bar.test.tsx`（4 例）；`typecheck` / `test`（53 文件 515 例）/ `build` 全绿。 |
+| v1.18 | 2026-11-05 | 候选池面板自动刷新（QUOT-421，父任务 QUOT-375 验收项 2）：`/pool` 每 30 秒**静默重取**一次 `/api/pool`，60 秒内必然看到新数值；静默路径不回 loading、不清屏，单拍失败保留上一帧数据等下一拍（不把好数据换成错误页）。**慢响应**（单次请求超过一拍）不打断在途请求：到点只记一次待补拍，当前请求 settle 后再发起，`refreshing` 在每次请求 settle 后必定复位（不会因 aborted 永久卡在「正在刷新…」）。内容状态行新增「更新于 HH:MM:SS」（重取中写「正在刷新…」）；刷新按钮在顶栏（v1.17 单顶栏），手动「刷新」走静默路径，**失败时保留旧数据并显示 `Banner danger`「刷新失败」+ 原因 + 重试**。演示源（固定夹具）与 `?state=` 强制态不轮询。规范落点：§3.10 补「自动刷新」行并改工具栏行、§11.10 补一条走查项。证据：`frontend/tests/quot-421-pool-auto-refresh.test.tsx`（假时钟走完一拍：新数值与 fetched_at 上屏、不闪骨架、单拍失败保留旧值、慢响应不自我 abort 且 `refreshing` 复位、手动失败有反馈、演示态不轮询）；`typecheck` / `test` / `check:ui` 全绿。 |
+
 
 ## 0. 范围与非目标
 
@@ -376,7 +378,8 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | 项 | 规范 | 代码依据 |
 |---|---|---|
 | 入口 | 侧栏「复盘」分组「候选池」 | `Layout.tsx:99` |
-| 工具栏 | 标题「候选池」；subtitle `${date} · 高度 … · N 只候选 · 来源 …`；右侧条件性「导出」+「刷新」 | `PoolScreen.tsx:286-307` |
+| 工具栏 | 标题「候选池」（`h1.sr-only`）；内容状态行 subtitle `${date} · 高度 … · N 只候选 · 来源 …` +「更新于 HH:MM:SS」（静默重取中写「正在刷新…」）；刷新按钮在顶栏（v1.17 单顶栏），次级「导出」留在内容状态行 | `PoolScreen.tsx`（QUOT-421 / QUOT-457） |
+| 自动刷新 | 面板每 30 秒**静默重取**一次 `/api/pool`：不回 loading、不清屏，失败保留上一帧数据等下一拍；慢响应不打断在途请求（排队下一拍），`refreshing` 每次 settle 后复位；演示态与 `?state=` 强制态不轮询。手动「刷新」同样走静默路径，失败时保留旧数据并显示 `Banner danger`「刷新失败」+ 原因 + 重试 | `lib/useAsync.ts` 的 `refresh` / `PoolScreen.tsx` |
 | 主区 | 3 指标卡（`grid-cols-3 gap-3`）→ `DataTable density=compact maxHeight=calc(100vh - 360px) onRowClick` → 页脚口径 → 行详情 `Drawer width="lg"` | `PoolScreen.tsx:404-442` |
 | 表体 | **抽屉内的分项表必须是第二份手写 `table`**——这是全仓唯一真违规裸表，根因是 C-09 缺 `summaryRow` | `PoolScreen.tsx:125-183`、`ui/Table.tsx` |
 | 六态 | 整屏 5 态齐全 + 表内空态（C-09 `empty`）；无表级 loading/error | `PoolScreen.tsx:313-401,433` |
@@ -997,6 +1000,7 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 表体高度不再用 `calc(100vh - 360px)` 魔法值；列宽落在 §7.3 刻度。
 - [ ] 名称列 `truncate` 必须配 `title`；行可点（Enter）且 `onRowClick` 有键盘等价。
 - [ ] 导出按钮标注"只写本机"，且导出成功/失败有反馈。
+- [ ] 静置 60 秒内页面自动出现新数值（30 秒静默重取），且不闪回骨架屏；单拍失败保留旧数据，慢响应不自我 abort，「正在刷新…」会复位。
 
 ### 11.11 我的持仓 `/positions`
 
