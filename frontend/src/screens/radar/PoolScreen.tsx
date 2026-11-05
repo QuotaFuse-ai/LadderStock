@@ -434,17 +434,15 @@ export default function PoolScreen() {
               )
             }
             action={
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button variant="secondary" onClick={reload}>刷新</Button>
-                {!demo && (
-                  <a
-                    href={withParams('/pool', { demo: '1', state: forced })}
-                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
-                  >
-                    查看演示数据
-                  </a>
-                )}
-              </div>
+              // 刷新已在顶栏（QUOT-457 顶栏收敛），空态不再放第二枚；这里只留与取数无关的演示入口
+              demo ? undefined : (
+                <a
+                  href={withParams('/pool', { demo: '1', state: forced })}
+                  className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
+                >
+                  查看演示数据
+                </a>
+              )
             }
           />
         </Card>
