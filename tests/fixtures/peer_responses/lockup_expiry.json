@@ -1,0 +1,43 @@
+{
+ "ok": true,
+ "data": {
+  "code": "600000",
+  "trade_date": "2026-11-05",
+  "forward_days": 90,
+  "history": [
+   {
+    "date": "2020-09-04",
+    "type": "定向增发机构配售股份",
+    "shares_10k": 2935213.1712,
+    "able_shares_10k": 124831.6498,
+    "ratio_pct": 4.2529,
+    "lift_market_cap_10k": 1257054.713486
+   },
+   {
+    "date": "2017-03-20",
+    "type": "定向增发机构配售股份",
+    "shares_10k": 2161827.9922,
+    "able_shares_10k": 109946.1365,
+    "ratio_pct": 5.0858,
+    "lift_market_cap_10k": 1774530.64311
+   },
+   {
+    "date": "2015-10-14",
+    "type": "定向增发机构配售股份",
+    "shares_10k": 1865347.1415,
+    "able_shares_10k": 373069.4283,
+    "ratio_pct": 20.0,
+    "lift_market_cap_10k": 5931803.90997
+   }
+  ],
+  "upcoming": []
+ },
+ "meta": {
+  "source": "eastmoney",
+  "fetched_at": "2026-11-05T19:58:09+08:00",
+  "cache_hit": true,
+  "confidence": "B",
+  "trace_id": "trace-fixture-446",
+  "count": 4
+ }
+}

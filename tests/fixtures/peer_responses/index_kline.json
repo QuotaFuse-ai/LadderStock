@@ -1,0 +1,45 @@
+{
+ "ok": true,
+ "data": {
+  "code": "000300",
+  "klines": [
+   {
+    "date": "2026-05-13",
+    "open": 4919.42,
+    "close": 4998.34,
+    "high": 5001.12,
+    "low": 4919.42,
+    "volume": 268454537.0,
+    "amount": null
+   },
+   {
+    "date": "2026-05-14",
+    "open": 5027.64,
+    "close": 4914.6,
+    "high": 5030.52,
+    "low": 4913.6,
+    "volume": 280695379.0,
+    "amount": null,
+    "change_pct": -1.6754
+   },
+   {
+    "date": "2026-05-15",
+    "open": 4911.62,
+    "close": 4859.59,
+    "high": 4935.62,
+    "low": 4832.69,
+    "volume": 276967769.0,
+    "amount": null,
+    "change_pct": -1.1193
+   }
+  ]
+ },
+ "meta": {
+  "source": "tencent",
+  "fetched_at": "2026-11-05T20:16:15+08:00",
+  "cache_hit": false,
+  "confidence": "A",
+  "trace_id": "trace-fixture-446",
+  "count": 120
+ }
+}

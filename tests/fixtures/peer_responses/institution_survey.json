@@ -1,0 +1,12 @@
+{
+ "ok": true,
+ "data": [],
+ "meta": {
+  "source": "eastmoney",
+  "fetched_at": "2026-11-05T19:58:06+08:00",
+  "cache_hit": true,
+  "confidence": "B",
+  "trace_id": "trace-fixture-446",
+  "count": 0
+ }
+}

@@ -1,0 +1,83 @@
+{
+ "ok": true,
+ "data": {
+  "code": "600000",
+  "name": "浦发银行",
+  "as_of": "2026-11-05",
+  "consensus": [
+   {
+    "year": 2026,
+    "analyst_count": 12,
+    "min": 1.45,
+    "mean": 1.53,
+    "max": 1.67,
+    "industry_avg": 1.91
+   },
+   {
+    "year": 2027,
+    "analyst_count": 12,
+    "min": 1.49,
+    "mean": 1.64,
+    "max": 1.88,
+    "industry_avg": 2.05
+   },
+   {
+    "year": 2028,
+    "analyst_count": 11,
+    "min": 1.51,
+    "mean": 1.75,
+    "max": 2.07,
+    "industry_avg": 2.23
+   }
+  ],
+  "current_year": 2026,
+  "eps_current_year": 1.53,
+  "eps_next_year": 1.64,
+  "analyst_count": 12,
+  "ratings": {
+   "buy": 3,
+   "overweight": 5,
+   "neutral": 0,
+   "underweight": 0,
+   "sell": 0
+  },
+  "history": [
+   {
+    "year": 2019,
+    "eps": 1.95,
+    "net_profit_yi": 589.11,
+    "status": "actual"
+   },
+   {
+    "year": 2020,
+    "eps": 1.88,
+    "net_profit_yi": 583.25,
+    "status": "actual"
+   },
+   {
+    "year": 2021,
+    "eps": 1.62,
+    "net_profit_yi": 530.03,
+    "status": "actual"
+   }
+  ],
+  "eps": [
+   1.53,
+   1.64,
+   1.75
+  ],
+  "years": [
+   "2026",
+   "2027",
+   "2028"
+  ]
+ },
+ "meta": {
+  "source": "ths",
+  "fetched_at": "2026-11-05T19:58:05+08:00",
+  "cache_hit": true,
+  "confidence": "C",
+  "trace_id": "trace-fixture-446",
+  "count": 3
+ }
+}

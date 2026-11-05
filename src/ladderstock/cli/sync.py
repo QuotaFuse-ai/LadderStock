@@ -61,7 +61,12 @@ from ladderstock.core import intraday
 from ladderstock.core.boundary import BoundaryViolation, owner_of
 from ladderstock.core.models import LadderEnvelope
 from ladderstock.data import archive, duckdb_store, sqlite_store, watermark
-from ladderstock.data.adapters.tickhub import needs_code, needs_codes_batch, tool_params
+from ladderstock.data.adapters.tickhub import (
+    accepts_optional_code,
+    needs_code,
+    needs_codes_batch,
+    tool_params,
+)
 from ladderstock.data.adapters.wire import needs_topic
 from ladderstock.data.adapters.wire import tool_params as wire_tool_params
 from ladderstock.data.db_lock import writer_lock
@@ -845,7 +850,11 @@ def sync_one(
             started=started,
             cli_codes=pool_codes,
         )
-    if binding.peer == "tickhub" and needs_code(dataset):
+    # `code` 可选的数据集（目前只有 dragon_tiger）：只有**显式给了代码池**才逐只回补，
+    # 调度上的默认口径仍是当日全市场榜（QUOT-446）。
+    if binding.peer == "tickhub" and (
+        needs_code(dataset) or (pool_codes and accepts_optional_code(dataset))
+    ):
         return sync_code_pool(
             registry,
             store,
