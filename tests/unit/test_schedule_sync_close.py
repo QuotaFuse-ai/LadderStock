@@ -101,6 +101,27 @@ _CLOSE_SOURCES: dict[str, Any] = {
             "retries": 0,
             "cooldown_sec": 60,
         },
+        # QUOT-446：收盘日更里追加的事件类数据集，形状见 adapters/tickhub.py 的 ROW_SHAPES。
+        *[
+            {
+                "id": f"tickhub_{dataset}",
+                "dataset": dataset,
+                "via": "tickhub",
+                "tool": tool,
+                "primary": True,
+                "fallback": [],
+                "timeout_sec": 1,
+                "retries": 0,
+                "cooldown_sec": 60,
+            }
+            for dataset, tool in (
+                ("consensus_forecast", "ths_eps_forecast"),
+                ("holder_trades", "holder_trades"),
+                ("institution_survey", "institution_survey"),
+                ("share_buyback", "share_buyback"),
+                ("index_daily", "index_kline"),
+            )
+        ],
     ],
 }
 
@@ -127,6 +148,46 @@ _CLOSE_SYNC: dict[str, Any] = {
                 "watermark_field": "trade_date",
                 "mode": "replace",
                 "codes": ["600000", "000001"],
+            },
+            # QUOT-446：事件类（semi_static）日更，事件日取上游公告日。
+            "consensus_forecast": {
+                "primary": "tickhub_consensus_forecast",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+                "codes": ["600000"],
+                "optional": True,
+            },
+            "holder_trades": {
+                "primary": "tickhub_holder_trades",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+                "codes": ["600000"],
+                "optional": True,
+            },
+            "institution_survey": {
+                "primary": "tickhub_institution_survey",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+                "codes": ["600000"],
+                "optional": True,
+            },
+            "share_buyback": {
+                "primary": "tickhub_share_buyback",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+                "codes": ["600000"],
+                "optional": True,
+            },
+            "index_daily": {
+                "primary": "tickhub_index_daily",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "append",
+                "codes": ["000300"],
             },
         },
         "cold_hot": {"intraday_cache_ttl_sec": 0, "history_backend": "duckdb"},
@@ -166,6 +227,78 @@ def _close_transport(day: str, fund_flow_rows: dict[str, int] | None = None) -> 
             "limit_up_pool": lambda _params: tickhub_payload(_limit_rows(day)),
             "concept_boards": lambda _params: tickhub_payload(_concept_rows(day)),
             "stock_fund_flow": fund_handler,
+            # QUOT-446：事件类工具的返回形状（对象快照 / 行列表 / 包一层 klines）。
+            "ths_eps_forecast": lambda params: tickhub_payload(
+                {
+                    "code": str(params.get("code") or "600000"),
+                    "name": "浦发银行",
+                    "as_of": day,
+                    "consensus": [
+                        {
+                            "year": 2026,
+                            "analyst_count": 12,
+                            "min": 1.45,
+                            "mean": 1.53,
+                            "max": 1.67,
+                        }
+                    ],
+                    "current_year": 2026,
+                    "eps_current_year": 1.53,
+                    "eps_next_year": 1.64,
+                    "analyst_count": 12,
+                    "ratings": {},
+                    "history": [],
+                }
+            ),
+            "holder_trades": lambda params: tickhub_payload(
+                [
+                    {
+                        "code": str(params.get("code") or "600000"),
+                        "name": "浦发银行",
+                        "holder": "上海国有资产经营有限公司",
+                        "direction": "增持",
+                        "change_shares_10k": 10.0,
+                        "notice_date": day,
+                    }
+                ]
+            ),
+            "institution_survey": lambda params: tickhub_payload(
+                [
+                    {
+                        "code": str(params.get("code") or "600000"),
+                        "name": "浦发银行",
+                        "notice_date": day,
+                        "institution_count": 5,
+                    }
+                ]
+            ),
+            "share_buyback": lambda params: tickhub_payload(
+                [
+                    {
+                        "code": str(params.get("code") or "600000"),
+                        "name": "浦发银行",
+                        "latest_notice": day,
+                        "shares_10k": 100.0,
+                        "amount": 1000000.0,
+                    }
+                ]
+            ),
+            "index_kline": lambda _params: tickhub_payload(
+                {
+                    "code": "000300",
+                    "klines": [
+                        {
+                            "date": day,
+                            "open": 4000.0,
+                            "close": 4010.0,
+                            "high": 4020.0,
+                            "low": 3990.0,
+                            "volume": 100000000.0,
+                            "amount": None,
+                        }
+                    ],
+                }
+            ),
         }
     )
 
