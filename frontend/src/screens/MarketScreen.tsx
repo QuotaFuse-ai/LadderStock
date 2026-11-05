@@ -47,6 +47,7 @@ import {
   type Column,
 } from '../components/ui'
 import { useDensity } from '../lib/prefs'
+import { useAutoRefresh, useChartRefresh } from '../lib/chartRefresh'
 import { DEMO_MARKET_DATE } from './market/demo'
 import { useMarketView } from './market/useMarketView'
 
@@ -311,6 +312,10 @@ export default function MarketScreen() {
   const reloadAll = () => requests.forEach((request) => request.reload())
   const busy = requests.some((request) => request.status === 'loading')
 
+  // QUOT-407：图表自动刷新，默认 15s；档位与默认值见 lib/chartRefresh.ts。
+  const refresh = useChartRefresh()
+  useAutoRefresh(reloadAll, refresh.seconds, !busy)
+
   const sent: SentimentResult | null = sentiment.data?.payload.sentiment ?? null
   const ladderResult: LadderResult | null = ladder.data?.payload.ladder ?? null
   const historyPayload: MarketHistoryPayload | null = history.data?.payload ?? null
@@ -518,6 +523,16 @@ export default function MarketScreen() {
           value={tab}
           onChange={setTab}
         />
+        <div className="flex flex-col gap-1">
+          <span className="text-caption text-text-secondary">自动刷新</span>
+          <Segmented
+            ariaLabel="图表自动刷新频率"
+            options={refresh.options}
+            value={String(refresh.seconds)}
+            onChange={(next) => refresh.setSeconds(Number(next))}
+            size="sm"
+          />
+        </div>
         <div className="grow" />
         <span className="text-caption text-text-muted">三段共用同一个交易日</span>
       </div>
