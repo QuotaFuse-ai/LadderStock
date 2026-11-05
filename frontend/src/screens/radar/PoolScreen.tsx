@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Database, Download, ListChecks } from 'lucide-react'
 
@@ -38,6 +38,16 @@ import { useDemoEnabled, usePoolView } from './useRadarView'
  *
  * 导出只在用户显式点击时发生：Blob → 本地下载，不经过任何网络。
  */
+
+/** 面板自动重取间隔（QUOT-421）：验收要求 60 秒内出现新值，30 秒一拍留足槽位相位差。 */
+const POOL_AUTO_REFRESH_MS = 30_000
+
+function clockLabel(ms: number): string {
+  const at = new Date(ms)
+  return [at.getHours(), at.getMinutes(), at.getSeconds()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':')
+}
 
 function compareNumber(a: number | null, b: number | null): number {
   if (a === null && b === null) return 0
@@ -248,7 +258,15 @@ export default function PoolScreen() {
   const [selected, setSelected] = useState<PoolCandidate | null>(null)
 
   const view = usePoolView({ date })
-  const { forced, state, payload, error, reload } = view
+  const { forced, state, payload, error, reload, refresh, refreshing, refreshError, updatedAt } = view
+
+  // 定时静默重取：不回到 loading、不清屏，失败也保留上一帧数据等下一拍。
+  // 演示源是静态夹具、`?state=` 是强制态，两者都不需要也没必要轮询。
+  useEffect(() => {
+    if (demo || forced) return
+    const timer = window.setInterval(() => refresh(), POOL_AUTO_REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [demo, forced, refresh])
 
   const columns = useMemo<Array<Column<PoolCandidate>>>(() => {
     const partColumns: Array<Column<PoolCandidate>> = POOL_PART_ORDER.map((part) => ({
@@ -331,9 +349,20 @@ export default function PoolScreen() {
           {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
         </div>
       }
+      meta={
+        !demo ? (
+          <span
+            className="text-caption text-text-muted"
+            title="面板每 30 秒自动重取一次；显示最近一次成功取数的本机时刻"
+          >
+            {refreshing ? '正在刷新…' : updatedAt === null ? '自动刷新 · 30 秒' : `更新于 ${clockLabel(updatedAt)}`}
+          </span>
+        ) : undefined
+      }
       refresh={{
-        onClick: reload,
+        onClick: payload ? () => refresh({ manual: true }) : reload,
         disabled: state === 'loading',
+        loading: refreshing,
       }}
       actions={payload && payload.available ? <DownloadButton payload={payload} /> : undefined}
     />
@@ -426,6 +455,21 @@ export default function PoolScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {refreshError !== null && (
+        <Banner
+          tone="danger"
+          title="刷新失败"
+          action={
+            <Button variant="secondary" onClick={() => refresh({ manual: true })}>
+              重试
+            </Button>
+          }
+        >
+          未能取到最新数据，下面仍是上一次成功的快照（更新于 {updatedAt === null ? MISSING : clockLabel(updatedAt)}）：
+          {refreshError instanceof Error ? refreshError.message : '未知错误'}
+        </Banner>
+      )}
 
       {state === 'partial' && (
         <Banner tone="warn" title="部分输入数据集缺失">
