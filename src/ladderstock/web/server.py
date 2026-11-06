@@ -60,6 +60,7 @@ from ladderstock.data import archive
 from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
+from ladderstock.web.assistant import build_router as build_assistant_router
 from ladderstock.web.control import (
     ControlPlane,
     build_router,
@@ -1537,6 +1538,13 @@ def create_app(
     # 但**不受 `LDST_CONTROL_ENABLED` 影响**——读取属于数据面。
     research = research_plane if research_plane is not None else ResearchPlane(data_root=root)
     app.include_router(build_research_router(research))
+
+    # ---------------------------------------------- 页级研究助手（QUOT-454）
+    #
+    # `POST /api/research/{code}/assistant`：把页面已展示数据的只读摘要 + 问题交给
+    # 既有 AI 通道（订阅版 CLI / HTTP 模型），只回文本、不回写页面数据。闸门与研究面
+    # 共用（回环 + Host + 写方法来源证据），不受 `LDST_CONTROL_ENABLED` 影响。
+    app.include_router(build_assistant_router())
 
     # -------------------------------------------------- 产业面（QUOT-276 / SPEC-INDUSTRY-PAGES §2）
     #

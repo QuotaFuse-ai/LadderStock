@@ -745,7 +745,12 @@ export default function ResearchDetailScreen() {
         code={view.code}
         reportHref={view.code ? reportHref(view.code, view) : null}
       />
-      <ResearchAiDock code={view.code} name={displayName} scope={{ tab, date: view.date }} />
+      <ResearchAiDock
+        code={view.code}
+        name={displayName}
+        scope={{ tab, date: view.date }}
+        overview={overviewRequest.data}
+      />
     </>
   )
 

@@ -779,10 +779,196 @@ export const loadEventStudy: EventStudyLoader = async (input, signal) => {
   return parseEventStudy(payload, input.symbol)
 }
 
+// ---------------------------------------------------------------- 页级研究助手（QUOT-454）
+
+/** 助手对话可能跑满后端 60s 的上游超时，前端留一段余量，不能被默认 12s 截断。 */
+const ASSISTANT_TIMEOUT_MS = 90000
+
+/** 财报前瞻摘要：只保留页面要展示的期次 / 一致预期字段，明细行不进上下文。 */
+export interface EarningsBriefSummary {
+  code: string
+  name: string | null
+  periods: number
+  latestReportDate: string | null
+  reportDates: string[]
+  withForecast: number
+  consensus: {
+    asOf: string | null
+    analystCount: number | null
+    epsCurrentYear: number | null
+    epsNextYear: number | null
+  } | null
+  consensusReason: string | null
+  earningsReason: string | null
+  dataSourceStatus: string | null
+}
+
+export interface EventTypeCount {
+  key: string
+  label: string
+  count: number
+}
+
+/** 事件回看摘要：只保留类型与条数，事件明细 / 超额收益不进入上下文。 */
+export interface EventStudySummary {
+  code: string
+  benchmark: string | null
+  tradingDays: number | null
+  total: number
+  types: EventTypeCount[]
+  dataSourceStatus: string | null
+}
+
+export interface AssistantPayload {
+  question: string
+  /** 已脱敏的页级上下文（见 `components/research/sections/aiContext.ts` 的白名单） */
+  context: string
+  date?: string
+  tab?: string
+}
+
+export interface AssistantReply {
+  reply: string
+  model: string | null
+  fetchedAt: string | null
+}
+
+function unwrapEnvelope(value: unknown, what: string): Record<string, unknown> {
+  const root = asRecord(value, what)
+  const nested = root.payload
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>
+  }
+  return root
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+export function parseEarningsBriefSummary(
+  payload: unknown,
+  expectedCode?: string,
+): EarningsBriefSummary {
+  const root = unwrapEnvelope(payload, '财报前瞻响应')
+  const stats = asObject(root.stats) ?? {}
+  const consensusRaw = asObject(root.consensus)
+  const earnings = Array.isArray(root.earnings) ? root.earnings : []
+  const reportDates = earnings
+    .map((row) => asString(asObject(row)?.report_date))
+    .filter((date): date is string => date !== null)
+
+  return {
+    code: asString(root.code) ?? expectedCode ?? '',
+    name: asString(root.name),
+    periods: asNumberOrNull(root.periods) ?? reportDates.length,
+    latestReportDate: asString(stats.latest_report_date) ?? reportDates[0] ?? null,
+    reportDates,
+    withForecast: asNumber(stats.with_forecast, 0),
+    consensus: consensusRaw
+      ? {
+          asOf: asString(consensusRaw.as_of),
+          analystCount: asNumberOrNull(consensusRaw.analyst_count),
+          epsCurrentYear: asNumberOrNull(consensusRaw.eps_current_year),
+          epsNextYear: asNumberOrNull(consensusRaw.eps_next_year),
+        }
+      : null,
+    consensusReason: asString(root.consensus_reason),
+    earningsReason: asString(root.earnings_reason),
+    dataSourceStatus: asString(root.data_source_status),
+  }
+}
+
+export function parseEventStudySummary(payload: unknown, expectedCode?: string): EventStudySummary {
+  const root = unwrapEnvelope(payload, '事件回看响应')
+  const rawTypes = Array.isArray(root.event_types) ? root.event_types : []
+  const types: EventTypeCount[] = rawTypes
+    .map((row) => {
+      const record = asObject(row)
+      const key = record ? asString(record.dataset) : null
+      if (!key) return null
+      return {
+        key,
+        label: asString(record?.label) ?? key,
+        count: asNumber(record?.count, 0),
+      }
+    })
+    .filter((item): item is EventTypeCount => item !== null)
+
+  return {
+    code: asString(root.code) ?? expectedCode ?? '',
+    benchmark: asString(root.benchmark),
+    tradingDays: asNumberOrNull(root.trading_days),
+    total: types.reduce((sum, item) => sum + item.count, 0),
+    types,
+    dataSourceStatus: asString(root.data_source_status),
+  }
+}
+
+/** `GET /api/research/{code}/earnings-brief`：一致预期 + 最近 6 期财报摘要（只读缓存）。 */
+export async function loadEarningsBriefSummary(
+  code: string,
+  signal?: AbortSignal,
+): Promise<EarningsBriefSummary> {
+  const payload = await request<unknown>(
+    `/api/research/${encodeURIComponent(code)}/earnings-brief`,
+    { signal },
+  )
+  return parseEarningsBriefSummary(payload, code)
+}
+
+/** `GET /api/research/{code}/event-study`：六类事件条数（只读缓存）。 */
+export async function loadEventStudySummary(
+  code: string,
+  signal?: AbortSignal,
+): Promise<EventStudySummary> {
+  const payload = await request<unknown>(
+    `/api/research/${encodeURIComponent(code)}/event-study`,
+    { signal },
+  )
+  return parseEventStudySummary(payload, code)
+}
+
+/**
+ * `POST /api/research/{code}/assistant`：页级研究助手。
+ *
+ * 只做「把已经脱敏的上下文和问题转给后端既有的模型通道」，前端不拼提示词、
+ * 不持有任何 key。空回答按解析失败处理，页面据此给可重试的降级文案。
+ */
+export async function askResearchAssistant(
+  code: string,
+  payload: AssistantPayload,
+  signal?: AbortSignal,
+): Promise<AssistantReply> {
+  const data = await request<unknown>(`/api/research/${encodeURIComponent(code)}/assistant`, {
+    method: 'POST',
+    body: payload,
+    signal,
+    timeoutMs: ASSISTANT_TIMEOUT_MS,
+  })
+  const root = asRecord(data, '研究助手响应')
+  const reply = asString(root.reply)
+  if (!reply) throw parseError('研究助手返回了空回答')
+  return {
+    reply,
+    model: asString(root.model),
+    fetchedAt: asString(root.fetched_at),
+  }
+}
+
 // ---------------------------------------------------------------- 传输
 
 const TIMEOUT_MS = 12000
 const RUN_TIMEOUT_MS = 20000
+
+/**
+ * 写方法的来源证据（QUOT-178）。浏览器直连同源时 `Origin` 已足够，但 `npm run dev`
+ * 的 Vite 代理会保留 5173 的 Origin、把 Host 换成后端端口，端口对不上会被 403；
+ * 带上这个已文档化的显式头，开发态与打包态走同一条放行路径。
+ */
+const CLIENT_HEADER = { 'X-LDST-Client': '1' }
 
 interface RequestOptions {
   method?: 'GET' | 'POST'
@@ -805,6 +991,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       headers: {
         accept: 'application/json',
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(method === 'POST' ? CLIENT_HEADER : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
