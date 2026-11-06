@@ -192,10 +192,7 @@ def _collect_symbols(root: Path | None) -> list[SymbolRef]:
         code = normalize_code(holding.symbol)
         if not code or holding.shares <= 0:
             continue
-        ref = refs.get(code)
-        if ref is None:
-            ref = SymbolRef(symbol=code)
-            refs[code] = ref
+        ref = refs.setdefault(code, SymbolRef(symbol=code))
         if holding.name and not ref.name:
             ref.name = str(holding.name)
         if "持有" not in ref.origin:
