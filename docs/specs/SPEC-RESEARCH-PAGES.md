@@ -1,14 +1,17 @@
 # SPEC-RESEARCH-PAGES 个股深挖与六阶段研究报告（前端）
 
-- 版本：v0.4（定稿：页面骨架 + 只读接口契约 + 五态矩阵；v0.2 补 `/research` 入口页与导航；
+- 版本：v0.5（定稿：页面骨架 + 只读接口契约 + 五态矩阵；v0.2 补 `/research` 入口页与导航；
   v0.3 补 K 线图端点契约 §2.4 并标注 §2 接口实现状态；v0.4 补 §2.4 的 `series` /
-  涨跌幅 / 均线 / 成交量单位与标签）
-- 日期：2026-11-05
+  涨跌幅 / 均线 / 成交量单位与标签；v0.5 补 §8 相邻只读面契约摘要与 §8.2 未落地对照表）
+- 日期：2026-11-06
 - 归属：前端架构
 - 实现：`frontend/src/screens/research/`、`frontend/src/components/research/`、
-  `frontend/src/api/research.ts`、`frontend/src/lib/citation.ts`
+  `frontend/src/api/research.ts`、`frontend/src/lib/citation.ts`；
+  §8 摘要对应的后端在 `src/ladderstock/web/radar.py`、`src/ladderstock/web/inbox.py`、
+  `src/ladderstock/core/portfolio.py`、`src/ladderstock/core/portfolio_perf.py`
 - 关联：`SPEC-RESEARCH-PROVENANCE`（R3 产物与角标口径）、后三段只消费上游、
-  估值事实键、来源白名单、`UI-SPEC`（令牌与五态）
+  估值事实键、来源白名单、`UI-SPEC`（令牌与五态，v1.19 §3.11 / §10）、
+  DEC-052 / DEC-055 / DEC-058 / DEC-059 / DEC-060 / DEC-064 / DEC-065
 
 ## 1. 路由与页面职责
 
@@ -160,7 +163,9 @@ GET /api/research/{code}/kline?period=daily|weekly|monthly&adjust=qfq|hfq|none&l
 }
 ```
 
-- `bars[]` 按 `date` 升序（上游返回序），每根 `date / open / high / low / close /
+- `bars[]` 保持上游 `records[]` 的返回序（本层**不排序、不反转**；`tencent_kline`
+  按时间升序回，所以实测是升序，但契约上这是「原样透传」而不是「本层排过序」。
+  前端按 `series.dates` 原样画图）；每根 `date / open / high / low / close /
   volume / amount`；`amount` 上游可能为 `null`，**原样透传，不要当 0 画**。
 - `available=false` 时 `bars=[]`，`data_source_status="missing"`，`reason` 给出
   上游不可达 / 无数据的原因；**HTTP 仍是 200**，不伪造、不补零。
@@ -335,9 +340,69 @@ GET /api/research/{code}/event-study?sources=holder_trades,dragon_tiger&window_b
 3. **估值分位**：依赖 FinanceCoffer 快照提供 `pe_percentile_5y` / `pb_percentile_5y`
   缺失时页面明确留白。
 4. **日志/导出**：报告导出 PDF、段级审计结果（`--check`）展示不在本页范围。
+5. **相邻面的缺口单列**：`/api/events/timeline`、`/api/portfolio/xray`、
+   `/api/portfolio/replay`、`/inbox` 页面都不在当前代码里，见 §8.2 的对照表——
+   它们不是「接口没接」，而是**名字本身不存在**，按 §8.1 的实际路由联调。
+
+## 8. 相邻只读面契约摘要（「我的股票」三模块）
+
+本节是**摘要 + 指路**，不重复完整口径：字段与算法以代码为准
+（`src/ladderstock/web/radar.py`、`src/ladderstock/web/inbox.py`），决策依据在
+`docs/decisions/`。写在这里的原因是个股深挖与「我的股票」共用同一条 K 线接口
+（§2.4）与同一套「缺数据 = `null` + 原因」的纪律，文档必须能对上号。
+
+### 8.1 已落地
+
+| 接口 | 参数 | 载荷要点 | 决策 |
+| --- | --- | --- | --- |
+| `GET /api/portfolio` | `method=average\|fifo`（缺省 `average`） | **平面 JSON、`no-store`、回环独占**，顶层刻意避开 `holdings`/`positions`/`trades`（`PRIVATE_KEYS`）。键：`local_only` / `store` / `method` / `method_label` / `methods[]` / `today` / `price_lookup` / `daily_lookup` / `items[]` / `closed[]` / `realized[]` / `dividends[]` / `issues[]` / `ledger[]` / `legacy[]` / `migration_pending` / `migration` / `totals_cny`。`items[]` 每行 `symbol/name/shares/unit_cost/cost_total/opened_at/lots[]/realized_pnl/dividends/fees/trade_count/latest_price/change/change_pct/market_value/pnl/pnl_pct/price_reason`；4 位小数；取不到现价是 `null` + `price_reason`，不拿成本价顶替 | DEC-065 |
+| `GET /api/portfolio/perf` | `days`（缺省 365，`0` = 全历史，上限 3650） | 平面 JSON、`no-store`、与 `/api/portfolio` 同一条闸门。**只读本机 `daily_k` 缓存**，不联网、不落盘。键：`as_of` / `groups[]` / `skipped[]` / `gaps[]` / `sources[]` / `notes[]`；`gaps[]` 逐条 `{symbol, reason}`；`days` 只裁走势序列，收益指标始终按全部流水。流水为空 → `groups=[]` + `notes`，不是 500 | DEC-064 / DEC-065 |
+| `POST /api/portfolio/ledger` | body 只认 10 个字段：`symbol/name/type/trade_date/shares/price/fee/amount/ratio/note`，多一个 400 | `{ok, local_only, store, trade}`；`trade` 投影用 `date`（不是 `trade_date`），含 `id/migrated_from/undated/created_at` | DEC-065 |
+| `POST /api/portfolio/ledger/{trade_id}/delete` | 路径参数 = 流水 id | 硬删一笔，**写前先备份**；id 不存在 404 | DEC-065 |
+| `POST /api/portfolio/legacy/{position_id}/adopt` `/dismiss` | 路径参数 = 旧 `positions` 行 id | `adopt` 转成期初流水（已转过的原地替换，不留第二笔）；`dismiss` 只写 `portfolio_legacy_marks`，**不删 `positions` 行** | DEC-065 |
+| `GET /api/watchlist` | 无 | 平面 JSON、`no-store`、回环独占、只 GET。顶层 `items` + `watch_count`（`watchlist` 是 `PRIVATE_KEYS`，不能出现在信封出口）；每条 `code/added_at` + 报价七列 `name/latest_price/change_pct/pe_ttm/pb/turnover_pct` 与逐条 `metrics_reason`；空态是 200 + `available=false` + `reason` | DEC-052 / DEC-055 / DEC-060 |
+| `POST /api/watchlist`、`POST /api/watchlist/{code}/delete` | body 只认 `code` | 需同源来源证据（`Origin` 或 `X-LDST-Client: 1`）；add 幂等不刷新 `created_at`；delete 不在清单里 404，不静默成功 | DEC-055 |
+| `GET /api/inbox` | `limit` 1..200（缺省 50） | 平面 JSON、`no-store`、只 GET。顶层**恰好** `local_only / store / items / unread / jobs` 五个键；`jobs[]` 为 `{id, label, trigger, enabled}`（读调度表，读不到是 `[]`），**没有 `last_status`**。渠道只有 `console` / `desktop`：不接 webhook、不接第三方推送、不发网络请求、没有免打扰设置 | DEC-058 |
+| `POST /api/inbox/read-all`、`POST /api/inbox/{item_id}/read` | 路径参数 = 条目 id | 写面需同源证据；`read-all` 返回本次实际改写条数与剩余 `unread`（幂等）；单条不存在 404 | DEC-058 |
+| `GET /api/events` | `month=YYYY-MM`（必填）、`code`（可重复）、`limit` | 这是**事件日历**，走 `LadderEnvelope`（与上面几条平面 JSON 不同）。`payload`：`month` / `window{start,end}` / `codes[]` / `summary{sections,entries,extracted_events,no_source[]}` / `sections[]` / `extracted_events[]` / `notice`。每节 `key/label/status/entries[]/note`，`status` 非「有源」时是 `reason` + `ask`；节内条目 `id/date/code/section/label/detail/source/provenance`。`no_source` 小节就是「暂无数据源」，不估算、不编日期 | DEC-018 R6 / DEC-059 |
+| `GET /api/positions` | `date=YYYY-MM-DD`（缺省取缓存最后一天） | 旧的「导入视图」，与 `/api/portfolio` 的**账本视图**分开：前者读 `positions` 行，后者重放流水。`positions` 行不会被账本改写或删除 | DEC-033 / DEC-052 读 / DEC-055 写 / DEC-065 |
+
+**币种与市场边界（三个面同一条）**：只支持 A 股、只用人民币。
+`/api/portfolio` 与 `/api/portfolio/perf` 里没有币种列、没有汇率换算，
+`market="A股"` / `currency="CNY"` / `label="人民币 · A 股"` 是固定值；
+B 股（`^(?:900|200)\d{3}$`）在账本写入即拒。已知缺口：`POST /api/positions`
+与自选写入**没有**做 6 位代码 / B 股校验（DEC-065「已知缺口」条）。
+
+**缺数据的统一表现**：值是 `null` 并同处给 `reason`（`price_reason` /
+`metrics_reason` / `gaps[]` / 节内 `reason`），页面显示 `—`。任何面都不补 0、
+不插值、不倒填、不自采。
+
+### 8.2 未落地（当前代码里不存在，不要按这些名字联调）
+
+| 名称 | 现状 | 实际可用的是什么 |
+| --- | --- | --- |
+| `GET /api/events/timeline` | **没有这个路由**。radar 路由表里只有 `/events`（`radar.py:1546`），没有 `timeline`，也就没有任务书里设想的 `overdue` 字段 | `GET /api/events?month=&code=&limit=`（§8.1）；「逾期 / overdue」这个概念在代码里不存在 |
+| `GET /api/portfolio/xray` | **不存在**。radar 里的 portfolio 家族只有根路径 `/api/portfolio`、`/api/portfolio/perf`、`POST /api/portfolio/ledger`、`POST /api/portfolio/ledger/{id}/delete`、`POST /api/portfolio/legacy/{id}/adopt`、`POST /api/portfolio/legacy/{id}/dismiss` 六条 | 持仓「集中度 / 行业穿透」类需求由 QUOT-437 承接，落地前不要写进页面 |
+| `GET /api/portfolio/replay` | **不存在**。重放是库内函数 `replay_portfolio(trades, method)`，其结果已经并进 `GET /api/portfolio` 的 `items[] / closed[] / realized[] / dividends[] / issues[]`，没有独立 HTTP 路由 | `GET /api/portfolio`（§8.1）；逐日回放子页由 QUOT-438 承接 |
+| `/inbox` 页面 | 后端三条路由已上线，**前端没有屏**：`frontend/src/screens/` 下无 `inbox`，`lib/nav.ts:111` 明写「不建占位入口」 | 数据走 `GET /api/inbox`；页面由 QUOT-435 承接 |
+| 持仓 perf / 账本子页 UI | `/api/portfolio` 在前端只被用来取 `items[].symbol` 做「是否持有」标记（`frontend/src/api/radar.ts:1343-1352`），`/api/portfolio/perf` **没有任何前端消费方** | 持仓标签仍是 `/api/positions` 的导入视图（`PositionsScreen.tsx`）；账本 UI 由 QUOT-434 承接 |
 
 ## 变更记录
 
+- v0.5（2026-11-06，QUOT-440）：文档收口，**只改文档、不改代码**。新增 §8 相邻只读面
+  契约摘要：§8.1 逐条列出已落地的 `GET /api/portfolio`、`GET /api/portfolio/perf`、
+  `POST /api/portfolio/ledger|ledger/{id}/delete|legacy/{id}/adopt|legacy/{id}/dismiss`、
+  `GET /api/watchlist` 及其写面、`GET /api/inbox` 及其写面、`GET /api/events`、
+  `GET /api/positions` 的参数与载荷要点，并指向 DEC-052 / DEC-055 / DEC-058 / DEC-060 /
+  DEC-064 / DEC-065；明写 A 股 + 人民币唯一边界（`B_SHARE` 写入即拒、无币种与汇率列）
+  与「缺数据 = `null` + 同处 `reason`，页面显示 `—`」的统一表现。§8.2 是未落地对照表：
+  `GET /api/events/timeline`（含任务书设想的 `overdue` 字段）、`GET /api/portfolio/xray`、
+  `GET /api/portfolio/replay` 在当前代码中**路由不存在**，`/inbox` 页面与账本 / perf
+  子页 UI 仍由 QUOT-435 / QUOT-434 / QUOT-437 / QUOT-438 承接，按名字联调必然 404。
+  §2.4 更正一处与代码不符的表述：`bars[]` 是**保持上游返回序、本层不排序不反转**，
+  不是「本层按 `date` 排升序」（`src/ladderstock/web/research.py:1128`）。§7 加第 5 条
+  指向 §8.2。版本号说明：§2.5 / §2.6 由 QUOT-446 / QUOT-450 / QUOT-451 合入时未追加
+  变更行、顶部版本行仍停在 v0.4（历史漂移），本版把它补齐为 v0.5，旧内容原文未改。
 - v0.4（2026-11-05，QUOT-428）：§2.4 载荷补齐 `series`（列式 OHLCV + `change` +
   `ma` 5/10/20/60）、`volume_unit`、市场/周期/复权标签与 `notes`；明确 `change` 为小数、
   首根不补 0，成交量单位如实为手（1 手 = 100 股，不换算）。
