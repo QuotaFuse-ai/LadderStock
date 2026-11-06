@@ -7,11 +7,13 @@ import {
   isRadarEndpointMissing,
   type CandidatePoolPayload,
   type EventCalendarPayload,
+  type EventTimelinePayload,
   type NewsStreamPayload,
   type PositionInput,
   type PositionMutation,
   type PositionsPayload,
   type RadarSource,
+  type TimelineDays,
 } from '../../api/radar'
 import { resolveState, useDemoEnabled, useForcedState, type PageState } from '../../lib/pageState'
 import { useAsync } from '../../lib/useAsync'
@@ -147,8 +149,35 @@ export function useCalendarView(query: { month: string; codes: string[] }): Requ
   }
 }
 
-/** 候选池比其它雷达页多一组静默重取字段：面板要按 QUOT-421 每 30 秒自动刷新。 */
-export interface PoolView extends RequestView<CandidatePoolPayload> {
+/** QUOT-436：按日的公司事件时间轴（自选 + 持仓）。没有标的时进空态，不假装「没有事件」。 */
+export function useTimelineView(days: TimelineDays): RequestView<EventTimelinePayload> {
+  const { demo, variant, source } = useRadarSource()
+  const forced = useForcedState()
+  const request = useAsync(
+    (signal) => source.timeline({ days }, signal),
+    [source, days],
+  )
+  const payload = request.data
+
+  const derived = stateFromRequest(
+    request.status,
+    request.error,
+    payload === null || payload.symbols.length === 0,
+    payload !== null && payload.data_source_status === 'partial',
+  )
+
+  return {
+    demo,
+    variant,
+    forced,
+    state: resolveState(forced, derived),
+    payload,
+    error: request.error,
+    reload: request.reload,
+  }
+}
+
+/** 候选池比其它雷达页多一组静默重取字段：面板要按 QUOT-421 每 30 秒自动刷新。 */export interface PoolView extends RequestView<CandidatePoolPayload> {
   refresh: (options?: { manual?: boolean }) => void
   refreshing: boolean
   refreshError: unknown

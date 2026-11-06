@@ -102,6 +102,7 @@ from ladderstock.news.calendar import DEFAULT_LIMIT as CALENDAR_DEFAULT_LIMIT
 from ladderstock.news.calendar import STATUS_NO_SOURCE, STATUS_SOURCED, build_calendar, parse_month
 from ladderstock.news.events import extract_events
 from ladderstock.news.models import normalize_code
+from ladderstock.news.timeline import build_timeline, parse_timeline_days
 from ladderstock.web import control as control_plane
 
 _T = TypeVar("_T")
@@ -159,6 +160,7 @@ WRITE_FAILURE = "本机持仓写入失败"
 POSITIONS_DENIED = "持仓只接受回环来源"
 #: 自选读面（DEC-052）：闸门判据与持仓一模一样，只是文案指向本单编号
 WATCHLIST_DENIED = "自选只接受回环来源（DEC-052）"
+TIMELINE_DENIED = "事件时间轴读取自选与持仓，只接受回环来源（DEC-015）"
 EMPTY_WATCHLIST = "本机还没有自选：在「我的自选」页加一只 6 位代码（只写本机 SQLite）"
 POSITIONS_WRITE_DENIED = "持仓写入缺少来源证据：需要本机页面 Origin，或显式头 X-LDST-Client: 1"
 #: 自选写面（QUOT-419 / DEC-055）：与持仓写面同一条来源证据判据，不改宽松度
@@ -718,6 +720,27 @@ class RadarPlane:
             status=status,
             source_detail=_calendar_detail(result),
             freshness="realtime",
+        )
+
+    # ------------------------------------------------------ 事件时间轴（QUOT-436）
+
+    def timeline_view(self, raw_days: int | None) -> dict[str, Any]:
+        """`GET /api/events/timeline`：自选 + 持仓的未来 7 / 30 / 90 天公司事件。
+
+        平面 JSON（不进 `LadderEnvelope`）：标的集合来自本机自选与持仓账本，
+        属于 DEC-015 的隐私面——回环独占 + `no-store`，与 `/api/portfolio` 同一条闸门。
+        取数失败是 `gaps` 里的一条，不是 500，也不补日期（DEC-018 R6）。
+        """
+        try:
+            days = parse_timeline_days(raw_days)
+        except ValueError as exc:
+            raise _invalid(str(exc)) from None
+        return self._read(
+            lambda: build_timeline(
+                days,
+                root=self.data_root,
+                registry=self._active_registry(),
+            )
         )
 
     # -------------------------------------------------------------- 指数条 §9.1
@@ -1525,6 +1548,11 @@ async def _watchlist_write_guard(request: Request) -> None:
     )
 
 
+async def _timeline_guard(request: Request) -> None:
+    """时间轴同时读自选与持仓：按隐私面闸门走，只接受回环（DEC-015 / DEC-052）。"""
+    await privacy_read_guard(request, denied=TIMELINE_DENIED, subject="事件时间轴")
+
+
 def build_router(plane: RadarPlane) -> APIRouter:
     """SPEC §3–§6.2 + §9：只读路由（含首页指数条、自选读面）+ 两对持仓 / 自选写入路由。"""
     router = APIRouter(prefix=RADAR_PREFIX)
@@ -1554,6 +1582,17 @@ def build_router(plane: RadarPlane) -> APIRouter:
         ] = None,
     ) -> dict[str, Any]:
         return plane.events_view(month, code, limit)
+
+    @router.get("/events/timeline", dependencies=[Depends(_timeline_guard)])
+    def events_timeline(
+        days: Annotated[
+            int | None, Query(description="时间窗天数，只接受 7 / 30 / 90（缺省 30）")
+        ] = None,
+    ) -> JSONResponse:
+        """自选 + 持仓的事件时间轴：隐私面，平面 JSON、`no-store`。"""
+        return JSONResponse(
+            plane.timeline_view(days), headers={"Cache-Control": "no-store"}
+        )
 
     @router.get("/indices")
     def indices() -> dict[str, Any]:

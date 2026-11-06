@@ -1,15 +1,14 @@
-import { useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Database } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { CalendarDays, Database } from 'lucide-react'
 
 import {
-  CALENDAR_SECTION_LABEL,
-  CALENDAR_SECTION_ORDER,
   isRadarEndpointMissing,
-  type CalendarEntry,
-  type CalendarExtractedEvent,
-  type CalendarSection,
-  type EventCalendarPayload,
+  TIMELINE_KIND_LABEL,
+  TIMELINE_KIND_ORDER,
+  type TimelineDays,
+  type TimelineEvent,
+  type TimelineKind,
 } from '../../api/radar'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../../components/PageShell'
 import {
@@ -20,419 +19,234 @@ import {
   CardHeader,
   EmptyState,
   ErrorBlock,
-  IconButton,
+  Segmented,
   SourceStatusBadge,
+  type BadgeTone,
+  type SegmentedOption,
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
-import { localDateIso, MISSING } from '../../lib/format'
-import { withParams } from '../industry/links'
-import { DEMO_MONTH } from './demo'
-import { useCalendarView, useDemoEnabled } from './useRadarView'
+import { readCalendarDays, saveCalendarDays } from '../../lib/calendarPrefs'
+import { formatTime } from '../../lib/format'
+import { useDemoEnabled, useTimelineView } from './useRadarView'
 
 /**
- * P-R10-02 事件日历（`/calendar`）。
+ * QUOT-436 事件时间轴（`/calendar`）。
  *
- * 月历只做「哪天有已知事件」的定位；当日面板按小节列出条目，
- * 并给出跳到当日资讯（`/news?date=`）的入口。
- *
- * `status="no_source"` 的小节必须显式画成「暂无数据源 + 怎么补」（reason / ask），
- * 不画空白格、不估算日期——这是 R6 日历口径的硬要求。
+ * 只排来源写出来的日期：自选 + 持仓的未来 7 / 30 / 90 天解禁、业绩预告、
+ * 原文写了日期的公告抽取。没有数据源的类别（财报预约披露日 / 股东大会 /
+ * 政策发布窗口）只出现在「没查到的」里——不估算、不拿相邻日期补、不给买卖建议。
  */
 
-const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] as const
+const DAY_OPTIONS: readonly SegmentedOption<'7' | '30' | '90'>[] = [
+  { value: '7', label: '7 天' },
+  { value: '30', label: '30 天' },
+  { value: '90', label: '90 天' },
+]
 
-function pad(value: number): string {
-  return String(value).padStart(2, '0')
+const KIND_TONE: Record<TimelineKind, BadgeTone> = {
+  lockup: 'warn',
+  earnings: 'info',
+  disclosure: 'neutral',
 }
 
-function shiftMonth(month: string, delta: number): string {
-  const [year, index] = month.split('-').map(Number)
-  if (!year || !index) return month
-  const next = new Date(year, index - 1 + delta, 1)
-  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}`
+const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const
+
+function readDays(): '7' | '30' | '90' {
+  return String(readCalendarDays()) as '7' | '30' | '90'
 }
 
-function todayMonth(): string {
-  return localDateIso().slice(0, 7)
+/** 「10月12日 周一 · 4 天后」；基准日是后端窗口起点（北京时间日期），不拿浏览器时区猜。 */
+export function dayLabel(date: string, today: string): { main: string; rel: string } {
+  const d = new Date(`${date}T00:00:00Z`)
+  const t = new Date(`${today}T00:00:00Z`)
+  if (Number.isNaN(d.getTime()) || Number.isNaN(t.getTime())) return { main: date, rel: '' }
+  const diff = Math.round((d.getTime() - t.getTime()) / 86_400_000)
+  const rel = diff === 0 ? '今天' : diff === 1 ? '明天' : diff > 1 ? `${diff} 天后` : `${-diff} 天前`
+  return { main: `${d.getUTCMonth() + 1}月${d.getUTCDate()}日 ${WEEK[d.getUTCDay()]}`, rel }
 }
 
-interface DayCell {
-  date: string | null
-  day: number | null
-  inMonth: boolean
-}
-
-function buildMonth(month: string): DayCell[] {
-  const [year, index] = month.split('-').map(Number)
-  if (!year || !index) return []
-  const first = new Date(year, index - 1, 1)
-  const offset = (first.getDay() + 6) % 7
-  const total = new Date(year, index, 0).getDate()
-  const cells: DayCell[] = []
-  for (let i = 0; i < offset; i += 1) cells.push({ date: null, day: null, inMonth: false })
-  for (let day = 1; day <= total; day += 1) {
-    cells.push({ date: `${month}-${pad(day)}`, day, inMonth: true })
+/** 后端已按日期升序；这里只把同一天收拢成一组，不重排。 */
+export function groupByDate(events: TimelineEvent[]): Array<{ date: string; items: TimelineEvent[] }> {
+  const groups: Array<{ date: string; items: TimelineEvent[] }> = []
+  for (const event of events) {
+    const last = groups.at(-1)
+    if (last && last.date === event.date) last.items.push(event)
+    else groups.push({ date: event.date, items: [event] })
   }
-  while (cells.length % 7 !== 0) cells.push({ date: null, day: null, inMonth: false })
-  return cells
+  return groups
 }
 
-interface DayData {
-  entries: CalendarEntry[]
-  events: CalendarExtractedEvent[]
-}
-
-function groupByDay(payload: EventCalendarPayload | null): Map<string, DayData> {
-  const map = new Map<string, DayData>()
-  const bucket = (date: string): DayData => {
-    const current = map.get(date) ?? { entries: [], events: [] }
-    map.set(date, current)
-    return current
-  }
-  for (const section of payload?.sections ?? []) {
-    for (const entry of section.entries) bucket(entry.date).entries.push(entry)
-  }
-  for (const event of payload?.extracted_events ?? []) bucket(event.date).events.push(event)
-  return map
-}
-
-function sectionShort(key: string): string {
-  if (key === 'lockup_expiry') return '解禁'
-  if (key === 'earnings_preview') return '预告'
-  if (key === 'shareholder_meeting') return '股东大会'
-  if (key === 'policy_window') return '政策'
-  if (key === 'earnings_disclosure') return '披露'
-  return key
-}
-
-function MonthGrid({
-  month,
-  days,
-  byDay,
-  selected,
-  onSelect,
-}: {
-  month: string
-  days: DayCell[]
-  byDay: Map<string, DayData>
-  selected: string | null
-  onSelect: (date: string) => void
-}) {
-  const today = localDateIso()
+function EventRow({ event }: { event: TimelineEvent }) {
   return (
-    <Card>
-      <CardHeader title={`${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`} subtitle="周一开始 · 点一天看当日事件" />
-      <div className="p-3">
-        <div className="grid grid-cols-7 gap-1" aria-hidden="true">
-          {WEEKDAYS.map((label) => (
-            <div key={label} className="pb-1 pl-1 text-left text-caption text-text-muted">
-              {label}
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7 gap-1" role="group" aria-label={`${month} 月历`}>
-          {days.map((cell, index) => {
-            if (!cell.date || cell.day === null) {
-              return <div key={`empty-${index}`} className="min-h-calendar-cell rounded border border-transparent" />
-            }
-            const data = byDay.get(cell.date)
-            const count = (data?.entries.length ?? 0) + (data?.events.length ?? 0)
-            const active = cell.date === selected
-            const chips = [
-              ...(data?.entries ?? []).map((entry) => sectionShort(entry.section)),
-              ...(data?.events ?? []).map(() => '事件'),
-            ]
-            const unique = [...new Set(chips)]
-            return (
-              <button
-                key={cell.date}
-                type="button"
-                aria-pressed={active}
-                aria-label={`${cell.date}${count > 0 ? `，${count} 个条目` : '，没有已知事件'}`}
-                onClick={() => onSelect(cell.date as string)}
-                className={cn(
-                  'flex min-h-calendar-cell flex-col items-start gap-1 rounded border p-1 text-left transition-colors duration-fast ease-ldst',
-                  active
-                    ? 'border-accent bg-accent-soft'
-                    : 'border-border bg-surface hover:bg-surface-3',
-                  cell.date === today && !active && 'border-border-strong',
-                )}
-              >
-                <span className="flex w-full items-baseline justify-between">
-                  <span className={cn('ldst-num text-body', active ? 'text-accent' : 'text-text')}>{cell.day}</span>
-                  {count > 0 && (
-                    <span className="ldst-num text-caption text-text-secondary">{count}</span>
-                  )}
-                </span>
-                {unique.length > 0 && (
-                  <span className="flex flex-wrap gap-half">
-                    {unique.slice(0, 2).map((label) => (
-                      <span
-                        key={label}
-                        className="rounded-xs bg-surface-3 px-1 text-caption leading-tight text-text-secondary"
-                      >
-                        {label}
-                      </span>
-                    ))}
-                    {unique.length > 2 && (
-                      <span className="text-caption text-text-muted">+{unique.length - 2}</span>
-                    )}
-                  </span>
-                )}
-                {cell.date === today && (
-                  <span className="mt-auto text-caption text-text-muted">今天</span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-    </Card>
-  )
-}
-
-function DayPanel({
-  day,
-  data,
-  demo,
-  forced,
-}: {
-  day: string
-  data: DayData | undefined
-  demo: boolean
-  forced: string | null
-}) {
-  const entries = data?.entries ?? []
-  const events = data?.events ?? []
-  const newsHref = withParams('/news', { date: day, demo: demo ? '1' : null, state: forced })
-  const grouped = new Map<string, CalendarEntry[]>()
-  for (const entry of entries) {
-    const bucket = grouped.get(entry.section) ?? []
-    bucket.push(entry)
-    grouped.set(entry.section, bucket)
-  }
-
-  return (
-    <Card className="flex flex-col">
-      <CardHeader
-        title={day}
-        subtitle={`${entries.length} 个日历条目 · ${events.length} 条规则抽取`}
-        actions={
-          <Link
-            to={newsHref}
-            className="inline-flex h-control items-center gap-1 rounded border border-border-strong bg-surface px-2 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
-          >
-            当日资讯
-            <ArrowRight className="size-3.5" aria-hidden="true" />
-          </Link>
-        }
-      />
-      <div className="flex flex-col gap-3 p-4">
-        {entries.length === 0 && events.length === 0 ? (
-          <EmptyState
-            compact
-            title="这一天没有已知事件"
-            description="日历只收录有数据源的条目；没有数据的日期不估算、不用相邻日期填充。"
-            action={
-              <Link
-                to={newsHref}
-                className="inline-flex h-control items-center gap-1 rounded border border-border-strong bg-surface px-2 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
-              >
-                当日资讯
-                <ArrowRight className="size-3.5" aria-hidden="true" />
-              </Link>
-            }
-          />
-        ) : (
-          <>
-            {[...grouped.entries()].map(([key, rows]) => (
-              <section key={key} className="flex flex-col gap-1">
-                <h3 className="text-caption font-medium text-text-secondary">
-                  {CALENDAR_SECTION_LABEL[key] ?? rows[0].section ?? key}
-                </h3>
-                <ul className="flex flex-col gap-1">
-                  {rows.map((entry) => (
-                    <li key={entry.id} className="rounded border border-border bg-surface-2 p-2">
-                      <p className="flex flex-wrap items-center gap-2 text-body text-text">
-                        {entry.code && <span className="ldst-num shrink-0 text-text-secondary">{entry.code}</span>}
-                        <span className="min-w-0 flex-1 truncate" title={entry.label || '日历条目'}>
-                          {entry.label || '日历条目'}
-                        </span>
-                      </p>
-                      {entry.detail && (
-                        <p className="line-clamp-2 text-caption leading-body text-text-secondary" title={entry.detail}>
-                          {entry.detail}
-                        </p>
-                      )}
-                      <p className="text-caption text-text-muted">
-                        数据集 <code className="ldst-num">{entry.source || MISSING}</code>
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-
-            {events.length > 0 && (
-              <section className="flex flex-col gap-1">
-                <h3 className="flex items-center gap-2 text-caption font-medium text-text-secondary">
-                  规则抽取事件
-                  <Badge tone="info">非日历数据源</Badge>
-                </h3>
-                <ul className="flex flex-col gap-1">
-                  {events.map((event) => (
-                    <li key={event.id} className="rounded border border-border bg-surface-2 p-2">
-                      <p className="flex flex-wrap items-center gap-2 text-body text-text">
-                        <Badge tone="neutral">{event.label || event.type}</Badge>
-                        {event.codes.map((code) => (
-                          <span key={code} className="ldst-num shrink-0 text-text-secondary">
-                            {code}
-                          </span>
-                        ))}
-                        <span className="min-w-0 flex-1 truncate" title={event.title}>
-                          {event.title}
-                        </span>
-                      </p>
-                      <p
-                        className="line-clamp-2 text-caption leading-body text-text-secondary"
-                        title={event.evidence.snippet || MISSING}
-                      >
-                        证据：{event.evidence.snippet || MISSING}
-                      </p>
-                      <p className="text-caption text-text-muted">
-                        {event.note || '规则从正文抽取，非日历数据源'} · 依据 {event.date_basis || MISSING}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-          </>
+    <li className="flex flex-col gap-1 rounded border border-border bg-surface-2 p-2 desk:flex-row desk:items-start desk:gap-3">
+      <Badge tone={KIND_TONE[event.kind]} className="w-fit shrink-0">
+        {TIMELINE_KIND_LABEL[event.kind]}
+      </Badge>
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-baseline gap-2 text-body text-text">
+          <span className="font-medium">{event.name || event.symbol}</span>
+          {event.name && <span className="ldst-num text-caption text-text-secondary">{event.symbol}</span>}
+          {event.estimated && <Badge tone="warn">预估</Badge>}
+          <span className="min-w-0 flex-1">{event.title}</span>
+        </p>
+        {event.detail.length > 0 && (
+          <p className="mt-0.5 text-caption leading-body text-text-secondary">
+            {event.detail.join(' · ')}
+          </p>
         )}
-
-        <Link
-          to={newsHref}
-          className="mt-1 inline-flex items-center gap-1 self-start text-caption font-medium text-accent underline underline-offset-2 transition-colors duration-fast ease-ldst hover:text-accent-solid-hover"
-        >
-          在资讯雷达里查看 {day} 的资讯
-          <ArrowRight className="size-3" aria-hidden="true" />
-        </Link>
       </div>
+      <span className="shrink-0 text-caption text-text-muted desk:text-right">
+        <code className="ldst-num">{event.source}</code>
+        {event.fetched_at ? (
+          <span className="block">{formatTime(event.fetched_at)} 取</span>
+        ) : (
+          <span className="block">取数时刻未记录</span>
+        )}
+      </span>
+    </li>
+  )
+}
+
+function OverdueCard({ events }: { events: TimelineEvent[] }) {
+  if (events.length === 0) return null
+  return (
+    <Card>
+      <CardHeader
+        title={`已经过了日子、还没处理（${events.length}）`}
+        subtitle="这些日子的来源事件仍然在；本仓没有「已处理」标记，不替用户判断"
+      />
+      <ul className="flex flex-col gap-2 p-4">
+        {events.map((event) => (
+          <li
+            key={`${event.date}-${event.kind}-${event.symbol}-${event.ref}`}
+            className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-body"
+          >
+            <span className="ldst-num text-caption text-warn">{event.date}</span>
+            <Badge tone={KIND_TONE[event.kind]}>{TIMELINE_KIND_LABEL[event.kind]}</Badge>
+            <span className="font-medium text-text">{event.name || event.symbol}</span>
+            <span className="text-text">{event.title}</span>
+            {event.detail.length > 0 && (
+              <span className="text-caption text-text-secondary">{event.detail.join(' · ')}</span>
+            )}
+          </li>
+        ))}
+      </ul>
     </Card>
   )
 }
 
-function SectionsCard({ sections }: { sections: CalendarSection[] }) {
+function GapsCard({ gaps }: { gaps: string[] }) {
+  if (gaps.length === 0) return null
   return (
     <Card>
-      <CardHeader title="小节数据源" subtitle="五个小节的固定顺序 · 没数据源的小节写明原因与补法" />
-      <div className="grid grid-cols-1 gap-3 p-4 desk:grid-cols-2">
-        {sections.map((section) => (
-          <div key={section.key} className="flex flex-col gap-1 rounded border border-border bg-surface-2 p-3">
-            <p className="flex flex-wrap items-center gap-2">
-              <span className="text-body font-medium text-text">{section.label}</span>
-              {section.status === 'sourced' ? (
-                <Badge tone={section.degraded ? 'warn' : 'ok'}>
-                  {section.degraded ? '有源（降级）' : `有源 · ${section.entries.length} 条`}
-                </Badge>
-              ) : (
-                <Badge tone="flat">暂无数据源</Badge>
-              )}
-            </p>
-            {section.status === 'sourced' ? (
-              <>
-                <p className="text-caption text-text-secondary">
-                  数据集 <code className="ldst-num">{section.data_source || MISSING}</code>
-                  {section.tool && (
-                    <>
-                      {' '}
-                      · 工具 <code className="ldst-num">{section.tool}</code>
-                    </>
-                  )}
-                </p>
-                {section.degraded && <p className="text-caption text-warn">{section.note || '上游降级'}</p>}
-              </>
-            ) : (
-              <>
-                <p className="text-caption leading-body text-text-secondary">{section.reason || '暂无数据源。'}</p>
-                <p className="text-caption leading-body text-text-muted">{section.ask || '需要上游提供结构化数据集。'}</p>
-              </>
-            )}
-          </div>
+      <CardHeader
+        title={`没查到的（${gaps.length}）`}
+        subtitle="时间轴没有不代表真的没有；这些来源这次没取到或本来就没有数据源"
+      />
+      <ul className="flex flex-col gap-2 p-4">
+        {gaps.map((gap) => (
+          <li key={gap} className="text-caption leading-body text-text-secondary">
+            {gap}
+          </li>
         ))}
-      </div>
+      </ul>
     </Card>
+  )
+}
+
+function KindFilter({
+  events,
+  excluded,
+  onToggle,
+}: {
+  events: TimelineEvent[]
+  excluded: Set<TimelineKind>
+  onToggle: (kind: TimelineKind) => void
+}) {
+  const counts = useMemo(() => {
+    const result = new Map<TimelineKind, number>()
+    for (const event of events) result.set(event.kind, (result.get(event.kind) ?? 0) + 1)
+    return result
+  }, [events])
+  const present = TIMELINE_KIND_ORDER.filter((kind) => (counts.get(kind) ?? 0) > 0)
+  if (present.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-caption">
+      <span className="text-text-muted">显示：</span>
+      {present.map((kind) => {
+        const active = !excluded.has(kind)
+        return (
+          <button
+            key={kind}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onToggle(kind)}
+            className={cn(
+              'inline-flex h-6 items-center gap-1 rounded-pill border px-3 font-medium transition-colors duration-fast ease-ldst',
+              active
+                ? 'border-accent bg-accent-soft text-accent'
+                : 'border-border text-text-secondary hover:text-text',
+            )}
+          >
+            {TIMELINE_KIND_LABEL[kind]}
+            <span className="ldst-num">{counts.get(kind) ?? 0}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
 export default function CalendarScreen() {
-  const [params, setParams] = useSearchParams()
   const demo = useDemoEnabled()
-  const month = params.get('month') ?? (demo ? DEMO_MONTH : todayMonth())
+  const [daysKey, setDaysKey] = useState<'7' | '30' | '90'>(readDays)
+  const [excluded, setExcluded] = useState<Set<TimelineKind>>(() => new Set())
 
-  const setParam = (key: string, value: string | null) => {
-    const next = new URLSearchParams(params)
-    if (value) next.set(key, value)
-    else next.delete(key)
-    setParams(next, { replace: true })
-  }
-
-  const view = useCalendarView({ month, codes: [] })
+  const days = Number(daysKey) as TimelineDays
+  const view = useTimelineView(days)
   const { forced, state, payload, error, reload } = view
 
-  const days = useMemo(() => buildMonth(month), [month])
-  const byDay = useMemo(() => groupByDay(payload), [payload])
+  const groups = useMemo(() => {
+    const visible = (payload?.events ?? []).filter((event) => !excluded.has(event.kind))
+    return groupByDate(visible)
+  }, [payload, excluded])
 
-  const daysWithData = useMemo(
-    () => [...byDay.keys()].filter((date) => date.startsWith(month)).sort(),
-    [byDay, month],
-  )
-  const day = params.get('day') ?? daysWithData[0] ?? `${month}-01`
+  const toggleKind = (kind: TimelineKind) => {
+    setExcluded((prev) => {
+      const next = new Set(prev)
+      if (next.has(kind)) next.delete(kind)
+      else next.add(kind)
+      return next
+    })
+  }
 
   const header = (
     <PageHeader
       title="事件日历"
-      subtitle={`${month} · ${payload?.sections.filter((section) => section.status === 'sourced').length ?? 0} / ${
-        payload?.sections.length ?? CALENDAR_SECTION_ORDER.length
-      } 个小节有源 · 规则抽取 ${payload?.extracted_events.length ?? 0} 条 · 数据时点 ${
-        payload?.data_as_of ?? MISSING
-      }`}
+      subtitle={
+        payload
+          ? `${payload.window.from} 至 ${payload.window.to}（北京时间）· 自选和持仓共 ${payload.symbols.length} 只 · 数据时点 ${payload.generated_at.slice(0, 16).replace('T', ' ')}`
+          : '自选和持仓接下来的公司事件；只列来源给出的日期，不打分、不给买卖建议'
+      }
       badge={
         <div className="flex flex-wrap items-center gap-2">
           <DemoStateBadge state={forced} />
-          {payload && <SourceStatusBadge status={payload.data_source_status} detail={payload.reason} />}
+          {payload && <SourceStatusBadge status={payload.data_source_status} />}
         </div>
       }
-      refresh={{
-        onClick: reload,
-        disabled: state === 'loading',
-      }}
+      refresh={{ onClick: reload, disabled: state === 'loading' }}
       actions={
-        <div className="flex items-center gap-2">
-          <IconButton
-            label="上个月"
-            icon={<ChevronLeft className="size-4" aria-hidden="true" />}
-            onClick={() => {
-              const next = new URLSearchParams(params)
-              next.set('month', shiftMonth(month, -1))
-              next.delete('day')
-              setParams(next, { replace: true })
-            }}
-          />
-          <Button variant="secondary" onClick={() => setParam('month', todayMonth())}>
-            本月
-          </Button>
-          <IconButton
-            label="下个月"
-            icon={<ChevronRight className="size-4" aria-hidden="true" />}
-            onClick={() => {
-              const next = new URLSearchParams(params)
-              next.set('month', shiftMonth(month, 1))
-              next.delete('day')
-              setParams(next, { replace: true })
-            }}
-          />
-        </div>
+        <Segmented
+          options={DAY_OPTIONS}
+          value={daysKey}
+          ariaLabel="看多少天"
+          size="sm"
+          onChange={(next) => {
+            setDaysKey(next)
+            saveCalendarDays(Number(next) as TimelineDays)
+          }}
+        />
       }
     />
   )
@@ -455,7 +269,7 @@ export default function CalendarScreen() {
           <EmptyState
             icon={<CalendarDays aria-hidden="true" />}
             title="本地服务未连接"
-            description="启动 ldst run 后自动接入 /api/events；未连接时日历不显示任何估算日期。"
+            description="启动 ldst run 后自动接入 /api/events/timeline；未连接时时间轴不显示任何估算日期。"
             action={<Button variant="secondary" onClick={reload}>重新检查</Button>}
           />
         </Card>
@@ -469,7 +283,7 @@ export default function CalendarScreen() {
         {header}
         <ErrorBlock
           variant="banner"
-          title="事件日历取数失败"
+          title="事件时间轴取数失败"
           detail={error instanceof Error ? error.message : '未知错误'}
           onRetry={reload}
         />
@@ -485,36 +299,45 @@ export default function CalendarScreen() {
         <Card>
           <EmptyState
             icon={<Database aria-hidden="true" />}
-            title={endpointMissing ? '接口未接入' : '这个月没有可用事件'}
+            title={
+              endpointMissing
+                ? '接口未接入'
+                : payload
+                  ? '还没有自选或持仓'
+                  : '没有可用的时间轴'
+            }
             description={
               endpointMissing ? (
                 <>
-                  页面已按 <code className="ldst-num">GET /api/events</code> 契约实现；后端提供该只读接口后自动接入，
-                  当前不估算任何日期。
+                  页面已按 <code className="ldst-num">GET /api/events/timeline</code> 契约实现；
+                  后端提供该只读接口后自动接入，当前不估算任何日期。
                 </>
               ) : (
                 <>
-                  {payload?.reason ?? '五个小节都没有数据源，也没有规则抽取事件。'}{' '}
-                  事件日历在请求时由本机库与 peer 现算，不读取命令产物；可点「刷新」重新取数，缺失处不估算日期。
+                  时间轴只排自选与持仓的公司事件。先去加几只自选，回来就能看到解禁、
+                  业绩预告与公告里写明的日期；没查到的来源会在下面逐条说明。
                 </>
               )
             }
             action={
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              endpointMissing ? (
                 <Button variant="secondary" onClick={reload}>刷新</Button>
-                {!demo && (
-                  <a
-                    href={withParams('/calendar', { demo: '1', state: forced })}
+              ) : (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Link
+                    to="/my-stocks?tab=watch"
                     className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
                   >
-                    查看演示数据
-                  </a>
-                )}
-              </div>
+                    去加自选
+                  </Link>
+                  <Button variant="secondary" onClick={reload}>刷新</Button>
+                </div>
+              )
             }
           />
         </Card>
-        {payload && <SectionsCard sections={payload.sections} />}
+        <GapsCard gaps={payload?.gaps ?? []} />
+        {demo && <p className="text-caption text-text-muted">当前是演示数据（?demo=1）。</p>}
       </div>
     )
   }
@@ -524,23 +347,64 @@ export default function CalendarScreen() {
       {header}
 
       {state === 'partial' && (
-        <Banner tone="warn" title="部分小节降级">
-          {payload.reason ?? '有数据源的小节返回了降级结果'}。降级小节仍在原位展示，不补造日期。
+        <Banner tone="warn" title="部分来源取数失败">
+          失败来源已写进「没查到的」，本轮没有补任何日期。
         </Banner>
       )}
 
-      <div className="grid grid-cols-[minmax(0,1fr)_360px] items-start gap-4 desk:grid-cols-[minmax(0,1fr)_400px]">
-        <MonthGrid
-          month={month}
-          days={days}
-          byDay={byDay}
-          selected={day}
-          onSelect={(date) => setParam('day', date)}
-        />
-        <DayPanel day={day} data={byDay.get(day)} demo={demo} forced={forced} />
-      </div>
+      <KindFilter events={payload.events} excluded={excluded} onToggle={toggleKind} />
 
-      <SectionsCard sections={payload.sections} />
+      <OverdueCard events={payload.overdue} />
+
+      <Card>
+        <CardHeader
+          title="时间轴"
+          subtitle={`${payload.window.days} 天 · 只列来源给出的日期，同一天按来源顺序排列`}
+        />
+        <div className="flex flex-col gap-4 p-4">
+          {groups.length === 0 ? (
+            <p className="py-6 text-center text-body text-text-muted">
+              {payload.events.length === 0
+                ? `这 ${payload.window.days} 天里没有查到事件。`
+                : '选中的类型在窗口内没有事件。'}{' '}
+              {payload.gaps.length > 0 && '下面有没取到的来源，不代表那几只没有事件。'}
+            </p>
+          ) : (
+            <ol className="flex flex-col gap-5">
+              {groups.map((group) => {
+                const label = dayLabel(group.date, payload.window.from)
+                return (
+                  <li key={group.date}>
+                    <p className="mb-2 flex items-baseline gap-2 text-body">
+                      <span className="font-medium text-text">{label.main}</span>
+                      <span
+                        className={cn(
+                          'text-caption',
+                          label.rel === '今天' || label.rel === '明天'
+                            ? 'text-accent'
+                            : 'text-text-muted',
+                        )}
+                      >
+                        {label.rel}
+                      </span>
+                    </p>
+                    <ul className="flex flex-col gap-2">
+                      {group.items.map((event) => (
+                        <EventRow
+                          key={`${event.kind}-${event.symbol}-${event.ref}-${event.title}`}
+                          event={event}
+                        />
+                      ))}
+                    </ul>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+        </div>
+      </Card>
+
+      <GapsCard gaps={payload.gaps} />
     </div>
   )
 }
