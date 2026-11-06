@@ -52,6 +52,14 @@ SOURCES_DOC: dict[str, Any] = {
             "default_url": "http://127.0.0.1:1/mcp",
             "timeout_sec": 1,
         },
+        "tickhub_us": {
+            "product": "TickHub-US",
+            "cli": "th-us",
+            "mcp_name": "th-us",
+            "url_env": "LDST_TEST_FAKE_TICKHUB_US_URL",
+            "default_url": "http://127.0.0.1:1/mcp",
+            "timeout_sec": 1,
+        },
     },
     "sources": [
         {
@@ -416,6 +424,53 @@ def senate_payload(day: str = "2026-10-24") -> dict[str, Any]:
         "fetched_at": f"{day}T20:00:00+08:00",
         "data_source_status": "ok",
         "payload": {"summary": "维持观察", "report_id": "r-1"},
+    }
+
+
+def us_quote_payload(
+    symbol: str,
+    *,
+    price: float = 51570.0898,
+    prev_close: float = 51523.0586,
+    change: float = 47.03,
+    change_pct: float = 0.09,
+    source: str = "sina",
+    compliance_tier: str = "C",
+    fetched_at: str = "2026-11-06T22:10:00+08:00",
+    cache_hit: bool = False,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    """TickHub-US `th_us_get_quote(symbol)` 的**真实**返回形状（QUOT-471 实测）。
+
+    与 CN 的 `ok/data/meta` 壳不同：外层直接是 US 自己的 `DataEnvelope`
+    （`symbol` / `payload` / `source` / `compliance_tier` / `warnings` / `cache_hit`），
+    没有「记录数组」。`compliance_tier=C` + 警告句是 `sina` 的实测口径——合规字段
+    必须原样落进信封 `source_detail`（`data/adapters/tickhub_us.py`），不吞不降级。
+    """
+    if warnings is None:
+        warnings = [f"新浪财经 属 Tier {compliance_tier}：商用需事先书面许可，当前为非商用调用。"]
+    return {
+        "schema_version": "1",
+        "domain": "quote",
+        "symbol": symbol,
+        "payload": {
+            "symbol": symbol,
+            "price": price,
+            "prev_close": prev_close,
+            "change": change,
+            "change_pct": change_pct,
+            "currency": "USD",
+            "as_of": fetched_at[:10],
+            "timestamp": fetched_at,
+        },
+        "source": source,
+        "compliance_tier": compliance_tier,
+        "freshness": "realtime",
+        "fetched_at": fetched_at,
+        "cache_hit": cache_hit,
+        "trace_id": f"trace-us-{symbol}",
+        "warnings": warnings,
+        "attempts": 1,
     }
 
 

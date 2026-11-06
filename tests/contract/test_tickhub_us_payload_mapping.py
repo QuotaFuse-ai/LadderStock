@@ -1,0 +1,74 @@
+"""TickHub-US 真实返回 → `LadderEnvelope` 的契约（QUOT-471）。
+
+锁三件事，对应 `data/adapters/tickhub_us.py` 的三段说明：
+
+1. **形状不同**：US 回的是自己的 `DataEnvelope`（`payload` 对象），没有 CN 的
+   `ok/data/meta` 壳，也没有「记录数组」——整包落一行。
+2. **合规字段必须落地**：`compliance_tier` 与 `warnings` 原样进信封 `payload`
+   （`sina` = Tier C），`source_detail` 带出上游与分级。这是 C-2 第 3 条的修复。
+3. **归属闸门**：`dataset` 不是 `tickhub_us` 归属的直接抛（DEC-006 闸门 1/2）。
+
+行数据用 `fixtures.fake_peers.us_quote_payload`（对齐 2026-11-06 实测形状）。
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from ladderstock.core.boundary import owner_of
+from ladderstock.data.adapters import from_us_tool_response
+from ladderstock.errors import LadderStockError
+from fixtures.fake_peers import us_quote_payload
+
+DATASET = "index_quote_us"
+
+
+def test_us_quote_lands_compliance_tier_and_warnings() -> None:
+    envelope = from_us_tool_response(DATASET, us_quote_payload("DJI"))
+    assert envelope.source == "tickhub_us"
+    assert envelope.payload["compliance_tier"] == "C"
+    assert envelope.payload["warnings"], "合规警告句不能吞"
+    assert "compliance_tier=C" in envelope.source_detail
+    assert "th_us_get_quote@sina" in envelope.source_detail
+
+
+def test_us_quote_projects_one_row_without_conversion() -> None:
+    envelope = from_us_tool_response(DATASET, us_quote_payload("IXIC", price=24707.8101))
+    records = envelope.payload["records"]
+    assert len(records) == 1
+    row = records[0]
+    assert row["symbol"] == "IXIC"
+    assert row["market"] == "US"
+    assert row["price"] == 24707.8101
+    assert row["currency"] == "USD"
+
+
+def test_us_quote_unwraps_structured_content_shell() -> None:
+    """真实 FastMCP 把 `model_dump_json()` 放进 `structuredContent.result`。"""
+    body = us_quote_payload("DJI")
+    shell = {"structuredContent": {"result": json.dumps(body, ensure_ascii=False)}}
+    envelope = from_us_tool_response(DATASET, shell)
+    assert envelope.payload["records"][0]["price"] == body["payload"]["price"]
+
+
+def test_us_confidence_follows_compliance_tier() -> None:
+    envelope = from_us_tool_response(DATASET, us_quote_payload("DJI", compliance_tier="B"))
+    assert envelope.confidence == "medium"
+
+
+def test_us_adapter_rejects_non_us_dataset() -> None:
+    """归属闸门：CN 数据集不能按 US 返回解析（DEC-006 闸门 1/2）。"""
+    with pytest.raises(LadderStockError):
+        from_us_tool_response("index_quote", us_quote_payload("DJI"))
+
+
+def test_us_adapter_rejects_error_body() -> None:
+    with pytest.raises(LadderStockError):
+        from_us_tool_response(DATASET, {"error": {"code": "E_COMPLIANCE", "message": "拒回"}})
+
+
+def test_us_dataset_is_owned_by_tickhub_us() -> None:
+    assert owner_of(DATASET).peer == "tickhub_us"
+    assert owner_of(DATASET).tool == "th_us_get_quote"
