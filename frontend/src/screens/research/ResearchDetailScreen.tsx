@@ -744,6 +744,11 @@ export default function ResearchDetailScreen() {
       <CompareSection
         code={view.code}
         reportHref={view.code ? reportHref(view.code, view) : null}
+        source={view.source}
+        date={view.date}
+        demo={view.demo}
+        overview={overviewRequest.data}
+        name={displayName}
       />
       <ResearchAiDock
         code={view.code}
