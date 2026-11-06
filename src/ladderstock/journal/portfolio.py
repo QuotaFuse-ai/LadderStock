@@ -441,6 +441,11 @@ def _backup(conn: sqlite3.Connection, *, root: Path | None = None) -> str:
     return candidate.name
 
 
+def backup_now(conn: sqlite3.Connection, *, root: Path | None = None) -> str:
+    """批量导入要「先备份再开事务」，所以把备份能力公开出去；文件名口径与单笔写一致。"""
+    return _backup(conn, root=root)
+
+
 # --------------------------------------------------------------------------- #
 # 写：单笔流水
 # --------------------------------------------------------------------------- #
@@ -710,6 +715,7 @@ __all__ = [
     "UNDATED_NOTE",
     "add_trade",
     "adopt_legacy",
+    "backup_now",
     "classify_legacy",
     "clean_symbol",
     "delete_trade",

@@ -36,6 +36,7 @@ import { MigrationCard, adoptLabel, dismissLabel, migrateActionRows } from './Po
 import { PortfolioPerfTab } from './PortfolioPerfTab'
 import { PortfolioTradesTab } from './PortfolioTradesTab'
 import { PrivacyText } from './PrivacyText'
+import { XrayTab } from './XrayTab'
 import {
   TONE_CLASS,
   moneyText,
@@ -58,7 +59,8 @@ import { readCostMethod, saveCostMethod, tradeTypeLabel } from './portfolioForm'
  * 2. 缺失一律 `—`，不补 0；有问题的流水在表上方逐条说明「没参与计算」；
  * 3. 旧记录**只标记、不删除**：adopt / dismiss 都要二次确认，备份文件名照实展示；
  * 4. 隐私遮罩只走 `lib/privacy.ts` + 顶栏开关（本页不再放第二个开关）；
- * 5. 收益子页只有「收益 / 交易流水」两个标签，X 光与回放由后续任务加。
+ * 5. 「收益 / 交易流水 / X 光」三个标签各自只在被选中时取数（X 光要读日线，不为看不到的东西付请求）；
+ *    写操作（记一笔、导入、删一笔、旧仓确认）之后统一 `bump()`，让已挂载的子页重算。
  */
 
 const REFRESH_MS = 30 * 60 * 1000
@@ -71,6 +73,7 @@ const METHOD_OPTIONS: Array<{ value: PortfolioMethod; label: string }> = [
 const IN_PAGE_TABS = [
   { value: 'perf', label: '收益' },
   { value: 'trades', label: '交易流水' },
+  { value: 'xray', label: 'X 光' },
 ] as const
 
 type InPageTab = (typeof IN_PAGE_TABS)[number]['value']
@@ -424,15 +427,22 @@ export function PortfolioPanel() {
 
       <Tabs ariaLabel="持仓的更多内容" tabs={IN_PAGE_TABS} value={tab} onChange={setTab} />
 
-      {tab === 'perf' ? (
-        <PortfolioPerfTab refreshKey={revision} pendingLegacy={legacyRows.length} />
-      ) : (
+      {tab === 'perf' && <PortfolioPerfTab refreshKey={revision} pendingLegacy={legacyRows.length} />}
+      {tab === 'trades' && (
         <PortfolioTradesTab
           trades={trades}
           issues={issues}
+          method={method}
           onDelete={(trade) => setConfirm({ kind: 'delete', trade })}
+          onImported={(result) =>
+            afterWrite(
+              `已导入 ${result.imported} 笔流水（写前备份：${result.backup ?? '未给出文件名'}）`,
+            )
+          }
         />
       )}
+      {/* X 光只在被选中时挂载：取价与相关性比收益率重，切到别的标签不该为它付请求 */}
+      {tab === 'xray' && <XrayTab refreshKey={revision} />}
 
       <ConfirmDialog
         open={confirm !== null}
