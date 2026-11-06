@@ -239,6 +239,7 @@ GET /api/research/{code}/event-study?sources=holder_trades,dragon_tiger&window_b
 | --- | --- |
 | `event_types[]` | 每类含 `dataset` / `label` / `count` / `dates`（去重升序）/ `events[]`（`date` + `detail` + `window`）/ `sample` |
 | `window` | `start` / `end` / `stock_return` / `benchmark_return` / `excess_return` / `reason`；窗口不齐或缺价时逐项 `null` + `reason`，不估算 |
+| `window.stock_start_close` / `stock_end_close` / `benchmark_start_close` / `benchmark_end_close` | 起止交易日的两只序列收盘**原值**（QUOT-451）；只用于页面复算 `close[end] / close[start] - 1`，不参与任何均值，窗口未对齐时为 `null` |
 | `sample` | `required=8`、`window_available`、`status`、三个均值、`reason`；**可计算窗口 < 8 时 `status=insufficient_sample` 且三个均值恒为 `null`**，统计句由后端给数 |
 | `counts` | 各数据集事件条数（同一公告日多行会各算一条，`dates` 去重） |
 | `trading_days` / `benchmark_rows` | 本地 000300 交易日历长度与原始行数 |

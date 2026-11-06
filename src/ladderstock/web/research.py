@@ -653,6 +653,12 @@ def _window_for(
     window: dict[str, Any] = {
         "start": None,
         "end": None,
+        # 四个边界收盘原值只用于页面「可复算」展示，不参与任何计算；
+        # 缺哪个就是 None（QUOT-451）。
+        "stock_start_close": None,
+        "stock_end_close": None,
+        "benchmark_start_close": None,
+        "benchmark_end_close": None,
         "stock_return": None,
         "benchmark_return": None,
         "excess_return": None,
@@ -683,7 +689,16 @@ def _window_for(
     start_day, end_day = bench_days[start_i], bench_days[end_i]
     stock_start, stock_end = stock_close.get(start_day), stock_close.get(end_day)
     bench_start, bench_end = bench_close.get(start_day), bench_close.get(end_day)
-    window.update({"start": start_day, "end": end_day})
+    window.update(
+        {
+            "start": start_day,
+            "end": end_day,
+            "stock_start_close": stock_start,
+            "stock_end_close": stock_end,
+            "benchmark_start_close": bench_start,
+            "benchmark_end_close": bench_end,
+        }
+    )
     if stock_start is None or stock_end is None or not stock_start:
         window["reason"] = NO_STOCK_BARS
         return window
