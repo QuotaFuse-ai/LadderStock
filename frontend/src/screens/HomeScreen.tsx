@@ -7,7 +7,6 @@ import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import {
   MISSING,
   formatChangePct,
-  formatTime,
   localDateIso,
 } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
@@ -43,9 +42,7 @@ import { useHomeDemoEnabled, useHomeBlocks } from './home/useHomeSource'
  */
 
 /** 溯源徽标只需要 envelope 的公共字段（§5.5 单一实现）；平面响应（自选）四键恒为 null。 */
-interface EnvelopeMeta extends SourceBadgeMeta {
-  fetched_at: string | null
-}
+type EnvelopeMeta = SourceBadgeMeta
 
 interface Todo {
   tone: 'warn' | 'danger' | 'accent'
@@ -131,18 +128,15 @@ export default function HomeScreen() {
             source_status: item.source_status ?? null,
             source_detail: item.source_detail ?? null,
             data_as_of: item.data_as_of ?? null,
-            fetched_at: item.fetched_at ?? null,
           }]
         : [],
     )
   }, [indexView.data, watchlistView.data, positionsView.data, watchView.data, validationView.data])
   const degraded = envelopes.filter((envelope) => envelope.source_status !== null && envelope.source_status !== 'ok')
-  const latestFetch = envelopes
-    .map((envelope) => envelope.fetched_at)
-    .filter((value): value is string => Boolean(value))
-    .sort()
-    .pop()
 
+  // 页头副标题只报「屏级态」：加载 / 断连 / 取数失败 / 空态——这些是整页唯一的可见信号。
+  // 数据完整度与取数时刻不在这里播报（参考页口径是「标题 + 面包屑」）：降级走待办条目 + 块级
+  // `SourceStatusBadge`，取数时刻留在拥有该数据的块里（如 A 块的 quoteTime），不挂在整页页头。
   const summary =
     state === 'loading'
       ? '读取中…'
@@ -152,7 +146,7 @@ export default function HomeScreen() {
           ? '取数失败'
           : state === 'empty'
             ? `${tradeDate} · 今日无数据`
-            : `${degraded.length > 0 ? '部分数据降级' : '数据完整'} · 更新于 ${formatTime(latestFetch ?? null)}`
+            : undefined
 
   const todos = useMemo<Todo[]>(() => {
     const list: Todo[] = []
