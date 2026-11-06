@@ -1,0 +1,4 @@
+=== mypy
+src\ladderstock\news\timeline.py:195: error: Incompatible types in assignment (expression has type "SymbolRef | None", variable has type "SymbolRef")  [assignment]
+Found 1 error in 1 file (checked 123 source files)
+EXIT:1

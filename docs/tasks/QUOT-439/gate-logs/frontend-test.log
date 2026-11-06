@@ -1,0 +1,257 @@
+=== test
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mD:/multica_workspaces/quotafuse-g-066955b36a89/quot-439-4240b975afb7/workdir/LadderStock/frontend[39m
+
+ [32m✓[39m tests/intraday-api.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 16[2mms[22m[39m
+ [32m✓[39m tests/financecoffer-api.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 18[2mms[22m[39m
+ [32m✓[39m tests/radar-api.test.ts [2m([22m[2m18 tests[22m[2m)[22m[90m 33[2mms[22m[39m
+ [32m✓[39m tests/research-api.test.ts [2m([22m[2m18 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+ [32m✓[39m tests/kline-view.test.ts [2m([22m[2m17 tests[22m[2m)[22m[90m 15[2mms[22m[39m
+ [32m✓[39m tests/industry-api.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 39[2mms[22m[39m
+ [32m✓[39m tests/symbols-search.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 20[2mms[22m[39m
+ [32m✓[39m tests/search-core.test.ts [2m([22m[2m27 tests[22m[2m)[22m[90m 58[2mms[22m[39m
+ [32m✓[39m tests/migrate.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 210[2mms[22m[39m
+ [32m✓[39m tests/persistence.test.ts [2m([22m[2m10 tests[22m[2m)[22m[90m 234[2mms[22m[39m
+ [32m✓[39m tests/earnings-brief.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 31[2mms[22m[39m
+ [32m✓[39m tests/ui-token-hygiene.test.ts [2m([22m[2m6 tests[22m[2m)[22m[90m 33[2mms[22m[39m
+ [32m✓[39m tests/industry-heat.test.ts [2m([22m[2m12 tests[22m[2m)[22m[90m 36[2mms[22m[39m
+ [32m✓[39m tests/watch-batch.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 10[2mms[22m[39m
+ [32m✓[39m tests/thesis-notes-sync.test.ts [2m([22m[2m4 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m tests/freshness.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+ [32m✓[39m tests/watch-settings-sync.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m tests/api-headers.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 17[2mms[22m[39m
+ [32m✓[39m tests/research-citation.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+ [32m✓[39m tests/watch-settings-store.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 667[2mms[22m[39m
+ [32m✓[39m tests/limit-pool-api.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+ [32m✓[39m tests/ai-failures.test.ts [2m([22m[2m3 tests[22m[2m)[22m[90m 7[2mms[22m[39m
+ [32m✓[39m tests/thesis-notes-store.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 1800[2mms[22m[39m
+   [33m[2m✓[22m[39m 持久化[2m > [22m写入 → 落 IndexedDB（version=2）→ 清内存 rehydrate 后原样恢复 [33m302[2mms[22m[39m
+[90mstderr[2m | tests/home-search.test.tsx[2m > [22m[2m首页搜索入口（QUOT-357）[2m > [22m[2m入口是按钮不是输入框，点击才打开面板（§4.3 / §4.5）
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/weekly-screen.test.tsx[2m > [22m[2m周度复盘 /weekly[2m > [22m[2m渲染五段与事实包指标，请求带 week 参数
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/ui-kit.test.tsx [2m([22m[2m27 tests[22m[2m)[22m[33m 786[2mms[22m[39m
+[90mstderr[2m | tests/intraday-screen.test.tsx[2m > [22m[2m六种时点状态[2m > [22m[2m六种状态各有独立文案 + 图形：已写入 / 降级写入 / 未覆盖 / 不补跑 / 未取到 / 抓取失败
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/radar-pages.test.tsx[2m > [22m[2m四页五态[2m > [22m[2m资讯雷达：normal / loading / empty / error / partial / offline 各一条
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/portfolio-panel.test.tsx[2m > [22m[2m记一笔：类型切换字段显隐（QUOT-434）[2m > [22m[2m买入显示 数量 / 成交价 / 费用；分红只显示到账金额；拆股只显示比例
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/quota-354-defects.test.tsx[2m > [22m[2m每日复盘的交易日与草稿归属（QUOT-354 BUG-B / BUG-C）[2m > [22m[2m?date= 深链优先于本机草稿日期，不串日
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/review-split.test.tsx[2m > [22m[2m复盘两屏边界（DEC-049）[2m > [22m[2m同一份演示产物：叙述只在模型面，指标与草稿只在数据面
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/research-event-study.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 1746[2mms[22m[39m
+   [33m[2m✓[22m[39m 事件回看卡片（QUOT-451）[2m > [22m七枚 chip 分开显示「有数 / 0 次 / 未接入」，口径取自接口回声 [33m380[2mms[22m[39m
+ [32m✓[39m tests/weekly-screen.test.tsx [2m([22m[2m12 tests[22m[2m)[22m[33m 1530[2mms[22m[39m
+   [33m[2m✓[22m[39m 周度复盘 /weekly[2m > [22m渲染五段与事实包指标，请求带 week 参数 [33m402[2mms[22m[39m
+ [32m✓[39m tests/home-search.test.tsx [2m([22m[2m17 tests[22m[2m)[22m[33m 1901[2mms[22m[39m
+ [32m✓[39m tests/review-split.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1624[2mms[22m[39m
+   [33m[2m✓[22m[39m 复盘两屏边界（DEC-049）[2m > [22m同一份演示产物：叙述只在模型面，指标与草稿只在数据面 [33m753[2mms[22m[39m
+   [33m[2m✓[22m[39m 复盘两屏边界（DEC-049）[2m > [22m模型未接入：AI屏说「缺的是模型」并给接入入口，数据屏照常出五段指标 [33m338[2mms[22m[39m
+ [32m✓[39m tests/quota-354-defects.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 2184[2mms[22m[39m
+   [33m[2m✓[22m[39m 每日复盘的交易日与草稿归属（QUOT-354 BUG-B / BUG-C）[2m > [22m?date= 深链优先于本机草稿日期，不串日 [33m550[2mms[22m[39m
+   [33m[2m✓[22m[39m 每日复盘的交易日与草稿归属（QUOT-354 BUG-B / BUG-C）[2m > [22m切回草稿所在的那天，草稿原样回填 [33m530[2mms[22m[39m
+   [33m[2m✓[22m[39m 每日复盘的交易日与草稿归属（QUOT-354 BUG-B / BUG-C）[2m > [22m页内「交易日」选择器改的是 URL，不是本机状态 [33m415[2mms[22m[39m
+ [32m✓[39m tests/intraday-screen.test.tsx [2m([22m[2m19 tests[22m[2m)[22m[33m 2918[2mms[22m[39m
+   [33m[2m✓[22m[39m 六种时点状态[2m > [22m六种状态各有独立文案 + 图形：已写入 / 降级写入 / 未覆盖 / 不补跑 / 未取到 / 抓取失败 [33m454[2mms[22m[39m
+ [32m✓[39m tests/portfolio-panel.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 2955[2mms[22m[39m
+   [33m[2m✓[22m[39m 记一笔：类型切换字段显隐（QUOT-434）[2m > [22m买入显示 数量 / 成交价 / 费用；分红只显示到账金额；拆股只显示比例 [33m611[2mms[22m[39m
+   [33m[2m✓[22m[39m 记一笔：校验与后端同口径（QUOT-434）[2m > [22m代码 / 日期 / 数量不合法时给出原因，且不写库 [33m510[2mms[22m[39m
+   [33m[2m✓[22m[39m 记一笔：校验与后端同口径（QUOT-434）[2m > [22m填对后 POST /api/portfolio/ledger 用写接口字段名 trade_date，并重取视图 [33m399[2mms[22m[39m
+   [33m[2m✓[22m[39m 旧仓迁移卡片（QUOT-434）[2m > [22mconflict 的 adopt / dismiss 都要二次确认，确认后才发对应 POST [33m535[2mms[22m[39m
+ [32m✓[39m tests/radar-pages.test.tsx [2m([22m[2m27 tests[22m[2m)[22m[33m 4402[2mms[22m[39m
+   [33m[2m✓[22m[39m 四页五态[2m > [22m资讯雷达：normal / loading / empty / error / partial / offline 各一条 [33m864[2mms[22m[39m
+   [33m[2m✓[22m[39m 四页五态[2m > [22m候选池：normal / loading / empty / error / partial / offline 各一条 [33m348[2mms[22m[39m
+   [33m[2m✓[22m[39m 四页五态[2m > [22m我的持仓：normal / loading / empty / error / partial / offline 各一条 [33m334[2mms[22m[39m
+   [33m[2m✓[22m[39m 资讯雷达 /news[2m > [22m代码 / 行业 / 来源过滤只作用于当前窗口 [33m378[2mms[22m[39m
+[90mstderr[2m | tests/my-stocks-screen.test.tsx[2m > [22m[2m我的股票：一页两标签（QUOT-431）[2m > [22m[2m`?tab=watch` 先渲染自选，点「持仓」切过去并记住选择
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/my-stocks-screen.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 1339[2mms[22m[39m
+   [33m[2m✓[22m[39m 我的股票：一页两标签（QUOT-431）[2m > [22m`?tab=watch` 先渲染自选，点「持仓」切过去并记住选择 [33m341[2mms[22m[39m
+[90mstderr[2m | tests/quota-334-home-watch.test.tsx[2m > [22m[2m首页演示源[2m > [22m[2m?demo=1 首屏直接出内容：四块都在，交易日跟随演示基准日
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/quota-331-envelope.test.tsx[2m > [22m[2mQUOT-331 · /limit-up 徽标真的用上 freshness[2m > [22m[2m真实通道（契约响应）：出「缓存」+「数据完整」，副标题带数据时间与取数时刻
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/quota-331-envelope.test.tsx [2m([22m[2m12 tests[22m[2m)[22m[33m 432[2mms[22m[39m
+[90mstderr[2m | tests/nav-routes.test.tsx[2m > [22m[2m侧栏顺序与渲染（docs/UI-SPEC.md）[2m > [22m[2m渲染出来的侧栏默认就带着全部入口（不用先点展开，DOM 顺序即视觉顺序）
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/nav-routes.test.tsx [2m([22m[2m37 tests[22m[2m)[22m[33m 8120[2mms[22m[39m
+   [33m[2m✓[22m[39m 复盘组三独立入口（QUOT-344 / DEC-046）[2m > [22m`/review` 与 `/review/ai` 挂的不是同一个组件 [33m7591[2mms[22m[39m
+[90mstderr[2m | tests/inbox-screen.test.tsx[2m > [22m[2m/inbox 收件箱[2m > [22m[2m按时间显示条目的任务名、标题、未读点与事实行
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/quota-334-journal-validate.test.tsx[2m > [22m[2m交易日志演示源[2m > [22m[2m?demo=1 首屏就是 13 行聚合表，夹具数字自洽且不发真实请求
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/inbox-screen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 926[2mms[22m[39m
+[90mstderr[2m | tests/quota-320-shared-layer.test.tsx[2m > [22m[2mQUOT-320 · ?demo=1 水印根因（§5.6 / R-18）[2m > [22m[2m只有 ?demo=1、没有 ?state= 时也必须上屏
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/quota-334-home-watch.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 3209[2mms[22m[39m
+   [33m[2m✓[22m[39m 首页演示源[2m > [22m?demo=1 首屏直接出内容：四块都在，交易日跟随演示基准日 [33m470[2mms[22m[39m
+   [33m[2m✓[22m[39m 盯盘演示源[2m > [22m演示态本机没有回放缓存：剩余 TTL 如实「—」，且不写 watch_snapshot 分片 [33m443[2mms[22m[39m
+ [32m✓[39m tests/quota-320-shared-layer.test.tsx [2m([22m[2m15 tests[22m[2m)[22m[33m 489[2mms[22m[39m
+ [32m✓[39m tests/quota-334-journal-validate.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 1650[2mms[22m[39m
+   [33m[2m✓[22m[39m 交易日志演示源[2m > [22m?demo=1 首屏就是 13 行聚合表，夹具数字自洽且不发真实请求 [33m396[2mms[22m[39m
+   [33m[2m✓[22m[39m 明日验证演示源[2m > [22m?demo=1 条件表首屏 ≥12 行，写入与探针全部禁用 [33m450[2mms[22m[39m
+ [32m✓[39m tests/research-thesis-section.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 2437[2mms[22m[39m
+   [33m[2m✓[22m[39m 空态与引导[2m > [22m没有记录时给出论点怎么用、裁决点为什么必须写 [33m315[2mms[22m[39m
+   [33m[2m✓[22m[39m 保存校验[2m > [22m只填标题、不写裁决点仍被拦住（每条论点至少一个裁决点） [33m395[2mms[22m[39m
+[90mstderr[2m | tests/market-demo.test.tsx[2m > [22m[2m市场屏演示源[2m > [22m[2m设置开关开启：三处图表都有数据点，日期落在演示基准日
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/market-demo.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 703[2mms[22m[39m
+   [33m[2m✓[22m[39m 市场屏演示源[2m > [22m设置开关开启：三处图表都有数据点，日期落在演示基准日 [33m382[2mms[22m[39m
+ [32m✓[39m tests/research-symbol-search.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 2204[2mms[22m[39m
+   [33m[2m✓[22m[39m 顶部标的搜索（QUOT-448）[2m > [22m输入 6 位代码命中后，下拉可选，回车进入同一页 [33m556[2mms[22m[39m
+   [33m[2m✓[22m[39m 顶部标的搜索（QUOT-448）[2m > [22m中文名同样命中；上下键移动高亮，aria-activedescendant 跟着走 [33m400[2mms[22m[39m
+   [33m[2m✓[22m[39m 顶部标的搜索（QUOT-448）[2m > [22m拼音查不到时说清是「拼音未接入」，而不是「没有这只股票」 [33m336[2mms[22m[39m
+   [33m[2m✓[22m[39m 顶部标的搜索（QUOT-448）[2m > [22m接口失败给 role=alert，并提示仍可直接输代码 [33m347[2mms[22m[39m
+   [33m[2m✓[22m[39m 顶部标的搜索（QUOT-448）[2m > [22m空输入不发请求 [33m420[2mms[22m[39m
+[90mstderr[2m | tests/quota-319b-screen-side.test.tsx[2m > [22m[2mB 族缺数不写 0（UI-SPEC §8）[2m > [22m[2m/signals 没取到载荷：副标题「命中 — 条」，不是「命中 0 条」
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/readonly-mount-fetch.test.tsx[2m > [22m[2m只读页进入即取数（QUOT-441）[2m > [22m[2m/positions：挂载后立即 GET /api/positions，不需要先跑命令
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/readonly-mount-fetch.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 615[2mms[22m[39m
+[90mstderr[2m | tests/quota-334-review-weekly.test.tsx[2m > [22m[2m每日复盘（数据面）/ 周度复盘演示源[2m > [22m[2m/review ?demo=1：指标卡与五段程序指标首屏可见，模型内容一律不在本屏
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/quota-319b-screen-side.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 1684[2mms[22m[39m
+ [32m✓[39m tests/quota-334-review-weekly.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1016[2mms[22m[39m
+   [33m[2m✓[22m[39m 每日复盘（数据面）/ 周度复盘演示源[2m > [22m/review ?demo=1：指标卡与五段程序指标首屏可见，模型内容一律不在本屏 [33m503[2mms[22m[39m
+[90mstderr[2m | tests/industry-pages.test.tsx[2m > [22m[2m产业矩阵 /industry[2m > [22m[2m演示源渲染 13 个行业，缺列或切换维度后表头跟着变
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/topbar.test.tsx[2m > [22m[2m顶栏面包屑[2m > [22m[2m`/my-stocks` 显示所属一级栏目「我的股票」
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/topbar.test.tsx [2m([22m[2m12 tests[22m[2m)[22m[33m 1653[2mms[22m[39m
+ [32m✓[39m tests/ui-source-badges.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[90m 117[2mms[22m[39m
+[90mstderr[2m | tests/positions-privacy.test.tsx[2m > [22m[2m持仓页运行时隐私[2m > [22m[2m新增 / 删除 / 导入都不写存储、不发请求
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/nav-pills.test.tsx[2m > [22m[2mNavPills · 原语[2m > [22m[2m选中态只有一颗：aria-current="page" 命中当前路径那一条
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/nav-pills.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 329[2mms[22m[39m
+ [32m✓[39m tests/positions-privacy.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1240[2mms[22m[39m
+   [33m[2m✓[22m[39m 持仓页运行时隐私[2m > [22m新增 / 删除 / 导入都不写存储、不发请求 [33m1068[2mms[22m[39m
+ [32m✓[39m tests/industry-pages.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 1987[2mms[22m[39m
+   [33m[2m✓[22m[39m 产业矩阵 /industry[2m > [22m演示源渲染 13 个行业，缺列或切换维度后表头跟着变 [33m437[2mms[22m[39m
+   [33m[2m✓[22m[39m 产业矩阵 /industry[2m > [22m搜索与「仅有数据」筛选生效，未绑定行业被筛掉 [33m318[2mms[22m[39m
+   [33m[2m✓[22m[39m 产业信号 /signals[2m > [22m命中计数、规则说明与证据抽屉（字段 + 时点 + 数据集） [33m322[2mms[22m[39m
+ [32m✓[39m tests/valuation-basis-panel.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 438[2mms[22m[39m
+[90mstderr[2m | tests/quot-421-pool-auto-refresh.test.tsx[2m > [22m[2mQUOT-421 候选池 30 秒自动刷新[2m > [22m[2m一拍之后新数值与 fetched_at 上屏，且不回到骨架屏
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/quot-421-pool-auto-refresh.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 529[2mms[22m[39m
+[90mstderr[2m | tests/research-pages.test.tsx[2m > [22m[2m个股深挖页[2m > [22m[2m概览默认：走势 + 财报卡直接出，深度研究要点 tab 才看
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/limit-up-screen.test.tsx[2m > [22m[2m涨停样本五态[2m > [22m[2mnormal / loading / empty / error / partial / offline 各一条
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/limit-up-screen.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 753[2mms[22m[39m
+   [33m[2m✓[22m[39m 涨停样本五态[2m > [22mnormal / loading / empty / error / partial / offline 各一条 [33m402[2mms[22m[39m
+[90mstderr[2m | tests/settings-module-count.test.tsx[2m > [22m[2m设置页模块数口径（QUOT-420）[2m > [22m[2m标题、侧栏说明、卡片数三处一致，且不再出现写死的「六个模块」
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/settings-module-count.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 586[2mms[22m[39m
+   [33m[2m✓[22m[39m 设置页模块数口径（QUOT-420）[2m > [22m标题、侧栏说明、卡片数三处一致，且不再出现写死的「六个模块」 [33m306[2mms[22m[39m
+[90mstderr[2m | tests/research-detail-layout.test.tsx[2m > [22m[2m个股深挖整页编排（QUOT-448）[2m > [22m[2m概览块序：行情条 → 走势 → 财报 → 事件 → 论点 → 研究报告 → 报告对比 → 分享卡
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+[90mstderr[2m | tests/watch-settings-screen.test.tsx[2m > [22m[2m盯盘阈值持久化[2m > [22m[2m写入 → 落库 → 新会话读回（刷新 / 重启）
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/ai-error-notice.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 341[2mms[22m[39m
+ [32m✓[39m tests/research-detail-layout.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 1382[2mms[22m[39m
+   [33m[2m✓[22m[39m 个股深挖整页编排（QUOT-448）[2m > [22m概览块序：行情条 → 走势 → 财报 → 事件 → 论点 → 研究报告 → 报告对比 → 分享卡 [33m526[2mms[22m[39m
+   [33m[2m✓[22m[39m 个股深挖整页编排（QUOT-448）[2m > [22m深度研究块序不变：六段之后仍是事件 → 论点 → 研究报告 → 报告对比 → 分享卡 [33m390[2mms[22m[39m
+   [33m[2m✓[22m[39m 个股深挖整页编排（QUOT-448）[2m > [22m换股只改代码：demo 等取证参数保留，tab 回到概览（照验收口径只带四个参数） [33m465[2mms[22m[39m
+ [32m✓[39m tests/research-pages.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 3616[2mms[22m[39m
+   [33m[2m✓[22m[39m 个股深挖页[2m > [22m概览默认：走势 + 财报卡直接出，深度研究要点 tab 才看 [33m660[2mms[22m[39m
+   [33m[2m✓[22m[39m 个股深挖页[2m > [22m五态可只靠 URL 演示（深度研究 tab） [33m311[2mms[22m[39m
+   [33m[2m✓[22m[39m 六阶段研究报告页[2m > [22m失败段「重试本段」→ 轮询 → 成功回填 [33m2200[2mms[22m[39m
+ [32m✓[39m tests/kline-card.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[90m 291[2mms[22m[39m
+ [32m✓[39m tests/watch-settings-screen.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1412[2mms[22m[39m
+   [33m[2m✓[22m[39m 盯盘阈值持久化[2m > [22m写入 → 落库 → 新会话读回（刷新 / 重启） [33m732[2mms[22m[39m
+   [33m[2m✓[22m[39m 盯盘阈值持久化[2m > [22m越界输入：红边 + 行内提示，不写分片，失焦回到已保存值 [33m385[2mms[22m[39m
+ [32m✓[39m tests/quot-421-useasync-slow.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 58[2mms[22m[39m
+[90mstderr[2m | tests/earnings-section.test.tsx[2m > [22m[2mEarningsSection（QUOT-450）[2m > [22m[2m渲染一致预期、六列表格、统计句、缺口与来源注脚
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/earnings-section.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 334[2mms[22m[39m
+[90mstderr[2m | tests/page-command-bar.test.tsx[2m > [22m[2m顶栏本页命令（QUOT-457）[2m > [22m[2m控制面有本页命令时渲染一颗图标按钮，点击展开面板
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/page-command-bar.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 306[2mms[22m[39m
+ [32m✓[39m tests/trend-section.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[90m 179[2mms[22m[39m
+ [32m✓[39m tests/chart-refresh.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[90m 30[2mms[22m[39m
+[90mstderr[2m | tests/demo-toggle.test.tsx[2m > [22m[2m虚拟数据开关[2m > [22m[2m开关开启：不写 URL 也渲染演示数据，水印标注来源是设置开关
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/demo-toggle.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 320[2mms[22m[39m
+ [32m✓[39m tests/privacy.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 22[2mms[22m[39m
+[90mstderr[2m | tests/research-entry-screen.test.tsx[2m > [22m[2m个股深挖落地页 /research[2m > [22m[2m填代码提交后跳 /research/:code
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/research-entry-screen.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[90m 199[2mms[22m[39m
+[90mstderr[2m | tests/topbar-single-bar.test.tsx[2m > [22m[2m单顶栏结构[2m > [22m[2m全屏只有一个 header，内容区没有页头与命令条
+[22m[39m⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition.
+⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath.
+
+ [32m✓[39m tests/topbar-single-bar.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 304[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m68 passed[39m[22m[90m (68)[39m
+[2m      Tests [22m [1m[32m637 passed[39m[22m[90m (637)[39m
+[2m   Start at [22m 19:43:30
+[2m   Duration [22m 37.46s[2m (transform 10.11s, setup 0ms, collect 78.11s, tests 64.60s, environment 188.75s, prepare 27.86s)[22m
+
+EXIT:0
