@@ -8,9 +8,9 @@ import MyStocksScreen from '../src/screens/my-stocks/MyStocksScreen'
 /**
  * P-QUOT-431 `/my-stocks?tab=watch|hold`：一页两标签。
  *
- * `hold` 暂时渲染现有持仓屏（Stage 4 的 G 任务替换），本文件只守住
- * 「地址优先 / 本机记忆 / 切标签不丢状态」与自选面板的七列、缺失值、
- * 持有标记、批量确认、点行看 K 线、行内删除这些页面行为。
+ * `hold` 由 QUOT-434 的流水驱动持仓页渲染（单独见 `portfolio-panel.test.tsx`），
+ * 本文件只守住「地址优先 / 本机记忆 / 切标签不丢状态」与自选面板的七列、
+ * 缺失值、持有标记、批量确认、点行看 K 线、行内删除这些页面行为。
  */
 
 // 图表组件在 jsdom 里画不出来，只验证「点行后它挂上了、再点收起」
@@ -123,52 +123,12 @@ function watchPayload(items: unknown[], count = items.length) {
   }
 }
 
-/** 空持仓：只够 PositionsScreen 渲染空态与标题。 */
-function positionsPayload() {
-  return {
-    local_only: true,
-    store: 'local_sqlite',
-    data_source_status: 'missing',
-    as_of: '2026-11-05',
-    price_source: 'daily_k',
-    position_count: 0,
-    valuation: {
-      total_cost: 0,
-      market_value: null,
-      priced_cost: 0,
-      unpriced_cost: 0,
-      coverage_pct: null,
-      unrealized_pnl: null,
-      unrealized_pnl_pct: null,
-      currency: 'CNY',
-    },
-    items: [],
-    concentration: {
-      available: false,
-      reason: '还没有持仓',
-      basis: 'cost',
-      top1_pct: null,
-      top3_pct: null,
-      hhi: null,
-      holdings: [],
-    },
-    sector_distribution: {
-      available: false,
-      reason: '还没有持仓',
-      basis: 'cost',
-      labeled_count: 0,
-      unlabeled_count: 0,
-      industries: [],
-    },
-  }
-}
-
 describe('我的股票：一页两标签（QUOT-431）', () => {
   it('`?tab=watch` 先渲染自选，点「持仓」切过去并记住选择', async () => {
     stubApi({
       '/api/watchlist': () => watchPayload([]),
+      '/api/portfolio/perf': () => ({ groups: [], notes: [], skipped: [], gaps: [], sources: [], as_of: null }),
       '/api/portfolio': () => ({ items: [] }),
-      '/api/positions': () => positionsPayload(),
     })
     renderAt('/my-stocks?tab=watch')
 
@@ -183,7 +143,7 @@ describe('我的股票：一页两标签（QUOT-431）', () => {
   it('地址没带 `?tab=` 时回到上次记住的那一页', async () => {
     window.localStorage.setItem(TAB_KEY, 'hold')
     stubApi({
-      '/api/positions': () => positionsPayload(),
+      '/api/portfolio/perf': () => ({ groups: [], notes: [], skipped: [], gaps: [], sources: [], as_of: null }),
       '/api/watchlist': () => watchPayload([]),
       '/api/portfolio': () => ({ items: [] }),
     })

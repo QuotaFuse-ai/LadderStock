@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Bell,
   Bot,
   Building2,
   CalendarDays,
@@ -108,7 +109,7 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   // QUOT-304 / DEC-044：把「我自己相关」的持仓与事件日历聚成一组。
   // QUOT-431：自选与持仓合成一页两标签（`/my-stocks?tab=watch|hold`），侧栏只留一个入口；
-  // 提醒（`/inbox`）由 Stage 4 的 I 任务交付后追加，现在不建占位入口。
+  // QUOT-435：提醒（`/inbox`）作为组内第三项，排在事件日历之后。
   {
     key: 'my-stocks',
     label: '我的股票',
@@ -116,6 +117,7 @@ export const NAV_SECTIONS: NavSection[] = [
     pages: [
       { to: '/my-stocks', label: '我的股票', icon: Star },
       { to: '/calendar', label: '事件日历', icon: CalendarDays },
+      { to: '/inbox', label: '提醒', icon: Bell },
     ],
   },
   {

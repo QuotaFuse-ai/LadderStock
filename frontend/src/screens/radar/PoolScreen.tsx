@@ -429,22 +429,20 @@ export default function PoolScreen() {
                   {payload && payload.missing.length > 0 && (
                     <> 缺：{payload.missing.join('、')}。</>
                   )}{' '}
-                  可用页内顶部「重算候选池」生成后，再点「刷新」。
+                  可用顶部「本页命令」中的「重算候选池」生成后，再点「刷新」。
                 </>
               )
             }
             action={
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button variant="secondary" onClick={reload}>刷新</Button>
-                {!demo && (
-                  <a
-                    href={withParams('/pool', { demo: '1', state: forced })}
-                    className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
-                  >
-                    查看演示数据
-                  </a>
-                )}
-              </div>
+              // 刷新已在顶栏（QUOT-457 顶栏收敛），空态不再放第二枚；这里只留与取数无关的演示入口
+              demo ? undefined : (
+                <a
+                  href={withParams('/pool', { demo: '1', state: forced })}
+                  className="inline-flex h-control items-center rounded border border-border-strong bg-surface px-3 text-body text-text transition-colors duration-fast ease-ldst hover:bg-surface-3"
+                >
+                  查看演示数据
+                </a>
+              )
             }
           />
         </Card>
@@ -507,7 +505,7 @@ export default function PoolScreen() {
         density="compact"
         maxHeight="var(--ldst-table-h)"
         onRowClick={(row) => setSelected(row)}
-        empty={<EmptyState compact title="没有候选" description="换一个交易日，或点页内顶部「重算候选池」。" />}
+        empty={<EmptyState compact title="没有候选" description="换一个交易日，或点顶部「本页命令」中的「重算候选池」。" />}
       />
 
       <p className="text-caption leading-body text-text-muted">

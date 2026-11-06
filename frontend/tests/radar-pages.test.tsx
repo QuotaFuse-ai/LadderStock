@@ -307,6 +307,21 @@ describe('候选池 /pool', () => {
     }
   })
 
+  it('empty 态全屏只有一枚「刷新」：页内动作区不再重复', async () => {
+    const demoEmpty = renderAt('/pool?demo=1&state=empty')
+    expect(await screen.findByText('候选池未生成')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '刷新' })).toHaveLength(1)
+    // 演示态页内没有别的动作，整块动作区不渲染
+    expect(screen.queryByRole('link', { name: '查看演示数据' })).toBeNull()
+    demoEmpty.unmount()
+
+    stubNotFound()
+    renderAt('/pool')
+    expect(await screen.findByText('接口未接入')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: '刷新' })).toHaveLength(1)
+    expect(screen.getByRole('link', { name: '查看演示数据' })).toBeTruthy()
+  })
+
   it('接口 404：空态写「接口未接入」', async () => {
     stubNotFound()
     renderAt('/pool')
