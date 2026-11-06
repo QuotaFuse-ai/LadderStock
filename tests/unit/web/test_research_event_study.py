@@ -187,6 +187,11 @@ def test_event_study_counts_windows_and_means(tmp_path: Path) -> None:
         assert event["detail"]["direction"] == "增持"
         assert event["window"]["start"] == CALENDAR[index - 5]
         assert event["window"]["end"] == CALENDAR[index + 20]
+        # QUOT-451：边界收盘原值供页面复算，不参与本接口的任何计算
+        assert event["window"]["stock_start_close"] == 10.0 + index - 5
+        assert event["window"]["stock_end_close"] == 10.0 + index + 20
+        assert event["window"]["benchmark_start_close"] == 4000.0
+        assert event["window"]["benchmark_end_close"] == 4000.0
         assert event["window"]["stock_return"] == pytest.approx(_expected_return(index))
         assert event["window"]["benchmark_return"] == 0.0
         assert event["window"]["excess_return"] == pytest.approx(_expected_return(index))
@@ -231,6 +236,11 @@ def test_event_study_window_edges_are_explained(tmp_path: Path) -> None:
 
     early = _type(payload, "earnings_preview")["events"][0]
     assert early["window"]["start"] is None and early["window"]["excess_return"] is None
+    # 窗口没对齐时四个边界收盘同为 null，页面不会拿别的日子顶上（QUOT-451）
+    assert early["window"]["stock_start_close"] is None
+    assert early["window"]["stock_end_close"] is None
+    assert early["window"]["benchmark_start_close"] is None
+    assert early["window"]["benchmark_end_close"] is None
     assert "只有 1 个交易日" in early["window"]["reason"]
     assert "本地基准自" in early["window"]["reason"]
 

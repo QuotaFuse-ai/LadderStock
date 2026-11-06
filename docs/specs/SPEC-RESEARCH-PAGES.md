@@ -217,6 +217,19 @@ GET /api/research/{code}/earnings-brief?periods=6
 
 `data_source_status`：有一致预期或有任一报告期 → `ok`；两者都没有 → `missing`。
 
+前端消费（`EarningsSection`，QUOT-450）：
+
+- 一致预期取 `consensus.consensus[]` 的 `current_year` 与下一财年；区间、机构数照抄，
+  `最高 ÷ 最低` 只做一次显示换算（接口未返回 dispersion）。
+- 「实际」列取 `earnings[].actual`；「预期」列只认同一报告期 `forecast`，缺失写 `—`，
+  **不拿当期一致预期倒填历史**。
+- 发布日 / 反应日 / 当天涨跌当前无源，逐期 `—`，原因汇总进「没取到的」；
+  `stats.with_reaction` 是统计句的唯一依据。
+- 契约目前**没有**「此前涨跌绝对值平均 / 最近一次 ÷ 平均」两个数，所以 `with_reaction ≥ 4`
+  时卡片也只写「接口未返回…本卡不在这里做除法」。这两个数需由后端补齐，前端不自行计算。
+- 下一期预约披露日上游没有工具，卡片不提供该数字。
+- 演示模式（`?demo=1` 或设置页开关）不读真实接口，卡片显示「演示模式不读取真实财报明细」。
+
 ### 2.6 `GET /api/research/{code}/event-study`（已实现，QUOT-446）
 
 事件回看：六类事件的日期序列 + 每个事件对沪深300（`000300`）的窗口超额收益。
@@ -239,6 +252,7 @@ GET /api/research/{code}/event-study?sources=holder_trades,dragon_tiger&window_b
 | --- | --- |
 | `event_types[]` | 每类含 `dataset` / `label` / `count` / `dates`（去重升序）/ `events[]`（`date` + `detail` + `window`）/ `sample` |
 | `window` | `start` / `end` / `stock_return` / `benchmark_return` / `excess_return` / `reason`；窗口不齐或缺价时逐项 `null` + `reason`，不估算 |
+| `window.stock_start_close` / `stock_end_close` / `benchmark_start_close` / `benchmark_end_close` | 起止交易日的两只序列收盘**原值**（QUOT-451）；只用于页面复算 `close[end] / close[start] - 1`，不参与任何均值，窗口未对齐时为 `null` |
 | `sample` | `required=8`、`window_available`、`status`、三个均值、`reason`；**可计算窗口 < 8 时 `status=insufficient_sample` 且三个均值恒为 `null`**，统计句由后端给数 |
 | `counts` | 各数据集事件条数（同一公告日多行会各算一条，`dates` 去重） |
 | `trading_days` / `benchmark_rows` | 本地 000300 交易日历长度与原始行数 |

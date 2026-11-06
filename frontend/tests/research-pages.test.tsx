@@ -36,10 +36,9 @@ describe('个股深挖页', () => {
   it('概览默认：走势 + 财报卡直接出，深度研究要点 tab 才看', async () => {
     renderRoute('/research/600000?demo=1')
 
-    // 默认概览：demo 源的 120 根 K 线直接画出来（chart 替身记录入参），不依赖六段
+    // 默认概览：走势块与财报卡直接出（走势本体由 KlineCard 自取 /kline，这里只看块在）
     expect(await screen.findByRole('tab', { name: '概览' })).toBeTruthy()
-    const chart = await screen.findByTestId('line-chart')
-    expect(Number(chart.getAttribute('data-points'))).toBeGreaterThan(0)
+    expect(await screen.findByRole('heading', { name: '走势' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '财报前瞻与复盘' })).toBeTruthy()
 
     // 切到深度研究：六段内容照旧（回归）
