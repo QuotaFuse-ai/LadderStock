@@ -1351,6 +1351,490 @@ export async function fetchPortfolioSymbols(signal?: AbortSignal): Promise<Set<s
   return new Set(symbols)
 }
 
+// ---------------------------------------------------------------- 我的持仓账本（QUOT-434）
+
+/**
+ * `GET /api/portfolio` 与 `GET /api/portfolio/perf` 的解析层。
+ *
+ * 两条硬规矩：
+ * 1. **不重算**：持仓、成本、盈亏、分币种合计、收益率全部用后端载荷；
+ *    `null` 就是「没有」，这里不补 0、不插值。
+ * 2. **写面只发一种形状**：新增流水用后端字段名 `trade_date`（`POST /api/portfolio/ledger`
+ *    的白名单就是它）；读面 `ledger[]` 里同一个值叫 `date`，两边不要混。
+ */
+
+/** 成本法：`fifo` 先进先出 / `average` 移动加权平均（与后端 `COST_METHODS` 同键）。 */
+export type PortfolioMethod = 'fifo' | 'average'
+
+export type TradeType = 'opening' | 'buy' | 'sell' | 'dividend' | 'split'
+
+export type LegacyState = 'pending' | 'stale' | 'conflict' | 'skipped' | 'dismissed'
+
+export interface PortfolioLot {
+  trade_id: number
+  date: string
+  shares: number
+  unit_cost: number
+}
+
+export interface PortfolioItem {
+  symbol: string
+  name: string
+  shares: number
+  unit_cost: number
+  cost_total: number
+  opened_at: string
+  lots: PortfolioLot[]
+  realized_pnl: number
+  dividends: number
+  fees: number
+  trade_count: number
+  latest_price: number | null
+  change: number | null
+  change_pct: number | null
+  market_value: number | null
+  pnl: number | null
+  pnl_pct: number | null
+  price_reason: string | null
+}
+
+export interface PortfolioTrade {
+  id: number
+  symbol: string
+  name: string
+  type: string
+  date: string
+  shares: number | null
+  price: number | null
+  fee: number | null
+  amount: number | null
+  ratio: number | null
+  note: string
+  migrated_from: number | null
+  undated: boolean
+  created_at: string
+}
+
+export interface PortfolioLegacyRow {
+  id: number
+  symbol: string
+  name: string
+  shares: number | null
+  cost: number | null
+  opened_at: string
+  state: LegacyState
+  why: string
+  migrated_trade: number | null
+}
+
+export interface PortfolioIssue {
+  id: number
+  symbol: string
+  date: string
+  type: string
+  why: string
+}
+
+export interface PortfolioClosedRow {
+  symbol: string
+  name: string
+  realized_pnl: number
+  dividends: number
+  fees: number
+  last_date: string
+}
+
+export interface PortfolioTotalsCny {
+  currency: string
+  available: boolean
+  market_value: number | null
+  cost: number | null
+  pnl: number | null
+  pnl_pct: number | null
+  priced_count: number
+  unpriced_count: number
+  reason: string | null
+}
+
+export interface PortfolioMigration {
+  backup: string | null
+  migrated: Array<{ position_id: number; trade_id: number; symbol: string }>
+  removed_stale: string[]
+  failed: Array<{ position_id: number; symbol: string; why: string }>
+  error: string | null
+}
+
+export interface PortfolioPayload {
+  local_only: boolean
+  store: string
+  method: PortfolioMethod
+  method_label: string
+  methods: Array<{ id: string; label: string }>
+  today: string
+  price_lookup: { dataset: string; date: string | null; reason: string | null }
+  items: PortfolioItem[]
+  closed: PortfolioClosedRow[]
+  issues: PortfolioIssue[]
+  ledger: PortfolioTrade[]
+  legacy: PortfolioLegacyRow[]
+  migration_pending: number
+  migration: PortfolioMigration
+  totals_cny: PortfolioTotalsCny
+}
+
+export interface PortfolioPerfGroup {
+  market: string
+  currency: string
+  label: string
+  ok: boolean
+  reason: string
+  start: string | null
+  end: string | null
+  span_days: number | null
+  twr: number | null
+  twr_annualized: number | null
+  xirr: number | null
+  mwr_period: number | null
+  invested: number | null
+  proceeds: number | null
+  dividends: number | null
+  fees: number | null
+  end_value: number | null
+  gain: number | null
+  excluded: Array<{ symbol: string; name: string; reason: string }>
+  notes: string[]
+  warnings: string[]
+  series: { dates: string[]; twr_index: Array<number | null> } | null
+}
+
+export interface PortfolioPerfPayload {
+  as_of: string | null
+  groups: PortfolioPerfGroup[]
+  skipped: Array<{ id: number; symbol: string; why: string }>
+  gaps: Array<{ symbol: string; reason: string }>
+  sources: string[]
+  notes: string[]
+}
+
+/** 新增流水的请求体：字段名与 `POST /api/portfolio/ledger` 白名单一致。 */
+export interface TradeInput {
+  symbol: string
+  name?: string
+  type: TradeType
+  trade_date: string
+  shares?: number
+  price?: number
+  fee?: number
+  amount?: number
+  ratio?: number
+  note?: string
+}
+
+function integerOf(value: unknown, fallback = 0): number {
+  const parsed = numberOrNull(value)
+  return parsed === null ? fallback : Math.trunc(parsed)
+}
+
+function reasonOf(value: unknown): string | null {
+  const raw = text(value).trim()
+  return raw || null
+}
+
+function parseLot(value: unknown): PortfolioLot | null {
+  const row = record(value)
+  if (!row) return null
+  return {
+    trade_id: integerOf(row.trade_id),
+    date: text(row.date),
+    shares: numberOrNull(row.shares) ?? 0,
+    unit_cost: numberOrNull(row.unit_cost) ?? 0,
+  }
+}
+
+function parseItem(value: unknown): PortfolioItem | null {
+  const row = record(value)
+  if (!row) return null
+  const symbol = text(row.symbol).trim().toUpperCase()
+  if (!symbol) return null
+  return {
+    symbol,
+    name: text(row.name),
+    shares: numberOrNull(row.shares) ?? 0,
+    unit_cost: numberOrNull(row.unit_cost) ?? 0,
+    cost_total: numberOrNull(row.cost_total) ?? 0,
+    opened_at: text(row.opened_at),
+    lots: list(row.lots).map(parseLot).filter((item): item is PortfolioLot => item !== null),
+    realized_pnl: numberOrNull(row.realized_pnl) ?? 0,
+    dividends: numberOrNull(row.dividends) ?? 0,
+    fees: numberOrNull(row.fees) ?? 0,
+    trade_count: integerOf(row.trade_count),
+    latest_price: numberOrNull(row.latest_price),
+    change: numberOrNull(row.change),
+    change_pct: numberOrNull(row.change_pct),
+    market_value: numberOrNull(row.market_value),
+    pnl: numberOrNull(row.pnl),
+    pnl_pct: numberOrNull(row.pnl_pct),
+    price_reason: reasonOf(row.price_reason),
+  }
+}
+
+function parseTrade(value: unknown): PortfolioTrade | null {
+  const row = record(value)
+  if (!row) return null
+  const id = numberOrNull(row.id)
+  const symbol = text(row.symbol).trim().toUpperCase()
+  const type = text(row.type)
+  if (id === null || !symbol || !type) return null
+  return {
+    id: Math.trunc(id),
+    symbol,
+    name: text(row.name),
+    type,
+    date: text(row.date),
+    shares: numberOrNull(row.shares),
+    price: numberOrNull(row.price),
+    fee: numberOrNull(row.fee),
+    amount: numberOrNull(row.amount),
+    ratio: numberOrNull(row.ratio),
+    note: text(row.note),
+    migrated_from: numberOrNull(row.migrated_from),
+    undated: flag(row.undated),
+    created_at: text(row.created_at),
+  }
+}
+
+function parseLegacyState(value: unknown): LegacyState {
+  return value === 'pending' || value === 'stale' || value === 'conflict' || value === 'skipped' || value === 'dismissed'
+    ? value
+    : 'skipped'
+}
+
+function parseLegacy(value: unknown): PortfolioLegacyRow | null {
+  const row = record(value)
+  if (!row) return null
+  const id = numberOrNull(row.id)
+  if (id === null) return null
+  return {
+    id: Math.trunc(id),
+    symbol: text(row.symbol).trim().toUpperCase(),
+    name: text(row.name),
+    shares: numberOrNull(row.shares),
+    cost: numberOrNull(row.cost),
+    opened_at: text(row.opened_at),
+    state: parseLegacyState(row.state),
+    why: text(row.why),
+    migrated_trade: numberOrNull(row.migrated_trade),
+  }
+}
+
+function parseIssue(value: unknown): PortfolioIssue | null {
+  const row = record(value)
+  if (!row) return null
+  const id = numberOrNull(row.id)
+  if (id === null) return null
+  return {
+    id: Math.trunc(id),
+    symbol: text(row.symbol).trim().toUpperCase(),
+    date: text(row.date),
+    type: text(row.type),
+    why: text(row.why),
+  }
+}
+
+function parseClosed(value: unknown): PortfolioClosedRow | null {
+  const row = record(value)
+  if (!row) return null
+  const symbol = text(row.symbol).trim().toUpperCase()
+  if (!symbol) return null
+  return {
+    symbol,
+    name: text(row.name),
+    realized_pnl: numberOrNull(row.realized_pnl) ?? 0,
+    dividends: numberOrNull(row.dividends) ?? 0,
+    fees: numberOrNull(row.fees) ?? 0,
+    last_date: text(row.last_date),
+  }
+}
+
+function parseCnyTotals(value: unknown): PortfolioTotalsCny {
+  const row = record(value) ?? {}
+  return {
+    currency: text(row.currency) || 'CNY',
+    available: flag(row.available),
+    market_value: numberOrNull(row.market_value),
+    cost: numberOrNull(row.cost),
+    pnl: numberOrNull(row.pnl),
+    pnl_pct: numberOrNull(row.pnl_pct),
+    priced_count: integerOf(row.priced_count),
+    unpriced_count: integerOf(row.unpriced_count),
+    reason: reasonOf(row.reason),
+  }
+}
+
+function parseMigration(value: unknown): PortfolioMigration {
+  const row = record(value) ?? {}
+  return {
+    backup: reasonOf(row.backup),
+    migrated: list(row.migrated)
+      .map(record)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => ({
+        position_id: integerOf(item.position_id),
+        trade_id: integerOf(item.trade_id),
+        symbol: text(item.symbol).trim().toUpperCase(),
+      })),
+    removed_stale: stringList(row.removed_stale),
+    failed: list(row.failed)
+      .map(record)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => ({
+        position_id: integerOf(item.position_id),
+        symbol: text(item.symbol).trim().toUpperCase(),
+        why: text(item.why),
+      })),
+    error: reasonOf(row.error),
+  }
+}
+
+function parsePortfolio(raw: unknown): PortfolioPayload {
+  const root = record(raw)
+  if (!root) throw new ApiError('parse', '持仓接口返回的不是对象')
+  const lookup = record(root.price_lookup) ?? {}
+  return {
+    local_only: flag(root.local_only),
+    store: text(root.store),
+    method: root.method === 'fifo' ? 'fifo' : 'average',
+    method_label: text(root.method_label),
+    methods: list(root.methods)
+      .map(record)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => ({ id: text(item.id), label: text(item.label) }))
+      .filter((item) => Boolean(item.id)),
+    today: text(root.today),
+    price_lookup: {
+      dataset: text(lookup.dataset),
+      date: reasonOf(lookup.date),
+      reason: reasonOf(lookup.reason),
+    },
+    items: list(root.items).map(parseItem).filter((item): item is PortfolioItem => item !== null),
+    closed: list(root.closed).map(parseClosed).filter((item): item is PortfolioClosedRow => item !== null),
+    issues: list(root.issues).map(parseIssue).filter((item): item is PortfolioIssue => item !== null),
+    ledger: list(root.ledger).map(parseTrade).filter((item): item is PortfolioTrade => item !== null),
+    legacy: list(root.legacy).map(parseLegacy).filter((item): item is PortfolioLegacyRow => item !== null),
+    migration_pending: integerOf(root.migration_pending),
+    migration: parseMigration(root.migration),
+    totals_cny: parseCnyTotals(root.totals_cny),
+  }
+}
+
+function parsePerfGroup(value: unknown): PortfolioPerfGroup | null {
+  const row = record(value)
+  if (!row) return null
+  const series = record(row.series)
+  const dates = series ? stringList(series.dates) : []
+  const indexes = series ? list(series.twr_index).map(numberOrNull) : []
+  return {
+    market: text(row.market),
+    currency: text(row.currency) || 'CNY',
+    label: text(row.label) || text(row.currency) || '人民币',
+    ok: flag(row.ok),
+    reason: text(row.reason),
+    start: reasonOf(row.start),
+    end: reasonOf(row.end),
+    span_days: numberOrNull(row.span_days),
+    twr: numberOrNull(row.twr),
+    twr_annualized: numberOrNull(row.twr_annualized),
+    xirr: numberOrNull(row.xirr),
+    mwr_period: numberOrNull(row.mwr_period),
+    invested: numberOrNull(row.invested),
+    proceeds: numberOrNull(row.proceeds),
+    dividends: numberOrNull(row.dividends),
+    fees: numberOrNull(row.fees),
+    end_value: numberOrNull(row.end_value),
+    gain: numberOrNull(row.gain),
+    excluded: list(row.excluded)
+      .map(record)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => ({
+        symbol: text(item.symbol).trim().toUpperCase(),
+        name: text(item.name),
+        reason: text(item.reason),
+      })),
+    notes: stringList(row.notes),
+    warnings: stringList(row.warnings),
+    series:
+      dates.length === indexes.length && dates.length >= 2
+        ? { dates, twr_index: indexes }
+        : null,
+  }
+}
+
+function parsePerf(raw: unknown): PortfolioPerfPayload {
+  const root = record(raw)
+  if (!root) throw new ApiError('parse', '收益率接口返回的不是对象')
+  return {
+    as_of: reasonOf(root.as_of),
+    groups: list(root.groups).map(parsePerfGroup).filter((item): item is PortfolioPerfGroup => item !== null),
+    skipped: list(root.skipped)
+      .map(record)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => ({
+        id: integerOf(item.id),
+        symbol: text(item.symbol).trim().toUpperCase(),
+        why: text(item.why),
+      })),
+    gaps: list(root.gaps)
+      .map(record)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => ({ symbol: text(item.symbol).trim().toUpperCase(), reason: text(item.reason) })),
+    sources: stringList(root.sources),
+    notes: stringList(root.notes),
+  }
+}
+
+/** 持仓账本（流水重放 + 行情拼接 + 旧仓分类）。 */
+export async function fetchPortfolio(
+  method: PortfolioMethod,
+  signal?: AbortSignal,
+): Promise<PortfolioPayload> {
+  return parsePortfolio(
+    await request<unknown>(withParams('/api/portfolio', [['method', method]]), { signal }),
+  )
+}
+
+/** 收益子页：TWR / 资金加权 / 净值序列（后端只读本机 daily_k）。 */
+export async function fetchPortfolioPerf(signal?: AbortSignal): Promise<PortfolioPerfPayload> {
+  return parsePerf(await request<unknown>('/api/portfolio/perf', { signal }))
+}
+
+/** 记一笔：只写本机 `portfolio_trades`，失败原因原样抛给页面。 */
+export async function addPortfolioTrade(
+  input: TradeInput,
+  signal?: AbortSignal,
+): Promise<PortfolioTrade | null> {
+  const raw = await request<unknown>('/api/portfolio/ledger', {
+    method: 'POST',
+    body: input,
+    signal,
+  })
+  return parseTrade(record(raw)?.trade)
+}
+
+/** 删一笔流水：硬删，后端删前先备份。 */
+export async function deletePortfolioTrade(id: number, signal?: AbortSignal): Promise<void> {
+  await request<unknown>(`/api/portfolio/ledger/${id}/delete`, { method: 'POST', signal })
+}
+
+/** 旧记录确认转成期初流水（已有按它转过的原地替换，不新增第二笔）。 */
+export async function adoptLegacy(positionId: number, signal?: AbortSignal): Promise<void> {
+  await request<unknown>(`/api/portfolio/legacy/${positionId}/adopt`, { method: 'POST', signal })
+}
+
+/** 旧记录标成「不要这条」：只写 mark，不删 `positions` 行。 */
+export async function dismissLegacy(positionId: number, signal?: AbortSignal): Promise<void> {
+  await request<unknown>(`/api/portfolio/legacy/${positionId}/dismiss`, { method: 'POST', signal })
+}
+
 // ---------------------------------------------------------------- 错误文案
 
 export interface RadarError {
