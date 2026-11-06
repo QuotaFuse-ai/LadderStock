@@ -65,6 +65,7 @@ from ladderstock.core.portfolio import replay as replay_portfolio
 from ladderstock.core.portfolio_perf import DEFAULT_DAYS as PERF_DEFAULT_DAYS
 from ladderstock.core.portfolio_perf import MAX_DAYS as PERF_MAX_DAYS
 from ladderstock.core.portfolio_perf import build_perf
+from ladderstock.core.portfolio_replay import SCENARIO_IDS, build_replay
 from ladderstock.core.privacy import strip_private
 from ladderstock.core.quotes import PRICE_DATASET, daily_change_map, price_map
 from ladderstock.core.watch_prices import DATASET as SPOT_QUOTE_DATASET
@@ -380,6 +381,17 @@ def portfolio_method(raw: str | None) -> Literal["average", "fifo"]:
     if text == "fifo":
         return "fifo"
     raise _invalid(f"成本法只能是 fifo（先进先出）或 average（移动加权平均），收到 {raw!r}")
+
+
+def replay_scenario(raw: str | None) -> str:
+    """`?scenario=` → 固定压力窗口 id 或 `all`；缺省 `all`，其余（含空串）422。"""
+    if raw is None:
+        return "all"
+    if raw == "all" or raw in SCENARIO_IDS:
+        return raw
+    raise _invalid(
+        f"非法 scenario：{raw!r}（合法值：{', '.join(SCENARIO_IDS)}, all）"
+    )
 
 
 def portfolio_id(raw: Any, name: str) -> int:
@@ -951,6 +963,21 @@ class RadarPlane:
         days = parse_days(raw_days)
         trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
         return self._read(lambda: build_perf(trades, root=self.data_root, days=days))
+
+    # --------------------------------------------- 情景回放（QUOT-466）
+
+    def portfolio_replay_view(self, raw_scenario: str | None) -> dict[str, Any]:
+        """`GET /api/portfolio/replay`：按当前持仓市值权重回放四段固定压力窗口。
+
+        平面 JSON、`no-store`、与 `/api/portfolio` 同一条回环闸门。只读本机日线：
+        不联网、不落盘、不建库；空账本 → 200 + 空 `groups`，缺行情 → `gaps`
+        逐条原因，不给任何组合收益。
+        """
+        scenario = replay_scenario(raw_scenario)
+        trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
+        return self._read(
+            lambda: build_replay(trades, root=self.data_root, scenario=scenario)
+        )
 
     def _auto_migrate(self) -> dict[str, Any]:
         """自动迁移旧记录；失败不拖垮读面，原因写进 `migration.error`。"""
@@ -1657,6 +1684,23 @@ def build_router(plane: RadarPlane) -> APIRouter:
         """持仓收益率（隐私数据）：平面 JSON、`no-store`、只 GET、只读本机日线。"""
         return JSONResponse(
             plane.portfolio_perf_view(days), headers={"Cache-Control": "no-store"}
+        )
+
+    @router.get("/portfolio/replay", dependencies=[Depends(_positions_guard)])
+    def portfolio_replay(
+        scenario: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "情景 id（2015-crash / 2018-bear / 2020-covid / 2024-liquidity），"
+                    "缺省 all"
+                )
+            ),
+        ] = None,
+    ) -> JSONResponse:
+        """情景回放（隐私数据）：平面 JSON、`no-store`、只 GET、只读本机日线。"""
+        return JSONResponse(
+            plane.portfolio_replay_view(scenario), headers={"Cache-Control": "no-store"}
         )
 
     @router.post(
