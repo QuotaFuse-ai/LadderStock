@@ -374,14 +374,25 @@ export interface KlineBar {
   volume: number | null
 }
 
+export interface OverviewQuoteSource {
+  peer: string | null
+  tool: string | null
+  fetched_at: string | null
+}
+
 export interface OverviewQuote {
   name?: string | null
   price: number | null
   prev_close: number | null
+  change: number | null
   change_pct: number | null
+  open: number | null
+  high: number | null
+  low: number | null
   volume: number | null
   amount: number | null
   timestamp: string | null
+  source_detail: OverviewQuoteSource | null
 }
 
 export interface OverviewFinancials {
@@ -408,6 +419,16 @@ export interface ResearchOverview {
 
 function asNumberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function parseQuoteSource(value: unknown): OverviewQuoteSource | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  return {
+    peer: asString(record.peer),
+    tool: asString(record.tool),
+    fetched_at: asString(record.fetched_at),
+  }
 }
 
 function parseKlineBar(value: unknown): KlineBar | null {
@@ -456,10 +477,15 @@ export function parseResearchOverview(payload: unknown, expectedCode?: string): 
         name: asString(quoteBlock.name),
         price: asNumberOrNull(quoteBlock.price),
         prev_close: asNumberOrNull(quoteBlock.prev_close),
+        change: asNumberOrNull(quoteBlock.change),
         change_pct: asNumberOrNull(quoteBlock.change_pct),
+        open: asNumberOrNull(quoteBlock.open),
+        high: asNumberOrNull(quoteBlock.high),
+        low: asNumberOrNull(quoteBlock.low),
         volume: asNumberOrNull(quoteBlock.volume),
         amount: asNumberOrNull(quoteBlock.amount),
         timestamp: asString(quoteBlock.timestamp),
+        source_detail: parseQuoteSource(quoteBlock.source_detail),
       }
     : null
 
@@ -536,6 +562,221 @@ export async function loadKline(
     { signal, timeoutMs: KLINE_TIMEOUT_MS },
   )
   return parseKline(payload, input.symbol)
+}
+
+// ---------------------------------------------------------------- 事件回看（QUOT-451）
+
+/**
+ * `GET /api/research/{code}/event-study` 的消费形状（契约见 SPEC §2.6）。
+ *
+ * 🔴 每个收益数字都直接取自接口：均值只在 `sample.status === 'ok'` 时才有，
+ *    前端不补算、不把「0 次」写成「0%」。
+ * 🔴 增持 / 减持是同一份 `holder_trades` 数据集按 `detail.direction` 拆出来的两枚 chip；
+ *    接口只按「增持减持」合计给样本，拆方向后没有单独均值，页面如实说明，不自己求平均。
+ */
+
+export type EventStudyDataset =
+  | 'holder_trades'
+  | 'dragon_tiger'
+  | 'earnings_preview'
+  | 'institution_survey'
+  | 'share_buyback'
+  | 'lockup_calendar'
+
+export type EventStudyStatus = 'ok' | 'partial' | 'missing'
+
+export interface EventWindow {
+  start: string | null
+  end: string | null
+  /** 四个边界收盘原值（QUOT-451 接口新增）：只用于页面复算，窗口未对齐时全为 null */
+  stockStartClose: number | null
+  stockEndClose: number | null
+  benchmarkStartClose: number | null
+  benchmarkEndClose: number | null
+  stockReturn: number | null
+  benchmarkReturn: number | null
+  excessReturn: number | null
+  /** 窗口算不出来的原因（基准不足 / 个股缺收盘 / 停牌），原样展示 */
+  reason: string | null
+}
+
+export interface EventStudyEvent {
+  date: string
+  /** 事件原始字段（方向、股东、类型…），键随数据集不同，页面只读存在的键 */
+  detail: Record<string, unknown>
+  window: EventWindow
+}
+
+export interface EventStudySample {
+  required: number | null
+  windowAvailable: number | null
+  status: string | null
+  meanStockReturn: number | null
+  meanBenchmarkReturn: number | null
+  meanExcessReturn: number | null
+  reason: string | null
+}
+
+export interface EventStudyType {
+  dataset: string
+  label: string
+  /** 条数；接口没给就是 null（`—`），0 是真实读数 */
+  count: number | null
+  dates: string[]
+  events: EventStudyEvent[]
+  sample: EventStudySample
+}
+
+export interface EventStudy {
+  code: string
+  name: string | null
+  windowBefore: number | null
+  windowAfter: number | null
+  benchmark: string | null
+  formula: string | null
+  tradingDays: number | null
+  benchmarkRows: number | null
+  eventTypes: EventStudyType[]
+  dataSourceStatus: EventStudyStatus
+  dataAsOf: string | null
+  fetchedAt: string | null
+}
+
+export interface EventStudyRequest {
+  symbol: string
+  /** 只取某几类（数据集键）；不给 = 全部 */
+  sources?: string[]
+  before?: number
+  after?: number
+}
+
+export type EventStudyLoader = (
+  request: EventStudyRequest,
+  signal?: AbortSignal,
+) => Promise<EventStudy>
+
+const EVENT_STUDY_TIMEOUT_MS = 30000
+
+function parseEventWindow(value: unknown): EventWindow {
+  const record =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
+  return {
+    start: asString(record.start),
+    end: asString(record.end),
+    stockStartClose: asNumberOrNull(record.stock_start_close),
+    stockEndClose: asNumberOrNull(record.stock_end_close),
+    benchmarkStartClose: asNumberOrNull(record.benchmark_start_close),
+    benchmarkEndClose: asNumberOrNull(record.benchmark_end_close),
+    stockReturn: asNumberOrNull(record.stock_return),
+    benchmarkReturn: asNumberOrNull(record.benchmark_return),
+    excessReturn: asNumberOrNull(record.excess_return),
+    reason: asString(record.reason),
+  }
+}
+
+function parseEventSample(value: unknown): EventStudySample {
+  const record =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
+  return {
+    required: asNumberOrNull(record.required),
+    windowAvailable: asNumberOrNull(record.window_available),
+    status: asString(record.status),
+    meanStockReturn: asNumberOrNull(record.mean_stock_return),
+    meanBenchmarkReturn: asNumberOrNull(record.mean_benchmark_return),
+    meanExcessReturn: asNumberOrNull(record.mean_excess_return),
+    reason: asString(record.reason),
+  }
+}
+
+/**
+ * 解析四段信封（`payload` + `data_source_status` + `data_as_of` + `meta`）。
+ * `event_types` 缺失即解析失败——七枚 chip 是区块骨架，不猜。
+ */
+export function parseEventStudy(payload: unknown, expectedCode?: string): EventStudy {
+  const envelope = asRecord(payload, '事件回看响应')
+  // 信封四段的 data_as_of / meta 只在信封层，解包 payload 前先留住
+  const root =
+    envelope.payload && typeof envelope.payload === 'object' && !Array.isArray(envelope.payload)
+      ? (envelope.payload as Record<string, unknown>)
+      : envelope
+  if (!Array.isArray(root.event_types)) throw parseError('事件回看响应缺少 event_types 数组')
+
+  const eventTypes: EventStudyType[] = []
+  for (const entry of root.event_types) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const item = entry as Record<string, unknown>
+    const dataset = asString(item.dataset)
+    if (!dataset) continue
+    const events: EventStudyEvent[] = []
+    if (Array.isArray(item.events)) {
+      for (const raw of item.events) {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+        const event = raw as Record<string, unknown>
+        const date = asString(event.date)
+        if (!date) continue
+        events.push({
+          date,
+          detail:
+            event.detail && typeof event.detail === 'object' && !Array.isArray(event.detail)
+              ? (event.detail as Record<string, unknown>)
+              : {},
+          window: parseEventWindow(event.window),
+        })
+      }
+    }
+    eventTypes.push({
+      dataset,
+      label: asString(item.label) ?? dataset,
+      count: asNumberOrNull(item.count),
+      dates: asStringArray(item.dates),
+      events,
+      sample: parseEventSample(item.sample),
+    })
+  }
+
+  const rawStatus = root.data_source_status ?? envelope.data_source_status
+  const envelopeMeta =
+    envelope.meta && typeof envelope.meta === 'object' && !Array.isArray(envelope.meta)
+      ? (envelope.meta as Record<string, unknown>)
+      : {}
+  const meta =
+    root.meta && typeof root.meta === 'object' && !Array.isArray(root.meta)
+      ? (root.meta as Record<string, unknown>)
+      : envelopeMeta
+  return {
+    code: asString(root.code) ?? expectedCode ?? '',
+    name: asString(root.name),
+    windowBefore: asNumberOrNull(root.window_before),
+    windowAfter: asNumberOrNull(root.window_after),
+    benchmark: asString(root.benchmark),
+    formula: asString(root.formula),
+    tradingDays: asNumberOrNull(root.trading_days),
+    benchmarkRows: asNumberOrNull(root.benchmark_rows),
+    eventTypes,
+    dataSourceStatus:
+      rawStatus === 'ok' || rawStatus === 'partial' || rawStatus === 'missing' ? rawStatus : 'ok',
+    dataAsOf:
+      asString(envelope.data_as_of) ?? asString(root.data_as_of) ?? asString(root.as_of),
+    fetchedAt: asString(root.fetched_at) ?? asString(meta.fetched_at),
+  }
+}
+
+/** `GET /api/research/{code}/event-study` → 解析后的视图。 */
+export const loadEventStudy: EventStudyLoader = async (input, signal) => {
+  const params = new URLSearchParams()
+  if (input.sources && input.sources.length > 0) params.set('sources', input.sources.join(','))
+  if (input.before !== undefined) params.set('window_before', String(input.before))
+  if (input.after !== undefined) params.set('window_after', String(input.after))
+  const query = params.toString()
+  const payload = await request<unknown>(
+    `/api/research/${encodeURIComponent(input.symbol)}/event-study${query ? `?${query}` : ''}`,
+    { signal, timeoutMs: EVENT_STUDY_TIMEOUT_MS },
+  )
+  return parseEventStudy(payload, input.symbol)
 }
 
 // ---------------------------------------------------------------- 传输
