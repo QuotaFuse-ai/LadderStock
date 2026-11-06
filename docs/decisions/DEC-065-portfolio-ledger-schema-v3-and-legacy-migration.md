@@ -108,7 +108,9 @@ v2 的本机库只有两张与持仓相关的表：`trades`（交易纪律日志
 - **GET 带写**：`GET /api/portfolio` 会触发自动迁移。好处是用户打开页面即完成升级，
   代价是只读语义被打破；已用备份 + `migration.error` 兜底，但并发首开仍需串行事务保证。
 - **旧仓可能重复出现**：迁移后 `positions` 仍在，若页面同时展示旧仓与新账本，用户会看到
-  「同一只票两次」。当前用 `migration_pending` / `legacy[]` 状态区分，UI 替换由 QUOT-434 收口。
+  「同一只票两次」。当前用 `migration_pending` / `legacy[]` 状态区分，持仓页已随 QUOT-434
+  改为账本驱动（`PortfolioPanel` + `MigrationCard` 承接采纳 / 忽略），旧 `PositionsScreen`
+  不再挂路由。
 - **未写建仓日的成本会失真**：`entry_date` 为空时按迁移日暂记，收益率起点会偏晚；
   已用 `undated=1` 标记，DEC-064 的「首笔流水晚于日线覆盖」规则会把它排除出收益率。
 - **B 股只在账本路径被挡**：`POST /api/positions` 与自选写入口没有做 6 位 / B 股校验，

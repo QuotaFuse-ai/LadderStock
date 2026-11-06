@@ -2,7 +2,8 @@
 
 - 日期：2026-11-06
 - 提出：产品经理（QUOT-440，父任务「按 vibe-astock 整体复刻我的股票三模块」）
-- 状态：已采纳（对应实现 QUOT-432，后端已合入 `origin/main`；页面由 QUOT-435 承接）
+- 状态：已采纳（后端与 CLI 随 QUOT-432 合入 `origin/main`；`/inbox` 页面随 QUOT-435 合入，
+  本版按合入后的代码复核）
 - 编号：`DEC-058`（任务书预定号，`docs/decisions/` 无同名文件；代码注释
   `journal/inbox.py`、`web/inbox.py`、`watch/digest.py` 已引用本号）
 - 关联：DEC-056（fast polling 的调度间隔，不同任务）、DEC-065（schema v3，`inbox` 表随 v3 建）、
@@ -73,8 +74,10 @@
 
 ## 4. 代价与风险
 
-- **页面未落地**：截至本版只有后端与 CLI 任务，`/inbox` 页面由 QUOT-435 交付；
-  UI-SPEC 不提前登记其版面，避免文档承诺不存在的界面。
+- **页面只呈现后端给得出的部分**：`/inbox` 随 QUOT-435 落地（`frontend/src/screens/my-stocks/InboxScreen.tsx`
+  + 独立取数层 `frontend/src/api/inbox.ts`），版面见 UI-SPEC §3.21 / §11.21。参考产品里的
+  「免打扰 / 渠道开关 / 发送测试 / 第三方推送」在参考库存在、在本仓**故意不做**，页面因此
+  只有只读的任务清单与两条本机渠道，不摆任何推不开的空控件。
 - **默认渠道是 stderr**：不开终端就看不到；`desktop` 依赖可选的系统通知库，
   未安装时只降级、不报错。用户需要知道「收件箱才是主入口」。
 - **摘要质量受上游限制**：盘前 11:30 后不生成、周末不生成；某类事实缺源时摘要会变短，
@@ -91,14 +94,19 @@
 - `src/ladderstock/cli/schedule.py`、`config/schedule.yaml`（三个任务）
 - `tests/unit/journal/test_inbox.py`、`tests/unit/web/test_inbox_endpoints.py`、
   `tests/unit/cli/test_schedule_digest.py`
-- `docs/UI-SPEC.md` §3.11（登记「页面未落地」）、`docs/specs/SPEC-RESEARCH-PAGES.md` §8
+- `frontend/src/screens/my-stocks/InboxScreen.tsx`、`frontend/src/api/inbox.ts`（QUOT-435）
+- `frontend/src/routes.ts`、`frontend/src/App.tsx`、`frontend/src/lib/nav.ts`（组内第三项）、
+  `frontend/tests/inbox-screen.test.tsx`、`frontend/tests/nav-routes.test.tsx:171,205-221`
+- `docs/UI-SPEC.md` §3.21 / §10 / §11.21（v1.19 登记版面）、`docs/specs/SPEC-RESEARCH-PAGES.md` §8
 
 ## 6. 生效版本与验收
 
-- 生效：schema v3；后端与 CLI 随 QUOT-432 合入；页面待 QUOT-435。
+- 生效：schema v3；后端与 CLI 随 QUOT-432 合入；页面随 QUOT-435 合入。
 - 验收：
   - 同一 `dedupe_key` 重跑只保留一行，`read_at` 不变；
   - 三个任务 id 与触发时间在默认配置和仓库 `schedule.yaml` 中一致；
   - 通知失败时收件箱仍有记录且任务为 `degraded`；
   - `GET /api/inbox` 顶层只有五个键，`jobs` 只列三个摘要任务，无 `last_status`；
-  - 全仓无 webhook / 免打扰实现（`grep` 为零命中）。
+  - 全仓无 webhook / 免打扰实现（`grep` 为零命中）；
+  - 页面侧：渠道卡只有 console / desktop 两条且无「发送测试」按钮，任务卡没有任何开关，
+    外链不可点，未读数来自后端 COUNT（`tests/inbox-screen.test.tsx:202,215,227`）。

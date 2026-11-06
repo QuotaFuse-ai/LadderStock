@@ -60,7 +60,7 @@ DEC-057 已经定下「K 线改 ECharts、颜色只走令牌、前端不重算�
 - 不恢复 / 不扩展 uPlot 自绘蜡烛作为交付标准（PR #94 的代码可保留，但不算验收）；
 - 不在前端算复权、均线、涨跌幅；
 - 不为 B 股 / 港股 / 美股做复权分支；
-- 不在本版把 K 线卡塞进持仓页或其它屏（当前挂载点只有自选行点击）。
+- 不在本版把 K 线卡塞进持仓页（当前挂载点为自选行点击、个股深挖走势段、组件画廊演示）。
 
 ## 3. 理由
 
@@ -78,7 +78,9 @@ DEC-057 已经定下「K 线改 ECharts、颜色只走令牌、前端不重算�
   这是契约行为（`notes` 已写明），页面不提示「请调大 limit」。
 - **成交量单位是「手」**：上游原样透传，不换算成股；用户若按股理解会差 100 倍，
   已在脚注与 `notes` 写明。
-- **只有一次挂载**：持仓页 / 研究页尚未复用该卡；后续复用需另立决策，避免隐式扩散。
+- **挂载点已不止一处**：本决策首版只承诺自选页行点击；QUOT-449 又把该卡接进个股
+  深挖走势段，另有组件画廊的演示挂载。三处共用同一张卡（`KlineCard.tsx`），
+  任何改图形的诉求都同时影响三处，后续再扩应在此清单里追加，避免隐式扩散。
 
 ## 5. 影响文件
 
@@ -87,6 +89,8 @@ DEC-057 已经定下「K 线改 ECharts、颜色只走令牌、前端不重算�
 - `frontend/src/charts/cssVar.ts`（`--ldst-chart-*` 读取）
 - `frontend/src/components/KlineCard.tsx`（高度 420、切参、脚注）
 - `frontend/src/screens/my-stocks/WatchlistPanel.tsx`（行点击挂载）
+- `frontend/src/components/research/sections/TrendSection.tsx`（个股深挖走势段挂载，QUOT-449）
+- `frontend/src/components/ui/Gallery.tsx`（组件画廊演示挂载）
 - `frontend/src/styles/tokens.css` / `frontend/tokens.json`（6 个令牌）
 - `frontend/tests/kline-view.test.ts`、`frontend/tests/kline-card.test.tsx`、
   `frontend/tests/my-stocks-screen.test.tsx`
