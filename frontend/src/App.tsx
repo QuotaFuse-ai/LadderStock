@@ -10,6 +10,7 @@ import IntradayScreen from './screens/intraday/IntradayScreen'
 import LimitUpScreen from './screens/limitup/LimitUpScreen'
 import JournalScreen from './screens/JournalScreen'
 import MarketScreen from './screens/MarketScreen'
+import InboxScreen from './screens/my-stocks/InboxScreen'
 import MyStocksScreen from './screens/my-stocks/MyStocksScreen'
 import CalendarScreen from './screens/radar/CalendarScreen'
 import NewsScreen from './screens/radar/NewsScreen'
@@ -82,6 +83,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   // QUOT-431：自选与持仓合成一页两标签（`?tab=watch|hold`）；持仓内容由 Stage 4 G 替换，
   // 本单先把 `hold` 指向现有持仓屏，路径与导入口径保持不变
   '/my-stocks': <MyStocksScreen />,
+  // QUOT-435：提醒 = 本机收件箱 + 只读定时任务 + 本机投递渠道（DEC-058 后端）
+  '/inbox': <InboxScreen />,
   // 旧深链保留可用：只重定向，不再单独挂屏（`routes.ts` 的 `NON_PAGE_ROUTES` 同步）
   '/watchlist': <Navigate to="/my-stocks?tab=watch" replace />,
   '/positions': <Navigate to="/my-stocks?tab=hold" replace />,

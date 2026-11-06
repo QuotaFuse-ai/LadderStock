@@ -164,15 +164,17 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     ])
   })
 
-  it('「我的股票」= 一页两标签 + 事件日历（QUOT-431）', () => {
+  it('「我的股票」= 一页两标签 + 事件日历 + 提醒（QUOT-431 / QUOT-435）', () => {
     const group = NAV_SECTIONS.find((section) => section.key === 'my-stocks')
-    // 自选 / 持仓合成 `/my-stocks?tab=watch|hold`，侧栏只留一颗入口；旧地址只做重定向
-    expect(group?.pages.map((page) => page.to)).toEqual(['/my-stocks', '/calendar'])
+    // 自选 / 持仓合成 `/my-stocks?tab=watch|hold`，侧栏只留一颗入口；旧地址只做重定向；
+    // 提醒（`/inbox`）是 QUOT-435 补上的组内第三项
+    expect(group?.pages.map((page) => page.to)).toEqual(['/my-stocks', '/calendar', '/inbox'])
     const other = NAV_SECTIONS.filter((section) => section.key !== 'my-stocks')
     const moved = other.flatMap((section) => section.pages.map((page) => page.to))
     expect(moved).not.toContain('/watchlist')
     expect(moved).not.toContain('/positions')
     expect(moved).not.toContain('/calendar')
+    expect(moved).not.toContain('/inbox')
   })
 
   it('聚合是移动不是砍功能：DEC-044 之前的 14 条已交付入口一条都不能少', () => {
@@ -188,6 +190,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
       '/journal',
       '/my-stocks',
       '/calendar',
+      '/inbox',
       '/validate',
       '/limit-up',
       '/industry',
@@ -199,7 +202,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     for (const to of NAV_TO_KEYS) expect(ROUTE_PATHS).toContain(pathOf(to))
   })
 
-  it('自选 / 持仓合并进 `/my-stocks`，旧地址只做重定向；提醒仍无已交付页面、不许占位', () => {
+  it('自选 / 持仓合并进 `/my-stocks`，旧地址只做重定向；提醒已交付、入口落在「我的股票」组', () => {
     // QUOT-431：页面在 `/my-stocks?tab=watch|hold`，`/watchlist`、`/positions` 只保留深链兼容
     expect(NAV_PATHS).toContain('/my-stocks')
     expect(NAV_PATHS).not.toContain('/watchlist')
@@ -208,10 +211,14 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     expect(NON_PAGE_ROUTES).toContain('/positions')
     const stocks = NAV_SECTIONS.flatMap((section) => section.pages).find((page) => page.to === '/my-stocks')
     expect(stocks?.label).toBe('我的股票')
-    // DEC-044 §2.4 对「没页面就建占位入口」的禁令仍然有效
-    expect(NAV_PATHS.filter((path) => /inbox|remind/.test(path))).toEqual([])
-    const labels = NAV_SECTIONS.flatMap((section) => [section.label, ...section.pages.map((page) => page.label)])
-    expect(labels.filter((label) => /提醒/.test(label))).toEqual([])
+    // QUOT-435：提醒不再是「没页面就建占位入口」的例外，入口与路由都要真实存在
+    const inbox = NAV_SECTIONS.filter((section) => section.key === 'my-stocks').flatMap(
+      (section) => section.pages,
+    )
+    expect(inbox.map((page) => page.label)).toContain('提醒')
+    expect(inbox.find((page) => page.label === '提醒')?.to).toBe('/inbox')
+    expect(NAV_PATHS).toContain('/inbox')
+    expect(NON_PAGE_ROUTES).not.toContain('/inbox')
   })
 
   it('单页组不挂二级（`pages.length > 1` 才展开）：持仓移出后日志只剩交易日志', () => {

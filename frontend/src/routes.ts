@@ -33,6 +33,8 @@ export const ROUTE_PATHS = [
   '/pool',
   // QUOT-431：自选与持仓合成一页两标签（`?tab=watch|hold`），旧地址只做重定向
   '/my-stocks',
+  // QUOT-435：提醒（本机收件箱 + 定时任务 + 本机投递渠道），「我的股票」组第三项
+  '/inbox',
   '/watchlist',
   '/positions',
   '/industry',
