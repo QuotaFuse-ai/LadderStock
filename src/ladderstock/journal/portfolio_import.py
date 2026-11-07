@@ -17,11 +17,10 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ladderstock.core import portfolio as core_portfolio
 from ladderstock.core.portfolio import Trade, replay
@@ -65,10 +64,12 @@ def _method(raw: Any) -> core_portfolio.CostMethod:
         raise _usage(
             f"成本法只能是 {' / '.join(core_portfolio.COST_METHODS)}，收到 {raw!r}"
         )
-    return value  # type: ignore[return-value]
+    return cast(core_portfolio.CostMethod, value)
 
 
-def _body(raw: Any, *, allowed: Sequence[str], what: str) -> tuple[core_portfolio.CostMethod, list[Any], list[bool] | None]:
+def _body(
+    raw: Any, *, allowed: Sequence[str], what: str
+) -> tuple[core_portfolio.CostMethod, list[Any], list[bool] | None]:
     """校验外层请求体，返回（成本法, 原始 records, selected 或 None）。"""
     if not isinstance(raw, Mapping):
         raise _usage(f"{what}的请求体必须是 JSON 对象")
@@ -254,7 +255,7 @@ def preview(raw: Any, *, root: Path | None = None) -> dict[str, Any]:
         raw, allow_selected=True, root=root
     )
     rows: list[dict[str, Any]] = []
-    for index, fields in enumerate(cleaned):
+    for index in range(len(cleaned)):
         duplicate, duplicate_of = duplicates[index]
         rows.append(
             {
