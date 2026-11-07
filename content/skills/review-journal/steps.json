@@ -1,0 +1,83 @@
+{
+  "name": "review-journal",
+  "label": "复盘与日志",
+  "entry": {
+    "page": "journal|review|my-stocks",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "ready",
+  "tools_allow": [
+    "local:/api/journal",
+    "local:/api/positions",
+    "local:/api/realized",
+    "market_sentiment",
+    "limit_up_pool",
+    "yesterday_limit_up_pool",
+    "stock_fund_flow",
+    "price_anomaly",
+    "tencent_quote_batch"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "读交易记录",
+      "output": "records",
+      "tools": [
+        "local:/api/journal",
+        "local:/api/realized",
+        "local:/api/positions"
+      ],
+      "prompt": "读指定区间的交易记录（默认最近 30 天），按日期聚合成「当日动作 + 标的 + 方向 + 数量」的清单。先报总数与覆盖的交易日数，缺日期或代码的记录单独列成「无法对齐」一组，不猜。持仓与成本只在本机呈现。"
+    },
+    {
+      "n": 2,
+      "title": "对上当日盘面",
+      "output": "tagged",
+      "tools": [
+        "market_sentiment",
+        "limit_up_pool",
+        "yesterday_limit_up_pool",
+        "price_anomaly",
+        "stock_fund_flow",
+        "tencent_quote_batch"
+      ],
+      "prompt": "给每个交易日打上盘面标签：情绪分、最高板、涨停家数、当日是否出现急跌异动。标签全部来自工具返回值。没有盘面数据（如停牌、非交易日）的日期标注出来并说明将从统计中剔除。"
+    },
+    {
+      "n": 3,
+      "title": "分组统计",
+      "output": "stats",
+      "tools": [],
+      "prompt": "按情绪分组（冰点/一般/高潮，阈值由情绪分实际分布给出）统计：交易笔数、盈利笔数、胜率、平均盈亏。再按最高板高度分组做一次。每组必须写样本数；样本少于 5 的组只写「样本不足」，不给胜率结论。"
+    },
+    {
+      "n": 4,
+      "title": "行为诊断",
+      "output": "insight",
+      "tools": [],
+      "prompt": "基于分组统计给 2-3 条行为洞察，每条必须带样本数与胜率分子分母。写出反例：哪一组的表现与结论相反。不评价人品、不用「你总是」这种绝对化表述。"
+    },
+    {
+      "n": 5,
+      "title": "纪律检查",
+      "output": "discipline",
+      "tools": [],
+      "prompt": "按用户自己设定的规则逐条核对（单笔亏损上限、单日最大仓位、连续亏损后是否停手等）。规则缺失的先列出缺失项并请用户补，不要替他定阈值。逐条输出「规则 / 是否违规 / 违规日期与记录」。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们来复盘你的交易记录。你是交易行为复盘助理：只描述行为与结果之间的相关性，不给买卖建议，也不评价对错。接下来 5 步，每步一页。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "name": "cross-market",
+  "label": "跨市场联动",
+  "entry": {
+    "page": "industry|home",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "unconnected",
+  "blocked_by": "th_us_* 适配器未接（QUOT-471）；港股报价口径待实测",
+  "offline_notice": "跨市场数据未接通：本包只提供研究步骤，执行时返回未接通，不输出溢价率或映射结论。",
+  "tools_allow": [
+    "tencent_quote",
+    "tencent_quote_batch",
+    "index_quote",
+    "northbound_flow",
+    "industry_boards",
+    "board_fund_flow",
+    "market_sentiment",
+    "th_us_get_quote",
+    "th_us_get_market_data",
+    "th_us_get_market_list",
+    "th_us_get_treasury_yield_curve",
+    "th_us_get_policy_rates",
+    "th_us_get_financial_statements"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "A/H 溢价",
+      "output": "ah",
+      "tools": [
+        "tencent_quote",
+        "th_us_get_quote"
+      ],
+      "prompt": "给定一只 A 股，找出对应的 H 股代码，取两地价格并写清各自报价时点与汇率来源。算溢价率 (A/H×汇率−1)，时点相差超过 30 分钟就标「不对齐」并只给区间不给结论。找不到对应 H 股就写「无对应 H 股」。"
+    },
+    {
+      "n": 2,
+      "title": "中概股映射",
+      "output": "mapping",
+      "tools": [
+        "th_us_get_market_list",
+        "th_us_get_quote",
+        "industry_boards"
+      ],
+      "prompt": "给定 A 股板块，列出该板块在美股/中概股的对应标的与其隔夜表现。映射关系要写依据（同产业链、同指数成分或同题材），列候选板块名由用户确认，不自己拍板。"
+    },
+    {
+      "n": 3,
+      "title": "隔夜映射",
+      "output": "overnight",
+      "tools": [
+        "th_us_get_market_data",
+        "market_sentiment",
+        "board_fund_flow"
+      ],
+      "prompt": "取上一交易日美股的板块表现与主要指数涨跌，对照 A 股对应板块最近 3 日的资金与情绪。只描述相关性与传导环节，不给「必涨/必跌」判断，也不承诺方向。"
+    },
+    {
+      "n": 4,
+      "title": "宏观传导链",
+      "output": "chain",
+      "tools": [
+        "th_us_get_treasury_yield_curve",
+        "th_us_get_policy_rates",
+        "northbound_flow",
+        "index_quote"
+      ],
+      "prompt": "取美债关键期限收益率与政策利率变化，配上 A 股北向资金与指数风格（大小盘、成长价值）。把链条拆成三段写：利率变化 → 资金流向 → 风格表现，每一段都要有数据，缺哪段就写缺。"
+    },
+    {
+      "n": 5,
+      "title": "结论与反证",
+      "output": "verdict",
+      "tools": [],
+      "prompt": "给三条跨市场结论，每条必须写清时点对齐情况与反证。若本包状态为未接通，则只输出研究步骤说明与所需数据清单，不输出任何数字。不构成投资建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们看跨市场联动。你是跨市场研究助理：两边的价格与资金都必须是工具结果，并写清各自时点。接下来 5 步，每步一页。注意：海外段当前未接通。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

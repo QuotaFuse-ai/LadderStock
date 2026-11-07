@@ -6,7 +6,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import { Loader2, Send, Sparkles, Square } from 'lucide-react'
+import { Check, Copy, Loader2, Send, Sparkles, Square } from 'lucide-react'
 
 import {
   askResearchAssistant,
@@ -19,8 +19,17 @@ import {
   formatMoney,
   MISSING,
 } from '../../../lib/format'
+import { useAssistantShell } from '../../../lib/assistant/shell'
+import {
+  buildDockView,
+  buildLegacyDockView,
+  describeObject,
+  type AssistantObject,
+  type DockView,
+} from '../../../lib/skills/dock'
 import {
   Badge,
+  Banner,
   Button,
   Drawer,
   EmptyState,
@@ -31,20 +40,22 @@ import {
   buildAssistantContext,
   describeAssistantError,
   loadAssistantPageData,
-  serializeAssistantContext,
   type AssistantFailureInfo,
   type AssistantPageData,
 } from './aiContext'
 
 /**
- * 页级研究助手抽屉（QUOT-454）。
+ * 「问 AI」抽屉（QUOT-454 建，QUOT-475 收成全站唯一实现）。
  *
- * 绑定当前 `/research/:code` 的页级上下文：代码 / 名称 / 研究日 / 当前视图 +
- * 页面已展示的行情、K 线区间、财报期次与事件条数（白名单见 `aiContext.ts`）。
- * 模型调用走后端既有的 `/api/research/{code}/assistant` 通道，前端不拼提示词、
- * 不持有任何 key；回答只作文本解读，不回写页面数据。
+ * **只有一个抽屉组件**：`Layout` 挂一份，顶栏按钮、移动端抽屉与 `/research/:code`
+ * 页内的「研究助手」按钮都打开它。`ResearchAiDock` 只保留触发按钮；
+ * 没有宿主时（组件单测、独立挂载）才自己托管一份同样的抽屉。
  *
- * 降级分四种说法：本机未连接、未配置模型、回答超时、上游失败；都带重试。
+ * 打开时的输入框**已经预填整段开场**（角色 + 分步说明 + 第 1 步指令，来自
+ * `content/skills/<pkg>/steps.json` 的 `dock` 模板），不自动发送；旁边留「复制」后门。
+ *
+ * 对话通道目前只有 `/api/research/{code}/assistant`：没有代码的页面进入「待接入」态，
+ * 只做开场编辑与复制，**不伪造回答、不自己拼后端接口**。
  */
 
 export interface ResearchAiDockProps {
@@ -54,6 +65,20 @@ export interface ResearchAiDockProps {
   /** 概览 tab 已取到的数据；传入可避免为上下文重复取一次 */
   overview?: ResearchOverview | null
   className?: string
+  /** QUOT-475：所在路由。传了才按 `pageBindings` 绑定页面技能（旧调用方不传即沿用旧标题） */
+  pageKey?: string
+  /** 显式覆盖绑定包（QUOT-474 的步骤级入口用）；缺省按 `pageKey` 推断 */
+  boundSkill?: string | null
+  /** 页面已经拼好的开场（步骤级「问 AI」）；缺省按包模板渲染 */
+  initialDraft?: string
+  /** 覆盖包级未接通说明 */
+  offlineNotice?: string
+}
+
+export interface AssistantDockDrawerProps {
+  view: DockView | null
+  overview?: ResearchOverview | null
+  onClose: () => void
 }
 
 interface ChatMessage {
@@ -70,20 +95,7 @@ const EMPTY_DATA: AssistantPageData = {
   issues: [],
 }
 
-function quickQuestions(label: string, tab: string): string[] {
-  if (tab === 'research') {
-    return [
-      `${label}这份研究的裁决点是什么`,
-      `${label}哪些数据有缺口`,
-      `${label}反证部分说了什么`,
-    ]
-  }
-  return [
-    `${label}最近的走势怎么样`,
-    `${label}下一份财报要看什么`,
-    `${label}有哪些值得留意的事件`,
-  ]
-}
+type CopyState = 'idle' | 'done' | 'failed'
 
 function ContextItem({
   label,
@@ -118,30 +130,31 @@ function displayTimestamp(value: string | null | undefined): string | null {
     : value
 }
 
-export function ResearchAiDock({
-  code,
-  name,
-  scope,
+export function AssistantDockDrawer({
+  view,
   overview = null,
-  className,
-}: ResearchAiDockProps) {
-  const [open, setOpen] = useState(false)
+  onClose,
+}: AssistantDockDrawerProps) {
+  const open = view !== null
+  const code = view?.channel?.code ?? null
+  const tab = view?.object.tab ?? 'overview'
+  const date = view?.object.date ?? ''
+  const name = view?.object.name ?? null
+  const pageKey = view?.pageKey ?? ''
+
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [pending, setPending] = useState(false)
   const [failure, setFailure] = useState<AssistantFailureInfo | null>(null)
   const [failedQuestion, setFailedQuestion] = useState<string | null>(null)
   const [showContext, setShowContext] = useState(false)
+  const [copyState, setCopyState] = useState<CopyState>('idle')
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
   const messageIdRef = useRef(0)
-
-  const tab = scope?.tab ?? 'overview'
-  const date = scope?.date ?? ''
-  const label = name ?? code ?? '这只'
-  const title = `研究助手 · 个股深挖${name ? ` · ${name}` : code ? ` · ${code}` : ''}`
+  const sessionRef = useRef<string | null>(null)
 
   const pageData = useAsync<AssistantPageData>(
     (signal) =>
@@ -163,13 +176,26 @@ export function ResearchAiDock({
     })
   }, [code, name, date, tab, overview, pageData.data])
 
-  const serializedContext = useMemo(
-    () => (context ? serializeAssistantContext(context) : ''),
-    [context],
-  )
+  // 发给后端的就是这份 JSON：页级摘要 + 三个上下文键（pageKey / boundSkill / object）
+  const serializedContext = useMemo(() => {
+    if (!context || !view) return ''
+    return JSON.stringify(
+      {
+        ...context,
+        pageKey: view.pageKey,
+        boundSkill: view.boundSkill,
+        object: view.object,
+      },
+      null,
+      2,
+    )
+  }, [context, view])
 
-  // 换标的时旧对话不再属于当前上下文，直接清掉并中止在途请求
+  // 换页 / 换标的时旧对话不再属于当前上下文；同一页反复开关则保留草稿与对话
+  const sessionKey = view ? `${view.pageKey}|${view.channel?.code ?? ''}` : null
   useEffect(() => {
+    if (!sessionKey || sessionRef.current === sessionKey) return
+    sessionRef.current = sessionKey
     abortRef.current?.abort()
     abortRef.current = null
     requestSeqRef.current += 1
@@ -177,7 +203,19 @@ export function ResearchAiDock({
     setFailure(null)
     setFailedQuestion(null)
     setPending(false)
-  }, [code])
+    setShowContext(false)
+    setCopyState('idle')
+    setDraft(view?.draft ?? '')
+    // 焦点落在输入框末尾会把预填的整段开场滚走，首屏只剩第 1 步；开在草稿开头
+    if (view?.draft) {
+      window.setTimeout(() => {
+        const element = inputRef.current
+        if (!element) return
+        element.setSelectionRange(0, 0)
+        element.scrollTop = 0
+      }, 60)
+    }
+  }, [sessionKey, view?.draft])
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -187,13 +225,13 @@ export function ResearchAiDock({
     abortRef.current?.abort()
     abortRef.current = null
     setPending(false)
-    setOpen(false)
-  }, [])
+    onClose()
+  }, [onClose])
 
   const ask = useCallback(
     async (raw: string, options: { echo?: boolean } = {}) => {
       const question = raw.trim()
-      if (!question || !code || pending || !context) return
+      if (!question || !code || pending || !context || !serializedContext) return
       const echo = options.echo ?? true
 
       const seq = requestSeqRef.current + 1
@@ -218,7 +256,7 @@ export function ResearchAiDock({
           code,
           {
             question,
-            context: serializeAssistantContext(context),
+            context: serializedContext,
             date: date || undefined,
             tab,
           },
@@ -254,7 +292,7 @@ export function ResearchAiDock({
         }
       }
     },
-    [code, pending, context, date, tab],
+    [code, pending, context, serializedContext, date, tab],
   )
 
   const retry = useCallback(() => {
@@ -265,6 +303,18 @@ export function ResearchAiDock({
     abortRef.current?.abort()
   }, [])
 
+  const copyDraft = useCallback(async () => {
+    if (!draft.trim()) return
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(draft)
+      setCopyState('done')
+    } catch {
+      setCopyState('failed')
+    }
+    window.setTimeout(() => setCopyState('idle'), 1800)
+  }, [draft])
+
   const onKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     // 输入法候选期间的回车归输入法，不能当成发送
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
@@ -272,8 +322,9 @@ export function ResearchAiDock({
     void ask(draft)
   }
 
-  const ready = Boolean(code) && context !== null
-  const questions = quickQuestions(label, tab)
+  const ready = Boolean(code) && context !== null && Boolean(view && !view.offlineBlocking)
+  const questions = view?.quickQuestions ?? []
+  const canCopy = Boolean(draft.trim()) && (view?.fallbackCopy ?? true)
 
   const data = pageData.data
   const quoteText = context?.quote
@@ -290,47 +341,37 @@ export function ResearchAiDock({
       .join(' · ') ?? ''
 
   return (
-    <div className={className}>
-      <Button
-        variant="secondary"
-        leadingIcon={<Sparkles className="size-3.5" aria-hidden="true" />}
-        onClick={() => setOpen(true)}
-        disabled={!code}
-        disabledReason={code ? undefined : '先选择一只标的'}
-        aria-haspopup="dialog"
-      >
-        研究助手
-      </Button>
-
-      <Drawer
-        open={open}
-        onClose={close}
-        title={title}
-        subtitle={scope ? `页级上下文 · ${scope.tab} · ${scope.date}` : '页级上下文'}
-        width="lg"
-        fullScreenNarrow
-        initialFocusRef={inputRef}
-        footer={
-          <div className="flex w-full flex-col gap-1">
-            <div className="flex items-end gap-2">
-              <Textarea
-                ref={inputRef}
-                rows={2}
-                maxLength={2000}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={onKeyDown}
-                disabled={!ready}
-                aria-label="向研究助手提问"
-                placeholder={
-                  ready ? `就 ${label} 这一页的内容问点什么…` : '正在准备页级上下文…'
-                }
-                className="min-w-0 flex-1 resize-none"
-              />
+    <Drawer
+      open={open}
+      onClose={close}
+      title={view?.title ?? ''}
+      subtitle={view?.subtitle}
+      width="lg"
+      fullScreenNarrow
+      initialFocusRef={inputRef}
+      footer={
+        <div className="flex w-full flex-col gap-1">
+          <div className="flex items-end gap-2">
+            <Textarea
+              ref={inputRef}
+              rows={view?.draft ? 5 : 2}
+              maxLength={4000}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={false}
+              aria-label="向研究助手提问"
+              placeholder={
+                ready
+                  ? `就 ${name ?? code ?? view?.pageLabel ?? '这一页'} 的内容问点什么…`
+                  : '开场已备好：可以改，也可以先「复制」交给任意 Agent'
+              }
+              className="min-w-0 flex-1 resize-none"
+            />
+            <div className="flex shrink-0 flex-col gap-1">
               {pending ? (
                 <Button
                   variant="secondary"
-                  className="shrink-0"
                   onClick={stop}
                   leadingIcon={<Square className="size-3.5" aria-hidden="true" />}
                 >
@@ -339,7 +380,6 @@ export function ResearchAiDock({
               ) : (
                 <Button
                   variant="primary"
-                  className="shrink-0"
                   onClick={() => void ask(draft)}
                   disabled={!ready || draft.trim() === ''}
                   leadingIcon={<Send className="size-3.5" aria-hidden="true" />}
@@ -347,14 +387,62 @@ export function ResearchAiDock({
                   发送
                 </Button>
               )}
+              {canCopy && (
+                <Button
+                  variant="ghost"
+                  className="px-2 text-caption"
+                  onClick={() => void copyDraft()}
+                  leadingIcon={
+                    copyState === 'done' ? (
+                      <Check className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <Copy className="size-3.5" aria-hidden="true" />
+                    )
+                  }
+                  aria-label="复制开场"
+                >
+                  {copyState === 'done' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制'}
+                </Button>
+              )}
             </div>
-            <p className="text-caption text-text-muted">
-              Enter 发送 · Shift+Enter 换行 · 回答仅作页面数据解读，不改写行情，也不构成投资建议
-            </p>
           </div>
-        }
-      >
-        <div className="flex flex-col gap-4">
+          <p className="text-caption text-text-muted">
+            {ready
+              ? 'Enter 发送 · Shift+Enter 换行 · 回答仅作页面数据解读，不改写行情，也不构成投资建议'
+              : 'Enter 发送（通道待接入时不可用）· Shift+Enter 换行 · 不自动发送，看过再发'}
+          </p>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {view?.offlineNotice && (
+          <Banner
+            tone={view.status === 'unconnected' ? 'danger' : 'warn'}
+            title={
+              view.status === 'unconnected'
+                ? `${view.pkgLabel ?? '本页技能'}未接通`
+                : `${view.pkgLabel ?? '本页技能'}部分段落未接通`
+            }
+          >
+            {view.offlineNotice}
+          </Banner>
+        )}
+
+        {view && !view.channel && (
+          <Banner tone="info" title="对话通道待接入">
+            当前只有「个股深挖」页接好了助手后端。这一页可以先把开场改好，再用「复制」交给任意
+            Agent；通道接通后同一个按钮直接生效。
+          </Banner>
+        )}
+
+        {view && view.missingPlaceholders.length > 0 && (
+          <Banner tone="warn" title="开场里还有没填的对象">
+            {view.missingPlaceholders.map((key) => `{${key}}`).join(' ')}
+            ：当前页取不到，先别编一个名字填进去——把它换成你要看的标的，或直接告诉我代码。
+          </Banner>
+        )}
+
+        {code ? (
           <section
             aria-label="页级上下文摘要"
             className="rounded border border-border bg-surface-2 p-3"
@@ -424,7 +512,7 @@ export function ResearchAiDock({
               </ul>
             )}
 
-            {showContext && context && (
+            {showContext && serializedContext && (
               <pre className="mt-2 max-h-60 overflow-auto rounded-xs bg-sunken p-2 font-mono text-caption leading-body text-text-secondary">
                 {serializedContext}
               </pre>
@@ -434,22 +522,73 @@ export function ResearchAiDock({
               只发送页面上已展示的行情、K 线区间、财报期次与事件条数；论点正文、持仓与令牌不会进入上下文。
             </p>
           </section>
-
-          <section aria-label="快捷提问" className="flex flex-col gap-1">
-            <h3 className="text-caption text-text-muted">快捷提问</h3>
-            {questions.map((question) => (
+        ) : (
+          <section
+            aria-label="本页上下文"
+            className="rounded border border-border bg-surface-2 p-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-4 text-accent" aria-hidden="true" />
+                <h3 className="text-body font-semibold text-text">本页上下文</h3>
+                <Badge tone="ok">已绑定</Badge>
+              </div>
               <Button
-                key={question}
-                variant="secondary"
-                className="h-auto min-h-control w-full justify-start whitespace-normal text-left"
-                onClick={() => void ask(question)}
-                disabled={!ready || pending}
+                variant="ghost"
+                className="h-7 px-2 text-caption"
+                onClick={() => setShowContext((value) => !value)}
               >
-                {question}
+                {showContext ? '收起 JSON' : '查看上下文 JSON'}
               </Button>
-            ))}
-          </section>
+            </div>
 
+            <dl className="mt-2 grid grid-cols-1 gap-x-3 gap-y-2 sm:grid-cols-2">
+              <ContextItem label="页面" value={view?.pageLabel ?? MISSING} note={pageKey || null} />
+              <ContextItem
+                label="绑定技能"
+                value={view?.pkgLabel ?? '开放域'}
+                note={view?.boundSkill ?? null}
+              />
+              <ContextItem
+                label="对象"
+                value={describeObject(view?.object ?? {}) ?? MISSING}
+                note={view?.missingPlaceholders.length ? '开场里还留着占位' : null}
+              />
+            </dl>
+
+            {showContext && (
+              <pre className="mt-2 max-h-60 overflow-auto rounded-xs bg-sunken p-2 font-mono text-caption leading-body text-text-secondary">
+                {JSON.stringify({ pageKey, boundSkill: view?.boundSkill ?? null, object: view?.object ?? {} }, null, 2)}
+              </pre>
+            )}
+
+            <p className="mt-2 border-t border-border pt-2 text-caption leading-body text-text-muted">
+              发送时带上 pageKey / boundSkill / object 三个上下文；不读页面正文、持仓与令牌。
+            </p>
+          </section>
+        )}
+
+        <section aria-label="快捷提问" className="flex flex-col gap-1">
+          <h3 className="text-caption text-text-muted">
+            {questions.some((question) => !question.send) ? '本页研究起手式 / 快捷提问' : '快捷提问'}
+          </h3>
+          {questions.map((question) => (
+            <Button
+              key={question.id}
+              variant="secondary"
+              className="h-auto min-h-control w-full justify-start whitespace-normal text-left"
+              onClick={() => {
+                if (question.send) void ask(question.text)
+                else setDraft(question.text)
+              }}
+              disabled={question.send && (!ready || pending)}
+            >
+              {question.send ? question.label : `${question.label}（点一下填入输入框）`}
+            </Button>
+          ))}
+        </section>
+
+        {code ? (
           <section
             aria-label="对话"
             role="log"
@@ -508,8 +647,92 @@ export function ResearchAiDock({
               />
             )}
           </section>
-        </div>
-      </Drawer>
-    </div>
+        ) : (
+          <p className="rounded border border-dashed border-border px-3 py-2 text-caption leading-body text-text-muted">
+            这一页还没有对话通道：输入框里的开场可以直接改，按「复制」后贴给任意 Agent 就能开工。
+          </p>
+        )}
+      </div>
+    </Drawer>
   )
 }
+
+function dockForTrigger(props: ResearchAiDockProps): DockView {
+  const { code, name, scope, pageKey, boundSkill, initialDraft, offlineNotice } = props
+  const object: AssistantObject = {
+    code,
+    name,
+    date: scope?.date ?? null,
+    tab: scope?.tab ?? null,
+  }
+
+  if (pageKey) {
+    return buildDockView({
+      pathname: pageKey,
+      object,
+      boundSkill,
+      initialDraft,
+      offlineNotice: offlineNotice ?? null,
+    })
+  }
+
+  return buildLegacyDockView({
+    code,
+    name,
+    tab: scope?.tab ?? 'overview',
+    date: scope?.date ?? '',
+    offlineNotice: offlineNotice ?? null,
+  })
+}
+
+/**
+ * 页内「研究助手」触发按钮。有宿主（`Layout`）时打开全站唯一的那个抽屉，
+ * 没有宿主时（组件测试、独立挂载）自己托管同一份抽屉。
+ */
+export function ResearchAiDock(props: ResearchAiDockProps) {
+  const { code, overview, className } = props
+  const shell = useAssistantShell()
+  const [localView, setLocalView] = useState<DockView | null>(null)
+
+  const open = () => {
+    const view = dockForTrigger(props)
+    if (shell) {
+      shell.open({
+        pageKey: view.pageKey,
+        object: view.object,
+        boundSkill: props.boundSkill,
+        initialDraft: props.initialDraft,
+        offlineNotice: props.offlineNotice ?? null,
+        overview: overview ?? null,
+      })
+      return
+    }
+    setLocalView(view)
+  }
+
+  return (
+    <>
+      <div className={className}>
+        <Button
+          variant="secondary"
+          leadingIcon={<Sparkles className="size-3.5" aria-hidden="true" />}
+          onClick={open}
+          disabled={!code}
+          disabledReason={code ? undefined : '先选择一只标的'}
+          aria-haspopup="dialog"
+        >
+          研究助手
+        </Button>
+      </div>
+      {!shell && (
+        <AssistantDockDrawer
+          view={localView}
+          overview={overview ?? null}
+          onClose={() => setLocalView(null)}
+        />
+      )}
+    </>
+  )
+}
+
+export default ResearchAiDock

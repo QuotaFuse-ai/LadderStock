@@ -1,0 +1,85 @@
+{
+  "name": "portfolio-check",
+  "label": "持仓体检",
+  "entry": {
+    "page": "my-stocks",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "ready",
+  "tools_allow": [
+    "local:/api/positions",
+    "local:/api/realized",
+    "tencent_quote_batch",
+    "stock_fund_flow_batch",
+    "stock_profile",
+    "baostock_stock_basic",
+    "price_anomaly",
+    "board_fund_flow",
+    "index_quote"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "读持仓与口径",
+      "output": "holdings",
+      "tools": [
+        "local:/api/positions",
+        "local:/api/realized"
+      ],
+      "prompt": "读本机持仓，列出每只的代码、成本、数量、市值；已实现盈亏单列。写清组合总市值与计算时点。缺代码或数量的记录单列成「口径不全」，不进入统计。持仓数据只在本机呈现，不外发。"
+    },
+    {
+      "n": 2,
+      "title": "现价与盈亏归因",
+      "output": "pnl",
+      "tools": [
+        "tencent_quote_batch"
+      ],
+      "prompt": "批量取现价（不超过 50 只，超过即分批并写明分批方式），算每只的浮动盈亏与组合汇总。写清浮动盈亏=数量×(现价−成本)，以及已实现与浮动的合计。停牌或取不到价的单列剔除，并写明剔除了哪几只。"
+    },
+    {
+      "n": 3,
+      "title": "集中度与行业暴露",
+      "output": "exposure",
+      "tools": [
+        "stock_profile",
+        "baostock_stock_basic",
+        "index_quote"
+      ],
+      "prompt": "按市值算每只权重与前三大合计权重，判断集中度（给出你用的阈值）。再按行业字段合并成行业暴露表，标出暴露最高的两个行业及占比。行业归属必须来自工具，不凭名字猜。现金与货基单列。"
+    },
+    {
+      "n": 4,
+      "title": "资金面与异动",
+      "output": "funds",
+      "tools": [
+        "stock_fund_flow_batch",
+        "price_anomaly",
+        "board_fund_flow"
+      ],
+      "prompt": "取组合内各票的近 20 日主力净流入方向，列出净流出最明显的三只；再查这些票近期是否有异动记录，以及所属板块的资金方向。只描述方向与幅度，不解释原因。"
+    },
+    {
+      "n": 5,
+      "title": "组合结论",
+      "output": "verdict",
+      "tools": [],
+      "prompt": "给三条暴露度结论（集中度 / 行业偏重 / 资金面背离），每条写清用的是哪个数与阈值，并各配一条反证。最后写清数据时点与剔除项，不出具买卖建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们给你的持仓做一次体检。你是组合风险助理：只算集中度、行业暴露与盈亏归因，不出具买卖建议。接下来 5 步，每步一页。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

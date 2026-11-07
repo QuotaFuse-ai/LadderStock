@@ -1,0 +1,70 @@
+{
+  "name": "senate-desk",
+  "label": "多空辩论与回测",
+  "entry": {
+    "page": "research|skills",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "unconnected",
+  "blocked_by": "StockSenate MCP（127.0.0.1:8765）未接进 LadderStock；须 POST 握手，约 20s",
+  "offline_notice": "投研链路未接通：本包只提供步骤，执行时返回未接通，不输出任何论点或回测结果。",
+  "tools_allow": [
+    "stock_senate_analysis",
+    "stock_senate_backtest",
+    "stock_senate_alert_query",
+    "stock_senate_report_query",
+    "stock_senate_config_query"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "多空要点",
+      "output": "debate",
+      "tools": [
+        "stock_senate_analysis"
+      ],
+      "prompt": "取该标的的多空分析结果，多空各列三条要点，每条标注依据类型（财务 / 事件 / 估值 / 资金）。标清哪些是可核数据、哪些是模型推论。"
+    },
+    {
+      "n": 2,
+      "title": "完整投研链路",
+      "output": "pipeline",
+      "tools": [
+        "stock_senate_analysis",
+        "stock_senate_report_query"
+      ],
+      "prompt": "取完整链路输出（分析师 → 辩论 → 风控 → 终审），按环节分段呈现。每段写清产出了什么、有没有被下一段推翻。缺环节就标缺。"
+    },
+    {
+      "n": 3,
+      "title": "回测推演",
+      "output": "backtest",
+      "tools": [
+        "stock_senate_backtest"
+      ],
+      "prompt": "给定策略描述，取回测结果：区间、标的池、成本假设、收益率与最大回撤必须齐全。缺哪项就写「假设缺失，结论不成立」，不补默认值。"
+    },
+    {
+      "n": 4,
+      "title": "结论与分歧",
+      "output": "verdict",
+      "tools": [],
+      "prompt": "汇总多空分歧点，列出双方各自最强的依据与最弱的依据。明确标注本段为模型推论。当前未接通时只输出步骤说明与所需数据清单，不输出任何数字。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们做一次多空辩论与回测。你是投研链路助理：论点、推论、可核数据要分开标注，不许把推论写成事实。接下来 4 步，每步一页。注意：投研链路当前未接通。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}
