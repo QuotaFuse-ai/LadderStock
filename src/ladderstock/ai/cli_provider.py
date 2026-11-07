@@ -41,9 +41,12 @@ Windows 上 `claude` 是 npm 的 `.cmd` 垫片，`CreateProcess` 不能直接执
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -516,6 +519,87 @@ def _run(
     )
 
 
+#: 取消 / 超时后等进程退出的宽限（秒）：taskkill 之后不该再等太久
+_KILL_GRACE_SEC = 5.0
+
+
+def _child_flags() -> dict[str, Any]:
+    """子进程要能「连坐」终止：Windows 独立进程组 + 无窗口，POSIX 独立会话。"""
+    if os.name == "nt":  # pragma: no cover - Windows 专用
+        return {
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        }
+    return {"start_new_session": True}
+
+
+async def _terminate_tree(proc: asyncio.subprocess.Process) -> None:
+    """连根杀掉子进程树：`cmd.exe /c` 与 npm 垫片都会再生子进程，只 kill 父级会留悬挂。"""
+    if proc.returncode is not None:
+        return
+    try:
+        if os.name == "nt":  # pragma: no cover - Windows 专用
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(proc.pid),
+                "/T",
+                "/F",
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            await killer.wait()
+        else:
+            try:
+                # killpg/SIGKILL 只存在于 POSIX；Windows 分支在上面已返回
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # type: ignore[attr-defined]
+            except (OSError, ProcessLookupError):
+                proc.kill()
+    except (OSError, ProcessLookupError, NotImplementedError):
+        with contextlib.suppress(OSError, ProcessLookupError):
+            proc.kill()
+    with contextlib.suppress(BaseException):
+        await asyncio.wait_for(proc.wait(), _KILL_GRACE_SEC)
+
+
+async def _run_async(
+    cmd: list[str],
+    *,
+    stdin_text: str | None,
+    timeout: float,
+    home: Path | None = None,
+    extra_env: tuple[tuple[str, str], ...] = (),
+) -> tuple[int, str, str]:
+    """`_run` 的异步版：同一套命令与环境，但超时 / 取消时会把整棵进程树杀掉。
+
+    返回 `(returncode, stdout, stderr)`；超时抛 `CliTimeout`，外部取消抛 `CancelledError`。
+    """
+    with tempfile.TemporaryDirectory(prefix="ldst-cli-") as workdir:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=workdir,
+            env=_clean_env(home, extra_env),
+            **_child_flags(),
+        )
+        payload = stdin_text.encode("utf-8") if stdin_text is not None else None
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(payload), timeout=timeout)
+        except TimeoutError:
+            await _terminate_tree(proc)
+            raise CliTimeout(f"超过 {int(timeout)}s 没有返回") from None
+        except asyncio.CancelledError:
+            # 前端 abort / 服务端关停：清理动作不能把取消本身吞掉
+            with contextlib.suppress(BaseException):
+                await _terminate_tree(proc)
+            raise
+    return int(proc.returncode or 0), _decode(out or b""), _decode(err or b"")
+
+
 def _first_line(text: str) -> str:
     lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
     return _mask(lines[0][:200]) if lines else ""
@@ -721,6 +805,13 @@ def _strip_fences(text: str) -> str:
 class CliProvider:
     """把「一段 prompt」交给本机 CLI。只实现补全，不实现 tool-calling。"""
 
+    @staticmethod
+    def _prompt_text(system: str, user: str, json_mode: bool) -> str:
+        prompt = f"{system}\n\n---\n\n{user}" if system else user
+        if json_mode:
+            prompt = f"{prompt}\n\n{JSON_ONLY_INSTRUCTION}"
+        return prompt
+
     def complete(
         self,
         target: ModelTarget,
@@ -741,9 +832,7 @@ class CliProvider:
         if status["state"] != "ok":
             raise CliUnavailable(str(status["detail"]))
 
-        prompt = f"{system}\n\n---\n\n{user}" if system else user
-        if json_mode:
-            prompt = f"{prompt}\n\n{JSON_ONLY_INSTRUCTION}"
+        prompt = self._prompt_text(system, user, json_mode)
 
         cmd = _command(spec, status["exe"], spec.build_argv(target.model))
         if cmd is None:
@@ -757,7 +846,7 @@ class CliProvider:
                 extra_env=spec.env_overrides,
             )
         except subprocess.TimeoutExpired:
-            raise CliUnavailable(f"{spec.label} 超过 {int(timeout)}s 没有返回") from None
+            raise CliTimeout(f"{spec.label} 超过 {int(timeout)}s 没有返回") from None
         except OSError as exc:
             raise CliUnavailable(f"{spec.label} 启动失败：{exc}") from None
 
@@ -772,9 +861,63 @@ class CliProvider:
             raise CliUnavailable(f"{spec.label} 没有输出正文")
         return _strip_fences(text) if json_mode else text
 
+    async def acomplete(
+        self,
+        target: ModelTarget,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        timeout: float = DEFAULT_GENERATE_TIMEOUT,
+    ) -> str:
+        """`complete` 的异步版（QUOT-473）：超时 / 取消时连根杀掉进程树。
+
+        探针仍走同步实现（有 120s 缓存），放到线程里跑，避免阻塞事件循环。
+        """
+        cli_id = (target.backend.cli or "").strip().lower()
+        try:
+            spec = cli_spec(cli_id)
+        except KeyError:
+            raise CliUnavailable(f"未知的 CLI 通道：{cli_id!r}") from None
+        status = await asyncio.to_thread(probe, spec)
+        if status["state"] != "ok":
+            raise CliUnavailable(str(status["detail"]))
+
+        prompt = self._prompt_text(system, user, json_mode)
+        cmd = _command(spec, status["exe"], spec.build_argv(target.model))
+        if cmd is None:
+            raise CliUnavailable(f"{spec.label} 缺少解释器 {spec.runner}")
+        try:
+            code, out, err = await _run_async(
+                cmd,
+                stdin_text=prompt,
+                timeout=timeout,
+                home=Path(status["home"]),
+                extra_env=spec.env_overrides,
+            )
+        except CliTimeout:
+            raise CliTimeout(f"{spec.label} 超过 {int(timeout)}s 没有返回") from None
+        except OSError as exc:
+            raise CliUnavailable(f"{spec.label} 启动失败：{exc}") from None
+
+        if code != 0:
+            reason = _error_line(f"{err}\n{out}")
+            raise CliUnavailable(
+                f"{spec.label} 退出码 {code}"
+                + (f"：{_friendly(reason)}" if reason else "（没有输出）")
+            )
+        text = (out or "").strip()
+        if not text:
+            raise CliUnavailable(f"{spec.label} 没有输出正文")
+        return _strip_fences(text) if json_mode else text
+
 
 class CliUnavailable(RuntimeError):
     """CLI 通道不可用（没装 / 没登录 / 跑挂）：属于配置问题，不该当成网络故障重试。"""
+
+
+class CliTimeout(CliUnavailable):
+    """CLI 在时限内没有返回：与「跑挂」分开，前端要能报超时并允许重试。"""
 
 
 class CliChatClient:
@@ -818,6 +961,7 @@ __all__ = [
     "CliChatClient",
     "CliProvider",
     "CliSpec",
+    "CliTimeout",
     "CliUnavailable",
     "build_chat_client",
     "channel_status",
