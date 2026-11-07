@@ -932,6 +932,15 @@ export async function loadEventStudySummary(
 }
 
 /**
+ * 首页研究入口的 scope 占位（QUOT-472）。
+ *
+ * 后端 `POST /api/research/{code}/assistant` 只读 `question` / `context`，`code` 是路由参数、
+ * 不参与取数。首页没有单一标的，又必须复用同一条通道与同一套降级口径，所以给一个固定占位，
+ * 而不是硬编一个假股票代码。
+ */
+export const HOME_ASSISTANT_SCOPE = 'home'
+
+/**
  * `POST /api/research/{code}/assistant`：页级研究助手。
  *
  * 只做「把已经脱敏的上下文和问题转给后端既有的模型通道」，前端不拼提示词、
@@ -998,6 +1007,14 @@ export async function loadResearchRuns(
     { signal },
   )
   return parseResearchRunList(payload, code)
+}
+
+/** 首页对话入口的请求：与页级助手同一条通道、同一套降级，只是 scope 换成 `home`。 */
+export function askHomeAssistant(
+  payload: AssistantPayload,
+  signal?: AbortSignal,
+): Promise<AssistantReply> {
+  return askResearchAssistant(HOME_ASSISTANT_SCOPE, payload, signal)
 }
 
 // ---------------------------------------------------------------- 传输

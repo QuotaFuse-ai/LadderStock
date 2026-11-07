@@ -58,5 +58,13 @@ docs/tasks/*
 !docs/tasks/QUOT-439/
 !docs/tasks/QUOT-439/**
 !docs/tasks/QUOT-439/gate-logs/*.log
+# 验收任务产出例外：交付报告与门禁日志随 PR 交付（QUOT-472）；截图仅作评论附件，不入库
+!docs/tasks/QUOT-472/
+!docs/tasks/QUOT-472/README.md
+!docs/tasks/QUOT-472/gate-logs/
+!docs/tasks/QUOT-472/gate-logs/*.log
+!docs/tasks/QUOT-472/gate-logs/*.json
+docs/tasks/QUOT-472/shots/
+docs/tasks/QUOT-472/shots-1280/
 *.docx
 ~$*

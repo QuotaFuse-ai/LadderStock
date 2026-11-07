@@ -7,6 +7,7 @@ import { HomeSearchTrigger } from '../src/components/search/HomeSearchTrigger'
 import { SearchPanel } from '../src/components/search/SearchPanel'
 import type { SearchSource } from '../src/lib/searchCore'
 import { HomeSearch } from '../src/screens/home/HomeSearch'
+import type { HomeAssistantBundle } from '../src/screens/home/homeAssistant'
 import { useHomeSearch } from '../src/screens/home/useHomeSearch'
 
 /**
@@ -23,6 +24,20 @@ import { useHomeSearch } from '../src/screens/home/useHomeSearch'
  */
 
 const PANEL_ID = 'test-search-panel'
+
+/** 深链用例只关心搜索装配件，对话上下文给一份空壳（QUOT-472 起 `HomeSearch` 必传）。 */
+const EMPTY_ASSISTANT: HomeAssistantBundle = {
+  context: {
+    page: '首页',
+    date: '2026-11-06',
+    market: null,
+    watchlist: null,
+    watch: null,
+    validation: null,
+    unavailable: [],
+  },
+  sources: [],
+}
 
 const LADDER: SearchSource = {
   id: 'limit_ladder',
@@ -398,7 +413,10 @@ describe('首页搜索入口（QUOT-357）', () => {
     render(
       <MemoryRouter initialEntries={['/?search=%E6%9C%BA%E5%99%A8%E4%BA%BA']}>
         <Routes>
-          <Route path="/" element={<HomeSearch />} />
+          <Route
+            path="/"
+            element={<HomeSearch assistant={EMPTY_ASSISTANT} date="2026-11-06" />}
+          />
           <Route path="*" element={<div />} />
         </Routes>
       </MemoryRouter>,
