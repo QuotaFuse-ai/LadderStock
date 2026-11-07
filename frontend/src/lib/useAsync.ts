@@ -15,14 +15,20 @@ export interface AsyncResult<T> {
   /**
    * 静默重取：已有数据时不回 loading、不清屏，失败也保留上一次成功的数据（定时刷新用）。
    * 传 `{ manual: true }` 表示用户手动点「刷新」，失败会写进 `refreshError` 供页面提示。
+   *
+   * 返回 `true` = 这一拍取数成功、`false` = 失败（失败原因照常进 `refreshError` / `failures`）。
+   * **不 reject**：`refresh` 常被 fire-and-forget 调用（定时器、事件回调），抛出未处理的
+   * 拒绝会污染全局；退避只需要成败信号，不需要异常。
    */
-  refresh: (options?: { manual?: boolean }) => void
+  refresh: (options?: { manual?: boolean }) => Promise<boolean>
   /** 静默重取进行中；首屏加载时为 false。 */
   refreshing: boolean
   /** 手动刷新最近一次失败的原因；下一次成功取数后清空。 */
   refreshError: unknown
   /** 最近一次成功取数的本地时刻（毫秒时间戳）；用于展示「更新于」。 */
   updatedAt: number | null
+  /** 连续失败次数（一次成功即归零）。轮询退避与「重试」提示读它，不需要屏侧自己数。 */
+  failures: number
 }
 
 type RunMode = 'load' | 'auto' | 'manual'
@@ -39,6 +45,7 @@ export function useAsync<T>(
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<unknown>(null)
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
+  const [failures, setFailures] = useState(0)
 
   const loaderRef = useRef(loader)
   loaderRef.current = loader
@@ -52,14 +59,14 @@ export function useAsync<T>(
   /** 在途期间到点的下一拍，等当前请求结束再发（不打断慢请求）。 */
   const queuedRef = useRef<RunMode | null>(null)
 
-  const runRef = useRef<(mode: RunMode) => void>(() => {})
+  const runRef = useRef<(mode: RunMode) => Promise<boolean>>(() => Promise.resolve(true))
 
-  const run = useCallback((mode: RunMode) => {
-    if (!enabledRef.current) return
+  const run = useCallback((mode: RunMode): Promise<boolean> => {
+    if (!enabledRef.current) return Promise.resolve(false)
     if (inFlightRef.current) {
       // 慢响应：abort 会把这拍和上一拍一起废掉，于是排队等当前请求结束再补一拍。
       if (queuedRef.current !== 'load') queuedRef.current = mode
-      return
+      return Promise.resolve(false)
     }
 
     const seq = ++seqRef.current
@@ -76,26 +83,31 @@ export function useAsync<T>(
       setRefreshing(false)
     }
 
-    loaderRef
+    // 返回 Promise<boolean> 让轮询 hook 判这一拍成败（退避用）；屏侧原有调用忽略返回值不受影响。
+    return loaderRef
       .current(controller.signal)
-      .then((value) => {
-        if (seq !== seqRef.current) return
+      .then((value): boolean => {
+        if (seq !== seqRef.current) return false
         dataRef.current = value
         setData(value)
         setUpdatedAt(Date.now())
         setStatus('ready')
         setError(null)
         setRefreshError(null)
+        setFailures(0)
+        return true
       })
-      .catch((cause: unknown) => {
-        if (seq !== seqRef.current || controller.signal.aborted) return
+      .catch((cause: unknown): boolean => {
+        if (seq !== seqRef.current || controller.signal.aborted) return false
+        setFailures((n) => n + 1)
         if (mode === 'load') {
           setError(cause)
           setStatus('error')
-          return
+          return false
         }
         if (mode === 'manual') setRefreshError(cause)
         // 自动重取失败保留上一帧数据，等下一拍；用户仍可手动「刷新」重试。
+        return false
       })
       .finally(() => {
         // 被 deps 变化 / 卸载取消的请求：新请求已经接管状态，这里不写。
@@ -106,7 +118,7 @@ export function useAsync<T>(
         setRefreshing(false)
         const next = queuedRef.current
         queuedRef.current = null
-        if (next) runRef.current(next)
+        if (next) void runRef.current(next)
       })
   }, [])
   runRef.current = run
@@ -134,10 +146,10 @@ export function useAsync<T>(
   }, [enabled, ...deps])
 
   const reload = useCallback(() => {
-    runRef.current('load')
+    void runRef.current('load')
   }, [])
   const refresh = useCallback((options?: { manual?: boolean }) => {
-    runRef.current(options?.manual ? 'manual' : 'auto')
+    return runRef.current(options?.manual ? 'manual' : 'auto')
   }, [])
-  return { status, data, error, reload, refresh, refreshing, refreshError, updatedAt }
+  return { status, data, error, reload, refresh, refreshing, refreshError, updatedAt, failures }
 }

@@ -11,8 +11,14 @@ import {
   type WatchlistPayload,
 } from '../../api/radar'
 import { useDemoEnabled, useForcedState } from '../../lib/pageState'
+import { useTradingSession } from '../../lib/tradingSession'
 import { useAsync, type AsyncResult } from '../../lib/useAsync'
+import { usePolling } from '../../lib/usePolling'
 import { demoHomeSource, type HomeDemoVariant, type HomeSource } from './demo'
+
+/** 指数条盘中节拍：15 秒（QUOT-470；对照参考页「每 15 秒刷新」）。 */
+export const INDICES_POLL_SECONDS = 15
+const INDICES_POLL_MS = INDICES_POLL_SECONDS * 1000
 
 /**
  * 首页五路取数口的选择（模板同 `limitup/useLimitUpView.ts:30-31,71-76`）。
@@ -146,6 +152,15 @@ export function useHomeBlocks(tradeDate: string) {
   const watch = useAsync((signal) => source.watchSnapshot(signal), [source])
   const validation = useAsync((signal) => source.validation(tradeDate, signal), [source, tradeDate])
 
+  // 盘中门控：交易所挂钟（`Asia/Shanghai`）+ 竞价窗口，休市 / 演示态不轮询（§2.1）。
+  const session = useTradingSession()
+  // 只有指数条按 15s 走轮询；其余四块维持一次性取数，各自刷新由用户触发（QUOT-470 只动指数区）。
+  const indicesPoll = usePolling({
+    intervalMs: INDICES_POLL_MS,
+    enabled: session && !demo,
+    onTick: () => indices.refresh(),
+  })
+
   const views = useMemo(() => {
     const i = asBlock<IndicesPayload>(indices, indicesEmpty, indicesPartial)
     const w = asBlock<WatchlistPayload>(watchlist, (data) => data.items.length === 0)
@@ -159,5 +174,17 @@ export function useHomeBlocks(tradeDate: string) {
   const requests = [indices, watchlist, positions, watch, validation]
   const reloadAll = () => requests.forEach((request) => request.reload())
 
-  return { demo, variant, views, requests, reloadAll }
+  return {
+    demo,
+    variant,
+    views,
+    requests,
+    reloadAll,
+    /** 交易所是否在连续竞价时段（真判定，不是本机钟点）。 */
+    session,
+    /** 指数条这一轮已发请求数（验收「2 分钟 ≈ 8 次」读它）。 */
+    indicesTicks: indicesPoll.ticks,
+    /** 指数条连续失败次数；退避生效时屏侧据此给「重试」提示。 */
+    indicesFailures: indicesPoll.failures,
+  }
 }
