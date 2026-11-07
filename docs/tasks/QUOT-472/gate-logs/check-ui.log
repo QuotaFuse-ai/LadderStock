@@ -1,0 +1,15 @@
+
+> ladderstock-frontend@0.1.0 check:ui
+> node scripts/check-ui-consistency.mjs
+
+PASS  bare-table   裸 <table> 仅允许出现在 components/ui/Table.tsx
+PASS  hex          颜色只能来自 --ldst-* 变量
+FAIL  arbitrary    新刻度先进 tailwind.config.ts / token，不写 p-[13px]
+      src/components/research/ResearchSymbolBar.tsx:219  <span className="text-[10px]">未接入</span>
+      src/components/research/sections/AiDock.tsx:465  'max-w-[88%] whitespace-pre-wrap rounded px-3 py-2 text-body leading-body',
+      src/components/research/sections/EventSection.tsx:474  <span className="ldst-num text-[11px] text-text-muted">{countText(itemStats)}</span>
+PASS  numeric      DataTable 的 numeric 列在组件内统一套 .ldst-num
+PASS  datatable    19 张屏引用：src/screens/home/HomePositionsCard.tsx, src/screens/home/HomeWatchlistCard.tsx, src/screens/industry/IndustryDetailScreen.tsx, src/screens/industry/IndustryMatrixScreen.tsx, src/screens/intraday/IntradayScreen.tsx, src/screens/JournalScreen.tsx, src/screens/limitup/LimitUpScreen.tsx, src/screens/MarketScreen.tsx, src/screens/my-stocks/PortfolioPanel.tsx, src/screens/my-stocks/PortfolioTradesTab.tsx, src/screens/my-stocks/WatchlistPanel.tsx, src/screens/radar/PoolScreen.tsx, src/screens/radar/PositionsScreen.tsx, src/screens/research/ResearchDetailScreen.tsx, src/screens/SettingsScreen.tsx, src/screens/signals/SignalsScreen.tsx, src/screens/ValidateScreen.tsx, src/screens/WatchScreen.tsx, src/screens/WeeklyScreen.tsx
+PASS  durations    hover/press/展开用 duration-fast；抽屉/Toast 的 duration-base 是登记例外
+
+5/6 项通过
