@@ -53,8 +53,11 @@ export interface DockView {
   steps: SkillStep[]
   quickQuestions: DockQuickQuestion[]
   object: AssistantObject
-  /** 已接通的对话通道：目前只有 `/research/{code}` 的页级助手 */
-  channel: { code: string } | null
+  /**
+   * 已接通的对话通道：`research` = `/research/{code}` 的页级助手；
+   * `skill` = `/skills` 页的技能助手（QUOT-476）。`unconnected` 页两样都没有。
+   */
+  channel: { kind: 'research'; code: string } | { kind: 'skill' } | null
   autoSend: boolean
   fallbackCopy: boolean
 }
@@ -179,7 +182,14 @@ export function buildDockView(input: BuildDockViewInput): DockView {
 
   const offlineNotice = input.offlineNotice ?? pkg?.offlineNotice ?? null
   const offlineBlocking = pkg?.status === 'unconnected'
-  const channel = object.code && !offlineBlocking ? { code: object.code } : null
+  // 通道随页面走：有 code 走研究助手；/skills 开放域走技能助手；其余页暂无通道
+  const channel: DockView['channel'] = !offlineBlocking
+    ? object.code
+      ? { kind: 'research', code: object.code }
+      : path.startsWith('/skills')
+        ? { kind: 'skill' }
+        : null
+    : null
 
   const rendered = pkg ? renderDraft(pkg, object, input.initialDraft) : { draft: '', missing: [] }
   const draft = rendered.draft
@@ -266,7 +276,7 @@ export function buildLegacyDockView(input: LegacyDockViewInput): DockView {
       send: true,
     })),
     object: { code: input.code, name: input.name, date: input.date, tab: input.tab },
-    channel: input.code ? { code: input.code } : null,
+    channel: input.code ? { kind: 'research', code: input.code } : null,
     autoSend: false,
     fallbackCopy: true,
   }

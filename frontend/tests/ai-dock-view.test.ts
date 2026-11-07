@@ -97,7 +97,7 @@ describe('开场预填（steps.json 的 dock 模板）', () => {
     })
     expect(view.draft).toContain('「贵州茅台（600519）」')
     expect(view.missingPlaceholders).toEqual([])
-    expect(view.channel).toEqual({ code: '600519' })
+    expect(view.channel).toEqual({ kind: 'research', code: '600519' })
   })
 
   it('/industry/电子 的 {sector} 从路由里取', () => {
@@ -142,6 +142,53 @@ describe('未接通与部分未接通', () => {
       offlineNotice: '这一页只有 A 股段。',
     })
     expect(view.offlineNotice).toBe('这一页只有 A 股段。')
+  })
+})
+
+/**
+ * QUOT-476：对话通道从「有没有 code」扩成两种——
+ * 个股页走 `/api/research/{code}/assistant`（research），
+ * `/skills` 页没有 code，走 `/api/skills/assistant`（skill）。
+ */
+describe('QUOT-476：对话通道类型', () => {
+  it('/skills 开放域页：skill 通道（没有 code 也能发）', () => {
+    const view = buildDockView({ pathname: '/skills/a-share-tape' })
+    expect(view.channel).toEqual({ kind: 'skill' })
+  })
+
+  it('/skills 绑定已接通包：仍是 skill 通道', () => {
+    const view = buildDockView({
+      pathname: '/skills/pkg/a-share-tape',
+      boundSkill: 'a-share-tape',
+    })
+    expect(view.status).toBe('ready')
+    expect(view.channel).toEqual({ kind: 'skill' })
+  })
+
+  it('/skills 绑定未接通包：不接通就不给通道', () => {
+    const view = buildDockView({ pathname: '/skills/pkg/wire-desk', boundSkill: 'wire-desk' })
+    expect(view.offlineBlocking).toBe(true)
+    expect(view.channel).toBeNull()
+  })
+
+  it('/research 有 code：research 通道（routeObject 提供对象时）', () => {
+    expect(
+      buildDockView({ pathname: '/research/600519', object: routeObject('/research/600519') })
+        .channel,
+    ).toEqual({
+      kind: 'research',
+      code: '600519',
+    })
+  })
+
+  it('/research 未接通包压在 code 前面：没有通道', () => {
+    const view = buildDockView({ pathname: '/research/600519', boundSkill: 'wire-desk' })
+    expect(view.offlineBlocking).toBe(true)
+    expect(view.channel).toBeNull()
+  })
+
+  it('非 /skills 的开放域页（首页）仍没有通道', () => {
+    expect(buildDockView({ pathname: '/' }).channel).toBeNull()
   })
 })
 

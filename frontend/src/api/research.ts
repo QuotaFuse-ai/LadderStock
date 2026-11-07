@@ -1017,6 +1017,45 @@ export function askHomeAssistant(
   return askResearchAssistant(HOME_ASSISTANT_SCOPE, payload, signal)
 }
 
+/**
+ * `/skills` 页抽屉的技能助手载荷（QUOT-476）。
+ *
+ * 后端端点是 `POST /api/skills/assistant`（/skills 页没有 code，不能复用
+ * `/api/research/{code}` 路由）；`page_key` / `bound_skill` 随载荷带去，
+ * 服务端 meta 行据此写页面来源，system prompt 换成不含个股深挖预设的版本。
+ */
+export interface SkillAssistantPayload {
+  question: string
+  context: string
+  pageKey?: string
+  boundSkill?: string | null
+}
+
+export async function askSkillAssistant(
+  payload: SkillAssistantPayload,
+  signal?: AbortSignal,
+): Promise<AssistantReply> {
+  const data = await request<unknown>('/api/skills/assistant', {
+    method: 'POST',
+    body: {
+      question: payload.question,
+      context: payload.context,
+      page_key: payload.pageKey ?? null,
+      bound_skill: payload.boundSkill ?? null,
+    },
+    signal,
+    timeoutMs: ASSISTANT_TIMEOUT_MS,
+  })
+  const root = asRecord(data, '技能助手响应')
+  const reply = asString(root.reply)
+  if (!reply) throw parseError('技能助手返回了空回答')
+  return {
+    reply,
+    model: asString(root.model),
+    fetchedAt: asString(root.fetched_at),
+  }
+}
+
 // ---------------------------------------------------------------- 传输
 
 const TIMEOUT_MS = 12000

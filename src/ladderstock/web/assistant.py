@@ -46,6 +46,19 @@ SYSTEM_PROMPT = (
     "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。"
 )
 
+# QUOT-476：/skills 页没有个股深挖页的页面数据，预设跟着页面走——
+# 技能助手只拿页键 / 绑定技能 / 对象三键上下文，口径改为「技能步骤引导 + 不编造」。
+SKILL_SYSTEM_PROMPT = (
+    "你是 LadderStock 研究助手，正在辅助一个页面技能包的研究流程。"
+    "只依据【页级上下文】里给出的信息回答，不要编造其中没有的数字、日期或结论。\n"
+    "- 上下文缺失的行情 / 财报 / 事件，就直说「这一项我还没拿到」，不要用一般知识补。\n"
+    "- 用户的问题可能对应技能包的某一步，先顺着该步骤要研究什么来引导；"
+    "上下文没给出技能步骤时，就按问题本身回答。\n"
+    "- 不要给出买卖建议，也不要预测价格。\n"
+    "- 回答用简洁中文，必要时分点；不要输出 JSON，不要使用 Markdown 标记"
+    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。"
+)
+
 
 class AssistantRequest(BaseModel):
     """页面发来的最小载荷：问题 + 已脱敏的上下文文本。"""
@@ -54,6 +67,17 @@ class AssistantRequest(BaseModel):
     context: str = ""
     date: str | None = None
     tab: str | None = None
+
+
+# QUOT-476：/skills 页没有 code，抽屉把页面键 / 绑定技能 / 对象拼进 context 文本后
+# 再带上这三个键，方便日志与服务端理解来源；三者均可缺省。
+class SkillAssistantRequest(BaseModel):
+    """技能页抽屉发来的载荷：问题 + 页面键上下文（与 `/research` 同一文本约定）。"""
+
+    question: str = ""
+    context: str = ""
+    page_key: str | None = None
+    bound_skill: str | None = None
 
 
 class AssistantFailure(RuntimeError):
@@ -104,15 +128,21 @@ def _is_timeout(exc: BaseException) -> bool:
 
 
 def ask(
-    *, question: str, context: str, day: str | None = None, tab: str | None = None
+    *,
+    question: str,
+    context: str,
+    day: str | None = None,
+    tab: str | None = None,
+    page_label: str = "个股深挖",
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> dict[str, Any]:
     """跑一轮问答。成功返回 `{reply, model, fetched_at}`；失败抛 `AssistantFailure`。"""
     client, model = _load_client()
     header = "【页级上下文】\n" + (context.strip() or "（这一页的数据还没取到。）")
-    meta = f"页面：个股深挖 · 视图 {tab or '未标注'} · 日期 {day or '未标注'}"
+    meta = f"页面：{page_label} · 视图 {tab or '未标注'} · 日期 {day or '未标注'}"
     user = f"{meta}\n{header}\n\n【问题】\n{question.strip()}"
     try:
-        reply = client.complete(model, SYSTEM_PROMPT, user, json_mode=False)
+        reply = client.complete(model, system_prompt, user, json_mode=False)
     except (UnconfiguredError, BoundaryViolation) as exc:
         raise AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}") from None
     except CliUnavailable as exc:
@@ -148,6 +178,37 @@ def ask(
     }
 
 
+def _question_payload_error(question: str, context: str) -> JSONResponse | None:
+    """问题 / 上下文长度校验，`/research` 与 `/skills` 两个端点共用。"""
+    if not question:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "问题不能为空", "code": "empty_question", "retryable": False},
+        )
+    if len(question) > MAX_QUESTION_CHARS:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": f"问题过长（上限 {MAX_QUESTION_CHARS} 字）",
+                "code": "question_too_long",
+                "retryable": False,
+            },
+        )
+    if len(context) > MAX_CONTEXT_CHARS:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": (
+                    f"页级上下文过长（上限 {MAX_CONTEXT_CHARS} 字），"
+                    "请缩小页面数据后重试"
+                ),
+                "code": "context_too_long",
+                "retryable": False,
+            },
+        )
+    return None
+
+
 def build_router() -> APIRouter:
     """`POST /api/research/{code}/assistant`：页级研究助手一问一答。"""
     router = APIRouter(prefix=ASSISTANT_PREFIX, dependencies=[Depends(_guard)])
@@ -155,34 +216,46 @@ def build_router() -> APIRouter:
     @router.post("/{code}/assistant")
     def research_assistant(code: str, body: AssistantRequest) -> Any:
         question = body.question.strip()
-        if not question:
-            return JSONResponse(
-                status_code=422,
-                content={"detail": "问题不能为空", "code": "empty_question", "retryable": False},
-            )
-        if len(question) > MAX_QUESTION_CHARS:
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "detail": f"问题过长（上限 {MAX_QUESTION_CHARS} 字）",
-                    "code": "question_too_long",
-                    "retryable": False,
-                },
-            )
-        if len(body.context) > MAX_CONTEXT_CHARS:
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "detail": (
-                        f"页级上下文过长（上限 {MAX_CONTEXT_CHARS} 字），"
-                        "请缩小页面数据后重试"
-                    ),
-                    "code": "context_too_long",
-                    "retryable": False,
-                },
-            )
+        error = _question_payload_error(question, body.context)
+        if error is not None:
+            return error
         try:
             return ask(question=question, context=body.context, day=body.date, tab=body.tab)
+        except AssistantFailure as exc:
+            return _failure_response(exc)
+
+    return router
+
+
+SKILLS_PREFIX = "/api/skills"
+
+
+def build_skills_router() -> APIRouter:
+    """`POST /api/skills/assistant`（QUOT-476）：/skills 页抽屉的一问一答。
+
+    与 `/api/research/{code}/assistant` 同一套客户端与降级口径，差别只有两点：
+    system prompt 不含个股深挖预设（`SKILL_SYSTEM_PROMPT`）；meta 行写页面键与
+    绑定技能，而不是个股深挖的视图 / 日期。
+    """
+    router = APIRouter(prefix=SKILLS_PREFIX, dependencies=[Depends(_guard)])
+
+    @router.post("/assistant")
+    def skill_assistant(body: SkillAssistantRequest) -> Any:
+        question = body.question.strip()
+        error = _question_payload_error(question, body.context)
+        if error is not None:
+            return error
+        page_label = "研究助手 · 技能页"
+        if body.bound_skill:
+            page_label += f" · {body.bound_skill}"
+        try:
+            return ask(
+                question=question,
+                context=body.context,
+                tab=body.page_key,
+                page_label=page_label,
+                system_prompt=SKILL_SYSTEM_PROMPT,
+            )
         except AssistantFailure as exc:
             return _failure_response(exc)
 
@@ -194,9 +267,13 @@ __all__ = [
     "ASSISTANT_TIMEOUT_SEC",
     "MAX_CONTEXT_CHARS",
     "MAX_QUESTION_CHARS",
+    "SKILLS_PREFIX",
+    "SKILL_SYSTEM_PROMPT",
     "SYSTEM_PROMPT",
     "AssistantFailure",
     "AssistantRequest",
+    "SkillAssistantRequest",
     "ask",
     "build_router",
+    "build_skills_router",
 ]
