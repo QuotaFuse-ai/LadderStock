@@ -758,12 +758,13 @@ class RadarPlane:
     # -------------------------------------------------------------- 指数条 §9.1
 
     def indices_view(self) -> dict[str, Any]:
-        """首页指数条（QUOT-380）：一次 `index_quote` 请求投影四格。
+        """首页指数条（QUOT-380 / QUOT-471）：一次 `index_quote` + 两次 `index_quote_us` 投影八格。
 
         公开行情面，**不加回环独占**（判据与 `/api/news` `/api/pool` 同一条）。
-        四格的顺序、条数、名称由 `core.indices` 的白名单写死；peer 回什么就用什么，
-        取不到的格子是 `available=false` + 原因，`data_source_status` 走
-        `ok / partial / missing`（全挂是 missing，不是 404，也不伪造行）。
+        八格的顺序、条数、名称由 `core.indices` 的白名单写死（A 股 4 + 美股 2 + 港股 2）；
+        peer 回什么就用什么，取不到的格子是 `available=false` + 原因，`data_source_status` 走
+        `ok / partial / missing`（全挂是 missing，不是 404，也不伪造行）。港股两格无合规源，
+        恒为「源未接入」占位（DEC-006 闸门 4）。
         """
         registry = self._active_registry()
         active = registry if registry is not None else ProviderRegistry()

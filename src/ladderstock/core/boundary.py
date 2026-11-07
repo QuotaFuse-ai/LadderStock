@@ -585,6 +585,13 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # 口径由调用方 `core/indices.py` 钉住，登记本身不做任何过滤。
         _b("index_quote", "tickhub", "index_quote", "replace", "timestamp",
            note="指数实时报价（首页指数条用）；不进 sync 台账，timestamp 不作交易日水位"),
+        # 美股指数实时报价（QUOT-471）：首页指数条的美股 2 格，由 TickHub-US 的
+        # `th_us_get_quote` 逐 symbol 取（`DJI` / `IXIC`，一次一个 symbol）。
+        # 与 CN 的 `index_quote` **同构**：现取现显、不进 sync.yaml / 不落库，
+        # `timestamp`/`fetched_at` 不作交易日水位。回包带 `compliance_tier` 与
+        # `warnings`（sina = Tier C），由 `data/adapters/tickhub_us.py` 落进信封。
+        _b("index_quote_us", "tickhub_us", "th_us_get_quote", "replace", "timestamp",
+           note="美股指数实时报价（首页指数条美股格）；逐 symbol 取，不进 sync 台账"),
         _b("dragon_tiger", "tickhub", "dragon_tiger", "replace", "trade_date",
            ("dragon_tiger_backup",), "备源为交易所官方榜"),
         _b("dragon_tiger_seats", "tickhub", "dragon_tiger_seats", "replace", "trade_date",

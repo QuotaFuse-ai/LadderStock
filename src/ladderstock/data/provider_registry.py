@@ -47,6 +47,7 @@ from ladderstock.data.adapters import (
     RateLimited,
     from_data_envelope,
     from_tool_response,
+    from_us_tool_response,
     from_wire_envelope,
 )
 from ladderstock.data.adapters.tickhub import RATE_LIMIT_NAME
@@ -54,8 +55,13 @@ from ladderstock.errors import EXIT_CONFIG, EXIT_SOURCE, LadderStockError
 
 # 每 peer 的并发上限与最小调用间隔：配置里没有这两项（schema 冻结），
 # 作为数据层常量写死并记录在 docs/SOURCES.md。目的是不打爆 peer 限流。
-DEFAULT_PEER_CONCURRENCY: dict[str, int] = {"tickhub": 4, "wire": 2, "senate": 2}
-DEFAULT_PEER_MIN_INTERVAL_SEC: dict[str, float] = {"tickhub": 0.05, "wire": 0.2, "senate": 0.2}
+DEFAULT_PEER_CONCURRENCY: dict[str, int] = {"tickhub": 4, "tickhub_us": 2, "wire": 2, "senate": 2}
+DEFAULT_PEER_MIN_INTERVAL_SEC: dict[str, float] = {
+    "tickhub": 0.05,
+    "tickhub_us": 0.2,
+    "wire": 0.2,
+    "senate": 0.2,
+}
 
 DEFAULT_TTL_SEC = 60.0
 MAX_HEALTH_EVENTS = 500
@@ -1175,6 +1181,16 @@ class ProviderRegistry:
     ) -> LadderEnvelope:
         if spec.via == "tickhub":
             return from_tool_response(
+                spec.dataset,
+                response,
+                data_as_of=trade_date,
+                topic=spec.dataset,
+                tool=spec.tool,
+            )
+        if spec.via == "tickhub_us":
+            # US 侧回自己的 DataEnvelope 形状（非 CN 的 ok/data/meta），走独立适配器
+            # （QUOT-471）；它不展开记录行，整包落一行，合规字段落进 `source_detail`。
+            return from_us_tool_response(
                 spec.dataset,
                 response,
                 data_as_of=trade_date,
