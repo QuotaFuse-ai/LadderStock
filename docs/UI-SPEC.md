@@ -1,11 +1,11 @@
-# 看板信息架构与视觉规范（20 屏）
+# 看板信息架构与视觉规范（21 屏）
 
-- 版本：v1.16
-- 日期：2026-11-05
+- 版本：v1.19
+- 日期：2026-11-06
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
-- 代码事实基准：`origin/main` @ `270caf8`；v1.16 的 §3.5 / §10 首页行 / §11.5 按 `origin/main` @ `997c769` 复核，§3.18 模块数口径按 DEC-056 复核。本文所有 `文件:行号`（省略 `frontend/src/` 前缀）都在对应基准上核对过。
+- 代码事实基准：`origin/main` @ `270caf8`；v1.16 的 §3.5 / §10 首页行 / §11.5 按 `origin/main` @ `997c769` 复核，§3.18 模块数口径按 DEC-056 复核。v1.19 的 §0 / §2 / §3.11 / §3.21 / §4.5 / §7.1 / §10 / §11.11 / §11.21 按 `origin/main` @ `6db2cd7` 复核（QUOT-431 / 434 / 435 全部合入后的状态）。本文所有 `文件:行号`（省略 `frontend/src/` 前缀）都在对应基准上核对过。
 - 唯一真源：`frontend/tokens.json`（v2.0.0）→ 由 `frontend/scripts/gen-tokens.mjs` 生成 `styles/tokens.css` 与 `tailwind.config.ts` 的 `theme.extend`。本文与生成物冲突时**以生成物为准并回改本文**（v1.1 就是这样做的，理由见 §12.4）。
 
 ## 变更记录
@@ -31,11 +31,12 @@
 | v1.16 | 2026-11-05 | 补 S3 合入后首页条目同步（QUOT-409；v1.7 变更行承诺的「§3.5 与 §11.5 在 S3 接线合入时按 SPEC-HOME-V2 同步」）。**只改文档、不改代码 / token / 组件**。**§3.5 整节重写**：旧「摘要 + TemperatureBar + 5 张指标卡」「连板梯队 Top 10 + 题材强度 Top 5」条目及其失效行号全部替换为 S3 实际落地的四块（A 大盘与全球指数 → B 今天，想研究什么？→ C 我的自选 → D 我的持仓）+ E 待办 / F 最近异动下移，行号按 `997c769` 的 `HomeScreen.tsx` 与 `screens/home/*` 逐条复核；「禁止」条款的数据链路清单由旧四接口改为代码实际五路：`GET /api/indices` / `GET /api/watchlist` / `GET /api/positions?date=` / `GET /api/watch/snapshot` / `GET /api/validation?date=`，并明写不再调用 `/api/sentiment` `/api/ladder`。**§10 首页行**（本单正文称「§8 路由映射表」，该表 v1.1 起编号为 §10）接口清单同步为上述五路，B 块注明走本机 `lib/searchCore` 检索、不发请求。**§11.5** 六条旧首页验收全部作废，替换为对四块可执行的 12 条整屏级条目，逐块细节指向 `SPEC-HOME-V2` §9。**模块数口径核对**：§3.5 不登记模块数（首页块集合按 `HomeScreen.tsx` 装配顺序读，不是注册表），§3.18 设置页 `N 个模块 · 运行中 M` 补注来源 = 注册表实际出卡数（`peers:` 条数 + 工具组件数，DEC-056 / QUOT-420），全文件无写死的模块个数或模块名清单。**随 main 同步**：QUOT-441 把首页空态的 `ldst sync --date` 命令提示改为「去行情页同步」，本版 §3.5 六态与 §11.5 相应条目按新代码更新；QUOT-412 的 K 线规格（`docs/specs/SPEC-KLINE-MODULE.md`）与 §7.1 图表 token 行属 main 既有内容，本版未覆盖、未删除。版本号说明：本单原定登记 v1.10，v1.10–v1.12 已被 QUOT-354 / QUOT-396 / QUOT-342 占用、v1.13 被 QUOT-441 占用、v1.14/v1.15 被 QUOT-442 占用，顺延为 v1.16。两处**已知偏差按代码登记、本版不改代码**：① A 块网格实现为 `grid-cols-2 … desk:grid-cols-4`（1024–1279 档 2 列 × 4 行），与 SPEC-HOME-V2 §2.1/§9 的「1024 起 4 列 × 2 行」不一致，待确认后另立单；② C 块卡头「管理自选 →」与 `/watchlist` 页已由 QUOT-419 落地，SPEC-HOME-V2 §4.4 / §12-L07「v2 首版不放」的前提（当时无自选页）已不成立。§0 不覆盖清单的 DEC-052 标注 v1.9 已加，本版不动。 |
 | v1.17 | 2026-11-05 | 单顶栏（QUOT-457 / DEC-063）：全平台由「顶栏 + 命令条 + 页头条」三条横栏收敛为**只留顶栏**。`PageHeader` 不再渲染横栏（去掉底色 / 分隔线 / sticky / `min-h-topbar`），标题改为 `h1.sr-only`（视觉标题由面包屑承担，读屏与测试仍有一级标题）；`subtitle` / `badge` / `meta` 与次级 `actions` 合成内容第一行的状态行；主操作「刷新」经 `PageToolsSlotContext` 用 `createPortal` 送进顶栏（无外壳时就地渲染），全屏只有一颗。`PageCommandBar` 从 `main` 移到顶栏、由「一行」改为「图标按钮 + `role="dialog"` 浮层」（命令名 / `ldst <argv>` / 运行 / 状态 / 日志尾），演示态或本页无命令时整颗不渲染（DEC-061 白名单不变）；页签 `SectionNavPills` 仍在内容区第一行，数据源仍是 `NAV_SECTIONS`。§2 示意图、标题层级 / 内容状态行 / 页签位置 / 顶栏高度 / 单顶栏 / 顶栏工具区六行同步重写。**§3 各屏「工具栏」行中「右侧唯一刷新」「主操作在最右」的表述按本版失效**：刷新在顶栏，次级操作留在内容状态行，其余字段与用例不变。证据：`tests/topbar-single-bar.test.tsx`（4 例）、`tests/page-command-bar.test.tsx`（4 例）；`typecheck` / `test`（53 文件 515 例）/ `build` 全绿。 |
 | v1.18 | 2026-11-05 | 候选池面板自动刷新（QUOT-421，父任务 QUOT-375 验收项 2）：`/pool` 每 30 秒**静默重取**一次 `/api/pool`，60 秒内必然看到新数值；静默路径不回 loading、不清屏，单拍失败保留上一帧数据等下一拍（不把好数据换成错误页）。**慢响应**（单次请求超过一拍）不打断在途请求：到点只记一次待补拍，当前请求 settle 后再发起，`refreshing` 在每次请求 settle 后必定复位（不会因 aborted 永久卡在「正在刷新…」）。内容状态行新增「更新于 HH:MM:SS」（重取中写「正在刷新…」）；刷新按钮在顶栏（v1.17 单顶栏），手动「刷新」走静默路径，**失败时保留旧数据并显示 `Banner danger`「刷新失败」+ 原因 + 重试**。演示源（固定夹具）与 `?state=` 强制态不轮询。规范落点：§3.10 补「自动刷新」行并改工具栏行、§11.10 补一条走查项。证据：`frontend/tests/quot-421-pool-auto-refresh.test.tsx`（假时钟走完一拍：新数值与 fetched_at 上屏、不闪骨架、单拍失败保留旧值、慢响应不自我 abort 且 `refreshing` 复位、手动失败有反馈、演示态不轮询）；`typecheck` / `test` / `check:ui` 全绿。 |
+| v1.19 | 2026-11-06 | 「我的股票」三模块文档收口（QUOT-440；DEC-058 / 059 / 060 / 065 / 066）。**只改文档，不改代码 / 设计**。§0 第 11 屏由「我的持仓 `/positions`」改为「我的股票 `/my-stocks?tab=watch\|hold`」：一页两标签，自选为默认；旧 `/watchlist` → `?tab=watch`、`/positions` → `?tab=hold`，客户端 `replace` 重定向，不再单独挂屏。**屏数 20 → 21**：QUOT-435 交付提醒页 `/inbox`，新登记为第 21 屏（新增 §3.21 与 §11.21），§0 / §2 / §4.5 / §6 / §10 / §11 的屏数口径全部对齐。§3.11 重写为两标签：**3.11-A 自选**七列（名称 / 代码 / 现价 / 涨跌% / PE(TTM) / PB / 换手%，每列可排序；缺数 `—` + 单元格 `title` 原因；批量添加先预览后确认；点行渲染 K 线卡；移除 `aria-label` 含代码）；**3.11-B 持仓**改为 QUOT-434 实际落地的 `PortfolioPanel`——数量、成本、市值、盈亏、已实现、分红全部由 `GET /api/portfolio` 按流水重放推出，页面不重算，含成本法 `Segmented`、人民币合计、记一笔、旧仓迁移卡、问题流水横幅、收益 / 交易流水两子页。隐私遮罩改为**遮 数量 / 成本价 / 市值 / 浮动盈亏 / 已实现 / 分红，不遮 现价 与 盈亏%**；此前登记的「隐私模式未禁用排序」偏差已由 QUOT-434 收口（`sortable(masked, …)`，`tests/portfolio-panel.test.tsx:333`），本版删除该条。**剩余偏差按代码登记**：自选页无自动轮询、无页内搜索（仅挂载 / 手动 / 增删后取数）。**K 线卡**按实际 ECharts 配置登记：按需注册 Candlestick，蜡烛 + MA5/10/20/60 四条线 + 成交量副图（`xAxisIndex:1`）+ inside/slider 双 dataZoom，`zoomOnMouseWheel:'ctrl'`，高 420；数据位空值 `'-'`、文本空值 `—`，红涨绿跌。§7.1 补 6 个图表令牌深浅值。§3.21 提醒页只列 console / desktop 两条本机渠道与只读定时任务，不出现 webhook / 免打扰的空 UI。**未落地不提前写**：持仓「体检穿透」`/api/portfolio/xray`（QUOT-437）与「历史回放」`/api/portfolio/replay`（QUOT-438）接口与屏都不存在，`GET /api/events/timeline` 同样不存在（事件日历实读 `GET /api/events?month=&code=`），见 `SPEC-RESEARCH-PAGES` §8.2 缺口表。版本号说明：本单原定 v1.17，但 v1.17 / v1.18 已由 QUOT-457 / QUOT-421 占用且顶部版本行停在 v1.16（历史漂移），本版补齐为 v1.19。 |
 
 
 ## 0. 范围与非目标
 
-**覆盖（20 屏）**——路由以 `App.tsx` 的 `ROUTE_ELEMENTS` 为准（v1.1 的 18 屏 + QUOT-302 的 `/intraday` + QUOT-344 的 `/review/ai`），侧栏入口以 `components/Layout.tsx` 的 `NAV_SECTIONS` 为准。
+**覆盖（21 屏）**——路由以 `App.tsx` 的 `ROUTE_ELEMENTS` 为准（v1.1 的 18 屏 + QUOT-302 的 `/intraday` + QUOT-344 的 `/review/ai` + QUOT-435 的 `/inbox`），侧栏入口以 `components/Layout.tsx` 的 `NAV_SECTIONS` 为准。
 
 | # | 屏 | 路由 | 侧栏入口（分组 · 标签） | 契约码 | v1.0 |
 |---|---|---|---|---|---|
@@ -43,13 +44,13 @@
 | 2 | 盯盘 | `/watch` | 盯盘 · 盘中信号 | P-03 | 已覆盖 |
 | 3 | 验证 | `/validate` | 验证 · 验证 | P-06 | 已覆盖 |
 | 4 | 日志 | `/journal` | 日志 · 交易日志 | P-05 | 已覆盖 |
-| 5 | 首页 | `/`（index，`App.tsx:54`） | 首页 · 首页（单页分组） | P-01 | 新增 |
+| 5 | 首页 | `/`（index，`App.tsx:65`） | 首页 · 首页（单页分组） | P-01 | 新增 |
 | 6 | 市场 | `/market?tab=sentiment\|ladder\|theme` | 市场 · 情绪温度 / 连板梯队 / 题材轮动（3 个入口同屏） | P-02 | 新增 |
 | 7 | AI周报 | `/weekly` | 复盘 · AI周报 | — | 新增 |
 | 8 | 资讯雷达 | `/news`（**不是** `/radar`） | 市场 · 资讯雷达 | — | 新增 |
 | 9 | 事件日历 | `/calendar` | 我的股票 · 事件日历 | — | 新增 |
 | 10 | 候选池 | `/pool` | 复盘 · 候选池 | — | 新增 |
-| 11 | 我的持仓 | `/positions` | 我的股票 · 我的持仓 | — | 新增 |
+| 11 | 我的股票（自选 + 持仓，一页两标签；持仓由流水推算） | `/my-stocks?tab=watch\|hold`（旧 `/watchlist` / `/positions` 重定向） | 我的股票 · 我的股票 | — | 新增（v1.19，QUOT-431 / DEC-059；持仓标签 QUOT-434 / DEC-065） |
 | 12 | 产业矩阵 | `/industry` | 无侧栏入口（深链） | — | 新增 |
 | 13 | 行业详情 | `/industry/:name` | 无侧栏入口（矩阵下钻） | — | 新增 |
 | 14 | 产业信号 | `/signals` | 无侧栏入口（深链） | — | 新增 |
@@ -59,18 +60,23 @@
 | 18 | 设置 | `/settings` | 侧栏底部固定项 | P-07 | 新增 |
 | 19 | 盯盘·竞价与盘中 | `/intraday`（QUOT-302 新增） | 盯盘 · 竞价与盘中 | — | 新增 |
 | 20 | AI复盘（**模型面**） | `/review/ai`（QUOT-344 新增） | 复盘 · AI复盘 | — | 新增（S2 已落正文：§3.19 / §11.20，DEC-049） |
+| 21 | 提醒（本机收件箱） | `/inbox`（QUOT-435 新增） | 我的股票 · 提醒 | — | 新增（v1.19，DEC-058；§3.21 / §11.21） |
 
-> 任务书里的 `/radar`、`/radar/pool` 等路由在代码里不存在：雷达家族的实际路由是 `/news` `/calendar` `/pool` `/positions`（`App.tsx:65-68`）。本规范一律按代码写。
+> 任务书里的 `/radar`、`/radar/pool` 等路由在代码里不存在：雷达家族的实际路由是 `/news` `/calendar` `/pool`（`App.tsx:80-82`）；`/positions` 与 `/watchlist` 自 v1.19 起是**只重定向、不挂屏**的旧深链（`App.tsx:89-90`，指向 `/my-stocks?tab=hold` / `?tab=watch`），仍计入路由表、不计入 21 屏。本规范一律按代码写。
 
 **不覆盖（明确不做）**：
 
 - 任何行情采集、数据清洗、指标计算逻辑（数字只由程序算，AI 只写叙述）。
 - 交易日志 / 持仓 / 自选的网络读写（隐私数据只进本机 SQLite，`journal*` 不经 HTTP）。
   **已开的两个回环口子**（不改写上面这句原文，只在清单上标注口径）：
-  **持仓**按 DEC-033 开读写面，**自选**按 DEC-052 只开**一条只读**路由
-  `GET /api/watchlist`（回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，只 GET、
-  增删只走本机 CLI `ldst watch add|rm|list`，`note` 不出）。
-  **交易日志仍一条 HTTP 路由都不开**（`/api/journal/stats` 只出聚合数字那条边界不动）。
+  **持仓快照**按 DEC-033 开读写面；**持仓账本**按 DEC-065 开
+  `GET /api/portfolio`、`/api/portfolio/perf` 与 `/api/portfolio/ledger*`；
+  **自选**读面按 DEC-052（`GET /api/watchlist`），写面按 DEC-055
+  （`POST /api/watchlist`、`POST /api/watchlist/{code}/delete`）；
+  **提醒收件箱**按 DEC-058 开 `GET /api/inbox` 与两条标已读
+  （`POST /api/inbox/{id}/read`、`POST /api/inbox/read-all`）——
+  全部回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，`note` 不出。
+  交易日志仍一条 HTTP 路由都不开（`/api/journal/stats` 只出聚合数字那条边界不动）。
 - 买卖建议、目标价、收益预测（产品边界：复盘辅助，不输出交易信号）。
 - 新增数据源或"某个 peer 挂了就换一家"的降级（只允许同 peer 备工具 → 缓存回放）。
 - **视口 < 1024px**：v1.0 §2 写的「<1024 侧栏折叠为顶部横向导航」「<720 表格转卡片列表」在 `270caf8` 上没有任何实现（`Layout.tsx:194` 只有 `w-sidebar` / `rail:w-sidebar-rail` 两档，`rail` = `max-width:1279px`）。v1.1 把最低支持视口正式定为 `--ldst-bp-min: 1024px`，窄屏适配移出规范（DEC-040 §3，理由见 §12.4-B）。
@@ -82,9 +88,9 @@
 2. **状态优先**：任何需要用户保持上下文的地方（复盘正文、未提交验证条件），刷新后必须可恢复或明确说"需重取"。不可恢复时**说清原因**，不给空页面。
 3. **不编造数据**：未接入、过期、降级、演示四种状态都必须显式可见；宁可显示「—」与原因，也不显示占位数值（`lib/format.ts:10 MISSING = '—'`）。
 4. **降级可见**：`freshness` / `source_status` / AI 降级 / 导出降级 / **演示数据**，全部有文字徽标，颜色只是辅助。
-5. **隐私不出本机**：日志与持仓常驻隐私说明（`radar/PositionsScreen.tsx:84-99`）；界面不出现"同步到云端""分享"类入口。
-6. **一致优于新奇**：全 20 屏共用一套外壳（`components/Layout.tsx` + `PageShell`）、一套徽标、一套空态、一套表体；例外必须在本文件登记。
-7. **一份实现，不许各写一套**：同一语义（溯源徽标、"接口未接入"空态、指标卡阵、状态条）在 20 屏里只允许有一个实现；需要差异时用 props，不复制粘贴（v1.1 实测有 4 份 `SourceBadge`、3 份"接口未接入"文案，全部列入 §12.5）。
+5. **隐私不出本机**：隐私说明是一份组件（`ui/PrivacyNotice.tsx:23-44`），消费方 = 持仓标签 `PortfolioPanel.tsx:292`、自选标签 `WatchlistPanel.tsx:321`、首页持仓卡 `HomePositionsCard.tsx:197`；界面不出现"同步到云端""分享"类入口。
+6. **一致优于新奇**：全 21 屏共用一套外壳（`components/Layout.tsx` + `PageShell`）、一套徽标、一套空态、一套表体；例外必须在本文件登记。
+7. **一份实现，不许各写一套**：同一语义（溯源徽标、"接口未接入"空态、指标卡阵、状态条）在 21 屏里只允许有一个实现；需要差异时用 props，不复制粘贴（v1.1 实测有 4 份 `SourceBadge`、3 份"接口未接入"文案，全部列入 §12.5）。
 
 ## 2. 全局外壳
 
@@ -133,10 +139,10 @@
 | 键盘 | 首元素「跳到主内容」（`Layout.tsx:191`）；Tab 顺序与视觉顺序一致；`main` 可聚焦（`tabIndex=-1`） | `Layout.tsx:191,328` |
 | 焦点可见 | `:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible` 走 `--ldst-focus-ring` | `styles/index.css:30` |
 | 提示条 | `PersistenceBanner` 在 `main` 之上（`Layout.tsx`），页面级 `Banner` 在内容状态行之下；同类最多 2 条，其余收进「另有 N 条提示」 | `PersistenceBanner.tsx:22` |
-| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（每日复盘 / AI复盘 / AI周报 / 候选池，QUOT-344 / DEC-046 拆三独立入口）→ 日志（交易日志）→ **我的股票**（我的持仓 / 事件日历）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；「接入 AI」动作与设置固定在侧栏底部（主题入口在顶栏，侧栏不再放第二份，DEC-062）（QUOT-304 / DEC-044；接入 AI 见 v1.5） | `Layout.tsx` `NAV_SECTIONS` |
+| 导航顺序 | 首页 → 市场（3 段 + 资讯雷达）→ 盯盘（盘中信号 / 竞价与盘中）→ 复盘（每日复盘 / AI复盘 / AI周报 / 候选池，QUOT-344 / DEC-046 拆三独立入口）→ 日志（交易日志）→ **我的股票**（我的股票 / 事件日历 / 提醒）→ 验证（验证 / 涨停样本）→ 产业研究（产业研究 / 产业信号）→ 个股深挖；「接入 AI」动作与设置固定在侧栏底部（主题入口在顶栏，侧栏不再放第二份，DEC-062）（QUOT-304 / DEC-044；自选与持仓合为一页两标签见 v1.19 / DEC-059；「提醒」是 QUOT-435 补上的组内第三项，见 DEC-058；接入 AI 见 v1.5） | `Layout.tsx` `NAV_SECTIONS`、`lib/nav.ts:113-122` |
 | 侧栏本机说明 | 「仅监听本机回环 · 草稿只存本机 IndexedDB」常驻 | `Layout.tsx:320-322` |
 
-**20 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组、QUOT-344 给 `/review/ai` 建独立入口后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
+**21 屏导航可达性**：QUOT-300 补上 `/industry` `/signals` `/research` 入口、QUOT-304 补齐「我的股票」组、QUOT-344 给 `/review/ai` 建独立入口后，**全部路由都有侧栏入口或由有入口的页面链入**（`/industry/:name`、`/research/:code`、`/research/:code/report` 由落地页链入）；`frontend/tests/nav-routes.test.tsx` 双向断言守住这一点。§3 的「入口」列必须写明用户实际怎么走到该屏，写不出路径的按 R-05 处理。
 
 ## 3. 逐屏信息架构
 
@@ -293,7 +299,7 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 
 **禁止**：盈亏排行榜、收益预测、"AI 点评你的交易"。
 
-**v1.1 补充**：「我的持仓」（§3.11）与本页同为 `本机私有`，隐私信息条规格同源；两屏必须使用同一个 `PrivacyNotice` 实现，当前只有持仓有 → R-25。
+**v1.1 补充**：「我的股票 · 持仓标签」（§3.11-B）与本页同为 `本机私有`，隐私信息条规格同源；两屏必须使用同一个 `PrivacyNotice` 实现，当前只有持仓有 → R-25。
 
 ### 3.5 首页（`/`，P-01）— 主任务：开盘前 5 分钟判断"今天有没有要做的事"
 
@@ -365,13 +371,17 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「市场」分组「事件日历」 | `Layout.tsx:80` |
+| 入口 | 侧栏「我的股票」分组「事件日历」（v1.19 随 DEC-059 同步；此前误记为「市场」组） | `nav.ts:117` |
 | 工具栏 | 标题「事件日历」；subtitle `${month} · N/N 小节有源 · 规则抽取 N 条`；右侧 `‹ 本月 › 刷新` | `CalendarScreen.tsx:371-414` |
 | 主区 | `grid-cols-[minmax(0,1fr)_360px] desk:grid-cols-[…_400px]`：月格（`grid-cols-7 gap-1`，格 `min-h-[76px] p-1.5`）+ 当日面板；下方「小节状态」卡（`gap-3 p-4 desk:grid-cols-2`） | `CalendarScreen.tsx:508,125-178,308` |
 | 六态 | 整屏 5 态齐全；**月格无自身 loading/empty/error**，空白天只渲染空白块 | `CalendarScreen.tsx:420-506,135` |
 | 溯源 | 小节状态徽标 `有源 · N 条` / `有数据源（降级）` / `暂无数据源`（`ok/warn/flat`）+ `非日历数据源` 徽标 + `data_source`/`tool`/`note` 文本 | `CalendarScreen.tsx:314-337,266` |
 
 **口径**：事件由后端规则抽取，页面不二次判定（`NewsScreen.tsx:324` 已声明，本页同样适用）。
+
+**未落地（QUOT-436，本版不提前登记）**：按日时间轴、7 / 30 / 90 天窗口与 `gaps` 展示尚未合入；
+当前页面只有月视图 + 当日面板。后端也**没有** `/api/events/timeline`，实际接口是
+`GET /api/events?month=&code=`（见 `SPEC-RESEARCH-PAGES` §8.2）。
 
 ### 3.10 候选池（`/pool`）— 主任务：把复盘产出的候选按分项拆开核对
 
@@ -387,17 +397,63 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 
 **数字**：`PartCell` 缺失走 `—`+「无数据（未核实）」（`PoolScreen.tsx:53-59`，合格）；抽屉权重缺失渲染 `0.0%`（R-07）；「原始输入」单元格数字未套 `.ldst-num`（R-08）。
 
-### 3.11 我的持仓（`/positions`）— 主任务：核对本机持仓的成本、市值与集中度
+### 3.11 我的股票（`/my-stocks?tab=watch|hold`）— 主任务：核对自选七列，以及持仓的成本、市值、收益率
+
+**一页两标签**（QUOT-431 / DEC-059）。标签解析顺序：URL `?tab=` → 本机 `localStorage['ldst.my-stocks.tab']` → `watch`；切换标签用 `replace` 写回 URL 并记住偏好。旧 `/watchlist` → `?tab=watch`、`/positions` → `?tab=hold`，只重定向、不再单独挂屏。`<Tabs ariaLabel="我的股票">` 两项文案固定为 **自选 / 持仓**。
+
+#### 3.11-A 自选标签（`?tab=watch`，`WatchlistPanel`）
 
 | 项 | 规范 | 代码依据 |
 |---|---|---|
-| 入口 | 侧栏「日志」分组「我的持仓」（与交易日志同组，同为 `本机私有`） | `Layout.tsx:109` |
-| 工具栏 | 标题「我的持仓」；subtitle `${as_of} · N 只 · 价格来源 …`；右侧 `导入本地 JSON / 刷新 / 新增持仓`（主操作最右） | `PositionsScreen.tsx:633-682` |
-| 主区顺序 | 隐私条与消息区 → 5 估值卡（`grid-cols-2 gap-3 desk:grid-cols-5`）→ 明细 `Card`+`CardBody p-0`+`DataTable` → 集中度 2 张 `SectionCard`（`HBarList`）→ 页脚 → `Drawer`/`ConfirmDialog` | `PositionsScreen.tsx:684-871,109-224` |
-| 六态 | 整屏 5 态齐全 + 表内空态 + 集中度/行业空态；**估值卡无卡级 empty/loading**；导入视图直接跳过估值卡与集中度 | `PositionsScreen.tsx:740-841,109-157,843` |
-| 溯源 | `PrivacyNotice`（`role="note"`，accent 左边条）；估值卡 note 带 `as_of`/`price_source`/覆盖率；HHI 口径注；导入结果 `Banner warn` | `PositionsScreen.tsx:84-99,115-128,185-187,713-731` |
+| 页头 | 标题「我的自选」；subtitle `${N} 只 · 数据时点 <price_as_of>`（无 payload 时为「自选只存本机」）；`SourceStatusBadge`；刷新按钮 | `my-stocks/WatchlistPanel.tsx:301-318` |
+| 表头七列 | 名称 / 代码 / 现价 / 涨跌% / PE(TTM) / PB / 换手%，**每列可排序**（升 → 降 → 不排序，带 `aria-sort`）；另有一列「操作」不可排序 | `WatchlistPanel.tsx:185-299` |
+| 缺失口径 | 无值一律 `—`（`MISSING`），**不补 0、不估算、不拿成本价顶替**；PE / PB / 换手的缺失原因放单元格 `title`（`metrics_reason`） | `WatchlistPanel.tsx:59-61,243-279`、DEC-060 |
+| 批量添加 | 一个 textarea（`aria-label="批量代码"`，placeholder `600519 000858, 300750`），空格 / 逗号 / 换行混写；**先预览后确认**：待加入 / 已在自选里 / 输入里重复 / 不能加入的代码（逐条原因），确认按钮「加入 N 只」，取消「不加了」；预览阶段不写库 | `WatchlistPanel.tsx:134-167,336-423` |
+| K 线联动 | 点任意一行 → 表格下方渲染该票 `KlineCard`；再点同一行收起；选中行 `bg-accent-soft`；caption 写明「点一行看它的 K 线，再点一次收起」 | `WatchlistPanel.tsx:469-502` |
+| 移除 | 行内 `IconButton`，`aria-label="移除 <code>"`，走 C-16 `ConfirmDialog`（标题「移除 <code> 是否继续？」），不得用 `window.confirm` | `WatchlistPanel.tsx:287-294,509-518` |
+| 持有标记 | 代码同时出现在持仓里时，名称列追加「持有」徽标；持仓取数失败只丢徽标，页面注明「没取到持仓，「持有」标记暂缺」 | `WatchlistPanel.tsx:191-204,493-497` |
+| 表体 | `DataTable density=compact maxHeight="520px"`；整屏 5 态齐全 + 表内空态 | `WatchlistPanel.tsx:469-490` |
+| 空态 | 「还没有自选」+ 说明 +「去批量添加」（聚焦输入框） | `WatchlistPanel.tsx:478-489` |
+| 取数 | 挂载即取（DEC-061 只读页口径）、手动刷新、增删后重取；**本版没有自动轮询** | `WatchlistPanel.tsx:89,129-132` |
+| 隐私 | 页脚固定说明：只走 127.0.0.1 回环读写、不缓存、不上传、不进 AI 上下文、不写浏览器存储；快照非逐笔 | `WatchlistPanel.tsx:504-507` |
 
-**硬约束**：隐私条常驻且不与消息条争位；导入/新增/删除一律不出本机（`DEC-033`）；删除走 C-16 `ConfirmDialog`，不得用 `window.confirm`。
+#### 3.11-B 持仓标签（`?tab=hold`，`PortfolioPanel` — QUOT-434 / DEC-065）
+
+一条主线：**录的是流水，持仓由流水推算**。数量、成本、市值、浮动盈亏、已实现、分红全部来自 `GET /api/portfolio`，页面不重算。
+
+| 项 | 规范 | 代码依据 |
+|---|---|---|
+| 入口 | 侧栏「我的股票」分组「我的股票」→ 切到持仓标签；旧 `/positions` 只重定向到这里（`PositionsScreen` 已不挂在这条路径上） | `App.tsx:85,90`、`MyStocksScreen.tsx:69` |
+| 页头 | 标题「我的持仓」，subtitle `${N} 只 · ${method_label} · 记账日 ${today}`（无 payload 时「持仓由交易流水推算」）；右上角 `Segmented ariaLabel="成本法"` 两项「移动加权平均 / 先进先出」；刷新在页头（手动） | `my-stocks/PortfolioPanel.tsx:273-290` |
+| 成本法 | 切换只改 `?method=`，持有数量两种算法一致、成本价与已实现不同；偏好记 `localStorage['ldst.portfolio.method']` | `PortfolioPanel.tsx:112-130`、`portfolioForm.ts:16,65-76` |
+| 自动刷新 | 每 30 分钟静默重取（`REFRESH_MS`）；失败只在页头下方出 `Banner warn`「刷新失败，页面上还是上一次的数据」，**不清空已有数据** | `PortfolioPanel.tsx:64,108,294-298` |
+| 明细十列 | 名称 / 代码 / 现价 / 数量 / 成本价 / 持仓市值 / 浮动盈亏 / 盈亏% / 已实现 / 分红 | `PortfolioPanel.tsx:156-255` |
+| 隐私遮罩 | `PrivacyText` 全仓一份（`lib/privacy.ts` 键 `ldst.privacy`，开关只在顶栏）：遮 数量 / 成本价 / 市值 / 浮动盈亏 / 已实现 / 分红 与表单里的自有数字（`PrivacyInput` 用 `WebkitTextSecurity`）；**不遮** 现价（公开行情）与 盈亏%（推不出本金）；`—` 不遮 | `my-stocks/PrivacyText.tsx:6-38`、DEC-062 |
+| 排序 | 名称 / 现价 / 盈亏% 恒可排序；被遮的五列**在隐私模式开启时不给排序**（`sortable(masked, …)` 返回 `undefined`），脚注同步写「这几列暂不参与排序」 | `PortfolioPanel.tsx:152-154,421`、`tests/portfolio-panel.test.tsx:333` |
+| 人民币合计 | `SectionCard`「人民币合计」四格（市值 / 成本 / 浮动盈亏 / 盈亏%），只汇总取到现价的行；`available=false` 时给原因文本；有缺价时以 `text-warn` 出原因，并固定说明「本页只做人民币，不含港美股、不做汇率换算」 | `PortfolioPanel.tsx:349-377` |
+| 记一笔 | `SectionCard`「记一笔 · 只记已经发生的交易，不下单」：类型 `Segmented`（买入 / 卖出 / 分红 / 拆股 / 期初持仓），按类型只显示必要字段；校验与后端同口径（6 位 A 股代码、日期、数量），失败原样回显后端原因且不丢已填内容；写请求体用后端字段名 `trade_date` | `PortfolioEntry.tsx:60-160`、`portfolioForm.ts:30-63,112-141`、`tests/portfolio-panel.test.tsx:149,178,208` |
+| 旧仓迁移 | `legacy[]` 非空时渲染 `MigrationCard`，`adopt` / `dismiss` 都要 `ConfirmDialog` 二次确认，确认文案带代码 / 股数 / 成本与「已按它转过一笔，这次会原地替换那笔」或「只会写一个「不要这条」的标记，positions 旧行原样保留」；`GET /api/portfolio` 自动迁移成功时页头下出 `Banner info`（含 `backup` 备份文件名与逐条失败原因），明写「旧记录只标记、不删除」 | `PortfolioPanel.tsx:311-347,469-489`、`PortfolioMigration.tsx`、`tests/portfolio-panel.test.tsx:362,399` |
+| 问题流水 | `issues[]` 在持仓表上方逐条列出（日期 · 类型 · 代码 · 原因），标题写明「有 N 笔流水数据不对，没参与计算」 | `PortfolioPanel.tsx:384-396` |
+| 页内子标签 | `<Tabs ariaLabel="持仓的更多内容">` **只有两项**：收益 / 交易流水；X 光与历史回放本版没有（`DEC-065` 未开这两个口子） | `PortfolioPanel.tsx:71-76,425-435` |
+| 收益子页 | 只读 `GET /api/portfolio/perf`，按 `groups[]` 分组渲染：卡标题「收益率 · 按交易流水逐日估值；只算 A 股 / 人民币，不跨币种」，组头 `label` + `start 至 end（N 天）`；七张 `MetricCard` = 时间加权收益 / 资金加权收益 / 区间盈亏 / 期末市值 / 卖出所得 / 现金分红 / 费用合计，年化只在后端给 `twr_annualized` / `xirr` 时出，否则原文「不满一年，不给年化」；`group.ok=false` → `Banner warn`「这一组没算成」+ `reason`；净值线只在 `series.dates.length ≥ 2` 时画；金额遮罩、百分比保留；`skipped[]` 说明「N 笔数据不对的流水没算」；脚注逐条列 `notes[]`，末尾固定「价格来源：<sources 或 `—`> · 算到 <as_of 或 `—`>」；卡右上角「重新计算」；未确认的旧仓 ≥1 时先出 `Banner warn`「还有 N 条旧持有记录等你确认」 | `PortfolioPerfTab.tsx:29-35,64-108,114-177,238-239`、DEC-064 |
+| 流水子页 | 日期倒序（同日按 `id` 倒序）；列 日期 / 类型 / 名称·代码 / 明细 / 备注 / 录入时间 / 操作；`undated` 在类型列标「暂记」（`title="原记录没写建仓日"`）；删除走 `ConfirmDialog`，确认文案含「删前后端会先备份」 | `PortfolioTradesTab.tsx:41-130`、`PortfolioPanel.tsx:476-481` |
+| 空态 | 持仓表空 → 「还没有持仓」+ 指引「期初持仓」记一笔；收益空 → 「还没有可算的收益率」；流水空 → 「还没有流水」 | `PortfolioPanel.tsx:406-412`、`PortfolioPerfTab.tsx:85-89`、`PortfolioTradesTab.tsx:149` |
+| 溯源 | `PrivacyNotice subject="持仓" storeCommand="ldst portfolio"` 常驻；脚注写成本法口径、费用计入买入成本 / 从卖出所得扣、分红单独算 | `PortfolioPanel.tsx:292,416-422` |
+
+**K 线卡（3.11-A 的联动内容，DEC-057 / DEC-066）**
+
+- ECharts 按需注册（不引全量包）：`candlestick` + 4 条 MA line + 成交量 `bar` 副图；
+- 均线 4 条 = `MA5 / MA10 / MA20 / MA60`，色取 `--ldst-chart-ma-1..4`，**只画后端 `series.ma` 给的**；
+- 成交量副图 `xAxisIndex: 1`，无单位或全空时不画副图；
+- 双 `dataZoom`（`inside` + `slider`），缩放只认 **Ctrl + 滚轮**（`zoomOnMouseWheel: 'ctrl'`），普通滚轮仍滚页面；
+- 卡片高度 **420**；默认可见根数：日线 120 / 周线 104 / 月线 120；
+- 红涨绿跌取 `--ldst-up` / `--ldst-down`；
+- 缺失值：**数据位写 `'-'`**（ECharts 把 `null` 当 0 会画假柱），**文本位写 `—`**；
+- 数据只来自 `GET /api/research/{code}/kline`，前端不算复权、不算均线、不推涨跌幅。
+
+**硬约束**：隐私条常驻且不与消息条争位；导入/新增/删除一律不出本机（`DEC-033` / `DEC-055`）；删除走 C-16 `ConfirmDialog`，不得用 `window.confirm`；任何缺失显示 `—`，不得补 0 或估算（`DEC-028`）。
+
+**本版未落地（不提前登记版面）**：持仓的「体检 / 集中度穿透」（`GET /api/portfolio/xray`，QUOT-437）与「历史回放」（`GET /api/portfolio/replay`，QUOT-438）在当前代码里**接口与屏都没有**，页内子标签因此固定为两项；`GET /api/events/timeline` 同样不存在（事件日历实际读 `GET /api/events?month=&code=`，见 §3.9）。提醒页 `/inbox` 已随 QUOT-435 落地，版面见 §3.21。
 
 ### 3.12 产业矩阵（`/industry`）— 主任务：一屏看完 SW 一级行业的热力与缺口
 
@@ -520,6 +576,27 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | 竞态 | 只接受最后一次响应：`if (result.superseded) return`，不自己比序号 | 规格 §8.3 / §9.4 |
 | 禁止 | 面板内不得出现 `DemoStateBadge` 或任何演示水印；不得自带第三份 label map；不得新增颜色令牌 | 规格 §6.7 / §10.2 / §5.5–§5.6 |
 
+### 3.21 提醒（`/inbox`）— 主任务：读本机定时任务落下的事实行，把看过的标成已读
+
+QUOT-435 落地（DEC-058）。整屏在 `frontend/src/screens/my-stocks/InboxScreen.tsx`，取数面在 `frontend/src/api/inbox.ts`。
+
+| 项 | 规范 | 代码依据 |
+|---|---|---|
+| 页头 | 标题「提醒」；subtitle 有载荷时 `最近 ${items.length} 条 · 未读 ${countOrMissing(unread)}`，无载荷时「本机提醒收件箱」；`Badge`「N 条未读」/「全部已读」；`refresh` 在 loading 时禁用 | `InboxScreen.tsx:183-198` |
+| 主操作 | 「全部已读」→ `POST /api/inbox/read-all`；**没有未读或正在忙时禁用**，不给「其实一条都没改」的静默成功 | `InboxScreen.tsx:199-211,170-181` |
+| 固定说明条 | 顶部 `Banner tone="info" title="只在本机运行与投递"`：定时任务生成、只投 console / desktop、不接第三方推送、不联网、关机或程序没开时不运行、正文只列事实不给买卖建议 | `InboxScreen.tsx:215-222` |
+| 版面 | `ready` 时两栏 `grid-cols-1 gap-4 desk:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]`：左「收件箱」，右「定时任务」+「推送渠道」两张 `SectionCard` | `InboxScreen.tsx:263,290-348` |
+| 条目行 | 未读左圆点 `aria-label="未读"`；任务名取 `job_label \|\| job`，标题、`formatInboxTime(created_at)`、事实行 `lines[]` 逐条 `ldst-num`；未读才给「标为已读」 | `InboxScreen.tsx:72-139` |
+| 时间口径 | 今天 `HH:mm`，更早 `MM-DD HH:mm`；读不出时间一律 `—`，不拿「今天」冒充 | `lib/format.ts:143-153` |
+| 链接 | **只认站内绝对路径**：`internalLink()` 只放行以 `/` 开头且非 `//` 开头的 `link`；有站内链接才给「打开」，点「打开」时顺带标已读；外链显示「外链不在页面打开」纯文本 + `title`，**不生成可点链接** | `InboxScreen.tsx:62-65,100-115` |
+| 未读数 | 以后端 `unread`（COUNT，不受 limit 截断）为准；载荷缺这个键时退回本页已加载条目的未读数，**不补 0** | `InboxScreen.tsx:146`、`src/ladderstock/journal/inbox.py:39-40` |
+| 定时任务卡 | 只列 `kind` 为 `digest` / `notify` 的任务：`label` / `trigger` / `Badge 已启用\|已停用`；**只读**，页脚写明「启停与运行时刻在 config/schedule.yaml 里改，本页不提供开关」；后端读不到配置时 `jobs` 为空，卡片说「没有会产生提醒的定时任务。」 | `InboxScreen.tsx:291-319`、`web/inbox.py:50,74-94` |
+| 推送渠道卡 | 只有 `console`（Terminal 图标）与 `desktop`（Monitor 图标）两条本机渠道，逐条给 detail；**没有第三方 webhook、没有「发送测试」按钮、没有免打扰 / 时段设置**（DEC-058） | `InboxScreen.tsx:46-59,321-347` |
+| 四态 | loading：`aria-busy="true"`「正在读取提醒…」；error：`kind === 'not-connected'` → `OfflineBanner`，否则 `ErrorBlock variant="banner" title="提醒读取失败"` + 原因 + 重试；empty：`EmptyState`「还没有提醒」+「定时任务跑过之后会出现在这里；到点运行一次就会落一条。」；操作失败：`Banner tone="danger" title="操作没有成功"` 带「知道了」 | `InboxScreen.tsx:229-288` |
+| 取数 | 挂载即取（`useAsync`，DEC-061 只读页口径）+ 顶栏刷新 + 增删已读后 `view.refresh()`；8s 超时、`cache: 'no-store'`、`credentials: 'same-origin'` | `InboxScreen.tsx:142,152-181`、`api/inbox.ts:17,72-117` |
+| 隐私 | 页脚固定：「收件箱只走 127.0.0.1 回环读写，响应不进缓存；不上传、不进 AI 上下文，也不写浏览器存储。」已读状态写本机 SQLite `inbox.read_at`，`localStorage` 里没有本屏任何键 | `InboxScreen.tsx:352-354`、§4.5、DEC-058 |
+| 缺失口径 | 响应不是对象直接抛 `ApiError('parse')`；缺 `id` 的行整行不渲染（编不出主键就没法标已读）；缺字段是 `null` / 空数组，不补 0、不编条目 | `api/inbox.ts:150-198` |
+
 ## 4. 状态恢复交互
 
 所有恢复相关提示都在**内容区顶部提示条区**，不弹模态，不阻塞输入。
@@ -571,19 +648,20 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 - 丢弃类提示与「已恢复」提示互斥：同一分片不可能既恢复又丢弃。
 - **v1.1 校正**：「迁移丢弃」由 v1.0 的 danger 改为 warn，与实现一致（`PersistenceBanner.tsx:24-33`）；判据是它丢的是历史草稿、不阻断当前输入，而 danger 保留给「恢复失败导致本轮从空态启动」。理由见 §12.4-C。
 
-### 4.5 全 20 屏的持久化面（v1.1 新增；v1.7 按 20 屏对齐）
+### 4.5 全 21 屏的持久化面（v1.1 新增；v1.7 按 20 屏对齐；v1.19 按 21 屏对齐）
 
-只有下表列出的屏有可恢复状态；其余屏刷新即重取，**不得**假装在持久化。20 屏 = 有可恢复状态的 6 屏（复盘 / 盯盘 / 验证 / 日志·我的持仓 / 设置）+ 明确无本机写入的 2 屏（盯盘·竞价与盘中 / AI复盘）+ 其余 12 屏。
+只有下表列出的屏有可恢复状态；其余屏刷新即重取，**不得**假装在持久化。21 屏 = 有可恢复状态的 6 屏（复盘 / 盯盘 / 验证 / 日志·我的股票 / 设置）+ 明确无本机写入的 2 屏（盯盘·竞价与盘中 / AI复盘）+ 只把「已读」写本机库、不存呈现态的 1 屏（提醒）+ 其余 12 屏。
 
 | 屏 | 持久化载体 | 键 | 依据 |
 |---|---|---|---|
 | 复盘 | `review_draft` | IndexedDB 分片 | DEC-034 / §4.1 |
 | 盯盘 | `watch_snapshot`（TTL 300s）、`watch_settings` | 本机 | DEC-037、`WatchScreen.tsx:180-185` |
 | 验证 | `validation_draft`（本地）/ 后端 `validation` 缓存 | IndexedDB | `ValidateScreen.tsx:579-582` 双模文案 |
-| 日志 / 我的持仓 | 本机 SQLite | 不经 HTTP 读；写走 DEC-033 | §3.4、§3.11 |
+| 日志 / 我的股票 | 本机 SQLite | 交易日志不经 HTTP 读；持仓快照读写走 DEC-033，自选读 DEC-052 / 写 DEC-055，持仓账本 DEC-065（均回环独占 + `no-store`）；呈现偏好记 `localStorage['ldst.my-stocks.tab']`（标签）与 `localStorage['ldst.portfolio.method']`（成本法，`portfolioForm.ts:16,65-76`）；隐私开关是全局键 `ldst.privacy`，归顶栏 | §3.4、§3.11、DEC-062 |
 | 盯盘·竞价与盘中 | 无本机写入（快照归「盯盘」的 `watch_snapshot`） | 只存 URL 状态（`?date=`） | §11.19 |
 | 设置 | `config/state.yaml` + 偏好 | `ldst.theme`（system/light/dark）、`ldst.density`（compact/default/comfortable）、`ldst.nav.expanded` | `tokens.css:9-12,189-191`、`Layout.tsx:128-130` |
 | AI复盘 | 无本机写入（「我的判断」草稿归复盘 `review_draft` 一处） | 只存 URL 状态（`?date=`） | DEC-049 §3、§3.19 |
+| 提醒 | 已读状态写本机 SQLite `inbox.read_at`（`POST /api/inbox/{id}/read`、`/read-all`）；页面不存呈现态 | 无 `localStorage` 键 | DEC-058、`frontend/src/api/inbox.ts` |
 | 其余 12 屏（首页 / 市场 / AI周报 / 资讯雷达 / 事件日历 / 候选池 / 产业矩阵 / 行业详情 / 产业信号 / 涨停样本 / 个股深挖 / 研究报告） | 只存 URL 状态（`?date=` `?week=` `?tab=` `?stage=`） | 无本机写入 | `App.tsx` 注释、各屏 hook |
 
 **规范**：主题 / 密度 / 导航展开三键只影响呈现，不得触发数据重取；密度只改 `--ldst-row-h`，不得改其它 token（`tokens.css:189-191`）。
@@ -639,7 +717,7 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 |---|---|---|
 | 4 份本地 `SourceBadge` | `HomeScreen.tsx:69-82`、`MarketScreen.tsx:105-118`、`WeeklyScreen.tsx:166-179`、`ReviewScreen.tsx:196-205` | 违规（R-01） |
 | 徽标形态不一 | `WatchScreen.tsx:340` 用 `StatusDot` 自写「需重新取数/有效期以内」 | 违规（R-26） |
-| 整屏无溯源徽标 | `/news` `/calendar` `/pool` `/positions` `/limit-up` `/industry` `/industry/:name` `/signals` 只有小字来源或全无 | 违规（R-11） |
+| 整屏无溯源徽标 | `/news` `/calendar` `/pool` `/my-stocks?tab=hold` `/limit-up` `/industry` `/industry/:name` `/signals` 只有小字来源或全无 | 违规（R-11） |
 
 ### 5.6 演示数据必须上屏（v1.1 新增，硬约束）
 
@@ -656,7 +734,7 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 
 ### 5.8 溯源与口径的呈现层级
 
-- L2 的 `source_detail` / `data_as_of` / `fetched_at` / `formula` 用 `text-caption text-text-secondary`（12px），可用 `truncate` + `title` 收进一行（模板：`PositionsScreen.tsx:338`）。
+- L2 的 `source_detail` / `data_as_of` / `fetched_at` / `formula` 用 `text-caption text-text-secondary`（12px），可用 `truncate` + `title` 收进一行（模板：`my-stocks/WatchlistPanel.tsx:242-279` 的缺失原因 `title`）。
 - 但「是否可信」属 L0，必须有徽标，**不能只靠页脚小字**（R-11）。
 - 后端字段名（`price_source`、`mode`、`fetched_at` 这类 key）**不得直显**，一律映射为 §5.1/§5.2/§8 的中文标签。
 
@@ -668,24 +746,24 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 
 | 码 | 组件 | 文件 | 用途 | 主要使用屏 |
 |---|---|---|---|---|
-| C-01/C-02 | `Button` `IconButton` | `ui/Button.tsx:7` | 主/次/危险操作；`disabledReason` 承载禁用可见原因 | 全 20 屏 |
+| C-01/C-02 | `Button` `IconButton` | `ui/Button.tsx:7` | 主/次/危险操作；`disabledReason` 承载禁用可见原因 | 全 21 屏 |
 | C-03/C-04/C-05/C-06 | `Input` `Select` `Switch` `Checkbox` + `Field` | `ui/Field.tsx:6` | 受控输入，label/hint/error 三段结构 | 设置、雷达、矩阵、信号 |
 | C-07 | `Segmented` | `ui/Segmented.tsx:6` | 2–4 选项互斥切换（tab 型选择器） | 市场、矩阵、信号、设置侧栏 |
 | C-08 | `Tabs` | `ui/Tabs.tsx:6` | 2px 下划线 + 键盘左右切换 | 设置外的分页场景（当前基本闲置） |
 | C-09 | `DataTable` `Column` | `ui/Table.tsx:7,16-24` | **全仓唯一表体**：sticky 表头/首列、三档行高、`aria-sort`、表体内 loading/empty/error | 首页 / 市场 / 日志 / 验证 / 候选池 / 持仓 / 涨停 / 矩阵 / 行业 / 信号 / 设置（13 屏真实使用） |
-| C-10/C-11 | `Card` `CardHeader` `CardBody` `CardFooter` `SectionCard` `MetricCard` | `ui/Card.tsx:6` | 容器卡 + 指标卡（`h-metric` 96px、`p-4`、值带 `.ldst-num`） | 全 20 屏 |
-| C-12/C-13 | `StatusDot` `Badge` `SignedNumber` | `ui/Badge.tsx:5` | 状态点（含 `ldst-pulse`）、徽标、带向数值 | 全 20 屏 |
+| C-10/C-11 | `Card` `CardHeader` `CardBody` `CardFooter` `SectionCard` `MetricCard` | `ui/Card.tsx:6` | 容器卡 + 指标卡（`h-metric` 96px、`p-4`、值带 `.ldst-num`） | 全 21 屏 |
+| C-12/C-13 | `StatusDot` `Badge` `SignedNumber` | `ui/Badge.tsx:5` | 状态点（含 `ldst-pulse`）、徽标、带向数值 | 全 21 屏 |
 | C-14 | `Toasts` `useToasts` | `ui/Feedback.tsx:8` | 轻量成功/失败反馈，自动消失 4000ms | 设置 |
-| C-17 | `EmptyState` | `ui/Feedback.tsx:8` | 空态 / 需重取 / 未接入 | 全 20 屏 |
-| C-18 | `Skeleton` `SkeletonText` `.ldst-skeleton` | `ui/Feedback.tsx:8`、`styles/index.css:70-90` | 骨架与扫光 | 全 20 屏 |
-| C-19 | `ErrorBlock` `Banner` | `ui/Feedback.tsx:8` | 段内错误面板 / 顶部提示条 | 全 20 屏 |
+| C-17 | `EmptyState` | `ui/Feedback.tsx:8` | 空态 / 需重取 / 未接入 | 全 21 屏 |
+| C-18 | `Skeleton` `SkeletonText` `.ldst-skeleton` | `ui/Feedback.tsx:8`、`styles/index.css:70-90` | 骨架与扫光 | 全 21 屏 |
+| C-19 | `ErrorBlock` `Banner` | `ui/Feedback.tsx:8` | 段内错误面板 / 顶部提示条 | 全 21 屏 |
 | C-15/C-16 | `Drawer` `ConfirmDialog` | `ui/Overlay.tsx:10` | 宽 480 / 640（`lg`），确认框 420；焦点陷阱 + `Esc` + 焦点归还 | 候选池、信号、研究、设置 |
 | C-20 / CH-03 | `Sparkline` `HBarList` | `ui/MiniChart.tsx:4` | 迷你趋势与横向条（值带 `.ldst-num`） | 周度、持仓、市场、研究 |
 | C-21 | `HomeSearchTrigger`（已实装） | `components/search/HomeSearchTrigger.tsx` | 首页搜索入口：纯展示 + `onOpen`，不请求、不禁用（离线也可点） | 首页（§3.20） |
 | C-22 | `SearchPanel`（已实装，含内部件 `SearchGroupView` 等；取数与判定在 `screens/home/useHomeSearch.ts`） | `components/search/SearchPanel.tsx` | `role=dialog` 搜索面板：输入 + 三组结果 + 四态；只吃 props 与 `onSelect(href)`，复用 C-12 `Badge` / C-17 `EmptyState` / C-18 `SkeletonRows` / C-19 `Banner` / `SourceStatusBadge` | 首页（§3.20） |
 | CH-01/CH-02 | `LineChart` `BarChart` | `charts/Chart.tsx:10,151` | uPlot；色值必须来自 `chartPalette()`/`cssVar()` | 市场（情绪折线 + 梯队柱） |
 | — | `AiErrorNotice` | `kit/AiErrorNotice.tsx` | §5.4 五类 AI 错误 | 复盘、周度 |
-| — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 20 屏 |
+| — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 21 屏 |
 | — | `Layout` `PersistenceBanner` | `components/Layout.tsx`、`components/PersistenceBanner.tsx` | 外壳与恢复提示 | 全局 |
 | — | `MarkdownView` `ProvenanceDrawer` `StageRail` `LinkButton` `PercentileBar` | `components/research/*` | 叙述渲染 / 引用抽屉 / 六段轨 | 研究两屏 |
 | — | `ValuationBasisPanel` | `components/valuation/` | 估值基准 | 个股深挖 |
@@ -751,6 +829,22 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | `--ldst-skeleton` / `-shine` | `#1d2530` / `#26303d` | `#e7ecf3` / `#f2f5f9` | 骨架底 / 扫光 |
 | `--ldst-focus` | `#6ba1ff` | `#1a5fd0` | 焦点环外圈 |
 | `--ldst-chart-*` | 见 `tokens.css:51-65` | 见 `tokens.css:208-222` | 图表专用（grid/axis/band/line/bar-up/bar-down/series-2/threshold/empty/tooltip-bg/tooltip-text/ma-1..4） |
+
+**图表令牌（v1.19 逐值登记，DEC-057 / DEC-066）**
+
+| 变量 | 深色 | 浅色 | 用途 |
+|---|---|---|---|
+| `--ldst-chart-tooltip-bg` | `#1b2230` | `#ffffff` | K 线等图表提示框底色（`tokens.css:60` / `:217`） |
+| `--ldst-chart-tooltip-text` | `#e8ecf2` | `#141a22` | 提示框文字（`tokens.css:61` / `:218`） |
+| `--ldst-chart-ma-1` | `#8b8f98` | `#6b7280` | MA5 灰（`tokens.css:62` / `:219`） |
+| `--ldst-chart-ma-2` | `#d4a017` | `#8a5a00` | MA10 琥珀（`tokens.css:63` / `:220`） |
+| `--ldst-chart-ma-3` | `#a855f7` | `#7c3aed` | MA20 紫（`tokens.css:64` / `:221`） |
+| `--ldst-chart-ma-4` | `#3b82f6` | `#1d4ed8` | MA60 蓝（`tokens.css:65` / `:222`） |
+
+- 蜡烛与成交量涨跌**不新增平行色板**，直接复用 `--ldst-up` / `--ldst-down`（A 股红涨绿跌）；
+- MA 取灰 / 琥珀 / 紫 / 蓝，是为了在红绿主色旁边仍可区分，深浅两套都按图表元素 ≥3:1 对比取值；
+- 唯一消费入口是 `charts/cssVar.ts` 的 `chartPalette()`（`tooltipBg` / `tooltipText` / `ma[]`），
+  业务代码不得直接写变量名或兜底色值（兜底值只允许出现在 `cssVar.ts:12-32`）。
 
 **两套色互不复用**：涨跌色只作用于数字/箭头；状态色只作用于徽标/提示条。浅色主题通过 `:root[data-ldst-theme='light']` 覆盖；色盲模式 `:root[data-ldst-colorblind='true']` 把涨/跌换成蓝/橙。
 
@@ -847,12 +941,12 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - 图标按钮必须有 `aria-label`；纯装饰图标 `aria-hidden="true"`。
 - 模态（C-16）与抽屉（C-15）：焦点陷阱 + `Esc` 取消 + 关闭后焦点回到触发元素（`Overlay.tsx:10-13`）。
 - 度量类必须带 ARIA：分位条 `role="meter"`（`IndustryDetailScreen.tsx:81-102`）、进度 `role="progressbar"` + `aria-valuenow`（`ResearchReportScreen.tsx:55-84`）、`aria-busy` 给骨架容器（`PageShell.tsx:82`）、运行中提示 `role="status" aria-live`。
-- 提示条使用 `role="status"`（信息）/ `role="alert"`（错误），不打断输入；隐私说明用 `role="note"`（`PositionsScreen.tsx:84-99`）。
+- 提示条使用 `role="status"`（信息）/ `role="alert"`（错误），不打断输入；隐私说明用 `role="note"`（`ui/PrivacyNotice.tsx:30`）。
 - 动效遵循 `prefers-reduced-motion`；扫光与呼吸在减弱动效下改静态占位。
 - 引用角标可点必须 `aria-label 查看来源 n：{dataset}`；未核实胶囊是文本而非颜色编码（`MarkdownView.tsx:50-79`）。
 - 最低支持视口 1024×768；1024–1279 允许内容下移，**不允许横向溢出**（`main` 之外）。
 
-## 10. 全 20 屏与后端契约映射
+## 10. 全 21 屏与后端契约映射
 
 | 屏 | 路由 | 主要端点 / 数据来源 | 持久化 | 可信规则 |
 |---|---|---|---|---|
@@ -868,7 +962,8 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 | 资讯雷达 | `/news` | `/api/news?date=&until=&source=&code=&limit=`（DEC-030） | 无 | 事件由后端规则抽取，页面不二次判定 |
 | 事件日历 | `/calendar` | `/api/events?month=&code=`（DEC-030） | 无 | 小节是否有源由后端 |
 | 候选池 | `/pool` | `/api/pool?date=&limit=`（DEC-030） | 无 | 分项缺失必须列明 |
-| 我的持仓 | `/positions` | `/api/positions?date=`、`/api/positions/*`（读写，DEC-033） | 本机 SQLite | 隐私条常驻；导入视图与真持仓分开 |
+| 我的股票 | `/my-stocks?tab=watch\|hold`（`/watchlist`、`/positions` 重定向） | 自选：`/api/watchlist`（读 DEC-052）+ `POST /api/watchlist`、`POST /api/watchlist/{code}/delete`（写 DEC-055）；持仓：`/api/portfolio?method=`、`/api/portfolio/perf`（读，页面不传 `days`，用后端缺省；DEC-064 / DEC-065）+ `POST /api/portfolio/ledger`、`POST /api/portfolio/ledger/{trade_id}/delete`、`POST /api/portfolio/legacy/{position_id}/adopt`、`POST /api/portfolio/legacy/{position_id}/dismiss`（写 DEC-065）；K 线：`/api/research/{code}/kline`（DEC-055 / DEC-066） | `localStorage['ldst.my-stocks.tab']`、`localStorage['ldst.portfolio.method']`、`localStorage['ldst.privacy']`；数据在本机 SQLite | 隐私条常驻；持仓数字全部由流水重放推出，页面不自算；缺数 `—` 不补 0；K 线图内空值 `'-'` |
+| 提醒 | `/inbox` | `/api/inbox`（读，默认 `limit=50`）、`POST /api/inbox/{id}/read`、`POST /api/inbox/read-all`（DEC-058） | 已读写本机 SQLite `inbox.read_at`；**页面无 localStorage 键** | 未读数只信后端 COUNT；任务与渠道只读，页面不提供启停；外链不在页面打开 |
 | 产业矩阵 | `/industry` | `/api/industry`（`api/industry.ts`） | 无 | 分位口径不得页面改算 |
 | 行业详情 | `/industry/:name` | `/api/industry/{name}` | 无 | 五维缺项逐个标注 |
 | 产业信号 | `/signals` | `/api/signals?industry=&rule=`、`/api/industry` | 无 | 命中数无数据不得为 0（R-07） |
@@ -1002,14 +1097,44 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 导出按钮标注"只写本机"，且导出成功/失败有反馈。
 - [ ] 静置 60 秒内页面自动出现新数值（30 秒静默重取），且不闪回骨架屏；单拍失败保留旧数据，慢响应不自我 abort，「正在刷新…」会复位。
 
-### 11.11 我的持仓 `/positions`
+### 11.11 我的股票 `/my-stocks?tab=watch|hold`
 
-- [ ] 隐私条（`role="note"`）常驻且位于所有消息条之上。
-- [ ] header「N 只」无数据时为「—」；缺失金额一律「—」，无手写裸 `—` 字符串（应引用 `MISSING`）。
-- [ ] 估值 5 卡在 empty/loading 下有骨架或「—」+注，不得空白；导入视图同样给出估值说明。
-- [ ] `HBarList` 数值走格式化函数（当前 `v.toFixed(2)` 绕过 `format.ts`）。
-- [ ] 行业列 `truncate` 配 `title`；`max-w-[140px]` 落在刻度上。
-- [ ] 新增/编辑走 C-03…C-06 受控件 + C-16 确认删除；无原生弹窗。
+**通用（v1.19，QUOT-431 / DEC-059）**
+
+- [ ] `/watchlist` 与 `/positions` 打开后 URL 分别变成 `/my-stocks?tab=watch` / `?tab=hold`（`replace`，不产生新历史项）。
+- [ ] 侧栏「我的股票」组是「我的股票」「事件日历」「提醒」三项（`tests/nav-routes.test.tsx:171`），顺序与 `lib/nav.ts:117-121` 一致。
+- [ ] 标签写在 URL 上；无 `?tab=` 时回到上次记忆的标签；切标签后刷新保持。
+
+**自选标签**
+
+- [ ] 七列齐备（名称 / 代码 / 现价 / 涨跌% / PE(TTM) / PB / 换手%），每列排序循环为升 → 降 → 不排序，表头有 `aria-sort`。
+- [ ] 任一列缺数显示 `—`，不得出现 `0` / `0.00` / 骨架假值；PE / PB / 换手的缺失原因在单元格 `title`。
+- [ ] 批量添加必须经过预览面板（待加入 / 已在自选里 / 输入里重复 / 不能加入），确认前不写库；「不加了」不留痕。
+- [ ] 点一行出现该票 K 线卡，再点同一行收起；选中行底色 `bg-accent-soft` 另有 caption 说明，不只靠颜色。
+- [ ] 移除按钮 `aria-label="移除 <code>"`，点击不切换 K 线（冒泡已截断），确认框为 C-16 而非 `window.confirm`。
+- [ ] 页头 subtitle 含「数据时点」，无 payload 时为 `—`；页脚说明「快照、不是逐笔实时」。
+- [ ] 同时出现在持仓里的票带「持有」徽标；持仓取数失败只丢徽标并有说明行。
+
+**K 线卡（DEC-057 / DEC-066）**
+
+- [ ] 蜡烛 + 4 条 MA（MA5/10/20/60）+ 成交量副图 + `inside`/`slider` 两个 dataZoom；卡高 420。
+- [ ] Ctrl + 滚轮缩放图表，普通滚轮仍然滚页面；提示框底色与文字取 `--ldst-chart-tooltip-bg` / `-text`。
+- [ ] 切换深浅主题后重绘，四条均线随 `--ldst-chart-ma-1..4` 变化；组件内无 hex / rgba 字面量。
+- [ ] 缺失值：图内数据位为 `'-'`（不画贴底假柱、不出 0 价假蜡烛），文本位为 `—`。
+
+**持仓标签（v1.19，QUOT-434 / DEC-065）**
+
+- [ ] 隐私条（`PrivacyNotice`，`role="note"`）常驻且位于所有消息条之上（`PortfolioPanel.tsx:292`）。
+- [ ] 隐私模式开启后：数量 / 成本价 / 持仓市值 / 浮动盈亏 / 已实现 / 分红显示遮罩；现价与盈亏% 不遮；`—` 保持原样（`tests/portfolio-panel.test.tsx:240`）。
+- [ ] 隐私模式下被遮的列**不给排序**，名称 / 现价 / 盈亏% 仍可排序；升 → 降循环，脚注同步说明「这几列暂不参与排序」（`PortfolioPanel.tsx:153-154,421`、`tests/portfolio-panel.test.tsx:333`）。
+- [ ] 明细十列齐全且数值全部来自 `GET /api/portfolio`：页面不得自己重算成本、市值、盈亏或汇总（`PortfolioPanel.tsx:156-255`）。
+- [ ] 成本法 `Segmented` 切换后请求带 `?method=`，偏好写进 `localStorage['ldst.portfolio.method']`，刷新后保持。
+- [ ] 「人民币合计」四格只汇总取到现价的行；`available=false` 或有缺价时给出后端原因，不补 0。
+- [ ] 记一笔按类型显隐字段，校验失败给逐字段原因且**不发写请求**；写成功后重取视图并提示（`tests/portfolio-panel.test.tsx:149,178,208`）。
+- [ ] `issues[]` 非空时在持仓表上方逐条列出「没参与计算」的流水；`legacy` 冲突的 adopt / dismiss 都走 C-16 二次确认（`tests/portfolio-panel.test.tsx:399`）。
+- [ ] 页内子标签只有「收益」「交易流水」两项；流水按日期倒序，删除走 C-16 而非 `window.confirm`（`tests/portfolio-panel.test.tsx:462`）。
+- [ ] 收益子页金额遮罩、百分比保留；不足两个交易日不画净值线；空态不画假线（`tests/portfolio-panel.test.tsx:284,448`）。
+- [ ] 缺数一律 `—`：header「N 只」在无 payload 时为「持仓由交易流水推算」，记账日缺失为 `—`，不出现 `0` / 空白。
 
 ### 11.12 产业矩阵 `/industry`
 
@@ -1101,6 +1226,17 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 - [ ] 交易日只跟 `?date=`：切日期不写 `review_draft`，也不产生第二份草稿存储。
 - [ ] 骨架与真实内容同构（`ScreenSkeleton metrics={0} rows={5}` 对得上五段卡，本屏无指标卡）；`npm run check:ui` 六项对本屏保持 PASS。
 
+### 11.21 提醒 `/inbox`（v1.19，QUOT-435 / DEC-058）
+
+- [ ] 侧栏「我的股票」组第三项是「提醒」→ `/inbox`，图标 `Bell`，`routes.ts` 的 `ROUTE_PATHS` 含 `/inbox` 且 `NON_PAGE_ROUTES` **不含**它（`tests/nav-routes.test.tsx:171,205-221`）。
+- [ ] 页头 subtitle 是「最近 N 条 · 未读 …」，未读数取后端 COUNT；载荷缺 `unread` 时退回本页条目统计，**不得出现 `0` 顶替缺失**（`InboxScreen.tsx:146`）。
+- [ ] 「全部已读」在无未读或请求进行中禁用；单条「标为已读」打到 `POST /api/inbox/{id}/read`，成功后未读点消失（`tests/inbox-screen.test.tsx:122,147`）。
+- [ ] 时间口径逐条可判：今天 `HH:mm`、更早 `MM-DD HH:mm`、读不到时间 `—`（`tests/inbox-screen.test.tsx:98`）。
+- [ ] 外链不生成可点链接，只有「外链不在页面打开」文本 + `title`；站内链接才给「打开」，点它顺带标已读（`tests/inbox-screen.test.tsx:227`）。
+- [ ] 定时任务卡只列 label / trigger / 已启用\|已停用 徽标，**屏上没有任何开关**；渠道卡只有 console / desktop 两条，**没有发送测试按钮、没有第三方 webhook 空 UI、没有免打扰设置**（`tests/inbox-screen.test.tsx:202,215`）。
+- [ ] 空态说「定时任务跑过之后会出现在这里」，不画假条目；读取失败给原因 + 重试，重试成功后渲染列表（`tests/inbox-screen.test.tsx:172,182`）。
+- [ ] 已读状态只写本机 SQLite，`localStorage` 里不出现本屏任何键；页脚固定回环隐私说明。
+
 ## 12. 遗留与下一步
 
 1. **阈值持久化**：已由 DEC-037 落地 `watch_settings` 分片（`config/state.yaml` + `stores/manifest.json` + 契约测试三处同步），刷新 / 重启 / 多窗口共用同一份。
@@ -1132,6 +1268,8 @@ QUOT-306 验收要求"hover/press/展开的过渡在 24–160ms"，而 `--ldst-d
 ### 12.5 整改清单（v1.1 登记，代码侧待办；本轮不改代码）
 
 编号 R-01…R-27（R-27 由 v1.6 / QUOT-344-S2 登记），每条都是"现状与 §n 冲突"，必须在阶段二/三落地或按 §12.4 反向修订规范。
+
+> **v1.19 事实标注（不改写历史行）**：本清单里指向 `PositionsScreen.tsx` 与 `/positions` 的条目登记于该屏仍挂路由时。自 QUOT-431 / 434 合入起，`/positions` 只是重定向，持仓屏实装换成 `my-stocks/PortfolioPanel.tsx`。这些行的**行号仍能解析**（该文件还在，`frontend/src/` 里已无任何引用，只剩 `tests/positions-privacy.test.tsx`、`tests/radar-pages.test.tsx`、`tests/quota-319b-screen-side.test.tsx`、`tests/readonly-mount-fetch.test.tsx` 四处直接挂载），但对应的是不面向用户的旧文件；逐条收口时应按新屏复核，勿照抄清单。
 
 | 编号 | 冲突 | 现状位置 | 违反条款 | 建议阶段 |
 |---|---|---|---|---|
