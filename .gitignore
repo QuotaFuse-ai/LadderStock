@@ -40,6 +40,9 @@ config/ai.env.tmp
 logs/
 *.log
 tmp*
+# 取证脚本（scripts/quot471_evidence.py）的运行数据根，每次跑都会重建
+.quot471-evidence/
+.quot471-live/
 新建 DOCX 文档.docx
 var/
 *.pid
