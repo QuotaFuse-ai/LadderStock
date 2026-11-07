@@ -27,6 +27,7 @@ import { HomeIndexStrip } from './home/HomeIndexStrip'
 import { HomePositionsCard } from './home/HomePositionsCard'
 import { HomeSearch } from './home/HomeSearch'
 import { HomeWatchlistCard } from './home/HomeWatchlistCard'
+import { buildHomeAssistant } from './home/homeAssistant'
 import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/useHomeSource'
 
 /**
@@ -115,6 +116,18 @@ export default function HomeScreen() {
         .sort((a, b) => Math.abs(b.change_pct ?? 0) - Math.abs(a.change_pct ?? 0))
         .slice(0, 3),
     [watchRows],
+  )
+
+  // B 块的对话上下文与「本轮来源」：同一次构建产出，持仓（D 块）按白名单不进上下文
+  const assistant = useMemo(
+    () =>
+      buildHomeAssistant(tradeDate, {
+        indices: indexView,
+        watchlist: watchlistView,
+        watch: watchView,
+        validation: validationView,
+      }),
+    [tradeDate, indexView, watchlistView, watchView, validationView],
   )
 
   // 各路信封的 payload 类型不同，只取溯源需要的公共字段
@@ -268,7 +281,7 @@ export default function HomeScreen() {
         pollTicks={indicesTicks}
         pollFailures={indicesFailures}
       />
-      <HomeSearch />
+      <HomeSearch assistant={assistant} date={tradeDate} />
       <HomeWatchlistCard view={watchlistView} />
       <HomePositionsCard view={positionsView} />
 
