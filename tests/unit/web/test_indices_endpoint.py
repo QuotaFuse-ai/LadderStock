@@ -233,7 +233,10 @@ def test_indices_footnote_says_snapshot(tmp_path: Path) -> None:
 
 
 def test_indices_call_index_quote_and_us_quote_with_expected_params(tmp_path: Path) -> None:
-    """A 股一次批量 `index_quote`；美股逐 symbol 两次 `th_us_get_quote`（各带 `commercial_use=false`）。"""
+    """A 股一次批量 `index_quote`；美股逐 symbol 两次 `th_us_get_quote`。
+
+    两次调用各带 `commercial_use=false`（非商用前提）。
+    """
     client, transport = _client(tmp_path)
     client.get("/api/indices")
     assert transport.tools_called == ["index_quote", "th_us_get_quote", "th_us_get_quote"]

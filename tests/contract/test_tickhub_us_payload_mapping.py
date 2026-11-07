@@ -16,11 +16,11 @@ from __future__ import annotations
 import json
 
 import pytest
+from fixtures.fake_peers import us_quote_payload
 
 from ladderstock.core.boundary import owner_of
 from ladderstock.data.adapters import from_us_tool_response
 from ladderstock.errors import LadderStockError
-from fixtures.fake_peers import us_quote_payload
 
 DATASET = "index_quote_us"
 

@@ -169,11 +169,11 @@ def _fetch_cn(registry: Any) -> tuple[list[dict[str, Any]], str | None]:
     try:
         outcome = registry.fetch_live(DATASET, params=params)
     except Exception as exc:  # noqa: BLE001 - 首页不能因为一个上游就 500
-        reason = f"{FETCH_FAILED}：{getattr(exc, 'message', None) or exc}"
-        _log.warning("index_quote 取数失败：%s", reason)
-        return [], reason
+        failure = f"{FETCH_FAILED}：{getattr(exc, 'message', None) or exc}"
+        _log.warning("index_quote 取数失败：%s", failure)
+        return [], failure
     rows = _rows(outcome.envelope)
-    reason = None if rows else f"{NO_ROWS}（index_quote 返回 0 行）"
+    reason: str | None = None if rows else f"{NO_ROWS}（index_quote 返回 0 行）"
     return rows, reason
 
 
@@ -194,16 +194,16 @@ def _fetch_us(registry: Any) -> tuple[list[dict[str, Any]], str | None, str]:
         try:
             outcome = registry.fetch_live(DATASET_US, params=params)
         except Exception as exc:  # noqa: BLE001 - 一格失败不连坐另一格
-            reason = f"{FETCH_US_FAILED}（{spec.symbol}）：{getattr(exc, 'message', None) or exc}"
-            _log.warning("%s", reason)
-            fail_reasons.append(reason)
+            failure = f"{FETCH_US_FAILED}（{spec.symbol}）：{getattr(exc, 'message', None) or exc}"
+            _log.warning("%s", failure)
+            fail_reasons.append(failure)
             continue
         rows.extend(_rows(outcome.envelope))
         tier, warns = _us_compliance(outcome.envelope)
         if tier:
             tiers.add(tier)
         warnings.extend(w for w in warns if w not in warnings)
-    reason = _us_overall_reason(rows, fail_reasons)
+    reason: str | None = _us_overall_reason(rows, fail_reasons)
     return rows, reason, _us_detail(tiers, warnings)
 
 

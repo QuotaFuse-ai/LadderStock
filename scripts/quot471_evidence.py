@@ -18,7 +18,6 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from fastapi.testclient import TestClient  # noqa: E402
-
 from fixtures.fake_peers import (  # noqa: E402
     SOURCES_DOC,
     SYNC_DOC,
@@ -27,6 +26,7 @@ from fixtures.fake_peers import (  # noqa: E402
     tickhub_payload,
     us_quote_payload,
 )
+
 from ladderstock.web.radar import RadarPlane  # noqa: E402
 from ladderstock.web.server import create_app  # noqa: E402
 
