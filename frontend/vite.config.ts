@@ -196,6 +196,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:5950',
         changeOrigin: false,
       },
+      // 平台健康 / 重启由独立看门狗提供（QUOT-443 / DEC-063）：dev 下同源代理，
+      // 生产（5950 托管页面）由 usePlatformHealth 直连 5952，靠看门狗的白名单 CORS。
+      '/platform': {
+        target: 'http://127.0.0.1:5952',
+        changeOrigin: false,
+      },
     },
   },
   build: {

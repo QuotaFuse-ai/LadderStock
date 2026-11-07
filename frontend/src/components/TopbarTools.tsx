@@ -1,5 +1,6 @@
 import { Eye, EyeOff, Moon, Sparkles, Sun } from 'lucide-react'
 
+import PlatformStatusLight from './PlatformStatusLight'
 import { cn } from '../lib/cn'
 import { useIsMobile } from '../lib/mediaQuery'
 import { usePrivacyMode } from '../lib/privacy'
@@ -8,11 +9,11 @@ import { resolveTheme } from '../lib/theme'
 import { Button } from './ui'
 
 /**
- * 顶栏右侧工具区（DEC-062 §2）：`本地 A 股短线工作台` 小字 → 隐私开关 → 深浅色 →
- * 「接入 AI」配置图标 → 「问 AI」主按钮（QUOT-475）。
+ * 顶栏右侧工具区（DEC-062 §2）：**服务状态灯** → `本地 A 股短线工作台` 小字 →
+ * 隐私开关 → 深浅色 → 「接入 AI」配置图标 → 「问 AI」主按钮（QUOT-475）。
  *
- * 抽成独立组件是硬约束：下一个任务要在**最左侧**插入服务状态灯，届时只改这里，
- * 不再动 `Layout.tsx` 的顶栏结构。
+ * 状态灯是最左一格（QUOT-443 / DEC-063）：红灯才出「重启平台」，绿 / 黄不占位。
+ * 抽成独立组件是硬约束：顶栏结构只在 `Layout.tsx` 维护，工具内容只改这里。
  *
  * 顺序与文案逐字对照参考实现 `components/layout/Layout.tsx:297-308`；
  * 颜色只走 `tokens.css` 语义类（`text-accent` / `text-text-muted` / `hover:bg-surface-3`）。
@@ -41,6 +42,8 @@ export function TopbarTools({ onOpenAi, onAskAi }: TopbarToolsProps) {
       className="flex shrink-0 items-center gap-1.5"
       style={{ marginRight: 'var(--ai-trigger-space, 0px)' }}
     >
+      <PlatformStatusLight />
+
       <span className="hidden text-caption text-text-muted lg:inline">本地 A 股短线工作台</span>
 
       <button

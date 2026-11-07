@@ -542,8 +542,8 @@ export function SearchPanel({ panelId, model, actions }: SearchPanelProps) {
                 title={model.failureTitle ?? '本机服务未连接'}
                 description={
                   <>
-                    搜索要读当日涨停池、行业字典与资讯流，都来自本机只读 API。先运行{' '}
-                    <code className="ldst-num">ldst run</code> 启动服务（默认 127.0.0.1:5950），再重试。
+                    搜索要读当日涨停池、行业字典与资讯流，都来自本机只读 API。服务未连接 →
+                    看顶栏状态灯 / 点「重启平台」；仍不行查看 watchdog 日志，再重试。
                   </>
                 }
                 action={
