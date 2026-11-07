@@ -1645,6 +1645,73 @@ export interface PortfolioPerfPayload {
   notes: string[]
 }
 
+export interface PortfolioReplayHolding {
+  symbol: string
+  name: string
+  weight: number | null
+  return: number | null
+  contribution: number | null
+  first_date: string
+  last_date: string
+  halted_days: number
+}
+
+export interface PortfolioReplayGap {
+  symbol: string
+  name: string
+  reason: string
+}
+
+/** 一段压力窗口的组合读数；`return` 是小数（`-0.3521` = −35.21%）。 */
+export interface PortfolioReplayStats {
+  return: number | null
+  max_drawdown: number | null
+  max_drawdown_peak: string | null
+  max_drawdown_trough: string | null
+  worst_day: number | null
+  worst_day_date: string | null
+  days: number | null
+  included_value: number | null
+  value_change: number | null
+}
+
+export interface PortfolioReplayScenario {
+  id: string
+  label: string
+  start: string
+  end: string
+  /** 非 `null`：这段窗口算不了，只显示原因，不给任何收益读数。 */
+  unavailable: string | null
+  benchmark: null
+  benchmark_error: string
+  portfolio: PortfolioReplayStats | null
+  /** 纳入持仓的当前市值占比（0..1）。 */
+  coverage: number | null
+  included: number
+  holdings: PortfolioReplayHolding[]
+  gaps: PortfolioReplayGap[]
+  /** 净值路径，首日 = 1.0；少于 2 个点时不画。 */
+  path: { dates: string[]; portfolio: number[] } | null
+}
+
+export interface PortfolioReplayGroup {
+  market: string
+  currency: string
+  label: string
+  total_value: number | null
+  /** 当前持仓只数（含没纳入的）。 */
+  input: number
+  scenarios: PortfolioReplayScenario[]
+}
+
+export interface PortfolioReplayPayload {
+  scenario: string
+  as_of: string | null
+  groups: PortfolioReplayGroup[]
+  notes: string[]
+  sources: string[]
+}
+
 /** 新增流水的请求体：字段名与 `POST /api/portfolio/ledger` 白名单一致。 */
 export interface TradeInput {
   symbol: string
@@ -1921,6 +1988,120 @@ function parsePerf(raw: unknown): PortfolioPerfPayload {
   }
 }
 
+function parseReplayHolding(value: unknown): PortfolioReplayHolding | null {
+  const row = record(value)
+  if (!row) return null
+  const symbol = text(row.symbol).trim().toUpperCase()
+  if (!symbol) return null
+  return {
+    symbol,
+    name: text(row.name),
+    weight: numberOrNull(row.weight),
+    return: numberOrNull(row.return),
+    contribution: numberOrNull(row.contribution),
+    first_date: text(row.first_date),
+    last_date: text(row.last_date),
+    halted_days: integerOf(row.halted_days),
+  }
+}
+
+function parseReplayGap(value: unknown): PortfolioReplayGap | null {
+  const row = record(value)
+  if (!row) return null
+  const symbol = text(row.symbol).trim().toUpperCase()
+  const reason = text(row.reason)
+  if (!symbol && !reason) return null
+  return { symbol, name: text(row.name), reason }
+}
+
+function parseReplayStats(value: unknown): PortfolioReplayStats | null {
+  const row = record(value)
+  if (!row) return null
+  return {
+    return: numberOrNull(row.return),
+    max_drawdown: numberOrNull(row.max_drawdown),
+    max_drawdown_peak: reasonOf(row.max_drawdown_peak),
+    max_drawdown_trough: reasonOf(row.max_drawdown_trough),
+    worst_day: numberOrNull(row.worst_day),
+    worst_day_date: reasonOf(row.worst_day_date),
+    days: numberOrNull(row.days),
+    included_value: numberOrNull(row.included_value),
+    value_change: numberOrNull(row.value_change),
+  }
+}
+
+/** 净值路径：日期与净值必须一一对应且至少 2 个点，否则当作没给（不画图）。 */
+function parseReplayPath(value: unknown): { dates: string[]; portfolio: number[] } | null {
+  const row = record(value)
+  if (!row) return null
+  const dates = list(row.dates).map((item) => text(item))
+  const points: number[] = []
+  for (const item of list(row.portfolio)) {
+    const parsed = numberOrNull(item)
+    if (parsed === null) return null
+    points.push(parsed)
+  }
+  if (dates.length < 2 || dates.some((date) => !date) || points.length !== dates.length) return null
+  return { dates, portfolio: points }
+}
+
+function parseReplayScenario(value: unknown): PortfolioReplayScenario | null {
+  const row = record(value)
+  if (!row) return null
+  const id = text(row.id).trim()
+  if (!id) return null
+  return {
+    id,
+    label: text(row.label) || id,
+    start: text(row.start),
+    end: text(row.end),
+    unavailable: reasonOf(row.unavailable),
+    benchmark: null,
+    benchmark_error: text(row.benchmark_error),
+    portfolio: parseReplayStats(row.portfolio),
+    coverage: numberOrNull(row.coverage),
+    included: integerOf(row.included),
+    holdings: list(row.holdings)
+      .map(parseReplayHolding)
+      .filter((item): item is PortfolioReplayHolding => item !== null),
+    gaps: list(row.gaps)
+      .map(parseReplayGap)
+      .filter((item): item is PortfolioReplayGap => item !== null),
+    path: parseReplayPath(row.path),
+  }
+}
+
+function parseReplayGroup(value: unknown): PortfolioReplayGroup | null {
+  const row = record(value)
+  if (!row) return null
+  const currency = text(row.currency) || 'CNY'
+  return {
+    market: text(row.market),
+    currency,
+    label: text(row.label) || currency,
+    total_value: numberOrNull(row.total_value),
+    input: integerOf(row.input),
+    scenarios: list(row.scenarios)
+      .map(parseReplayScenario)
+      .filter((item): item is PortfolioReplayScenario => item !== null),
+  }
+}
+
+/** 情景回放：缺字段一律 `null` / `[]`，不因为一个字段缺失让整页报错。 */
+export function parseReplayPayload(raw: unknown): PortfolioReplayPayload {
+  const root = record(raw)
+  if (!root) throw new ApiError('parse', '情景回放接口返回的不是对象')
+  return {
+    scenario: text(root.scenario) || 'all',
+    as_of: reasonOf(root.as_of),
+    groups: list(root.groups)
+      .map(parseReplayGroup)
+      .filter((item): item is PortfolioReplayGroup => item !== null),
+    notes: stringList(root.notes),
+    sources: stringList(root.sources),
+  }
+}
+
 /** 持仓账本（流水重放 + 行情拼接 + 旧仓分类）。 */
 export async function fetchPortfolio(
   method: PortfolioMethod,
@@ -1934,6 +2115,13 @@ export async function fetchPortfolio(
 /** 收益子页：TWR / 资金加权 / 净值序列（后端只读本机 daily_k）。 */
 export async function fetchPortfolioPerf(signal?: AbortSignal): Promise<PortfolioPerfPayload> {
   return parsePerf(await request<unknown>('/api/portfolio/perf', { signal }))
+}
+
+/** 情景回放：按当前持仓市值权重回看四段固定压力窗口（只读本机 daily_k，不联网）。 */
+export async function fetchPortfolioReplay(signal?: AbortSignal): Promise<PortfolioReplayPayload> {
+  return parseReplayPayload(
+    await request<unknown>(withParams('/api/portfolio/replay', [['scenario', 'all']]), { signal }),
+  )
 }
 
 /** 记一笔：只写本机 `portfolio_trades`，失败原因原样抛给页面。 */
