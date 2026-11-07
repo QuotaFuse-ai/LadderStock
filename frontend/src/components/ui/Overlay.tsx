@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 import { cn } from '../../lib/cn'
+import { useIsMobile } from '../../lib/mediaQuery'
 import { Button, IconButton } from './Button'
 import { Checkbox } from './Field'
 import { useEnter } from './useEnter'
@@ -29,6 +30,7 @@ export function useModalChrome(
   open: boolean,
   onRequestClose: () => void,
   ref: RefObject<HTMLElement>,
+  initialFocusRef?: RefObject<HTMLElement>,
 ): void {
   useEffect(() => {
     if (!open) return
@@ -45,7 +47,7 @@ export function useModalChrome(
     }
 
     const timer = window.setTimeout(() => {
-      const first = focusables()[0]
+      const first = initialFocusRef?.current ?? focusables()[0]
       first?.focus()
     }, 0)
 
@@ -76,7 +78,7 @@ export function useModalChrome(
       document.body.style.overflow = previousOverflow
       previous?.focus?.()
     }
-  }, [open, onRequestClose, ref])
+  }, [open, onRequestClose, ref, initialFocusRef])
 }
 
 export interface DrawerProps {
@@ -88,6 +90,10 @@ export interface DrawerProps {
   subtitle?: ReactNode
   footer?: ReactNode
   width?: 'md' | 'lg'
+  /** 窄屏（<640px）铺满整屏：手机上 480px 抽屉会只剩一条内容带 */
+  fullScreenNarrow?: boolean
+  /** 打开后优先聚焦的控件（如聊天输入框）；缺省聚焦第一个可聚焦元素 */
+  initialFocusRef?: RefObject<HTMLElement>
   children: ReactNode
 }
 
@@ -99,6 +105,8 @@ export function Drawer({
   subtitle,
   footer,
   width = 'md',
+  fullScreenNarrow = false,
+  initialFocusRef,
   children,
 }: DrawerProps) {
   const panelRef = useRef<HTMLDivElement>(null)
@@ -113,9 +121,11 @@ export function Drawer({
     })()
   }, [confirmClose, onClose])
 
-  useModalChrome(open, requestClose, panelRef)
+  useModalChrome(open, requestClose, panelRef, initialFocusRef)
   /** 抽屉是 `if (!open) return null` 的即时挂载，入场动画必须由 useEnter 提供起止两帧 */
   const entered = useEnter(open)
+  // 断点用 JS（DEC-062 的 <768）：本仓 `screens` 含对象档位，Tailwind 不生成 `max-sm:` 变体
+  const isMobile = useIsMobile()
 
   if (!open) return null
 
@@ -135,7 +145,11 @@ export function Drawer({
           'absolute inset-y-0 right-0 flex flex-col border-l border-border bg-surface shadow-overlay',
           'transition-all duration-base ease-ldst',
           entered ? 'translate-x-0' : 'translate-x-full',
-          width === 'lg' ? 'w-drawer-wide' : 'w-drawer',
+          fullScreenNarrow && isMobile
+            ? 'w-full border-l-0'
+            : width === 'lg'
+              ? 'w-drawer-wide'
+              : 'w-drawer',
         )}
       >
         <div className="flex min-h-topbar items-start justify-between gap-3 border-b border-border px-4 py-2">
