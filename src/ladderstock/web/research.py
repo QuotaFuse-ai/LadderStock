@@ -200,6 +200,24 @@ def validate_day_text(text: str) -> str:
         raise _invalid(f"date 不是合法日期：{text!r}") from None
 
 
+def research_days(code: str, root: Path) -> list[str]:
+    """该代码有哪些日期的研究产物（QUOT-453：报告对比要挑两次不同的运行）。
+
+    判据与 `_require_research` 同源：checkpoint 或任一阶段产物存在即算一次运行。
+    目录读不动时如实抛 OSError，由调用方翻成 503，不吞成「没有历史」。
+    """
+    days: set[str] = set()
+    directory = checkpoint.checkpoint_dir(code, root)
+    if directory.is_dir():
+        days.update(path.stem for path in directory.glob("*.json") if DAY_PATTERN.match(path.stem))
+    artifact_root = Path(root) / artifacts.ARTIFACT_SUBDIR / code
+    if artifact_root.is_dir():
+        for path in artifact_root.iterdir():
+            if path.is_dir() and DAY_PATTERN.match(path.name):
+                days.add(path.name)
+    return sorted(days, reverse=True)
+
+
 def parse_day(raw: Any, *, code: str, root: Path) -> str:
     """`date` → `YYYY-MM-DD`；缺省取该代码最近一次运行日，一次记录都没有则 404。"""
     if raw is None or (isinstance(raw, str) and not raw.strip()):
@@ -858,6 +876,27 @@ class ResearchPlane:
                 status_code=503, detail=ENGINE_UNAVAILABLE_DETAIL.format(reason=exc)
             ) from None
         return self._status_payload(code, day, summary)
+
+    def runs(self, raw_code: Any) -> dict[str, Any]:
+        """`GET /{code}/runs`：该代码有研究产物的日期列表（QUOT-453 报告对比用）。
+
+        没有产物是正常的业务空态：200 + 空列表，让页面说明「还没有可以比较的两次研究」；
+        未知代码仍按 404 处理，盘面读不动按 503 处理，口径与 `status()` 一致。
+        """
+        code = parse_code(raw_code)
+        require_known_code(code)
+        try:
+            days = research_days(code, self.data_root)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=503, detail=ENGINE_UNAVAILABLE_DETAIL.format(reason=exc)
+            ) from None
+        return {
+            "code": code,
+            "count": len(days),
+            "latest": days[0] if days else None,
+            "dates": days,
+        }
 
     def _require_research(self, code: str, day: str) -> Mapping[str, Any]:
         """「研究不存在」的唯一判据：checkpoint 与产物都查不到 → 404。
@@ -1628,6 +1667,11 @@ def build_router(plane: ResearchPlane) -> APIRouter:
     ) -> dict[str, Any]:
         return plane.status(code, date_str)
 
+    @router.get("/{code}/runs")
+    def research_runs(code: str) -> dict[str, Any]:
+        """研究运行日期（QUOT-453）：报告对比在同一标的的历史运行里挑两次。"""
+        return plane.runs(code)
+
     @router.get("/{code}/overview")
     def research_overview(
         code: str,
@@ -1724,6 +1768,7 @@ __all__ = [
     "parse_code",
     "parse_day",
     "parse_limit",
+    "research_days",
     "parse_period",
     "parse_periods",
     "parse_sources",

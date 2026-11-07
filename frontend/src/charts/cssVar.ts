@@ -10,6 +10,12 @@ import { useEffect, useMemo, useState } from 'react'
 
 /** 仅在 CSS 变量读不到时兜底（例如测试环境 jsdom 没有样式表），与 tokens.css 的暗色值一致 */
 const FALLBACK: Record<string, string> = {
+  '--ldst-bg': '#0e1116',
+  '--ldst-surface': '#151a21',
+  '--ldst-surface-2': '#1b2230',
+  '--ldst-border': '#2a3342',
+  '--ldst-text': '#e8ecf2',
+  '--ldst-warn': '#f0b429',
   '--ldst-chart-grid': '#26303c',
   '--ldst-chart-axis': '#8a96a6',
   '--ldst-chart-band': 'rgba(76, 141, 255, 0.12)',
