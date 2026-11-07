@@ -340,7 +340,7 @@ def test_peer_rows_count_sources(tmp_path) -> None:
 
     rows = {row["peer"]: row for row in registry.peer_rows()}
 
-    assert set(rows) == {"tickhub", "wire", "senate"}
+    assert set(rows) == {"tickhub", "tickhub_us", "wire", "senate"}
     assert rows["tickhub"]["sources"] == 4
 
 

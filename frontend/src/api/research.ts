@@ -958,6 +958,48 @@ export async function askResearchAssistant(
   }
 }
 
+// ---------------------------------------------------- 历史运行清单（QUOT-453）
+
+const DAY_TEXT = /^\d{4}-\d{2}-\d{2}$/
+
+export interface ResearchRunList {
+  code: string
+  /** 有产物的日期，新→旧；没有产物时是空数组（业务空态，不是接口缺失） */
+  dates: string[]
+  latest: string | null
+  /** 接口没返回 `count` 时按 `dates.length` 记账，不自己发明数 */
+  count: number
+}
+
+/** `GET /api/research/{code}/runs` 的载荷解析（后端 `ResearchPlane.runs()`）。 */
+export function parseResearchRunList(payload: unknown, expectedCode?: string): ResearchRunList {
+  let root = asRecord(payload, '研究运行清单')
+  if (root.payload && typeof root.payload === 'object' && !Array.isArray(root.payload)) {
+    root = root.payload as Record<string, unknown>
+  }
+  if (!Array.isArray(root.dates)) throw parseError('研究运行清单缺少 dates 数组')
+  const dates = (root.dates as unknown[])
+    .filter((item): item is string => typeof item === 'string' && DAY_TEXT.test(item))
+    .sort((left, right) => right.localeCompare(left))
+  return {
+    code: asString(root.code) ?? expectedCode ?? '',
+    dates,
+    latest: asString(root.latest) ?? dates[0] ?? null,
+    count: asNumber(root.count, dates.length),
+  }
+}
+
+export async function loadResearchRuns(
+  code: string,
+  signal?: AbortSignal,
+): Promise<ResearchRunList> {
+  const payload = await request<unknown>(
+    `/api/research/${encodeURIComponent(code)}/runs`,
+    { signal },
+  )
+  return parseResearchRunList(payload, code)
+}
+
 // ---------------------------------------------------------------- 传输
 
 const TIMEOUT_MS = 12000

@@ -19,6 +19,7 @@
  *   --suffix <s>       文件名后缀（默认 before）
  *   --themes <a,b>     主题（默认 dark,light）
  *   --routes <a,b>     只拍指定 slug，逗号分隔
+ *   --route <slug>=<path>  临时加一屏（可重复），配合 `--routes` 拍样例之外的标的
  *   --query <str>      追加到每个路由的查询串（`demo=1` / `demo=1&variant=partial` / `tab=ports`），
  *                      配合 `--suffix after-demo` 这类后缀拍演示态与缺失态
  *   --clock <iso>      把页面 `Date` 钉到该时刻（如 `2026-11-06T13:41:07+08:00`）。用于时段相关
@@ -98,6 +99,7 @@ function parseArgs(argv) {
     height: VIEWPORT.height,
     fullPage: false,
     scroll: 0,
+    extraRoutes: [],
   }
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i]
@@ -107,6 +109,13 @@ function parseArgs(argv) {
     else if (flag === '--suffix') options.suffix = next()
     else if (flag === '--themes') options.themes = next().split(',').filter(Boolean)
     else if (flag === '--routes') options.routes = next().split(',').filter(Boolean)
+    // 验收常要拍某个具体样本（如 /research/600000），不必为一次取证改 ROUTES 表
+    else if (flag === '--route') {
+      const raw = next()
+      const at = raw.indexOf('=')
+      if (at <= 0 || at === raw.length - 1) throw new Error(`--route 要写成 slug=/path，收到 ${raw}`)
+      options.extraRoutes.push({ slug: raw.slice(0, at), path: raw.slice(at + 1) })
+    }
     else if (flag === '--query') options.query = next()
     else if (flag === '--clock') options.clock = next()
     else if (flag === '--demo-pref') options.demoPref = true
@@ -353,7 +362,8 @@ async function main() {
   }
   mkdirSync(options.out, { recursive: true })
 
-  const routes = options.routes ? ROUTES.filter((r) => options.routes.includes(r.slug)) : ROUTES
+  const allRoutes = [...ROUTES, ...options.extraRoutes]
+  const routes = options.routes ? allRoutes.filter((r) => options.routes.includes(r.slug)) : allRoutes
   if (routes.length === 0) throw new Error(`--routes 没有匹配到任何屏幕`)
 
   if (!options.base) {

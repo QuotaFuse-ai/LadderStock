@@ -55,7 +55,15 @@ const INDEX_SEEDS: IndexSeed[] = [
   { code: 'sh000300', market: 'SH', name: '沪深300', prevClose: 4301.2, price: 4267.55 },
   { code: 'sz399001', market: 'SZ', name: '深证成指', prevClose: 12815.44, price: 12768.02 },
   { code: 'sz399006', market: 'SZ', name: '创业板指', prevClose: 2504.18, price: 2519.21 },
+  { code: 'DJI', market: 'US', name: '道琼斯', prevClose: 51523.06, price: 51570.09 },
+  { code: 'IXIC', market: 'US', name: '纳斯达克综合', prevClose: 24673.5, price: 24707.81 },
+  // 港股无合规源（QUOT-471，DEC-006 闸门 4 不自采）：恒定「源未接入」，不补 0。
+  { code: 'HSI', market: 'HK', name: '恒生指数', prevClose: 0, price: null, reason: '源未接入：港股指数无合规源' },
+  { code: 'HSTECH', market: 'HK', name: '恒生科技', prevClose: 0, price: null, reason: '源未接入：港股指数无合规源' },
 ]
+
+/** 港股两格无论哪个变体都不可用：没有源，就不该在演示里「凭空有值」。 */
+const HK_CODES = new Set(['HSI', 'HSTECH'])
 
 function indexOf(seed: IndexSeed, options: { available: boolean; reason: string | null }) {
   const price = options.available ? seed.price : null
@@ -75,33 +83,36 @@ function indexOf(seed: IndexSeed, options: { available: boolean; reason: string 
 }
 
 function indicesPayload(variant: HomeDemoVariant): IndicesPayload {
-  // `partial`：创业板指那一格没回。缺格也在 `cells[]` 里，前端渲染几格就是几格
-  const broken = variant === 'partial' ? INDEX_SEEDS.length - 1 : -1
+  // `partial`：创业板指那一格没回。缺格也在 `cells[]` 里，前端渲染几格就是几格；
+  // 港股两格恒定不可用（无源），不参与 `partial` 的「制造缺格」。
+  const broken = variant === 'partial' ? 3 : -1
   const cells = INDEX_SEEDS.map((seed, index) =>
     indexOf(seed, {
-      available: variant !== 'empty' && index !== broken,
+      available: variant !== 'empty' && !HK_CODES.has(seed.code) && index !== broken,
       reason:
-        variant === 'empty'
-          ? 'index_quote 这批里没有这一天的行（先 ldst sync --dataset index_quote）'
-          : index === broken
-            ? 'index_quote 响应里没有创业板指'
-            : null,
+        HK_CODES.has(seed.code)
+          ? seed.reason ?? '源未接入：港股指数无合规源'
+          : variant === 'empty'
+            ? 'index_quote 这批里没有这一天的行（先 ldst sync --dataset index_quote）'
+            : index === broken
+              ? 'index_quote 响应里没有创业板指'
+              : null,
     }),
   )
   const priced = cells.filter((cell) => cell.price !== null).length
   const status = priced === 0 ? 'missing' : priced === cells.length ? 'ok' : 'partial'
   return {
     available: priced > 0,
-    reason: priced === 0 ? '四格指数都没有点位' : null,
+    reason: priced === 0 ? '所有指数格都没有点位' : null,
     footnote: '指数为行情快照，不是逐笔实时',
     price_source: 'index_quote',
-    datasets: ['index_quote'],
+    datasets: ['index_quote', 'index_quote_us'],
     cells,
     data_source_status: status,
     // 外壳：整块没取到时 `data_as_of=null`，不拿请求日期顶替数据时点
     freshness: 'realtime',
     source_status: status === 'ok' ? 'ok' : 'partial',
-    source_detail: `index_quote: peer 行情（${priced}/${cells.length} 格有值）`,
+    source_detail: `index_quote + index_quote_us: peer 行情（${priced}/${cells.length} 格有值）`,
     data_as_of: status === 'missing' ? null : DEMO_TRADE_DATE,
     fetched_at: status === 'missing' ? null : DEMO_FETCHED_AT,
   }

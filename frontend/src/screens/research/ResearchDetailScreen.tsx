@@ -59,6 +59,7 @@ import {
   riskItems,
   seriesFacts,
   stringFact,
+  unwrapNarrativeJson,
   type SeriesFact,
 } from './facts'
 import { reportHref } from './links'
@@ -171,7 +172,7 @@ function Narrative({
     <div className="mt-4 border-t border-border pt-3">
       <h3 className="mb-2 text-body font-semibold text-text">研究摘要</h3>
       <MarkdownView
-        markdown={document.narrative.join('\n\n')}
+        markdown={unwrapNarrativeJson(document.narrative.join('\n\n'))}
         index={buildCitationIndex(document.provenance)}
         onCitation={onCitation}
       />
@@ -744,6 +745,11 @@ export default function ResearchDetailScreen() {
       <CompareSection
         code={view.code}
         reportHref={view.code ? reportHref(view.code, view) : null}
+        source={view.source}
+        date={view.date}
+        demo={view.demo}
+        overview={overviewRequest.data}
+        name={displayName}
       />
       <ResearchAiDock
         code={view.code}

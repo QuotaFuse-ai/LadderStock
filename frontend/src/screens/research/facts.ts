@@ -180,13 +180,54 @@ export function textList(ai: Record<string, unknown> | undefined, key: string): 
   return raw.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
 }
 
+/** 「整包 JSON 当一段叙述」的包装串长相：`{"某个键": …}`。 */
+const WRAPPED_JSON = /^\{\s*"[A-Za-z_]\w*"\s*:/
+
+function unwrapWrappedLine(line: string): string {
+  const trimmed = line.trim()
+  if (!WRAPPED_JSON.test(trimmed) || !trimmed.endsWith('}')) return line
+  // 包装串本身可能是坏的（数组收尾多一个引号写成 `"]"`），先修这一处已知错位再试解析
+  const candidates = [trimmed, trimmed.replace(/"\]"/g, '"]')]
+  let parsed: Record<string, unknown> | null = null
+  for (const candidate of candidates) {
+    try {
+      const value: unknown = JSON.parse(candidate)
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        parsed = value as Record<string, unknown>
+        break
+      }
+    } catch {
+      /* 换下一个候选写法 */
+    }
+  }
+  if (!parsed) return line
+  const paragraphs: string[] = []
+  for (const value of Object.values(parsed)) {
+    if (typeof value === 'string') {
+      if (value.trim()) paragraphs.push(value.trim())
+    } else if (Array.isArray(value)) {
+      for (const item of value) if (typeof item === 'string' && item.trim()) paragraphs.push(item.trim())
+    }
+  }
+  return paragraphs.length > 0 ? paragraphs.join('\n\n') : line
+}
+
+/**
+ * 旧产物（mode=parsed）会把模型返回的整包 JSON 原样写成一段叙述，页面照原样渲染就是一屏花括号。
+ * 这里只做拆包展示：逐行处理，文案一字不改、不解释字段含义；不是包装串或解析不出来就原样返回。
+ */
+export function unwrapNarrativeJson(text: string): string {
+  if (!text.includes('{"')) return text
+  return text.split('\n').map(unwrapWrappedLine).join('\n')
+}
+
 /**
  * 优先用磁盘上的 `<stage>.md`；缺失时用同一份 document 的叙述 + 备注拼一个等价视图。
  * 只做排版，不改写文案、不补数字。
  */
 export function artifactMarkdown(document: StageDocument, markdown: string): string {
-  if (markdown.trim()) return markdown
-  const lines = [...document.narrative]
+  if (markdown.trim()) return unwrapNarrativeJson(markdown)
+  const lines = document.narrative.flatMap((line) => unwrapNarrativeJson(line).split('\n\n'))
   if (document.notes.length > 0) {
     lines.push('', '## 备注', '', ...document.notes.map((note) => `- ${note}`))
   }

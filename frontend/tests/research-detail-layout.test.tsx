@@ -159,7 +159,8 @@ describe('个股深挖整页编排（QUOT-448）', () => {
     const input = screen.getByRole('combobox', { name: /股票代码/ })
     fireEvent.focus(input)
     fireEvent.change(input, { target: { value: '600001' } })
-    const option = await screen.findByRole('option')
+    // 页面上还有对比块的两个日期下拉，这里的 role=option 要指名搜到的那条
+    const option = await screen.findByRole('option', { name: /600001/ })
     fireEvent.mouseDown(option)
 
     await waitFor(() =>

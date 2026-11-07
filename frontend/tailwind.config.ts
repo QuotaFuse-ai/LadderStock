@@ -153,6 +153,9 @@ export default {
         measure: cssVar(tokens.layout.measure.cssVar),
         /* 结构尺寸（非视觉令牌）：顶栏命令浮层的宽度上限，窄屏两侧各留 16px */
         popover: 'calc(100vw - 2rem)',
+        /* 结构尺寸：分享卡预览按出图比例（720×1020 / 1080×660）缩放两档 */
+        'share-portrait': '360px',
+        'share-landscape': '720px',
       },
       zIndex: {
         /* 表格 sticky 首列 / 首列×表头交叉格：介于 base 0 与 sticky 10 之间，见 tokens.css 注释 */
