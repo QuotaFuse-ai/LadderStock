@@ -1,22 +1,29 @@
 import { Trash2 } from 'lucide-react'
 
-import type { PortfolioIssue, PortfolioTrade } from '../../api/radar'
+import type { PortfolioIssue, PortfolioMethod, PortfolioTrade } from '../../api/radar'
 import { Banner, DataTable, EmptyState, IconButton, type Column } from '../../components/ui'
 import { MISSING, formatTime } from '../../lib/format'
 import { tradeDetail, tradeTypeLabel } from './portfolioForm'
 import { PrivacyText } from './PrivacyText'
+import { TradeCsvImport } from './TradeCsvImport'
 
 /**
- * 交易流水子页（QUOT-434）：全部流水按日期倒序，删除走二次确认（确认框由页面持有）。
+ * 交易流水子页（QUOT-434 / QUOT-437）：全部流水按日期倒序，删除走二次确认（确认框由页面持有）。
  *
  * 数据不对的流水（`issues`）在表上方逐条说明原因——它们没参与计算，
  * 让用户看见「为什么持仓和流水对不上」。
+ *
+ * 「从表格导入」在本子页里：多笔流水一次写进去之前要先看后端预览（不写库），
+ * 勾选与预览对得上才导（实现见 `TradeCsvImport.tsx`）。
  */
 
 export interface PortfolioTradesTabProps {
   trades: PortfolioTrade[]
   issues: PortfolioIssue[]
+  /** 成本法：批量导入的预览与写入要按同一套口径校验 */
+  method: PortfolioMethod
   onDelete: (trade: PortfolioTrade) => void
+  onImported: (result: { imported: number; backup: string | null }) => void
 }
 
 function nameOf(trade: PortfolioTrade, names: Map<string, string>): string {
@@ -38,7 +45,7 @@ function detailTextOf(trade: PortfolioTrade): string {
   return detail || MISSING
 }
 
-export function PortfolioTradesTab({ trades, issues, onDelete }: PortfolioTradesTabProps) {
+export function PortfolioTradesTab({ trades, issues, method, onDelete, onImported }: PortfolioTradesTabProps) {
   const names = nameMapOf(trades)
   const ordered = [...trades].sort((a, b) => {
     if (a.date !== b.date) return b.date.localeCompare(a.date)
@@ -149,13 +156,15 @@ export function PortfolioTradesTab({ trades, issues, onDelete }: PortfolioTrades
           <EmptyState
             compact
             title="还没有流水"
-            description="买入、卖出、分红、送转都在上面「记一笔」里记录；持仓和盈亏会按流水重新算。"
+            description="买入、卖出、分红、送转都在上面「记一笔」里记录；已经在表格里记好的，用下面「从表格导入」一次写进来。"
           />
         }
       />
       <p className="text-caption text-text-muted">
         删除是硬删（删前后端会先备份）。流水按日期倒序；金额与股数在隐私模式下遮罩。
       </p>
+
+      <TradeCsvImport method={method} onImported={onImported} />
     </div>
   )
 }

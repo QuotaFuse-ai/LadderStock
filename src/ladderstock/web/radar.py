@@ -64,7 +64,8 @@ from ladderstock.core.portfolio import HoldingRow, round4
 from ladderstock.core.portfolio import replay as replay_portfolio
 from ladderstock.core.portfolio_perf import DEFAULT_DAYS as PERF_DEFAULT_DAYS
 from ladderstock.core.portfolio_perf import MAX_DAYS as PERF_MAX_DAYS
-from ladderstock.core.portfolio_perf import build_perf
+from ladderstock.core.portfolio_perf import build_perf, load_close_series
+from ladderstock.core.portfolio_xray import build_view as build_xray_view
 from ladderstock.core.privacy import strip_private
 from ladderstock.core.quotes import PRICE_DATASET, daily_change_map, price_map
 from ladderstock.core.watch_prices import DATASET as SPOT_QUOTE_DATASET
@@ -88,6 +89,8 @@ from ladderstock.journal.portfolio import legacy_rows as portfolio_legacy_rows
 from ladderstock.journal.portfolio import list_trades as list_portfolio_trades
 from ladderstock.journal.portfolio import migrate_legacy as migrate_portfolio_legacy
 from ladderstock.journal.portfolio import trade_as_dict as portfolio_trade_dict
+from ladderstock.journal.portfolio_import import import_rows as import_portfolio_rows
+from ladderstock.journal.portfolio_import import preview as preview_portfolio_import
 from ladderstock.journal.position import (
     add_position,
     compute_metrics,
@@ -929,6 +932,67 @@ class RadarPlane:
         trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
         return self._read(lambda: build_perf(trades, root=self.data_root, days=days))
 
+    # ------------------------------------------------- 持仓 X 光（QUOT-437）
+
+    def portfolio_xray_view(self) -> dict[str, Any]:
+        """`GET /api/portfolio/xray`：权重 / 集中度 / 行业暴露 / 相关系数 / 缺口。
+
+        平面 JSON、`no-store`、回环独占（与 `/api/portfolio` 同一条闸门）。权重按
+        现价市值算，只依赖重放出来的**持有数量**——两种成本法持有数量一样，所以
+        这里不收 `method`，避免让页面以为换个成本法会算出另一份权重。
+
+        现价只读本机 `daily_k`（`price_map`），相关系数只读本机 `daily_k` 收盘序列
+        （`load_close_series`）：缺价 / 缺日线的持仓进 `gaps` 并说明原因，不补 0、
+        不拿成本价顶替，也不联网。
+        """
+        trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
+        holdings = replay_portfolio(trades, "average").holdings
+        codes = [row.symbol for row in holdings]
+        prices, price_lookup = self._read(
+            lambda: price_map(codes, None, root=self.data_root)
+        )
+        positions = self._read(lambda: list_positions(root=self.data_root))
+        industries = {
+            str(row.get("code") or "").strip().upper(): str(row.get("industry") or "")
+            for row in positions
+        }
+        closes = self._read(
+            lambda: load_close_series(codes, root=self.data_root)
+        )
+        view = build_xray_view(
+            holdings, prices, industries, closes, as_of=price_lookup["date"]
+        )
+        return {
+            "ok": True,
+            "local_only": True,
+            "store": "local_sqlite",
+            "price_source": PRICE_DATASET,
+            "price_lookup": price_lookup,
+            **view,
+        }
+
+    def portfolio_import_preview(self, body: Any) -> dict[str, Any]:
+        """`POST /api/portfolio/ledger/import/preview`：逐行校验 + 重复标记，不写库。
+
+        用法类错误（行不合法 / 超限）一律 422（SPEC §7），`_read` 已经按这条映射；
+        预览连备份都不落，所以复用读面的错误映射。
+        """
+        view = self._read(
+            lambda: preview_portfolio_import(body, root=self.data_root)
+        )
+        return {"local_only": True, "store": "local_sqlite", **view}
+
+    def portfolio_import(self, body: Any) -> dict[str, Any]:
+        """`POST /api/portfolio/ledger/import`：再校验 → 备份 → 事务内整批写入。
+
+        任何一行不合法 / 重复 / 会让某笔卖出超过持有，整批 422、一行都不写；
+        用法类错误按 SPEC §7 用 422（单笔写入沿用 400，这里不改它）。
+        """
+        result = self._import_write(
+            lambda: import_portfolio_rows(body, root=self.data_root)
+        )
+        return {"local_only": True, "store": "local_sqlite", **result}
+
     def _auto_migrate(self) -> dict[str, Any]:
         """自动迁移旧记录；失败不拖垮读面，原因写进 `migration.error`。"""
         try:
@@ -1149,6 +1213,20 @@ class RadarPlane:
         except (OSError, sqlite3.Error) as exc:
             raise HTTPException(status_code=500, detail=f"{WRITE_FAILURE}：{exc}") from None
 
+    def _import_write(self, thunk: Callable[[], _T]) -> _T:
+        """批量导入的错误映射：用法类（行不对 / 超限 / 重复）按 SPEC §7 一律 422。"""
+        try:
+            return thunk()
+        except LadderStockError as exc:
+            if exc.code == EXIT_USAGE:
+                raise _invalid(exc.message) from None
+            if exc.code == EXIT_CONFIG:
+                raise HTTPException(status_code=503, detail=exc.message) from None
+            raise HTTPException(
+                status_code=500, detail=f"{WRITE_FAILURE}：{exc.message}"
+            ) from None
+        except (OSError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=500, detail=f"{WRITE_FAILURE}：{exc}") from None
 
 
 def _empty_news_view(
@@ -1620,6 +1698,13 @@ def build_router(plane: RadarPlane) -> APIRouter:
             plane.portfolio_perf_view(days), headers={"Cache-Control": "no-store"}
         )
 
+    @router.get("/portfolio/xray", dependencies=[Depends(_positions_guard)])
+    def portfolio_xray() -> JSONResponse:
+        """持仓 X 光（隐私数据）：权重 / 集中度 / 行业 / 相关系数 / 缺口，平面 JSON、`no-store`。"""
+        return JSONResponse(
+            plane.portfolio_xray_view(), headers={"Cache-Control": "no-store"}
+        )
+
     @router.post(
         "/portfolio/ledger", dependencies=[Depends(_positions_write_guard)]
     )
@@ -1629,6 +1714,30 @@ def build_router(plane: RadarPlane) -> APIRouter:
         """新增一笔流水：平面 JSON、`no-store`、不进信封。"""
         return JSONResponse(
             plane.portfolio_add_ledger(body), headers={"Cache-Control": "no-store"}
+        )
+
+    @router.post(
+        "/portfolio/ledger/import/preview",
+        dependencies=[Depends(_positions_write_guard)],
+    )
+    def portfolio_ledger_import_preview(
+        body: Annotated[Any, Body(description="批量流水；逐行校验，不写库")],
+    ) -> JSONResponse:
+        """导入预览：逐行 `problem` / `duplicate`，不写库、不备份；用法错误 422。"""
+        return JSONResponse(
+            plane.portfolio_import_preview(body), headers={"Cache-Control": "no-store"}
+        )
+
+    @router.post(
+        "/portfolio/ledger/import",
+        dependencies=[Depends(_positions_write_guard)],
+    )
+    def portfolio_ledger_import(
+        body: Annotated[Any, Body(description="批量流水；任何一行不对整批不写")],
+    ) -> JSONResponse:
+        """批量导入：再校验 → 备份 → 事务整批写入；用法错误 422。"""
+        return JSONResponse(
+            plane.portfolio_import(body), headers={"Cache-Control": "no-store"}
         )
 
     @router.post(
