@@ -1,0 +1,345 @@
+=== pytest
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.2.0, pluggy-1.7.0
+rootdir: D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\LadderStock
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.16.0
+collected 2711 items
+
+tests\compat\test_legacy_entry.py .........XXXX                          [  0%]
+tests\contract\test_ecosystem_boundary.py .............................. [  1%]
+.......................                                                  [  2%]
+tests\contract\test_kline_chart_payload_mapping.py ....                  [  2%]
+tests\contract\test_ladder_envelope.py ............                      [  3%]
+tests\contract\test_mcp_stdio.py .....                                   [  3%]
+tests\contract\test_mcp_streamable_http.py ........                      [  3%]
+tests\contract\test_mcp_tools.py ....................                    [  4%]
+tests\contract\test_tickhub_payload_mapping.py ......................... [  5%]
+........................................................................ [  7%]
+.................................                                        [  9%]
+tests\integration\test_ai_fallback_chain.py ......                       [  9%]
+tests\integration\test_journal_privacy.py ...............                [  9%]
+tests\integration\test_position_privacy.py ...............               [ 10%]
+tests\integration\test_provider_fallback.py ...............              [ 10%]
+tests\integration\test_rate_limit_backoff.py .............               [ 11%]
+tests\integration\test_realized_reconciliation.py .....                  [ 11%]
+tests\integration\test_sync_batch_pool.py ........                       [ 11%]
+tests\integration\test_sync_code_pool.py ..................              [ 12%]
+tests\integration\test_sync_incremental.py .............                 [ 13%]
+tests\integration\test_sync_optional_codes.py ..                         [ 13%]
+tests\integration\test_sync_topic_pool.py ...........                    [ 13%]
+tests\integration\test_validation_reconcile.py .........                 [ 13%]
+tests\integration\test_watch_signals.py .................                [ 14%]
+tests\state\test_persist_recover.py .....................                [ 15%]
+tests\unit\ai\test_checkpoint.py .......                                 [ 15%]
+tests\unit\ai\test_cli_provider.py .............                         [ 15%]
+tests\unit\ai\test_error_taxonomy.py ......................              [ 16%]
+tests\unit\ai\test_orchestrator.py ...........                           [ 17%]
+tests\unit\ai\test_providers.py ...................                      [ 17%]
+tests\unit\ai\test_self_ai_env.py ....                                   [ 18%]
+tests\unit\ai\test_structured_output.py .................                [ 18%]
+tests\unit\ai\test_tools.py .........................s.................. [ 20%]
+.....                                                                    [ 20%]
+tests\unit\cli\test_schedule_digest.py ...................               [ 21%]
+tests\unit\config\test_migrate.py ..........                             [ 21%]
+tests\unit\config\test_peer_registry.py ....................             [ 22%]
+tests\unit\core\test_batch_slots.py ........                             [ 22%]
+tests\unit\core\test_intraday.py ...........................             [ 23%]
+tests\unit\core\test_ladder.py ................                          [ 24%]
+tests\unit\core\test_limit_pool.py .........                             [ 24%]
+tests\unit\core\test_listener_policy.py .....................            [ 25%]
+tests\unit\core\test_metrics_golden.py ................................. [ 26%]
+............................                                             [ 27%]
+tests\unit\core\test_peer_dirs.py ...                                    [ 27%]
+tests\unit\core\test_peer_versions.py ...........                        [ 28%]
+tests\unit\core\test_pool_fund_as_of.py ......                           [ 28%]
+tests\unit\core\test_pool_golden.py .............s...................... [ 29%]
+..............                                                           [ 30%]
+tests\unit\core\test_pool_live_fields.py ....                            [ 30%]
+tests\unit\core\test_pool_theme_membership.py ............               [ 30%]
+tests\unit\core\test_portfolio_perf.py ...............                   [ 31%]
+tests\unit\core\test_privacy.py ........                                 [ 31%]
+tests\unit\core\test_provenance.py ....................                  [ 32%]
+tests\unit\core\test_quotes_daily_change.py .........                    [ 32%]
+tests\unit\core\test_sentiment.py .......                                [ 32%]
+tests\unit\core\test_validation.py ..............                        [ 33%]
+tests\unit\data\test_archive.py ........                                 [ 33%]
+tests\unit\data\test_duckdb_concurrency.py ..........                    [ 34%]
+tests\unit\data\test_duckdb_store.py ...........                         [ 34%]
+tests\unit\data\test_provisional_probe.py .......                        [ 34%]
+tests\unit\data\test_schema_v3.py .....                                  [ 34%]
+tests\unit\data\test_watermark.py .........                              [ 35%]
+tests\unit\industry\test_industry_catalog.py ..............              [ 35%]
+tests\unit\industry\test_industry_cli.py ......                          [ 35%]
+tests\unit\industry\test_industry_metrics.py ........................... [ 36%]
+.......                                                                  [ 37%]
+tests\unit\industry\test_industry_snapshot_golden.py ................    [ 37%]
+tests\unit\industry\test_industry_views_projection.py .................. [ 38%]
+                                                                         [ 38%]
+tests\unit\journal\test_inbox.py ...........                             [ 38%]
+tests\unit\journal\test_portfolio_replay.py .......................      [ 39%]
+tests\unit\journal\test_portfolio_store.py ............................. [ 40%]
+...                                                                      [ 40%]
+tests\unit\journal\test_position.py .................................... [ 42%]
+.                                                                        [ 42%]
+tests\unit\journal\test_position_daily_pnl.py .........                  [ 42%]
+tests\unit\journal\test_realized.py ..........                           [ 42%]
+tests\unit\journal\test_watchlist.py .........................           [ 43%]
+tests\unit\mcp\test_mcp_watch_status.py ........                         [ 44%]
+tests\unit\news\test_ai_enrich.py ........................               [ 45%]
+tests\unit\news\test_calendar.py ...................................     [ 46%]
+tests\unit\news\test_events.py ................................          [ 47%]
+tests\unit\news\test_mcp_news_tools.py ..........................        [ 48%]
+tests\unit\news\test_models.py ....................                      [ 49%]
+tests\unit\news\test_normalize.py ...............                        [ 49%]
+tests\unit\news\test_store.py ........................                   [ 50%]
+tests\unit\news\test_stream.py ...............................           [ 51%]
+tests\unit\research\test_check_cli.py .............                      [ 52%]
+tests\unit\research\test_citation.py ....................                [ 53%]
+tests\unit\research\test_cli.py ............                             [ 53%]
+tests\unit\research\test_gate.py ......                                  [ 53%]
+tests\unit\research\test_mcp_status.py .......                           [ 53%]
+tests\unit\research\test_pipeline.py ..............                      [ 54%]
+tests\unit\research\test_pipeline_tools.py ..........                    [ 54%]
+tests\unit\research\test_provenance_pipeline.py ........                 [ 55%]
+tests\unit\research\test_stages_back.py .....                            [ 55%]
+tests\unit\research\test_stages_front.py .....                           [ 55%]
+tests\unit\research\test_tool_policy.py ...................              [ 56%]
+tests\unit\review\test_export.py ......ss.......                         [ 56%]
+tests\unit\review\test_row_count_caliber.py ..                           [ 56%]
+tests\unit\test_cli_news_commands.py ..........................          [ 57%]
+tests\unit\test_cli_output_option.py ................................... [ 59%]
+........................................................................ [ 61%]
+........................................................................ [ 64%]
+....                                                                     [ 64%]
+tests\unit\test_cli_surface.py ......................................... [ 66%]
+..........                                                               [ 66%]
+tests\unit\test_config_contract.py .....                                 [ 66%]
+tests\unit\test_output_format.py ........                                [ 66%]
+tests\unit\test_port_policy_messages.py ..............                   [ 67%]
+tests\unit\test_schedule_fast.py .............                           [ 67%]
+tests\unit\test_schedule_snapshot.py ........                            [ 68%]
+tests\unit\test_schedule_sync_close.py ..............                    [ 68%]
+tests\unit\test_sources_consistency.py .................                 [ 69%]
+tests\unit\test_state_contract.py ...................                    [ 70%]
+tests\unit\watch\test_watch_notifier.py ..............                   [ 70%]
+tests\unit\watch\test_watch_signal_engine.py .....................       [ 71%]
+tests\unit\watch\test_watch_status_file.py ................              [ 71%]
+tests\unit\web\test_calendar_timeline.py .................               [ 72%]
+tests\unit\web\test_control_acl.py ................s.................... [ 73%]
+                                                                         [ 73%]
+tests\unit\web\test_control_plane.py ................................... [ 75%]
+.......................................................                  [ 77%]
+tests\unit\web\test_inbox_endpoints.py ...........                       [ 77%]
+tests\unit\web\test_indices_endpoint.py .............                    [ 78%]
+tests\unit\web\test_industry_endpoints.py .............................. [ 79%]
+..                                                                       [ 79%]
+tests\unit\web\test_intraday_endpoints.py .............................  [ 80%]
+tests\unit\web\test_journal_stats_endpoint.py .................          [ 81%]
+tests\unit\web\test_limit_pool_endpoint.py ........                      [ 81%]
+tests\unit\web\test_market_history_endpoint.py ......................... [ 82%]
+....                                                                     [ 82%]
+tests\unit\web\test_market_theme_endpoint.py .................           [ 82%]
+tests\unit\web\test_peer_import.py ...............                       [ 83%]
+tests\unit\web\test_pool_fund_freshness.py .....                         [ 83%]
+tests\unit\web\test_portfolio_endpoints.py ............................. [ 84%]
+                                                                         [ 84%]
+tests\unit\web\test_portfolio_perf_endpoint.py ..........                [ 85%]
+tests\unit\web\test_positions_write_endpoints.py ....................... [ 86%]
+...................                                                      [ 86%]
+tests\unit\web\test_radar_endpoints.py ................................. [ 87%]
+..........................                                               [ 88%]
+tests\unit\web\test_research_earnings_brief.py .......                   [ 89%]
+tests\unit\web\test_research_endpoints.py .............................. [ 90%]
+..........                                                               [ 90%]
+tests\unit\web\test_research_event_study.py ...........                  [ 91%]
+tests\unit\web\test_research_kline.py ...............................    [ 92%]
+tests\unit\web\test_research_overview.py ...........                     [ 92%]
+tests\unit\web\test_self_ai_config.py .....                              [ 92%]
+tests\unit\web\test_state_index_endpoint.py ........................     [ 93%]
+tests\unit\web\test_static_cache_headers.py ....                         [ 93%]
+tests\unit\web\test_symbols_search_endpoint.py ........                  [ 94%]
+tests\unit\web\test_validation_conditions_endpoint.py .................. [ 94%]
+.................                                                        [ 95%]
+tests\unit\web\test_watch_validation_endpoints.py ..............         [ 95%]
+tests\unit\web\test_watchlist_read_endpoint.py .................         [ 96%]
+tests\unit\web\test_watchlist_write_endpoints.py ....................... [ 97%]
+..                                                                       [ 97%]
+tests\unit\web\test_weekly_endpoint.py ................                  [ 98%]
+tests\unit\weekly\test_cli_weekly.py ............                        [ 98%]
+tests\unit\weekly\test_facts.py ................                         [ 99%]
+tests\unit\weekly\test_week.py ................                          [ 99%]
+tests\unit\weekly\test_weekly_pipeline.py .........                      [100%]
+
+============================== warnings summary ===============================
+tests/unit/data/test_provisional_probe.py::test_doctor_keeps_24_checks_and_warning_does_not_change_exit
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-97 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_output_json_is_never_a_usage_error[doctor --output json-]
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-99 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_implemented_commands_emit_parseable_json[doctor]
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-101 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_implemented_commands_accept_csv[doctor]
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-103 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_doctor_defaults_to_json_when_captured
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-105 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_surface.py::test_command_registered_and_exits_as_baseline[argv45-expected45]
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-107 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_sources_consistency.py::test_doctor_red_when_chain_broken
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-109 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_sources_consistency.py::test_doctor_green_when_chain_valid_even_if_peers_down
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-111 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_sources_consistency.py::test_doctor_skips_probe_when_no_pending_tool
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-113 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "D:\workplace\ruanjian\python312\Lib\threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "D:\workplace\ruanjian\python312\Lib\subprocess.py", line 1599, in _readerthread
+      buffer.append(fh.read())
+                    ^^^^^^^^^
+    File "<frozen codecs>", line 322, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/web/test_inbox_endpoints.py::test_write_surface_is_only_post
+tests/unit/web/test_watchlist_read_endpoint.py::test_write_surface_is_only_post
+  D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\.venv-accept\Lib\site-packages\fastapi\openapi\utils.py:295: UserWarning: Duplicate Operation ID unsupported___state_index_put for function unsupported at D:\multica_workspaces\quotafuse-g-066955b36a89\quot-439-4240b975afb7\workdir\LadderStock\src\ladderstock\web\state_index.py
+    warnings.warn(message, stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+===== 2702 passed, 5 skipped, 4 xpassed, 11 warnings in 812.67s (0:13:32) =====
+EXIT:0
