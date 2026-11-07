@@ -48,6 +48,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -538,7 +539,9 @@ async def _terminate_tree(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
     try:
-        if os.name == "nt":  # pragma: no cover - Windows 专用
+        # 用 sys.platform 而非 os.name：两者在 CPython 上等价，但只有前者能让
+        # mypy 按平台收窄，从而不必给下面的 POSIX 专有调用挂 type: ignore。
+        if sys.platform == "win32":  # pragma: no cover - Windows 专用
             killer = await asyncio.create_subprocess_exec(
                 "taskkill",
                 "/PID",
@@ -554,7 +557,7 @@ async def _terminate_tree(proc: asyncio.subprocess.Process) -> None:
         else:
             try:
                 # killpg/SIGKILL 只存在于 POSIX；Windows 分支在上面已返回
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # type: ignore[attr-defined]
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (OSError, ProcessLookupError):
                 proc.kill()
     except (OSError, ProcessLookupError, NotImplementedError):
