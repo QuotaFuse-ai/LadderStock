@@ -18,9 +18,17 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from ladderstock.core.portfolio import EPS, HoldingRow, round4
+
+
+class _PricedItem(TypedDict):
+    symbol: str
+    name: str
+    market_value: float
+    weight: float | None
+
 
 #: 未标注行业归入的桶名（与 `journal/position.py` 的行业分布同一个词）
 UNLABELED = "未标注"
@@ -63,7 +71,7 @@ def _returns(series: Mapping[str, float]) -> dict[str, float]:
         points.append((str(raw_day)[:10], price))
     points.sort()
     out: dict[str, float] = {}
-    for (_, prev), (day, price) in zip(points, points[1:]):
+    for (_, prev), (day, price) in zip(points, points[1:], strict=False):
         if prev > 0:
             out[day] = price / prev - 1.0
     return out
@@ -79,7 +87,7 @@ def _pearson(xs: Sequence[float], ys: Sequence[float]) -> float | None:
     syy = sum((y - mean_y) ** 2 for y in ys)
     if sxx <= 0 or syy <= 0:
         return None
-    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=False))
     value = sxy / math.sqrt(sxx * syy)
     return max(-1.0, min(1.0, value))
 
@@ -155,19 +163,19 @@ def build_view(
     """接口层入口：持仓 + 现价 + 行业标注 + 日线 → X 光载荷（平面 JSON）。"""
     items: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
-    priced: list[dict[str, Any]] = []
+    priced: list[_PricedItem] = []
 
     for row in holdings:
         symbol = str(row.symbol).strip().upper()
         price = prices.get(symbol)
         market_value = round4(price * row.shares) if price is not None else None
-        item = {
+        entry: dict[str, Any] = {
             "symbol": symbol,
             "name": row.name,
             "market_value": market_value,
             "weight": None,
         }
-        items.append(item)
+        items.append(entry)
         if market_value is None:
             gaps.append(
                 {
@@ -181,37 +189,38 @@ def build_view(
                 }
             )
         else:
-            priced.append(item)
+            entry["market_value"] = market_value
+            priced.append(cast(_PricedItem, entry))
 
-    total_value = round4(sum(float(item["market_value"]) for item in priced)) if priced else None
-    for item in priced:
-        item["weight"] = _weight(float(item["market_value"]), total_value or 0.0)
-    items.sort(key=lambda item: (-(item["market_value"] or 0.0), item["symbol"]))
+    total_value = round4(sum(h["market_value"] for h in priced)) if priced else None
+    for h in priced:
+        h["weight"] = _weight(h["market_value"], total_value or 0.0)
+    items.sort(key=lambda h: (-(h["market_value"] or 0.0), h["symbol"]))
     weighted = sorted(
-        (item for item in priced if item["weight"] is not None),
-        key=lambda item: (-float(item["weight"]), item["symbol"]),
+        (h for h in priced if h["weight"] is not None),
+        key=lambda h: (-(h["weight"] or 0.0), h["symbol"]),
     )
-    weights = [float(item["weight"]) for item in weighted]
+    weights = [h["weight"] or 0.0 for h in weighted]
 
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for item in priced:
-        label = _label_of(item["symbol"], industries)
-        buckets.setdefault(label, []).append(item)
-    industry_buckets = [
+    buckets: dict[str, list[_PricedItem]] = {}
+    for h in priced:
+        label = _label_of(h["symbol"], industries)
+        buckets.setdefault(label, []).append(h)
+    industry_buckets: list[dict[str, Any]] = [
         {
             "industry": label,
             "labeled": label != UNLABELED,
-            "market_value": round4(sum(float(item["market_value"]) for item in rows)),
+            "market_value": round4(sum(h["market_value"] for h in rows)),
             "weight": _weight(
-                sum(float(item["market_value"]) for item in rows), total_value or 0.0
+                sum(h["market_value"] for h in rows), total_value or 0.0
             ),
-            "symbols": [item["symbol"] for item in sorted(rows, key=lambda r: r["symbol"])],
+            "symbols": [h["symbol"] for h in sorted(rows, key=lambda r: r["symbol"])],
         }
         for label, rows in buckets.items()
     ]
     industry_buckets.sort(key=lambda row: (-(row["weight"] or 0.0), row["industry"]))
 
-    correlation_targets = [str(item["symbol"]) for item in priced]
+    correlation_targets = [item["symbol"] for item in priced]
     if len(correlation_targets) >= 2:
         _, corr = _correlation_block(correlation_targets, closes)
         for symbol in correlation_targets:
