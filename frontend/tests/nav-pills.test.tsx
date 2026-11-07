@@ -122,8 +122,10 @@ describe('SectionNavPills · 挂在页头下方的导航用法', () => {
     expect(within(nav).getAllByRole('link', { current: 'page' })).toHaveLength(1)
   })
 
-  it('单页组整条不渲染：首页 / 日志 / 个股深挖 / 设置都不出现空条', () => {
-    for (const entry of ['/', '/journal', '/research', '/settings']) {
+  it('单页组整条不渲染：首页 / 日志 / 设置都不出现空条', () => {
+    // QUOT-474 / DEC-067：`/research` 现在与 `/skills` 同属「研究工具」双页组，
+    // 不再是单页组，故从这条用例里移除；单页组只剩 首页 / 日志
+    for (const entry of ['/', '/journal', '/settings']) {
       const { unmount } = renderAt(entry)
       expect(screen.queryByRole('navigation', { name: '页内导航' })).toBeNull()
       unmount()

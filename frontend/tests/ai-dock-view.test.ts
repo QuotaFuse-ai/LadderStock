@@ -32,9 +32,9 @@ describe('标题与页面绑定', () => {
     )
   })
 
-  it('/research/600519 → 个股深挖 · 个股全景', () => {
+  it('/research/600519 → 研究工具 · 个股全景', () => {
     expect(buildDockView({ pathname: '/research/600519' }).title).toBe(
-      '研究助手 · 个股深挖 · 个股全景',
+      '研究助手 · 研究工具 · 个股全景',
     )
   })
 

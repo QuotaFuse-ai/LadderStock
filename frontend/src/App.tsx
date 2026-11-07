@@ -21,6 +21,9 @@ import ResearchReportScreen from './screens/research/ResearchReportScreen'
 import ReviewScreen from './screens/ReviewScreen'
 import SettingsScreen from './screens/SettingsScreen'
 import SignalsScreen from './screens/signals/SignalsScreen'
+import SkillDetailScreen from './screens/skills/SkillDetailScreen'
+import SkillPackageScreen from './screens/skills/SkillPackageScreen'
+import SkillsIndexScreen from './screens/skills/SkillsIndexScreen'
 import ValidateScreen from './screens/ValidateScreen'
 import WatchScreen from './screens/WatchScreen'
 import WeeklyScreen from './screens/WeeklyScreen'
@@ -29,10 +32,11 @@ import { ROUTE_PATHS, type RoutePath } from './routes'
 /**
  * 路由表（DESIGN-SPEC §4.1）。
  *
- * 八个一级导航 + 设置，旧深链全部保留：
+ * 九个一级导航 + 设置，旧深链全部保留：
  * `/review` `/watch` `/validate` `/journal` 在此前版本就存在，不能 404；
  * 旧的 `index → /review` 重定向改成 `index → /`（首页是新的工作流起点）。
  * `/market` 是 QUOT-198 新增：三段用 `?tab=sentiment|ladder|theme` 区分，不是三个子路由。
+ * `/skills` `/skills/:name` 是 QUOT-474 新增：第 9 组「研究工具」的总览与单个 skill 详情。
  *
  * 路径清单在 `routes.ts`，组件表按 `Record<RoutePath, …>` 声明：两边少一条都编译不过，
  * `tests/nav-routes.test.ts` 再用同一份路径清单比对侧栏入口。
@@ -45,7 +49,7 @@ function NotFound() {
       <h1 className="text-page font-semibold text-text">页面不存在</h1>
       <p className="text-body text-text-secondary">
         地址可能已经变更。九个入口在左侧导航：首页 / 市场 / 盯盘 / 复盘 / 日志 / 我的股票 / 验证 /
-        产业研究 / 个股深挖（设置固定在底部）。
+        产业研究 / 研究工具（设置固定在底部）。
       </p>
       <Link
         to="/"
@@ -97,6 +101,10 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/research': <ResearchEntryScreen />,
   '/research/:code': <ResearchDetailScreen />,
   '/research/:code/report': <ResearchReportScreen />,
+  // QUOT-474 / DEC-067：第 9 组「研究工具」= 方向总览（70 条目录）+ 单条方向详情 + 整包详情
+  '/skills': <SkillsIndexScreen />,
+  '/skills/:id': <SkillDetailScreen />,
+  '/skills/pkg/:name': <SkillPackageScreen />,
   // 旧入口：此前首页重定向到复盘；带查询串保留（`?state=` 演示态）
   '/index.html': <Navigate to="/" replace />,
   '*': <NotFound />,
