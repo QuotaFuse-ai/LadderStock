@@ -44,17 +44,27 @@ export const ROUTE_PATHS = [
   '/research',
   '/research/:code',
   '/research/:code/report',
+  // QUOT-474 / DEC-065：「研究工具」组的三条页路由。
+  // `/skills` 是方向条目总览（70 条目录），`/skills/:id` 是单条方向详情（`id` = catalog 条目 id），
+  // `/skills/pkg/:name` 是整包详情（`name` = index.json 里的包名）。8 个可执行包不各占一条页路由。
+  '/skills',
+  '/skills/:id',
+  '/skills/pkg/:name',
   '/index.html',
   '*',
 ] as const
 
 export type RoutePath = (typeof ROUTE_PATHS)[number]
 
-/** 不是「页面」的路径：404 兜底 + 旧地址重定向，本来就不该有侧栏入口。 */
+/** 不是「页面」的路径：404 兜底 + 旧地址重定向 + 由有入口页面链入的深链，本来就不该有侧栏入口。 */
 export const NON_PAGE_ROUTES: readonly RoutePath[] = [
   '*',
   '/index.html',
   // QUOT-431：旧深链保留可用，但落点是 `/my-stocks?tab=watch|hold`，不再单独挂屏
   '/watchlist',
   '/positions',
+  // QUOT-474 / DEC-065：`/skills/:id` 与 `/skills/pkg/:name` 由 `/skills` 列表页逐条链入，
+  // 静态前缀（`/skills/pkg/`）落不进侧栏，按「有入口页面链入」处理。
+  '/skills/:id',
+  '/skills/pkg/:name',
 ]

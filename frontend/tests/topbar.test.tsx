@@ -86,7 +86,8 @@ describe('顶栏面包屑', () => {
     expect(navTitleFor('/my-stocks')).toBe('我的股票')
     expect(navTitleFor('/market?tab=theme')).toBe('市场')
     expect(navTitleFor('/review/ai')).toBe('复盘')
-    expect(navTitleFor('/research/600519')).toBe('个股深挖')
+    // QUOT-474 / DEC-065：`/research` 归到改名后的第 9 组「研究工具」，路径不变
+    expect(navTitleFor('/research/600519')).toBe('研究工具')
     expect(navTitleFor('/')).toBe('首页')
     expect(navTitleFor('/nope')).toBe('工作空间')
   })

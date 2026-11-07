@@ -149,8 +149,41 @@ describe('旧深链重定向（QUOT-431）', () => {
   }, 15000)
 })
 
+/**
+ * QUOT-474 / DEC-065：第 9 组由「个股深挖」整组改名为「研究工具」，不是新增第 10 组。
+ *
+ * 改名而非并排，是为了不让侧栏同时出现「研究工具」和「个股深挖」两条平级项；组内两页
+ * 固定为 工具总览（`/skills`）+ 个股深挖（`/research`，路径不变、深链不 404）。
+ */
+describe('「研究工具」组（QUOT-474 / DEC-065）', () => {
+  it('第 9 组 key 是 `research-tools`，不再是 `deep-dive`', () => {
+    expect(NAV_SECTIONS.at(-1)?.key).toBe('research-tools')
+    expect(NAV_SECTIONS.map((section) => section.key)).not.toContain('deep-dive')
+  })
+
+  it('组内两页恰好是 `/skills` 与 `/research`，顺序在册', () => {
+    const group = NAV_SECTIONS.find((section) => section.key === 'research-tools')
+    expect(group?.label).toBe('研究工具')
+    expect(group?.pages.map((page) => page.to)).toEqual(['/skills', '/research'])
+  })
+
+  it('两条入口都命中真实路由：`/skills` 与 `/skills/:id` 新增，`/research` 深链保留', () => {
+    expect(ROUTE_PATHS).toContain('/skills')
+    expect(ROUTE_PATHS).toContain('/skills/:id')
+    expect(ROUTE_PATHS).toContain('/skills/pkg/:name')
+    expect(matchedRoute('/skills')).toBe('/skills')
+    expect(matchedRoute('/skills/1')).toBe('/skills/:id')
+    expect(matchedRoute('/skills/pkg/a-share-dossier')).toBe('/skills/pkg/:name')
+    // 个股深挖路径不变：概览与报告深链都还在
+    expect(NAV_PATHS).toContain('/research')
+    expect(matchedRoute('/research')).toBe('/research')
+    expect(matchedRoute('/research/600000')).toBe('/research/:code')
+    expect(matchedRoute('/research/600000/report')).toBe('/research/:code/report')
+  })
+})
+
 describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
-  it('既有分组顺序保留，QUOT-304 的「我的股票」插在「日志」之后', () => {
+  it('既有分组顺序保留，QUOT-474 第 9 组为「研究工具」', () => {
     expect(NAV_SECTIONS.map((section) => section.key)).toEqual([
       'home',
       'market',
@@ -160,7 +193,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
       'my-stocks',
       'validate',
       'industry',
-      'deep-dive',
+      'research-tools',
     ])
   })
 
@@ -223,7 +256,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
 
   it('单页组不挂二级（`pages.length > 1` 才展开）：持仓移出后日志只剩交易日志', () => {
     const single = NAV_SECTIONS.filter((section) => section.pages.length === 1).map((section) => section.key)
-    expect(single).toEqual(['home', 'journal', 'deep-dive'])
+    expect(single).toEqual(['home', 'journal'])
   })
 
   it('设置沉底、不参与分组展开，其余页面都在分组里', () => {

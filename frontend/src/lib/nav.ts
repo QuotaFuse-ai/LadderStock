@@ -23,6 +23,7 @@ import {
   Timer,
   TrendingUp,
   Wallet,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -30,7 +31,10 @@ import {
  * 侧栏导航的数据源（DEC-044 / QUOT-304）与顶栏面包屑（DEC-062）。
  *
  * 一级导航 9 组 + 底部固定的「设置」：
- * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 个股深挖 ─┬─ 设置（弱化、沉底）。
+ * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 研究工具 ─┬─ 设置（弱化、沉底）。
+ *
+ * 第 9 组由 QUOT-474 / DEC-065 从「个股深挖」整组改名而来：「研究工具」= 工具总览（`/skills`）
+ * + 个股深挖（`/research`，路径不变、深链不 404）。8 个 skill 不各占一条侧栏，收在列表页里。
  *
  * 这里只放纯数据与纯函数，不含 React：`components/Layout.tsx` 负责渲染，
  * `lib/nav.ts` 的 `navTitleFor()` 给顶栏取一级栏目名。放在独立模块而不是
@@ -139,12 +143,19 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/signals', label: '产业信号', icon: Radio },
     ],
   },
+  // QUOT-474 / DEC-065：第 9 组由「个股深挖」（`deep-dive`）整组改名「研究工具」（`research-tools`）。
+  // 组内两项：工具总览（`/skills`，新增的 8 个 skill 列表）在前，个股深挖（`/research`）在后。
+  // 8 个 skill 不各占一条（否则侧栏会多出 8 行），统一收在「工具总览」列表页里。
+  // `/research` 路径与所有 `/research/:code` 深链原样保留，不 404。
   {
-    key: 'deep-dive',
-    label: '个股深挖',
-    icon: Microscope,
+    key: 'research-tools',
+    label: '研究工具',
+    icon: Wrench,
     // 落地页收 6 位代码后才跳 `/research/:code`：侧栏本身没有代码可带
-    pages: [{ to: '/research', label: '个股深挖', icon: Microscope }],
+    pages: [
+      { to: '/skills', label: '工具总览', icon: Wrench },
+      { to: '/research', label: '个股深挖', icon: Microscope },
+    ],
   },
 ]
 
