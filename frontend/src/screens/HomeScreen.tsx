@@ -27,7 +27,7 @@ import { HomeIndexStrip } from './home/HomeIndexStrip'
 import { HomePositionsCard } from './home/HomePositionsCard'
 import { HomeSearch } from './home/HomeSearch'
 import { HomeWatchlistCard } from './home/HomeWatchlistCard'
-import { useHomeDemoEnabled, useHomeBlocks } from './home/useHomeSource'
+import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/useHomeSource'
 
 /**
  * 首页（SPEC-HOME-V2 v1.0 / QUOT-381 S3 接线）。
@@ -60,7 +60,7 @@ export default function HomeScreen() {
   // 演示源讲的是同一个交易日的 facts：请求日期跟随它，否则「2026-11-01 的演示数据」这种
   // 自相矛盾的标题会写在首屏上。`?date=` 优先。
   const tradeDate = params.get('date') || (demoEnabled ? DEMO_TRADE_DATE : localDateIso())
-  const { views, requests, reloadAll } = useHomeBlocks(tradeDate)
+  const { views, requests, reloadAll, session, indicesTicks, indicesFailures } = useHomeBlocks(tradeDate)
 
   const indexView = views.indices
   const watchlistView = views.watchlist
@@ -261,7 +261,13 @@ export default function HomeScreen() {
       )}
 
       {/* A/B/C/D 四块各自满宽纵向堆叠（§1.1：持仓六列下限 824px，并排必然叠字） */}
-      <HomeIndexStrip view={indexView} />
+      <HomeIndexStrip
+        view={indexView}
+        session={session}
+        pollSeconds={INDICES_POLL_SECONDS}
+        pollTicks={indicesTicks}
+        pollFailures={indicesFailures}
+      />
       <HomeSearch />
       <HomeWatchlistCard view={watchlistView} />
       <HomePositionsCard view={positionsView} />

@@ -21,6 +21,8 @@
  *   --routes <a,b>     只拍指定 slug，逗号分隔
  *   --query <str>      追加到每个路由的查询串（`demo=1` / `demo=1&variant=partial` / `tab=ports`），
  *                      配合 `--suffix after-demo` 这类后缀拍演示态与缺失态
+ *   --clock <iso>      把页面 `Date` 钉到该时刻（如 `2026-11-06T13:41:07+08:00`）。用于时段相关
+ *                      文案 / 轮询的取证：真实时钟不可控时（周末、盘后）也能拍到「交易时段」态（QUOT-470）。
  *   --demo-pref        用设置页的同款偏好开启演示源（写 `ldst.demo-data=1`），不依赖 URL 参数
  *   --prefs k=v,k=v    截图前写入任意本机偏好（如 `ldst.privacy=on`），与主题同一注入时机
  *   --settle <ms>      load 之后额外等待（默认 1500，留给 React 渲染 + 图表重绘）
@@ -86,6 +88,7 @@ function parseArgs(argv) {
     themes: ['dark', 'light'],
     routes: null,
     query: null,
+    clock: null,
     demoPref: false,
     prefs: {},
     settle: 1500,
@@ -105,6 +108,7 @@ function parseArgs(argv) {
     else if (flag === '--themes') options.themes = next().split(',').filter(Boolean)
     else if (flag === '--routes') options.routes = next().split(',').filter(Boolean)
     else if (flag === '--query') options.query = next()
+    else if (flag === '--clock') options.clock = next()
     else if (flag === '--demo-pref') options.demoPref = true
     else if (flag === '--prefs') {
       for (const pair of next().split(',')) {
@@ -275,6 +279,31 @@ async function shoot(cdp, base, route, theme, options) {
       },
       sessionId,
     )
+    if (options.clock) {
+      // 把页面时钟**平移**到指定时刻的对应相位（不冻结）：`Date.now()` 与零参 `new Date()`
+      // 都加上固定偏移，时间照常前进。冻结会让定时器 / 调度器停在原地（页面卡在骨架），
+      // 平移只改「现在几点」，不动「时间是否在走」——时段文案与轮询节拍都能正常取证（QUOT-470）。
+      await cdp.send(
+        'Page.addScriptToEvaluateOnNewDocument',
+        {
+          source: `try {
+            var __target = new Date(${JSON.stringify(options.clock)}).getTime();
+            var __delta = __target - Date.now();
+            var __RealDate = Date;
+            function __FakeDate(...args) {
+              if (args.length === 0) return new __RealDate(__RealDate.now() + __delta);
+              return new __RealDate(...args);
+            }
+            __FakeDate.prototype = __RealDate.prototype;
+            __FakeDate.now = function () { return __RealDate.now() + __delta; };
+            __FakeDate.parse = __RealDate.parse;
+            __FakeDate.UTC = __RealDate.UTC;
+            Date = __FakeDate;
+          } catch (e) {}`,
+        },
+        sessionId,
+      )
+    }
     const loaded = cdp.once('Page.loadEventFired', 30_000)
     const query = options.query ? `${route.path.includes('?') ? '&' : '?'}${options.query}` : ''
     await cdp.send('Page.navigate', { url: `${base}${route.path}${query}` }, sessionId)

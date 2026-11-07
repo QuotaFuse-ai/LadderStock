@@ -58,7 +58,19 @@ function IndexCellView({ cell }: { cell: IndexCell }) {
   )
 }
 
-export function HomeIndexStrip({ view }: { view: BlockView<IndicesPayload> }) {
+export interface HomeIndexStripProps {
+  view: BlockView<IndicesPayload>
+  /** 交易所是否在连续竞价时段（真判定，见 `lib/tradingSession.ts`）；休市时说「休市」并停轮询。 */
+  session: boolean
+  /** 轮询节拍（秒）；盘中文案「每 N 秒刷新」读它，与真实 `usePolling` 同源，不写字面量。 */
+  pollSeconds: number
+  /** 本轮已发出的指数请求数；只作 `data-*` 暴露，不改视觉（验收「2 分钟 ≈ 8 次」按它取证）。 */
+  pollTicks?: number
+  /** 连续失败次数；退避中时值 > 0。 */
+  pollFailures?: number
+}
+
+export function HomeIndexStrip({ view, session, pollSeconds, pollTicks = 0, pollFailures = 0 }: HomeIndexStripProps) {
   const payload = view.state === 'normal' || view.state === 'partial' ? view.data : null
   const cells = payload?.cells ?? []
   const missingCells = cells.filter((cell) => cell.price === null)
@@ -67,8 +79,9 @@ export function HomeIndexStrip({ view }: { view: BlockView<IndicesPayload> }) {
     .filter((value): value is string => Boolean(value))
     .sort()
     .pop()
-  // 非交易时段的 `as_of` 就是上一交易日收盘时刻，必须和口径句一起显示，不得当成当日（§9.1）
-  const closed = payload?.freshness === 'cached' || payload?.freshness === 'archive'
+  // 休市判据是「不在竞价时段」，不是 `freshness`——后端指数条恒发 `realtime`，
+  // 拿它当休市信号永远为假（QUOT-470 的 bug 就出在这里）。休市读数即上一交易日收盘，和口径句一起显示（§9.1）。
+  const closed = !session
 
   return (
     <SectionCard
@@ -76,7 +89,9 @@ export function HomeIndexStrip({ view }: { view: BlockView<IndicesPayload> }) {
       tone={cells.length > 0 && missingCells.length > 0 ? 'warn' : 'neutral'}
       subtitle={
         <span className="flex flex-wrap items-center gap-1">
-          <span>{closed ? '休市 · 显示最近交易日读数' : '快照 · 不自动刷新'}</span>
+          <span data-poll-ticks={pollTicks} data-poll-failures={pollFailures}>
+            {closed ? '休市 · 显示最近交易日读数' : `交易时段 · 每 ${pollSeconds} 秒刷新`}
+          </span>
           {payload && (
             <>
               <FreshnessBadge freshness={payload.freshness ?? null} asOf={payload.data_as_of} />
