@@ -11,6 +11,7 @@ flowchart TB
     CLI[cli/ · Typer 31 条命令基线 · 表内 35 行]
     WEB[web/server.py · 看板 5950]
     CTRL[web/control.py · /api/control/*]
+    DOG[cli/watchdog.py · 看门狗 5952]
     MCP[mcp/ · stdio + http 5951]
   end
   subgraph 领域层
@@ -33,6 +34,7 @@ flowchart TB
   CLI --> REVIEW & WATCH & JOURNAL & AI
   WEB --> REVIEW & WATCH
   MCP --> REVIEW & SENTI & LADDER
+  DOG -. 探活 /api/health .-> WEB
   REVIEW --> VALID & SENTI & LADDER
   REVIEW --> REG
   REG --> ADAPT --> DUCK
@@ -46,8 +48,10 @@ flowchart TB
 - **本地优先**：没有网络也能跑（离线 provider + 缓存重放）；所有配置、缓存、隐私库都在本机。
 - **生态边界**：本项目**不采集**。数据只能来自 provider registry 登记的生态 peer；
   单源故障按「主源 → 同层备源 → 缓存重放」降级，缺数据就报退出码 8，绝不自己动手抓。
-- **端口**：看板 `5950`、MCP http `5951`，只监听回环；端口被占用直接失败（退出码 3），
-  不静默换端口（IndexedDB 按 origin 隔离）。
+- **端口**：看板 `5950`、MCP http `5951`、看门狗 `5952`，只监听回环；端口被占用直接失败（退出码 3），
+  不静默换端口（IndexedDB 按 origin 隔离）。看门狗是独立于主服务的第二个常驻进程：
+  主服务死掉时仍可提供 `/platform/health` 与离线壳页，并按「只杀当前 5950 占用者、
+  绝不按映像名批量杀、绝不碰 `multica*`」的规则重启主服务（QUOT-443 / DEC-063）。
 - **控制面**：`web/control.py` 在读写面上单开一层 `/api/control/*`，让看板能看见、安装、
   启停、配置四个 peer（TickHub-CN / TickHub-US / Wire / StockSenate）。与数据面严格分层：只接受回环
   来源（非回环 403），写方法另需正向证据（`Origin` 同源或 `X-LDST-Client: 1`），

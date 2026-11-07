@@ -37,6 +37,7 @@ from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
+from ladderstock.cli.watchdog import register as register_watchdog
 from ladderstock.cli.watchlist import register as register_watchlist
 from ladderstock.cli.weekly import register as register_weekly
 from ladderstock.core.boundary import DATASET_CATALOG
@@ -180,6 +181,11 @@ def run(
         raise typer.Exit(EXIT_CONFIG)
     # 实现体在 cli/run.py（DEC-004 端口约定、只读 API、优雅退出）
     launch_dashboard(host=host, port=port)
+
+
+# 独立看门狗（QUOT-443 / DEC-063）：5952 探活 + 重启入口；主服务挂了它仍活着。
+# 实现体在 cli/watchdog.py（只绑回环、Origin 白名单、只结束自己记录的 PID）。
+register_watchdog(app)
 
 
 # 实现体在 cli/review.py（指标直出 + 五段编排 + 验证条件；DEC-003 命令名不变）

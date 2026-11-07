@@ -172,8 +172,8 @@ export function OfflineBanner({ onRetry }: { onRetry?: () => void }) {
       }
     >
       <p className="max-w-measure">
-        先运行 <code className="ldst-num">ldst run</code> 启动本机只读 API（默认
-        127.0.0.1:5950）。本机草稿仍可编辑，恢复自 IndexedDB 的内容不会丢。
+        服务未连接 → 看顶栏状态灯 / 点「重启平台」；仍不行查看 watchdog 日志。本机草稿仍可编辑，
+        恢复自 IndexedDB 的内容不会丢。
       </p>
     </Banner>
   )

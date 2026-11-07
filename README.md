@@ -114,11 +114,12 @@ ldst sync                  # 增量同步（水位线之后的数据）
 ldst review --date 2026-10-22
 ldst validate --date 2026-10-22
 ldst run                   # 打开本地工作台 http://127.0.0.1:5950
+ldst watchdog              # 看门狗：探活 + 顶栏状态灯 + 离线壳页（5952）
 ```
 
 结构化结果走 stdout，日志走 stderr；`--output json|table|csv` 三档可选。
 
-端口固定 `5950`（看板）/ `5951`（MCP http），默认只监听 `127.0.0.1`；**端口被占用时直接报错并提示 `--port`，不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会丢前端状态。
+端口固定 `5950`（看板）/ `5951`（MCP http）/ `5952`（看门狗），默认只监听 `127.0.0.1`；**端口被占用时直接报错并提示 `--port`，不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会丢前端状态。
 
 ### 本机子模块（peer）
 
@@ -150,6 +151,7 @@ ldst run                   # 打开本地工作台 http://127.0.0.1:5950
 
 ```bash
 ldst run [--port 5950]            # 启动本地工作台
+ldst watchdog                     # 独立看门狗（5952）：状态灯 / 离线壳页 / 安全重启
 ldst review --date 2026-10-22     # 重新生成指定日期复盘
 ldst review show --date 2026-10-22
 ldst validate --date 2026-10-22   # 明日验证条件与对账结果
@@ -228,7 +230,7 @@ ladderstock/
 | PyPI / 导入包 | `ladderstock` | 单包，不发布 quotafuse 前缀包 |
 | CLI | `ldst` | 注册长别名 `ladderstock` |
 | 启动方式 | `ldst run` | 旧启动脚本委托新版并打印提示 |
-| 端口 | 5950（看板）/ 5951（MCP http） | 被占用直接报错不换端口；旧 5940 / 8770 仅打印迁移提示 |
+| 端口 | 5950（看板）/ 5951（MCP http）/ 5952（看门狗） | 被占用直接报错不换端口；旧 5940 / 8770 仅打印迁移提示 |
 | 配置与环境变量 | `~/.ladderstock/`、`LDST_*` | 首次启动只读迁移，兼容读取旧前缀 |
 
 ## 开发

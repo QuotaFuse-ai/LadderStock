@@ -1,0 +1,241 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+/**
+ * 平台健康探测（QUOT-443 / DEC-063）。
+ *
+ * 数据只来自独立看门狗 `GET {platform}/platform/health`，2s 一拍：
+ * - 连续 **2 次**请求失败才判红（单次抖动维持原色，不闪）；
+ * - 看门狗明确回 `status=offline` 时立即红——主服务已死是事实，不是抖动；
+ * - `db_ok=false` 或 `status=degraded` → 黄；`ok` → 绿。
+ *
+ * 为什么是 2s 而不是 5s：验收要求杀掉主进程后 **≤5s 转红**，而看门狗每次请求都
+ * 实时探活主服务（连接挂起时最多等 2s）。5s 间隔 + 2s 探测超时实测 7.1s 才转红，
+ * 2s 间隔把最坏情况压到 ~4s。
+ *
+ * 页面隐藏（`visibilitychange`）时暂停轮询，回到前台立刻补一拍。
+ * 健康响应只有状态字段，不含任何持仓 / 金额 / 日志内容。
+ */
+
+export type PlatformLight = 'unknown' | 'ok' | 'degraded' | 'offline'
+
+export interface PlatformHealth {
+  status: 'ok' | 'degraded' | 'offline'
+  uptime_sec: number | null
+  version: string | null
+  db_ok: boolean | null
+  checked_at: string | null
+  api: {
+    status?: string
+    uptime_sec?: number
+    version?: string
+    db_ok?: boolean
+  } | null
+  watchdog?: { uptime_sec?: number; version?: string } | null
+}
+
+export const PLATFORM_POLL_MS = 2000
+export const PLATFORM_RESTART_TIMEOUT_MS = 90_000
+export const FAILURES_BEFORE_RED = 2
+
+/**
+ * prod（页面由 5950 托管）→ 直连 5952；dev → 同源走 vite 代理 `/platform`。
+ * 两者都不改 origin：`localStorage` / 书签继续绑在 5950（DEC-063 否决前端迁移）。
+ */
+export function platformBaseUrl(): string {
+  return import.meta.env.DEV ? '' : 'http://127.0.0.1:5952'
+}
+
+export interface ProbeResult {
+  ok: boolean
+  body: PlatformHealth | null
+}
+
+export interface LightState {
+  light: PlatformLight
+  failures: number
+}
+
+/** 纯状态机：单测直接覆盖，不依赖 React。 */
+export function nextLightState(prev: LightState, probe: ProbeResult): LightState {
+  if (!probe.ok || probe.body === null) {
+    const failures = prev.failures + 1
+    return {
+      failures,
+      light: failures >= FAILURES_BEFORE_RED ? 'offline' : prev.light,
+    }
+  }
+  const body = probe.body
+  if (body.status === 'offline') return { light: 'offline', failures: 0 }
+  if (body.status === 'degraded' || body.db_ok === false) {
+    return { light: 'degraded', failures: 0 }
+  }
+  return { light: 'ok', failures: 0 }
+}
+
+export function lightLabel(light: PlatformLight): string {
+  switch (light) {
+    case 'ok':
+      return '服务正常'
+    case 'degraded':
+      return '服务降级'
+    case 'offline':
+      return '服务离线'
+    default:
+      return '状态探测中'
+  }
+}
+
+export function formatUptime(seconds: number | null | undefined): string {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return '—'
+  const total = Math.floor(seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const secs = total % 60
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`
+  if (minutes > 0) return `${minutes} 分 ${secs} 秒`
+  return `${secs} 秒`
+}
+
+interface Options {
+  baseUrl?: string
+  intervalMs?: number
+  restartPollMs?: number
+  restartTimeoutMs?: number
+  fetchImpl?: typeof fetch
+  reload?: () => void
+}
+
+export interface PlatformHealthApi {
+  light: PlatformLight
+  health: PlatformHealth | null
+  restarting: boolean
+  restartError: string | null
+  /** 二次确认后由 UI 调用；成功恢复会自动刷新页面。 */
+  restart: () => Promise<void>
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export function usePlatformHealth(options: Options = {}): PlatformHealthApi {
+  const baseUrl = options.baseUrl ?? platformBaseUrl()
+  const intervalMs = options.intervalMs ?? PLATFORM_POLL_MS
+  const restartPollMs = options.restartPollMs ?? 2000
+  const restartTimeoutMs = options.restartTimeoutMs ?? PLATFORM_RESTART_TIMEOUT_MS
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch
+  const reload = options.reload ?? (() => window.location.reload())
+
+  const [state, setState] = useState<LightState>({ light: 'unknown', failures: 0 })
+  const [health, setHealth] = useState<PlatformHealth | null>(null)
+  const [restarting, setRestarting] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
+  const restartingRef = useRef(false)
+
+  const probeOnce = useCallback(async (): Promise<ProbeResult> => {
+    try {
+      const response = await fetchImpl(`${baseUrl}/platform/health`, { cache: 'no-store' })
+      if (!response.ok) return { ok: false, body: null }
+      const body = (await response.json()) as PlatformHealth
+      return { ok: true, body }
+    } catch {
+      return { ok: false, body: null }
+    }
+  }, [baseUrl, fetchImpl])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const clear = () => {
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
+    }
+
+    const tick = async () => {
+      if (cancelled) return
+      if (typeof document !== 'undefined' && document.hidden) return
+      const probe = await probeOnce()
+      if (cancelled) return
+      if (typeof document !== 'undefined' && document.hidden) return
+      setHealth(probe.body)
+      setState((prev) => nextLightState(prev, probe))
+      timer = setTimeout(tick, intervalMs)
+    }
+
+    const onVisibility = () => {
+      clear()
+      if (typeof document !== 'undefined' && !document.hidden) void tick()
+    }
+
+    void tick()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      cancelled = true
+      clear()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [probeOnce, intervalMs])
+
+  const restart = useCallback(async () => {
+    if (restartingRef.current) return
+    restartingRef.current = true
+    setRestarting(true)
+    setRestartError(null)
+    // 重启请求报错不等于服务没起来（脚本可能已拉起、只是没在超时内确认），
+    // 所以先记下错误，仍然按真实健康轮询到截止；恢复了就刷新页面。
+    let requestError: string | null = null
+    try {
+      const response = await fetchImpl(`${baseUrl}/platform/restart`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      const body = (await response.json().catch(() => null)) as
+        | { ok?: boolean; reason?: string; detail?: string }
+        | null
+      if (!response.ok || !body?.ok) {
+        requestError =
+          body?.reason ?? body?.detail ?? `重启请求失败（HTTP ${response.status}）`
+      }
+    } catch (error) {
+      requestError = error instanceof Error ? error.message : String(error)
+    }
+
+    try {
+      const deadline = Date.now() + restartTimeoutMs
+      while (Date.now() < deadline) {
+        await sleep(restartPollMs)
+        const probe = await probeOnce()
+        if (probe.ok && probe.body?.status === 'ok') {
+          reload()
+          return
+        }
+      }
+      const timeout = `服务在 ${Math.round(restartTimeoutMs / 1000)} 秒内未恢复：请查看看门狗日志或手动运行 ldst run`
+      setRestartError(requestError ? `${requestError}；${timeout}` : timeout)
+    } finally {
+      restartingRef.current = false
+      setRestarting(false)
+    }
+  }, [
+    baseUrl,
+    fetchImpl,
+    probeOnce,
+    reload,
+    restartPollMs,
+    restartTimeoutMs,
+  ])
+
+  return {
+    light: state.light,
+    health,
+    restarting,
+    restartError,
+    restart,
+  }
+}
+
+export default usePlatformHealth

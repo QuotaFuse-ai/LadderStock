@@ -32,6 +32,8 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
+import time
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -233,6 +235,36 @@ REMOTE_TOKEN_ENV = "LDST_WEB_TOKEN"
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _db_ok(root: Path) -> bool:
+    """隐私库是否可读（`/api/health` 的 `db_ok`，QUOT-443 / DEC-063）。
+
+    只做 `SELECT 1` + `PRAGMA user_version`，**只读打开**：健康探测不能成为
+    隐式建库/迁移的写操作。任何异常（文件是目录、权限不足、库损坏）一律 `False`，
+    绝不向调用方抛 500——探测本身不可用时的语义是「降级」，不是「服务崩了」。
+
+    库尚未创建（首次启动）不算故障：此时还没有任何本机数据，读失败是预期状态。
+    """
+    from ladderstock.data.sqlite_store import DB_FILENAME
+
+    path = root / DB_FILENAME
+    try:
+        if path.exists() and not path.is_file():
+            return False
+        if not path.exists():
+            return True
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2.0)
+    except Exception:  # noqa: BLE001 - 探测失败就是降级，不往上抛
+        return False
+    try:
+        conn.execute("SELECT 1").fetchone()
+        conn.execute("PRAGMA user_version").fetchone()
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        conn.close()
+    return True
 
 
 def _parse_day(value: str | None) -> date:
@@ -961,6 +993,8 @@ def create_app(
     """
     root = _resolve_data_root(data_root)
     dist = Path(dist_dir) if dist_dir is not None else default_dist_dir()
+    # `uptime_sec` 的基准点：进程内唯一一个应用实例（DEC-063）
+    started_at = time.monotonic()
 
     app = FastAPI(
         title="LadderStock 本地工作台",
@@ -987,6 +1021,9 @@ def create_app(
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
+        # QUOT-443 / DEC-063：`status` / `uptime_sec` / `db_ok` 是新增字段；
+        # 原有字段一个不删——外部探测（`core/boundary.py`）与 doctor 都读它们。
+        db_ok = _db_ok(root)
         return {
             "ok": True,
             "name": "ladderstock",
@@ -994,6 +1031,9 @@ def create_app(
             "time": _now().isoformat(timespec="seconds"),
             "data_dir": str(root),
             "read_only": True,
+            "status": "ok" if db_ok else "degraded",
+            "uptime_sec": max(0, int(time.monotonic() - started_at)),
+            "db_ok": db_ok,
         }
 
     @app.get("/api/review")
