@@ -1,0 +1,992 @@
+{
+  "version": 2,
+  "updated": "2026-11-07",
+  "note": "目录条目数按原始清单逐条实数；52 是前八类之和（12+8+6+7+5+6+5+3），后四类再补 18 条，总计 70。",
+  "total": 70,
+  "status_count": {
+    "ready": 41,
+    "planned": 2,
+    "unconnected": 20,
+    "existing_page": 2,
+    "partial": 2,
+    "not_supported": 3
+  },
+  "groups": [
+    {
+      "key": "单票分析",
+      "label": "TickHub-CN「个股」",
+      "count": 12
+    },
+    {
+      "key": "盘面情绪",
+      "label": "TickHub-CN「盘面」",
+      "count": 8
+    },
+    {
+      "key": "板块指数",
+      "label": "TickHub-CN「板块」",
+      "count": 6
+    },
+    {
+      "key": "事件日历",
+      "label": "TickHub-CN「事件」",
+      "count": 7
+    },
+    {
+      "key": "宏观跨资产",
+      "label": "TickHub-CN「宏观」",
+      "count": 5
+    },
+    {
+      "key": "美股单票",
+      "label": "TickHub-US「个股」",
+      "count": 6
+    },
+    {
+      "key": "美股特色",
+      "label": "TickHub-US「特色」",
+      "count": 5
+    },
+    {
+      "key": "产业链资讯",
+      "label": "QuotaFuse Wire",
+      "count": 3
+    },
+    {
+      "key": "多空投研",
+      "label": "StockSenate",
+      "count": 3
+    },
+    {
+      "key": "复盘日志",
+      "label": "LadderStock",
+      "count": 4
+    },
+    {
+      "key": "跨项目组合",
+      "label": "跨项目",
+      "count": 8
+    },
+    {
+      "key": "历史深度",
+      "label": "FinanceCoffer（缺）",
+      "count": 3
+    }
+  ],
+  "items": [
+    {
+      "id": 1,
+      "slug": "skill-01",
+      "label": "个股基础速览",
+      "group": "单票分析",
+      "priority": "P0",
+      "package": "a-share-dossier",
+      "steps": [
+        1
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 2,
+      "slug": "skill-02",
+      "label": "财务三表速读",
+      "group": "单票分析",
+      "priority": "P0",
+      "package": "a-share-dossier",
+      "steps": [
+        2
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 3,
+      "slug": "skill-03",
+      "label": "财务勾稽体检",
+      "group": "单票分析",
+      "priority": "P1",
+      "package": "a-share-dossier",
+      "steps": [
+        3
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 4,
+      "slug": "skill-04",
+      "label": "估值历史分位",
+      "group": "单票分析",
+      "priority": "P1",
+      "package": "a-share-dossier",
+      "steps": [
+        6
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 5,
+      "slug": "skill-05",
+      "label": "机构预期追踪",
+      "group": "单票分析",
+      "priority": "P1",
+      "package": "a-share-dossier",
+      "steps": [
+        6
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 6,
+      "slug": "skill-06",
+      "label": "主力资金追踪",
+      "group": "单票分析",
+      "priority": "P1",
+      "package": "a-share-dossier",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 7,
+      "slug": "skill-07",
+      "label": "龙虎榜席位解读",
+      "group": "单票分析",
+      "priority": "P1",
+      "package": "a-share-dossier",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 8,
+      "slug": "skill-08",
+      "label": "股东结构变化",
+      "group": "单票分析",
+      "priority": "P2",
+      "package": "a-share-dossier",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 9,
+      "slug": "skill-09",
+      "label": "公告风险扫描",
+      "group": "单票分析",
+      "priority": "P1",
+      "package": "a-share-dossier",
+      "steps": [
+        5
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 10,
+      "slug": "skill-10",
+      "label": "研报评级汇总",
+      "group": "单票分析",
+      "priority": "P2",
+      "package": "a-share-dossier",
+      "steps": [
+        6
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 11,
+      "slug": "skill-11",
+      "label": "筹码分布速览",
+      "group": "单票分析",
+      "priority": "P2",
+      "package": "a-share-dossier",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 12,
+      "slug": "skill-12",
+      "label": "可转债联动",
+      "group": "单票分析",
+      "priority": "P3",
+      "package": "a-share-dossier",
+      "steps": [
+        6
+      ],
+      "status": "ready",
+      "note": "当前 dossier 白名单未含 convertible_bonds，落地时需补这一条工具"
+    },
+    {
+      "id": 13,
+      "slug": "skill-13",
+      "label": "短线情绪复盘",
+      "group": "盘面情绪",
+      "priority": "P0",
+      "package": "a-share-tape",
+      "steps": [
+        1,
+        2
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 14,
+      "slug": "skill-14",
+      "label": "涨停板质量分析",
+      "group": "盘面情绪",
+      "priority": "P1",
+      "package": "a-share-tape",
+      "steps": [
+        3
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 15,
+      "slug": "skill-15",
+      "label": "连板梯队断层监控",
+      "group": "盘面情绪",
+      "priority": "P1",
+      "package": "a-share-tape",
+      "steps": [
+        2
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 16,
+      "slug": "skill-16",
+      "label": "市场宽度速览",
+      "group": "盘面情绪",
+      "priority": "P2",
+      "package": "a-share-tape",
+      "steps": [
+        1
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 17,
+      "slug": "skill-17",
+      "label": "异动个股扫描",
+      "group": "盘面情绪",
+      "priority": "P2",
+      "package": "a-share-tape",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 18,
+      "slug": "skill-18",
+      "label": "ST/退市风险筛查",
+      "group": "盘面情绪",
+      "priority": "P2",
+      "package": "a-share-tape",
+      "steps": [
+        1
+      ],
+      "status": "ready",
+      "note": "需补 st_stocks / baostock_st_list 到 tape 白名单"
+    },
+    {
+      "id": 19,
+      "slug": "skill-19",
+      "label": "热榜与舆情",
+      "group": "盘面情绪",
+      "priority": "P2",
+      "package": "a-share-tape",
+      "steps": [
+        5
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 20,
+      "slug": "skill-20",
+      "label": "涨停原因揭秘",
+      "group": "盘面情绪",
+      "priority": "P1",
+      "package": "a-share-tape",
+      "steps": [
+        3
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 21,
+      "slug": "skill-21",
+      "label": "板块资金流排行",
+      "group": "板块指数",
+      "priority": "P1",
+      "package": "sector-rotation",
+      "steps": [
+        2
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 22,
+      "slug": "skill-22",
+      "label": "板块成分股扫描",
+      "group": "板块指数",
+      "priority": "P1",
+      "package": "sector-rotation",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 23,
+      "slug": "skill-23",
+      "label": "指数成分与权重",
+      "group": "板块指数",
+      "priority": "P2",
+      "package": "sector-rotation",
+      "steps": [
+        5
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 24,
+      "slug": "skill-24",
+      "label": "指数估值分位",
+      "group": "板块指数",
+      "priority": "P2",
+      "package": "sector-rotation",
+      "steps": [
+        5
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 25,
+      "slug": "skill-25",
+      "label": "申万行业轮动",
+      "group": "板块指数",
+      "priority": "P2",
+      "package": "sector-rotation",
+      "steps": [
+        3
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 26,
+      "slug": "skill-26",
+      "label": "交易日历与状态",
+      "group": "板块指数",
+      "priority": "P3",
+      "package": "event-calendar",
+      "steps": [
+        1
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 27,
+      "slug": "skill-27",
+      "label": "解禁日历",
+      "group": "事件日历",
+      "priority": "P1",
+      "package": "event-calendar",
+      "steps": [
+        2
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 28,
+      "slug": "skill-28",
+      "label": "股东增减持追踪",
+      "group": "事件日历",
+      "priority": "P1",
+      "package": "event-calendar",
+      "steps": [
+        3
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 29,
+      "slug": "skill-29",
+      "label": "业绩预告追踪",
+      "group": "事件日历",
+      "priority": "P1",
+      "package": "event-calendar",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 30,
+      "slug": "skill-30",
+      "label": "机构调研热度",
+      "group": "事件日历",
+      "priority": "P2",
+      "package": "event-calendar",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 31,
+      "slug": "skill-31",
+      "label": "回购计划追踪",
+      "group": "事件日历",
+      "priority": "P2",
+      "package": "event-calendar",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 32,
+      "slug": "skill-32",
+      "label": "股权质押监控",
+      "group": "事件日历",
+      "priority": "P2",
+      "package": "event-calendar",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 33,
+      "slug": "skill-33",
+      "label": "新股申购日历",
+      "group": "事件日历",
+      "priority": "P2",
+      "package": "event-calendar",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": "ipo_calendar 在白名单但无专属步骤，落地时单列一步"
+    },
+    {
+      "id": 34,
+      "slug": "skill-34",
+      "label": "宏观数据速览",
+      "group": "宏观跨资产",
+      "priority": "P2",
+      "package": "macro-crossasset",
+      "steps": [
+        1
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 35,
+      "slug": "skill-35",
+      "label": "利率走廊监控",
+      "group": "宏观跨资产",
+      "priority": "P2",
+      "package": "macro-crossasset",
+      "steps": [
+        2
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 36,
+      "slug": "skill-36",
+      "label": "经济日历提醒",
+      "group": "宏观跨资产",
+      "priority": "P2",
+      "package": "event-calendar",
+      "steps": [
+        1
+      ],
+      "status": "ready",
+      "note": "macro_calendar 在 event-calendar 白名单"
+    },
+    {
+      "id": 37,
+      "slug": "skill-37",
+      "label": "期货持仓排名",
+      "group": "宏观跨资产",
+      "priority": "P3",
+      "package": "macro-crossasset",
+      "steps": [
+        3
+      ],
+      "status": "planned",
+      "note": "缺 futures_position_rank 到 macro 包白名单，需新增一步"
+    },
+    {
+      "id": 38,
+      "slug": "skill-38",
+      "label": "A50 期指风向标",
+      "group": "宏观跨资产",
+      "priority": "P1",
+      "package": "macro-crossasset",
+      "steps": [
+        3
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 39,
+      "slug": "skill-39",
+      "label": "美股个股速览",
+      "group": "美股单票",
+      "priority": "P1",
+      "package": "us-dossier",
+      "steps": [
+        1
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 40,
+      "slug": "skill-40",
+      "label": "美股财报速读",
+      "group": "美股单票",
+      "priority": "P1",
+      "package": "us-dossier",
+      "steps": [
+        2
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 41,
+      "slug": "skill-41",
+      "label": "SEC 文件追踪",
+      "group": "美股单票",
+      "priority": "P2",
+      "package": "us-dossier",
+      "steps": [
+        4
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 42,
+      "slug": "skill-42",
+      "label": "内部人交易追踪",
+      "group": "美股单票",
+      "priority": "P1",
+      "package": "us-dossier",
+      "steps": [
+        3
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 43,
+      "slug": "skill-43",
+      "label": "13F 机构持仓",
+      "group": "美股单票",
+      "priority": "P2",
+      "package": "us-dossier",
+      "steps": [
+        3
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 44,
+      "slug": "skill-44",
+      "label": "分析师预期对比",
+      "group": "美股单票",
+      "priority": "P2",
+      "package": "us-dossier",
+      "steps": [
+        6
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 45,
+      "slug": "skill-45",
+      "label": "期权异动扫描",
+      "group": "美股特色",
+      "priority": "P1",
+      "package": "us-dossier",
+      "steps": [
+        5
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 46,
+      "slug": "skill-46",
+      "label": "做空数据追踪",
+      "group": "美股特色",
+      "priority": "P2",
+      "package": "us-dossier",
+      "steps": [
+        5
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 47,
+      "slug": "skill-47",
+      "label": "VIX 期限结构",
+      "group": "美股特色",
+      "priority": "P2",
+      "package": "us-dossier",
+      "steps": [
+        5
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 48,
+      "slug": "skill-48",
+      "label": "美债收益率曲线",
+      "group": "美股特色",
+      "priority": "P2",
+      "package": "macro-crossasset",
+      "steps": [
+        4
+      ],
+      "status": "unconnected",
+      "note": "US 段未接通"
+    },
+    {
+      "id": 49,
+      "slug": "skill-49",
+      "label": "全球央行利率速览",
+      "group": "美股特色",
+      "priority": "P2",
+      "package": "macro-crossasset",
+      "steps": [
+        4
+      ],
+      "status": "unconnected",
+      "note": "US 段未接通"
+    },
+    {
+      "id": 50,
+      "slug": "skill-50",
+      "label": "产业链资讯日报",
+      "group": "产业链资讯",
+      "priority": "P0",
+      "package": "wire-desk",
+      "steps": [
+        1
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 51,
+      "slug": "skill-51",
+      "label": "事件多源追踪",
+      "group": "产业链资讯",
+      "priority": "P1",
+      "package": "wire-desk",
+      "steps": [
+        2,
+        3
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 52,
+      "slug": "skill-52",
+      "label": "信源质量查询",
+      "group": "产业链资讯",
+      "priority": "P3",
+      "package": "wire-desk",
+      "steps": [
+        4
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 53,
+      "slug": "skill-53",
+      "label": "多空辩论速览",
+      "group": "多空投研",
+      "priority": "P1",
+      "package": "senate-desk",
+      "steps": [
+        1
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 54,
+      "slug": "skill-54",
+      "label": "深度投研报告",
+      "group": "多空投研",
+      "priority": "P2",
+      "package": "senate-desk",
+      "steps": [
+        2
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 55,
+      "slug": "skill-55",
+      "label": "回测推演",
+      "group": "多空投研",
+      "priority": "P2",
+      "package": "senate-desk",
+      "steps": [
+        3
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 56,
+      "slug": "skill-56",
+      "label": "明日验证生成与对账",
+      "group": "复盘日志",
+      "priority": "P1",
+      "package": "review-journal",
+      "steps": [
+        5
+      ],
+      "status": "planned",
+      "note": "生成与次日对账要后端接口，现有 /validate 只做录入"
+    },
+    {
+      "id": 57,
+      "slug": "skill-57",
+      "label": "涨停样本统计",
+      "group": "复盘日志",
+      "priority": "P1",
+      "package": "",
+      "steps": "",
+      "status": "existing_page",
+      "note": "已由 /limit-up 页承载，无需 skill"
+    },
+    {
+      "id": 58,
+      "slug": "skill-58",
+      "label": "交易行为诊断",
+      "group": "复盘日志",
+      "priority": "P2",
+      "package": "review-journal",
+      "steps": [
+        2,
+        3,
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 59,
+      "slug": "skill-59",
+      "label": "盘中异动提醒",
+      "group": "复盘日志",
+      "priority": "P2",
+      "package": "",
+      "steps": "",
+      "status": "existing_page",
+      "note": "已由 /watch 页阈值信号承载，无需 skill"
+    },
+    {
+      "id": 60,
+      "slug": "skill-60",
+      "label": "个股全景分析",
+      "group": "跨项目组合",
+      "priority": "P1",
+      "package": "a-share-dossier",
+      "steps": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 61,
+      "slug": "skill-61",
+      "label": "跨市场晨报",
+      "group": "跨项目组合",
+      "priority": "P1",
+      "package": "cross-market",
+      "steps": [
+        3
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 62,
+      "slug": "skill-62",
+      "label": "A/H 溢价速览",
+      "group": "跨项目组合",
+      "priority": "P1",
+      "package": "cross-market",
+      "steps": [
+        1
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 63,
+      "slug": "skill-63",
+      "label": "中概股映射 A 股",
+      "group": "跨项目组合",
+      "priority": "P2",
+      "package": "cross-market",
+      "steps": [
+        2
+      ],
+      "status": "unconnected",
+      "note": ""
+    },
+    {
+      "id": 64,
+      "slug": "skill-64",
+      "label": "全球宏观→A 股传导",
+      "group": "跨项目组合",
+      "priority": "P2",
+      "package": "cross-market",
+      "steps": [
+        4
+      ],
+      "status": "partial",
+      "note": "CN 段可跑，US 段未接通"
+    },
+    {
+      "id": 65,
+      "slug": "skill-65",
+      "label": "财报季密集监控",
+      "group": "跨项目组合",
+      "priority": "P2",
+      "package": "event-calendar",
+      "steps": [
+        4
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 66,
+      "slug": "skill-66",
+      "label": "持仓体检",
+      "group": "跨项目组合",
+      "priority": "P0",
+      "package": "portfolio-check",
+      "steps": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "ready",
+      "note": ""
+    },
+    {
+      "id": 67,
+      "slug": "skill-67",
+      "label": "板块+资讯联动",
+      "group": "跨项目组合",
+      "priority": "P1",
+      "package": "sector-rotation",
+      "steps": [
+        2
+      ],
+      "status": "partial",
+      "note": "板块段可跑，资讯段待接 Wire"
+    },
+    {
+      "id": 68,
+      "slug": "skill-68",
+      "label": "历史财报对比",
+      "group": "历史深度",
+      "priority": "P2",
+      "package": "",
+      "steps": "",
+      "status": "not_supported",
+      "note": "FinanceCoffer 无 MCP、容器 Restarting，本阶段不做"
+    },
+    {
+      "id": 69,
+      "slug": "skill-69",
+      "label": "公告语义检索",
+      "group": "历史深度",
+      "priority": "P2",
+      "package": "",
+      "steps": "",
+      "status": "not_supported",
+      "note": "无可用向量检索工具，本阶段不做"
+    },
+    {
+      "id": 70,
+      "slug": "skill-70",
+      "label": "风险事件回溯",
+      "group": "历史深度",
+      "priority": "P2",
+      "package": "",
+      "steps": "",
+      "status": "not_supported",
+      "note": "无历史风险库，本阶段不做"
+    }
+  ]
+}

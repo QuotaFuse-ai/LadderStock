@@ -179,7 +179,7 @@ describe('页内入口与顶栏共用同一份抽屉', () => {
 
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
     expect(
-      screen.getByRole('heading', { name: '研究助手 · 个股深挖 · 个股全景' }),
+      screen.getByRole('heading', { name: '研究助手 · 研究工具 · 个股全景' }),
     ).toBeTruthy()
     expect(draftValue()).toContain('「贵州茅台（600519）」')
   })
@@ -191,7 +191,7 @@ describe('页内入口与顶栏共用同一份抽屉', () => {
 
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
     expect(
-      screen.getByRole('heading', { name: '研究助手 · 个股深挖 · 个股全景' }),
+      screen.getByRole('heading', { name: '研究助手 · 研究工具 · 个股全景' }),
     ).toBeTruthy()
     expect(draftValue()).toContain('「贵州茅台（600519）」')
   })
