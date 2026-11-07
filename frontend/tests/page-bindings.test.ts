@@ -51,7 +51,7 @@ describe('bindingFor 覆盖全部前缀', () => {
     expect(bindingFor('/')?.pkg).toBeNull()
     expect(bindingFor('/')?.label).toBe('首页')
     expect(bindingFor('/nope')).toBeNull()
-    expect(bindingFor('/nope/600519')).toBeNull()
+    expect(bindingFor('/positions/600519')).toBeNull()
   })
 
   it('开放域页面绑定 null 包但不丢页面名', () => {

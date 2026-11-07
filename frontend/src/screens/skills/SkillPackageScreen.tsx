@@ -24,7 +24,7 @@ import {
 } from '../../lib/skills'
 
 /**
- * `/skills/pkg/:name` 整包详情（QUOT-474 / DEC-065）。
+ * `/skills/pkg/:name` 整包详情（QUOT-474 / DEC-067）。
  *
  * `name` 是 `content/skills/index.json` 里的包名。展示整包的全部步骤（7/6/5 步）与
  * 该包承载的方向条目清单（从 `catalog.json` 反查，不写第二份）。每步都可「问 AI」预填。

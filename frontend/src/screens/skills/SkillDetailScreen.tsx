@@ -26,7 +26,7 @@ import {
 } from '../../lib/skills'
 
 /**
- * `/skills/:id` 单条方向详情（QUOT-474 / DEC-065）。
+ * `/skills/:id` 单条方向详情（QUOT-474 / DEC-067）。
  *
  * `id` 是 **catalog 条目 id**（不是包名）。页面据条目找映射包与步号，把该方向的步骤
  * 高亮并自动展开；「问 AI」预填该方向 `steps[0]` 那一步的 `prompt`。

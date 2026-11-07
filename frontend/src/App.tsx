@@ -101,7 +101,7 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/research': <ResearchEntryScreen />,
   '/research/:code': <ResearchDetailScreen />,
   '/research/:code/report': <ResearchReportScreen />,
-  // QUOT-474 / DEC-065：第 9 组「研究工具」= 方向总览（70 条目录）+ 单条方向详情 + 整包详情
+  // QUOT-474 / DEC-067：第 9 组「研究工具」= 方向总览（70 条目录）+ 单条方向详情 + 整包详情
   '/skills': <SkillsIndexScreen />,
   '/skills/:id': <SkillDetailScreen />,
   '/skills/pkg/:name': <SkillPackageScreen />,

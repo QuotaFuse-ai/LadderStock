@@ -2,7 +2,7 @@ import catalog from '../../../content/skills/catalog.json'
 import index from '../../../content/skills/index.json'
 
 /**
- * 「研究工具」数据层（QUOT-474 / DEC-065）。
+ * 「研究工具」数据层（QUOT-474 / DEC-067）。
  *
  * 入库数据是 `content/skills/`（人类拍板产物），前端只读、不改写、不写第二份清单：
  * - `catalog.json` —— **方向条目清单（70 条）**，`/skills` 列表页与 `/skills/:id` 条目详情只读这一份；

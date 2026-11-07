@@ -33,7 +33,7 @@ import {
  * 一级导航 9 组 + 底部固定的「设置」：
  * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 研究工具 ─┬─ 设置（弱化、沉底）。
  *
- * 第 9 组由 QUOT-474 / DEC-065 从「个股深挖」整组改名而来：「研究工具」= 工具总览（`/skills`）
+ * 第 9 组由 QUOT-474 / DEC-067 从「个股深挖」整组改名而来：「研究工具」= 工具总览（`/skills`）
  * + 个股深挖（`/research`，路径不变、深链不 404）。8 个 skill 不各占一条侧栏，收在列表页里。
  *
  * 这里只放纯数据与纯函数，不含 React：`components/Layout.tsx` 负责渲染，
@@ -143,7 +143,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/signals', label: '产业信号', icon: Radio },
     ],
   },
-  // QUOT-474 / DEC-065：第 9 组由「个股深挖」（`deep-dive`）整组改名「研究工具」（`research-tools`）。
+  // QUOT-474 / DEC-067：第 9 组由「个股深挖」（`deep-dive`）整组改名「研究工具」（`research-tools`）。
   // 组内两项：工具总览（`/skills`，新增的 8 个 skill 列表）在前，个股深挖（`/research`）在后。
   // 8 个 skill 不各占一条（否则侧栏会多出 8 行），统一收在「工具总览」列表页里。
   // `/research` 路径与所有 `/research/:code` 深链原样保留，不 404。

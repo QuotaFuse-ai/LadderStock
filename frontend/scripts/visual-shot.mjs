@@ -82,7 +82,7 @@ const ROUTES = [
   { slug: 'settings', path: '/settings' },
   { slug: 'research-code', path: '/research/600519' },
   { slug: 'research-code-report', path: '/research/600519/report' },
-  // QUOT-474 / DEC-065：第 9 组「研究工具」——工具总览（70 条方向目录）、
+  // QUOT-474 / DEC-067：第 9 组「研究工具」——工具总览（70 条方向目录）、
   // 单条方向详情（`id` = catalog 条目 id）、整包详情（`name` = index.json 包名）
   { slug: 'skills', path: '/skills' },
   { slug: 'skills-id', path: '/skills/2' },

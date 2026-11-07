@@ -150,12 +150,12 @@ describe('旧深链重定向（QUOT-431）', () => {
 })
 
 /**
- * QUOT-474 / DEC-065：第 9 组由「个股深挖」整组改名为「研究工具」，不是新增第 10 组。
+ * QUOT-474 / DEC-067：第 9 组由「个股深挖」整组改名为「研究工具」，不是新增第 10 组。
  *
  * 改名而非并排，是为了不让侧栏同时出现「研究工具」和「个股深挖」两条平级项；组内两页
  * 固定为 工具总览（`/skills`）+ 个股深挖（`/research`，路径不变、深链不 404）。
  */
-describe('「研究工具」组（QUOT-474 / DEC-065）', () => {
+describe('「研究工具」组（QUOT-474 / DEC-067）', () => {
   it('第 9 组 key 是 `research-tools`，不再是 `deep-dive`', () => {
     expect(NAV_SECTIONS.at(-1)?.key).toBe('research-tools')
     expect(NAV_SECTIONS.map((section) => section.key)).not.toContain('deep-dive')
