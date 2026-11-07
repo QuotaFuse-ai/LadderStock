@@ -63,6 +63,7 @@ from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
 from ladderstock.web.assistant import build_router as build_assistant_router
+from ladderstock.web.assistant import build_skills_router as build_skills_router
 from ladderstock.web.control import (
     ControlPlane,
     build_router,
@@ -1585,6 +1586,12 @@ def create_app(
     # 既有 AI 通道（订阅版 CLI / HTTP 模型），只回文本、不回写页面数据。闸门与研究面
     # 共用（回环 + Host + 写方法来源证据），不受 `LDST_CONTROL_ENABLED` 影响。
     app.include_router(build_assistant_router())
+
+    # ---------------------------------------------- 技能页对话通道（QUOT-476）
+    #
+    # `POST /api/skills/assistant`：/skills 页没有 code，复用同一个 ask() 但换成
+    # 不含个股深挖预设的 system prompt；闸门与上面同一条。
+    app.include_router(build_skills_router())
 
     # -------------------------------------------------- 产业面（QUOT-276 / SPEC-INDUSTRY-PAGES §2）
     #

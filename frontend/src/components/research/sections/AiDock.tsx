@@ -10,6 +10,7 @@ import { Check, Copy, Loader2, Send, Sparkles, Square } from 'lucide-react'
 
 import {
   askResearchAssistant,
+  askSkillAssistant,
   type ResearchOverview,
 } from '../../../api/research'
 import { cn } from '../../../lib/cn'
@@ -54,8 +55,10 @@ import {
  * 打开时的输入框**已经预填整段开场**（角色 + 分步说明 + 第 1 步指令，来自
  * `content/skills/<pkg>/steps.json` 的 `dock` 模板），不自动发送；旁边留「复制」后门。
  *
- * 对话通道目前只有 `/api/research/{code}/assistant`：没有代码的页面进入「待接入」态，
- * 只做开场编辑与复制，**不伪造回答、不自己拼后端接口**。
+ * 对话通道两种（QUOT-476）：`research` 走 `/api/research/{code}/assistant`（个股深挖页，
+ * 上下文是页级摘要）；`skill` 走 `/api/skills/assistant`（/skills 页，上下文只有
+ * 页面键三件套）。两样都没有的页面进入「待接入」态，只做开场编辑与复制，
+ * **不伪造回答、不自己拼后端接口**。
  */
 
 export interface ResearchAiDockProps {
@@ -136,7 +139,8 @@ export function AssistantDockDrawer({
   onClose,
 }: AssistantDockDrawerProps) {
   const open = view !== null
-  const code = view?.channel?.code ?? null
+  const channel = view?.channel ?? null
+  const code = channel?.kind === 'research' ? channel.code : null
   const tab = view?.object.tab ?? 'overview'
   const date = view?.object.date ?? ''
   const name = view?.object.name ?? null
@@ -176,23 +180,36 @@ export function AssistantDockDrawer({
     })
   }, [code, name, date, tab, overview, pageData.data])
 
-  // 发给后端的就是这份 JSON：页级摘要 + 三个上下文键（pageKey / boundSkill / object）
+  // 发给后端的就是这份 JSON：research 通道是页级摘要 + 三个上下文键；
+  // skill 通道没有页级数据可摘要，上下文就是页面键三件套（QUOT-476）
   const serializedContext = useMemo(() => {
-    if (!context || !view) return ''
-    return JSON.stringify(
-      {
-        ...context,
-        pageKey: view.pageKey,
-        boundSkill: view.boundSkill,
-        object: view.object,
-      },
-      null,
-      2,
-    )
-  }, [context, view])
+    if (!view) return ''
+    if (context) {
+      return JSON.stringify(
+        {
+          ...context,
+          pageKey: view.pageKey,
+          boundSkill: view.boundSkill,
+          object: view.object,
+        },
+        null,
+        2,
+      )
+    }
+    if (channel?.kind === 'skill') {
+      return JSON.stringify(
+        { pageKey: view.pageKey, boundSkill: view.boundSkill, object: view.object },
+        null,
+        2,
+      )
+    }
+    return ''
+  }, [context, view, channel])
 
   // 换页 / 换标的时旧对话不再属于当前上下文；同一页反复开关则保留草稿与对话
-  const sessionKey = view ? `${view.pageKey}|${view.channel?.code ?? ''}` : null
+  const sessionKey = view
+    ? `${view.pageKey}|${view.channel?.kind === 'research' ? view.channel.code : (view.channel?.kind ?? '')}`
+    : null
   useEffect(() => {
     if (!sessionKey || sessionRef.current === sessionKey) return
     sessionRef.current = sessionKey
@@ -231,7 +248,8 @@ export function AssistantDockDrawer({
   const ask = useCallback(
     async (raw: string, options: { echo?: boolean } = {}) => {
       const question = raw.trim()
-      if (!question || !code || pending || !context || !serializedContext) return
+      // serializedContext 非空就说明通道已就绪（research 已拼好页级摘要 / skill 已拼好页面键）
+      if (!question || !serializedContext || pending) return
       const echo = options.echo ?? true
 
       const seq = requestSeqRef.current + 1
@@ -252,16 +270,27 @@ export function AssistantDockDrawer({
       setPending(true)
 
       try {
-        const reply = await askResearchAssistant(
-          code,
-          {
-            question,
-            context: serializedContext,
-            date: date || undefined,
-            tab,
-          },
-          controller.signal,
-        )
+        const reply =
+          channel?.kind === 'skill'
+            ? await askSkillAssistant(
+                {
+                  question,
+                  context: serializedContext,
+                  pageKey: view?.pageKey,
+                  boundSkill: view?.boundSkill,
+                },
+                controller.signal,
+              )
+            : await askResearchAssistant(
+                code ?? '',
+                {
+                  question,
+                  context: serializedContext,
+                  date: date || undefined,
+                  tab,
+                },
+                controller.signal,
+              )
         if (requestSeqRef.current !== seq) return
         messageIdRef.current += 1
         setMessages((prev) => [
@@ -292,7 +321,7 @@ export function AssistantDockDrawer({
         }
       }
     },
-    [code, pending, context, serializedContext, date, tab],
+    [code, pending, serializedContext, date, tab, channel, view],
   )
 
   const retry = useCallback(() => {
@@ -322,7 +351,9 @@ export function AssistantDockDrawer({
     void ask(draft)
   }
 
-  const ready = Boolean(code) && context !== null && Boolean(view && !view.offlineBlocking)
+  // 通道就绪即可发：serializedContext 非空已隐含页级上下文（research）或三键 JSON（skill）
+  const ready =
+    Boolean(channel) && !view?.offlineBlocking && serializedContext !== ''
   const questions = view?.quickQuestions ?? []
   const canCopy = Boolean(draft.trim()) && (view?.fallbackCopy ?? true)
 
@@ -588,7 +619,7 @@ export function AssistantDockDrawer({
           ))}
         </section>
 
-        {code ? (
+        {channel ? (
           <section
             aria-label="对话"
             role="log"
@@ -600,7 +631,11 @@ export function AssistantDockDrawer({
                 compact
                 icon={<Sparkles aria-hidden="true" />}
                 title="从这一页问起"
-                description="回答只依据上方页级上下文；页面没取到的行情 / 财报 / 事件，助手会直说，不会用一般知识补。"
+                description={
+                  channel.kind === 'skill'
+                    ? '回答会带上本页的页面键与绑定技能；助手只依据给出的信息回答，不会编造。'
+                    : '回答只依据上方页级上下文；页面没取到的行情 / 财报 / 事件，助手会直说，不会用一般知识补。'
+                }
               />
             )}
 
