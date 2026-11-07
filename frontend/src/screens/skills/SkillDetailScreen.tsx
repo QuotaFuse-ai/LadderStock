@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, Check, Copy, Sparkles } from 'lucide-react'
 
 import { DemoStateBadge, PageHeader } from '../../components/PageShell'
-import { ResearchAiDock } from '../../components/research/sections/AiDock'
+import { useAssistantShell } from '../../lib/assistant/shell'
 import { LinkButton } from '../../components/research/bits'
 import {
   Badge,
@@ -190,8 +190,8 @@ export default function SkillDetailScreen() {
   const { id } = useParams()
   const item = getCatalogItem(id)
   const skill = getPackage(item?.package)
-  // 页面级抽屉：受控开合，每步「问 AI」把该步 prompt 送进来预填
-  const [askStep, setAskStep] = useState<{ n: number; prompt: string } | null>(null)
+  // 抽屉是 Layout 里唯一那一份（QUOT-475）：页面只请求打开，不渲染第二套
+  const shell = useAssistantShell()
   // 映射到的步骤默认展开（人类口径：定位并展开 steps 里那几步）
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
 
@@ -207,12 +207,9 @@ export default function SkillDetailScreen() {
   // 可执行方向（有包、有步骤）才展开步骤时间轴；否则是「已在页面 / 待建 / 本阶段不做」
   const detailStatuses: CatalogStatus[] = ['ready', 'partial', 'unconnected']
   const canViewSteps = detailStatuses.includes(item.status) && skill !== null
-  const canAsk = item.status === 'ready' || item.status === 'partial'
+  // 未接通包也允许点开抽屉——照常展示步骤与提示词，只在抽屉顶部挂 `offline_notice`
+  const canAsk = detailStatuses.includes(item.status)
   const mapped = new Set(item.steps)
-  // 「问 AI」预填：该方向映射的第一步；没有映射就退回包的首步
-  const firstStep = skill
-    ? (skill.steps.find((step) => mapped.has(step.n)) ?? skill.steps[0]) ?? null
-    : null
 
   return (
     <div className="flex flex-col gap-5">
@@ -286,7 +283,14 @@ export default function SkillDetailScreen() {
                         return next
                       })
                     }
-                    onAsk={(target) => setAskStep({ n: target.n, prompt: target.prompt })}
+                    onAsk={(target) => {
+                      if (!skill) return
+                      shell?.open({
+                        boundSkill: skill.name,
+                        initialDraft: target.prompt,
+                        offlineNotice: skill.offline_notice || null,
+                      })
+                    }}
                   />
                 </li>
               ))}
@@ -304,23 +308,6 @@ export default function SkillDetailScreen() {
             />
           )}
         </>
-      )}
-
-      {/* 单挂点：整页只有抽屉这一处（打回项 5：不许第二套 AI 抽屉）。
-          `trigger="drawer-only"`：执行入口是每步卡片里的「问 AI」，抽屉自身不出按钮；
-          受控 `open` 由 `askStep` 驱动；`initialDraft` 是该步提示词，`offlineNotice` 给未接通包说明。 */}
-      {skill && canViewSteps && (
-        <ResearchAiDock
-          trigger="drawer-only"
-          pageKey={`skills:${skill.name}`}
-          name={skill.label}
-          initialDraft={askStep?.prompt ?? firstStep?.prompt ?? ''}
-          offlineNotice={skill.offline_notice || undefined}
-          open={askStep !== null}
-          onOpenChange={(next) => {
-            if (!next) setAskStep(null)
-          }}
-        />
       )}
     </div>
   )

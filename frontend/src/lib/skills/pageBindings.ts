@@ -27,6 +27,9 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   { prefix: '/validate', pkg: 'review-journal' },
   { prefix: '/limit-up', pkg: 'review-journal' },
   { prefix: '/my-stocks', pkg: 'portfolio-check' },
+  // QUOT-431 旧地址：重定向到 `/my-stocks?tab=watch|hold`，绑定跟着落点走
+  { prefix: '/watchlist', pkg: 'portfolio-check' },
+  { prefix: '/positions', pkg: 'portfolio-check' },
   { prefix: '/calendar', pkg: 'event-calendar' },
   { prefix: '/inbox', pkg: 'event-calendar' },
   { prefix: '/industry', pkg: 'sector-rotation' },

@@ -27,11 +27,11 @@ describe('bindingFor 覆盖全部前缀', () => {
     expect(found?.label).toBe('复盘')
   })
 
-  it('/research/600519 归个股深挖（不是首页）', () => {
+  it('/research/600519 归研究工具（不是首页）', () => {
     const found = bindingFor('/research/600519')
     expect(found?.prefix).toBe('/research')
     expect(found?.pkg).toBe('a-share-dossier')
-    expect(found?.label).toBe('个股深挖')
+    expect(found?.label).toBe('研究工具')
   })
 
   it('/industry/电子 归产业研究', () => {
@@ -51,7 +51,7 @@ describe('bindingFor 覆盖全部前缀', () => {
     expect(bindingFor('/')?.pkg).toBeNull()
     expect(bindingFor('/')?.label).toBe('首页')
     expect(bindingFor('/nope')).toBeNull()
-    expect(bindingFor('/positions/600519')).toBeNull()
+    expect(bindingFor('/nope/600519')).toBeNull()
   })
 
   it('开放域页面绑定 null 包但不丢页面名', () => {

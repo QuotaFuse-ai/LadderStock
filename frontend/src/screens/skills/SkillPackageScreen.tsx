@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, Check, Copy, Package, Sparkles } from 'lucide-react'
 
 import { DemoStateBadge, PageHeader } from '../../components/PageShell'
-import { ResearchAiDock } from '../../components/research/sections/AiDock'
+import { useAssistantShell } from '../../lib/assistant/shell'
 import { LinkButton } from '../../components/research/bits'
 import {
   Badge,
@@ -144,7 +144,8 @@ function StepRow({
 export default function SkillPackageScreen() {
   const { name } = useParams()
   const skill = getPackage(name)
-  const [askStep, setAskStep] = useState<{ n: number; prompt: string } | null>(null)
+  // 抽屉是 Layout 里唯一那一份（QUOT-475）：页面只请求打开，不渲染第二套
+  const shell = useAssistantShell()
 
   // 反查本包承载的方向条目（catalog 是唯一数据源），按 id 排序
   const directions = useMemo(
@@ -251,22 +252,21 @@ export default function SkillPackageScreen() {
         <ol className="flex flex-col gap-4">
           {skill.steps.map((step, index) => (
             <li key={step.n}>
-              <StepRow step={step} index={index} onAsk={(target) => setAskStep({ n: target.n, prompt: target.prompt })} />
+              <StepRow
+                step={step}
+                index={index}
+                onAsk={(target) =>
+                  shell?.open({
+                    boundSkill: skill.name,
+                    initialDraft: target.prompt,
+                    offlineNotice: skill.offline_notice || null,
+                  })
+                }
+              />
             </li>
           ))}
         </ol>
       )}
-
-      <ResearchAiDock
-        pageKey={`skills:${skill.name}`}
-        name={skill.label}
-        initialDraft={askStep?.prompt ?? ''}
-        offlineNotice={skill.offline_notice || undefined}
-        open={askStep !== null}
-        onOpenChange={(next) => {
-          if (!next) setAskStep(null)
-        }}
-      />
     </div>
   )
 }
