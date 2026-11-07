@@ -132,7 +132,8 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
     renderBoth('/review?demo=1&variant=partial&date=2026-10-30')
     await screen.findByText('演示数据 · ?demo=1')
     // 数据面的 partial = 某段数据集没落盘，与段级 AI 成败是两件事（§5.2）
-    expect(bodyText()).toContain('五段中 1 段数据缺失')
+    // 演示源是异步 load：只等徽标会在慢机上抢跑（CI 实测），同下方周度分支
+    await waitFor(() => expect(bodyText()).toContain('五段中 1 段数据缺失'))
     expect(screen.getByText('缺数')).toBeTruthy()
     expect(metricRow('dragon_tiger', '上榜个股')).toBe('—')
     expect(metricRow('dragon_tiger', '席位行数')).toBe('—')
