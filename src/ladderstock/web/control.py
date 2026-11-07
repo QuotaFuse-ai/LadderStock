@@ -75,6 +75,7 @@ from ladderstock.core.peer_versions import (
 )
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
+from ladderstock.web import chat as chat_channel
 from ladderstock.web import peer_registry
 
 # --------------------------------------------------------------------------- #
@@ -3168,6 +3169,17 @@ def build_router(plane: ControlPlane) -> APIRouter:
     def self_ai_cli_test(body: CliTestRequest) -> dict[str, Any]:
         """真跑一次本机 CLI 的探针；失败也回 200，由 `ok` 字段区分。"""
         return plane.self_ai_cli_test(body.cli)
+
+    @router.post("/ai/chat")
+    async def ai_chat(body: chat_channel.ChatRequest, request: Request) -> Any:
+        """一轮问答（QUOT-473）：正文 + 本轮来源 + 待确认的研究建议。
+
+        与 `generate` / `retry` 的 job 型契约互不影响；失败按 `code` 区分
+        无通道（503）/ 超时（504）/ 断网（502）/ 额度（429）等，绝不返回假回答。
+        """
+        return await chat_channel.handle(
+            body, request, config_root=plane.config_root
+        )
 
     @router.post("/ai/generate")
     def ai_generate(body: AiGenerateRequest) -> dict[str, Any]:
