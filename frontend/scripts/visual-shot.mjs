@@ -32,6 +32,9 @@
  *   --height <px>      视口高（默认 900）
  *   --full-page        截整页（按 `contentSize` 撑高），长页一屏装不下时用；溢出判定仍按视口宽
  *   --scroll <px>      截图前先滚到纵向 N px（拍首屏之后的分区，不传则停在顶部）
+ *   --click <selector> 截图前点一下该元素（可重复，按顺序），用来拍打开后的抽屉/弹层；
+ *                      元素找不到会直接报错，避免拍出一张「其实没打开」的图
+ *   --click-settle <ms> 每次点击后额外等待（默认 800，留给抽屉入场动画）
  *
  * 每张图拍完都会量 `documentElement.scrollWidth` 与 `innerWidth`，脚本结束统一报告横向溢出清单
  * （QUOT-304 / QUOT-317 的 1280px 证据就是这条输出的原文）。
@@ -99,6 +102,8 @@ function parseArgs(argv) {
     height: VIEWPORT.height,
     fullPage: false,
     scroll: 0,
+    clicks: [],
+    clickSettle: 800,
     extraRoutes: [],
   }
   for (let i = 0; i < argv.length; i += 1) {
@@ -132,6 +137,8 @@ function parseArgs(argv) {
     else if (flag === '--height') options.height = Number(next())
     else if (flag === '--full-page') options.fullPage = true
     else if (flag === '--scroll') options.scroll = Number(next())
+    else if (flag === '--click') options.clicks.push(next())
+    else if (flag === '--click-settle') options.clickSettle = Number(next())
     else throw new Error(`未知参数：${flag}（--help 见文件头注释）`)
   }
   for (const theme of options.themes) {
@@ -318,6 +325,23 @@ async function shoot(cdp, base, route, theme, options) {
     await cdp.send('Page.navigate', { url: `${base}${route.path}${query}` }, sessionId)
     await loaded
     await sleep(options.settle)
+    for (const selector of options.clicks) {
+      const clicked = await cdp.send(
+        'Runtime.evaluate',
+        {
+          expression: `(() => {
+            const el = document.querySelector(${JSON.stringify(selector)});
+            if (!el) return 'missing';
+            el.click();
+            return 'ok';
+          })()`,
+          returnByValue: true,
+        },
+        sessionId,
+      )
+      if (clicked.result.value !== 'ok') throw new Error(`--click 找不到元素：${selector}`)
+      await sleep(options.clickSettle)
+    }
     if (options.scroll > 0) {
       await cdp.send(
         'Runtime.evaluate',

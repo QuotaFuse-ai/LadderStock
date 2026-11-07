@@ -1,27 +1,40 @@
 import { Eye, EyeOff, Moon, Sparkles, Sun } from 'lucide-react'
 
 import { cn } from '../lib/cn'
+import { useIsMobile } from '../lib/mediaQuery'
 import { usePrivacyMode } from '../lib/privacy'
 import { setTheme, useThemeChoice } from '../lib/prefs'
 import { resolveTheme } from '../lib/theme'
+import { Button } from './ui'
 
 /**
- * 顶栏右侧工具区（DEC-062 §2）：`本地 A 股短线工作台` 小字 → 隐私开关 → 深浅色 → AI 入口。
+ * 顶栏右侧工具区（DEC-062 §2）：`本地 A 股短线工作台` 小字 → 隐私开关 → 深浅色 →
+ * 「接入 AI」配置图标 → 「问 AI」主按钮（QUOT-475）。
  *
  * 抽成独立组件是硬约束：下一个任务要在**最左侧**插入服务状态灯，届时只改这里，
  * 不再动 `Layout.tsx` 的顶栏结构。
  *
  * 顺序与文案逐字对照参考实现 `components/layout/Layout.tsx:297-308`；
  * 颜色只走 `tokens.css` 语义类（`text-accent` / `text-text-muted` / `hover:bg-surface-3`）。
+ *
+ * 「问 AI」与「接入 AI」语义不同，**不合并**：前者是随时开口的研究助手入口，
+ * 后者是配置模型通道的次级图标。
+ *
+ * 窄屏（< md）顶栏不渲染「问 AI」，入口整体挪到 `MobileNavDrawer` 底部，
+ * 同一条口子（`onAskAi`），不另起一份逻辑。
  */
 export interface TopbarToolsProps {
+  /** 接入 AI（配置 key） */
   onOpenAi: () => void
+  /** 问 AI（打开全站唯一的助手抽屉） */
+  onAskAi: () => void
 }
 
-export function TopbarTools({ onOpenAi }: TopbarToolsProps) {
+export function TopbarTools({ onOpenAi, onAskAi }: TopbarToolsProps) {
   const privacy = usePrivacyMode()
   const theme = useThemeChoice()
   const dark = resolveTheme(theme) === 'dark'
+  const isMobile = useIsMobile()
 
   return (
     <div
@@ -76,6 +89,20 @@ export function TopbarTools({ onOpenAi }: TopbarToolsProps) {
       >
         <Sparkles className="size-4 text-accent" strokeWidth={1.75} aria-hidden="true" />
       </button>
+
+      {!isMobile && (
+        <Button
+          variant="secondary"
+          onClick={onAskAi}
+          aria-label="问 AI"
+          title="问 AI：按当前页面绑定技能，打开研究助手"
+          aria-haspopup="dialog"
+          leadingIcon={<Sparkles className="size-3.5" aria-hidden="true" />}
+          className="ml-0.5 border-accent px-2.5 text-accent hover:bg-accent-soft hover:text-accent"
+        >
+          问 AI
+        </Button>
+      )}
     </div>
   )
 }

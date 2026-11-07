@@ -1,0 +1,90 @@
+{
+  "name": "event-calendar",
+  "label": "事件日历",
+  "entry": {
+    "page": "calendar|my-stocks|home",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "ready",
+  "tools_allow": [
+    "is_trading_day",
+    "market_calendar_summary",
+    "trading_calendar",
+    "macro_calendar",
+    "lockup_expiry",
+    "holder_trades",
+    "earnings_forecast",
+    "institution_survey",
+    "share_buyback",
+    "equity_pledge",
+    "ipo_calendar",
+    "dividend_history",
+    "cninfo_announcements"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "时间基准",
+      "output": "baseline",
+      "tools": [
+        "is_trading_day",
+        "market_calendar_summary",
+        "trading_calendar"
+      ],
+      "prompt": "先确认今天是否交易日、最近交易日是哪天，再列出未来 6 个月内的非交易日与长假。所有后续事件都相对这个基准算相对天数，日期一律写成 YYYY-MM-DD。"
+    },
+    {
+      "n": 2,
+      "title": "解禁批次",
+      "output": "lockup",
+      "tools": [
+        "lockup_expiry"
+      ],
+      "prompt": "取未来 3-6 个月的全部解禁批次，逐批写日期、解禁股数、占流通比例、涉及股东类型。按日期升序排，标明最近一批距今天还有多少天。查不到就写「该源无记录」并给查询区间。"
+    },
+    {
+      "n": 3,
+      "title": "增减持已公告",
+      "output": "trades",
+      "tools": [
+        "holder_trades",
+        "cninfo_announcements"
+      ],
+      "prompt": "把减持分成两栏：已公告的计划（公告日、计划数量、截止日）、已发生的成交（成交日、数量、均价）。两栏不合并。公告细节回 cninfo_announcements 核对日期。质押与回购不放在这一栏。"
+    },
+    {
+      "n": 4,
+      "title": "预告、调研、回购、质押",
+      "output": "others",
+      "tools": [
+        "earnings_forecast",
+        "institution_survey",
+        "share_buyback",
+        "equity_pledge"
+      ],
+      "prompt": "业绩预告写发布状态与预告区间（预喜/预忧/已发布的具体数字），未发布就明确写「未发布」。机构调研写最近几次的日期与参与机构数。回购写方案金额与已实施进度两条。质押写当前比例与预警线是否披露。"
+    },
+    {
+      "n": 5,
+      "title": "排成时间轴",
+      "output": "timeline",
+      "tools": [],
+      "prompt": "把所有事件按日期合成一张时间轴，每条只写：日期 / 事件 / 规模或方向 / 是否已确定。同一天多事件分行。最后标出未来 30 天内最需要注意的 2 条，并写清哪些条目当前仅为计划、尚未发生。不构成投资建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们把未来一段时间的事件日历过一遍。你是事件驱动研究助理：只列已经公告或已排期的事项，不预测、不推断影响。接下来 5 步，每步一页。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Check, Copy, FileText, RefreshCw, RotateCcw } from 'lucide-react'
 
 import {
@@ -18,6 +18,7 @@ import {
 import { buildCitationIndex } from '../../lib/citation'
 import { MISSING, formatTime } from '../../lib/format'
 import { cn } from '../../lib/cn'
+import { useRegisterAssistantObject } from '../../lib/assistant/shell'
 import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
 import {
   asSourceBadgeStatus,
@@ -576,6 +577,7 @@ const DEEP_DIVE_TABS = [
 export default function ResearchDetailScreen() {
   const view = useResearchView()
   const navigate = useNavigate()
+  const location = useLocation()
   const [params, setParams] = useSearchParams()
   const [drawer, setDrawer] = useState<DrawerState>(null)
   const [copied, setCopied] = useState(false)
@@ -689,6 +691,8 @@ export default function ResearchDetailScreen() {
 
   // 顶部标的搜索两个分页共用（参考库页头口径）：换股只改代码，不改 tab
   const displayName = view.name ?? overviewRequest.data?.name ?? null
+  // QUOT-475：把当前标的登记给顶栏「问 AI」，从顶栏打开时开场里能填上名称而不是留占位
+  useRegisterAssistantObject({ code: view.code, name: displayName, date: view.date, tab })
   const symbolBar = <ResearchSymbolBar code={view.code} name={displayName} onOpen={openResearch} />
 
   const header = (
@@ -756,6 +760,7 @@ export default function ResearchDetailScreen() {
         name={displayName}
         scope={{ tab, date: view.date }}
         overview={overviewRequest.data}
+        pageKey={location.pathname}
       />
     </>
   )

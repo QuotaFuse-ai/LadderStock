@@ -1,0 +1,130 @@
+{
+  "name": "a-share-dossier",
+  "label": "个股全景",
+  "entry": {
+    "page": "home|research|my-stocks",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "ready",
+  "tools_allow": [
+    "stock_profile",
+    "baostock_stock_basic",
+    "tencent_quote",
+    "eastmoney_financial_all",
+    "eastmoney_financial_report",
+    "eastmoney_finance_indicators",
+    "finance_crosscheck",
+    "cninfo_financial_notes",
+    "stock_fund_flow",
+    "dragon_tiger_seats",
+    "chip_distribution",
+    "top_shareholders",
+    "holder_number",
+    "cninfo_announcement_risk",
+    "cninfo_announcements",
+    "holder_trades",
+    "equity_pledge",
+    "lockup_expiry",
+    "ths_eps_forecast",
+    "eastmoney_reports",
+    "institution_survey",
+    "full_valuation",
+    "baostock_valuation_history"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "定位与口径",
+      "output": "profile",
+      "tools": [
+        "stock_profile",
+        "baostock_stock_basic",
+        "tencent_quote"
+      ],
+      "prompt": "用 stock_profile 和 baostock_stock_basic 取这只票的主营、行业归属与最新价，用 tencent_quote 取行情。开头先写清数据时点（行情时间与交易日），再写一句话定性：它靠什么赚钱、处在什么行业位置。三个数字都必须标注来自哪个工具。"
+    },
+    {
+      "n": 2,
+      "title": "财务三表速读",
+      "output": "financials",
+      "tools": [
+        "eastmoney_financial_all",
+        "eastmoney_financial_report",
+        "eastmoney_finance_indicators"
+      ],
+      "prompt": "拉最近 8 个季度的营收、归母净利润、扣非净利润、毛利率、经营性现金流。原始返回多为累计数，必须先 quarterize 成单季，再算同比与环比，标出营收和毛利率的加速或减速拐点。缺哪个季度就明说缺，不要用插值补。"
+    },
+    {
+      "n": 3,
+      "title": "财务勾稽体检",
+      "output": "crosscheck",
+      "tools": [
+        "finance_crosscheck",
+        "cninfo_financial_notes",
+        "eastmoney_financial_report"
+      ],
+      "prompt": "跑 finance_crosscheck，逐条列出它报出的不一致项（资产=负债+权益、现金流与利润匹配、应收与收入增速背离）。每个异常项都回到 cninfo_financial_notes 找原始科目说明。核对不出来的项写成「待核」，不要解释成正常。"
+    },
+    {
+      "n": 4,
+      "title": "资金与筹码",
+      "output": "funds",
+      "tools": [
+        "stock_fund_flow",
+        "dragon_tiger_seats",
+        "chip_distribution",
+        "top_shareholders",
+        "holder_number"
+      ],
+      "prompt": "取近 20 日主力与大单净流入，列出上榜龙虎榜的日期与席位性质（机构/游资），再看筹码集中度与获利盘比例、十大股东与股东户数变化。结论只写资金在流入还是流出、筹码在集中还是分散，不推断意图。"
+    },
+    {
+      "n": 5,
+      "title": "事件与风险",
+      "output": "events",
+      "tools": [
+        "cninfo_announcement_risk",
+        "cninfo_announcements",
+        "holder_trades",
+        "equity_pledge",
+        "lockup_expiry"
+      ],
+      "prompt": "取近 3 个月的公告并按风险类型归类（诉讼、减值、变更、处罚、关联交易），再把已公告的增减持、质押比例、未来 6 个月解禁批次按时间排开。每条都写公告日期与来源，没查到就写「该源无记录」。"
+    },
+    {
+      "n": 6,
+      "title": "预期与估值",
+      "output": "valuation",
+      "tools": [
+        "ths_eps_forecast",
+        "eastmoney_reports",
+        "institution_survey",
+        "full_valuation",
+        "baostock_valuation_history"
+      ],
+      "prompt": "取一致预期 EPS 与评级分布、近期研报的目标价区间、机构调研频次；再用 full_valuation 与 baostock_valuation_history 给出 PE/PB 的当前值与近 3 年、近 5 年分位。写清「市场预期是什么」和「现在价格处在历史什么位置」，不判断贵贱结论。"
+    },
+    {
+      "n": 7,
+      "title": "结论与反证",
+      "output": "verdict",
+      "tools": [],
+      "prompt": "给三条结论，每条必须配一条反证（能推翻它的具体数据或事件）。列清数据缺口：哪一段没取到、缺了会影响哪条结论。结尾写明数据时点与不构成投资建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们来把「{name}（{code}）」这只票从头挖一遍。你是 A 股基本面研究助理：所有数字必须来自工具返回，取不到就写\"该源无数据\"，不要估算。接下来我分 7 步给你指令，每一步只产出一页内容；不要跳步，也不要自由发挥。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "skills": [
+    {
+      "name": "a-share-dossier",
+      "label": "个股全景",
+      "status": "ready",
+      "step_count": 7,
+      "tool_count": 23,
+      "path": "skills/a-share-dossier",
+      "entry": {
+        "page": "home|research|my-stocks",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": ""
+    },
+    {
+      "name": "a-share-tape",
+      "label": "盘面复盘",
+      "status": "ready",
+      "step_count": 6,
+      "tool_count": 16,
+      "path": "skills/a-share-tape",
+      "entry": {
+        "page": "review|market|home",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": ""
+    },
+    {
+      "name": "cross-market",
+      "label": "跨市场联动",
+      "status": "unconnected",
+      "step_count": 5,
+      "tool_count": 13,
+      "path": "skills/cross-market",
+      "entry": {
+        "page": "industry|home",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": "th_us_* 适配器未接（QUOT-471）；港股报价口径待实测"
+    },
+    {
+      "name": "event-calendar",
+      "label": "事件日历",
+      "status": "ready",
+      "step_count": 5,
+      "tool_count": 13,
+      "path": "skills/event-calendar",
+      "entry": {
+        "page": "calendar|my-stocks|home",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": ""
+    },
+    {
+      "name": "macro-crossasset",
+      "label": "宏观与跨资产",
+      "status": "partial",
+      "step_count": 5,
+      "tool_count": 17,
+      "path": "skills/macro-crossasset",
+      "entry": {
+        "page": "market|home",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": "US 宏观段（美债收益率曲线、全球政策利率）依赖 th_us_*，QUOT-471 未接通；A 股段可用"
+    },
+    {
+      "name": "portfolio-check",
+      "label": "持仓体检",
+      "status": "ready",
+      "step_count": 5,
+      "tool_count": 7,
+      "path": "skills/portfolio-check",
+      "entry": {
+        "page": "my-stocks",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": ""
+    },
+    {
+      "name": "review-journal",
+      "label": "复盘与日志",
+      "status": "ready",
+      "step_count": 5,
+      "tool_count": 6,
+      "path": "skills/review-journal",
+      "entry": {
+        "page": "journal|review|my-stocks",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": ""
+    },
+    {
+      "name": "sector-rotation",
+      "label": "板块与指数",
+      "status": "ready",
+      "step_count": 6,
+      "tool_count": 14,
+      "path": "skills/sector-rotation",
+      "entry": {
+        "page": "industry|market|home",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": ""
+    },
+    {
+      "name": "senate-desk",
+      "label": "多空辩论与回测",
+      "status": "unconnected",
+      "step_count": 4,
+      "tool_count": 5,
+      "path": "skills/senate-desk",
+      "entry": {
+        "page": "research|skills",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": "StockSenate MCP（127.0.0.1:8765）未接进 LadderStock；须 POST 握手，约 20s"
+    },
+    {
+      "name": "us-dossier",
+      "label": "美股港股全景",
+      "status": "unconnected",
+      "step_count": 6,
+      "tool_count": 17,
+      "path": "skills/us-dossier",
+      "entry": {
+        "page": "home|research",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": "LadderStock provider_registry 尚无 th_us_* 适配器（QUOT-471 在补）"
+    },
+    {
+      "name": "wire-desk",
+      "label": "产业链资讯",
+      "status": "unconnected",
+      "step_count": 4,
+      "tool_count": 4,
+      "path": "skills/wire-desk",
+      "entry": {
+        "page": "news|industry",
+        "button": "问 AI",
+        "action": "open_ai_dock",
+        "auto_send": false
+      },
+      "blocked_by": "Wire MCP（127.0.0.1:8791）未接进 LadderStock；4 个工具已实测可用"
+    }
+  ]
+}

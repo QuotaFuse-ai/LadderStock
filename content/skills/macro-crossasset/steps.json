@@ -1,0 +1,102 @@
+{
+  "name": "macro-crossasset",
+  "label": "宏观与跨资产",
+  "entry": {
+    "page": "market|home",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "partial",
+  "blocked_by": "US 宏观段（美债收益率曲线、全球政策利率）依赖 th_us_*，QUOT-471 未接通；A 股段可用",
+  "offline_notice": "美债与全球政策利率段未接通：该段输出「未接通」，其余段落照常执行。",
+  "tools_allow": [
+    "china_gdp",
+    "china_cpi",
+    "china_pmi",
+    "china_social_financing",
+    "china_lpr",
+    "china_money_supply",
+    "china_retail_sales",
+    "economy_snapshot",
+    "shibor_rates",
+    "repo_rate",
+    "bond_yield_curve",
+    "a50_futures",
+    "northbound_flow",
+    "macro_calendar",
+    "index_quote",
+    "th_us_get_treasury_yield_curve",
+    "th_us_get_policy_rates"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "增长与通胀",
+      "output": "growth",
+      "tools": [
+        "china_gdp",
+        "china_cpi",
+        "china_pmi",
+        "china_social_financing",
+        "china_retail_sales",
+        "economy_snapshot"
+      ],
+      "prompt": "取 GDP、CPI、PMI、社融、社零的最新一期，每个都写统计期与发布期两个时间，并写同比与环比。累计口径的先换算成当期值再比。缺月就写「该月未发布」。最后用一段话说增长与通胀的方向，判断必须落到具体数值上。"
+    },
+    {
+      "n": 2,
+      "title": "货币与利率",
+      "output": "rates",
+      "tools": [
+        "china_lpr",
+        "china_money_supply",
+        "shibor_rates",
+        "repo_rate",
+        "bond_yield_curve"
+      ],
+      "prompt": "取 LPR、M2 与社融存量、Shibor 与 DR007、国债收益率曲线。利率必须标期限。用 10Y 与 2Y 的差值算曲线形态（陡峭/平坦/倒挂），写清差值与计算方式。"
+    },
+    {
+      "n": 3,
+      "title": "跨资产价格",
+      "output": "crossasset",
+      "tools": [
+        "a50_futures",
+        "northbound_flow",
+        "index_quote"
+      ],
+      "prompt": "取同一交易日的 A50 期指、北向资金、主要指数表现三者。写明北向是净买入还是净流入（按工具口径原样标）。如果三者方向背离，就列出来并写各自的数值，不做因果解释。"
+    },
+    {
+      "n": 4,
+      "title": "美债与全球政策利率",
+      "output": "us-macro",
+      "tools": [
+        "th_us_get_treasury_yield_curve",
+        "th_us_get_policy_rates"
+      ],
+      "prompt": "取美债关键期限收益率与主要经济体政策利率，标期限与币种。当前该段数据源未接通时，直接输出「未接通：需要 th_us_* 适配器（QUOT-471）」，不编数字、不用记忆里的利率。"
+    },
+    {
+      "n": 5,
+      "title": "传导链与结论",
+      "output": "verdict",
+      "tools": [],
+      "prompt": "把「利率变化 → 资金流向 → 市场风格」拆成三段写，每段都要有前面的具体数值支撑，缺一段就标缺。给三条结论各配一条反证，写明数据缺口与统计期。不构成投资建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们看宏观与跨资产的水位。你是宏观研究助理：只描述水平、方向与差值，不做宏观预测。接下来 5 步，每步一页；美债与全球政策利率这一段目前未接通，遇到就明确标缺。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

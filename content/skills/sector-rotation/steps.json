@@ -1,0 +1,101 @@
+{
+  "name": "sector-rotation",
+  "label": "板块与指数",
+  "entry": {
+    "page": "industry|market|home",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "ready",
+  "tools_allow": [
+    "industry_boards",
+    "concept_boards",
+    "board_members",
+    "board_history",
+    "board_fund_flow",
+    "fund_flow_ranking",
+    "sw_industry_index",
+    "sw_industry_history",
+    "index_quote",
+    "index_valuation",
+    "index_constituents",
+    "index_weights",
+    "index_kline",
+    "eastmoney_industry_reports"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "板块全景",
+      "output": "boards",
+      "tools": [
+        "industry_boards",
+        "concept_boards"
+      ],
+      "prompt": "先列出可用的行业板块与概念板块名录，确认要研究的那一个到底是哪一个（同名不同源要指出来）。再写这个板块包含多少只成分、今天整体涨跌与成交额。板块名必须是工具返回的名字，不要用题材词代替。"
+    },
+    {
+      "n": 2,
+      "title": "资金流排行",
+      "output": "flows",
+      "tools": [
+        "fund_flow_ranking",
+        "board_fund_flow"
+      ],
+      "prompt": "取当日行业与概念的主力净流入排行，分别写流入前三与流出前三，数值标单位与来源。再取目标板块的当日资金流，说明它在排行里处于什么位置。行业与概念两套口径分开列，不混排。"
+    },
+    {
+      "n": 3,
+      "title": "历史对比",
+      "output": "history",
+      "tools": [
+        "board_history",
+        "sw_industry_history"
+      ],
+      "prompt": "取近 20 个交易日的板块资金流与涨跌，算出连续净流入天数、区间涨跌幅、以及是否已经走出一段。写清从哪天开始、累计多少，全部由逐日值计算并给出公式，不用「近期持续流入」这类模糊表述。"
+    },
+    {
+      "n": 4,
+      "title": "板块内结构",
+      "output": "members",
+      "tools": [
+        "board_members"
+      ],
+      "prompt": "列板块内涨幅前若干与跌幅前若干的个股，说明是普涨还是少数龙头拉指数（用涨跌家数比支撑）。只取前 N 只并写明截断，不要用长尾样本代表整个板块。"
+    },
+    {
+      "n": 5,
+      "title": "指数与估值",
+      "output": "index",
+      "tools": [
+        "index_quote",
+        "index_valuation",
+        "index_constituents",
+        "index_weights",
+        "index_kline"
+      ],
+      "prompt": "取相关指数的最新点位与涨跌、成分权重集中在哪几个行业、指数 PE/PB 的历史分位。区分配置：指数涨是权重股带的还是普涨。估值只给分位，不给贵贱判断。"
+    },
+    {
+      "n": 6,
+      "title": "结论与反证",
+      "output": "verdict",
+      "tools": [],
+      "prompt": "给三条结论：这条板块轮动处在什么阶段（启动/延续/衰竭），各配一条反证。写明哪些数据没取到、缺了会影响哪条结论。不构成投资建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们来梳理「{sector}」这个板块。你是行业与指数研究助理：板块归属、资金流、成分股都必须来自工具，不凭名字猜。接下来 6 步，每步一页。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

@@ -187,6 +187,9 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: false,
+    // `src/lib/skills/catalog.ts` 直接 import 仓库根的 `content/skills/*.json`
+    // （QUOT-475：技能包数据由内容侧维护，不复制进 frontend/），dev server 需要放行
+    fs: { allow: [REPO_ROOT] },
     proxy: {
       // 只读 API 由 `ldst run` 提供（M2）；未启动时前端显示「未接入」，不编造数据。
       '/api': {

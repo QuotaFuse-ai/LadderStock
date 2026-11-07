@@ -1,0 +1,70 @@
+{
+  "name": "wire-desk",
+  "label": "产业链资讯",
+  "entry": {
+    "page": "news|industry",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "unconnected",
+  "blocked_by": "Wire MCP（127.0.0.1:8791）未接进 LadderStock；4 个工具已实测可用",
+  "offline_notice": "资讯源未接通：本包只提供步骤，执行时返回未接通，不输出任何报道内容。",
+  "tools_allow": [
+    "wire_get_digest",
+    "wire_search_events",
+    "wire_get_timeline",
+    "wire_list_sources"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "每日产业摘要",
+      "output": "digest",
+      "tools": [
+        "wire_get_digest"
+      ],
+      "prompt": "取当日或最近交易日的分赛道摘要，按赛道分组列出要点，每条带信源名与发布时间。没有任何内容就写「该源当日无更新」，不补写。"
+    },
+    {
+      "n": 2,
+      "title": "事件多源追踪",
+      "output": "events",
+      "tools": [
+        "wire_search_events"
+      ],
+      "prompt": "给定关键词，取多源报道列表，逐条写标题、信源、时间、链接。同一事件不同说法并列，不合并。写明共命中几条、时间跨度几天。"
+    },
+    {
+      "n": 3,
+      "title": "事件时间线",
+      "output": "timeline",
+      "tools": [
+        "wire_get_timeline"
+      ],
+      "prompt": "把该事件排成时间线：日期 / 发生了什么 / 信源。标出首次出现日期与最近一次更新，并算出持续天数。缺时间的条目单列。"
+    },
+    {
+      "n": 4,
+      "title": "信源质量与结论",
+      "output": "verdict",
+      "tools": [
+        "wire_list_sources"
+      ],
+      "prompt": "列该赛道的信源清单与其评分字段，说明哪些是一手、哪些是转载。最后给两条结论各配一条反证。当前未接通时只输出步骤说明与所需数据清单。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们来读产业链资讯。你是资讯整理助理：只写\"谁在什么时候说了什么\"，原文与信源缺一不可，不做事实判断。接下来 4 步，每步一页。注意：资讯源当前未接通，先只输出步骤与所需数据清单。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

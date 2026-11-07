@@ -1,0 +1,109 @@
+{
+  "name": "us-dossier",
+  "label": "美股港股全景",
+  "entry": {
+    "page": "home|research",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "unconnected",
+  "blocked_by": "LadderStock provider_registry 尚无 th_us_* 适配器（QUOT-471 在补）",
+  "offline_notice": "数据源未接通：本包只提供研究步骤与提示词，执行时返回未接通，不输出任何数字。",
+  "tools_allow": [
+    "th_us_get_quote",
+    "th_us_get_market_data",
+    "th_us_get_fundamentals",
+    "th_us_get_financial_statements",
+    "th_us_get_key_indicators",
+    "th_us_get_analyst_estimates",
+    "th_us_get_insider_trades",
+    "th_us_get_13f_holdings",
+    "th_us_search_filings",
+    "th_us_get_filing_feed",
+    "th_us_get_options_flow",
+    "th_us_get_short_interest",
+    "th_us_get_short_volume",
+    "th_us_get_xbrl_facts",
+    "th_us_lookup_cik"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "定位与口径",
+      "output": "profile",
+      "tools": [
+        "th_us_lookup_cik",
+        "th_us_get_quote",
+        "th_us_get_fundamentals"
+      ],
+      "prompt": "用 th_us_lookup_cik 拿 CIK，th_us_get_quote 取最新价与市值，th_us_get_fundamentals 取行业与主营。写清报价时间与时区、币种。末尾一句话定性这家公司靠什么赚钱。"
+    },
+    {
+      "n": 2,
+      "title": "财报三表",
+      "output": "financials",
+      "tools": [
+        "th_us_get_financial_statements",
+        "th_us_get_key_indicators",
+        "th_us_get_xbrl_facts"
+      ],
+      "prompt": "取最近 8 个财季的收入、净利润、毛利率、经营现金流。先按 FQ 标注，再算同比与环比；财务口径差异（GAAP 与非 GAAP）必须分开写。缺的季度写缺，不插值。"
+    },
+    {
+      "n": 3,
+      "title": "内部人与机构",
+      "output": "holders",
+      "tools": [
+        "th_us_get_insider_trades",
+        "th_us_get_13f_holdings"
+      ],
+      "prompt": "列最近 3 个月的 Form 4 交易（人、方向、数量、金额），再列主要机构的 13F 持仓变化。13F 必须同时写报告期与申报日，并说明滞后。不推断内部人意图。"
+    },
+    {
+      "n": 4,
+      "title": "SEC 文件",
+      "output": "filings",
+      "tools": [
+        "th_us_search_filings",
+        "th_us_get_filing_feed",
+        "th_us_fulltext_search"
+      ],
+      "prompt": "列出最近 10-K/10-Q/8-K 的申报日与主要事项，把 8-K 里的重大事项单列。需要原文时用全文检索定位段落，给出文件名与段落位置，不转述成自己的话。"
+    },
+    {
+      "n": 5,
+      "title": "期权与做空",
+      "output": "positioning",
+      "tools": [
+        "th_us_get_options_flow",
+        "th_us_get_short_interest",
+        "th_us_get_short_volume",
+        "th_us_get_volatility"
+      ],
+      "prompt": "取期权异动（方向、到期、成交量放大倍数）与做空数据（short interest 报告期、days to cover、short volume 日频）。两种做空口径分开写，不合成一个数。"
+    },
+    {
+      "n": 6,
+      "title": "预期与结论",
+      "output": "verdict",
+      "tools": [
+        "th_us_get_analyst_estimates"
+      ],
+      "prompt": "取一致预期 EPS 与评级分布，写清预期基数与覆盖券商数。最后给三条结论各配一条反证，列出数据缺口，注明本包当前状态未接通时的输出口径。不构成投资建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们看这只海外标的。你是海外基本面研究助理：财务、估值、持仓都必须来自工具，缺数据就标缺。接下来 6 步，每步一页。注意：美股数据源当前未接通，取不到的内容一律写\"未接通\"，不要填任何估值或预期。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

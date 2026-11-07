@@ -1,0 +1,108 @@
+{
+  "name": "a-share-tape",
+  "label": "盘面复盘",
+  "entry": {
+    "page": "review|market|home",
+    "button": "问 AI",
+    "action": "open_ai_dock",
+    "auto_send": false
+  },
+  "status": "ready",
+  "tools_allow": [
+    "market_sentiment",
+    "market_overview",
+    "limit_up_pool",
+    "yesterday_limit_up_pool",
+    "ths_limit_up_pool",
+    "broken_board_pool",
+    "limit_down_pool",
+    "strong_stock_pool",
+    "price_anomaly",
+    "stock_changes",
+    "ths_hot_rank",
+    "eastmoney_hot_rank",
+    "board_fund_flow",
+    "fund_flow_ranking",
+    "sw_industry_index",
+    "margin_market"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title": "情绪总览",
+      "output": "sentiment",
+      "tools": [
+        "market_sentiment",
+        "market_overview",
+        "margin_market"
+      ],
+      "prompt": "先写清复盘的是哪一天。用 market_sentiment 取情绪分、涨停/跌停家数，用 market_overview 取涨跌家数与两市成交额，用 margin_market 取两融余额变化。给出「今天情绪处于什么水平」的判断，判断必须能被这几个数支撑，写出你用的是哪几个阈值。"
+    },
+    {
+      "n": 2,
+      "title": "连板梯队与断层",
+      "output": "ladder",
+      "tools": [
+        "limit_up_pool",
+        "yesterday_limit_up_pool",
+        "ths_limit_up_pool"
+      ],
+      "prompt": "按高度把今天的涨停排成梯队（首板/2 板/3 板…最高板），再用 yesterday_limit_up_pool 算各高度晋级率，标出断在哪一层。逐一列出断层位置与只数，不要用「梯队尚可」这类概括。"
+    },
+    {
+      "n": 3,
+      "title": "封板质量与炸板",
+      "output": "quality",
+      "tools": [
+        "ths_limit_up_pool",
+        "broken_board_pool",
+        "strong_stock_pool"
+      ],
+      "prompt": "取封板时间、封单强度与炸板只数，算炸板率（炸板 / 涨停+炸板）。列出今天最差的三个封板样本（几点开板、开板后走势），说明封板质量是偏硬还是偏软。涨停原因只引用 ths_limit_up_pool 的归类字段。"
+    },
+    {
+      "n": 4,
+      "title": "亏钱效应",
+      "output": "loss",
+      "tools": [
+        "limit_down_pool",
+        "price_anomaly",
+        "yesterday_limit_up_pool"
+      ],
+      "prompt": "看跌停家数、昨日涨停今日的整体表现（红绿比与平均涨幅）、以及 price_anomaly 报出的急跌样本。结论只写「接力亏不亏钱」，用昨日涨停组今天的实际涨跌来支撑，不用单只票举例代替整体。"
+    },
+    {
+      "n": 5,
+      "title": "资金与轮动",
+      "output": "rotation",
+      "tools": [
+        "board_fund_flow",
+        "fund_flow_ranking",
+        "sw_industry_index",
+        "ths_hot_rank",
+        "eastmoney_hot_rank"
+      ],
+      "prompt": "取行业与概念板块主力净流入排行，配合申万行业指数涨跌，找出今天资金真正进去的方向与只是指数涨的方向。两条热榜只作为关注度参考，不当作资金证据。列出资金流入前三与流出前三，各自写明数值来源。"
+    },
+    {
+      "n": 6,
+      "title": "结论与明日验证点",
+      "output": "verdict",
+      "tools": [],
+      "prompt": "给三条今日结论（各一条反证），再给 2-3 条明日可验证的判断：写清验证什么数、达到什么值算成立。不预测涨跌、不给个股买卖建议。"
+    }
+  ],
+  "dock": {
+    "title_template": "研究助手 · {page_label} · {pkg_label}",
+    "opening": "我们来复盘今天的盘面。你是 A 股短线盘面复盘助理：情绪分、连板、涨跌宽度都只用工具数据，不凭印象。接下来 6 步，每步一页，不要跳步。",
+    "draft_template": "{opening}\n\n第 {n} 步，{title}：\n{prompt}",
+    "auto_send": false,
+    "fallback_copy": true,
+    "context_keys": [
+      "pageKey",
+      "boundSkill",
+      "object"
+    ],
+    "note": "点步骤或点顶栏「问 AI」，抽屉打开即预填这条完整开场；用户看过再自己按发送。另留「复制」按钮作为后门。"
+  }
+}

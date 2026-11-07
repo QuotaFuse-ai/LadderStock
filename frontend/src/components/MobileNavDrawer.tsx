@@ -1,6 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react'
 import { Link, useLocation, type Location } from 'react-router-dom'
-import { X } from 'lucide-react'
+import { Sparkles, X } from 'lucide-react'
 
 import { cn } from '../lib/cn'
 import { BRAND_ICON, NAV_SECTIONS, PINNED_NAV, type NavPage } from '../lib/nav'
@@ -24,6 +24,8 @@ export interface MobileNavDrawerProps {
   onClose: () => void
   /** 关闭后焦点回落的元素（汉堡按钮） */
   returnFocusTo: RefObject<HTMLButtonElement | null>
+  /** 「问 AI」入口（QUOT-475）：小屏顶栏收起主按钮后，入口落在这里 */
+  onAskAi: () => void
 }
 
 function drawerNavClass(isActive: boolean): string {
@@ -42,7 +44,7 @@ function pageActive(page: NavPage, location: Location): boolean {
   return (new URLSearchParams(location.search).get('tab') ?? 'sentiment') === page.tab
 }
 
-export function MobileNavDrawer({ open, onClose, returnFocusTo }: MobileNavDrawerProps) {
+export function MobileNavDrawer({ open, onClose, returnFocusTo, onAskAi }: MobileNavDrawerProps) {
   const location = useLocation()
   const closeRef = useRef<HTMLButtonElement>(null)
 
@@ -144,6 +146,19 @@ export function MobileNavDrawer({ open, onClose, returnFocusTo }: MobileNavDrawe
         </nav>
 
         <div className="mt-auto flex flex-col gap-1 border-t border-border p-2">
+          {/* QUOT-475：小屏顶栏放不下「问 AI」主按钮，入口在抽屉底部保留一项 */}
+          <button
+            type="button"
+            onClick={() => {
+              onClose()
+              onAskAi()
+            }}
+            aria-haspopup="dialog"
+            className={drawerNavClass(false)}
+          >
+            <Sparkles className="size-4 shrink-0 text-accent" strokeWidth={1.75} aria-hidden="true" />
+            <span className="truncate">问 AI</span>
+          </button>
           {PINNED_NAV.map((page) => (
             <Link
               key={page.to}

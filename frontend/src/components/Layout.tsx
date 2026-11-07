@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, type Location } from 'react-router-dom'
 import { ChevronDown, Menu, Sparkles } from 'lucide-react'
 
@@ -7,9 +7,12 @@ import MobileNavDrawer from './MobileNavDrawer'
 import PageCommandBar from './PageCommandBar'
 import PersistenceBanner from './PersistenceBanner'
 import TopbarTools from './TopbarTools'
+import { AssistantDockDrawer } from './research/sections/AiDock'
 import { cn } from '../lib/cn'
+import { AssistantObjectContext, AssistantShellContext, type AssistantDockState, type AssistantOpenInput } from '../lib/assistant/shell'
 import { useIsMobile } from '../lib/mediaQuery'
 import { PageToolsSlotContext } from '../lib/pageToolsSlot'
+import { buildDockView, routeObject, type AssistantObject } from '../lib/skills/dock'
 import {
   BRAND_ICON,
   NAV_SECTIONS,
@@ -111,12 +114,47 @@ export default function Layout() {
   // `?ai=1` 是深链（截图与排障用）；首次渲染读取一次，不跟后续导航反复弹窗
   const [aiOpen, setAiOpen] = useState(() => new URLSearchParams(location.search).get('ai') === '1')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // 顶栏「问 AI」与页内「研究助手」共用这一份抽屉（QUOT-475）：全站只有一个实例
+  const [assistant, setAssistant] = useState<AssistantDockState | null>(null)
+  // 页内登记的当前对象（如 `/research/:code` 的名称与研究日），顶栏打开时带上
+  const [pageObject, setPageObject] = useState<AssistantObject | null>(null)
   // 顶栏右侧给页面主操作（刷新）留的落点，见 `lib/pageToolsSlot.tsx`
   const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLButtonElement>(null)
 
   const openAi = useCallback(() => setAiOpen(true), [])
   const closeDrawer = useCallback(() => setDrawerOpen(false), [])
+
+  /**
+   * 打开助手抽屉：页面绑定按 `lib/skills/pageBindings.ts` 推断；
+   * 调用方（页内按钮）给了对象就用它的，否则用路由 + 页内登记的对象。
+   */
+  const openAssistant = useCallback(
+    (input: AssistantOpenInput = {}) => {
+      const pageKey = input.pageKey ?? location.pathname
+      const base = input.object ? {} : { ...routeObject(pageKey), ...(pageObject ?? {}) }
+      const object: AssistantObject = { ...base, ...(input.object ?? {}) }
+      setAssistant({
+        view: buildDockView({
+          pathname: pageKey,
+          object,
+          boundSkill: input.boundSkill,
+          initialDraft: input.initialDraft,
+          offlineNotice: input.offlineNotice ?? null,
+        }),
+        overview: input.overview ?? null,
+      })
+    },
+    [location.pathname, pageObject],
+  )
+
+  const assistantShell = useMemo(() => ({ open: openAssistant }), [openAssistant])
+  const closeAssistant = useCallback(() => setAssistant(null), [])
+
+  // 换页就收起：抽屉里的上下文属于上一页，留着会拼错绑定
+  useEffect(() => {
+    setAssistant(null)
+  }, [location.pathname])
 
   // 主内容区是滚动容器（QUOT-397），浏览器自带的窗口滚动复原管不到它：换页时手动归顶，
   // 否则从长页跳到短页会停在空白处。页内 `#anchor` 跳转交给浏览器，这里不拦。
@@ -327,7 +365,7 @@ export default function Layout() {
             <div ref={setToolsSlot} className="flex items-center gap-2" />
             {/* QUOT-457：「运行本页命令」收进顶栏（图标 + 弹层）；无命令或控制面未开启时整颗不渲染 */}
             <PageCommandBar />
-            <TopbarTools onOpenAi={openAi} />
+            <TopbarTools onOpenAi={openAi} onAskAi={() => openAssistant()} />
           </div>
         </header>
 
@@ -335,14 +373,29 @@ export default function Layout() {
           <PersistenceBanner />
           <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
             <PageToolsSlotContext.Provider value={toolsSlot}>
-              <Outlet />
+              {/* QUOT-475：页内「研究助手」通过 shell 打开同一份抽屉；页面可把当前标的上报给顶栏 */}
+              <AssistantShellContext.Provider value={assistantShell}>
+                <AssistantObjectContext.Provider value={setPageObject}>
+                  <Outlet />
+                </AssistantObjectContext.Provider>
+              </AssistantShellContext.Provider>
             </PageToolsSlotContext.Provider>
           </main>
         </div>
       </div>
 
-      <MobileNavDrawer open={drawerOpen} onClose={closeDrawer} returnFocusTo={menuRef} />
+      <MobileNavDrawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        returnFocusTo={menuRef}
+        onAskAi={() => openAssistant()}
+      />
       <AiConnectDialog open={aiOpen} onClose={() => setAiOpen(false)} />
+      <AssistantDockDrawer
+        view={assistant?.view ?? null}
+        overview={assistant?.overview ?? null}
+        onClose={closeAssistant}
+      />
     </div>
   )
 }
