@@ -62,6 +62,8 @@ DOCUMENTED_GROUPS = {
     "weekly",
     "news",
     "events",
+    # QUOT-443 增量：独立看门狗（5952），见 docs/CLI.md §J
+    "watchdog",
     "mcp",
     "config",
     "schedule",

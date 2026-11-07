@@ -39,7 +39,12 @@
 > ⚠️ 上面的历史计数**彼此不一致**（R6 那条写「全表 45 行 / 叶子 43 / argv 42」，
 > R11 那条写「44 行 / 42 叶子 / 41 argv」，两者都自称「行号续编 44」），
 > 本单不代为对账；**唯一可复核的计数口径是 `tests/fixtures/command_matrix.py`**
-> （`LEAF_PATHS` 现为 **45** 个叶子路径，含本单新增 3 条）。
+> （QUOT-380 当时 `LEAF_PATHS` 为 45；当前值见下一段）。
+>
+> **QUOT-443 增量（2026-11-06）**：基线 31 条口径**不变**，新增 1 条长驻命令
+> `ldst watchdog`（独立看门狗，端口 `5952`，见 §J 与 `DEC-063-platform-watchdog-and-health`）。
+> **以代码为准的当前计数**：`LEAF_PATHS` **48** 个叶子、`COMMAND_MATRIX` **46** 条可执行 argv
+> （48 − 4 个长驻服务 `run` / `watchdog` / `mcp stdio` / `mcp http`，+ `sync` 的两种形态各跑一次）。
 >
 > **前置约束**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
@@ -65,6 +70,7 @@
 | **R7 增量（5，非 P0 基线）** | `pool`、`position add`、`position list`、`position update`、`position remove` |
 | **R5 增量（2，非 P0 基线）** | `industry list`、`industry show` |
 | **R11 增量（1，非 P0 基线）** | `weekly` |
+| **QUOT-443 增量（1，非 P0 基线）** | `watchdog` |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -291,13 +297,41 @@ ldst position list --output json                         # realized.total_pnl（
 由 `scripts/check_privacy.py` 第 3 组的第三条授权例外钉住，四项判据缺一不可，
 反例覆盖「自选模块出现在 MCP / AI 出口」——**白名单不能变成后门**。
 
+## J. 平台看门狗（QUOT-443 增量，1）
+
+> 口径来源：`docs/decisions/DEC-063-platform-watchdog-and-health.md`。
+> 这 1 条**不属于** 31 条 P0 基线；与 `run` 一样是长驻进程，**不进** argv 矩阵，
+> 但叶子路径 `("watchdog",)` 必须登记在 `tests/fixtures/command_matrix.py`
+> （当前 `LEAF_PATHS` 共 **48** 个、矩阵 **46** 条）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 49 | `ldst watchdog` | 独立看门狗：按 `--probe-interval` 探活 `--api` 的 `/api/health`，对外提供 `GET /platform/health`、`POST /platform/restart` 与一张离线壳页 `GET /` | `--host 127.0.0.1`、`--port 5952`、`--api http://127.0.0.1:5950`、`--restart-task "LadderStock API"`、`--restart-script <绝对 .ps1>`、`--probe-interval 2`、`--output` | 长驻进程；端口占用 / 非回环主机 / 重启脚本不是文件 → **3**（并提示 `--port`）。启动写 `state/watchdog.json` |
+
+**契约**：
+
+- `GET /platform/health` → `{status, uptime_sec, version, db_ok, checked_at, api, watchdog}`，
+  `status` 三态 `ok|degraded|offline`，探不到主服务时 `api=null`；`Cache-Control: no-store`。
+- `POST /platform/restart`：先杀**当前 5950 的监听者**（不是按 `ldst` 映像名批量杀，
+  目标映像名以 `multica` 开头或等于自身 PID 时拒杀），再按
+  `--restart-task`（`schtasks /run /tn`）→ `--restart-script` 顺序拉起；
+  两级都未配置 → **409**，两级都失败 → **503**；30 秒内重复请求 → **429**；`GET` 无副作用。
+- 只绑回环；写方法校验 `Origin` 白名单（5950 / 5952 / 5173 的 `127.0.0.1` 与 `localhost`），
+  缺 `Origin` → **403**，不回 `*`；命令参数全部来自启动参数，**不从 HTTP 输入拼接**。
+- 离线壳页内联 HTML/CSS/JS，不引用 CDN / 外部脚本；主服务恢复后自动 `location.replace` 回 5950。
+
+**安装常驻**：管理员运行 `scripts/install-service.ps1` 注册两个 S4U 计划任务
+（`LadderStock API` → `ldst run`，`LadderStock Watchdog` → `ldst watchdog --restart-task "LadderStock API"`），
+并生成 `%LOCALAPPDATA%\LadderStock\restart-api.ps1` 作为脚本兜底。失败重启间隔为 `PT1M`
+（任务计划程序的最小值是 1 分钟，`PT30S` 会被注册接口拒绝）。
+
 ## F. 全局约定
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。
 - **输出格式**：全局 `--output json|table|csv`；默认 table（交互）/ json（管道）。
 - **退出码**：`0` 成功、`2` 参数错误、`3` 配置错误、`4` 数据源不可用、`6` 对象不存在 / 无结果（含 `sentiment show` / `ladder show` 的 `available=false`；含 `research --check` 的产物缺失；含 `weekly` 的整周没有可用单日指标——**6 优先于 9**，此时产物照写）、`8` 部分数据源失败（含 `research --check` 查出引用不合格的数字）、`9` AI 降级完成、`10` **本机历史库被别的进程占着**（`sync` 拿锁超时，或 `duckdb.connect()` 退避重试耗尽；QUOT-234）。
   `10` 不属于对外契约的那 6 个码，也**不复用 4/8**——那两个码的主语是「生态 peer 数据源」，报它们会把排查方向引到换源、重试取数上；库锁争用是本机串行问题，判据见 `docs/decisions/DEC-036-duckdb-cross-process-writes.md`。
-- **端口**：看板 `5950`、MCP http `5951`，默认仅回环监听。**端口被占用直接报错（退出码 3）并提示 `--port`，绝不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会让 M1 状态恢复失效。旧版端口 `5940` / `8770` 仅打印迁移提示。
+- **端口**：看板 `5950`、MCP http `5951`、看门狗 `5952`，默认仅回环监听。**端口被占用直接报错（退出码 3）并提示 `--port`，绝不静默换端口**——IndexedDB 按 origin 隔离，端口漂移会让 M1 状态恢复失效。旧版端口 `5940` / `8770` 仅打印迁移提示。`5952` 只在 `ldst watchdog` 运行时占用，不托管 SPA、不迁前端 origin（QUOT-443 / DEC-063）。
 - **监听鉴权（R-1，判据唯一份：`core/listener.py`）**：回环（`127.0.0.1` / `localhost` / `::1`）无需配置；非回环**必须同时**设置 `<前缀>_ALLOW_REMOTE=1` 与 `<前缀>_TOKEN`（≥16 字符），否则拒绝启动、退出码 3，绝不静默对外暴露。前缀：web `LDST_WEB_*`，MCP `LDST_MCP_*`。开启后 web 校验 `/api/*`、MCP 校验 `/mcp`，均要求 `Authorization: Bearer <token>`（web 兼容 `X-Web-Token`），`hmac.compare_digest` 常量时间比较，失败 401 且不回显服务端细节。
 - **不撞端口**：Council WebUI `8786` / MCP `8765`、TickHub Admin `8787` / MCP `8000`、TickHub-US MCP `8002`（本机构建无管理端）、Wire `8790` / `8791`。`8788` / `8789` 归 ProxyFleet（REST/管理台、本地转发网关），见 `docs/decisions/DEC-047-peer-port-ownership.md`。
 - **控制面**：`ldst run` 启动后看板页可在 `/api/control/*` 查看、安装、启停、配置四个 peer，实现落点 `src/ladderstock/web/control.py`。该族接口**只接受回环来源**（非回环 403），`LDST_CONTROL_ENABLED=0` 时整族返回 404 且数据面 7 个只读接口零影响；**写方法（`POST`/`PUT`/`PATCH`/`DELETE`）必须带正向来源证据**——浏览器同源页面由 `Origin` 自动满足，`curl` / CLI / 脚本须显式加 `X-LDST-Client: 1`（否则 403）；安装/启停一律 `subprocess.run([...], shell=False)` 走白名单命令，端口被占用直接报错、**绝不换端口也不杀占用者**；密钥只写目标 peer **真正加载的那个 dotenv**（CN/US/Senate 为 `.env`、Wire 为 `.env.local`，0600），GET 只回 `{"set": true, "preview": "sk-****abcd"}`，日志同样脱敏。**`GET /api/control/validation/conditions` 是写通道探针**（QUOT-287 / DEC-032）：控制面开启时回 `405` + `Allow: PUT`，不返回数据、不落盘；看板靠它判断 `/validate` 的「后端」模式是否就绪，读条件仍走数据面 `GET /api/validation?date=` 的 `payload.conditions`。

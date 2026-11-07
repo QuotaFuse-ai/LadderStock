@@ -160,6 +160,9 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
 # 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴ / §A′）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
+    # QUOT-443 / DEC-063：独立看门狗（5952）。长驻进程，与 `run` 同口径不进 COMMAND_MATRIX；
+    # 端口占用 / 回环 / Origin 契约由 tests/unit/cli/test_watchdog.py 覆盖。
+    ("watchdog",),
     ("review",),
     ("review", "show"),
     # R11 新增（QUOT-149，不计入 31 条基线，见 docs/CLI.md §A′）
