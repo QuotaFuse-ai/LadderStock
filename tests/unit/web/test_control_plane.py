@@ -929,7 +929,7 @@ def _legacy_component(directory: Path) -> Any:
 
 def test_proxyfleet_is_a_managed_task_peer() -> None:
     """QUOT-485：ProxyFleet 升级为纳管 peer（Windows 计划任务生命周期），不再是组件。"""
-    from ladderstock.core.boundary import COMPONENTS, PEERS, PEER_SIBLING_DIRS, resolve_peer_control
+    from ladderstock.core.boundary import COMPONENTS, PEER_SIBLING_DIRS, PEERS, resolve_peer_control
 
     ctl = PEER_CONTROL["proxyfleet"]
     assert ctl.task_name == "ProxyFleet"

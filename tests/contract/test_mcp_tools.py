@@ -602,8 +602,18 @@ def test_proxyfleet_status_alive_but_pool_empty_is_degraded(
         mcp_server,
         "_proxyfleet_get",
         _proxyfleet_fake_get(
-            (503, json.dumps({"ok": False, "data": {"ready": False, "biz_ok": 0, "active": 0, "total": 0}})),
-            (200, json.dumps({"ok": True, "data": {"pool": {"biz_ok": 0}, "gateway": {}, "sources": {}}})),
+            (
+                503,
+                json.dumps(
+                    {"ok": False, "data": {"ready": False, "biz_ok": 0, "active": 0, "total": 0}}
+                ),
+            ),
+            (
+                200,
+                json.dumps(
+                    {"ok": True, "data": {"pool": {"biz_ok": 0}, "gateway": {}, "sources": {}}}
+                ),
+            ),
             (200, json.dumps({"ok": True, "data": {"count": 0, "items": []}})),
         ),
     )

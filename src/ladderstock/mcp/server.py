@@ -897,7 +897,10 @@ def _tool_proxyfleet_status(arguments: dict[str, Any], root: Any) -> dict[str, A
         available=available,
         source_status=source_status,
         freshness="realtime",
-        source_detail=f"ProxyFleet REST {_proxyfleet_base()}（/readyz + /v1/stats/summary + /v1/nodes）",
+        source_detail=(
+            f"ProxyFleet REST {_proxyfleet_base()}"
+            "（/readyz + /v1/stats/summary + /v1/nodes）"
+        ),
     )
 
 

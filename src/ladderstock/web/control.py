@@ -2580,7 +2580,6 @@ class ControlPlane:
         再 Enable 回来。
         """
         name = ctl.task_name or ""
-        directory = Path(ctl.directory)
 
         # 停止前把现状写进任务日志（仿 compose：不允许无提示强停）
         state = self._task_state(job, name)
