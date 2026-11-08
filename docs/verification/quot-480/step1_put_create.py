@@ -1,3 +1,4 @@
+# ruff: noqa
 """QUOT-480 #3 证据步骤 1：控制面 PUT 创建真实 deploy/.env（现网等值基线）。
 
 - PUT 15 个非空键（值取自现网 financecoffer-api-1 容器 env 快照），文件从无到有；

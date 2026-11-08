@@ -1,3 +1,4 @@
+# ruff: noqa
 """QUOT-480 打回复核：生成 FC 配置白名单的「键名 → 读取位置」对照表与生效性判定。
 
 不手写：逐键在 FinanceCoffer 源码里定位 Config 字段定义行与 env 变量出现位置，
