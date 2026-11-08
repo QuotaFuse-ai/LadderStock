@@ -116,6 +116,22 @@ peers:
     default_port: 8788
     role: 代理池：节点采集 / 健康检查 / 出口网关（8788 控制台 · 8789 网关）
     repo: null
+  # qdrant（QUOT-488）：标的档案知识库的向量层，同 mem0 口径——不是取数通道，
+  # sources 不允许 via 它，只登记注册表让控制面出卡。两个容器（project qf-qdrant）：
+  # qdrant REST/Dashboard 6333、mcp-server-qdrant streamable-http 9300，主机侧均绑
+  # 127.0.0.1。独立卷存储，不复用 mem0 的 pgvector；控制面托管启停（compose 分支）。
+  # /collections 是实测确认的健康端点（Qdrant 无 /healthz）。
+  qdrant:
+    product: Qdrant
+    package: qf-qdrant
+    cli: docker               # 占位：实际启停是 WSL docker compose（PEER_CONTROL.compose_file），cli 不执行
+    mcp_name: null            # MCP 面是 mcp-server-qdrant（9300，streamable-http），不经 sources 注册
+    url_env: LDST_QDRANT_API_URL
+    default_url: http://127.0.0.1:6333
+    timeout_sec: 10
+    health_path: /collections
+    default_port: 6333
+    role: 知识库向量层：档案向量存储 / 语义检索（REST 6333 · MCP 9300）
 
 sources:
   # ---------------- 行情与短线数据：TickHub-CN ----------------

@@ -329,7 +329,7 @@ def record_refutation(
         raise KnowledgeError(f"档案不存在，无法记录反证：{market}:{symbol}")
     day = day or sh_today().isoformat()
     lines = dossier.body.rstrip("\n").splitlines()
-    header = "| as_of | 结论论 | 依据 | 有效期(天) | 状态(fresh / stale / refuted) |"
+    header = "| as_of | 结论 | 依据 | 有效期(天) | 状态(fresh / stale / refuted) |"
     sep = "|---|---|---|---|---|"
     row = (
         f"| {day} | 实时数据推翻旧结论：{old_conclusion} → 现为 {realtime_value} "

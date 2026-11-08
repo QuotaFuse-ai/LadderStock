@@ -75,9 +75,12 @@ def test_all_registered_peers_have_repo_for_version_check() -> None:
     qf-mem0/mem0 镜像，不在任何 GitHub Release 上，填上游仓库只会让三态检测
     显示失真的落后/超前，因此显式豁免而不是填一个假 repo。
     proxyfleet 例外（QUOT-485）：本机 D:\\workplace\\ProxyFleet 工作副本，同理豁免。
+    qdrant 同理（QUOT-488）：部署单元在 LadderStock 仓的部署目录
+    D:\\QuotaFuseModules\\Qdrant（镜像 qdrant/qdrant + 本地 build 的 mcp 镜像），
+    版本真源是 compose 里的镜像 tag，同样豁免。
     """
     for key, item in _sources_doc()["peers"].items():
-        if key in ("mem0", "proxyfleet"):
+        if key in ("mem0", "proxyfleet", "qdrant"):
             assert item.get("repo") is None
             continue
         assert item.get("repo"), f"peers.{key} 缺 repo 字段"
@@ -141,7 +144,7 @@ def test_build_peers_falls_back_when_block_missing() -> None:
     for block in (None, {}, "not-a-mapping"):
         peers, warnings = build_peers(block)
         assert peers == build_peers(None)[0]
-        assert len(peers) == 7
+        assert len(peers) == 8
         assert warnings and "回退内置默认" in warnings[0]
 
 
