@@ -27,7 +27,7 @@
  */
 
 import { ApiError, isApiError, isEndpointMissing } from '../api'
-import { envelopeMetaOf, type EnvelopeFields } from './envelope'
+import { envelopeMetaOf, freshnessKeyOf, type EnvelopeFields, type FreshnessKey } from './envelope'
 
 const READ_TIMEOUT_MS = 8000
 
@@ -411,7 +411,9 @@ export interface WatchlistItem {
 
 /**
  * 平面 JSON：**没有 `payload` / `domain` / `fetched_at` 这三个信封键**（DEC-052），
- * 所以这里不套 `payloadOf()`，直接读顶层；外壳四键恒为 `null`，徽标据此出「未知」，
+ * 所以这里不套 `payloadOf()`，直接读顶层。`freshness` 是唯一的例外（QUOT-478）：
+ * 后端按价点时点显式判了 §5.1 三档放顶层——不是信封键，也就没破坏平面契约。
+ * `source_status` / `fetched_at` 仍恒为 `null`，徽标对这两枚照旧出「未知」，
  * 不拿请求日期顶替数据时点。
  */
 export interface WatchlistPayload {
@@ -427,7 +429,8 @@ export interface WatchlistPayload {
   price_as_of: string | null
   source_detail: string | null
   items: WatchlistItem[]
-  freshness: null
+  /** QUOT-478：后端判不出时给 `null`，屏侧出「未知」，不回落默认档。 */
+  freshness: FreshnessKey | null
   source_status: null
   data_as_of: string | null
   fetched_at: null
@@ -1147,8 +1150,10 @@ function parseWatchlistItem(value: unknown): WatchlistItem | null {
  * 自选是平面 JSON：**顶层就是载荷，不套 `payloadOf()`**（§9.2 的结构性保证——
  * `payload` / `domain` / `fetched_at` 这三个信封键一个都不出现，隐私数据才到不了
  * export / MCP / AI 三条出口，DEC-015）。
- * 因此没有外壳可读：`freshness` / `source_status` / `fetched_at` 恒为 `null`，
- * 徽标据此出「未知」而不是猜一个 `cached`；数据时点用载荷里的 `price_as_of`。
+ * 因此没有外壳可读：`source_status` / `fetched_at` 恒为 `null`，徽标据此出「未知」
+ * 而不是猜一个 `cached`；数据时点用载荷里的 `price_as_of`。
+ * `freshness`（QUOT-478）是平面响应里唯一由后端显式给的溯源档：顶层读出，只收
+ * §5.1 已登记的三档，判不出/未登记的 key 都是 `null`，同样落「未知」。
  */
 export function parseWatchlist(raw: unknown): WatchlistPayload {
   const root = record(raw)
@@ -1168,7 +1173,7 @@ export function parseWatchlist(raw: unknown): WatchlistPayload {
     price_as_of: text(root.price_as_of) || null,
     source_detail: text(root.source_detail) || null,
     items,
-    freshness: null,
+    freshness: freshnessKeyOf(root.freshness),
     source_status: null,
     data_as_of: text(root.price_as_of) || null,
     fetched_at: null,

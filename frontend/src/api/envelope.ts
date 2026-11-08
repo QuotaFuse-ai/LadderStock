@@ -40,6 +40,18 @@ function text(value: unknown): string | null {
   return trimmed === '' ? null : trimmed
 }
 
+/** §5.1 已登记的三档；平面响应（如 `GET /api/watchlist`）的顶层 `freshness` 也走这张表。 */
+export const FRESHNESS_KEYS = ['realtime', 'cached', 'archive'] as const
+
+/**
+ * 只收 §5.1 已登记的三档（同 `SourceBadges` 的 `findFreshness`）。
+ * 未登记的 key 一律 `null`：屏侧据此出「未知」，不猜档位（R-06）。
+ */
+export function freshnessKeyOf(value: unknown): FreshnessKey | null {
+  const key = text(value)
+  return key && (FRESHNESS_KEYS as readonly string[]).includes(key) ? (key as FreshnessKey) : null
+}
+
 /**
  * 读响应外壳；平面响应（没有 `payload` 对象那一层）没有外壳可读，
  * 返回全 `null`，屏侧据此出「未知」而不是消失。

@@ -15,6 +15,12 @@ QUOT-380 第 5 项（约 2h）+ DEC-052 §2.2 的字段口径。三条硬约束�
 不缓存。上游命名不统一，按 `PE_TTM_KEYS` / `PB_KEYS` / `TURNOVER_PCT_KEYS` 的优先级取
 第一个**有限数值**；`0` 是有效读数（亏损股 PE 可以为负，停牌换手可以是 0），**不当缺失**。
 三项里缺哪一项就写进该条的 `metrics_reason`，全齐时为 `null`。
+
+新鲜度（QUOT-478）：`PriceStrip` 多带一个 `cache_replay`——这批自选的取数路径上有没有
+出现**明确的缓存回放证据**（上游 `meta.cache_hit`、我方 registry TTL 命中、peer 整体
+不可用时的本地回放，三条路都会把信封 `freshness` 写成 `cached`）。`judge_freshness()`
+按时点形状判 §5.1 三档，**判不出就回 `None`**：前端保留了「未知」兜底，后端不替用户
+猜一个 `realtime`（DEC-052 平面响应也一样，表里出 `null` 不留空档）。
 """
 
 from __future__ import annotations
@@ -22,10 +28,18 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 from typing import Any, Literal
 
 from ladderstock.core.indices import iso_timestamp
+from ladderstock.core.intraday import (
+    DEFAULT_TIMEZONE,
+    TRADING_WINDOWS,
+    in_trading_session,
+    local_moment,
+)
 from ladderstock.core.ladder import as_float
+from ladderstock.core.models import Freshness
 
 DATASET = "spot_quote"
 QUOTE_TOOL = "tencent_quote_batch"
@@ -63,6 +77,10 @@ class PriceStrip:
     prices: dict[str, dict[str, Any]]
     status: Status
     source_detail: str
+    #: QUOT-478：这批里**有票取到了价**的批次中，是否出现过明确的缓存回放路径
+    #: （信封 `freshness=="cached"`：上游 cache_hit / 我方 TTL 命中 / 本地回放）。
+    #: 任一批坐实即算——混着来的批次宁可把整条读成「非实时」，不赌多数批清白。
+    cache_replay: bool = False
 
     @property
     def as_of(self) -> str | None:
@@ -144,6 +162,7 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
     }
     detail = ""
     ok_codes: set[str] = set()
+    cache_replay = False
 
     for chunk in _chunks(wanted, PRICE_CHUNK):
         try:
@@ -164,6 +183,7 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
 
         detail = detail or str(getattr(outcome.envelope, "source_detail", "") or "")
         rows = _rows(outcome.envelope)
+        chunk_priced = False
         by_code: dict[str, dict[str, Any]] = {}
         for row in rows:
             code = str(row.get("code") or "").strip()
@@ -195,10 +215,18 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
                 **_metrics(quoted, code=code),
             }
             ok_codes.add(code)
+            chunk_priced = True
+
+        # QUOT-478：这一批确实贡献了读数、且取数路径被明确标记为缓存回放，
+        # 缓存证据才算坐实（取了个空批次不算：页面上没有一条价来自那条路）。
+        if chunk_priced and getattr(outcome.envelope, "freshness", None) == "cached":
+            cache_replay = True
 
     missing = len(ok_codes) == 0
     status: Status = "missing" if missing else ("ok" if len(ok_codes) == len(wanted) else "partial")
-    return PriceStrip(prices=prices, status=status, source_detail=detail)
+    return PriceStrip(
+        prices=prices, status=status, source_detail=detail, cache_replay=cache_replay
+    )
 
 
 def _rows(envelope: Any) -> list[dict[str, Any]]:
@@ -207,7 +235,78 @@ def _rows(envelope: Any) -> list[dict[str, Any]]:
     return [row for row in records or [] if isinstance(row, dict)]
 
 
+#: 「现在」与数据时点之间允许的时钟偏移：peer 时钟略快不构成未来数据
+CLOCK_SKEW_TOLERANCE = timedelta(minutes=5)
+
+
+def _session_window(moment: datetime) -> tuple[time, time] | None:
+    """`moment` 此刻所处的连续竞价窗口（与 `intraday.in_trading_session` 同一张表）。"""
+    clock = moment.time().replace(microsecond=0)
+    for window in TRADING_WINDOWS:
+        if window[0] <= clock < window[1]:
+            return window
+    return None
+
+
+def judge_freshness(
+    as_of: str | None,
+    *,
+    priced: bool,
+    cache_replay: bool = False,
+    now: datetime | None = None,
+) -> Freshness | None:
+    """自选现价的 §5.1 三档判定（QUOT-478）：以 `price_as_of` 与取数路径为据，
+    不按「请求时刻」想当然；判不出就回 `None`，不给默认值 `realtime`。
+
+    - **盘中**（Asia/Shanghai 落在连续竞价时段）且时点**落在本次交易会话内**
+      （同一自然日、不早于本会话开盘、且不在未来）→ `realtime`；
+    - **非交易时段**拿到的是**过去某日的读数**（前一交易日收盘，或今日 15:00 后）
+      → `archive`；
+    - **明确走缓存回放 / 沿用了旧快照**（`cache_replay`）且时点形状判不出实时/存档
+      → `cached`；
+    - 其余（没有读数、时点解析不了、盘中但时点对不上、未来时点）→ `None`，
+      前端据此出「未知」——这是特意保留的诚实出口。
+
+    两处顺序是拍过板的：
+
+    1. 盘中的缓存证据先于 `realtime`：会话内拿到回放就是「非实时」，不因为时点
+       落在本会话内就标实时；
+    2. 非交易时段的过去读数判 `archive` **不被缓存证据覆盖**：周末页面上该读的是
+       「存档」（数据是周五收盘），缓存只是递送路径。
+    """
+    if not priced or not as_of:
+        return None
+    try:
+        stamp = datetime.fromisoformat(as_of)
+    except ValueError:
+        return None
+    moment = local_moment(now, DEFAULT_TIMEZONE).replace(tzinfo=None)
+    if stamp > moment + CLOCK_SKEW_TOLERANCE:
+        # 时点在「未来」且超出时钟偏移容忍，判不出它是什么
+        return None
+    window = _session_window(moment)
+    # A 股周六 / 周日不开市（调休补班日同样不开），周末一律按非交易时段读；
+    # 工作日的法定节假日没有交易日历可查，时点对不上就落「判不出」，不猜。
+    if window is not None and moment.weekday() < 5:
+        if cache_replay:
+            return "cached"
+        if stamp.date() == moment.date() and stamp.time() >= window[0]:
+            return "realtime"
+        # 盘中但时点属于上一会话（停牌股）、或早于本会话开盘：判不出，不猜
+        return None
+    if stamp.date() < moment.date():
+        # 过去某日的读数（前一交易日收盘 / 假期前的收盘，无需交易日历，日期自己会说）
+        return "archive"
+    if stamp.date() == moment.date() and moment.time() >= TRADING_WINDOWS[-1][1]:
+        # 同日的收盘后读数（周五 16:14 的价格，周六 / 周日 / 平日晚 22 点都读这）
+        return "archive"
+    # 同日、尚未收盘、又不在连续竞价时段（集合竞价前 / 午休）：时点形状判不出档位，
+    # 明确的缓存证据给 cached，否则诚实回 None。
+    return "cached" if cache_replay else None
+
+
 __all__ = [
+    "CLOCK_SKEW_TOLERANCE",
     "DATASET",
     "PB_KEYS",
     "PE_TTM_KEYS",
@@ -218,4 +317,5 @@ __all__ = [
     "QUOTE_TOOL",
     "TURNOVER_PCT_KEYS",
     "fetch_prices",
+    "judge_freshness",
 ]

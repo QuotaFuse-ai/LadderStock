@@ -70,7 +70,7 @@ from ladderstock.core.portfolio_xray import build_view as build_xray_view
 from ladderstock.core.privacy import strip_private
 from ladderstock.core.quotes import PRICE_DATASET, daily_change_map, price_map
 from ladderstock.core.watch_prices import DATASET as SPOT_QUOTE_DATASET
-from ladderstock.core.watch_prices import fetch_prices
+from ladderstock.core.watch_prices import fetch_prices, judge_freshness
 from ladderstock.data import archive
 from ladderstock.data.provider_registry import ProviderRegistry
 from ladderstock.errors import (
@@ -1123,8 +1123,13 @@ class RadarPlane:
           顶层用 `items` + `watch_count`；
         - **`note` 不出**（QUOT-380 拍板口径 2）：投影在 `journal/watchlist.py` 就不读那一列；
         - **空态是 200**：本机没有自选就回 `available=false` + 指向「我的自选」页的文案，
-          不是 404、不伪造行。
+          不是 404、不伪造行；
+        - **`freshness` 是顶层唯一显式给的溯源档**（QUOT-478）：按 `core.watch_prices.
+          judge_freshness()` 的时点形状判 §5.1 三档，判不出回 `null`（前端出「未知」，
+          不给默认值）。`source_status` / `fetched_at` 仍不出——那是信封键，平面响应
+          不碰（DEC-052）。
         """
+        requested_at = datetime.now().astimezone()
         rows = self._read(lambda: list_watch(root=self.data_root))
         codes = [str(row["code"]) for row in rows]
         registry = self._active_registry()
@@ -1161,6 +1166,12 @@ class RadarPlane:
             "data_source_status": strip.status,
             "price_source": SPOT_QUOTE_DATASET,
             "price_as_of": strip.as_of,
+            "freshness": judge_freshness(
+                strip.as_of,
+                priced=strip.status != "missing",
+                cache_replay=strip.cache_replay,
+                now=requested_at,
+            ),
             "source_detail": strip.source_detail,
             "items": items,
         }
