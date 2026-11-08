@@ -76,6 +76,8 @@ from ladderstock.web.control import (
 from ladderstock.web.inbox import build_router as build_inbox_router
 from ladderstock.web.industry import IndustryPlane
 from ladderstock.web.industry import build_router as build_industry_router
+from ladderstock.web.knowledge import KnowledgePlane
+from ladderstock.web.knowledge import build_router as build_knowledge_router
 from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
@@ -988,9 +990,10 @@ def create_app(
     radar_plane: Any | None = None,
     symbols_plane: Any | None = None,
     supervisor_engine: Any | None = None,
+    knowledge_plane: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
-    / `industry_plane` / `radar_plane` / `symbols_plane` 可注入，便于测试。
+    / `industry_plane` / `radar_plane` / `symbols_plane` / `knowledge_plane` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -1626,6 +1629,15 @@ def create_app(
     # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
     symbols = symbols_plane if symbols_plane is not None else SymbolPlane(data_root=root)
     app.include_router(build_symbols_router(symbols))
+
+    # -------------------------------------------- 标的档案面（QUOT-488）
+    #
+    # `/api/knowledge/{market}/{symbol}` 一个只读接口：标的档案（as_of / 状态 /
+    # 来源 + 正文 + 召回快照），供助手注入通道（QUOT-487）一次性取出。闸门同
+    # 标的字典面（回环 + `Host`，纯数据面，不受 `LDST_CONTROL_ENABLED` 影响）；
+    # 注册在 SPA 兜底之前。market 枚举与 symbol 形态在进路径解析前就拒（400）。
+    knowledge = knowledge_plane if knowledge_plane is not None else KnowledgePlane(data_root=root)
+    app.include_router(build_knowledge_router(knowledge))
 
     # ------------------------------------------ 状态索引面（QUOT-288 / UI-SPEC §12.2 第 2 条）
     #
