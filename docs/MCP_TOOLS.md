@@ -27,8 +27,10 @@
 | `industry_snapshot` | 是 | `sentiment` | `industry` | 申万一级行业五维画像：景气 / 资金 / 估值 / 动量 / 拥挤度，缺数显式 `null` 并给原因（口径见 `docs/specs/SPEC-INDUSTRY-METRICS.md`，R5） |
 | `news_stream` | 是 | `news` | `date`、`until?`、`sources?`、`codes?`、`limit?`、`store?`、`ai?` | 统一资讯流 + 规则抽取事件（R6） |
 | `event_calendar` | 是 | `news` | `month`、`codes?`、`limit?`、`fetch?` | 事件日历五小节，含三个「暂无数据源」（R6） |
+| `proxyfleet_status` | 是 | `meta` | — | ProxyFleet 代理池水位：`/readyz` + 池摘要 + 出口网关 + 采集源错误 + 最近失败节点（QUOT-485） |
+| `proxyfleet_control` | **否** | `meta` | `action`（`start`/`stop`） | ProxyFleet 起停，经 `ControlPlane` 走 SYSTEM 计划任务垫片，返回任务 ID 与结果（QUOT-485） |
 
-除 `ladder_start_research` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。**工具数量与名称以 `ldst mcp tools list` 的输出为准**，本文不写死数字；下表按域登记语义与入参，新增或删除工具须同步本表（契约测试 `tests/contract/test_mcp_tools.py` 会比对两者）。
+除 `ladder_start_research` 与 `proxyfleet_control` 外全部只读；所有日期入参统一为 `YYYY-MM-DD`。**工具数量与名称以 `ldst mcp tools list` 的输出为准**，本文不写死数字；下表按域登记语义与入参，新增或删除工具须同步本表（契约测试 `tests/contract/test_mcp_tools.py` 会比对两者）。
 
 > **命名偏差（已声明-接受）**：`candidate_pool` 没有沿用 `ladder_get_*` 前缀，
 > 验收口径直接点名「MCP 只读工具 `candidate_pool`」。
@@ -64,6 +66,20 @@
 > ② **入参没有 `date`**：按行业名定位，口径是「本机缓存里的最新一批」，各维度自己给出
 > `trade_date` / `as_of`（SPEC §1.2）。契约测试用 `INDUSTRY_SCOPED_TOOLS` 登记这个例外，
 > 并反向断言 schema 里没有 `date`——要加日期就得先改口径文件。信封域是 `sentiment`（取值集合不变）。
+
+> **ProxyFleet 两个工具的口径**（2026-11-09，QUOT-485）：
+> ① `proxyfleet_status` 是 8788 REST 的**薄封装**（`/readyz` + `/v1/stats/summary` + `/v1/nodes`），
+> 不重写 ProxyFleet 内部逻辑；观测的是「当下」水位，**没有 `date` 入参**、
+> `freshness=realtime`（与 `ladder_get_sources_health` 同一条 meta 例外）。
+> 连不上 / 鉴权失败 / 端点异常都如实进 `payload.proxyfleet.problems`，全挂时
+> `available=false` + `missing`，**不伪造水位**；`/readyz` 返回 503（活着但池空）
+> 照样能读水位，记 `degraded` 而不是 `missing`。「最近失败」从 `/v1/nodes` 的
+> `fail` 计数派生，不另设探测逻辑。
+> ② `proxyfleet_control` 是第二个写工具：`action` 只允许 `start`/`stop`，
+> 经 `ControlPlane.create_job("proxyfleet", …)` 走 **SYSTEM 计划任务垫片**
+> （账本 `origin=spawned-via-task`），工具自身不做任何 schtasks/进程操作。
+> 起停是即时动作没有日期，`data_as_of` 取调用当天。`start`/`stop` 之外的
+> action 由 ControlPlane 拒绝（`rejected` + 原因），同 peer 已有任务在跑同样如实回。
 
 ### 1.1 `ladder_get_watch` 的数据来源
 
@@ -116,6 +132,30 @@
 不存在「有值但无出处」，也不存在「有出处但没读到这批数据」。
 行业北向净流入与申万行业指数涨跌幅是**结构性缺口**（上游无对应工具，SPEC §9），
 永远显式 `null`——不降级成成分股聚合值，因为那是另一个字段。
+
+### 1.4 `proxyfleet_status` / `proxyfleet_control` 的数据来源与载荷（QUOT-485）
+
+`proxyfleet_status` 每次调用现打三个 GET（走 `LDST_PROXYFLEET_API_URL`，缺省
+`http://127.0.0.1:8788`；`PF_API_TOKEN` 非空时带 Bearer），回环不走系统代理：
+
+| 端点 | 用途 | 载荷落点 |
+|---|---|---|
+| `/readyz` | 池子是否活着（200 = `biz_ok≥1`；503 = 活着但池空） | `payload.proxyfleet.ready` / `.pool`（`biz_ok` / `active` / `total` / `min_active` / `uptime`） |
+| `/v1/stats/summary` | 出口网关与采集源错误 | `payload.proxyfleet.gateway` / `.harvest_sources` |
+| `/v1/nodes?limit=500` | 节点明细 | `payload.proxyfleet.nodes_total` + `.recent_failures`（`fail>0` 按失败次数降序，最多 10 条） |
+
+`payload.proxyfleet.problems` 列出每个失败端点与原因（HTTP 码 / 不可达异常）；
+`source_status`：三端点全好 = `ok`，能读到水位但有降级/失败 = `degraded`，
+连 `/readyz` 都够不着 = `partial` 且 `available=false`。
+响应体读取上限 `PROXYFLEET_MAX_BODY_BYTES = 2MB`：`/v1/nodes?limit=500` 实测
+约 92KB，早期实现按 64KB 截断拿半截 JSON、把「截断」误报成「响应体不是 JSON」
+（真实联调踩过一次），上限放宽后以全量为准。
+
+`proxyfleet_control` 不碰 REST 面：经 `ControlPlane`（按 data_root 惰性单例）提交
+`proxyfleet` 的 `start`/`stop` 任务并同步等收敛（默认 120s），返回
+`payload.proxyfleet_control = {action, job_id, status, error, log_tail}`；
+任务失败 → `source_status=partial`，被 ControlPlane 拒绝（未托管 / 已有任务在跑）→
+`status="rejected"`，超时 → `status="timeout"` 且带 job_id（任务可能仍在后台继续）。
 
 ## 2. 隐私边界（硬约束）
 

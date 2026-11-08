@@ -1,4 +1,5 @@
-"""MCP Server（stdio / Streamable HTTP）：14 个工具，全部只读 + 1 个发起研究。
+"""MCP Server（stdio / Streamable HTTP）：16 个只读 + 2 个动作工具
+（发起研究 / ProxyFleet 起停）。
 
 协议与数据边界：
 
@@ -18,8 +19,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -747,6 +752,235 @@ def _tool_sources_health(arguments: dict[str, Any], root: Any) -> dict[str, Any]
     )
 
 
+# --------------------------------------------------------------------------- #
+# ProxyFleet（QUOT-485）：8788 REST 的薄封装 + 生命周期走 ControlPlane 垫片
+# --------------------------------------------------------------------------- #
+
+#: URL/token 与 `config/sources.yaml` 的 proxyfleet 块及 ProxyFleet 自带 MCP 的
+#: 环境变量同名对齐（PF_API_TOKEN 是 ProxyFleet 侧的既有约定）
+PROXYFLEET_URL_ENV = "LDST_PROXYFLEET_API_URL"
+PROXYFLEET_DEFAULT_URL = "http://127.0.0.1:8788"
+PROXYFLEET_TOKEN_ENV = "PF_API_TOKEN"
+#: 控制动作默认 120s（schtasks Enable/Start/Stop 是秒级）；测试可 monkeypatch
+PROXYFLEET_CONTROL_TIMEOUT_SEC = 120.0
+PROXYFLEET_POLL_INTERVAL_SEC = 1.0
+PROXYFLEET_RECENT_FAILURES = 10
+#: /v1/nodes?limit=500 实测约 92KB（500 条节点 × ~200B）；read 截断会拿到半截
+#: JSON 被误报「响应体不是 JSON」（QUOT-485 实测踩过），上限给足余量。
+PROXYFLEET_MAX_BODY_BYTES = 2_000_000
+
+
+def _proxyfleet_base() -> str:
+    return (os.environ.get(PROXYFLEET_URL_ENV) or PROXYFLEET_DEFAULT_URL).rstrip("/")
+
+
+def _proxyfleet_get(path: str, *, timeout: float = 10.0) -> tuple[int, str]:
+    """GET ProxyFleet REST 端点，返回 (HTTP 状态码, 响应体)；0 = 连不上。
+
+    回环不走系统代理（与 `web.control._no_proxy_opener` 同口径）；
+    网络异常如实带回，不抛——状态工具要把「不可达」当正常观测值汇报。
+    """
+    headers = {"Accept": "application/json"}
+    token = os.environ.get(PROXYFLEET_TOKEN_ENV) or ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(_proxyfleet_base() + path, method="GET", headers=headers)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310 - 只探本机回环
+            body = response.read(PROXYFLEET_MAX_BODY_BYTES).decode("utf-8", "replace")
+            return int(getattr(response, "status", 200)), body
+    except urllib.error.HTTPError as exc:
+        return exc.code, ""
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+
+
+def _proxyfleet_document(path: str, problems: list[str]) -> dict[str, Any] | None:
+    """GET 并解析 `/v1/*` 的 JSON（200 + ok:true 才算数），失败原因追加进 problems。"""
+    code, body = _proxyfleet_get(path)
+    if code != 200:
+        problems.append(f"GET {path}：HTTP {code}" + (f"（{body}）" if body and code == 0 else ""))
+        return None
+    try:
+        document = json.loads(body)
+    except ValueError:
+        problems.append(f"GET {path}：响应体不是 JSON")
+        return None
+    if not isinstance(document, dict) or document.get("ok") is not True:
+        problems.append(f"GET {path}：响应不是 ok:true")
+        return None
+    data = document.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _tool_proxyfleet_status(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
+    """ProxyFleet 水位只读观测：/readyz + /v1/stats/summary + /v1/nodes 派生最近失败。
+
+    不重写 ProxyFleet 内部逻辑——三个端点原样转发/摘取；连不上、降级、鉴权失败
+    都如实进 `problems`，全挂时 `available=false`，不伪造水位。
+    """
+    day = date.today()
+    problems: list[str] = []
+
+    code, body = _proxyfleet_get("/readyz")
+    ready: dict[str, Any] | None = None
+    ready_ok = False
+    if code in (200, 503):
+        # 503 也是活着的应答（biz_ok=0，池空）：照样能读水位，只是降级
+        try:
+            document = json.loads(body)
+        except ValueError:
+            document = None
+        if isinstance(document, dict):
+            data = document.get("data")
+            ready = data if isinstance(data, dict) else {}
+            ready_ok = code == 200 and document.get("ok") is True
+        else:
+            problems.append("GET /readyz：响应体不是 JSON")
+    else:
+        problems.append(f"GET /readyz：HTTP {code}" + (f"（{body}）" if body and code == 0 else ""))
+
+    summary: dict[str, Any] | None = None
+    nodes_total: int | None = None
+    failures: list[dict[str, Any]] = []
+    if ready is not None:
+        summary = _proxyfleet_document("/v1/stats/summary", problems)
+        nodes = _proxyfleet_document("/v1/nodes?limit=500", problems)
+        if nodes is not None:
+            items = [item for item in (nodes.get("items") or []) if isinstance(item, dict)]
+            nodes_total = len(items)
+            # 「最近失败」直接从 /v1/nodes 的 fail 计数派生，不另设探测逻辑
+            ranked = sorted(items, key=lambda item: -(item.get("fail") or 0))
+            failures = [
+                {
+                    "proxy": item.get("proxy"),
+                    "state": item.get("state"),
+                    "fail": item.get("fail"),
+                    "ok": item.get("ok"),
+                    "last_ok_at": item.get("last_ok_at"),
+                    "source": item.get("source"),
+                }
+                for item in ranked
+                if (item.get("fail") or 0) > 0
+            ][:PROXYFLEET_RECENT_FAILURES]
+
+    available = ready is not None
+    pool = (
+        {key: ready.get(key) for key in ("biz_ok", "active", "total", "min_active", "uptime")}
+        if ready is not None
+        else None
+    )
+    source_status = "ok" if (available and ready_ok and not problems) else (
+        "degraded" if available else "partial"
+    )
+    return _envelope(
+        domain="review",
+        topic="proxyfleet_status",
+        day=day,
+        payload={
+            "proxyfleet": {
+                "available": available,
+                "base_url": _proxyfleet_base(),
+                "ready": ready_ok,
+                "pool": pool,
+                "gateway": summary.get("gateway") if summary else None,
+                "harvest_sources": summary.get("sources") if summary else None,
+                "nodes_total": nodes_total,
+                "recent_failures": failures,
+                "problems": problems,
+            },
+            "data_source_status": "ok" if available and ready_ok else (
+                "degraded" if available else "missing"
+            ),
+        },
+        available=available,
+        source_status=source_status,
+        freshness="realtime",
+        source_detail=f"ProxyFleet REST {_proxyfleet_base()}（/readyz + /v1/stats/summary + /v1/nodes）",
+    )
+
+
+_PROXYFLEET_PLANE_LOCK = threading.Lock()
+_PROXYFLEET_PLANES: dict[str, Any] = {}
+
+
+def _proxyfleet_plane(root: Any) -> Any:
+    """按 data_root 惰性缓存 ControlPlane：每次实例化都会起 ReleaseCache watcher
+    线程，MCP 工具会被反复调用，必须复用（web/CLI 同款构造：`ControlPlane(data_root)`）。"""
+    base = Path(root) if root is not None else _data_dir()
+    key = str(base)
+    with _PROXYFLEET_PLANE_LOCK:
+        plane = _PROXYFLEET_PLANES.get(key)
+        if plane is None:
+            from ladderstock.web.control import ControlPlane
+
+            plane = ControlPlane(data_root=base)
+            _PROXYFLEET_PLANES[key] = plane
+        return plane
+
+
+def _tool_proxyfleet_control(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
+    """ProxyFleet 起停：经 ControlPlane 走 SYSTEM 计划任务垫片（禁止绕开它直起进程）。
+
+    同步等任务收敛（MCP handler 已在 worker 线程里跑）；超时不撒谎——
+    返回 `status="timeout"` 与 job_id，任务可能仍在后台继续。
+    """
+    action = arguments.get("action")
+    if action not in {"start", "stop"}:
+        raise ToolError("action 必须是 start 或 stop")
+    day = date.today()
+    try:
+        plane = _proxyfleet_plane(root)
+        job = plane.create_job("proxyfleet", action)
+    except Exception as exc:  # noqa: BLE001 - 冲突/未托管等如实回给调用方
+        return _envelope(
+            domain="review",
+            topic="proxyfleet_control",
+            day=day,
+            payload={
+                "proxyfleet_control": {
+                    "action": action,
+                    "job_id": None,
+                    "status": "rejected",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "log_tail": [],
+                },
+                "data_source_status": "degraded",
+            },
+            available=False,
+            source_detail=f"ControlPlane 拒绝任务：{exc}",
+        )
+
+    deadline = time.monotonic() + PROXYFLEET_CONTROL_TIMEOUT_SEC
+    while time.monotonic() < deadline:
+        current = plane.get_job(job.id)
+        if current is None or current.status in {"ok", "failed"}:
+            break
+        time.sleep(PROXYFLEET_POLL_INTERVAL_SEC)
+    current = plane.get_job(job.id) or job
+    status = current.status if current.status in {"ok", "failed"} else "timeout"
+    log_tail = current.tail(50)
+    error = current.error
+    return _envelope(
+        domain="review",
+        topic="proxyfleet_control",
+        day=day,
+        payload={
+            "proxyfleet_control": {
+                "action": action,
+                "job_id": job.id,
+                "status": status,
+                "error": error,
+                "log_tail": log_tail,
+            },
+            "data_source_status": "ok" if status == "ok" else "degraded",
+        },
+        available=status == "ok",
+        source_detail=f"peer 任务（SYSTEM 计划任务垫片，账本 origin=spawned-via-task）：{status}",
+    )
+
+
 def _tool_watch(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
     """盯盘状态：读 `data/watch/status.json`（由 `ldst watch start` 写入）。
 
@@ -978,6 +1212,8 @@ TOOL_HANDLERS: dict[str, Callable[[dict[str, Any], Any], dict[str, Any]]] = {
     "industry_snapshot": _tool_industry_snapshot,
     "news_stream": _tool_news_stream,
     "event_calendar": _tool_event_calendar,
+    "proxyfleet_status": _tool_proxyfleet_status,
+    "proxyfleet_control": _tool_proxyfleet_control,
 }
 
 

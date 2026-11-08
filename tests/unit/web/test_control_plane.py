@@ -896,6 +896,11 @@ def test_peer_metadata_points_at_the_dotenv_each_peer_really_reads() -> None:
     # （QUOT-480 实测）；仓库根 .env 不会被容器加载（无挂载、process env 优先）。
     assert PEER_CONTROL["financecoffer"].env_filename == "deploy/.env"
     for ctl in PEER_CONTROL.values():
+        if ctl.env_filename == "config.json":
+            # QUOT-485 ProxyFleet：config 真源是 config.json + PF_* 环境变量，
+            # 没有 dotenv 加载链——写配置入口直接置灰（config_keys 为空白名单）。
+            assert ctl.config_keys == ()
+            continue
         assert ctl.env_filename in {".env", ".env.local", "deploy/.env"}  # 只有这三种
 
 
@@ -906,48 +911,55 @@ def test_peer_health_paths_are_the_ones_the_services_serve() -> None:
     assert PEER_CONTROL["wire"].health_path == "/api/health"
 
 
-def _proxyfleet_component(directory: Path) -> Any:
+def _legacy_component(directory: Path) -> Any:
+    """组件观测机制的测试夹具：QUOT-485 起 proxyfleet 已升级为 peer，机制仍保留。"""
     from ladderstock.core.boundary import ComponentControl
 
     return ComponentControl(
-        key="proxyfleet",
-        product="ProxyFleet",
-        role="代理池",
+        key="legacy",
+        product="Legacy Component",
+        role="组件观测机制的占位样例",
         directory=str(directory),
         console_port=8788,
         gateway_port=8789,
         health_path="/readyz",
-        managed_by="计划任务 ProxyFleet",
+        managed_by="人工脚本",
     )
 
 
-def test_proxyfleet_is_a_component_not_a_peer() -> None:
-    """代理池不提供数据集：必须留在组件表里，不能进 PEERS / PEER_CONTROL。"""
-    from ladderstock.core.boundary import COMPONENTS, PEERS
+def test_proxyfleet_is_a_managed_task_peer() -> None:
+    """QUOT-485：ProxyFleet 升级为纳管 peer（Windows 计划任务生命周期），不再是组件。"""
+    from ladderstock.core.boundary import COMPONENTS, PEERS, PEER_SIBLING_DIRS, resolve_peer_control
 
-    ctl = COMPONENTS["proxyfleet"]
-    assert ctl.console_port == 8788
-    assert ctl.gateway_port == 8789
+    ctl = PEER_CONTROL["proxyfleet"]
+    assert ctl.task_name == "ProxyFleet"
+    assert ctl.mcp_port == 8788
+    assert ctl.web_port == 8788
+    assert ctl.extra_ports == (8789,)
     assert ctl.health_path == "/readyz"
-    assert "proxyfleet" not in PEERS
-    assert "proxyfleet" not in PEER_CONTROL
+    assert ctl.config_keys == ()  # ProxyFleet 用 config.json + PF_* env，无 dotenv 链，白名单置空
+    assert ctl.managed is True
+    assert "proxyfleet" in PEERS
+    assert "proxyfleet" in resolve_peer_control()
+    assert PEER_SIBLING_DIRS["proxyfleet"] == "ProxyFleet"
+    assert "proxyfleet" not in COMPONENTS  # 升级：从组件表迁出（机制保留，表可为空）
 
 
 def test_component_snapshot_running_from_health(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
-    component = _proxyfleet_component(peer_dirs["alpha"])
+    component = _legacy_component(peer_dirs["alpha"])
     plane = _plane(
         tmp_path,
         peer_dirs,
-        components={"proxyfleet": component},
+        components={"legacy": component},
         ports=lambda port: [PortOwner(pid=7, process="python.exe")]
         if port in (8788, 8789)
         else [],
         health=lambda url, timeout: (True, "HTTP 200"),
     )
 
-    snapshot = plane.component_snapshot("proxyfleet")
+    snapshot = plane.component_snapshot("legacy")
 
     assert snapshot["status"] == "running"
     assert snapshot["status_label"] == "运行中"
@@ -962,15 +974,15 @@ def test_component_snapshot_stopped_when_ports_are_free(
     plane = _plane(
         tmp_path,
         peer_dirs,
-        components={"proxyfleet": _proxyfleet_component(peer_dirs["alpha"])},
+        components={"legacy": _legacy_component(peer_dirs["alpha"])},
     )
 
-    snapshot = plane.component_snapshot("proxyfleet")
+    snapshot = plane.component_snapshot("legacy")
 
     assert snapshot["status"] == "stopped"
     assert snapshot["open_url"] is None
     assert snapshot["actions"]["can_open"] is False
-    assert "计划任务 ProxyFleet" in snapshot["detail"]
+    assert "人工脚本" in snapshot["detail"]
 
 
 def test_component_snapshot_unconfigured_when_directory_missing(
@@ -979,10 +991,10 @@ def test_component_snapshot_unconfigured_when_directory_missing(
     plane = _plane(
         tmp_path,
         peer_dirs,
-        components={"proxyfleet": _proxyfleet_component(tmp_path / "missing")},
+        components={"legacy": _legacy_component(tmp_path / "missing")},
     )
 
-    snapshot = plane.component_snapshot("proxyfleet")
+    snapshot = plane.component_snapshot("legacy")
 
     assert snapshot["status"] == "unconfigured"
     assert snapshot["directory_exists"] is False
@@ -992,12 +1004,12 @@ def test_board_includes_components(tmp_path: Path, peer_dirs: dict[str, Path]) -
     plane = _plane(
         tmp_path,
         peer_dirs,
-        components={"proxyfleet": _proxyfleet_component(peer_dirs["alpha"])},
+        components={"legacy": _legacy_component(peer_dirs["alpha"])},
     )
 
     payload = plane.board()
 
-    assert [item["id"] for item in payload["components"]] == ["proxyfleet"]
+    assert [item["id"] for item in payload["components"]] == ["legacy"]
 
 
 # --------------------------------------------------------------------------- #
@@ -1052,6 +1064,121 @@ def test_financecoffer_is_registered_as_readonly_peer() -> None:
 
     assert "financecoffer" in resolve_peer_control()
     assert PEER_SIBLING_DIRS["financecoffer"] == "FinanceCoffer"
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-485：Windows 计划任务生命周期（ProxyFleet 启停垫片）
+# --------------------------------------------------------------------------- #
+
+
+def _task_peer(directory: Path) -> Any:
+    from ladderstock.core.boundary import PeerControl
+
+    return PeerControl(
+        key="proxyfleet",
+        directory=str(directory),
+        import_package="",
+        mcp_port=8788,
+        web_port=8788,
+        web_port_label="控制台 / REST",
+        extra_ports=(8789,),
+        health_path="/readyz",
+        start_commands=(),
+        config_keys=(),
+        has_wheel_dist=False,
+        env_filename="config.json",
+        task_name="ProxyFleet",
+    )
+
+
+def _task_plane(tmp_path: Path, directory: Path, runtime: Any, ports: Any) -> ControlPlane:
+    return ControlPlane(
+        data_root=tmp_path,
+        peers={"proxyfleet": _task_peer(directory)},
+        components={},
+        sources_loader=lambda: {"proxyfleet": {"product": "ProxyFleet"}},
+        run=runtime,
+        port_probe=ports,
+        health_probe=lambda url, timeout: (True, "HTTP 200"),
+        spawn=lambda args, *, cwd, log_path: SimpleNamespace(pid=4242),
+    )
+
+
+def test_proxyfleet_start_enables_and_starts_task_shim(tmp_path: Path) -> None:
+    """启动 = Enable（如被停用）+ Start-ScheduledTask；账本记 origin=spawned-via-task。"""
+    directory = tmp_path / "peers" / "proxyfleet"
+    directory.mkdir(parents=True)
+    probing = {"up": False}
+
+    def run(args: list[str], cwd: Path, timeout: float) -> StepResult:
+        joined = " ".join(args)
+        if "(Get-ScheduledTask" in joined:
+            return StepResult(0, "\r\nDisabled\r\n")  # 停止过一次后任务处于停用态
+        probing["up"] = True  # Start-ScheduledTask 之后垫片把服务带起来
+        return StepResult(0, "ok")
+
+    def ports(port: int | None) -> list[PortOwner]:
+        if port in (8788, 8789) and probing["up"]:
+            return [PortOwner(pid=99, process="python.exe")]
+        return []
+
+    plane = _task_plane(tmp_path, directory, run, ports)
+    finished = _wait(plane, plane.create_job("proxyfleet", "start").id)
+    assert finished.status == "ok", finished.error
+    assert "Enable-ScheduledTask" in " ".join(finished.tail(50))
+    state = plane._peer_state("proxyfleet")
+    assert state["task"]["origin"] == "spawned-via-task"
+    assert state["pids"] == []
+    assert state.get("last_stop_at") is None
+
+
+def test_proxyfleet_stop_disables_before_stopping(tmp_path: Path) -> None:
+    """停止 = 先 Disable 压住 1 分钟自愈触发，再 Stop；两步都留痕。"""
+    directory = tmp_path / "peers" / "proxyfleet"
+    directory.mkdir(parents=True)
+    probing = {"up": True}
+    calls: list[list[str]] = []
+
+    def run(args: list[str], cwd: Path, timeout: float) -> StepResult:
+        calls.append(list(args))
+        joined = " ".join(args)
+        if "(Get-ScheduledTask" in joined:
+            return StepResult(0, "\r\nRunning\r\n")
+        probing["up"] = False  # Disable/Stop 落地后端口释放
+        return StepResult(0, "ok")
+
+    def ports(port: int | None) -> list[PortOwner]:
+        if port in (8788, 8789) and probing["up"]:
+            return [PortOwner(pid=99, process="python.exe")]
+        return []
+
+    plane = _task_plane(tmp_path, directory, run, ports)
+    finished = _wait(plane, plane.create_job("proxyfleet", "stop").id)
+    assert finished.status == "ok", finished.error
+    names = [" ".join(call) for call in calls]
+    assert any("Disable-ScheduledTask" in name for name in names)
+    assert any("Stop-ScheduledTask" in name for name in names)
+    assert names.index(next(n for n in names if "Disable-ScheduledTask" in n)) < names.index(
+        next(n for n in names if "Stop-ScheduledTask" in n)
+    )
+    assert plane._peer_state("proxyfleet").get("last_stop_at")
+
+
+def test_proxyfleet_stop_refuses_when_task_not_running(tmp_path: Path) -> None:
+    """无监听且任务非 Running：拒绝停止，不空转、不留痕。"""
+    directory = tmp_path / "peers" / "proxyfleet"
+    directory.mkdir(parents=True)
+
+    def run(args: list[str], cwd: Path, timeout: float) -> StepResult:
+        if "(Get-ScheduledTask" in " ".join(args):
+            return StepResult(0, "\r\nReady\r\n")
+        return StepResult(0, "ok")
+
+    plane = _task_plane(tmp_path, directory, run, lambda port: [])
+    finished = _wait(plane, plane.create_job("proxyfleet", "stop").id)
+    assert finished.status == "failed"
+    assert "未在运行" in (finished.error or "")
+    assert plane._peer_state("proxyfleet").get("last_stop_at") is None
 
 
 def test_degraded_health_is_reported_verbatim(monkeypatch: pytest.MonkeyPatch) -> None:

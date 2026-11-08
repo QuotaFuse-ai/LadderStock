@@ -5,7 +5,7 @@
 | 出口 | 断言 |
 |---|---|
 | MCP 工具清单 | 没有任何 position 相关工具名 |
-| MCP 工具结果 | 12 个只读工具逐个 dispatch，信封里没有哨兵、没有 `entry_date` |
+| MCP 工具结果 | 每个只读工具逐个 dispatch，信封里没有哨兵、没有 `entry_date` |
 | AI 上下文 | `strip_private` → `build_messages` 序列化后不含持仓字段名 |
 | `ldst pool` stdout | 持仓与候选池共用同一代码也不串数据 |
 | 磁盘 | 不加 `--export` 不产生任何文件；加了才落盘并在 stderr 提醒 |
@@ -160,9 +160,14 @@ def test_position_module_is_not_reachable_from_mcp_surface() -> None:
 # 2. MCP 工具结果：哨兵不出现在任何信封里
 # --------------------------------------------------------------------------- #
 
-def test_dispatched_envelopes_are_position_free(tmp_path: Path) -> None:
+def test_dispatched_envelopes_are_position_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     read_only = [spec.name for spec in TOOL_SPECS if spec.read_only]
     assert read_only, "工具清单为空，这条断言就没有意义"
+
+    # ProxyFleet 状态工具会探真实 REST（本机 8788 可能活着）——测试里当它不存在
+    monkeypatch.setenv("LDST_PROXYFLEET_API_URL", "http://127.0.0.1:9")
 
     seen = 0
     for name in read_only:

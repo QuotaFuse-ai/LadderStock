@@ -137,6 +137,21 @@ _PEER_FALLBACKS: dict[str, Peer] = {
         health_path="/configure",
         repo=None,
     ),
+    # QUOT-485：ProxyFleet 升级登记为 peer（控制面纳管 + MCP 薄封装）。
+    # 它仍不是取数通道——DATASET_CATALOG 不给它任何数据集，sources 不许 via 它，
+    # 四层边界的保护点在数据集目录（DEC-050/051 的只读口径由此单升级为纳管）。
+    "proxyfleet": Peer(
+        key="proxyfleet",
+        product="ProxyFleet",
+        package="proxyfleet",
+        cli="pfctl",
+        mcp_name=None,
+        default_port=8788,
+        role="代理池：节点采集 / 健康检查 / 出口网关（8788 控制台 · 8789 网关）",
+        consumption="基础设施",
+        health_path="/readyz",
+        repo=None,
+    ),
 }
 
 
@@ -295,6 +310,14 @@ class PeerControl:
     #: 改走 `wsl -d <发行版> -- docker compose -f <directory>/<该文件名> up -d / stop`。
     #: 存 compose 文件名（相对 directory）；None = venv 脚本形态。
     compose_file: str | None = None
+    #: Windows 计划任务生命周期（QUOT-485 ProxyFleet）：启停不打进程，改走
+    #: `schtasks /change /tn <任务名> /enable|/disable` + `/run|/end` 打 SYSTEM
+    #: 垫片任务（先 disable 压住自愈触发再 end，否则 1 分钟内会被自动拉起）。
+    #: 存计划任务名；None = 非 task 形态。enable/disable 不改任务账户/触发器。
+    task_name: str | None = None
+    #: 除 mcp_port / web_port 之外还要探测的端口（QUOT-485 ProxyFleet 的 8789
+    #: 出口网关）：面板归属探测与端口冲突检查都要覆盖它们，但不出「打开」按钮。
+    extra_ports: tuple[int, ...] = ()
 
 
 PEER_CONTROL: dict[str, PeerControl] = {
@@ -550,6 +573,49 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "接口，强改 OpenAI embedding 会 403）；LLM 走云骏 deepseek-v4.1-flash-1017。",
         ),
     ),
+    # QUOT-485：ProxyFleet 从「只读观测的组件」升级为「纳管 peer」——控制面出卡、
+    # 起停走 SYSTEM 计划任务垫片（task 形态），见 PEER_CONTROL 的 task_name 分支。
+    "proxyfleet": PeerControl(
+        key="proxyfleet",
+        directory=r"[local-path]\ProxyFleet",
+        # 生命周期走 Windows 计划任务垫片：控制面不查 import、不装 wheel，
+        # 目录在位即视为已安装（与 compose 分支同构，QUOT-485）。
+        import_package="",
+        repo=None,
+        dist_name=None,
+        # 8788 同时是 REST API 与浏览器控制台（api.py："/" 挂控制台 HTML、/v1/* 是 API），
+        # 8789 是常驻出口网关（config.py gateway.port）。8788 给 web_port 以出「打开」按钮，
+        # 8789 只探测归属、不打开（进 extra_ports）。
+        mcp_port=8788,
+        web_port=8788,
+        web_port_label="控制台 / REST",
+        extra_ports=(8789,),
+        # 实测（curl 127.0.0.1:8788/readyz）：ready = biz_ok >= 1，未就绪回 503，
+        # 免鉴权；/healthz /health 均 404。控制面探针据此判「活着」。
+        health_path="/readyz",
+        start_commands=(),
+        # 配置真源是 config.json + PF_<SECTION>_<KEY> 环境变量覆盖（proxyfleet/config.py:184-186），
+        # 没有 dotenv 加载链，控制面的 env 白名单模型套不上 → 按 PRD §5「核实不了就空白名单」
+        # 置空；键名→文件:行 对照见 config_notes。配置编辑在本 peer 的控制台完成。
+        config_keys=(),
+        secret_keys=(),
+        has_wheel_dist=False,
+        env_filename="config.json",
+        task_name="ProxyFleet",
+        config_notes=(
+            "启停形态（QUOT-485）：Windows 计划任务 ProxyFleet（SYSTEM，开机自启 +"
+            " 1 分钟自愈重复触发）。起 = schtasks /change /tn ProxyFleet /enable"
+            " 再 /run；停 = /change /disable 再 /end——先 disable 压住自愈触发再 end，"
+            "否则纯 /end 会在 1 分钟内被自动拉起。enable/disable 不动任务账户、"
+            "触发器与权限，不触碰它的运行身份。",
+            "账本口径：由垫片拉起的服务在启停账本里记 origin=\"spawned-via-task\"——"
+            "控制面只是打了一下计划任务，进程归属属于 SYSTEM 垫片，不冒充直接子进程。",
+            "config_keys 白名单置空的原因：ProxyFleet 不读任何 dotenv，配置真源是"
+            " config.json（proxyfleet/config.py DEFAULTS）叠加 PF_<SECTION>_<KEY>"
+            " 环境变量覆盖（config.py:184-186），控制面的 env 白名单模型不适用；"
+            "按 PRD §5「核实不了就空白名单 + 置灰」处理。",
+        ),
+    ),
 }
 
 
@@ -561,6 +627,7 @@ PEER_DIR_ENV: dict[str, str] = {
     "senate": "LDST_PEER_DIR_SENATE",
     "financecoffer": "LDST_PEER_DIR_FINANCECOFFER",
     "mem0": "LDST_PEER_DIR_MEM0",
+    "proxyfleet": "LDST_PEER_DIR_PROXYFLEET",
 }
 
 #: 默认按同级目录探测：把 peer 仓库 clone 到 LadderStock 旁边即可直接安装。
@@ -573,15 +640,23 @@ PEER_SIBLING_DIRS: dict[str, str] = {
     "financecoffer": "FinanceCoffer",
     # mem0 是独立部署单元：D:\QuotaFuseModules\Mem0（机器级变量 LDST_PEER_DIR_MEM0）
     "mem0": "Mem0",
+    # ProxyFleet 与 LadderStock 同级：D:\workplace\ProxyFleet
+    "proxyfleet": "ProxyFleet",
 }
 
 # --------------------------------------------------------------------------- #
 # 工具组件（不是 peer：不提供数据集，只提供生态里的公共能力）
 # --------------------------------------------------------------------------- #
 #
-# peer 是「向谁取数」的边界对象；工具组件是「生态里的基础设施」。二者不能混在
-# `PEERS` 里：数据集归属校验要求 `peer in PEERS`，把代理池登记成 peer 会让它
-# 变成合法数据来源，反而破坏四层边界。因此单独一张表，只读观测、不代管启停。
+# peer 是「向谁取数」的边界对象；工具组件是「生态里的基础设施」。历史上二者分开
+# 登记：组件只读观测、不代管启停。QUOT-485 起 ProxyFleet 升级为**纳管 peer**
+# （进 PEER_CONTROL + sources.yaml 的 peers 块），因此本表当前为空——但机制保留
+# （`component_snapshot` / 控制面 components 卡 / 本表的键白名单都还在），
+# 未来「只观测不纳管」的基础设施仍可登记到这里。
+#
+# 注：升级为 peer 不等于让它变成「合法数据来源」——四层边界的保护点在
+# DATASET_CATALOG：代理池不被任何数据集绑定，sources 不许写 `via: proxyfleet`，
+# 取证走 boundary 校验。DEC-050/051 的「不登记为取数通道」由此单升级为「纳管」。
 
 
 @dataclass(frozen=True)
@@ -600,31 +675,12 @@ class ComponentControl:
     notes: tuple[str, ...] = ()
 
 
-COMPONENTS: dict[str, ComponentControl] = {
-    "proxyfleet": ComponentControl(
-        key="proxyfleet",
-        product="ProxyFleet",
-        role="代理池：节点采集 / 健康检查 / 出口网关（8788 控制台 · 8789 网关）",
-        directory=r"[local-path]\ProxyFleet",
-        console_port=8788,
-        gateway_port=8789,
-        health_path="/readyz",
-        managed_by="Windows 计划任务 ProxyFleet（SYSTEM，开机自启 + 崩溃重启）",
-        notes=(
-            "不登记为 peer：它不提供 LadderStock 的数据集，只提供出口代理（DEC-047）。",
-            "控制面只做只读观测；安装与启停走 pfctl.py / 计划任务，不在本页执行。",
-        ),
-    ),
-}
+COMPONENTS: dict[str, ComponentControl] = {}
 
 #: 组件目录覆盖入口：与 peer 一样是固定键白名单。
-COMPONENT_DIR_ENV: dict[str, str] = {
-    "proxyfleet": "LDST_COMPONENT_DIR_PROXYFLEET",
-}
+COMPONENT_DIR_ENV: dict[str, str] = {}
 
-COMPONENT_SIBLING_DIRS: dict[str, str] = {
-    "proxyfleet": "ProxyFleet",
-}
+COMPONENT_SIBLING_DIRS: dict[str, str] = {}
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 

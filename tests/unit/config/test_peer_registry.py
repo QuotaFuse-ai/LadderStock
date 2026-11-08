@@ -60,6 +60,7 @@ def test_yaml_peers_block_registers_financecoffer() -> None:
         ("wire", "/api/health"),
         ("senate", "/healthz"),
         ("financecoffer", "/health"),
+        ("proxyfleet", "/readyz"),
     ],
 )
 def test_yaml_carries_real_health_paths(key: str, health_path: str) -> None:
@@ -73,9 +74,10 @@ def test_all_registered_peers_have_repo_for_version_check() -> None:
     mem0 例外（QUOT-486）：它是本地 WSL compose 部署单元，版本真源是
     qf-mem0/mem0 镜像，不在任何 GitHub Release 上，填上游仓库只会让三态检测
     显示失真的落后/超前，因此显式豁免而不是填一个假 repo。
+    proxyfleet 例外（QUOT-485）：本机 D:\\workplace\\ProxyFleet 工作副本，同理豁免。
     """
     for key, item in _sources_doc()["peers"].items():
-        if key == "mem0":
+        if key in ("mem0", "proxyfleet"):
             assert item.get("repo") is None
             continue
         assert item.get("repo"), f"peers.{key} 缺 repo 字段"
@@ -100,6 +102,36 @@ def test_boundary_peers_include_financecoffer() -> None:
     assert fc.repo == "QuotaFuse-ai/FinanceCoffer"
 
 
+def test_yaml_peers_block_registers_proxyfleet() -> None:
+    """QUOT-485：ProxyFleet 从只读组件升级为纳管 peer，登记进 peers 块。"""
+    block = _sources_doc()["peers"]
+    assert "proxyfleet" in block
+    pf = block["proxyfleet"]
+    assert pf["product"] == "ProxyFleet"
+    assert pf["package"] == "proxyfleet"
+    assert pf["cli"] == "pfctl"
+    assert pf["mcp_name"] is None  # 面板不直连；LS 侧走 proxyfleet_* 薄封装工具
+    assert pf["url_env"] == "LDST_PROXYFLEET_API_URL"
+    assert pf["health_path"] == "/readyz"
+    assert pf["default_port"] == 8788
+    assert pf["repo"] is None
+
+
+def test_proxyfleet_is_never_a_dataset_source() -> None:
+    """QUOT-485 边界红线：纳管 ≠ 取数通道，代理池不许绑数据集、不许被 via。
+
+    四层边界的保护点在 DATASET_CATALOG：升级为 peer 后它具备「被 via」的形式
+    资格（PEERS 含它），必须显式守住「没有任何数据集归属它 / sources 不 via 它」。
+    """
+    from ladderstock.core.boundary import DATASET_CATALOG
+
+    doc = _sources_doc()
+    offenders = [s["id"] for s in doc["sources"] if s.get("via") == "proxyfleet"]
+    assert offenders == [], f"sources 不许 via proxyfleet：{offenders}"
+    bound = [d for d, b in DATASET_CATALOG.items() if b.peer == "proxyfleet"]
+    assert bound == [], f"代理池不许绑定数据集：{bound}"
+
+
 # --------------------------------------------------------------------------- #
 # 3. 配置三态：合法 / 非法 / 缺文件（都不许崩、不许变空）
 # --------------------------------------------------------------------------- #
@@ -109,7 +141,7 @@ def test_build_peers_falls_back_when_block_missing() -> None:
     for block in (None, {}, "not-a-mapping"):
         peers, warnings = build_peers(block)
         assert peers == build_peers(None)[0]
-        assert len(peers) == 6
+        assert len(peers) == 7
         assert warnings and "回退内置默认" in warnings[0]
 
 
