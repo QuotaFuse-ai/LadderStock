@@ -17,8 +17,9 @@ import type { BlockView } from './useHomeSource'
  * 一屏只回答「大盘在哪」：八格由后端白名单写死（4 个 A 股：上证 / 沪深300 / 深证成指 /
  * 创业板指；2 个美股：道琼斯 / 纳斯达克综合；2 个港股：恒生指数 / 恒生科技），
  * 前端不排序、不补格、不指定代码——`index_list` 是按涨幅排序的榜，不含这些指数。
- * 版式是 4 列 × 2 行的算术结论（§1.2 / §12-L02）：`text-section`（20px）的点位
- * `12,641.86` 需要 132px，1440 档单排 8 格只有 128px，放不下；8 格在 4 列下自然回流成两行。
+ * 版式主次分层（QUOT-479，只改视觉）：A 股四格是主卡（`min-h-index-cell` 72px 三行），
+ * 海外四格降为「名称 · 源未接入」胶囊行（28px 一行），拿到点位才升级为正常 cell——
+ * 八格始终全部渲染，缺数不出 0、不补格、不回落。
  *
  * 三条缺数口径（§2.2 / §2.3）：
  * - 点位取不到 = `—`，**不显示 0**；第三行落到「源未接入」或「点位未取到」二者之一，不留白；
@@ -36,26 +37,39 @@ function IndexCellView({ cell }: { cell: IndexCell }) {
   const missing = cell.price === null
   // 「源未接入」与「点位未取到」是两种缺席：整格不可用（`available=false`）才是前者
   const missingNote = !cell.available ? '源未接入' : '点位未取到'
+  // A 股恒为主卡（哪怕某格缺数也走三行，口径不变）；海外行只有取到点位才升级为正常 cell
+  const primary = label === 'A 股' || !missing
+  if (!primary) {
+    return (
+      <div
+        className="flex h-7 items-center gap-1 rounded-full bg-surface-2 px-3 text-11px text-text-muted"
+        title={`未接入时显示「${MISSING}」，不补 0。${cell.reason ?? ''}`}
+      >
+        <span className="min-w-0 truncate text-text-secondary">{cell.name ?? MISSING}</span>
+        <span className="shrink-0">· {missingNote}</span>
+      </div>
+    )
+  }
   return (
-    <div className="flex min-h-metric flex-col justify-between gap-1 rounded border border-border bg-surface p-3">
-      <div className="flex items-center gap-1 text-caption text-text-secondary">
+    <div className="flex min-h-index-cell flex-col justify-between gap-0.5 rounded border border-border bg-surface p-3">
+      <div className="flex items-center gap-1 text-11px text-text-secondary">
         <span className="min-w-0 truncate" title={cell.name ?? MISSING}>
           {cell.name ?? MISSING}
         </span>
         {/* 后缀是身份说明不是状态，用行内标签不用 Badge（§2.1）；取不到就不显示这一行 */}
         {label && <span className="shrink-0 text-text-muted">{label}</span>}
       </div>
-      <div className="truncate text-section font-semibold ldst-num text-text" title={missing ? missingNote : undefined}>
+      <div className="truncate text-section ldst-num text-text" title={missing ? missingNote : undefined}>
         {formatAmount(cell.price)}
       </div>
       {missing ? (
-        <div className="truncate text-caption text-text-muted" title={cell.reason ?? undefined}>
+        <div className="truncate text-11px text-text-muted" title={cell.reason ?? undefined}>
           {missingNote}
         </div>
       ) : (
         <div className="flex items-center gap-1">
-          <SignedNumber {...change} className="text-caption" />
-          {change.missing && <span className="text-caption text-text-muted">涨跌幅未取到</span>}
+          <SignedNumber {...change} className="text-11px" />
+          {change.missing && <span className="text-11px text-text-muted">涨跌幅未取到</span>}
         </div>
       )}
     </div>
@@ -90,7 +104,7 @@ export function HomeIndexStrip({ view, session, pollSeconds, pollTicks = 0, poll
   return (
     <SectionCard
       title="大盘与全球指数"
-      tone={cells.length > 0 && missingCells.length > 0 ? 'warn' : 'neutral'}
+      tone="neutral"
       subtitle={
         <span className="flex flex-wrap items-center gap-1">
           <span data-poll-ticks={pollTicks} data-poll-failures={pollFailures}>
@@ -117,7 +131,7 @@ export function HomeIndexStrip({ view, session, pollSeconds, pollTicks = 0, poll
       {view.state === 'loading' && (
         <div className="grid grid-cols-2 gap-4 desk:grid-cols-4" aria-hidden="true">
           {Array.from({ length: 8 }, (_, index) => (
-            <div key={index} className="min-h-metric rounded border border-border bg-surface-2" />
+            <div key={index} className="min-h-index-cell rounded border border-border bg-surface-2" />
           ))}
         </div>
       )}
@@ -169,9 +183,9 @@ export function HomeIndexStrip({ view, session, pollSeconds, pollTicks = 0, poll
         <EmptyState compact title="本机服务未连接" description="指数条不落缓存，断连时不显示上一次的读数。" />
       )}
 
-      <p className="mt-3 border-t border-border pt-2 text-caption leading-body text-text-muted">
-        {payload?.footnote ?? '指数为行情快照，不是逐笔实时'}；港股 / 美股指数源未接入时该格显示「{MISSING}」与原因，不补 0。
-        源：<span className="ldst-num">{(payload?.datasets ?? ['index_quote']).map(quoteSourceLabel).join(' + ')}</span>
+      <p className="mt-3 border-t border-border pt-2 text-11px leading-body text-text-muted">
+        {payload?.footnote ?? '指数为行情快照，不是逐笔实时'} · 源：
+        <span className="ldst-num">{(payload?.datasets ?? ['index_quote']).map(quoteSourceLabel).join(' + ')}</span>
       </p>
     </SectionCard>
   )

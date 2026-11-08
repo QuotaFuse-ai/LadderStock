@@ -7,7 +7,18 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import { Link } from 'react-router-dom'
-import { Loader2, Send, Sparkles, Square, Trash2 } from 'lucide-react'
+import {
+  Building2,
+  ChartLine,
+  FileSearch,
+  Loader2,
+  Network,
+  Send,
+  Sparkles,
+  Square,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
 
 import { askHomeAssistant } from '../../api/research'
 import { cn } from '../../lib/cn'
@@ -50,11 +61,16 @@ interface ChatTurn {
   stopped?: boolean
 }
 
-const SUGGESTIONS = [
-  '今天大盘和自选有哪些值得注意的变化？',
-  '帮我看一家公司的估值和风险，该先问哪几个问题？',
-  '产业链最近有哪些新变化值得跟踪？',
-  '核对一份研报的结论，该先查哪些证据？',
+/**
+ * 起步问题 → 建议卡（QUOT-479 定稿：2×2，只改视觉，问题文本与填入行为不变）。
+ * 卡的可访问名必须钉死为问题原文：卡内副 label 属于卡，但测试与读屏都按
+ * `getByRole('button', { name: question })` 找它，不加 aria-label 会被副文本污染。
+ */
+const SUGGESTIONS: { text: string; label: string; Icon: LucideIcon }[] = [
+  { text: '今天大盘和自选有哪些值得注意的变化？', label: '大盘与自选异动', Icon: ChartLine },
+  { text: '帮我看一家公司的估值和风险，该先问哪几个问题？', label: '个股估值与风险', Icon: Building2 },
+  { text: '产业链最近有哪些新变化值得跟踪？', label: '产业链动态', Icon: Network },
+  { text: '核对一份研报的结论，该先查哪些证据？', label: '研报证据核对', Icon: FileSearch },
 ]
 
 function SourceList({ sources }: { sources: HomeContextSource[] }) {
@@ -231,19 +247,25 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
       >
         {!hasTurns && !pending && !failure && (
           <div className="flex flex-col gap-2">
-            <p className="text-caption text-text-muted">
-              四条起步问题，点一下填进输入框：
-            </p>
-            <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-              {SUGGESTIONS.map((suggestion) => (
-                <Button
-                  key={suggestion}
-                  variant="secondary"
-                  className="h-auto min-h-control justify-start whitespace-normal text-left text-caption"
-                  onClick={() => pickSuggestion(suggestion)}
+            <p className="text-11px text-text-muted">四条起步问题，点一下填进输入框：</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {SUGGESTIONS.map(({ text, label, Icon }) => (
+                <button
+                  key={text}
+                  type="button"
+                  aria-label={text}
+                  onClick={() => pickSuggestion(text)}
+                  className="group relative flex min-h-16 items-start rounded-lg border border-border bg-surface p-3 text-left transition-colors duration-fast hover:border-accent hover:shadow-card"
                 >
-                  {suggestion}
-                </Button>
+                  <span className="flex min-w-0 flex-col gap-1 pr-5">
+                    <span className="whitespace-normal text-13px leading-tight text-text">{text}</span>
+                    <span className="text-11px text-text-muted">{label}</span>
+                  </span>
+                  <Icon
+                    className="absolute right-2 top-2 size-4 shrink-0 text-text-muted transition-colors duration-fast group-hover:text-accent"
+                    aria-hidden="true"
+                  />
+                </button>
               ))}
             </div>
           </div>
@@ -297,7 +319,8 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
       </div>
 
       <div className="flex flex-col gap-1">
-        <div className="flex items-end gap-2">
+        {/* 发送/停止入框右下（QUOT-479）：外层 relative，输入框底部让出按钮高度 */}
+        <div className="relative">
           <Textarea
             ref={inputRef}
             rows={2}
@@ -307,12 +330,12 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
             onKeyDown={onKeyDown}
             aria-label="向研究助手提问"
             placeholder="说说要研究什么…（Shift+Enter 换行）"
-            className="min-w-0 flex-1 resize-none"
+            className="min-w-0 resize-none pb-9 !border-border !bg-surface-2 focus-visible:!border-border"
           />
           {pending ? (
             <Button
               variant="secondary"
-              className="shrink-0"
+              className="absolute bottom-2 right-2 h-8 shrink-0"
               onClick={stop}
               leadingIcon={<Square className="size-3.5" aria-hidden="true" />}
             >
@@ -321,7 +344,7 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
           ) : (
             <Button
               variant="secondary"
-              className="shrink-0"
+              className="absolute bottom-2 right-2 h-8 shrink-0"
               onClick={() => void ask(draft)}
               disabled={draft.trim() === ''}
               leadingIcon={<Send className="size-3.5" aria-hidden="true" />}
@@ -330,7 +353,7 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
             </Button>
           )}
         </div>
-        <p className="text-caption text-text-muted">
+        <p className="text-11px text-text-muted">
           Enter 发送 · Shift+Enter 换行 · 回答只是解读，行情数字以页面为准，不构成投资建议
         </p>
       </div>
