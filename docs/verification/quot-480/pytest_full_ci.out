@@ -1,0 +1,358 @@
+C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\pytest_asyncio\plugin.py:300: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the "fixture" caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to "function" scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.........XXXX........................................................... [  2%]
+........................................................................ [  4%]
+........................................................................ [  7%]
+........................................................................ [  9%]
+........................................................................ [ 12%]
+............................................................F........... [ 14%]
+........................................................................ [ 17%]
+........................................s............................... [ 19%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+.............................s.......................................... [ 29%]
+........................................................................ [ 32%]
+........................................................................ [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 44%]
+........................................................................ [ 47%]
+........................................................................ [ 49%]
+........................................................................ [ 52%]
+........................................................................ [ 54%]
+.........................ss............................................. [ 57%]
+........................................................................ [ 59%]
+......................................................................s. [ 62%]
+........................................................................ [ 64%]
+..............s......................................................... [ 67%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+...........s............................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 79%]
+........................................................................ [ 81%]
+........................................................................ [ 84%]
+........................................................................ [ 86%]
+........................................................................ [ 89%]
+........................................................................ [ 91%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+...................                                                      [100%]
+================================== FAILURES ===================================
+___________________ test_frontend_persistence_suite_passes ____________________
+
+    def test_frontend_persistence_suite_passes() -> None:
+        node = shutil.which("node")
+        if node is None or not VITEST_BIN.is_file():
+            pytest.skip("本机没有 node / 前端依赖，跳过前端持久化套件")
+    
+        env = dict(os.environ)
+        env["CI"] = "1"
+        completed = subprocess.run(
+            [node, str(VITEST_BIN), "run"],
+            cwd=FRONTEND,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=300,
+            check=False,
+        )
+        output = f"{completed.stdout}\n{completed.stderr}"
+        # vitest 在 CI=1 下仍可能输出颜色控制符，解析前先剥掉
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+>       assert completed.returncode == 0, f"前端持久化套件失败：\n{plain[-3000:]}"
+E       AssertionError: 前端持久化套件失败：
+E                 title="情绪温度"
+E                 >
+E                   <svg
+E                     aria-hidden="true"
+E                     class="lucide lucide-gauge size-4 shrink-0"
+E                     fill="none"
+E                     height="24"
+E                     stroke="currentColor"
+E                     stroke-linecap="round"
+E                     stroke-linejoin="round"
+E                     stroke-width="1.75"
+E                     viewBox="0 0 24 24"
+E                     width="24"
+E                     xmlns="http://www.w3.org/2000/svg"
+E                   >
+E                     <path
+E                       d="m12 14 4-4"
+E                     />
+E                     <path
+E                       d="M3.34 19a10 10 0 1 1 17.32 0"
+E                     />
+E                   </svg>
+E                   <span
+E                     class="whitespace-nowrap"
+E                   >
+E                     情绪温度
+E                   </span>
+E                 </a>
+E                 <a
+E                   class="inline-flex shrink-0 items-center rounded-pill border transition-colors duration-fast ease-ldst h-control gap-2 px-3 text-body border-border-strong text-text-secondary hover:border-accent hover:text-text"
+E                   href="/market?tab=ladder"
+E                   title="连板梯队"
+E                 >
+E                   <svg
+E                     aria-hidden="true"
+E                     class="lucide lucide-chart-column size-4 shrink-0"
+E                     fill="none"
+E                     height="24"
+E                     stroke="currentColor"
+E                     stroke-linecap="round"
+E                     stroke-linejoin="round"
+E                     stroke-width="1.75"
+E                     viewBox="0 0 24 24"
+E                     width="24"
+E                     xmlns="http://www.w3.org/2000/svg"
+E                   >
+E                     <path
+E                       d="M3 3v16a2 2 0 0 0 2 2h16"
+E                     />
+E                     <path
+E                       d="M18 17V9"
+E                     />
+E                     <path
+E                       d="M13 17V5"
+E                     />
+E                     <path
+E                       d="M8 17v-3"
+E                     />
+E                   </svg>
+E                   <span
+E                     class="whitespace-nowrap"
+E                   >
+E                     连板梯队
+E                   </span>
+E                 </a>
+E                 <a
+E                   class="inline-flex shrink-0 items-center rounded-pill border transition-colors duration-fast ease-ldst h-control gap-2 px-3 text-body border-border-strong text-text-secondary hover:border-accent hover:text-text"
+E                   href="/market?tab=theme"
+E                   title="题材轮动"
+E                 >
+E                   <svg
+E                     aria-hidden="true"
+E                     class="lucide lucide-layers size-4 shrink-0"
+E                     fill="none"
+E                     height="24"
+E                     stroke="currentColor"
+E                     stroke-linecap="round"
+E           ...
+E          ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+E          ❯ getAllByLabelText node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+E          ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+E          ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+E          ❯ tests/market-demo.test.tsx:151:20
+E             149|     expect(await screen.findByRole('heading', { name: '市场', level: 1…
+E             150|     expect(screen.getByText('演示数据 · 设置开关')).toBeTruthy()
+E             151|     expect((screen.getByLabelText('交易日') as HTMLInputElement).value…
+E                |                    ^
+E             152| 
+E             153|     // CH-01：折线拿到 20 个演示交易日点
+E         
+E         ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\Administrator\\AppData\\Local\\Doubao\\User Data\\sandbox_runtime\\bases\\772984f6f...[39m    \x1b[90m// CH-01：折线拿到 20 个演示交易日点\x1b[39m\n\n\x1b[31m\x1b[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\x1b[22m\x1b[39m\n\n').returncode
+
+tests\state\test_persist_recover.py:392: AssertionError
+============================== warnings summary ===============================
+tests/unit/data/test_provisional_probe.py::test_doctor_keeps_24_checks_and_warning_does_not_change_exit
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-118 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_output_json_is_never_a_usage_error[doctor --output json-]
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-120 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_implemented_commands_emit_parseable_json[doctor]
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-122 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_implemented_commands_accept_csv[doctor]
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-124 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_output_option.py::test_doctor_defaults_to_json_when_captured
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-126 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_cli_surface.py::test_command_registered_and_exits_as_baseline[argv45-expected45]
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-128 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_sources_consistency.py::test_doctor_red_when_chain_broken
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-130 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_sources_consistency.py::test_doctor_green_when_chain_valid_even_if_peers_down
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-132 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/test_sources_consistency.py::test_doctor_skips_probe_when_no_pending_tool
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\_pytest\threadexception.py:54: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-134 (_readerthread)
+  
+  Traceback (most recent call last):
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 1044, in _bootstrap_inner
+      self.run()
+      ~~~~~~~~^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\threading.py", line 995, in run
+      self._target(*self._args, **self._kwargs)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\subprocess.py", line 1616, in _readerthread
+      buffer.append(fh.read())
+                    ~~~~~~~^^
+    File "<frozen codecs>", line 325, in decode
+  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xbb in position 2: invalid start byte
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/unit/web/test_inbox_endpoints.py::test_write_surface_is_only_post
+tests/unit/web/test_watchlist_read_endpoint.py::test_write_surface_is_only_post
+  C:\Users\Administrator\AppData\Local\Doubao\User Data\sandbox_runtime\bases\772984f6fd3a8ae0ae7d2422cd7c2bfa\python\Lib\site-packages\fastapi\openapi\utils.py:295: UserWarning: Duplicate Operation ID unsupported___state_index_delete for function unsupported at D:\multica_workspaces\quotafuse-g-066955b36a89\quot-480-7dc63895c894\workdir\LadderStock\src\ladderstock\web\state_index.py
+    warnings.warn(message, stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/state/test_persist_recover.py::test_frontend_persistence_suite_passes
+1 failed, 2887 passed, 7 skipped, 4 xpassed, 11 warnings in 534.47s (0:08:54)

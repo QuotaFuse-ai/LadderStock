@@ -1,0 +1,1 @@
+{"ok":true,"data":{"status":"degraded","version":"0.1.0","checks":{"database":"ok","embedding":"unreachable"},"compliance_enabled":true},"meta":{"source":null,"fetched_at":"2026-11-08T20:27:08Z","quality_status":null,"confidence":null,"compliance_tier":null,"trace_id":"c9cb16c725b1441180678665dd85aac5"},"error":null}

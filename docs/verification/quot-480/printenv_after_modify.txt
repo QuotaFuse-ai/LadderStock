@@ -1,0 +1,6 @@
+== 端到端生效证据：deploy/.env 写入 -> compose 重建 -> 容器 env ==
+printenv FC_RATE_LIMIT_PER_MINUTE = 125
+printenv FC_MINIO_ENDPOINT (死键: compose 字面量) = minio:9000
+printenv FC_REDIS_URL (死键: compose 字面量) = redis://redis:6379/1
+printenv FC_MINIO_AUTOSTART (死键: compose 字面量) = false
+healthcheck = healthy
