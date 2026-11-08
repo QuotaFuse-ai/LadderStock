@@ -1,6 +1,7 @@
 import { navTitleFor } from '../nav'
 import { bindingFor } from './pageBindings'
 import { dockOf, skillPackage, type SkillPackage, type SkillStep, type SkillStatus } from './catalog'
+import { PAGE_ASSISTANT_ENDPOINT } from '../../api/research'
 
 /**
  * 「问 AI」抽屉的**视图模型**（QUOT-475）。
@@ -54,10 +55,16 @@ export interface DockView {
   quickQuestions: DockQuickQuestion[]
   object: AssistantObject
   /**
-   * 已接通的对话通道：`research` = `/research/{code}` 的页级助手；
-   * `skill` = `/skills` 页的技能助手（QUOT-476）。`unconnected` 页两样都没有。
+   * 已接通的对话通道（QUOT-477）：`research` = `/research/{code}` 的页级助手；
+   * `skill` = `/skills` 页的技能助手（QUOT-476）；`page` = 其余绑定页
+   * （`PAGE_SKILL_BINDINGS` 里 `pkg` 非空的页面）的页面助手。开放域
+   * （`/`、`/settings` 等不绑包的页面）两样都没有，保持 `null`。
    */
-  channel: { kind: 'research'; code: string } | { kind: 'skill' } | null
+  channel:
+    | { kind: 'research'; code: string }
+    | { kind: 'skill' }
+    | { kind: 'page'; endpoint: string }
+    | null
   autoSend: boolean
   fallbackCopy: boolean
 }
@@ -170,7 +177,9 @@ export function buildDockView(input: BuildDockViewInput): DockView {
   const boundSkill = input.boundSkill !== undefined ? input.boundSkill : (binding?.pkg ?? null)
   const pkg = skillPackage(boundSkill)
   const pageLabel = binding?.label ?? pageLabelFor(path)
-  const object = input.object ?? {}
+  // 路由里能读到的对象（/research/600519 的代码、/industry/电子 的板块）作兜底，
+  // 显式传入的 object 优先；顶栏入口不传 object 时 /research/{code} 也有 code 可判通道
+  const object = { ...routeObject(path), ...(input.object ?? {}) }
 
   const title = pkg
     ? (pkg.dock?.title_template ?? DEFAULT_TITLE_TEMPLATE)
@@ -182,14 +191,18 @@ export function buildDockView(input: BuildDockViewInput): DockView {
 
   const offlineNotice = input.offlineNotice ?? pkg?.offlineNotice ?? null
   const offlineBlocking = pkg?.status === 'unconnected'
-  // 通道随页面走：有 code 走研究助手；/skills 开放域走技能助手；其余页暂无通道
-  const channel: DockView['channel'] = !offlineBlocking
-    ? object.code
+  // 通道优先级（QUOT-477）：`/research/{code}` 保持 `research`、`/skills` 保持 `skill`，
+  // 其余命中 `PAGE_SKILL_BINDINGS` 且 `pkg` 非空的绑定页走 `page`；
+  // 开放域（`/`、`/settings`）不接通道。包级 `unconnected`（数据源没接通）不夺通道：
+  // `offlineBlocking` 在抽屉里照样拦住发送，不拿占位文案冒充对话能力。
+  const channel: DockView['channel'] =
+    object.code
       ? { kind: 'research', code: object.code }
       : path.startsWith('/skills')
         ? { kind: 'skill' }
-        : null
-    : null
+        : binding && binding.pkg
+          ? { kind: 'page', endpoint: PAGE_ASSISTANT_ENDPOINT }
+          : null
 
   const rendered = pkg ? renderDraft(pkg, object, input.initialDraft) : { draft: '', missing: [] }
   const draft = rendered.draft
