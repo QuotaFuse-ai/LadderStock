@@ -302,7 +302,7 @@ ldst position list --output json                         # realized.total_pnl（
 > 口径来源：`docs/decisions/DEC-063-platform-watchdog-and-health.md`。
 > 这 1 条**不属于** 31 条 P0 基线；与 `run` 一样是长驻进程，**不进** argv 矩阵，
 > 但叶子路径 `("watchdog",)` 必须登记在 `tests/fixtures/command_matrix.py`
-> （当前 `LEAF_PATHS` 共 **48** 个、矩阵 **46** 条）。
+> （当前 `LEAF_PATHS` 共 **49** 个、矩阵 **46** 条）。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
@@ -324,6 +324,18 @@ ldst position list --output json                         # realized.total_pnl（
 （`LadderStock API` → `ldst run`，`LadderStock Watchdog` → `ldst watchdog --restart-task "LadderStock API"`），
 并生成 `%LOCALAPPDATA%\LadderStock\restart-api.ps1` 作为脚本兜底。失败重启间隔为 `PT1M`
 （任务计划程序的最小值是 1 分钟，`PT30S` 会被注册接口拒绝）。
+
+## K. 助手记忆（QUOT-487 增量，1）
+
+> 口径来源：issue QUOT-487「助手通道接入 Mem0 记忆：召回/写入策略 + 注入边界」。
+> 这 1 条**不属于** 31 条 P0 基线；叶子路径 `("ai", "memory-clear")` 已登记
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **49** 个）。
+> 读/写发生在 web 助手端点（`/api/research/assistant`、`/api/skills/assistant`），
+> CLI 只提供清空入口——记忆的写入与召回策略见 `src/ladderstock/ai/memory.py` 模块 docstring。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 50 | `ldst ai memory-clear` | 一键清空助手记忆：只删 `LDST_MEMORY_USER_ID` + `ladderstock-assistant` 名下（mem0 侧 `DELETE /v1/memories/`，兜底 `POST /v1/memories/delete_all/`）的全部对话记忆，清空动作写日志（`memory_cleared`） | `--yes`（跳过确认）、`--output` | 成功 0 + 结构化载荷 `{cleared, endpoint, user_id, agent_id, removed}`；通道未启用（`LDST_MEMORY_BASE_URL` 为空或被禁用）→ **3**（无事可做，不假装清了）；mem0 不可达 → **9**（未执行清空）。**绝不越命名空间**：不碰其他 user_id / agent_id 的记忆，也绝不连 9000 端口（Multica 的 mem0 后端）
 
 ## F. 全局约定
 
