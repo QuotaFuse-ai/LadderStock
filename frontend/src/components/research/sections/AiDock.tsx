@@ -9,12 +9,14 @@ import {
 import { Check, Copy, Loader2, Send, Sparkles, Square } from 'lucide-react'
 
 import {
+  askPageAssistant,
   askResearchAssistant,
   askSkillAssistant,
   type ResearchOverview,
 } from '../../../api/research'
 import { cn } from '../../../lib/cn'
 import { useAsync } from '../../../lib/useAsync'
+import { bindingFor } from '../../../lib/skills/pageBindings'
 import {
   formatChangePct,
   formatMoney,
@@ -55,10 +57,11 @@ import {
  * 打开时的输入框**已经预填整段开场**（角色 + 分步说明 + 第 1 步指令，来自
  * `content/skills/<pkg>/steps.json` 的 `dock` 模板），不自动发送；旁边留「复制」后门。
  *
- * 对话通道两种（QUOT-476）：`research` 走 `/api/research/{code}/assistant`（个股深挖页，
- * 上下文是页级摘要）；`skill` 走 `/api/skills/assistant`（/skills 页，上下文只有
- * 页面键三件套）。两样都没有的页面进入「待接入」态，只做开场编辑与复制，
- * **不伪造回答、不自己拼后端接口**。
+ * 对话通道三种（QUOT-476 / QUOT-477）：`research` 走 `/api/research/{code}/assistant`
+ * （个股深挖页，上下文是页级摘要）；`skill` 走 `/api/skills/assistant`（/skills 页，
+ * 上下文只有页面键三件套）；`page` 走 `/api/page/assistant`（其余绑定页，`page_key`
+ * 取路由前缀，上下文同样只放页面实际可取到的键）。开放域没有通道，进入「待接入」态，
+ * 只做开场编辑与复制，**不伪造回答、不自己拼后端接口**。
  */
 
 export interface ResearchAiDockProps {
@@ -181,7 +184,8 @@ export function AssistantDockDrawer({
   }, [code, name, date, tab, overview, pageData.data])
 
   // 发给后端的就是这份 JSON：research 通道是页级摘要 + 三个上下文键；
-  // skill 通道没有页级数据可摘要，上下文就是页面键三件套（QUOT-476）
+  // skill / page 通道没有单一标的的页级数据可摘要，上下文就是页面键三件套
+  // （QUOT-476 / QUOT-477）：页面实际取不到的项不塞假数据，模型据此如实说
   const serializedContext = useMemo(() => {
     if (!view) return ''
     if (context) {
@@ -196,7 +200,7 @@ export function AssistantDockDrawer({
         2,
       )
     }
-    if (channel?.kind === 'skill') {
+    if (channel?.kind === 'skill' || channel?.kind === 'page') {
       return JSON.stringify(
         { pageKey: view.pageKey, boundSkill: view.boundSkill, object: view.object },
         null,
@@ -271,26 +275,37 @@ export function AssistantDockDrawer({
 
       try {
         const reply =
-          channel?.kind === 'skill'
-            ? await askSkillAssistant(
+          channel?.kind === 'page'
+            ? await askPageAssistant(
                 {
                   question,
                   context: serializedContext,
-                  pageKey: view?.pageKey,
+                  // page_key 取当前路由命中的前缀（/review/ai → /review）
+                  pageKey: bindingFor(view?.pageKey ?? '')?.prefix ?? view?.pageKey ?? '',
                   boundSkill: view?.boundSkill,
                 },
                 controller.signal,
               )
-            : await askResearchAssistant(
-                code ?? '',
-                {
-                  question,
-                  context: serializedContext,
-                  date: date || undefined,
-                  tab,
-                },
-                controller.signal,
-              )
+            : channel?.kind === 'skill'
+              ? await askSkillAssistant(
+                  {
+                    question,
+                    context: serializedContext,
+                    pageKey: view?.pageKey,
+                    boundSkill: view?.boundSkill,
+                  },
+                  controller.signal,
+                )
+              : await askResearchAssistant(
+                  code ?? '',
+                  {
+                    question,
+                    context: serializedContext,
+                    date: date || undefined,
+                    tab,
+                  },
+                  controller.signal,
+                )
         if (requestSeqRef.current !== seq) return
         messageIdRef.current += 1
         setMessages((prev) => [
@@ -440,7 +455,7 @@ export function AssistantDockDrawer({
           <p className="text-caption text-text-muted">
             {ready
               ? 'Enter 发送 · Shift+Enter 换行 · 回答仅作页面数据解读，不改写行情，也不构成投资建议'
-              : 'Enter 发送（通道待接入时不可用）· Shift+Enter 换行 · 不自动发送，看过再发'}
+              : 'Enter 发送（未接通时不可用）· Shift+Enter 换行 · 不自动发送，看过再发'}
           </p>
         </div>
       }
@@ -460,9 +475,9 @@ export function AssistantDockDrawer({
         )}
 
         {view && !view.channel && (
-          <Banner tone="info" title="对话通道待接入">
-            当前只有「个股深挖」页接好了助手后端。这一页可以先把开场改好，再用「复制」交给任意
-            Agent；通道接通后同一个按钮直接生效。
+          <Banner tone="info" title="这一页没有对话通道">
+            开放域页面（首页、设置等）没有绑定页面助手，这里只做开场编辑与复制：改好之后按「复制」，可以交给任意
+            Agent 使用。绑定页、个股深挖与技能页都能直接对话。
           </Banner>
         )}
 
@@ -634,7 +649,9 @@ export function AssistantDockDrawer({
                 description={
                   channel.kind === 'skill'
                     ? '回答会带上本页的页面键与绑定技能；助手只依据给出的信息回答，不会编造。'
-                    : '回答只依据上方页级上下文；页面没取到的行情 / 财报 / 事件，助手会直说，不会用一般知识补。'
+                    : channel.kind === 'page'
+                      ? '回答只依据本页的页面键与绑定技能；页面没取到的数据，助手会直说，不会编造。'
+                      : '回答只依据上方页级上下文；页面没取到的行情 / 财报 / 事件，助手会直说，不会用一般知识补。'
                 }
               />
             )}
@@ -684,7 +701,7 @@ export function AssistantDockDrawer({
           </section>
         ) : (
           <p className="rounded border border-dashed border-border px-3 py-2 text-caption leading-body text-text-muted">
-            这一页还没有对话通道：输入框里的开场可以直接改，按「复制」后贴给任意 Agent 就能开工。
+            开放域页面没有对话通道：输入框里的开场可以直接改，按「复制」后贴给任意 Agent 就能开工。
           </p>
         )}
       </div>

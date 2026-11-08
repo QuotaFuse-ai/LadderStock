@@ -1056,6 +1056,41 @@ export async function askSkillAssistant(
   }
 }
 
+/**
+ * 绑定页（`/market`、`/watch`、`/industry` 等）的页面助手端点（QUOT-477）。
+ *
+ * 这些页面没有单一标的，拿不到 `/research/{code}` 的页级摘要，但也不是
+ * `/skills` 那种开放域，所以走单独的页级通道。载荷与 skill 助手同构：
+ * `page_key` 取当前路由命中的**前缀**（`/watch` 取 `/watch`），`bound_skill`
+ * 取该页绑定的技能包 code；`context` 只放页面实际可取到的键，取不到就不放。
+ */
+export const PAGE_ASSISTANT_ENDPOINT = '/api/page/assistant'
+
+export async function askPageAssistant(
+  payload: SkillAssistantPayload,
+  signal?: AbortSignal,
+): Promise<AssistantReply> {
+  const data = await request<unknown>(PAGE_ASSISTANT_ENDPOINT, {
+    method: 'POST',
+    body: {
+      question: payload.question,
+      context: payload.context,
+      page_key: payload.pageKey ?? null,
+      bound_skill: payload.boundSkill ?? null,
+    },
+    signal,
+    timeoutMs: ASSISTANT_TIMEOUT_MS,
+  })
+  const root = asRecord(data, '页面助手响应')
+  const reply = asString(root.reply)
+  if (!reply) throw parseError('页面助手返回了空回答')
+  return {
+    reply,
+    model: asString(root.model),
+    fetchedAt: asString(root.fetched_at),
+  }
+}
+
 // ---------------------------------------------------------------- 传输
 
 const TIMEOUT_MS = 12000

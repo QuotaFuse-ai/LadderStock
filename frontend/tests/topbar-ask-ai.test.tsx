@@ -87,7 +87,8 @@ describe('顶栏「问 AI」入口', () => {
     expect(draft).toContain('第 1 步，情绪总览：')
     // 不自动发送：只有「复制」和「发送」，没有请求
     expect(screen.getByRole('button', { name: '复制开场' })).toBeTruthy()
-    expect((screen.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(true)
+    // QUOT-477：绑定页有 page 通道，预填后即可发送（不再因「没通道」禁用）
+    expect((screen.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(false)
     expect(document.body.style.overflow).toBe('hidden')
   })
 

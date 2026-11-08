@@ -83,11 +83,12 @@ describe('开场预填（steps.json 的 dock 模板）', () => {
     expect(starter.text).toBe(view.draft)
   })
 
-  it('模板里的 {name}/{code} 取不到就原样保留并记下来', () => {
+  it('模板里的 {name} 取不到就原样保留并记下来（{code} 从路由取到）', () => {
     const view = buildDockView({ pathname: '/research/600519' })
     expect(view.draft).toContain('{name}')
-    expect(view.draft).toContain('{code}')
-    expect(view.missingPlaceholders).toEqual(expect.arrayContaining(['name', 'code']))
+    expect(view.draft).not.toContain('{code}')
+    expect(view.missingPlaceholders).toContain('name')
+    expect(view.missingPlaceholders).not.toContain('code')
   })
 
   it('带对象时占位换成真实值，不再报缺', () => {
@@ -120,10 +121,10 @@ describe('开场预填（steps.json 的 dock 模板）', () => {
 })
 
 describe('未接通与部分未接通', () => {
-  it('unconnected：说明来自包数据，发送被拦', () => {
+  it('unconnected：说明来自包数据，发送被拦（QUOT-477 起通道不因未接通被夺）', () => {
     const view = buildDockView({ pathname: '/news', object: { code: '600000' } })
     expect(view.offlineBlocking).toBe(true)
-    expect(view.channel).toBeNull()
+    expect(view.channel).toEqual({ kind: 'research', code: '600000' })
     expect(view.offlineNotice).toBe(skillPackage('wire-desk')?.offlineNotice)
   })
 
@@ -149,6 +150,9 @@ describe('未接通与部分未接通', () => {
  * QUOT-476：对话通道从「有没有 code」扩成两种——
  * 个股页走 `/api/research/{code}/assistant`（research），
  * `/skills` 页没有 code，走 `/api/skills/assistant`（skill）。
+ *
+ * QUOT-477：再扩到第三种 `page`（`/api/page/assistant`，见 page-channel.test.ts），
+ * 并且通道判定不再看 `offlineBlocking`：未接通包保留通道、由抽屉拦发送。
  */
 describe('QUOT-476：对话通道类型', () => {
   it('/skills 开放域页：skill 通道（没有 code 也能发）', () => {
@@ -165,10 +169,10 @@ describe('QUOT-476：对话通道类型', () => {
     expect(view.channel).toEqual({ kind: 'skill' })
   })
 
-  it('/skills 绑定未接通包：不接通就不给通道', () => {
+  it('/skills 绑定未接通包：skill 通道保留，发送被拦', () => {
     const view = buildDockView({ pathname: '/skills/pkg/wire-desk', boundSkill: 'wire-desk' })
     expect(view.offlineBlocking).toBe(true)
-    expect(view.channel).toBeNull()
+    expect(view.channel).toEqual({ kind: 'skill' })
   })
 
   it('/research 有 code：research 通道（routeObject 提供对象时）', () => {
@@ -181,10 +185,10 @@ describe('QUOT-476：对话通道类型', () => {
     })
   })
 
-  it('/research 未接通包压在 code 前面：没有通道', () => {
+  it('/research 未接通包压在 code 前面：research 通道仍在，发送被拦', () => {
     const view = buildDockView({ pathname: '/research/600519', boundSkill: 'wire-desk' })
     expect(view.offlineBlocking).toBe(true)
-    expect(view.channel).toBeNull()
+    expect(view.channel).toEqual({ kind: 'research', code: '600519' })
   })
 
   it('非 /skills 的开放域页（首页）仍没有通道', () => {

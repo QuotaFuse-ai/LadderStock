@@ -263,6 +263,19 @@ export function describeAssistantError(error: unknown): AssistantFailureInfo {
         retryable: false,
       }
     }
+    if (error.status === 403) {
+      // 来源闸门（写方法必须有本机页面 Origin 或显式头）：页内重试通常还是 403，
+      // 所以不给重试按钮，把服务的原话带出来
+      return {
+        kind: 'invalid',
+        title: '请求来源校验未通过',
+        detail:
+          error.detail ??
+          '写请求缺少来源证据：需要本机页面 Origin 或显式客户端头。请从 LadderStock 页面内重新打开后再问。',
+        code: 'HTTP 403',
+        retryable: false,
+      }
+    }
     if (error.status === 503) {
       const detail = error.detail ?? '模型通道不可用'
       if (detail.includes('未配置') || detail.includes('缺少')) {
@@ -288,6 +301,15 @@ export function describeAssistantError(error: unknown): AssistantFailureInfo {
         title: '回答超时',
         detail: error.detail ?? '模型通道超时；可以重试，或把问题问得更短一些。',
         code: 'HTTP 504',
+        retryable: true,
+      }
+    }
+    if (error.status === 502) {
+      return {
+        kind: 'upstream',
+        title: 'AI 请求未送达',
+        detail: error.detail ?? '模型请求没有送达或上游返回错误（网络 / 代理 / 上游服务）；可以重试。',
+        code: 'HTTP 502',
         retryable: true,
       }
     }
