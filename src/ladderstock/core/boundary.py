@@ -125,6 +125,18 @@ _PEER_FALLBACKS: dict[str, Peer] = {
         health_path="/health",
         repo="QuotaFuse-ai/FinanceCoffer",
     ),
+    "mem0": Peer(
+        key="mem0",
+        product="Mem0",
+        package="qf-mem0",
+        cli="docker",
+        mcp_name=None,
+        default_port=9100,
+        role="助手记忆：add / search / 历史回放（本地 bge-small-zh 向量，云骏 LLM）",
+        consumption="基础设施",
+        health_path="/configure",
+        repo=None,
+    ),
 }
 
 
@@ -277,6 +289,10 @@ class PeerControl:
     #: 控制面是否接管安装/启停（QUOT-403）：False = 只读观测（面板出卡、探健康，
     #: 不给安装/启动/停止按钮）。WSL 里的服务（FinanceCoffer）归此列。
     managed: bool = True
+    #: Docker compose 生命周期（QUOT-486 mem0）：启停不走 `.venv/Scripts/` 入口，
+    #: 改走 `wsl -d <发行版> -- docker compose -f <directory>/<该文件名> up -d / stop`。
+    #: 存 compose 文件名（相对 directory）；None = venv 脚本形态。
+    compose_file: str | None = None
 
 
 PEER_CONTROL: dict[str, PeerControl] = {
@@ -408,6 +424,60 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "不是本单要修的故障。",
         ),
     ),
+    "mem0": PeerControl(
+        key="mem0",
+        directory=r"[modules-path]\Mem0",
+        # mem0 是容器化服务（OPENAI_API_KEY 只从 Windows 机器级环境变量注入），
+        # 没有 pip 分发，也不走 .venv：compose 分支不查 import（见 control.py）。
+        import_package="",
+        repo=None,
+        dist_name=None,
+        # 容器映射 9100→8000（mem0 API，本 peer 的服务端口）；3200→3000（dashboard）
+        mcp_port=9100,
+        web_port=3200,
+        web_port_label="Dashboard",
+        # 实测（curl http://127.0.0.1:9100/configure 200）：mem0 OSS server 没有
+        # 专用 /healthz——/health /healthz /metrics 均 404；/configure 是轻量只读
+        # 端点（返回当前 vector_store/llm/embedder 配置），用它当健康探针。
+        health_path="/configure",
+        start_commands=(),
+        config_keys=(
+            "OPENAI_BASE_URL",
+            "OPENAI_API_KEY",
+            "MEM0_DEFAULT_LLM_MODEL",
+            "MEM0_EMBEDDER_PROVIDER",
+            "MEM0_DEFAULT_EMBEDDER_MODEL",
+            "MEM0_DEFAULT_EMBEDDER_DIM",
+            "HF_ENDPOINT",
+            "POSTGRES_COLLECTION_NAME",
+            "APP_DB_NAME",
+            "MEM0_TELEMETRY",
+            "AUTH_DISABLED",
+            "JWT_SECRET",
+            "POSTGRES_USER",
+            "POSTGRES_PASSWORD",
+        ),
+        secret_keys=("OPENAI_API_KEY", "JWT_SECRET", "POSTGRES_PASSWORD"),
+        has_wheel_dist=False,
+        # compose 读取的就是这个 .env（实测 /configure 的 llm.base_url 即出自它）
+        env_filename=".env",
+        compose_file="docker-compose.yml",
+        config_notes=(
+            "config_keys 对照表（键名 → mem0 server 源码位置，实测读取，非白名单）——"
+            "POSTGRES_COLLECTION_NAME 在 server/main.py:113；APP_DB_NAME 在 server/db.py:12；"
+            "AUTH_DISABLED 在 server/auth.py:20；JWT_SECRET 在 server/auth.py:15；"
+            "MEM0_TELEMETRY 在 server/telemetry.py:27；OPENAI_BASE_URL / OPENAI_API_KEY / "
+            "MEM0_DEFAULT_LLM_MODEL / MEM0_EMBEDDER_PROVIDER / MEM0_DEFAULT_EMBEDDER_MODEL / "
+            "MEM0_DEFAULT_EMBEDDER_DIM / HF_ENDPOINT 由 mem0 OSS 库的 config 层读取"
+            "（容器内 mem0 包，非 server/ 目录），由 GET /configure 的返回印证。",
+            "启停形态：`wsl -d <默认发行版> -- docker compose -f "
+            "<directory>/docker-compose.yml up -d / stop`，compose project 名 qf-mem0"
+            "（与 Multica 的 mem0-dev 物理隔离：独立端口 9100/3200/8532、独立卷、"
+            "集合 ladderstock_memories）。发行版名不写死：LDST_WSL_DISTRO > wsl -l -v 默认。",
+            "embedder 必须留在本地 huggingface BAAI/bge-small-zh-v1.5（云骏无 embedding "
+            "接口，强改 OpenAI embedding 会 403）；LLM 走云骏 deepseek-v4.1-flash-1017。",
+        ),
+    ),
 }
 
 
@@ -418,6 +488,7 @@ PEER_DIR_ENV: dict[str, str] = {
     "wire": "LDST_PEER_DIR_WIRE",
     "senate": "LDST_PEER_DIR_SENATE",
     "financecoffer": "LDST_PEER_DIR_FINANCECOFFER",
+    "mem0": "LDST_PEER_DIR_MEM0",
 }
 
 #: 默认按同级目录探测：把 peer 仓库 clone 到 LadderStock 旁边即可直接安装。
@@ -428,6 +499,8 @@ PEER_SIBLING_DIRS: dict[str, str] = {
     "wire": os.path.join("Wire", "quotafuse-wire"),
     "senate": "StockSenate",
     "financecoffer": "FinanceCoffer",
+    # mem0 是独立部署单元：D:\QuotaFuseModules\Mem0（机器级变量 LDST_PEER_DIR_MEM0）
+    "mem0": "Mem0",
 }
 
 # --------------------------------------------------------------------------- #
