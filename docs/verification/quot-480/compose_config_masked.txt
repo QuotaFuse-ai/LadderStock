@@ -1,0 +1,327 @@
+name: financecoffer
+services:
+  api:
+    build:
+      context: /mnt/d/workplace/FinanceCoffer
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+        required: true
+      minio:
+        condition: service_healthy
+        required: true
+      postgres:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    entrypoint:
+      - uvicorn
+      - financecoffer.api.app:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8100"
+    environment:
+      FC_COLD_AFTER_YEARS: "3"
+      FC_COMPLIANCE_ENABLED: "true"
+      FC_DB_URL: postgresql+psycopg://fcoffer:***LOCAL_DB_PWD***@postgres:5432/financecoffer
+      FC_EMBEDDING_API_KEY: ""
+      FC_EMBEDDING_DIM: "1024"
+      FC_EMBEDDING_MODEL: bge-m3
+      FC_EMBEDDING_PROVIDER: openai
+      FC_EMBEDDING_URL: http://host.docker.internal:8001/v1/embeddings
+      FC_ETL_BACKOFF_MS: "1000"
+      FC_ETL_BATCH_SIZE: "50"
+      FC_ETL_BLOCK_MS: "5000"
+      FC_ETL_CLAIM_IDLE_MS: "60000"
+      FC_ETL_CONSUMER_NAME: ""
+      FC_ETL_CONTROL_KEY: fc:etl:control
+      FC_ETL_DLQ_STREAM: fc:stockdata:dlq
+      FC_ETL_MAX_ATTEMPTS: "3"
+      FC_EVENT_CONSUMER: redis
+      FC_EVENT_GROUP: fc-etl
+      FC_EVENT_STREAM: fc:stockdata:events
+      FC_LOG_LEVEL: INFO
+      FC_MCP_TOKEN: ""
+      FC_METRICS_PROFILE: snapshot
+      FC_MINIO_ACCESS_KEY: ***MINIO_ACCESS_KEY***
+      FC_MINIO_AUTOSTART: "false"
+      FC_MINIO_BINARY: ""
+      FC_MINIO_BUCKET: financecoffer
+      FC_MINIO_CONSOLE_ENDPOINT: ""
+      FC_MINIO_DATA_DIR: ""
+      FC_MINIO_ENDPOINT: minio:9000
+      FC_MINIO_LOG_FILE: ""
+      FC_MINIO_SECRET_KEY: ***MINIO_SECRET_KEY***
+      FC_RATE_LIMIT_ENABLED: "true"
+      FC_RATE_LIMIT_PER_MINUTE: "125"
+      FC_REDIS_URL: redis://redis:6379/1
+    extra_hosts:
+      - host.docker.internal=host-gateway
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=4)
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 20s
+    image: financecoffer/app:local
+    networks:
+      fcnet: null
+    ports:
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 8100
+        published: "8100"
+        protocol: tcp
+    restart: unless-stopped
+  migrate:
+    build:
+      context: /mnt/d/workplace/FinanceCoffer
+      dockerfile: deploy/Dockerfile
+    command:
+      - db
+      - migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: true
+    environment:
+      FC_COLD_AFTER_YEARS: "3"
+      FC_COMPLIANCE_ENABLED: "true"
+      FC_DB_URL: postgresql+psycopg://fcoffer:***LOCAL_DB_PWD***@postgres:5432/financecoffer
+      FC_EMBEDDING_API_KEY: ""
+      FC_EMBEDDING_DIM: "1024"
+      FC_EMBEDDING_MODEL: bge-m3
+      FC_EMBEDDING_PROVIDER: openai
+      FC_EMBEDDING_URL: http://host.docker.internal:8001/v1/embeddings
+      FC_ETL_BACKOFF_MS: "1000"
+      FC_ETL_BATCH_SIZE: "50"
+      FC_ETL_BLOCK_MS: "5000"
+      FC_ETL_CLAIM_IDLE_MS: "60000"
+      FC_ETL_CONSUMER_NAME: ""
+      FC_ETL_CONTROL_KEY: fc:etl:control
+      FC_ETL_DLQ_STREAM: fc:stockdata:dlq
+      FC_ETL_MAX_ATTEMPTS: "3"
+      FC_EVENT_CONSUMER: redis
+      FC_EVENT_GROUP: fc-etl
+      FC_EVENT_STREAM: fc:stockdata:events
+      FC_LOG_LEVEL: INFO
+      FC_MCP_TOKEN: ""
+      FC_METRICS_PROFILE: snapshot
+      FC_MINIO_ACCESS_KEY: ***MINIO_ACCESS_KEY***
+      FC_MINIO_AUTOSTART: "false"
+      FC_MINIO_BINARY: ""
+      FC_MINIO_BUCKET: financecoffer
+      FC_MINIO_CONSOLE_ENDPOINT: ""
+      FC_MINIO_DATA_DIR: ""
+      FC_MINIO_ENDPOINT: minio:9000
+      FC_MINIO_LOG_FILE: ""
+      FC_MINIO_SECRET_KEY: ***MINIO_SECRET_KEY***
+      FC_RATE_LIMIT_ENABLED: "true"
+      FC_RATE_LIMIT_PER_MINUTE: "125"
+      FC_REDIS_URL: redis://redis:6379/1
+    healthcheck:
+      disable: true
+    image: financecoffer/app:local
+    networks:
+      fcnet: null
+    restart: "no"
+  minio:
+    command:
+      - server
+      - /data
+      - --console-address
+      - :9001
+    environment:
+      MINIO_ROOT_PASSWORD: *** ***MINIO_SECRET_KEY***
+      MINIO_ROOT_USER: ***MINIO_ACCESS_KEY***
+    expose:
+      - "9000"
+      - "9001"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1
+      timeout: 5s
+      interval: 10s
+      retries: 10
+      start_period: 20s
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    networks:
+      fcnet: null
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: miniodata
+        target: /data
+        volume: {}
+  postgres:
+    environment:
+      POSTGRES_DB: financecoffer
+      POSTGRES_PASSWORD: *** ***LOCAL_DB_PWD***
+      POSTGRES_USER: ***DB_USER***
+    expose:
+      - "5432"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      timeout: 5s
+      interval: 10s
+      retries: 10
+      start_period: 30s
+    image: pgvector/pgvector:pg16
+    networks:
+      fcnet: null
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+        volume: {}
+  redis:
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+    expose:
+      - "6379"
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      timeout: 3s
+      interval: 10s
+      retries: 10
+    image: redis:7.4-alpine
+    networks:
+      fcnet: null
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: redisdata
+        target: /data
+        volume: {}
+  worker:
+    build:
+      context: /mnt/d/workplace/FinanceCoffer
+      dockerfile: deploy/Dockerfile
+    command:
+      - etl
+      - consume
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+        required: true
+      postgres:
+        condition: service_healthy
+        required: true
+      redis:
+        condition: service_healthy
+        required: true
+    environment:
+      FC_COLD_AFTER_YEARS: "3"
+      FC_COMPLIANCE_ENABLED: "true"
+      FC_DB_URL: postgresql+psycopg://fcoffer:***LOCAL_DB_PWD***@postgres:5432/financecoffer
+      FC_EMBEDDING_API_KEY: ""
+      FC_EMBEDDING_DIM: "1024"
+      FC_EMBEDDING_MODEL: bge-m3
+      FC_EMBEDDING_PROVIDER: openai
+      FC_EMBEDDING_URL: http://host.docker.internal:8001/v1/embeddings
+      FC_ETL_BACKOFF_MS: "1000"
+      FC_ETL_BATCH_SIZE: "50"
+      FC_ETL_BLOCK_MS: "5000"
+      FC_ETL_CLAIM_IDLE_MS: "60000"
+      FC_ETL_CONSUMER_NAME: ""
+      FC_ETL_CONTROL_KEY: fc:etl:control
+      FC_ETL_DLQ_STREAM: fc:stockdata:dlq
+      FC_ETL_MAX_ATTEMPTS: "3"
+      FC_EVENT_CONSUMER: redis
+      FC_EVENT_GROUP: fc-etl
+      FC_EVENT_STREAM: fc:stockdata:events
+      FC_LOG_LEVEL: INFO
+      FC_MCP_TOKEN: ""
+      FC_METRICS_PROFILE: snapshot
+      FC_MINIO_ACCESS_KEY: ***MINIO_ACCESS_KEY***
+      FC_MINIO_AUTOSTART: "false"
+      FC_MINIO_BINARY: ""
+      FC_MINIO_BUCKET: financecoffer
+      FC_MINIO_CONSOLE_ENDPOINT: ""
+      FC_MINIO_DATA_DIR: ""
+      FC_MINIO_ENDPOINT: minio:9000
+      FC_MINIO_LOG_FILE: ""
+      FC_MINIO_SECRET_KEY: ***MINIO_SECRET_KEY***
+      FC_RATE_LIMIT_ENABLED: "true"
+      FC_RATE_LIMIT_PER_MINUTE: "125"
+      FC_REDIS_URL: redis://redis:6379/1
+    extra_hosts:
+      - host.docker.internal=host-gateway
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import os, redis, time; r = redis.Redis.from_url(os.environ['FC_REDIS_URL'], socket_timeout=3, decode_responses=True); v = r.get('fc:etl:live:' + os.environ['FC_EVENT_STREAM']); raise SystemExit(0 if v and time.time() - float(v) < 120 else 1)
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 20s
+    image: financecoffer/app:local
+    networks:
+      fcnet: null
+    restart: unless-stopped
+networks:
+  fcnet:
+    name: financecoffer_fcnet
+    driver: bridge
+volumes:
+  miniodata:
+    name: financecoffer_miniodata
+  pgdata:
+    name: financecoffer_pgdata
+  redisdata:
+    name: financecoffer_redisdata
+x-app-env:
+  FC_COLD_AFTER_YEARS: "3"
+  FC_COMPLIANCE_ENABLED: "true"
+  FC_DB_URL: postgresql+psycopg://fcoffer:***LOCAL_DB_PWD***@postgres:5432/financecoffer
+  FC_EMBEDDING_API_KEY: ""
+  FC_EMBEDDING_DIM: "1024"
+  FC_EMBEDDING_MODEL: bge-m3
+  FC_EMBEDDING_PROVIDER: openai
+  FC_EMBEDDING_URL: http://host.docker.internal:8001/v1/embeddings
+  FC_ETL_BACKOFF_MS: "1000"
+  FC_ETL_BATCH_SIZE: "50"
+  FC_ETL_BLOCK_MS: "5000"
+  FC_ETL_CLAIM_IDLE_MS: "60000"
+  FC_ETL_CONSUMER_NAME: ""
+  FC_ETL_CONTROL_KEY: fc:etl:control
+  FC_ETL_DLQ_STREAM: fc:stockdata:dlq
+  FC_ETL_MAX_ATTEMPTS: "3"
+  FC_EVENT_CONSUMER: redis
+  FC_EVENT_GROUP: fc-etl
+  FC_EVENT_STREAM: fc:stockdata:events
+  FC_LOG_LEVEL: INFO
+  FC_MCP_TOKEN: ""
+  FC_METRICS_PROFILE: snapshot
+  FC_MINIO_ACCESS_KEY: ***MINIO_ACCESS_KEY***
+  FC_MINIO_AUTOSTART: "false"
+  FC_MINIO_BINARY: ""
+  FC_MINIO_BUCKET: financecoffer
+  FC_MINIO_CONSOLE_ENDPOINT: ""
+  FC_MINIO_DATA_DIR: ""
+  FC_MINIO_ENDPOINT: minio:9000
+  FC_MINIO_LOG_FILE: ""
+  FC_MINIO_SECRET_KEY: ***MINIO_SECRET_KEY***
+  FC_RATE_LIMIT_ENABLED: "true"
+  FC_RATE_LIMIT_PER_MINUTE: "125"
+  FC_REDIS_URL: redis://redis:6379/1

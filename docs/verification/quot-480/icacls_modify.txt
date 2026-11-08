@@ -1,0 +1,5 @@
+D:\workplace\FinanceCoffer\deploy\.env BUILTIN\Administrators:(F)
+                                       NT AUTHORITY\SYSTEM:(F)
+                                       0EBDA3E87F2CB04\Administrator:(F)
+
+�ѳɹ����� 1 ���ļ�; ���� 0 ���ļ�ʱʧ��

@@ -1592,6 +1592,10 @@ class ControlPlane:
         last_job = self._last_job.get(key)
         running_with_web = status == STATUS_RUNNING and bool(ctl.web_port)
         open_url = f"http://127.0.0.1:{ctl.web_port}" if running_with_web else None
+        # 配置抽屉能不能开：白名单非空（与 update_config 的 allowed 同源）且 env 文件
+        # 的父目录存在（与 update_config 的 400 前置检查同源）。空白名单模块不出
+        # 「编辑配置」入口——空抽屉 + 「保存后创建」提示是误导（QUOT-480）。
+        env_parent = Path(directory) / Path(ctl.env_filename).parent
         # 版本三态（QUOT-402）：期望值来自后台线程维护的 GitHub Release 缓存；
         # 缓存没有 / 任一侧不是 semver 都判 unknown，不许猜。只读，绝不代跑升级。
         expected_version = self._release_cache.expected(ctl.repo) if ctl.repo else None
@@ -1636,6 +1640,9 @@ class ControlPlane:
                 ),
                 "can_stop": ctl.managed and (bool(state_pids(self._peer_state(key))) or listening),
                 "can_open": open_url is not None,
+                #  config_keys 为空 = 没有可写键（未配白名单的模块）：页面据此置灰
+                # 「编辑配置」，不给空抽屉与「保存后创建」的假承诺（QUOT-480）。
+                "can_config": bool(ctl.config_keys) and env_parent.is_dir(),
             },
         }
 
@@ -1884,6 +1891,8 @@ class ControlPlane:
                 "can_start": False,
                 "can_stop": False,
                 "can_open": False,
+                # 白名单里没有它的控制元数据，自然也没有可写配置（QUOT-480）
+                "can_config": False,
             },
         }
 
@@ -2666,6 +2675,9 @@ class ControlPlane:
             "peer": key,
             "env_file": str(path),
             "exists": path.is_file(),
+            # 与快照 actions.can_config / update_config 的写入条件同源，前端只按它渲染，
+            # 不在两边各判一次（QUOT-480）：白名单为空或 env 父目录缺失就是不可编辑。
+            "editable": bool(ctl.config_keys) and path.parent.is_dir(),
             "keys": list(ctl.config_keys),
             "values": rows,
             "notes": list(ctl.config_notes),

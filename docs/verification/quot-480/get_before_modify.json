@@ -1,0 +1,179 @@
+{
+  "status": 200,
+  "body": {
+    "peer": "financecoffer",
+    "env_file": "D:\\workplace\\FinanceCoffer\\deploy\\.env",
+    "exists": true,
+    "editable": true,
+    "keys": [
+      "FC_EMBEDDING_DIM",
+      "FC_EMBEDDING_PROVIDER",
+      "FC_EMBEDDING_MODEL",
+      "FC_EMBEDDING_URL",
+      "FC_EMBEDDING_API_KEY",
+      "FC_MINIO_ACCESS_KEY",
+      "FC_MINIO_SECRET_KEY",
+      "FC_MINIO_BUCKET",
+      "FC_EVENT_CONSUMER",
+      "FC_EVENT_STREAM",
+      "FC_EVENT_GROUP",
+      "FC_ETL_CONSUMER_NAME",
+      "FC_ETL_DLQ_STREAM",
+      "FC_ETL_CONTROL_KEY",
+      "FC_ETL_BATCH_SIZE",
+      "FC_ETL_BLOCK_MS",
+      "FC_ETL_MAX_ATTEMPTS",
+      "FC_ETL_BACKOFF_MS",
+      "FC_ETL_CLAIM_IDLE_MS",
+      "FC_METRICS_PROFILE",
+      "FC_COMPLIANCE_ENABLED",
+      "FC_RATE_LIMIT_ENABLED",
+      "FC_RATE_LIMIT_PER_MINUTE",
+      "FC_MCP_TOKEN",
+      "FC_LOG_LEVEL",
+      "FC_COLD_AFTER_YEARS"
+    ],
+    "values": {
+      "FC_EMBEDDING_DIM": {
+        "set": true,
+        "secret": false,
+        "value": "1024"
+      },
+      "FC_EMBEDDING_PROVIDER": {
+        "set": true,
+        "secret": false,
+        "value": "openai"
+      },
+      "FC_EMBEDDING_MODEL": {
+        "set": true,
+        "secret": false,
+        "value": "bge-m3"
+      },
+      "FC_EMBEDDING_URL": {
+        "set": true,
+        "secret": false,
+        "value": "http://host.docker.internal:8001/v1/embeddings"
+      },
+      "FC_EMBEDDING_API_KEY": {
+        "set": false,
+        "secret": true,
+        "preview": ""
+      },
+      "FC_MINIO_ACCESS_KEY": {
+        "set": true,
+        "secret": true,
+        "preview": "****"
+      },
+      "FC_MINIO_SECRET_KEY": {
+        "set": true,
+        "secret": true,
+        "preview": "fco****2026"
+      },
+      "FC_MINIO_BUCKET": {
+        "set": true,
+        "secret": false,
+        "value": "financecoffer"
+      },
+      "FC_EVENT_CONSUMER": {
+        "set": true,
+        "secret": false,
+        "value": "redis"
+      },
+      "FC_EVENT_STREAM": {
+        "set": true,
+        "secret": false,
+        "value": "fc:stockdata:events"
+      },
+      "FC_EVENT_GROUP": {
+        "set": true,
+        "secret": false,
+        "value": "fc-etl"
+      },
+      "FC_ETL_CONSUMER_NAME": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_ETL_DLQ_STREAM": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_ETL_CONTROL_KEY": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_ETL_BATCH_SIZE": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_ETL_BLOCK_MS": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_ETL_MAX_ATTEMPTS": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_ETL_BACKOFF_MS": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_ETL_CLAIM_IDLE_MS": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_METRICS_PROFILE": {
+        "set": false,
+        "secret": false,
+        "value": null
+      },
+      "FC_COMPLIANCE_ENABLED": {
+        "set": true,
+        "secret": false,
+        "value": "true"
+      },
+      "FC_RATE_LIMIT_ENABLED": {
+        "set": true,
+        "secret": false,
+        "value": "true"
+      },
+      "FC_RATE_LIMIT_PER_MINUTE": {
+        "set": true,
+        "secret": false,
+        "value": "120"
+      },
+      "FC_MCP_TOKEN": {
+        "set": false,
+        "secret": true,
+        "preview": ""
+      },
+      "FC_LOG_LEVEL": {
+        "set": true,
+        "secret": false,
+        "value": "INFO"
+      },
+      "FC_COLD_AFTER_YEARS": {
+        "set": true,
+        "secret": false,
+        "value": "3"
+      }
+    },
+    "notes": [
+      "FinanceCoffer 服务跑在 WSL（127.0.0.1:8100），控制面不接管安装/启停；启停与治理见 QUOT-404。",
+      "/health 回 status=degraded（如 embedding unreachable）时面板如实显示，不是本单要修的故障。",
+      "白名单 26 键 = core/config.py 的 Config.model_fields 全量 34 键，扣除 8 个容器部署形态下写 deploy/.env 不生效的键（逐键「键名 → config.py:行」对照表由脚本生成，见 PR 评论的脚本与输出）。",
+      "扣除的 8 键及依据（deploy/compose.yaml x-app-env 的值表达式，行号实测）：FC_DB_URL（:24，由 POSTGRES_USER/PASSWORD/DB 拼装，写本键会被覆盖）；FC_REDIS_URL（:25，字面量 redis://redis:6379/1）；FC_MINIO_ENDPOINT（:31，字面量 minio:9000）；FC_MINIO_AUTOSTART（:38，字面量 false）；FC_MINIO_BINARY/DATA_DIR/LOG_FILE/CONSOLE_ENDPOINT（:41-44，虽经 ${VAR:-} 插值，但仅本地进程形态消费，容器 AUTOSTART 钉死 false 时是 no-op）。",
+      "生效路径实测（2026-11）：WSL 内 docker compose 托管，容器 inspect 标签 environment_file=/mnt/d/workplace/FinanceCoffer/deploy/.env，compose 把它渲染进 api/worker 的 environment。保存 deploy/.env 后不会即时生效——需在 WSL 侧执行 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d 重建容器才生效；该启停不属于控制面（QUOT-403/404）。",
+      "密钥口径 = FC 自身 SECRET_FIELDS 四键（FC_EMBEDDING_API_KEY / FC_MINIO_ACCESS_KEY / FC_MINIO_SECRET_KEY / FC_MCP_TOKEN）；FC_REDIS_URL 本机 Redis 无认证、也不在白名单，不按密钥处理。",
+      "vector/chunking.py:135 直读 FC_TOKENIZER_PATH / FC_EMBEDDING_MODEL_DIR（不走 loader 的 .env 链路）；FC_WEBHOOK_TOKEN / FC_DRILL_TARGET_DSN / FC_RESTORE_DSN / FC_STATE_DIR 是运维脚本键、不在 Config.model_fields 内：均不进白名单，写本文件对它们不生效。",
+      "config/loader.py 的 DEFAULT_ENV_FILE（.env）只在进程 CWD 下解析；FC 实际经 compose 的 process env 取值，仓库根 .env 的运行时不读它。"
+    ]
+  }
+}

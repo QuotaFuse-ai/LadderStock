@@ -1,0 +1,19 @@
+{
+  "before_lines": 15,
+  "after_lines": 15,
+  "kept_in_place": true,
+  "removed_set": [
+    "FC_RATE_LIMIT_PER_MINUTE=120"
+  ],
+  "added_set": [
+    "FC_RATE_LIMIT_PER_MINUTE=125"
+  ],
+  "dacl_unchanged": true,
+  "getcontent_matches_disk": true,
+  "rate_limit_after": {
+    "set": true,
+    "secret": false,
+    "value": "125"
+  },
+  "secrets_plain_in_response": []
+}

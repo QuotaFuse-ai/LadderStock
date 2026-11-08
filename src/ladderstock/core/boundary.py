@@ -253,7 +253,9 @@ PEERS, PEER_LOAD_WARNINGS = _load_module_peers()
 
 #: 控制面默认只写这一个文件（DEC-014 硬约束 4：凭据只进 env、0600）。
 #: 但各 peer 读取的 dotenv 文件名并不一致（见 `PeerControl.env_filename` 的实测
-#: 依据）：CN / US / Senate 只读 `.env`，Wire 读 `.env.local` 且优先级更高。
+#: 依据）：CN / US / Senate 只读 `.env`，Wire 读 `.env.local` 且优先级更高，
+#: FinanceCoffer 的生效文件在子目录 `deploy/.env`（WSL 内 docker compose 的
+#: environment_file 标签实测，容器无仓库挂载、process env 优先）。
 #: 写错文件名 = 用户填了 key 却静默不生效，属于 DEC-014 禁止的「静默降级」。
 PEER_ENV_FILENAME = ".env.local"
 
@@ -413,15 +415,85 @@ PEER_CONTROL: dict[str, PeerControl] = {
         # 服务跑在 WSL 里，Windows 侧的 .venv/Scripts 里没有可拉起的入口：
         # 控制面只做只读观测与健康探测，绝不接管启停（QUOT-403）。
         start_commands=(),
-        config_keys=(),
+        # 白名单 26 键 = Config.model_fields 全量 34 键扣除 8 个「写 deploy/.env 也不
+        # 生效」的键。逐键证据由脚本核对两道关后生成（对照表随 PR 评论交付）：
+        # ① FC 侧真的在读 —— core/config.py 的 Config 字段（行号对照）经
+        #    config/loader.py ENV_PREFIX=FC_ + _extract_known 读入；
+        # ② 部署形态真的收得到 —— deploy/compose.yaml x-app-env 用 ${FC_...:?} /
+        #    ${FC_...:-} 引用同键插值，写 deploy/.env 后重建容器即生效。
+        config_keys=(
+            "FC_EMBEDDING_DIM",
+            "FC_EMBEDDING_PROVIDER",
+            "FC_EMBEDDING_MODEL",
+            "FC_EMBEDDING_URL",
+            "FC_EMBEDDING_API_KEY",
+            "FC_MINIO_ACCESS_KEY",
+            "FC_MINIO_SECRET_KEY",
+            "FC_MINIO_BUCKET",
+            "FC_EVENT_CONSUMER",
+            "FC_EVENT_STREAM",
+            "FC_EVENT_GROUP",
+            "FC_ETL_CONSUMER_NAME",
+            "FC_ETL_DLQ_STREAM",
+            "FC_ETL_CONTROL_KEY",
+            "FC_ETL_BATCH_SIZE",
+            "FC_ETL_BLOCK_MS",
+            "FC_ETL_MAX_ATTEMPTS",
+            "FC_ETL_BACKOFF_MS",
+            "FC_ETL_CLAIM_IDLE_MS",
+            "FC_METRICS_PROFILE",
+            "FC_COMPLIANCE_ENABLED",
+            "FC_RATE_LIMIT_ENABLED",
+            "FC_RATE_LIMIT_PER_MINUTE",
+            "FC_MCP_TOKEN",
+            "FC_LOG_LEVEL",
+            "FC_COLD_AFTER_YEARS",
+        ),
+        # FC 自身 SECRET_FIELDS 四键（core/config.py:19-21）。FC_DB_URL 不在白名单
+        # （DSN 由 compose 从 POSTGRES_* 拼装，写本键无效），自然也不按密钥处理。
+        secret_keys=(
+            "FC_EMBEDDING_API_KEY",
+            "FC_MINIO_ACCESS_KEY",
+            "FC_MINIO_SECRET_KEY",
+            "FC_MCP_TOKEN",
+        ),
         has_wheel_dist=False,
-        env_filename=".env",
+        # 生效 env-file 实测是 deploy/.env 而不是仓库根的 .env：FC 跑在 WSL 内的
+        # docker compose（project financecoffer），compose 容器 inspect 标签
+        # environment_file=/mnt/d/workplace/FinanceCoffer/deploy/.env，容器既没有
+        # 挂载仓库、CWD（/app）下也没有 .env，而 process env 优先级高于 .env——
+        # 写仓库根 .env 等于没写，故按实测路径落盘到这个子目录文件。
+        env_filename="deploy/.env",
         managed=False,
         config_notes=(
             "FinanceCoffer 服务跑在 WSL（127.0.0.1:8100），控制面不接管安装/启停；"
             "启停与治理见 QUOT-404。",
             "/health 回 status=degraded（如 embedding unreachable）时面板如实显示，"
             "不是本单要修的故障。",
+            "白名单 26 键 = core/config.py 的 Config.model_fields 全量 34 键，扣除 8 个"
+            "容器部署形态下写 deploy/.env 不生效的键（逐键「键名 → config.py:行」对照"
+            "表由脚本生成，见 PR 评论的脚本与输出）。",
+            "扣除的 8 键及依据（deploy/compose.yaml x-app-env 的值表达式，行号实测）："
+            "FC_DB_URL（:24，由 POSTGRES_USER/PASSWORD/DB 拼装，写本键会被覆盖）；"
+            "FC_REDIS_URL（:25，字面量 redis://redis:6379/1）；"
+            "FC_MINIO_ENDPOINT（:31，字面量 minio:9000）；"
+            "FC_MINIO_AUTOSTART（:38，字面量 false）；"
+            "FC_MINIO_BINARY/DATA_DIR/LOG_FILE/CONSOLE_ENDPOINT（:41-44，虽经 ${VAR:-} "
+            "插值，但仅本地进程形态消费，容器 AUTOSTART 钉死 false 时是 no-op）。",
+            "生效路径实测（2026-11）：WSL 内 docker compose 托管，容器 inspect 标签 "
+            "environment_file=/mnt/d/workplace/FinanceCoffer/deploy/.env，compose 把它渲染进 "
+            "api/worker 的 environment。保存 deploy/.env 后不会即时生效——需在 WSL 侧执行 "
+            "docker compose --env-file deploy/.env -f deploy/compose.yaml up -d 重建容器才生效；"
+            "该启停不属于控制面（QUOT-403/404）。",
+            "密钥口径 = FC 自身 SECRET_FIELDS 四键（FC_EMBEDDING_API_KEY / "
+            "FC_MINIO_ACCESS_KEY / FC_MINIO_SECRET_KEY / FC_MCP_TOKEN）；"
+            "FC_REDIS_URL 本机 Redis 无认证、也不在白名单，不按密钥处理。",
+            "vector/chunking.py:135 直读 FC_TOKENIZER_PATH / FC_EMBEDDING_MODEL_DIR（不走 "
+            "loader 的 .env 链路）；FC_WEBHOOK_TOKEN / FC_DRILL_TARGET_DSN / "
+            "FC_RESTORE_DSN / FC_STATE_DIR 是运维脚本键、不在 Config.model_fields 内："
+            "均不进白名单，写本文件对它们不生效。",
+            "config/loader.py 的 DEFAULT_ENV_FILE（.env）只在进程 CWD 下解析；FC 实际经 "
+            "compose 的 process env 取值，仓库根 .env 的运行时不读它。",
         ),
     ),
     "mem0": PeerControl(

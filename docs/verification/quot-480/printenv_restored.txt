@@ -1,0 +1,3 @@
+== 还原证据：PUT 120 -> compose 重建 -> 容器 env ==
+printenv FC_RATE_LIMIT_PER_MINUTE = 120
+healthcheck = healthy

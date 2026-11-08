@@ -1,0 +1,128 @@
+Config.model_fields 共 34 字段；x-app-env 段共 34 个 FC_ 键
+
+## autostart 门控判定（消费点必须只落在本地进程形态）
+  minio_binary: 消费点 5 处，非本地进程消费 无 -> autostart 门控成立
+  minio_data_dir: 消费点 6 处，非本地进程消费 无 -> autostart 门控成立
+  minio_log_file: 消费点 2 处，非本地进程消费 无 -> autostart 门控成立
+  minio_console_endpoint: 消费点 2 处，非本地进程消费 无 -> autostart 门控成立
+
+env 键                              Config 字段                    config.py   compose 形态     结论
+---------------------------------------------------------------------------------------------
+FC_DB_URL                          db_url                       config.py:47  derived        排除（derived，写 .env 不生效）
+FC_REDIS_URL                       redis_url                    config.py:48  literal        排除（literal，写 .env 不生效）
+FC_EMBEDDING_DIM                   embedding_dim                config.py:51  interpolated   白名单（插值可覆盖）
+FC_EMBEDDING_PROVIDER              embedding_provider           config.py:52  interpolated   白名单（插值可覆盖）
+FC_EMBEDDING_MODEL                 embedding_model              config.py:53  interpolated   白名单（插值可覆盖）
+FC_EMBEDDING_URL                   embedding_url                config.py:54  interpolated   白名单（插值可覆盖）
+FC_EMBEDDING_API_KEY               embedding_api_key            config.py:55  interpolated   白名单（插值可覆盖）
+FC_MINIO_ENDPOINT                  minio_endpoint               config.py:58  literal        排除（literal，写 .env 不生效）
+FC_MINIO_ACCESS_KEY                minio_access_key             config.py:59  interpolated   白名单（插值可覆盖）
+FC_MINIO_SECRET_KEY                minio_secret_key             config.py:60  interpolated   白名单（插值可覆盖）
+FC_MINIO_BUCKET                    minio_bucket                 config.py:61  interpolated   白名单（插值可覆盖）
+FC_MINIO_AUTOSTART                 minio_autostart              config.py:69  literal        排除（literal，写 .env 不生效）
+FC_MINIO_BINARY                    minio_binary                 config.py:70  interpolated   排除（autostart 门控：容器 AUTOSTART=false，容器内 no-op）
+FC_MINIO_DATA_DIR                  minio_data_dir               config.py:71  interpolated   排除（autostart 门控：容器 AUTOSTART=false，容器内 no-op）
+FC_MINIO_LOG_FILE                  minio_log_file               config.py:72  interpolated   排除（autostart 门控：容器 AUTOSTART=false，容器内 no-op）
+FC_MINIO_CONSOLE_ENDPOINT          minio_console_endpoint       config.py:73  interpolated   排除（autostart 门控：容器 AUTOSTART=false，容器内 no-op）
+FC_EVENT_CONSUMER                  event_consumer               config.py:76  interpolated   白名单（插值可覆盖）
+FC_EVENT_STREAM                    event_stream                 config.py:77  interpolated   白名单（插值可覆盖）
+FC_EVENT_GROUP                     event_group                  config.py:78  interpolated   白名单（插值可覆盖）
+FC_ETL_CONSUMER_NAME               etl_consumer_name            config.py:82  interpolated   白名单（插值可覆盖）
+FC_ETL_DLQ_STREAM                  etl_dlq_stream               config.py:83  interpolated   白名单（插值可覆盖）
+FC_ETL_CONTROL_KEY                 etl_control_key              config.py:84  interpolated   白名单（插值可覆盖）
+FC_ETL_BATCH_SIZE                  etl_batch_size               config.py:85  interpolated   白名单（插值可覆盖）
+FC_ETL_BLOCK_MS                    etl_block_ms                 config.py:86  interpolated   白名单（插值可覆盖）
+FC_ETL_MAX_ATTEMPTS                etl_max_attempts             config.py:87  interpolated   白名单（插值可覆盖）
+FC_ETL_BACKOFF_MS                  etl_backoff_ms               config.py:88  interpolated   白名单（插值可覆盖）
+FC_ETL_CLAIM_IDLE_MS               etl_claim_idle_ms            config.py:89  interpolated   白名单（插值可覆盖）
+FC_METRICS_PROFILE                 metrics_profile              config.py:97  interpolated   白名单（插值可覆盖）
+FC_COMPLIANCE_ENABLED              compliance_enabled           config.py:101 interpolated   白名单（插值可覆盖）
+FC_RATE_LIMIT_ENABLED              rate_limit_enabled           config.py:105 interpolated   白名单（插值可覆盖）
+FC_RATE_LIMIT_PER_MINUTE           rate_limit_per_minute        config.py:106 interpolated   白名单（插值可覆盖）
+FC_MCP_TOKEN                       mcp_token                    config.py:109 interpolated   白名单（插值可覆盖）
+FC_LOG_LEVEL                       log_level                    config.py:110 interpolated   白名单（插值可覆盖）
+FC_COLD_AFTER_YEARS                cold_after_years             config.py:111 interpolated   白名单（插值可覆盖）
+
+## compose.yaml x-app-env 值表达式（行号: 键 = 值）
+  compose.yaml:24: FC_DB_URL = 'postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}' -> derived
+  compose.yaml:25: FC_REDIS_URL = 'redis://redis:6379/1' -> literal
+  compose.yaml:26: FC_EMBEDDING_PROVIDER = '${FC_EMBEDDING_PROVIDER:?set FC_EMBEDDING_PROVIDER}' -> interpolated
+  compose.yaml:27: FC_EMBEDDING_MODEL = '${FC_EMBEDDING_MODEL:?set FC_EMBEDDING_MODEL}' -> interpolated
+  compose.yaml:28: FC_EMBEDDING_DIM = '${FC_EMBEDDING_DIM:?set FC_EMBEDDING_DIM}' -> interpolated
+  compose.yaml:29: FC_EMBEDDING_URL = '${FC_EMBEDDING_URL:?set FC_EMBEDDING_URL}' -> interpolated
+  compose.yaml:30: FC_EMBEDDING_API_KEY = '${FC_EMBEDDING_API_KEY:-}' -> interpolated
+  compose.yaml:31: FC_MINIO_ENDPOINT = 'minio:9000' -> literal
+  compose.yaml:32: FC_MINIO_ACCESS_KEY = '${FC_MINIO_ACCESS_KEY:?set FC_MINIO_ACCESS_KEY}' -> interpolated
+  compose.yaml:33: FC_MINIO_SECRET_KEY = '${FC_MINIO_SECRET_KEY:?set FC_MINIO_SECRET_KEY}' -> interpolated
+  compose.yaml:34: FC_MINIO_BUCKET = '${FC_MINIO_BUCKET:?set FC_MINIO_BUCKET}' -> interpolated
+  compose.yaml:38: FC_MINIO_AUTOSTART = 'false' -> literal
+  compose.yaml:41: FC_MINIO_BINARY = '${FC_MINIO_BINARY:-}' -> interpolated
+  compose.yaml:42: FC_MINIO_DATA_DIR = '${FC_MINIO_DATA_DIR:-}' -> interpolated
+  compose.yaml:43: FC_MINIO_LOG_FILE = '${FC_MINIO_LOG_FILE:-}' -> interpolated
+  compose.yaml:44: FC_MINIO_CONSOLE_ENDPOINT = '${FC_MINIO_CONSOLE_ENDPOINT:-}' -> interpolated
+  compose.yaml:45: FC_EVENT_CONSUMER = '${FC_EVENT_CONSUMER:?set FC_EVENT_CONSUMER}' -> interpolated
+  compose.yaml:46: FC_EVENT_STREAM = '${FC_EVENT_STREAM:?set FC_EVENT_STREAM}' -> interpolated
+  compose.yaml:47: FC_EVENT_GROUP = '${FC_EVENT_GROUP:?set FC_EVENT_GROUP}' -> interpolated
+  compose.yaml:51: FC_ETL_CONSUMER_NAME = '${FC_ETL_CONSUMER_NAME:-}' -> interpolated
+  compose.yaml:52: FC_ETL_DLQ_STREAM = '${FC_ETL_DLQ_STREAM:-fc:stockdata:dlq}' -> interpolated
+  compose.yaml:53: FC_ETL_CONTROL_KEY = '${FC_ETL_CONTROL_KEY:-fc:etl:control}' -> interpolated
+  compose.yaml:54: FC_ETL_BATCH_SIZE = '${FC_ETL_BATCH_SIZE:-50}' -> interpolated
+  compose.yaml:55: FC_ETL_BLOCK_MS = '${FC_ETL_BLOCK_MS:-5000}' -> interpolated
+  compose.yaml:56: FC_ETL_MAX_ATTEMPTS = '${FC_ETL_MAX_ATTEMPTS:-3}' -> interpolated
+  compose.yaml:57: FC_ETL_BACKOFF_MS = '${FC_ETL_BACKOFF_MS:-1000}' -> interpolated
+  compose.yaml:58: FC_ETL_CLAIM_IDLE_MS = '${FC_ETL_CLAIM_IDLE_MS:-60000}' -> interpolated
+  compose.yaml:62: FC_METRICS_PROFILE = '${FC_METRICS_PROFILE:-snapshot}' -> interpolated
+  compose.yaml:63: FC_COMPLIANCE_ENABLED = '${FC_COMPLIANCE_ENABLED:?set FC_COMPLIANCE_ENABLED}' -> interpolated
+  compose.yaml:64: FC_RATE_LIMIT_ENABLED = '${FC_RATE_LIMIT_ENABLED:?set FC_RATE_LIMIT_ENABLED}' -> interpolated
+  compose.yaml:65: FC_RATE_LIMIT_PER_MINUTE = '${FC_RATE_LIMIT_PER_MINUTE:?set FC_RATE_LIMIT_PER_MINUTE}' -> interpolated
+  compose.yaml:66: FC_MCP_TOKEN = '${FC_MCP_TOKEN:-}' -> interpolated
+  compose.yaml:67: FC_LOG_LEVEL = '${FC_LOG_LEVEL:?set FC_LOG_LEVEL}' -> interpolated
+  compose.yaml:68: FC_COLD_AFTER_YEARS = '${FC_COLD_AFTER_YEARS:?set FC_COLD_AFTER_YEARS}' -> interpolated
+
+## 排除键的原文位置（供评论引用）
+  FC_DB_URL: compose.yaml:24 = 'postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}'（derived）
+  FC_REDIS_URL: compose.yaml:25 = 'redis://redis:6379/1'（literal）
+  FC_MINIO_ENDPOINT: compose.yaml:31 = 'minio:9000'（literal）
+  FC_MINIO_AUTOSTART: compose.yaml:38 = 'false'（literal）
+  FC_MINIO_BINARY: compose.yaml:41 = '${FC_MINIO_BINARY:-}'（autostart-gated）
+  FC_MINIO_DATA_DIR: compose.yaml:42 = '${FC_MINIO_DATA_DIR:-}'（autostart-gated）
+  FC_MINIO_LOG_FILE: compose.yaml:43 = '${FC_MINIO_LOG_FILE:-}'（autostart-gated）
+  FC_MINIO_CONSOLE_ENDPOINT: compose.yaml:44 = '${FC_MINIO_CONSOLE_ENDPOINT:-}'（autostart-gated）
+
+## 白名单（26 键）
+  FC_EMBEDDING_DIM
+  FC_EMBEDDING_PROVIDER
+  FC_EMBEDDING_MODEL
+  FC_EMBEDDING_URL
+  FC_EMBEDDING_API_KEY
+  FC_MINIO_ACCESS_KEY
+  FC_MINIO_SECRET_KEY
+  FC_MINIO_BUCKET
+  FC_EVENT_CONSUMER
+  FC_EVENT_STREAM
+  FC_EVENT_GROUP
+  FC_ETL_CONSUMER_NAME
+  FC_ETL_DLQ_STREAM
+  FC_ETL_CONTROL_KEY
+  FC_ETL_BATCH_SIZE
+  FC_ETL_BLOCK_MS
+  FC_ETL_MAX_ATTEMPTS
+  FC_ETL_BACKOFF_MS
+  FC_ETL_CLAIM_IDLE_MS
+  FC_METRICS_PROFILE
+  FC_COMPLIANCE_ENABLED
+  FC_RATE_LIMIT_ENABLED
+  FC_RATE_LIMIT_PER_MINUTE
+  FC_MCP_TOKEN
+  FC_LOG_LEVEL
+  FC_COLD_AFTER_YEARS
+
+## 抽查 8 键的源码出现位置（非注释行）
+  FC_EMBEDDING_PROVIDER: ['src\\financecoffer\\cli\\commands\\bootstrap.py:405', 'deploy\\.env.example:64', 'deploy\\compose.yaml:26']
+  FC_MINIO_BUCKET: ['deploy\\.env.example:79', 'deploy\\compose.yaml:34']
+  FC_ETL_BATCH_SIZE: ['deploy\\.env.example:54', 'deploy\\compose.yaml:54']
+  FC_METRICS_PROFILE: ['src\\financecoffer\\cli\\commands\\warehouse.py:246', 'src\\financecoffer\\cli\\commands\\warehouse.py:319', 'src\\financecoffer\\dws\\builder.py:220', 'deploy\\.env.example:96', 'deploy\\compose.yaml:62']
+  FC_LOG_LEVEL: ['src\\financecoffer\\core\\config.py:173', 'src\\financecoffer\\core\\logging.py:3', 'src\\financecoffer\\core\\logging.py:25', 'deploy\\.env.example:109', 'deploy\\compose.yaml:67']
+  FC_RATE_LIMIT_PER_MINUTE: ['deploy\\.env.example:101', 'deploy\\compose.yaml:65']
+  FC_MINIO_AUTOSTART: ['src\\financecoffer\\cli\\commands\\objstore.py:8', 'src\\financecoffer\\cli\\commands\\objstore.py:50', 'src\\financecoffer\\cli\\commands\\serve.py:426', 'src\\financecoffer\\ops\\minio_process.py:8', 'src\\financecoffer\\ops\\minio_process.py:445', 'deploy\\.env.example:86', 'deploy\\compose.yaml:38']
+  FC_REDIS_URL: ['src\\financecoffer\\cli\\commands\\etl.py:57', 'src\\financecoffer\\core\\config.py:126', 'src\\financecoffer\\etl\\client.py:16', 'src\\financecoffer\\etl\\consumer.py:178', 'src\\financecoffer\\etl\\consumer.py:279', 'deploy\\.env.example:42', 'deploy\\compose.yaml:25', 'deploy\\compose.yaml:195']
