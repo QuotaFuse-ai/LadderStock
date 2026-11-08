@@ -75,6 +75,7 @@ from ladderstock.core.peer_versions import (
 )
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
+from ladderstock.supervisor import MODULE_ORDER, SupervisorEngine
 from ladderstock.web import chat as chat_channel
 from ladderstock.web import peer_registry
 
@@ -1414,6 +1415,7 @@ class ControlPlane:
         resolve: Callable[[str], list[str]] | None = None,
         harden_acl: Callable[[Path], None] | None = None,
         config_root: Path | None = None,
+        supervisor: SupervisorEngine | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
@@ -1440,6 +1442,9 @@ class ControlPlane:
         self._resolve = resolve or resolve_host_ips
         # 文件权限收口可注入（QUOT-194 P1-3）：测试用它构造「icacls 失败」路径
         self._harden_acl = harden_acl or harden_file_acl
+        # supervisor 引擎可选注入（QUOT-482-A）：482-B 的模块 adapters 未接线前为
+        # None，`/api/supervisor/state` 返回 configured=False，页面不出启停面板
+        self.supervisor = supervisor
 
         self._state_path = self.data_root / CONTROL_STATE_SUBDIR / CONTROL_STATE_FILE
         self._logs_dir = self.data_root / CONTROL_LOG_SUBDIR
@@ -3749,6 +3754,46 @@ def build_router(plane: ControlPlane) -> APIRouter:
         if found is None:
             raise HTTPException(status_code=404, detail=f"未知任务：{job_id}")
         return found.view()
+
+    return router
+
+
+def build_supervisor_router(plane: ControlPlane) -> APIRouter:
+    """构造 `/api/supervisor/*` 路由（QUOT-482-A）：同一把 `_guard`（回环来源）。
+
+    响应以 482-C 自愈状态面（`selfheal.snapshot()`）为底——前端 484 契约
+    （modules[].health / state / self_heal）一个不少；在其上叠加 482-A 的归属
+    视角：每模块 `ownership`（managed / external）、`evidence`（ledger /
+    cmdline / port）、`listening`；顶层加 `configured`（482-B 接线前为 False）
+    与 `order`（启动顺序）。启停引擎未接线时端点仍 200，页面据此降级而不是报
+    错。本单只读观测（state），启停动作不在 HTTP 面（DEC-014）。
+    """
+    router = APIRouter(prefix="/api/supervisor", dependencies=[Depends(_guard)])
+
+    @router.get("/state")
+    def supervisor_state() -> dict[str, Any]:
+        """482-C 健康视角 + 482-A 归属视角合并（账本命中 or cmdline 匹配）。"""
+        engine = plane.supervisor
+        heal = getattr(plane, "selfheal", None)
+        snapshot = getattr(heal, "snapshot", None)
+        if callable(snapshot):
+            payload = dict(snapshot())
+            payload["modules"] = [dict(item) for item in payload.get("modules", [])]
+        else:
+            payload = {"ok": True, "engine": None, "modules": []}
+        payload["order"] = list(MODULE_ORDER)
+        if engine is None:
+            payload["configured"] = False
+            return payload
+        payload["configured"] = True
+        state = engine.state()
+        payload["supervisor_pid"] = state.get("supervisor_pid")
+        ownership = state.get("modules") or {}
+        for item in payload["modules"]:
+            extra = ownership.get(item.get("module"))
+            if extra:
+                item.update(extra)
+        return payload
 
     return router
 

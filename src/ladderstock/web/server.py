@@ -68,6 +68,7 @@ from ladderstock.web.assistant import build_skills_router as build_skills_router
 from ladderstock.web.control import (
     ControlPlane,
     build_router,
+    build_supervisor_router,
     client_host,
     control_enabled,
     host_header_allowed,
@@ -1578,6 +1579,11 @@ def create_app(
         plane = ControlPlane(data_root=root)
     if plane is not None:
         app.include_router(build_router(plane))
+        # supervisor 归属观测（QUOT-482-A）：同一把 _guard；引擎未接线时端点
+        # 返回 configured=False（482-B 的模块 adapters 合并后才真正构造引擎）。
+        # 注册顺序在 482-C 自愈状态面之前：GET /state 由本路由合并两视角响应，
+        # 482-C 的 POST /state/{module}/reset 不受影响。
+        app.include_router(build_supervisor_router(plane))
 
     # ------------------------------------------------ 研究面（QUOT-275 / SPEC-RESEARCH-PAGES §2）
     #
@@ -1665,6 +1671,10 @@ def create_app(
     engine = supervisor_engine if supervisor_engine is not None else build_selfheal_engine(
         root, panel_url=f"http://127.0.0.1:{WEB_PORT}/"
     )
+    if plane is not None:
+        # 482-A 归属观测端点复用自愈快照做底（QUOT-482-A × 482-C 合并视图）；
+        # control_plane 分支注册在 mount_supervisor_router 之前，GET /state 走合并版
+        plane.selfheal = engine
     mount_supervisor_router(app, engine)
 
     # ------------------------------------------------------------ 静态看板
