@@ -691,7 +691,14 @@ export interface PeerSnapshot {
   port_conflicts: PortConflict[]
   last_job: JobView | null
   open_url: string | null
-  actions: { can_install: boolean; can_start: boolean; can_stop: boolean; can_open: boolean }
+  actions: {
+    can_install: boolean
+    can_start: boolean
+    can_stop: boolean
+    can_open: boolean
+    /** 有可写配置键（后端白名单非空）才允许打开配置抽屉 */
+    can_config: boolean
+  }
 }
 
 /** 工具组件（如 ProxyFleet）：只读观测，不参与 peer 的安装/启停任务。 */
@@ -778,6 +785,8 @@ export interface PeerConfig {
   peer: string
   env_file: string
   exists: boolean
+  /** 后端判定是否可编辑（白名单非空 + env 父目录存在）；前端只按它渲染 */
+  editable: boolean
   keys: string[]
   values: Record<string, ConfigEntry>
   notes: string[]

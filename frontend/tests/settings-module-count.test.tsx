@@ -35,7 +35,7 @@ function peer(id: string, product: string): PeerSnapshot {
     port_conflicts: [],
     last_job: null,
     open_url: null,
-    actions: { can_install: false, can_start: false, can_stop: true, can_open: false },
+    actions: { can_install: false, can_start: false, can_stop: true, can_open: false, can_config: true },
   }
 }
 

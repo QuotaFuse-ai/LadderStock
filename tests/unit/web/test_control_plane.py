@@ -533,6 +533,143 @@ def test_config_put_rejects_newlines(
 
 
 # --------------------------------------------------------------------------- #
+# 4b. QUOT-480：空白名单模块不出「可编辑配置」入口 / FC 白名单口径
+# --------------------------------------------------------------------------- #
+
+def _blank_whitelist_peer(directory: Path, **kwargs: Any) -> Any:
+    from ladderstock.core.boundary import PeerControl
+
+    fields: dict[str, Any] = dict(
+        key="ghost",
+        directory=str(directory),
+        import_package="ghost_pkg",
+        mcp_port=8795,
+        web_port=None,
+        web_port_label="HTTP 服务",
+        health_path="/health",
+        start_commands=(),
+        config_keys=(),
+        managed=False,
+    )
+    fields.update(kwargs)
+    return PeerControl(**fields)
+
+
+def test_peer_without_whitelist_has_no_editable_config_entry(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """config_keys 为空：快照 can_config=False、读配置 editable=False、写一律 400。
+
+    页面据此置灰「编辑配置」并只展示原因——空抽屉 + 「保存后创建（0600）」的
+    提示是假承诺（QUOT-480）。
+    """
+    ghost_dir = tmp_path / "peers" / "ghost"
+    ghost_dir.mkdir(parents=True)
+    plane = _plane(tmp_path, peer_dirs)
+    plane.peers["ghost"] = _blank_whitelist_peer(ghost_dir)
+
+    assert plane.snapshot("ghost")["actions"]["can_config"] is False
+    payload = plane.read_config("ghost")
+    assert payload["editable"] is False
+    assert payload["keys"] == []
+    assert not (ghost_dir / ".env.local").exists()  # 空白名单不会顺手建文件
+    with pytest.raises(HTTPException) as excinfo:
+        plane.update_config("ghost", {"MCP_HTTP_PORT": "8002"}, [])
+    assert excinfo.value.status_code == 400
+    assert "MCP_HTTP_PORT" in str(excinfo.value.detail)
+
+
+def test_can_config_false_when_env_parent_directory_missing(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """白名单非空、但 env 文件所在目录不存在（如子目录 env_filename）时同样不可编辑。"""
+    nested = tmp_path / "peers" / "nested"
+    nested.mkdir(parents=True)
+    plane = _plane(tmp_path, peer_dirs)
+    plane.peers["nested"] = _blank_whitelist_peer(
+        nested, key="nested", mcp_port=8796,
+        config_keys=("NESTED_URL",), env_filename="deploy/.env",
+    )
+
+    assert plane.snapshot("nested")["actions"]["can_config"] is False
+    assert plane.read_config("nested")["editable"] is False
+
+
+def test_can_config_true_for_peer_with_whitelist_and_existing_directory(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """有白名单且 env 父目录在：入口开放，editable 随读配置一路为真。"""
+    plane = _plane(tmp_path, peer_dirs)
+    assert plane.snapshot("alpha")["actions"]["can_config"] is True
+    assert plane.read_config("alpha")["editable"] is True
+
+
+def test_registry_only_peer_has_no_config_action(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """只读观测卡（注册表里有、白名单里没有）同样没有配置入口。"""
+    snapshot = ControlPlane(
+        data_root=tmp_path, peers={}, sources_loader=lambda: {}
+    ).registry_entry_snapshot("imported", {"product": "Imported", "default_port": 8899})
+    assert snapshot["actions"]["can_config"] is False
+
+
+def test_financecoffer_whitelist_matches_config_model_and_compose() -> None:
+    """QUOT-480：FC 白名单 = Config.model_fields 全量 34 键，密钥口径与部署形态钉死。"""
+    fc = PEER_CONTROL["financecoffer"]
+    assert set(fc.config_keys) == {
+        "FC_DB_URL",
+        "FC_REDIS_URL",
+        "FC_EMBEDDING_PROVIDER",
+        "FC_EMBEDDING_MODEL",
+        "FC_EMBEDDING_DIM",
+        "FC_EMBEDDING_URL",
+        "FC_EMBEDDING_API_KEY",
+        "FC_MINIO_ENDPOINT",
+        "FC_MINIO_ACCESS_KEY",
+        "FC_MINIO_SECRET_KEY",
+        "FC_MINIO_BUCKET",
+        "FC_MINIO_AUTOSTART",
+        "FC_MINIO_BINARY",
+        "FC_MINIO_DATA_DIR",
+        "FC_MINIO_LOG_FILE",
+        "FC_MINIO_CONSOLE_ENDPOINT",
+        "FC_EVENT_CONSUMER",
+        "FC_EVENT_STREAM",
+        "FC_EVENT_GROUP",
+        "FC_ETL_CONSUMER_NAME",
+        "FC_ETL_DLQ_STREAM",
+        "FC_ETL_CONTROL_KEY",
+        "FC_ETL_BATCH_SIZE",
+        "FC_ETL_BLOCK_MS",
+        "FC_ETL_MAX_ATTEMPTS",
+        "FC_ETL_BACKOFF_MS",
+        "FC_ETL_CLAIM_IDLE_MS",
+        "FC_METRICS_PROFILE",
+        "FC_COMPLIANCE_ENABLED",
+        "FC_RATE_LIMIT_ENABLED",
+        "FC_RATE_LIMIT_PER_MINUTE",
+        "FC_MCP_TOKEN",
+        "FC_LOG_LEVEL",
+        "FC_COLD_AFTER_YEARS",
+    }
+    # 密钥 = FC 自身 SECRET_FIELDS 四键 + 带密码的 DSN
+    assert set(fc.secret_keys) == {
+        "FC_DB_URL",
+        "FC_EMBEDDING_API_KEY",
+        "FC_MINIO_ACCESS_KEY",
+        "FC_MINIO_SECRET_KEY",
+        "FC_MCP_TOKEN",
+    }
+    assert set(fc.secret_keys) <= set(fc.config_keys)
+    assert "FC_REDIS_URL" not in fc.secret_keys  # 本机 Redis 无认证，不当密钥
+    # 部署形态：WSL 内 docker compose 的 environment_file 实测路径、不接管启停
+    assert fc.env_filename == "deploy/.env"
+    assert fc.managed is False
+    assert fc.start_commands == () and fc.web_port is None
+
+
+# --------------------------------------------------------------------------- #
 # 5. 开关 / 来源 / 未知资源
 # --------------------------------------------------------------------------- #
 
@@ -725,8 +862,12 @@ def test_peer_metadata_points_at_the_dotenv_each_peer_really_reads() -> None:
     assert PEER_CONTROL["tickhub_us"].env_filename == ".env"
     assert PEER_CONTROL["senate"].env_filename == ".env"
     assert PEER_CONTROL["wire"].env_filename == ".env.local"  # Wire 优先读 .env.local
+    # FinanceCoffer 的生效文件在子目录 deploy/.env：它跑在 WSL 内的 docker compose，
+    # 容器 inspect 标签 environment_file=/mnt/d/workplace/FinanceCoffer/deploy/.env
+    # （QUOT-480 实测）；仓库根 .env 不会被容器加载（无挂载、process env 优先）。
+    assert PEER_CONTROL["financecoffer"].env_filename == "deploy/.env"
     for ctl in PEER_CONTROL.values():
-        assert ctl.env_filename in {".env", ".env.local"}  # 只有这两种，不允许乱写
+        assert ctl.env_filename in {".env", ".env.local", "deploy/.env"}  # 只有这三种
 
 
 def test_peer_health_paths_are_the_ones_the_services_serve() -> None:

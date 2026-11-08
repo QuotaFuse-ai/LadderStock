@@ -445,7 +445,12 @@ function PeerCard({
           </Button>
           <Button
             variant="ghost"
-            disabled={!controlReady}
+            disabled={!controlReady || !peer.actions.can_config}
+            disabledReason={
+              peer.actions.can_config
+                ? undefined
+                : '本模块没有可写配置键（控制面配置白名单为空），配置由该模块自行管理'
+            }
             onClick={onConfig}
             leadingIcon={<Sliders className="size-3.5" aria-hidden="true" />}
           >
@@ -851,8 +856,10 @@ function ConfigDrawer({
             variant="secondary"
             onClick={() => void save()}
             loading={saving}
-            disabled={!data || !dirty}
-            disabledReason={!dirty ? '没有修改' : undefined}
+            disabled={!data || !data.editable || !dirty}
+            disabledReason={
+              data && !data.editable ? '本模块配置不可编辑' : !dirty ? '没有修改' : undefined
+            }
           >
             保存
           </Button>
@@ -872,59 +879,75 @@ function ConfigDrawer({
               ))}
             </ul>
           )}
-          {!data.exists && (
-            <p className="text-caption text-warn">配置文件尚未生成，保存后创建（权限 0600）。</p>
-          )}
-          {data.keys.map((key) => {
-            const entry = data.values[key]
-            const isCleared = cleared.includes(key)
-            if (!entry) return null
-            if (entry.secret) {
-              return (
-                <div key={key} className="flex flex-col gap-2 rounded border border-border p-2">
-                  <Field
-                    label={configKeyLabel(key)}
-                    htmlFor={`cfg-${key}`}
-                    hint={`密钥只写不读回 · 配置键 ${key} · 当前 ${entry.set ? entry.preview ?? '已配置' : '未配置'} · 留空表示不修改`}
-                  >
+          {!data.editable ? (
+            // QUOT-480：白名单为空（或 env 目录不存在）= 本机无可写配置。
+            // 如实说明原因，不出空表单、也不给「保存后创建」的假承诺。
+            <div className="flex flex-col gap-2 rounded border border-border bg-surface-2 p-3">
+              <p className="text-body text-text-secondary">
+                本模块没有可写配置：控制面没有登记它的配置白名单（或其配置文件目录不存在），
+                配置由该模块自行管理，本页面不提供写入入口。
+              </p>
+              <p className="text-caption text-text-muted">该模块的配置文件路径：{data.env_file}</p>
+            </div>
+          ) : (
+            <>
+              {!data.exists && (
+                <p className="text-caption text-warn">
+                  配置文件尚未生成，保存后创建（落盘后仅所有者可读写，0600）。
+                </p>
+              )}
+              {data.keys.map((key) => {
+                const entry = data.values[key]
+                const isCleared = cleared.includes(key)
+                if (!entry) return null
+                if (entry.secret) {
+                  return (
+                    <div key={key} className="flex flex-col gap-2 rounded border border-border p-2">
+                      <Field
+                        label={configKeyLabel(key)}
+                        htmlFor={`cfg-${key}`}
+                        hint={`密钥只写不读回 · 配置键 ${key} · 当前 ${entry.set ? entry.preview ?? '已配置' : '未配置'} · 留空表示不修改`}
+                      >
+                        <Input
+                          id={`cfg-${key}`}
+                          type="password"
+                          autoComplete="new-password"
+                          spellCheck={false}
+                          placeholder={entry.set ? (entry.preview ?? '已配置') : '未配置'}
+                          value={drafts[key] ?? ''}
+                          disabled={isCleared}
+                          onChange={(event) => setDrafts((current) => ({ ...current, [key]: event.target.value }))}
+                        />
+                      </Field>
+                      <Checkbox checked={isCleared} onChange={(next) => toggleClear(key, next)}>
+                        清除该密钥（保存后删除）
+                      </Checkbox>
+                    </div>
+                  )
+                }
+                return (
+                  <Field key={key} label={configKeyLabel(key)} htmlFor={`cfg-${key}`} hint={`配置键 ${key} · 当前值 ${entry.value ?? MISSING}（可覆盖）`}>
                     <Input
                       id={`cfg-${key}`}
-                      type="password"
-                      autoComplete="new-password"
                       spellCheck={false}
-                      placeholder={entry.set ? (entry.preview ?? '已配置') : '未配置'}
+                      placeholder={entry.value ?? ''}
                       value={drafts[key] ?? ''}
-                      disabled={isCleared}
                       onChange={(event) => setDrafts((current) => ({ ...current, [key]: event.target.value }))}
                     />
                   </Field>
-                  <Checkbox checked={isCleared} onChange={(next) => toggleClear(key, next)}>
-                    清除该密钥（保存后删除）
-                  </Checkbox>
-                </div>
-              )
-            }
-            return (
-              <Field key={key} label={configKeyLabel(key)} htmlFor={`cfg-${key}`} hint={`配置键 ${key} · 当前值 ${entry.value ?? MISSING}（可覆盖）`}>
-                <Input
-                  id={`cfg-${key}`}
-                  spellCheck={false}
-                  placeholder={entry.value ?? ''}
-                  value={drafts[key] ?? ''}
-                  onChange={(event) => setDrafts((current) => ({ ...current, [key]: event.target.value }))}
-                />
-              </Field>
-            )
-          })}
-          {saveError && (
-            // C-19 Banner danger：失败原因置顶可见，表单内容保持可编辑（§11.18）
-            <Banner tone="danger" title="保存失败">
-              {saveError}
-            </Banner>
+                )
+              })}
+              {saveError && (
+                // C-19 Banner danger：失败原因置顶可见，表单内容保持可编辑（§11.18）
+                <Banner tone="danger" title="保存失败">
+                  {saveError}
+                </Banner>
+              )}
+              <p className="text-caption text-text-muted">
+                白名单以外的键不可写；密钥落盘 0600，页面永远不会回显明文。
+              </p>
+            </>
           )}
-          <p className="text-caption text-text-muted">
-            白名单以外的键不可写；密钥落盘 0600，页面永远不会回显明文。
-          </p>
         </div>
       )}
     </Drawer>
