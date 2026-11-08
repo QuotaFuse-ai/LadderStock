@@ -125,6 +125,18 @@ _PEER_FALLBACKS: dict[str, Peer] = {
         health_path="/health",
         repo="QuotaFuse-ai/FinanceCoffer",
     ),
+    "mem0": Peer(
+        key="mem0",
+        product="Mem0",
+        package="qf-mem0",
+        cli="docker",
+        mcp_name=None,
+        default_port=9100,
+        role="助手记忆：add / search / 历史回放（本地 bge-small-zh 向量，云骏 LLM）",
+        consumption="基础设施",
+        health_path="/configure",
+        repo=None,
+    ),
 }
 
 

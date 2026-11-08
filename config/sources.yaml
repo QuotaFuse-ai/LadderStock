@@ -80,6 +80,23 @@ peers:
     default_port: 8100
     role: 数据存储：结构化宽表 / 公告检索 / 风险
     repo: QuotaFuse-ai/FinanceCoffer
+  # mem0（QUOT-486）：LadderStock 助手的记忆后端，同 FinanceCoffer 口径——不是取数
+  # 通道，sources 不允许 via 它，只登记注册表让控制面出卡。服务是 WSL 里的
+  # docker compose（project qf-mem0，端口 9100/3200/8532），与 Multica 的 mem0-dev
+  # 物理隔离；控制面托管启停（compose 分支），不查 import/不装 wheel。
+  # /configure 是实测确认的健康端点（server 无 /healthz）。
+  mem0:
+    product: Mem0
+    package: qf-mem0
+    cli: docker               # 占位：实际启停是 WSL docker compose（PEER_CONTROL.compose_file），cli 不执行
+    mcp_name: null            # 没有 MCP 面，9100 是 REST API
+    url_env: LDST_MEM0_API_URL
+    default_url: http://127.0.0.1:9100
+    timeout_sec: 10
+    health_path: /configure
+    default_port: 9100
+    role: 助手记忆：add / search / 历史回放（本地 bge-small-zh 向量，云骏 LLM）
+    repo: null
 
 sources:
   # ---------------- 行情与短线数据：TickHub-CN ----------------

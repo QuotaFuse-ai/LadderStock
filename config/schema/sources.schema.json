@@ -67,9 +67,17 @@
           "description": "控制面模块卡上显示的一句话职责"
         },
         "repo": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$",
-          "description": "GitHub 仓库名（owner/name），QUOT-402 期望版本的来源"
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$",
+              "description": "GitHub 仓库名（owner/name），QUOT-402 期望版本的来源"
+            },
+            {
+              "type": "null",
+              "description": "不做 GitHub Release 检测：本地部署单元（如 QUOT-486 的 mem0 compose）"
+            }
+          ]
         }
       }
     }

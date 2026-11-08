@@ -68,8 +68,16 @@ def test_yaml_carries_real_health_paths(key: str, health_path: str) -> None:
 
 
 def test_all_registered_peers_have_repo_for_version_check() -> None:
-    """QUOT-402 版本三态检测依赖 repo 字段，注册表里每个 peer 都要带。"""
+    """QUOT-402 版本三态检测依赖 repo 字段，注册表里每个 peer 都要带。
+
+    mem0 例外（QUOT-486）：它是本地 WSL compose 部署单元，版本真源是
+    qf-mem0/mem0 镜像，不在任何 GitHub Release 上，填上游仓库只会让三态检测
+    显示失真的落后/超前，因此显式豁免而不是填一个假 repo。
+    """
     for key, item in _sources_doc()["peers"].items():
+        if key == "mem0":
+            assert item.get("repo") is None
+            continue
         assert item.get("repo"), f"peers.{key} 缺 repo 字段"
 
 
@@ -101,7 +109,7 @@ def test_build_peers_falls_back_when_block_missing() -> None:
     for block in (None, {}, "not-a-mapping"):
         peers, warnings = build_peers(block)
         assert peers == build_peers(None)[0]
-        assert len(peers) == 5
+        assert len(peers) == 6
         assert warnings and "回退内置默认" in warnings[0]
 
 

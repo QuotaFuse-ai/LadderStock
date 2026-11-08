@@ -188,6 +188,13 @@ START_GRACE_SEC = 30.0
 #: 安装各步骤的超时（pip 首次解析依赖可能较慢，但必须有上限）
 INSTALL_STEP_TIMEOUT_SEC = 900.0
 
+#: Docker compose 生命周期（QUOT-486 mem0）：up / stop / ps 单次的硬上限
+COMPOSE_TIMEOUT_SEC = 120.0
+#: wsl -l -v / wslpath 这类 WSL 侧只读辅助命令的超时
+WSL_PROBE_TIMEOUT_SEC = 15.0
+#: 期望 WSL 发行版的机器级覆盖键（不设则解析 `wsl -l -v` 的默认发行版，绝不写死）
+WSL_DISTRO_ENV = "LDST_WSL_DISTRO"
+
 #: 端口占用探测的超时
 PORT_PROBE_TIMEOUT_SEC = 10.0
 
@@ -728,6 +735,42 @@ class PortOwner:
 
     def as_dict(self) -> dict[str, Any]:
         return {"pid": self.pid, "process": self.process}
+
+
+def _wsl_listing() -> str:
+    """`wsl -l -v` 的原始文本（wsl.exe 输出是 UTF-16LE；失败返回空串，不抛）。"""
+    try:
+        raw = subprocess.run(
+            ["wsl.exe", "-l", "-v"],
+            capture_output=True,
+            timeout=WSL_PROBE_TIMEOUT_SEC,
+            shell=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    text = raw.decode("utf-16-le", errors="ignore") if b"\x00" in raw else raw.decode(
+        "utf-8", errors="ignore"
+    )
+    return text.replace("\x00", "").replace("\r\n", "\n")
+
+
+def default_wsl_distro(env: Mapping[str, str] | None = None) -> str:
+    """解析 compose 生命周期用的 WSL 发行版名（QUOT-486：不写死）。
+
+    口径：机器级 `LDST_WSL_DISTRO` > `wsl -l -v` 里带 `*` 的默认发行版 > 空串。
+    返回空串表示解析失败，调用方必须显式失败而不是盲猜发行版。
+    """
+    values = os.environ if env is None else env
+    configured = (values.get(WSL_DISTRO_ENV) or "").strip()
+    if configured:
+        return configured
+    for line in _wsl_listing().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("*"):
+            name = stripped.lstrip("*").strip().split()
+            if name:
+                return name[0]
+    return ""
 
 
 def _parse_netstat_listeners(output: str, port: int) -> list[int]:
@@ -1505,7 +1548,11 @@ class ControlPlane:
 
         version: str | None = None
         installed = False
-        if dir_exists and self._venv_python(ctl).exists():
+        if ctl.compose_file:
+            # compose 生命周期（QUOT-486 mem0）：没有 .venv 也没有 pip 分发，
+            # compose 文件落在位即视为已安装；版本无单一真源，如实回 None。
+            installed = dir_exists and (directory / ctl.compose_file).is_file()
+        elif dir_exists and self._venv_python(ctl).exists():
             version = self.import_version(ctl)
             installed = version is not None
 
@@ -2191,6 +2238,8 @@ class ControlPlane:
 
     def _start(self, job: Job) -> None:
         ctl = self.peers[job.peer]
+        if ctl.compose_file:
+            return self._start_compose(job, ctl)
         directory = Path(ctl.directory)
 
         # 1. 端口预检：已被占用直接失败，**不自动换端口**（DEC-004 / DEC-014 §3）
@@ -2254,6 +2303,121 @@ class ControlPlane:
             f"启动后 {START_GRACE_SEC:.0f} 秒内端口无监听（进程 PID {pids} 仍在，"
             f"日志见 {log_path}）"
         )
+
+    def _wsl_compose_argv(self, distro: str, compose_path: str, *action: str) -> list[str]:
+        """wsl 内 docker compose 的参数数组形态（不拼 shell，DEC-014 硬约束 2）。"""
+        return [
+            "wsl.exe", "-d", distro, "--",
+            "docker", "compose", "-f", compose_path, *action,
+        ]
+
+    def _compose_linux_path(self, distro: str, ctl: PeerControl) -> str:
+        """compose 文件的 Windows 路径 → WSL 内路径（`wslpath`，失败用 /mnt/<盘> 兜底）。"""
+        windows = Path(ctl.directory) / ctl.compose_file
+        result = self._run(
+            ["wsl.exe", "-d", distro, "--", "wslpath", "-a", str(windows)],
+            Path(ctl.directory),
+            WSL_PROBE_TIMEOUT_SEC,
+        )
+        lines = tail_lines(result.output, 1) if result.ok else []
+        if lines and lines[0].startswith("/"):
+            return lines[0]
+        drive = windows.drive.rstrip(":").lower()
+        return f"/mnt/{drive}{windows.as_posix()[2:] if windows.drive else windows.as_posix()}"
+
+    def _start_compose(self, job: Job, ctl: PeerControl) -> None:
+        """Docker compose 生命周期的启动（QUOT-486 mem0）：`up -d` 后等端口。
+
+        与 venv 形态的差异：没有 import 安装检查（compose 文件存在即视为可启动），
+        也不做端口占用预检——`compose up -d` 幂等，已在跑的容器会原地保留。
+        """
+        compose = Path(ctl.directory) / ctl.compose_file
+        if not compose.is_file():
+            raise JobFailure(f"compose 文件不存在：{compose}（先完成部署）")
+        distro = default_wsl_distro()
+        if not distro:
+            raise JobFailure(
+                "解析默认 WSL 发行版失败（wsl -l -v 无默认项），拒绝盲启；"
+                f"可设 {WSL_DISTRO_ENV} 显式指定"
+            )
+        linux_path = self._compose_linux_path(distro, ctl)
+        argv = self._wsl_compose_argv(distro, linux_path, "up", "-d")
+        job.step = f"docker compose up -d（{distro}）"
+        job.log(f"  $ {' '.join(argv[:6])} …")
+        result = self._run(argv, Path(ctl.directory), COMPOSE_TIMEOUT_SEC)
+        if not result.ok:
+            raise JobFailure(
+                f"compose up -d 失败（exit {result.code}）：{tail_lines(result.output, 5)}"
+            )
+        for line in tail_lines(result.output, 10):
+            job.log(f"  {line}")
+
+        job.step = "等待端口监听"
+        deadline = time.monotonic() + START_GRACE_SEC
+        while time.monotonic() < deadline:
+            if self._port_probe(ctl.mcp_port):
+                job.log(
+                    f"  端口 {ctl.mcp_port} 已监听"
+                    f"（{time.monotonic() - (deadline - START_GRACE_SEC):.1f}s）"
+                )
+                entry = self._peer_state(job.peer)
+                entry["compose"] = {"distro": distro, "compose_file": str(compose)}
+                entry.pop("last_stop_at", None)
+                entry["last_start_at"] = _now_iso()
+                self._save_state()
+                return
+            time.sleep(0.5)
+        raise JobFailure(
+            f"compose up -d 后 {START_GRACE_SEC:.0f} 秒内端口 {ctl.mcp_port} 无监听，"
+            f"日志见 {self._log_path(job.peer)}"
+        )
+
+    def _stop_compose(self, job: Job, ctl: PeerControl) -> None:
+        """Docker compose 生命周期的停止（QUOT-486 mem0）。
+
+        D2（可接管）：停止前先把「将要停止的容器清单」写进任务日志，不允许
+        无提示强杀；用 `compose stop`（保留数据卷与网络），不 `down`。
+        """
+        state = self._peer_state(job.peer).get("compose") or {}
+        distro = str(state.get("distro") or "") or default_wsl_distro()
+        if not distro:
+            raise JobFailure(
+                "解析默认 WSL 发行版失败（wsl -l -v 无默认项），拒绝盲停；"
+                f"可设 {WSL_DISTRO_ENV} 显式指定"
+            )
+        linux_path = self._compose_linux_path(distro, ctl)
+        ps_argv = self._wsl_compose_argv(distro, linux_path, "ps", "--format", "table")
+        job.step = "列出将要停止的容器"
+        ps = self._run(ps_argv, Path(ctl.directory), COMPOSE_TIMEOUT_SEC)
+        if ps.ok and ps.output.strip():
+            for line in tail_lines(ps.output, 20):
+                job.log(f"  {line}")
+        else:
+            job.log("  compose ps 无输出（可能已全部停止），继续执行 stop")
+
+        job.step = f"docker compose stop（{distro}）"
+        job.log(f"  $ docker compose -f {linux_path} stop")
+        result = self._run(
+            self._wsl_compose_argv(distro, linux_path, "stop"),
+            Path(ctl.directory),
+            COMPOSE_TIMEOUT_SEC,
+        )
+        if not result.ok:
+            raise JobFailure(
+                f"compose stop 失败（exit {result.code}）：{tail_lines(result.output, 5)}"
+            )
+
+        job.step = "等待端口释放"
+        deadline = time.monotonic() + START_GRACE_SEC
+        while time.monotonic() < deadline:
+            if not self._occupied_ports(ctl):
+                break
+            time.sleep(0.5)
+
+        entry = self._peer_state(job.peer)
+        entry["pids"] = []
+        entry["last_stop_at"] = _now_iso()
+        self._save_state()
 
     def _ownership_refusal(self, ctl: PeerControl, record: Mapping[str, Any]) -> str | None:
         """终止前的归属校验：不通过就返回可读原因（**绝不降级成盲杀**，QUOT-123 P0-2）。
@@ -2343,6 +2507,8 @@ class ControlPlane:
 
     def _stop(self, job: Job) -> None:
         ctl = self.peers[job.peer]
+        if ctl.compose_file:
+            return self._stop_compose(job, ctl)
         records = pid_records(self._peer_state(job.peer))
 
         # 只终止「本控制面启动过」的进程（DEC-014 硬约束 3）
