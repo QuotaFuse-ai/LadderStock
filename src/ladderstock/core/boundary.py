@@ -487,7 +487,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "MAX_ATTEMPTS/BACKOFF_MS/CLAIM_IDLE_MS → etl_*；"
             "FC_METRICS_PROFILE → metrics_profile；FC_COMPLIANCE_ENABLED → compliance_enabled；"
             "FC_RATE_LIMIT_ENABLED/PER_MINUTE → rate_limit_enabled/rate_limit_per_minute；"
-            "FC_MCP_TOKEN → mcp_token；FC_LOG_LEVEL → log_level；FC_COLD_AFTER_YEARS → cold_after_years。",
+            "FC_MCP_TOKEN → mcp_token；FC_LOG_LEVEL → log_level；"
+            "FC_COLD_AFTER_YEARS → cold_after_years。",
             "生效路径实测（2026-11）：WSL 内 docker compose 托管，容器 inspect 标签 "
             "environment_file=/mnt/d/workplace/FinanceCoffer/deploy/.env，compose 把它渲染进 "
             "api/worker 的 environment。保存 deploy/.env 后不会即时生效——需在 WSL 侧执行 "
