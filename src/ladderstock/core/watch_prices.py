@@ -35,7 +35,6 @@ from ladderstock.core.indices import iso_timestamp
 from ladderstock.core.intraday import (
     DEFAULT_TIMEZONE,
     TRADING_WINDOWS,
-    in_trading_session,
     local_moment,
 )
 from ladderstock.core.ladder import as_float
