@@ -7,6 +7,7 @@ import {
   FileText,
   Info,
   Play,
+  Power,
   RefreshCw,
   Sliders,
   Square,
@@ -64,6 +65,13 @@ import AiConnectDialog from '../components/AiConnectDialog'
 import { setDensityPref, setTheme, useDensity, useThemeChoice } from '../lib/prefs'
 import type { Density, ThemeChoice } from '../lib/theme'
 import { cn } from '../lib/cn'
+import StopChecklistDialog from '../components/StopChecklistDialog'
+import {
+  entriesFromBoard,
+  ownershipLabel,
+  planStop,
+  type StopListEntry,
+} from '../lib/supervisor'
 
 /**
  * 设置页（P-07 / DESIGN-SPEC §4.8 + PRD-SETTINGS-CONTROL-PLANE）。
@@ -276,6 +284,7 @@ function PeerCard({
   job,
   controlReady,
   acting,
+  keptExternal,
   onInstall,
   onStart,
   onStop,
@@ -287,6 +296,8 @@ function PeerCard({
   job: JobView | undefined
   controlReady: boolean
   acting: string | null
+  /** 用户取消停止后保留的「未停止（外部进程）」标记（QUOT-484 D2） */
+  keptExternal: boolean
   onInstall: () => void
   onStart: () => void
   onStop: () => void
@@ -297,9 +308,14 @@ function PeerCard({
   const statusLabel = peer.status_label || PEER_STATUS_LABEL[peer.status]
   const uptime = peer.last_job?.action === 'start' && peer.last_job.status === 'ok' ? uptimeLabel(peer.last_job.started_at) : null
   const jobActive = job?.status === 'queued' || job?.status === 'running'
+  // 归属只认账本 origin（QUOT-484 / 482）：null=非托管（观测），字段缺失=归属未上报
+  const ownership = ownershipLabel(peer.origin)
+  const selfHeal = peer.self_heal ?? null
+  const healGaveUp = selfHeal?.status === 'gave_up'
+  const healActive = selfHeal?.status === 'healing'
 
   return (
-    <li className="rounded border border-border bg-surface shadow-card">
+    <li className={cn('rounded border bg-surface shadow-card', healGaveUp ? 'border-danger' : 'border-border')}>
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -309,6 +325,13 @@ function PeerCard({
               </StatusDot>
               <h3 className="truncate text-subtitle font-semibold text-text">{peer.product}</h3>
               {peer.version && <span className="ldst-num text-caption text-text-muted">v{peer.version}</span>}
+              <Badge
+                tone={peer.origin === 'adopted' ? 'warn' : ownership === '主程序托管' ? 'info' : 'flat'}
+                title="归属来自后端 supervisor 账本的 origin 字段，前端不做端口扫描"
+              >
+                {ownership}
+              </Badge>
+              {keptExternal && <Badge tone="warn">未停止（外部进程）</Badge>}
             </div>
             <p className="mt-1 text-caption text-text-secondary">{peer.role}</p>
           </div>
@@ -330,6 +353,45 @@ function PeerCard({
             </>
           )}
         </p>
+
+        {selfHeal && healActive && (
+          <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-surface-2 px-2 py-2">
+            <Badge tone="info">正在重拉（第 {selfHeal.attempts}/{selfHeal.max} 次）</Badge>
+            <span
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={selfHeal.max}
+              aria-valuenow={selfHeal.attempts}
+              aria-label="自愈重拉进度"
+              className="h-1 w-24 overflow-hidden rounded-pill bg-surface-3"
+            >
+              <span
+                className="block h-full rounded-pill bg-accent transition-all duration-base"
+                style={{ width: `${Math.min(100, (selfHeal.attempts / Math.max(1, selfHeal.max)) * 100)}%` }}
+              />
+            </span>
+            <span className="text-caption text-text-muted">崩溃自愈进行中，界面不会一直卡住</span>
+          </div>
+        )}
+
+        {selfHeal && healGaveUp && (
+          <div className="flex flex-wrap items-center gap-2 rounded border border-danger bg-danger-soft px-2 py-2">
+            <Badge tone="danger">需人工处理（已停止自愈）</Badge>
+            <span className="text-caption text-text-secondary">
+              已重拉 <span className="ldst-num">{selfHeal.attempts}/{selfHeal.max}</span> 次仍退出，自动自愈停止。
+            </span>
+            <Button
+              variant="secondary"
+              className="ml-auto"
+              disabled={!controlReady || jobActive}
+              loading={acting === `${peer.id}:start`}
+              onClick={onStart}
+              leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+            >
+              重试
+            </Button>
+          </div>
+        )}
 
         {peer.port_conflicts.length > 0 && (
           <ul className="flex flex-col gap-1">
@@ -1555,6 +1617,17 @@ export default function SettingsScreen() {
   const [importOpen, setImportOpen] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
 
+  // QUOT-484 · 停止清单流程：exit=退出全停，single=停一个外部接管模块
+  const [stopFlow, setStopFlow] = useState<{
+    mode: 'exit' | 'single'
+    entries: StopListEntry[]
+    peerId?: string
+    source: 'backend' | 'board-fallback'
+  } | null>(null)
+  const [stopBusy, setStopBusy] = useState(false)
+  // 取消停止（或停止时被后端保留）的外部进程：面板保留「未停止（外部进程）」标记，不静默消失
+  const [keptExternal, setKeptExternal] = useState<Set<string>>(new Set())
+
   const tabParam = params.get('tab')
   const section: Section = isSection(tabParam) ? tabParam : 'peers'
 
@@ -1654,6 +1727,95 @@ export default function SettingsScreen() {
     }
   }
 
+  // ---------------------------------------------------------------- QUOT-484 停止清单
+
+  const markKept = (ids: readonly string[]): void => {
+    setKeptExternal((current) => new Set([...current, ...ids]))
+  }
+
+  /** 外部接管模块不允许无提示直停（D2）：打开停止清单，确认后才创建停止任务。 */
+  const beginSingleStop = (peer: PeerSnapshot): void => {
+    setStopFlow({
+      mode: 'single',
+      peerId: peer.id,
+      entries: entriesFromBoard([peer]),
+      source: 'backend',
+    })
+  }
+
+  /** 「退出并停止全部」：先取后端停止预览；482 未接入时回退 board 快照组装。 */
+  const beginExitFlow = async (): Promise<void> => {
+    setStopBusy(true)
+    try {
+      let entries: StopListEntry[]
+      let source: 'backend' | 'board-fallback'
+      try {
+        const preview = await api.control.stopPreview()
+        entries = preview.entries
+        source = 'backend'
+      } catch (previewError) {
+        if (!isApiError(previewError)) throw previewError
+        entries = entriesFromBoard(peers)
+        source = 'board-fallback'
+      }
+      if (entries.length === 0) {
+        push('没有正在运行的模块，无需停止', 'info')
+        return
+      }
+      // 空清单（全是本程序启动的）不弹冗余确认：直接执行并给出可见说明
+      const plan = planStop(entries)
+      if (plan.mode === 'direct') {
+        const result = await api.control.stopAll()
+        push(
+          `已退出：${result.stopped.length} 个进程全部为本程序启动，直接停止（无需确认清单）`,
+          'ok',
+        )
+        board.reload()
+        return
+      }
+      setStopFlow({ mode: 'exit', entries: plan.entries, source })
+    } catch (error) {
+      push(`无法获取停止清单：${describeApiError(error).detail}`, 'danger')
+    } finally {
+      setStopBusy(false)
+    }
+  }
+
+  const confirmStop = async (): Promise<void> => {
+    if (!stopFlow) return
+    setStopBusy(true)
+    try {
+      if (stopFlow.mode === 'exit') {
+        const result = await api.control.stopAll()
+        if (result.kept.length > 0) markKept(result.kept)
+        push(
+          result.kept.length > 0
+            ? `已停止 ${result.stopped.length} 个进程；${result.kept.length} 个外部进程已保留并标记「未停止（外部进程）」`
+            : `已停止 ${result.stopped.length} 个进程`,
+          result.kept.length > 0 ? 'danger' : 'ok',
+        )
+      } else if (stopFlow.peerId) {
+        const peerId = stopFlow.peerId
+        const handle = await api.control.stop(peerId)
+        setJobs((current) => ({ ...current, [peerId]: pendingJob(peerId, 'stop', handle.job_id) }))
+        push('已创建任务：停止外部接管模块', 'info')
+      }
+      setStopFlow(null)
+      board.reload()
+    } catch (error) {
+      push(`停止失败：${describeApiError(error).detail}`, 'danger')
+    } finally {
+      setStopBusy(false)
+    }
+  }
+
+  /** 取消停止：模块回正常态，外部接管的保留可见标记（D2，不静默消失）。 */
+  const cancelStop = (): void => {
+    if (!stopFlow) return
+    markKept(stopFlow.entries.filter((entry) => entry.origin === 'adopted').map((entry) => entry.module))
+    setStopFlow(null)
+  }
+
   const confirmInstall = async (): Promise<void> => {
     if (!installPeer) return
     setInstallBusy(true)
@@ -1689,6 +1851,18 @@ export default function SettingsScreen() {
               : '读取模块状态…'
       }
       badge={<DemoStateBadge state={forced} />}
+      actions={
+        controlReady ? (
+          <Button
+            variant="secondary"
+            loading={stopBusy}
+            onClick={() => void beginExitFlow()}
+            leadingIcon={<Power className="size-3.5" aria-hidden="true" />}
+          >
+            退出并停止全部
+          </Button>
+        ) : undefined
+      }
       refresh={{
         label: '刷新状态',
         loading: board.status === 'loading' && state !== 'loading',
@@ -1866,12 +2040,15 @@ export default function SettingsScreen() {
                     job={jobs[peer.id]}
                     controlReady={controlReady}
                     acting={acting}
+                    keptExternal={keptExternal.has(peer.id) && peer.status === 'running'}
                     onInstall={() => {
                       setInstallError(null)
                       setInstallPeer(peer)
                     }}
                     onStart={() => void runAction(peer, 'start')}
-                    onStop={() => void runAction(peer, 'stop')}
+                    onStop={() =>
+                      peer.origin === 'adopted' ? beginSingleStop(peer) : void runAction(peer, 'stop')
+                    }
                     onLogs={() => setLogsPeer(peer)}
                     onConfig={() => setConfigPeer(peer)}
                     onMeta={() => setMetaPeer(peer)}
@@ -1950,6 +2127,29 @@ export default function SettingsScreen() {
       </ConfirmDialog>
 
       <LogsDrawer peer={logsPeer} onClose={() => setLogsPeer(null)} />
+
+      <StopChecklistDialog
+        open={stopFlow !== null}
+        title={
+          stopFlow?.mode === 'single'
+            ? `停止 ${stopFlow.entries[0]?.product ?? '模块'}`
+            : '退出：将停止以下进程'
+        }
+        subtitle={
+          stopFlow?.mode === 'single'
+            ? '该模块为外部接管进程，停止前需逐行确认'
+            : '关闭主程序前逐行确认；取消后外部接管进程会保留并标记'
+        }
+        entries={stopFlow?.entries ?? []}
+        fallbackNote={
+          stopFlow?.source === 'board-fallback'
+            ? 'supervisor 预览接口未接入（QUOT-482），清单由最近一次模块探测组装；pid 来自监听端口属主'
+            : undefined
+        }
+        loading={stopBusy}
+        onConfirm={() => void confirmStop()}
+        onCancel={cancelStop}
+      />
 
       <ImportPeerDrawer
         open={importOpen}

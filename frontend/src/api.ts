@@ -12,6 +12,8 @@
  * 未接入时抛 `ApiError`，界面显示「未接入 / 离线」，**不编造数据**。
  */
 
+import type { StopListEntry } from './lib/supervisor'
+
 export const API_BASE = '/api'
 const DEFAULT_TIMEOUT_MS = 5000
 const CONTROL_TIMEOUT_MS = 15000
@@ -692,6 +694,14 @@ export interface PeerSnapshot {
   last_job: JobView | null
   open_url: string | null
   actions: { can_install: boolean; can_start: boolean; can_stop: boolean; can_open: boolean }
+  /**
+   * QUOT-484：归属只来自 supervisor 账本（QUOT-482），482 未落地时字段缺失，
+   * 前端不推断、不做端口扫描。 */
+  origin?: 'spawned' | 'adopted' | 'spawned-via-task' | null
+  /** 崩溃自愈状态；缺省 = 后端未开启自愈或未上报，界面不显示自愈块。 */
+  self_heal?: { attempts: number; max: number; status: 'ok' | 'healing' | 'gave_up' } | null
+  /** 进程命令行（停止清单展示用）；后端未给就是 null，前端不拼装。 */
+  cmdline?: string | null
 }
 
 /** 工具组件（如 ProxyFleet）：只读观测，不参与 peer 的安装/启停任务。 */
@@ -1070,6 +1080,26 @@ export const api = {
         method: 'POST',
         body: {},
         timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /**
+     * QUOT-484 · 停止预览（supervisor 账本，QUOT-482 契约）：
+     * 「如果现在停止，哪些进程会被停」。482 未合入时 404 → 调用方按
+     * board 快照回退组装，不编造 pid。
+     */
+    stopPreview: (signal?: AbortSignal) =>
+      request<{ entries: StopListEntry[] }>('/control/supervisor/stop-preview', {
+        signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /**
+     * QUOT-484 · 全停执行：必须显式带确认意图（`confirmed: true`），
+     * 不允许无参数 POST 就把全部停掉（D2）。
+     */
+    stopAll: () =>
+      request<{ stopped: string[]; kept: string[] }>('/control/supervisor/stop-all', {
+        method: 'POST',
+        body: { confirmed: true },
+        timeoutMs: 60000,
       }),
   },
 }
