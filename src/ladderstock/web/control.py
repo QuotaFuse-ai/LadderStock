@@ -195,6 +195,11 @@ WSL_PROBE_TIMEOUT_SEC = 15.0
 #: 期望 WSL 发行版的机器级覆盖键（不设则解析 `wsl -l -v` 的默认发行版，绝不写死）
 WSL_DISTRO_ENV = "LDST_WSL_DISTRO"
 
+#: Windows 计划任务生命周期（QUOT-485 ProxyFleet）：单条 PowerShell cmdlet 调用上限
+TASK_TIMEOUT_SEC = 60.0
+#: 账本里的启动来源标记：进程由 SYSTEM 计划任务垫片拉起，控制面不亲手持有 PID
+TASK_ORIGIN_VIA_TASK = "spawned-via-task"
+
 #: 端口占用探测的超时
 PORT_PROBE_TIMEOUT_SEC = 10.0
 
@@ -1552,14 +1557,24 @@ class ControlPlane:
             # compose 生命周期（QUOT-486 mem0）：没有 .venv 也没有 pip 分发，
             # compose 文件落在位即视为已安装；版本无单一真源，如实回 None。
             installed = dir_exists and (directory / ctl.compose_file).is_file()
+        elif ctl.task_name:
+            # Windows 计划任务生命周期（QUOT-485 ProxyFleet）：没有 .venv 也没有
+            # pip 分发，目录在位即视为已安装（与 compose 分支同构）；版本无单一
+            # 真源（服务由 SYSTEM 垫片拉起），如实回 None。
+            installed = dir_exists
         elif dir_exists and self._venv_python(ctl).exists():
             version = self.import_version(ctl)
             installed = version is not None
 
         mcp_owners = self._port_probe(ctl.mcp_port)
         web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
-        listening = bool(mcp_owners or web_owners)
-        conflicts = self._port_conflicts(key, ctl, mcp_owners, web_owners)
+        # QUOT-485：额外端口（ProxyFleet 的 8789 出口网关）也探归属并计入「是否
+        # 监听」，但不出「打开」按钮——网关不是能点的站点。
+        extra_owners: dict[int, list[PortOwner]] = {
+            port: self._port_probe(port) for port in ctl.extra_ports
+        }
+        listening = bool(mcp_owners or web_owners or any(extra_owners.values()))
+        conflicts = self._port_conflicts(key, ctl, mcp_owners, web_owners, extra_owners)
 
         health: dict[str, Any] = {"ok": None, "detail": ""}
         if listening:  # 有监听就探一次：占用者到底是不是本方 peer，靠健康检查说话
@@ -1580,7 +1595,7 @@ class ControlPlane:
         # 亲手拉起它」（手动启动很常见，如 CN 要先加载代理 env）。降级成归属提示，
         # 保留 PID/进程名与「不接管」的事实，避免整页全红。
         if status == STATUS_RUNNING:
-            own_ports = {ctl.mcp_port, ctl.web_port}
+            own_ports = {ctl.mcp_port, ctl.web_port, *ctl.extra_ports}
             for conflict in conflicts:
                 if conflict.get("foreign") and conflict["port"] in own_ports:
                     conflict["severity"] = "info"
@@ -1617,10 +1632,20 @@ class ControlPlane:
             "upgrade_hint": upgrade_command(ctl.directory) if v_status == "behind" else None,
             "repo": ctl.repo,
             "venv": str(self._venv_dir(ctl)) if self._venv_dir(ctl).is_dir() else None,
-            "ports": {"mcp": ctl.mcp_port, "web": ctl.web_port, "web_label": ctl.web_port_label},
+            "ports": {
+                "mcp": ctl.mcp_port,
+                "web": ctl.web_port,
+                "web_label": ctl.web_port_label,
+                # 额外端口（QUOT-485，ProxyFleet 的 8789 出口网关）：探测归属，不打开
+                "extra": list(ctl.extra_ports),
+            },
             "listening": {
                 "mcp": [owner.as_dict() for owner in mcp_owners],
                 "web": [owner.as_dict() for owner in web_owners],
+                "extra": {
+                    str(port): [owner.as_dict() for owner in owners]
+                    for port, owners in extra_owners.items()
+                },
             },
             "health": health,
             "dist": {
@@ -1651,7 +1676,9 @@ class ControlPlane:
         attempts: list[tuple[str, str]] = []
         if ctl.web_port:
             attempts.append((f"http://127.0.0.1:{ctl.web_port}{ctl.health_path}", "web"))
-        attempts.append((f"http://127.0.0.1:{ctl.mcp_port}{ctl.health_path}", "mcp"))
+        # 同端口（QUOT-485 ProxyFleet 的 mcp_port == web_port == 8788）不重复打同一 URL
+        if ctl.mcp_port != ctl.web_port:
+            attempts.append((f"http://127.0.0.1:{ctl.mcp_port}{ctl.health_path}", "mcp"))
         details: list[str] = []
         for url, label in attempts:
             ok, detail = self._health(url, HEALTH_TIMEOUT_SEC)
@@ -1722,8 +1749,13 @@ class ControlPlane:
         ctl: PeerControl,
         mcp_owners: list[PortOwner],
         web_owners: list[PortOwner],
+        extra_owners: Mapping[int, list[PortOwner]] | None = None,
     ) -> list[dict[str, Any]]:
-        """两类冲突：历史默认端口被占（只报告）+ 本 peer 端口被非本控制面进程占用。"""
+        """两类冲突：历史默认端口被占（只报告）+ 本 peer 端口被非本控制面进程占用。
+
+        mcp_port / web_port / extra_ports 可能同端口（QUOT-485 ProxyFleet 的
+        8788 既是 mcp 也是 web）：按端口合并探测结果再判，避免同一占用报两次。
+        """
         conflicts: list[dict[str, Any]] = []
         mine = set(state_pids(self._peer_state(key)))
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
@@ -1737,10 +1769,15 @@ class ControlPlane:
                         "severity": "conflict",
                     }
                 )
-        for bound_port, owners in ((ctl.mcp_port, mcp_owners), (ctl.web_port, web_owners)):
-            if not bound_port:
-                continue
-            for owner in owners:
+        bound: dict[int, list[PortOwner]] = {}
+        if ctl.mcp_port:
+            bound.setdefault(ctl.mcp_port, []).extend(mcp_owners)
+        if ctl.web_port:
+            bound.setdefault(ctl.web_port, []).extend(web_owners)
+        for port, owners in (extra_owners or {}).items():
+            bound.setdefault(port, []).extend(owners)
+        for bound_port in sorted(bound):
+            for owner in bound[bound_port]:
                 if owner.pid is not None and owner.pid in mine:
                     continue
                 conflicts.append(
@@ -2249,6 +2286,8 @@ class ControlPlane:
         ctl = self.peers[job.peer]
         if ctl.compose_file:
             return self._start_compose(job, ctl)
+        if ctl.task_name:
+            return self._start_task(job, ctl)
         directory = Path(ctl.directory)
 
         # 1. 端口预检：已被占用直接失败，**不自动换端口**（DEC-004 / DEC-014 §3）
@@ -2436,6 +2475,151 @@ class ControlPlane:
         entry["last_stop_at"] = _now_iso()
         self._save_state()
 
+    # ----------------- Windows 计划任务生命周期（QUOT-485 ProxyFleet）-----------------
+
+    @staticmethod
+    def _ps_quote(value: str) -> str:
+        """PowerShell 单引号字面量（'' 转义）；任务名来自白名单常量，转义纯防御。"""
+        return "'" + value.replace("'", "''") + "'"
+
+    def _ps_task(self, job: Job, name: str, script: str, step: str) -> StepResult:
+        """跑一条 ScheduledTasks cmdlet；非 0 退出即失败（fail closed）。"""
+        job.step = step
+        job.log(f"  $ powershell -NoProfile -Command {script}")
+        result = self._run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            Path(self.peers[job.peer].directory),
+            TASK_TIMEOUT_SEC,
+        )
+        if not result.ok:
+            raise JobFailure(
+                f"{step}失败（exit {result.returncode}）：{tail_lines(result.output, 5)}"
+            )
+        return result
+
+    def _task_state(self, job: Job, name: str) -> str:
+        """计划任务的 State 枚举（Ready/Running/Disabled/…），PowerShell 原生非本地化。"""
+        result = self._ps_task(
+            job,
+            name,
+            f"(Get-ScheduledTask -TaskName {self._ps_quote(name)} -ErrorAction Stop).State",
+            f"查询计划任务 {name} 状态",
+        )
+        lines = tail_lines(result.output, 1)
+        return lines[-1].strip() if lines else ""
+
+    def _start_task(self, job: Job, ctl: PeerControl) -> None:
+        """计划任务生命周期的启动：enable（如被停用）+ Start，进程归 SYSTEM 垫片。
+
+        控制面不亲手拉起主进程、不持有 PID——`Start-ScheduledTask` 只触发任务，
+        主进程由该任务的启动动作（含 1 分钟自愈重复触发）带到前台，账本记
+        `origin: spawned-via-task`。Enable/Start 不改任务账户、触发器与权限。
+        """
+        name = ctl.task_name or ""
+        directory = Path(ctl.directory)
+        if not directory.is_dir():
+            raise JobFailure(f"目录不存在：{directory}（先完成部署）")
+
+        # 端口预检：与 venv 形态同口径（DEC-004 不换端口）；已在监听说明服务在跑
+        #（手动启动很常见），直接记账返回——Start 对运行中的任务没有意义
+        if self._occupied_ports(ctl):
+            job.log("  声明端口已有监听，跳过 Start（服务可能已在运行）")
+            entry = self._peer_state(job.peer)
+            entry["task"] = {"task_name": name, "origin": TASK_ORIGIN_VIA_TASK}
+            entry["pids"] = []
+            entry.pop("last_stop_at", None)
+            entry["last_start_at"] = _now_iso()
+            self._save_state()
+            return
+
+        state = self._task_state(job, name)
+        if state == "Running":
+            job.log(f"  计划任务 {name} 已在运行，跳过 Start")
+        else:
+            if state == "Disabled":
+                self._ps_task(
+                    job,
+                    name,
+                    f"Enable-ScheduledTask -TaskName {self._ps_quote(name)} | Out-Null",
+                    f"启用计划任务 {name}",
+                )
+            self._ps_task(
+                job,
+                name,
+                f"Start-ScheduledTask -TaskName {self._ps_quote(name)}",
+                f"启动计划任务 {name}",
+            )
+
+        job.step = "等待端口监听"
+        deadline = time.monotonic() + START_GRACE_SEC
+        while time.monotonic() < deadline:
+            if self._port_probe(ctl.mcp_port):
+                job.log(
+                    f"  端口 {ctl.mcp_port} 已监听"
+                    f"（{time.monotonic() - (deadline - START_GRACE_SEC):.1f}s）"
+                )
+                entry = self._peer_state(job.peer)
+                entry["task"] = {"task_name": name, "origin": TASK_ORIGIN_VIA_TASK}
+                entry["pids"] = []  # 进程归 SYSTEM 计划任务，控制面不持 PID
+                entry.pop("last_stop_at", None)
+                entry["last_start_at"] = _now_iso()
+                self._save_state()
+                return
+            time.sleep(0.5)
+        raise JobFailure(
+            f"计划任务 {name} 已 Start，但 {START_GRACE_SEC:.0f} 秒内端口 "
+            f"{ctl.mcp_port} 无监听；任务自身可能启动失败，"
+            f"查任务历史或日志目录 {self._log_path(job.peer)}"
+        )
+
+    def _stop_task(self, job: Job, ctl: PeerControl) -> None:
+        """计划任务生命周期的停止：先 Disable 压住 1 分钟自愈触发，再 Stop。
+
+        只 Stop 不 Disable 的话，任务的重复触发会在一分钟内把服务拉回来。
+        Disable/Stop 不改任务账户、触发器定义与权限，只改启停位；启动路径负责
+        再 Enable 回来。
+        """
+        name = ctl.task_name or ""
+
+        # 停止前把现状写进任务日志（仿 compose：不允许无提示强停）
+        state = self._task_state(job, name)
+        job.log(f"  计划任务 {name} 当前 State = {state or '未知'}")
+        owners = self._occupied_ports(ctl)
+        for port, owner in owners:
+            job.log(f"  端口 {port}：PID {owner.pid or '未知'}（{owner.process or '未知进程'}）")
+        if not owners and state != "Running":
+            raise JobFailure(
+                f"计划任务 {name} 未在运行（State={state or '未知'}），声明端口无监听，"
+                "未执行任何停止"
+            )
+
+        self._ps_task(
+            job,
+            name,
+            f"Disable-ScheduledTask -TaskName {self._ps_quote(name)} | Out-Null",
+            f"停用计划任务 {name}（压住自愈触发）",
+        )
+        self._ps_task(
+            job,
+            name,
+            f"Stop-ScheduledTask -TaskName {self._ps_quote(name)}",
+            f"停止计划任务 {name}",
+        )
+
+        job.step = "等待端口释放"
+        deadline = time.monotonic() + START_GRACE_SEC
+        while time.monotonic() < deadline:
+            if not self._occupied_ports(ctl):
+                break
+            time.sleep(0.5)
+
+        entry = self._peer_state(job.peer)
+        task_entry = entry.setdefault("task", {"task_name": name})
+        task_entry["origin"] = TASK_ORIGIN_VIA_TASK
+        entry["pids"] = []
+        entry["last_stop_at"] = _now_iso()
+        self._save_state()
+
     def _ownership_refusal(self, ctl: PeerControl, record: Mapping[str, Any]) -> str | None:
         """终止前的归属校验：不通过就返回可读原因（**绝不降级成盲杀**，QUOT-123 P0-2）。
 
@@ -2526,6 +2710,8 @@ class ControlPlane:
         ctl = self.peers[job.peer]
         if ctl.compose_file:
             return self._stop_compose(job, ctl)
+        if ctl.task_name:
+            return self._stop_task(job, ctl)
         records = pid_records(self._peer_state(job.peer))
 
         # 只终止「本控制面启动过」的进程（DEC-014 硬约束 3）
@@ -2581,9 +2767,8 @@ class ControlPlane:
 
     def _occupied_ports(self, ctl: PeerControl) -> list[tuple[int, PortOwner]]:
         occupied: list[tuple[int, PortOwner]] = []
-        for port in (ctl.mcp_port, ctl.web_port):
-            if not port:
-                continue
+        ports = (ctl.mcp_port, ctl.web_port, *ctl.extra_ports)
+        for port in dict.fromkeys(p for p in ports if p):  # 去重保序（8788 同值两字段）
             for owner in self._port_probe(port):
                 occupied.append((port, owner))
         return occupied

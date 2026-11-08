@@ -1,5 +1,5 @@
 """MCP 工具注册表（只读白名单 + 1 个发起研究 + 3 个复盘类 + 1 个研究进度
-+ 1 个候选池 + 1 个行业画像 + 2 个资讯工具）。
++ 1 个候选池 + 1 个行业画像 + 2 个资讯工具 + 2 个 ProxyFleet 工具）。
 
 隐私硬约束：交易日志与持仓（`journal.sqlite`）**永不出现在**任何工具的输出 schema 中。
 R6 的两个资讯工具（`news_stream` / `event_calendar`）同样只读：默认不写本机库，
@@ -168,6 +168,34 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "required": ["month"],
         },
         "news",
+    ),
+    # QUOT-485 ProxyFleet 纳管：8788 REST 的薄封装。状态工具只读、无 date——
+    # 数据是「当下水位」，按 date 定位快照的口径不适用（同 research_status 的偏差逻辑）。
+    # 生命周期动作（起/停）只有这一个写工具：走 SYSTEM 计划任务垫片（ControlPlane），
+    # 不重复实现 schtasks 逻辑，账本记 origin=spawned-via-task。
+    ToolSpec(
+        "proxyfleet_status",
+        "ProxyFleet 代理池水位：readyz/池摘要/出口网关/采集源错误/最近失败节点（只读）",
+        True,
+        {"type": "object", "properties": {}},
+        "meta",
+    ),
+    ToolSpec(
+        "proxyfleet_control",
+        "ProxyFleet 起停（start/stop）：经 SYSTEM 计划任务垫片由控制面执行，返回任务 ID 与结果",
+        False,
+        {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["start", "stop"],
+                    "description": "start = 启用并启动计划任务；stop = 先禁用（压自愈）再停止",
+                }
+            },
+            "required": ["action"],
+        },
+        "meta",
     ),
 )
 

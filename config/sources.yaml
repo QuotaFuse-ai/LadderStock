@@ -97,6 +97,25 @@ peers:
     default_port: 9100
     role: 助手记忆：add / search / 历史回放（本地 bge-small-zh 向量，云骏 LLM）
     repo: null
+  # ProxyFleet（QUOT-485）：生态基础设施（出口代理池），从「工具组件只读观测」
+  # 升级为纳管 peer——但同 FinanceCoffer / mem0 口径：不是取数通道，sources 不允许
+  # via 它，DATASET_CATALOG 不给它任何数据集，四层边界的保护点不变。
+  # 服务是 Windows 计划任务 ProxyFleet（SYSTEM）带起的 `python -m proxyfleet serve`：
+  # 控制面启停走该垫片任务（PEER_CONTROL.task_name），账本记 origin=spawned-via-task；
+  # 8788 既是控制台/REST 也是 LS 视角的 MCP 面（ProxyFleet 自带 stdio MCP 就是这个
+  # REST 的客户端），8789 是出口网关（PEER_CONTROL.extra_ports，只探测不出「打开」）。
+  proxyfleet:
+    product: ProxyFleet
+    package: proxyfleet
+    cli: pfctl                # 占位：实际启停是 Windows 计划任务 ProxyFleet（PEER_CONTROL.task_name），cli 不执行
+    mcp_name: null            # 面板不直连它的 MCP；LS 侧走本仓 mcp 的 proxyfleet_* 工具（薄封装 8788 REST）
+    url_env: LDST_PROXYFLEET_API_URL
+    default_url: http://127.0.0.1:8788
+    timeout_sec: 10
+    health_path: /readyz      # 实测确认：免鉴权健康端点，ready = biz_ok >= 1
+    default_port: 8788
+    role: 代理池：节点采集 / 健康检查 / 出口网关（8788 控制台 · 8789 网关）
+    repo: null
 
 sources:
   # ---------------- 行情与短线数据：TickHub-CN ----------------

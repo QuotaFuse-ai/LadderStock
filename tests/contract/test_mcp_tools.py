@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from ladderstock.core import validation as validation_module
+from ladderstock.mcp import server as mcp_server
 from ladderstock.mcp.server import (
     ENVELOPE_OUTPUT_SCHEMA,
     ToolError,
@@ -58,6 +59,9 @@ DOCUMENTED_TOOLS = {
     # R6 新增：资讯流与事件日历，都只读；工具名按任务原文
     "news_stream",
     "event_calendar",
+    # QUOT-485 新增：ProxyFleet 纳管（8788 REST 薄封装 + 生命周期垫片）
+    "proxyfleet_status",
+    "proxyfleet_control",
 }
 
 #: 按**证券代码**定位进度的工具：`date` 可选（缺省取该代码最近一次 checkpoint），
@@ -78,9 +82,10 @@ def test_tool_set_matches_document() -> None:
     assert {spec.name for spec in TOOL_SPECS} == DOCUMENTED_TOOLS
 
 
-def test_only_research_tool_is_write() -> None:
+def test_only_start_research_and_proxyfleet_control_write() -> None:
+    """写工具白名单：发起研究 + QUOT-485 的 ProxyFleet 起停（走 SYSTEM 垫片）。"""
     writes = {spec.name for spec in TOOL_SPECS if not spec.read_only}
-    assert writes == {"ladder_start_research"}
+    assert writes == {"ladder_start_research", "proxyfleet_control"}
 
 
 def test_no_privacy_keywords_leak_into_mcp() -> None:
@@ -132,6 +137,23 @@ def test_news_tools_keep_their_own_locators() -> None:
     # 「只读工具默认不留副作用」：store 与 ai 都必须默认 false
     assert props["store"]["default"] is False, "news_stream 默认不得写本机库"
     assert props["ai"]["default"] is False, "模型叙述必须默认关闭（R6 要求 2）"
+
+
+def test_proxyfleet_tools_keep_meta_domain_and_own_locators() -> None:
+    """反向钉住 QUOT-485 的口径：状态只读无 date（水位是「当下」），
+    控制是第二个写工具且 action 只允许 start/stop。"""
+    by_name = {spec.name: spec for spec in TOOL_SPECS}
+    status = by_name["proxyfleet_status"]
+    assert status.read_only is True
+    assert status.domain == "meta"
+    # 无 date：水位不是按交易日定位的快照（同 research_status 的偏差逻辑）
+    assert "date" not in status.input_schema.get("properties", {})
+
+    control = by_name["proxyfleet_control"]
+    assert control.read_only is False
+    assert control.domain == "meta"
+    assert control.input_schema["required"] == ["action"]
+    assert control.input_schema["properties"]["action"]["enum"] == ["start", "stop"]
 
 
 def test_code_scoped_tools_require_code_and_keep_date_optional() -> None:
@@ -188,6 +210,18 @@ def _assert_envelope(envelope: dict[str, Any]) -> None:
     assert envelope["source_status"] in {"ok", "degraded", "partial"}
     assert isinstance(envelope["payload"], dict)
     # 每个 payload 都显式带数据状态，缺失/降级一眼可见
+    assert envelope["payload"]["data_source_status"] in {"ok", "missing", "partial", "degraded"}
+
+
+def _assert_live_envelope(envelope: dict[str, Any]) -> None:
+    """与 `_assert_envelope` 同口径，但 data_as_of 取今天——
+    QUOT-485 的 ProxyFleet 工具观测的是「当下」水位，没有 date 入参。"""
+    assert set(envelope) == ENVELOPE_KEYS
+    assert envelope["source"] == "ladderstock"
+    assert isinstance(envelope["source_detail"], str) and envelope["source_detail"]
+    assert envelope["data_as_of"] == date.today().isoformat()
+    assert envelope["source_status"] in {"ok", "degraded", "partial"}
+    assert isinstance(envelope["payload"], dict)
     assert envelope["payload"]["data_source_status"] in {"ok", "missing", "partial", "degraded"}
 
 
@@ -418,3 +452,267 @@ def test_dispatch_rejects_bad_usage(tmp_path: Any) -> None:
         dispatch("ladder_get_review", {}, root=tmp_path)
     with pytest.raises(ToolError):
         dispatch("ladder_get_review", {"date": "not-a-date"}, root=tmp_path)
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-485：ProxyFleet 薄封装
+# --------------------------------------------------------------------------- #
+
+def test_proxyfleet_status_unreachable_is_partial_and_honest(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """8788 没起时如实 partial：不伪造水位，problems 里写清是哪个端点连不上。"""
+    monkeypatch.setenv("LDST_PROXYFLEET_API_URL", "http://127.0.0.1:9")
+
+    envelope = dispatch("proxyfleet_status", {}, root=tmp_path)
+
+    _assert_live_envelope(envelope)
+    assert envelope["domain"] == "review"
+    assert envelope["topic"] == "proxyfleet_status"
+    assert envelope["source_status"] == "partial"
+    assert envelope["confidence"] == "low"
+    proxyfleet = envelope["payload"]["proxyfleet"]
+    assert proxyfleet["available"] is False
+    assert proxyfleet["base_url"] == "http://127.0.0.1:9"
+    assert proxyfleet["ready"] is False
+    assert proxyfleet["pool"] is None
+    assert any("/readyz" in problem for problem in proxyfleet["problems"])
+    assert envelope["payload"]["data_source_status"] == "missing"
+
+
+def _proxyfleet_fake_get(
+    ready: tuple[int, str], summary: tuple[int, str], nodes: tuple[int, str]
+) -> Any:
+    """按路径分发罐头响应的 `_proxyfleet_get` 替身。"""
+
+    def fake_get(path: str, *, timeout: float = 10.0) -> tuple[int, str]:
+        if path == "/readyz":
+            return ready
+        if path == "/v1/stats/summary":
+            return summary
+        if path.startswith("/v1/nodes"):
+            return nodes
+        raise AssertionError(f"意外路径：{path}")
+
+    return fake_get
+
+
+def test_proxyfleet_status_reports_pool_gateway_and_failures(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/readyz + /v1/stats/summary 原样透传，「最近失败」从 /v1/nodes 的 fail 计数派生。"""
+    monkeypatch.setattr(
+        mcp_server,
+        "_proxyfleet_get",
+        _proxyfleet_fake_get(
+            (
+                200,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "data": {
+                            "ready": True,
+                            "biz_ok": 2,
+                            "active": 2,
+                            "total": 10,
+                            "min_active": 1,
+                            "uptime": 3600,
+                        },
+                    }
+                ),
+            ),
+            (
+                200,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "data": {
+                            "pool": {"biz_ok": 2},
+                            "gateway": {"total": 5, "errors": 0},
+                            "sources": {"demo": {"pages": 3}},
+                        },
+                    }
+                ),
+            ),
+            (
+                200,
+                json.dumps(
+                    {
+                        "ok": True,
+                        "data": {
+                            "count": 2,
+                            "items": [
+                                {
+                                    "proxy": "1.2.3.4:8080",
+                                    "state": "active",
+                                    "score": 90.0,
+                                    "ok": 5,
+                                    "fail": 0,
+                                    "source": "demo",
+                                },
+                                {
+                                    "proxy": "5.6.7.8:8080",
+                                    "state": "dead",
+                                    "score": 0.0,
+                                    "ok": 0,
+                                    "fail": 3,
+                                    "last_ok_at": None,
+                                    "source": "demo",
+                                },
+                            ],
+                        },
+                    }
+                ),
+            ),
+        )
+    )
+
+    envelope = dispatch("proxyfleet_status", {}, root=tmp_path)
+
+    _assert_live_envelope(envelope)
+    assert envelope["source_status"] == "ok"
+    assert envelope["freshness"] == "realtime"
+    proxyfleet = envelope["payload"]["proxyfleet"]
+    assert proxyfleet["available"] is True
+    assert proxyfleet["ready"] is True
+    assert proxyfleet["pool"] == {
+        "biz_ok": 2,
+        "active": 2,
+        "total": 10,
+        "min_active": 1,
+        "uptime": 3600,
+    }
+    assert proxyfleet["gateway"] == {"total": 5, "errors": 0}
+    assert proxyfleet["harvest_sources"] == {"demo": {"pages": 3}}
+    assert proxyfleet["nodes_total"] == 2
+    # 只有 fail>0 的节点进「最近失败」，且按失败次数降序
+    assert [row["proxy"] for row in proxyfleet["recent_failures"]] == ["5.6.7.8:8080"]
+    assert proxyfleet["problems"] == []
+    assert envelope["payload"]["data_source_status"] == "ok"
+    blob = json.dumps(envelope, ensure_ascii=False).lower()
+    for word in FORBIDDEN_KEYWORDS:
+        assert word.lower() not in blob, word
+
+
+def test_proxyfleet_status_alive_but_pool_empty_is_degraded(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/readyz 503 也是活着的应答（biz_ok=0）：水位可读，只是降级，不谎报 missing。"""
+    monkeypatch.setattr(
+        mcp_server,
+        "_proxyfleet_get",
+        _proxyfleet_fake_get(
+            (
+                503,
+                json.dumps(
+                    {"ok": False, "data": {"ready": False, "biz_ok": 0, "active": 0, "total": 0}}
+                ),
+            ),
+            (
+                200,
+                json.dumps(
+                    {"ok": True, "data": {"pool": {"biz_ok": 0}, "gateway": {}, "sources": {}}}
+                ),
+            ),
+            (200, json.dumps({"ok": True, "data": {"count": 0, "items": []}})),
+        ),
+    )
+
+    envelope = dispatch("proxyfleet_status", {}, root=tmp_path)
+
+    _assert_live_envelope(envelope)
+    assert envelope["source_status"] == "degraded"
+    proxyfleet = envelope["payload"]["proxyfleet"]
+    assert proxyfleet["available"] is True
+    assert proxyfleet["ready"] is False
+    assert proxyfleet["pool"]["biz_ok"] == 0
+    assert envelope["payload"]["data_source_status"] == "degraded"
+
+
+class _FakeJob:
+    def __init__(self, job_id: str, status: str, error: str | None = None) -> None:
+        self.id = job_id
+        self.status = status
+        self.error = error
+
+    def tail(self, count: int) -> list[str]:
+        return [f"line-{index}" for index in range(min(count, 2))]
+
+
+class _FakePlane:
+    def __init__(self, final: _FakeJob, reject: Exception | None = None) -> None:
+        self.final = final
+        self.reject = reject
+        self.calls: list[tuple[str, str]] = []
+
+    def create_job(self, peer: str, action: str, *, dev: bool = False) -> _FakeJob:
+        if self.reject is not None:
+            raise self.reject
+        self.calls.append((peer, action))
+        return self.final
+
+    def get_job(self, job_id: str) -> _FakeJob | None:
+        return self.final
+
+
+def test_proxyfleet_control_runs_through_plane(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """起停必须经 ControlPlane（SYSTEM 计划任务垫片），工具只做薄转发。"""
+    plane = _FakePlane(_FakeJob("job-1", "ok"))
+    monkeypatch.setattr(mcp_server, "_proxyfleet_plane", lambda root: plane)
+
+    envelope = dispatch("proxyfleet_control", {"action": "start"}, root=tmp_path)
+
+    _assert_live_envelope(envelope)
+    assert envelope["domain"] == "review"
+    assert envelope["topic"] == "proxyfleet_control"
+    assert envelope["source_status"] == "ok"
+    control = envelope["payload"]["proxyfleet_control"]
+    assert control == {
+        "action": "start",
+        "job_id": "job-1",
+        "status": "ok",
+        "error": None,
+        "log_tail": ["line-0", "line-1"],
+    }
+    assert plane.calls == [("proxyfleet", "start")]
+    assert envelope["payload"]["data_source_status"] == "ok"
+    # 口径随结果一起出：账本里的 origin 必须能被调用方看见
+    assert "spawned-via-task" in envelope["source_detail"]
+
+
+def test_proxyfleet_control_failed_job_is_partial(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plane = _FakePlane(_FakeJob("job-2", "failed", error="proxyfleet 未在运行"))
+    monkeypatch.setattr(mcp_server, "_proxyfleet_plane", lambda root: plane)
+
+    envelope = dispatch("proxyfleet_control", {"action": "stop"}, root=tmp_path)
+
+    _assert_live_envelope(envelope)
+    assert envelope["source_status"] == "partial"
+    control = envelope["payload"]["proxyfleet_control"]
+    assert control["status"] == "failed"
+    assert "未在运行" in control["error"]
+    assert envelope["payload"]["data_source_status"] == "degraded"
+
+
+def test_proxyfleet_control_rejects_bad_action_and_conflict(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(ToolError):
+        dispatch("proxyfleet_control", {"action": "restart"}, root=tmp_path)
+    with pytest.raises(ToolError):
+        dispatch("proxyfleet_control", {}, root=tmp_path)
+
+    # 同一 peer 已有任务在跑（ControlPlane RuntimeError）→ rejected，不崩
+    plane = _FakePlane(_FakeJob("job-3", "ok"), reject=RuntimeError("proxyfleet 已有任务在执行"))
+    monkeypatch.setattr(mcp_server, "_proxyfleet_plane", lambda root: plane)
+    envelope = dispatch("proxyfleet_control", {"action": "start"}, root=tmp_path)
+
+    _assert_live_envelope(envelope)
+    control = envelope["payload"]["proxyfleet_control"]
+    assert control["status"] == "rejected"
+    assert control["job_id"] is None
+    assert "已有任务在执行" in control["error"]

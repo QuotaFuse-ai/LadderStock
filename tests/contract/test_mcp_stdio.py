@@ -7,7 +7,7 @@
 - 每一行都必须能被 `json.loads` 解析成带 `jsonrpc: "2.0"` 的对象；
   出现一行日志（`ldst: ...`、traceback、进度提示）就算违约；
 - 日志必须落在 stderr（`ldst:` 前缀），且不能污染协议流；
-- 工具清单与 `mcp/tools.py` 的登记一致（12 个），每个都声明输出 schema，
+- 工具清单与 `mcp/tools.py` 的登记一致，每个都声明输出 schema，
   字段与本项目 `LadderEnvelope` 对齐；
 - 交易日志 / 持仓等隐私字段不得出现在工具清单里。
 
@@ -65,6 +65,9 @@ DOCUMENTED_TOOLS = {
     # R6 新增：资讯流 + 事件日历
     "news_stream",
     "event_calendar",
+    # QUOT-485 新增：ProxyFleet 纳管（8788 REST 薄封装 + 生命周期垫片）
+    "proxyfleet_status",
+    "proxyfleet_control",
 }
 
 #: 以证券代码（而非 date）定位快照的工具，见 tests/contract/test_mcp_tools.py 同名片段
@@ -188,9 +191,9 @@ def test_stdio_handshake_and_tool_list(session: StdioSession) -> None:
     tools = session.recv()["result"]["tools"]
 
     assert {tool["name"] for tool in tools} == DOCUMENTED_TOOLS
-    # 16 = 11 个 P0 + `research_status` + `candidate_pool` + `industry_snapshot`
-    # + `news_stream` + `event_calendar`；数量与清单一致才算没有重复注册
-    assert len(tools) == len(DOCUMENTED_TOOLS) == 16
+    # 数量与清单一致才算没有重复注册（11 个 P0 + research_status + candidate_pool
+    # + industry_snapshot + news_stream + event_calendar + proxyfleet_status/control）
+    assert len(tools) == len(DOCUMENTED_TOOLS) == 18
 
     code = session.close()
     assert code == 0
@@ -234,10 +237,11 @@ def test_tool_list_declares_envelope_output_schema(session: StdioSession) -> Non
         assert schema["properties"]["freshness"]["enum"] == ["realtime", "cached", "archive"]
         assert schema["properties"]["confidence"]["enum"] == ["high", "medium", "low"]
 
-        # meta 工具（sources health）没有 date 参数；以代码定位进度的工具（R1-1
-        # research_status）required 是 ["code"]、date 可选；以月份定位的日历（R6
-        # event_calendar）required 是 ["month"]；其余都必须要求 date
-        if name == "ladder_get_sources_health":
+        # meta 工具（sources health / ProxyFleet 状态）没有 date 参数；以代码定位进度的
+        # 工具（R1-1 research_status）required 是 ["code"]、date 可选；以月份定位的日历
+        # （R6 event_calendar）required 是 ["month"]；ProxyFleet 控制以 action 定位；
+        # 其余都必须要求 date
+        if name in {"ladder_get_sources_health", "proxyfleet_status"}:
             continue
         if name in CODE_SCOPED_TOOLS:
             assert tool["inputSchema"]["required"] == ["code"], name
@@ -248,6 +252,10 @@ def test_tool_list_declares_envelope_output_schema(session: StdioSession) -> Non
         if name in MONTH_SCOPED_TOOLS:
             assert tool["inputSchema"]["required"] == ["month"], name
             assert tool["annotations"]["readOnlyHint"] is True, name
+            continue
+        if name == "proxyfleet_control":
+            assert tool["inputSchema"]["required"] == ["action"], name
+            assert tool["annotations"]["readOnlyHint"] is False, name
             continue
         assert tool["inputSchema"]["required"] == ["date"], name
 
