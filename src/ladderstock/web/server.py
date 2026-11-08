@@ -82,6 +82,8 @@ from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
+from ladderstock.web.supervisor_api import build_selfheal_engine
+from ladderstock.web.supervisor_api import mount_supervisor as mount_supervisor_router
 from ladderstock.web.symbols import SymbolPlane
 from ladderstock.web.symbols import build_router as build_symbols_router
 
@@ -985,6 +987,7 @@ def create_app(
     industry_plane: Any | None = None,
     radar_plane: Any | None = None,
     symbols_plane: Any | None = None,
+    supervisor_engine: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
     / `industry_plane` / `radar_plane` / `symbols_plane` 可注入，便于测试。
@@ -1631,6 +1634,18 @@ def create_app(
     # SPA 兜底之前**：兜底是 `@app.get`，POST 落到它身上就是生产态那 7 条 405。
     # 闸门同控制面（回环 + `Host`），同样**不受 `LDST_CONTROL_ENABLED` 影响**。
     app.include_router(build_state_index_router(StateIndexPlane(data_root=root)))
+
+    # ------------------------------------------- 自愈状态面（QUOT-491 / 482-C）
+    #
+    # `/api/supervisor/state`（GET 只读）+ `/api/supervisor/state/{module}/reset`
+    # （POST 人工解除 needs_human）。引擎 = 最小账本 + 命令表重拉 + 通知
+    # （482-A/482-B 未落地，边界说明见 `supervisor/__init__.py`）；写面闸门复用
+    # 雷达面同一份实现（回环 + Host + 写方法来源证据），不新增鉴权。引擎随应用
+    # 启停（startup 起 / shutdown 停）；测试用 `supervisor_engine` 注入假件。
+    engine = supervisor_engine if supervisor_engine is not None else build_selfheal_engine(
+        root, panel_url=f"http://127.0.0.1:{WEB_PORT}/"
+    )
+    mount_supervisor_router(app, engine)
 
     # ------------------------------------------------------------ 静态看板
 
