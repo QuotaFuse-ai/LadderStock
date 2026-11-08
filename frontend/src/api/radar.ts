@@ -31,6 +31,9 @@ import { envelopeMetaOf, type EnvelopeFields } from './envelope'
 
 const READ_TIMEOUT_MS = 8000
 
+/** 批量导入要在库里备份 + 一个事务插最多 1000 行，8 秒的读超时口径不够用。 */
+const IMPORT_TIMEOUT_MS = 20000
+
 export type RadarStatus = 'ok' | 'partial' | 'missing'
 
 // ---------------------------------------------------------------- 文案表
@@ -1726,6 +1729,98 @@ export interface TradeInput {
   note?: string
 }
 
+// ---------------------------------------------------------------- X 光（QUOT-437）
+
+export interface XrayItem {
+  symbol: string
+  name: string
+  /** 现价 × 持有数；缺价时是 `null`（不是 0） */
+  market_value: number | null
+  /** 小数权重（`0.125` = 12.5%）；没进分母的是 `null` */
+  weight: number | null
+}
+
+export interface XrayBucket {
+  industry: string
+  /** `false` = 「未标注」这一桶 */
+  labeled: boolean
+  market_value: number | null
+  weight: number | null
+  symbols: string[]
+}
+
+export interface XrayCorrPair {
+  pair: string[]
+  corr: number
+  samples: number
+}
+
+export interface XrayCorrelation {
+  available: boolean
+  reason: string | null
+  max_pair: XrayCorrPair | null
+  avg_abs_corr: number | null
+  pairs: XrayCorrPair[]
+  pairs_count: number
+  min_days: number
+  window: { first: string | null; last: string | null; days: number | null }
+}
+
+export type XrayGapKind = 'weight' | 'correlation'
+
+export interface XrayGap {
+  symbol: string
+  name: string
+  affects: XrayGapKind
+  reason: string
+}
+
+export interface PortfolioXrayPayload {
+  local_only: boolean
+  store: string
+  price_lookup: { dataset: string; date: string | null; reason: string | null }
+  as_of: string | null
+  total_value: number | null
+  items: XrayItem[]
+  top1: number | null
+  top3: number | null
+  top5: number | null
+  industry_buckets: XrayBucket[]
+  industry_labeled_count: number
+  industry_unlabeled_count: number
+  correlation: XrayCorrelation
+  gaps: XrayGap[]
+  notes: string[]
+}
+
+// ---------------------------------------------------------------- CSV 批量导入
+
+export type ImportDuplicate = 'existing' | 'table'
+
+/** 预览的一行：`problem` 非空就是不可勾；`duplicate` 只说明「像重复」，不拦导入。 */
+export interface ImportPreviewRow {
+  index: number
+  problem: string | null
+  duplicate: ImportDuplicate | null
+  /** `existing` → 已记流水的 id；`table` → 本批里前一行在 `records` 里的下标 */
+  duplicate_of: number | null
+}
+
+export interface ImportPreviewPayload {
+  count: number
+  limit: number
+  max_bytes: number
+  rows: ImportPreviewRow[]
+  existing_issues: PortfolioIssue[]
+}
+
+export interface ImportResult {
+  imported: number
+  ids: number[]
+  backup: string | null
+  at: string
+}
+
 function integerOf(value: unknown, fallback = 0): number {
   const parsed = numberOrNull(value)
   return parsed === null ? fallback : Math.trunc(parsed)
@@ -2102,6 +2197,153 @@ export function parseReplayPayload(raw: unknown): PortfolioReplayPayload {
   }
 }
 
+function parseXrayItem(value: unknown): XrayItem | null {
+  const row = record(value)
+  if (!row) return null
+  const symbol = text(row.symbol).trim().toUpperCase()
+  if (!symbol) return null
+  return {
+    symbol,
+    name: text(row.name),
+    market_value: numberOrNull(row.market_value),
+    weight: numberOrNull(row.weight),
+  }
+}
+
+function parseXrayBucket(value: unknown): XrayBucket | null {
+  const row = record(value)
+  if (!row) return null
+  const industry = text(row.industry).trim()
+  if (!industry) return null
+  return {
+    industry,
+    labeled: flag(row.labeled),
+    market_value: numberOrNull(row.market_value),
+    weight: numberOrNull(row.weight),
+    symbols: stringList(row.symbols).map((item) => item.toUpperCase()),
+  }
+}
+
+function parseCorrPair(value: unknown): XrayCorrPair | null {
+  const row = record(value)
+  if (!row) return null
+  const corr = numberOrNull(row.corr)
+  const pair = stringList(row.pair)
+  if (corr === null || pair.length < 2) return null
+  return { pair, corr, samples: integerOf(row.samples) }
+}
+
+function parseCorrelation(value: unknown): XrayCorrelation {
+  const row = record(value) ?? {}
+  const pairs = list(row.pairs)
+    .map(parseCorrPair)
+    .filter((item): item is XrayCorrPair => item !== null)
+  const window = record(row.window) ?? {}
+  return {
+    available: flag(row.available),
+    // 后端算不出来时一定给原因；这里只兜「没有原因」的空串，不编一句解释
+    reason: reasonOf(row.reason),
+    max_pair: parseCorrPair(row.max_pair),
+    avg_abs_corr: numberOrNull(row.avg_abs_corr),
+    pairs,
+    pairs_count: integerOf(row.pairs_count, pairs.length),
+    min_days: integerOf(row.min_days),
+    window: {
+      first: reasonOf(window.first),
+      last: reasonOf(window.last),
+      days: numberOrNull(window.days),
+    },
+  }
+}
+
+function parseXrayGap(value: unknown): XrayGap | null {
+  const row = record(value)
+  if (!row) return null
+  const symbol = text(row.symbol).trim().toUpperCase()
+  if (!symbol) return null
+  return {
+    symbol,
+    name: text(row.name),
+    affects: row.affects === 'correlation' ? 'correlation' : 'weight',
+    reason: text(row.reason),
+  }
+}
+
+function parseXray(raw: unknown): PortfolioXrayPayload {
+  const root = record(raw)
+  if (!root) throw new ApiError('parse', 'X 光接口返回的不是对象')
+  const lookup = record(root.price_lookup) ?? {}
+  const metrics = record(root.metrics) ?? {}
+  return {
+    local_only: flag(root.local_only),
+    store: text(root.store),
+    price_lookup: {
+      dataset: text(lookup.dataset),
+      date: reasonOf(lookup.date),
+      reason: reasonOf(lookup.reason),
+    },
+    as_of: reasonOf(root.as_of),
+    total_value: numberOrNull(root.total_value),
+    items: list(root.items)
+      .map(parseXrayItem)
+      .filter((item): item is XrayItem => item !== null),
+    top1: numberOrNull(root.top1),
+    top3: numberOrNull(root.top3),
+    top5: numberOrNull(root.top5),
+    industry_buckets: list(root.industry_buckets)
+      .map(parseXrayBucket)
+      .filter((item): item is XrayBucket => item !== null),
+    industry_labeled_count: integerOf(root.industry_labeled_count),
+    industry_unlabeled_count: integerOf(root.industry_unlabeled_count),
+    correlation: parseCorrelation(metrics.corr),
+    gaps: list(root.gaps)
+      .map(parseXrayGap)
+      .filter((item): item is XrayGap => item !== null),
+    notes: stringList(root.notes),
+  }
+}
+
+function parseImportRow(value: unknown): ImportPreviewRow | null {
+  const row = record(value)
+  if (!row) return null
+  const index = numberOrNull(row.index)
+  if (index === null) return null
+  const duplicate = row.duplicate === 'existing' || row.duplicate === 'table' ? row.duplicate : null
+  return {
+    index: Math.trunc(index),
+    problem: reasonOf(row.problem),
+    duplicate,
+    duplicate_of: numberOrNull(row.duplicate_of),
+  }
+}
+
+function parseImportPreview(raw: unknown): ImportPreviewPayload {
+  const root = record(raw)
+  if (!root) throw new ApiError('parse', '导入预览接口返回的不是对象')
+  return {
+    count: integerOf(root.count),
+    limit: integerOf(root.limit),
+    max_bytes: integerOf(root.max_bytes),
+    rows: list(root.rows)
+      .map(parseImportRow)
+      .filter((item): item is ImportPreviewRow => item !== null),
+    existing_issues: list(root.existing_issues)
+      .map(parseIssue)
+      .filter((item): item is PortfolioIssue => item !== null),
+  }
+}
+
+function parseImportResult(raw: unknown): ImportResult {
+  const root = record(raw)
+  if (!root) throw new ApiError('parse', '导入接口返回的不是对象')
+  return {
+    imported: integerOf(root.imported),
+    ids: list(root.ids).map(integerOf),
+    backup: reasonOf(root.backup),
+    at: text(root.at),
+  }
+}
+
 /** 持仓账本（流水重放 + 行情拼接 + 旧仓分类）。 */
 export async function fetchPortfolio(
   method: PortfolioMethod,
@@ -2121,6 +2363,53 @@ export async function fetchPortfolioPerf(signal?: AbortSignal): Promise<Portfoli
 export async function fetchPortfolioReplay(signal?: AbortSignal): Promise<PortfolioReplayPayload> {
   return parseReplayPayload(
     await request<unknown>(withParams('/api/portfolio/replay', [['scenario', 'all']]), { signal }),
+  )
+}
+
+/**
+ * 持仓体检（X 光）：权重 / 集中度 / 行业 / 相关性 / 缺口。
+ *
+ * 后端只吃「流水回放出的持仓 + 本机现价 + 本机日线」，不联网；两种成本法的持有数量
+ * 一样，所以这里没有 `method` 参数——权重与行业暴露跟成本法无关。
+ */
+export async function fetchPortfolioXray(signal?: AbortSignal): Promise<PortfolioXrayPayload> {
+  return parseXray(await request<unknown>('/api/portfolio/xray', { signal }))
+}
+
+/** 表格导入的预览体：`selected` 只影响「按这批勾选重放会不会卖超」，预览本身不写库。 */
+export interface ImportPreviewInput {
+  method: PortfolioMethod
+  records: TradeInput[]
+  selected: boolean[]
+}
+
+/** 逐行校验 + 重复标记；后端明确不写库、不备份。 */
+export async function previewTradeImport(
+  input: ImportPreviewInput,
+  signal?: AbortSignal,
+): Promise<ImportPreviewPayload> {
+  return parseImportPreview(
+    await request<unknown>('/api/portfolio/ledger/import/preview', {
+      method: 'POST',
+      body: input,
+      signal,
+      timeoutMs: IMPORT_TIMEOUT_MS,
+    }),
+  )
+}
+
+/** 一次写入：后端按 `{method, records}` 再查一遍，全对才备份、才在一个事务里批量插。 */
+export async function importPortfolioTrades(
+  input: { method: PortfolioMethod; records: TradeInput[] },
+  signal?: AbortSignal,
+): Promise<ImportResult> {
+  return parseImportResult(
+    await request<unknown>('/api/portfolio/ledger/import', {
+      method: 'POST',
+      body: input,
+      signal,
+      timeoutMs: IMPORT_TIMEOUT_MS,
+    }),
   )
 }
 
