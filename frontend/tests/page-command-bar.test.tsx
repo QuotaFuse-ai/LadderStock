@@ -72,7 +72,9 @@ describe('顶栏本页命令（QUOT-457）', () => {
 
     fireEvent.click(trigger())
 
-    const panel = screen.getByRole('dialog', { name: '本页命令' })
+    // commands 首次到达时 command?.key 的 effect 会执行一次 setOpen(false)，
+    // 与点击存在时序竞态：waitFor 轮询到面板稳定后再断言，而非同步断言第一帧
+    const panel = await waitFor(() => screen.getByRole('dialog', { name: '本页命令' }))
     expect(panel.textContent).toContain('拉取行情数据')
     expect(panel.textContent).toContain('ldst sync --date 2026-11-05')
     expect(panel.textContent).toContain('上次成功')
@@ -84,6 +86,7 @@ describe('顶栏本页命令（QUOT-457）', () => {
     renderBar()
     await waitFor(() => expect(trigger()).toBeTruthy())
     fireEvent.click(trigger())
+    await waitFor(() => expect(screen.getByRole('button', { name: '运行' })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: '运行' }))
 
     await waitFor(() => expect(runCommand).toHaveBeenCalledWith('sync'))
@@ -96,7 +99,7 @@ describe('顶栏本页命令（QUOT-457）', () => {
     renderBar()
     await waitFor(() => expect(trigger()).toBeTruthy())
     fireEvent.click(trigger())
-    expect(screen.getByRole('dialog')).toBeTruthy()
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
