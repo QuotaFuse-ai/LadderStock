@@ -56,6 +56,13 @@ warn_unused_ignores = true
 module = ["yaml.*", "jsonschema.*"]
 ignore_missing_imports = true
 
+# `ctypes.windll` 只在 Windows 存在（typeshed 也只给 win32 平台定义），
+# 但 posix 平台检查时该行会报 attr-defined、win 平台检查时 ignore 又判「未使用」，
+# 平台二选一都挂一头——此模块只允许平台相关的 ignore（mypy 官方对平台特定代码的建议）。
+[[tool.mypy.overrides]]
+module = ["ladderstock.supervisor.restart"]
+warn_unused_ignores = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

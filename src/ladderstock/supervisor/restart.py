@@ -32,7 +32,7 @@ def windows_pid_alive(pid: int) -> bool:
     进程已退出 → 句柄被触发（WAIT_OBJECT_0）；还活着 → WAIT_TIMEOUT。
     打不开句柄（权限/不存在）一律按不存活处理——自愈只会「多探一次」，不会误标成功。
     """
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]  # windll 仅 win32 平台存在
     handle = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
     if not handle:
         return False
