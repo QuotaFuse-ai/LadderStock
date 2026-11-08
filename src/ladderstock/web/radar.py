@@ -64,7 +64,7 @@ from ladderstock.core.portfolio import HoldingRow, round4
 from ladderstock.core.portfolio import replay as replay_portfolio
 from ladderstock.core.portfolio_perf import DEFAULT_DAYS as PERF_DEFAULT_DAYS
 from ladderstock.core.portfolio_perf import MAX_DAYS as PERF_MAX_DAYS
-from ladderstock.core.portfolio_perf import load_close_series
+from ladderstock.core.portfolio_perf import build_perf, load_close_series
 from ladderstock.core.portfolio_replay import SCENARIO_IDS, build_replay
 from ladderstock.core.portfolio_xray import build_view as build_xray_view
 from ladderstock.core.privacy import strip_private
