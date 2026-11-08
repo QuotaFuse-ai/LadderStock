@@ -13,6 +13,7 @@ AI 回答只是文本，不会回写页面上的行情 / 财务数据（页面�
 
 from __future__ import annotations
 
+import json
 import socket
 from datetime import UTC, datetime
 from typing import Any
@@ -60,6 +61,21 @@ SKILL_SYSTEM_PROMPT = (
 )
 
 
+# QUOT-493：/api/page/assistant 服务的是「任意页面」（watch / industry / calendar …）
+# 的抽屉问答，预设跟着页面走：只认本页上下文、缺项直说没取到、且明确不做个股深挖——
+# 深挖仍由 /api/research/{code}/assistant 承担，行为不变。
+PAGE_SYSTEM_PROMPT = (
+    "你是 LadderStock 页面助手，只回答当前页面（行情 / 产业 / 日历等）的问题。"
+    "只依据【页级上下文】里给出的数据回答，不要编造其中没有的行情、新闻、财报数字、日期或结论。\n"
+    "- 上下文缺失的行情 / 新闻 / 财报 / 事件，就直说「本页这项没取到」，不要用一般知识补。\n"
+    "- 这是页面内的轻量问答，不做单只股票的深度研究；需要深挖单个标的时，请回到个股研究页再问。\n"
+    "- 上下文里的数字只是页面已展示数据的摘要，不能当作新的行情结论；"
+    "不要给出买卖建议，也不要预测价格。\n"
+    "- 回答用简洁中文，必要时分点；不要输出 JSON，不要使用 Markdown 标记"
+    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。"
+)
+
+
 class AssistantRequest(BaseModel):
     """页面发来的最小载荷：问题 + 已脱敏的上下文文本。"""
 
@@ -76,6 +92,17 @@ class SkillAssistantRequest(BaseModel):
 
     question: str = ""
     context: str = ""
+    page_key: str | None = None
+    bound_skill: str | None = None
+
+
+# QUOT-493：页面抽屉直接传页级上下文 JSON（页面有什么就传什么），由本端序列化后进
+# 同一条用户消息——上下文的形状由页面决定，这里不做 schema 约束。
+class PageAssistantRequest(BaseModel):
+    """任意页面抽屉发来的载荷：问题 + 页级上下文 JSON。"""
+
+    question: str = ""
+    context: dict[str, Any] | None = None
     page_key: str | None = None
     bound_skill: str | None = None
 
@@ -262,18 +289,67 @@ def build_skills_router() -> APIRouter:
     return router
 
 
+PAGE_PREFIX = "/api/page"
+
+
+def _context_text(context: dict[str, Any] | None) -> str:
+    """把页级上下文 JSON 展平成一条文本，与原 `/skills` 通道的 context 文本同一形态。"""
+    if not context:
+        return ""
+    return json.dumps(context, ensure_ascii=False, default=str)
+
+
+def build_page_router() -> APIRouter:
+    """`POST /api/page/assistant`（QUOT-493）：任意页面抽屉的一问一答。
+
+    与 `/api/research/{code}/assistant`、`/api/skills/assistant` 同一套客户端、闸门与
+    降级口径；差别有三点：上下文是页面传的任意 JSON（本端序列化），system prompt 换成
+    不含个股深挖预设的 `PAGE_SYSTEM_PROMPT`，meta 行只写页面键与绑定技能。
+    """
+    router = APIRouter(prefix=PAGE_PREFIX, dependencies=[Depends(_guard)])
+
+    @router.post("/assistant")
+    def page_assistant(body: PageAssistantRequest) -> Any:
+        question = body.question.strip()
+        context = _context_text(body.context)
+        error = _question_payload_error(question, context)
+        if error is not None:
+            return error
+        page_label = "页面助手"
+        if body.page_key:
+            page_label += f" · {body.page_key}"
+        if body.bound_skill:
+            page_label += f" · {body.bound_skill}"
+        try:
+            return ask(
+                question=question,
+                context=context,
+                tab=body.page_key,
+                page_label=page_label,
+                system_prompt=PAGE_SYSTEM_PROMPT,
+            )
+        except AssistantFailure as exc:
+            return _failure_response(exc)
+
+    return router
+
+
 __all__ = [
     "ASSISTANT_PREFIX",
     "ASSISTANT_TIMEOUT_SEC",
     "MAX_CONTEXT_CHARS",
     "MAX_QUESTION_CHARS",
+    "PAGE_PREFIX",
+    "PAGE_SYSTEM_PROMPT",
     "SKILLS_PREFIX",
     "SKILL_SYSTEM_PROMPT",
     "SYSTEM_PROMPT",
     "AssistantFailure",
     "AssistantRequest",
+    "PageAssistantRequest",
     "SkillAssistantRequest",
     "ask",
+    "build_page_router",
     "build_router",
     "build_skills_router",
 ]
