@@ -415,26 +415,21 @@ PEER_CONTROL: dict[str, PeerControl] = {
         # 服务跑在 WSL 里，Windows 侧的 .venv/Scripts 里没有可拉起的入口：
         # 控制面只做只读观测与健康探测，绝不接管启停（QUOT-403）。
         start_commands=(),
-        # 白名单 = core/config.py 的 Config.model_fields 全量 34 键（FC_ 前缀 +
-        # Config 模型），与 deploy/.env.example、compose.yaml x-app-env 的 34 个
-        # FC_ 键一一对应。键名 → 读取位置的对照见 config_notes。
+        # 白名单 26 键 = Config.model_fields 全量 34 键扣除 8 个「写 deploy/.env 也不
+        # 生效」的键。逐键证据由脚本核对两道关后生成（对照表随 PR 评论交付）：
+        # ① FC 侧真的在读 —— core/config.py 的 Config 字段（行号对照）经
+        #    config/loader.py ENV_PREFIX=FC_ + _extract_known 读入；
+        # ② 部署形态真的收得到 —— deploy/compose.yaml x-app-env 用 ${FC_...:?} /
+        #    ${FC_...:-} 引用同键插值，写 deploy/.env 后重建容器即生效。
         config_keys=(
-            "FC_DB_URL",
-            "FC_REDIS_URL",
+            "FC_EMBEDDING_DIM",
             "FC_EMBEDDING_PROVIDER",
             "FC_EMBEDDING_MODEL",
-            "FC_EMBEDDING_DIM",
             "FC_EMBEDDING_URL",
             "FC_EMBEDDING_API_KEY",
-            "FC_MINIO_ENDPOINT",
             "FC_MINIO_ACCESS_KEY",
             "FC_MINIO_SECRET_KEY",
             "FC_MINIO_BUCKET",
-            "FC_MINIO_AUTOSTART",
-            "FC_MINIO_BINARY",
-            "FC_MINIO_DATA_DIR",
-            "FC_MINIO_LOG_FILE",
-            "FC_MINIO_CONSOLE_ENDPOINT",
             "FC_EVENT_CONSUMER",
             "FC_EVENT_STREAM",
             "FC_EVENT_GROUP",
@@ -454,11 +449,9 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "FC_LOG_LEVEL",
             "FC_COLD_AFTER_YEARS",
         ),
-        # FC 自身 SECRET_FIELDS 四键（core/config.py）+ FC_DB_URL（DSN 带库密码）。
-        # FC_REDIS_URL 不算密钥：本机 Redis 无认证，FC redacted_dict 也只对它做
-        # 文本脱敏而非密钥掩码。
+        # FC 自身 SECRET_FIELDS 四键（core/config.py:19-21）。FC_DB_URL 不在白名单
+        # （DSN 由 compose 从 POSTGRES_* 拼装，写本键无效），自然也不按密钥处理。
         secret_keys=(
-            "FC_DB_URL",
             "FC_EMBEDDING_API_KEY",
             "FC_MINIO_ACCESS_KEY",
             "FC_MINIO_SECRET_KEY",
@@ -477,26 +470,24 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "启停与治理见 QUOT-404。",
             "/health 回 status=degraded（如 embedding unreachable）时面板如实显示，"
             "不是本单要修的故障。",
-            "键名 → 读取位置（core/config.py Config 模型 + config/loader.py ENV_PREFIX=FC_）："
-            "FC_DB_URL → config.py db_url；FC_REDIS_URL → redis_url；"
-            "FC_EMBEDDING_PROVIDER/MODEL/DIM/URL/API_KEY → embedding_*；"
-            "FC_MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET/AUTOSTART/BINARY/DATA_DIR/"
-            "LOG_FILE/CONSOLE_ENDPOINT → minio_*；"
-            "FC_EVENT_CONSUMER/STREAM/GROUP → event_consumer/event_stream/event_group；"
-            "FC_ETL_CONSUMER_NAME/DLQ_STREAM/CONTROL_KEY/BATCH_SIZE/BLOCK_MS/"
-            "MAX_ATTEMPTS/BACKOFF_MS/CLAIM_IDLE_MS → etl_*；"
-            "FC_METRICS_PROFILE → metrics_profile；FC_COMPLIANCE_ENABLED → compliance_enabled；"
-            "FC_RATE_LIMIT_ENABLED/PER_MINUTE → rate_limit_enabled/rate_limit_per_minute；"
-            "FC_MCP_TOKEN → mcp_token；FC_LOG_LEVEL → log_level；"
-            "FC_COLD_AFTER_YEARS → cold_after_years。",
+            "白名单 26 键 = core/config.py 的 Config.model_fields 全量 34 键，扣除 8 个"
+            "容器部署形态下写 deploy/.env 不生效的键（逐键「键名 → config.py:行」对照"
+            "表由脚本生成，见 PR 评论的脚本与输出）。",
+            "扣除的 8 键及依据（deploy/compose.yaml x-app-env 的值表达式，行号实测）："
+            "FC_DB_URL（:24，由 POSTGRES_USER/PASSWORD/DB 拼装，写本键会被覆盖）；"
+            "FC_REDIS_URL（:25，字面量 redis://redis:6379/1）；"
+            "FC_MINIO_ENDPOINT（:31，字面量 minio:9000）；"
+            "FC_MINIO_AUTOSTART（:38，字面量 false）；"
+            "FC_MINIO_BINARY/DATA_DIR/LOG_FILE/CONSOLE_ENDPOINT（:41-44，虽经 ${VAR:-} "
+            "插值，但仅本地进程形态消费，容器 AUTOSTART 钉死 false 时是 no-op）。",
             "生效路径实测（2026-11）：WSL 内 docker compose 托管，容器 inspect 标签 "
             "environment_file=/mnt/d/workplace/FinanceCoffer/deploy/.env，compose 把它渲染进 "
             "api/worker 的 environment。保存 deploy/.env 后不会即时生效——需在 WSL 侧执行 "
             "docker compose --env-file deploy/.env -f deploy/compose.yaml up -d 重建容器才生效；"
             "该启停不属于控制面（QUOT-403/404）。",
             "密钥口径 = FC 自身 SECRET_FIELDS 四键（FC_EMBEDDING_API_KEY / "
-            "FC_MINIO_ACCESS_KEY / FC_MINIO_SECRET_KEY / FC_MCP_TOKEN）加 FC_DB_URL"
-            "（DSN 带数据库密码）；FC_REDIS_URL 本机 Redis 无认证，不按密钥处理。",
+            "FC_MINIO_ACCESS_KEY / FC_MINIO_SECRET_KEY / FC_MCP_TOKEN）；"
+            "FC_REDIS_URL 本机 Redis 无认证、也不在白名单，不按密钥处理。",
             "vector/chunking.py:135 直读 FC_TOKENIZER_PATH / FC_EMBEDDING_MODEL_DIR（不走 "
             "loader 的 .env 链路）；FC_WEBHOOK_TOKEN / FC_DRILL_TARGET_DSN / "
             "FC_RESTORE_DSN / FC_STATE_DIR 是运维脚本键、不在 Config.model_fields 内："

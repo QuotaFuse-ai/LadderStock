@@ -491,6 +491,22 @@ def test_config_put_rejects_non_whitelisted_key(
     assert not (peer_dirs["alpha"] / ".env.local").exists()
 
 
+def _read_icacls(path: Path) -> str:
+    """读回文件 DACL 文本（Windows 上验证「等价 0600」的实际落点）。"""
+    import subprocess
+
+    proc = subprocess.run(
+        ["icacls", str(path)],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=15,
+        check=False,
+    )
+    assert proc.returncode == 0, f"icacls 读回失败：{proc.stderr or proc.stdout}"
+    return proc.stdout
+
+
 def test_config_put_writes_private_file_and_keeps_other_lines(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
@@ -501,9 +517,18 @@ def test_config_put_writes_private_file_and_keeps_other_lines(
     assert payload["updated"] == ["MCP_HTTP_PORT"]
     text = env_file.read_text(encoding="utf-8")
     assert "OTHER=keep-me" in text and "MCP_HTTP_PORT=8003" in text
-    if os.name == "posix":  # Windows 上 chmod 语义有限，仅在 POSIX 严格断言
+    if os.name == "posix":
         mode = stat.S_IMODE(env_file.stat().st_mode)
         assert mode == 0o600
+    else:
+        # Windows 上 chmod 0600 是空操作：保存链路经 core/fsguard.harden_file_acl
+        # 用 icacls 收 DACL。等价 0600 在这里显式验证：继承 ACE 已关、
+        # 只剩「当前用户 + SYSTEM + Administrators」，没有 Everyone/Users 宽松主体。
+        dacl = _read_icacls(env_file)
+        assert "(I)" not in dacl, f"继承 ACE 未关闭：{dacl}"
+        assert "SYSTEM" in dacl and "Administrators" in dacl, f"DACL 缺受信主体：{dacl}"
+        assert "Everyone" not in dacl, f"DACL 仍有 Everyone：{dacl}"
+        assert "\\Users" not in dacl, f"DACL 仍有 Users 组：{dacl}"
     assert payload["values"]["MCP_HTTP_PORT"]["value"] == "8003"
 
 
@@ -615,25 +640,17 @@ def test_registry_only_peer_has_no_config_action(
 
 
 def test_financecoffer_whitelist_matches_config_model_and_compose() -> None:
-    """QUOT-480：FC 白名单 = Config.model_fields 全量 34 键，密钥口径与部署形态钉死。"""
+    """QUOT-480：FC 白名单 26 键 = Config.model_fields 全量 34 键扣除 8 个容器死键。"""
     fc = PEER_CONTROL["financecoffer"]
     assert set(fc.config_keys) == {
-        "FC_DB_URL",
-        "FC_REDIS_URL",
         "FC_EMBEDDING_PROVIDER",
         "FC_EMBEDDING_MODEL",
         "FC_EMBEDDING_DIM",
         "FC_EMBEDDING_URL",
         "FC_EMBEDDING_API_KEY",
-        "FC_MINIO_ENDPOINT",
         "FC_MINIO_ACCESS_KEY",
         "FC_MINIO_SECRET_KEY",
         "FC_MINIO_BUCKET",
-        "FC_MINIO_AUTOSTART",
-        "FC_MINIO_BINARY",
-        "FC_MINIO_DATA_DIR",
-        "FC_MINIO_LOG_FILE",
-        "FC_MINIO_CONSOLE_ENDPOINT",
         "FC_EVENT_CONSUMER",
         "FC_EVENT_STREAM",
         "FC_EVENT_GROUP",
@@ -653,16 +670,28 @@ def test_financecoffer_whitelist_matches_config_model_and_compose() -> None:
         "FC_LOG_LEVEL",
         "FC_COLD_AFTER_YEARS",
     }
-    # 密钥 = FC 自身 SECRET_FIELDS 四键 + 带密码的 DSN
+    # 密钥 = FC 自身 SECRET_FIELDS 四键；FC_DB_URL 由 compose 从 POSTGRES_* 拼装
+    # （deploy/compose.yaml:24），白名单不收，自然也不按密钥暴露。
     assert set(fc.secret_keys) == {
-        "FC_DB_URL",
         "FC_EMBEDDING_API_KEY",
         "FC_MINIO_ACCESS_KEY",
         "FC_MINIO_SECRET_KEY",
         "FC_MCP_TOKEN",
     }
     assert set(fc.secret_keys) <= set(fc.config_keys)
-    assert "FC_REDIS_URL" not in fc.secret_keys  # 本机 Redis 无认证，不当密钥
+    # 8 个死键一律不在白名单（deploy/compose.yaml x-app-env 实测行号）：写
+    # deploy/.env 会被 compose 的字面量/拼装覆盖，或仅在本地进程形态被消费。
+    for dead in (
+        "FC_DB_URL",
+        "FC_REDIS_URL",
+        "FC_MINIO_ENDPOINT",
+        "FC_MINIO_AUTOSTART",
+        "FC_MINIO_BINARY",
+        "FC_MINIO_DATA_DIR",
+        "FC_MINIO_LOG_FILE",
+        "FC_MINIO_CONSOLE_ENDPOINT",
+    ):
+        assert dead not in fc.config_keys
     # 部署形态：WSL 内 docker compose 的 environment_file 实测路径、不接管启停
     assert fc.env_filename == "deploy/.env"
     assert fc.managed is False
