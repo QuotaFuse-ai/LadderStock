@@ -17,13 +17,47 @@ R6（QUOT-144）再新增 2 条：`ldst news <date>` / `ldst events --month YYYY
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 DATE = "2026-10-22"
 MONTH = "2026-11"
+
+
+def ai_backends_configured() -> bool:
+    """至少一个 AI 后端凭据齐全（只读 `ai.yaml` + 环境变量 / `ai.env`，不发网络请求）。
+
+    这是「本机有没有真实网关」的离线判据：凭据齐全时 `ldst ai chain test` 会向
+    `base_url` 发真实探测请求，退出码由网关回答决定；凭据缺失时它按契约以 3
+    退出且不拨网络。判据只做本地求值，CI（无凭据）恒为 False。
+    """
+    from ladderstock.ai import fallback
+    from ladderstock.core.boundary import BoundaryViolation
+
+    try:
+        return fallback.is_configured(fallback.load_config())
+    except BoundaryViolation:
+        return False
+
+
+#: `ai chain test` 的契约预期（未配置凭据 → 3，不拨网）只在离线环境成立。
+#: 本机配好网关时它真发请求（`model_not_found` 等由上游决定），契约断言不再适用，
+#: 因此按凭据是否配置跳过——CI 无凭据照常执行，本地验证网关请直接跑
+#: `ldst ai chain test`（或临时清空 `LDST_LLM_*` 后跑本套契约）。
+AI_CHAIN_TEST_OFFLINE_ONLY = pytest.mark.skipif(
+    ai_backends_configured(),
+    reason=(
+        "AI 凭据已配置：`ai chain test` 会向真实网关发探测请求，"
+        "『未配置凭据 → 3』契约仅在离线环境成立"
+    ),
+)
 
 #: `weekly` 的固定周标签（`DATE` 落在 2026-W43，这里取下一周以免与复盘产物纠缠）
 WEEK = "2026-W44"
 
-COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
+#: 条目既可以是裸 `(argv, expected)`，也可以是带 mark 的 `pytest.param(...)`。
+COMMAND_MATRIX: tuple[Any, ...] = (
     # 启动与复盘
     # `run` 是长驻进程（会阻塞到 Ctrl+C），不放进矩阵：
     # 端口被占用 -> 3 由 tests/integration/test_journal_privacy.py 覆盖，
@@ -115,7 +149,8 @@ COMMAND_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = (
     # chain test 未配置凭据 -> 3（明确告知缺哪个环境变量，不拨网络）。
     (("ai", "status"), {0}),
     (("ai", "retry", "--date", DATE), {0, 9}),
-    (("ai", "chain", "test"), {3}),
+    # 唯一依赖真实外部网关的基线：凭据齐全时会真发请求，见 AI_CHAIN_TEST_OFFLINE_ONLY。
+    pytest.param(("ai", "chain", "test"), {3}, marks=AI_CHAIN_TEST_OFFLINE_ONLY),
     # R1-1 新增（在 31 条基线之外，见 docs/CLI.md §0 的「R1-1 增量」行）：
     # 未配置模型凭据时六段按占位降级 -> 9；配好模型则 0。语义与 `ai retry` 同口径。
     (("research", "600000"), {0, 9}),
@@ -217,11 +252,21 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("doctor",),
 )
 
-# 同一条 argv 带上 `--output json`：退出码期望不变，且**绝不能是 2**
-# （2 只会来自「No such option: --output」这种契约违约）。
-OUTPUT_MATRIX: tuple[tuple[tuple[str, ...], set[int]], ...] = tuple(
-    ((*argv, "--output", "json"), expected) for argv, expected in COMMAND_MATRIX
-)
+def _with_output_json(entry: Any) -> Any:
+    """同一条 argv 带上 `--output json`：退出码期望不变，且**绝不能是 2**
+    （2 只会来自「No such option: --output」这种契约违约）。
+
+    条目是 `pytest.param(...)` 时透传它的 marks（如 `AI_CHAIN_TEST_OFFLINE_ONLY`），
+    保证 `--output json` 派生条目与原条目在相同环境下被跳过。
+    """
+    values = getattr(entry, "values", None)
+    if values is not None:  # ParameterSet（pytest.param(...)）
+        return pytest.param((*values[0], "--output", "json"), values[1], marks=entry.marks)
+    argv, expected = entry
+    return ((*argv, "--output", "json"), expected)
+
+
+OUTPUT_MATRIX: tuple[Any, ...] = tuple(_with_output_json(entry) for entry in COMMAND_MATRIX)
 
 # 已实现且**有结构化 stdout** 的路径：`--output json` 必须能被 json.loads 解析，
 # `--output csv` 至少不得报选项错误（表头 + 行）。桩命令没有载荷，不在此列。

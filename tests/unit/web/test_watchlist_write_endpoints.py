@@ -46,6 +46,7 @@ class _NoQuotes:
     status = "missing"
     as_of = None
     source_detail = "offline-test"
+    cache_replay = False
 
 
 @pytest.fixture(autouse=True)

@@ -55,7 +55,14 @@ const RAW = {
 }
 
 function viewOf(payload: WatchlistPayload): BlockView<WatchlistPayload> {
-  return { state: 'normal', data: payload, reason: null }
+  return {
+    state: 'normal',
+    data: payload,
+    error: null,
+    offline: false,
+    endpointMissing: false,
+    onRetry: () => {},
+  }
 }
 
 function cardOf(raw: Record<string, unknown>) {

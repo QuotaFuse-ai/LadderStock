@@ -2313,7 +2313,12 @@ class ControlPlane:
 
     def _compose_linux_path(self, distro: str, ctl: PeerControl) -> str:
         """compose 文件的 Windows 路径 → WSL 内路径（`wslpath`，失败用 /mnt/<盘> 兜底）。"""
-        windows = Path(ctl.directory) / ctl.compose_file
+        compose_file = ctl.compose_file
+        if not compose_file:
+            raise JobFailure(
+                f"{ctl.key} 未配置 compose_file（venv 形态），不走 compose 路径换算"
+            )
+        windows = Path(ctl.directory) / compose_file
         result = self._run(
             ["wsl.exe", "-d", distro, "--", "wslpath", "-a", str(windows)],
             Path(ctl.directory),
@@ -2331,7 +2336,10 @@ class ControlPlane:
         与 venv 形态的差异：没有 import 安装检查（compose 文件存在即视为可启动），
         也不做端口占用预检——`compose up -d` 幂等，已在跑的容器会原地保留。
         """
-        compose = Path(ctl.directory) / ctl.compose_file
+        compose_file = ctl.compose_file
+        if not compose_file:
+            raise JobFailure(f"{ctl.key} 未配置 compose_file（venv 形态），拒绝盲启")
+        compose = Path(ctl.directory) / compose_file
         if not compose.is_file():
             raise JobFailure(f"compose 文件不存在：{compose}（先完成部署）")
         distro = default_wsl_distro()
@@ -2347,7 +2355,7 @@ class ControlPlane:
         result = self._run(argv, Path(ctl.directory), COMPOSE_TIMEOUT_SEC)
         if not result.ok:
             raise JobFailure(
-                f"compose up -d 失败（exit {result.code}）：{tail_lines(result.output, 5)}"
+                f"compose up -d 失败（exit {result.returncode}）：{tail_lines(result.output, 5)}"
             )
         for line in tail_lines(result.output, 10):
             job.log(f"  {line}")
@@ -2404,7 +2412,7 @@ class ControlPlane:
         )
         if not result.ok:
             raise JobFailure(
-                f"compose stop 失败（exit {result.code}）：{tail_lines(result.output, 5)}"
+                f"compose stop 失败（exit {result.returncode}）：{tail_lines(result.output, 5)}"
             )
 
         job.step = "等待端口释放"
