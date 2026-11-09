@@ -36,8 +36,7 @@
 ```powershell
 Get-NetTCPConnection -State Listen -LocalPort 8000,8787 |
   Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object { taskkill /PID $_ /T }
-# 3 秒后端口仍在：换成 taskkill /PID $_ /T /F
+  ForEach-Object { taskkill /PID $_ /T /F }
 ```
 
 识别关键字：8000 → `th-cn` + `start-all`；8787 → `th-cn` + `admin` + `serve`。
@@ -52,6 +51,8 @@ Get-NetTCPConnection -State Listen -LocalPort 8000,8787 |
   都停干净，避免引擎强杀只认主 PID 留孤儿。
 - `--crawler on` 是线上既有形态；`start-all` 起爬虫后会持续写数据，启停窗口尽量
   避开盘中。
+- 这几个 Python 服务对温和 `taskkill /T` 不响应（报「只能强制终止」），停止命令
+  一律带 `/F`；适配器先发 CTRL_BREAK、3 秒内不退出再升级 `/F`。
 - 环境变量来自 `~/.tickhub/proxy.env` 与 `D:\QuotaFuseModules\TickHub-CN\ops\peer.env`
   （存在才加载，可用 `LDST_TICKHUB_ENV_FILES` 覆盖）。**不要把文件内容写进日志或提交**。
 
@@ -68,7 +69,7 @@ Get-NetTCPConnection -State Listen -LocalPort 8000,8787 |
 ```powershell
 Get-NetTCPConnection -State Listen -LocalPort 8002 |
   Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object { taskkill /PID $_ /T }
+  ForEach-Object { taskkill /PID $_ /T /F }
 ```
 
 识别关键字：`th-us` + `mcp` + `http` + `8002`（带上端口，避免与 CN 侧命令混淆）。
@@ -94,7 +95,7 @@ Get-NetTCPConnection -State Listen -LocalPort 8002 |
 ```powershell
 Get-NetTCPConnection -State Listen -LocalPort 8790,8791 |
   Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object { taskkill /PID $_ /T }
+  ForEach-Object { taskkill /PID $_ /T /F }
 ```
 
 识别关键字：8790 → `qfw` + `serve`；8791 → `qfw` + `mcp` + `http`。
@@ -123,7 +124,7 @@ start：
 ```powershell
 Get-NetTCPConnection -State Listen -LocalPort 8765,8786 |
   Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object { taskkill /PID $_ /T }
+  ForEach-Object { taskkill /PID $_ /T /F }
 ```
 
 识别关键字：8765 → `ssenate` + `mcp` + `http`；8786 → `ssenate` + `webui`。
@@ -142,26 +143,57 @@ Get-NetTCPConnection -State Listen -LocalPort 8765,8786 |
 启动（`deploy/.env` 存在时 compose up；缺失时退回 docker start 既有容器）：
 
 ```powershell
-wsl.exe -d (wsl.exe -l -v | Select-String '^\*' | ForEach-Object { ($_ -replace '^\*\s*','').Split()[0] }) -u root -- bash -lc "cd /mnt/d/workplace/FinanceCoffer/deploy && docker compose --env-file .env -f compose.yaml up -d"
-# deploy/.env 不存在时：
-wsl.exe -d <发行版> -u root -- bash -lc 'ids=$(docker ps -aq --filter label=com.docker.compose.project=financecoffer); docker start $ids'
+# 先取默认发行版（PS 5.1 直接读 wsl 输出会因 UTF-16 乱码，这里临时切 Unicode）
+$d = (& { $o=[Console]::OutputEncoding; [Console]::OutputEncoding=[Text.Encoding]::Unicode
+  try { (wsl.exe -l -v | Select-String '^\s*\*' | ForEach-Object { ($_.ToString() -replace '^\s*\*\s*','').Split()[0] })
+  } finally { [Console]::OutputEncoding=$o } })
+
+# deploy/.env 存在时：
+wsl.exe -d $d -u root -e bash -lc "cd /mnt/d/workplace/FinanceCoffer/deploy && docker compose --env-file .env -f compose.yaml up -d"
+# deploy/.env 不存在时（本机现状）：
+wsl.exe -d $d -u root -e bash -lc 'ids=$(docker ps -aq --filter label=com.docker.compose.project=financecoffer); docker start $ids'
 ```
 
 停止（compose stop → docker stop → docker kill，判据是回读容器为空）：
 
 ```powershell
-wsl.exe -d <发行版> -u root -- bash -lc "cd /mnt/d/workplace/FinanceCoffer/deploy && docker compose --env-file .env -f compose.yaml stop -t 20; ids=`$(docker ps -q --filter label=com.docker.compose.project=financecoffer); [ -n \"`$ids\" ] && echo \"`$ids\" | xargs -r docker stop -t 20; remain=`$(docker ps -q --filter label=com.docker.compose.project=financecoffer); [ -n \"`$remain\" ] && echo \"`$remain\" | xargs -r docker kill; after=`$(docker ps -q --filter label=com.docker.compose.project=financecoffer); [ -z \"`$after\" ] && echo FC_STOPPED=yes || echo FC_STOPPED=no"
+$d = (& { $o=[Console]::OutputEncoding; [Console]::OutputEncoding=[Text.Encoding]::Unicode
+  try { (wsl.exe -l -v | Select-String '^\s*\*' | ForEach-Object { ($_.ToString() -replace '^\s*\*\s*','').Split()[0] })
+  } finally { [Console]::OutputEncoding=$o } })
+# 注意：PS 5.1 传原生参数时会把内嵌双引号改写成 \"，这里脚本内一律不用双引号。
+$script = @'
+set -u
+pkill -f '^fc-anchor' 2>/dev/null || true
+D=label=com.docker.compose.project=financecoffer
+if [ -f /mnt/d/workplace/FinanceCoffer/deploy/.env ] && [ -f /mnt/d/workplace/FinanceCoffer/deploy/compose.yaml ]; then
+  cd /mnt/d/workplace/FinanceCoffer/deploy && docker compose --env-file .env -f compose.yaml stop -t 20
+fi
+docker ps -q --filter $D | xargs -r docker stop -t 20
+docker ps -q --filter $D | xargs -r docker kill
+count=$(docker ps -q --filter $D | wc -l)
+if [ $count -eq 0 ]; then echo FC_STOPPED=yes; else echo FC_STOPPED=no; exit 1; fi
+'@
+wsl.exe -d $d -u root -e bash -lc $script
 ```
 
 识别：8100 在监听 **且** 下面这条命令有输出：
 
 ```powershell
-wsl.exe -d <发行版> -u root -- bash -lc "docker ps --filter label=com.docker.compose.project=financecoffer --filter label=com.docker.compose.service=api --format '{{.Names}}'"
+$d = (& { $o=[Console]::OutputEncoding; [Console]::OutputEncoding=[Text.Encoding]::Unicode
+  try { (wsl.exe -l -v | Select-String '^\s*\*' | ForEach-Object { ($_.ToString() -replace '^\s*\*\s*','').Split()[0] })
+  } finally { [Console]::OutputEncoding=$o } })
+wsl.exe -d $d -u root -e bash -lc "docker ps --filter label=com.docker.compose.project=financecoffer --filter label=com.docker.compose.service=api --format '{{.Names}}'"
 ```
 
 已知坑：
 
 - 发行版名不写死：适配器取 `wsl -l -v` 里带 `*` 的默认发行版，`LDST_WSL_DISTRO` 可覆盖。
+- `wsl.exe` 必须带 `-e` 再给 `bash -lc <脚本>`：缺省 `--` 形态会先把命令交给默认
+  shell 二次展开，脚本里 `$(docker ps -q ...)` 被提前求值，多行容器 ID 变成独立
+  命令行（实测 `bash: line 2: <id>: command not found`，停止脚本静默失效）。
+- PS 5.1 给原生程序传参时会把脚本里的双引号改写成 `\"`，bash 收到后丢引号、按空格
+  拆词（`[: too many arguments`）。手工执行的脚本里一律不写双引号；适配器走
+  `subprocess` argv 直传，不受此影响。
 - `wslhost.exe` 只是转发器，**不能作为归属证据**：容器停了端口有时还会残留几十秒，
   反之容器在跑但转发没建好也会短暂不可达。探活必须双证据。
 - 停止判据是「回读不到 financecoffer 容器」，不是命令退出码；`docker stop` 超时后
@@ -249,7 +281,10 @@ Get-CimInstance Win32_Process |
 
 ```powershell
 (Get-NetTCPConnection -State Listen -LocalPort 8100 -ErrorAction SilentlyContinue) -ne $null
-wsl.exe -d <发行版> -u root -- bash -lc "docker ps --filter label=com.docker.compose.project=financecoffer --format '{{.Names}}'"
+$d = (& { $o=[Console]::OutputEncoding; [Console]::OutputEncoding=[Text.Encoding]::Unicode
+  try { (wsl.exe -l -v | Select-String '^\s*\*' | ForEach-Object { ($_.ToString() -replace '^\s*\*\s*','').Split()[0] })
+  } finally { [Console]::OutputEncoding=$o } })
+wsl.exe -d $d -u root -e bash -lc "docker ps --filter label=com.docker.compose.project=financecoffer --format '{{.Names}}'"
 ```
 
 代理池任务状态：

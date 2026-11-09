@@ -865,8 +865,9 @@ class FinanceCofferAdapter:
     """FinanceCoffer：服务在 WSL 容器里，Windows 侧只有 wslhost 端口转发。
 
     - 启动：先在 WSL 内 `docker compose up -d`（deploy/.env 缺失时退回 `docker start`），
-      再拉一个 wsl.exe 锚进程（`exec sleep infinity`）作为账本 PID——容器 PID 在
-      Windows 侧不可寻址，锚进程让「这次托管会话」有一个可对账的活进程。
+      再拉一个 wsl.exe 锚进程（`exec -a fc-anchor sleep infinity`）作为账本 PID——容器
+      PID 在 Windows 侧不可寻址，锚进程让「这次托管会话」有一个可对账的活进程，
+      其 Linux 侧 argv[0] 固定为 fc-anchor，供跨进程停止时回收。
     - 停止：WSL 内 compose stop → docker stop → docker kill 逐层兜底，**判据是
       回读不到 financecoffer 容器**，不是命令返回 0；然后终止锚进程。
     - 识别：Windows 侧端口 → wslhost（只是转发器，不算归属证据）+ WSL 内
@@ -913,7 +914,8 @@ class FinanceCofferAdapter:
                 f"{(result.stderr or result.stdout).strip()[:300]}"
             )
         anchor = (
-            f"cd '{self._wsl_path(self._deploy)}' 2>/dev/null; exec sleep infinity"
+            f"cd '{self._wsl_path(self._deploy)}' 2>/dev/null; "
+            "exec -a fc-anchor sleep infinity"
         )
         argv = (
             "wsl.exe",
@@ -921,7 +923,10 @@ class FinanceCofferAdapter:
             distro,
             "-u",
             "root",
-            "--",
+            # `-e` 必须显式给：缺省的 `--` 形态会先把命令交给默认 shell
+            # 再二次展开，脚本里的 `$(docker ps -q ...)` 会被提前求值，
+            # 多行容器 ID 变成独立命令行（实测 bash: line 2: <id>: command not found）。
+            "-e",
             "bash",
             "-lc",
             anchor,
@@ -1042,7 +1047,7 @@ class FinanceCofferAdapter:
 
     def _wsl(self, distro: str, script: str, *, timeout: float) -> CommandResult:
         return self._host.run(
-            ("wsl.exe", "-d", distro, "-u", "root", "--", "bash", "-lc", script),
+            ("wsl.exe", "-d", distro, "-u", "root", "-e", "bash", "-lc", script),
             timeout=timeout,
         )
 
@@ -1073,6 +1078,9 @@ class FinanceCofferAdapter:
         filter_expr = 'label=com.docker.compose.project=financecoffer'
         return (
             "set -u; "
+            # 锚进程跨 supervisor 重启后拿不到 pid：锚在 WSL 侧 argv[0] 是
+            # fc-anchor，停容器前先由 Linux 侧收掉，wsl.exe 随之退出。
+            "pkill -f '^fc-anchor' 2>/dev/null || true; "
             f"DEPLOY='{deploy}'; "
             'if [ -f "$DEPLOY/.env" ] && [ -f "$DEPLOY/compose.yaml" ]; then '
             'cd "$DEPLOY" && docker compose --env-file .env -f compose.yaml stop -t 20; '
@@ -1089,6 +1097,7 @@ class FinanceCofferAdapter:
     def _kill_script(self) -> str:
         return (
             "set -u; "
+            "pkill -f '^fc-anchor' 2>/dev/null || true; "
             'ids=$(docker ps -q --filter label=com.docker.compose.project=financecoffer); '
             '[ -n "$ids" ] && echo "$ids" | xargs -r docker kill'
         )
