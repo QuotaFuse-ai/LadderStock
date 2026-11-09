@@ -65,6 +65,7 @@ from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRE
 from ladderstock.web.assistant import build_page_router
 from ladderstock.web.assistant import build_router as build_assistant_router
 from ladderstock.web.assistant import build_skills_router as build_skills_router
+from ladderstock.web.calc import build_router as build_calc_router
 from ladderstock.web.control import (
     ControlPlane,
     build_router,
@@ -1643,6 +1644,13 @@ def create_app(
     # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
     symbols = symbols_plane if symbols_plane is not None else SymbolPlane(data_root=root)
     app.include_router(build_symbols_router(symbols))
+
+    # -------------------------------------------- 计算层面（QUOT-511 / QUOT-499 子项4）
+    #
+    # `/api/calc/ops` + `/api/calc/{op}`：计算层 HTTP 端点，算子目录 + 契约信封 +
+    # 状态码纪律（实现见 `web/calc.py`）。闸门同研究面（回环 + `Host`，纯计算面，
+    # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
+    app.include_router(build_calc_router())
 
     # -------------------------------------------- 标的档案面（QUOT-488）
     #
