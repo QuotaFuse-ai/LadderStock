@@ -11,6 +11,7 @@ import {
   type SelfAiStatus,
 } from '../api'
 import { cn } from '../lib/cn'
+import { AiModulesConfig } from './AiModulesConfig'
 import { Badge, Banner, Button, Drawer, Field, Input, Segmented, SkeletonText, type BadgeTone } from './ui'
 
 /**
@@ -597,6 +598,9 @@ export default function AiConnectDialog({ open, onClose, onSaved }: AiConnectDia
             </section>
           </section>
         )}
+
+        {/* 按模块配置（QUOT-498）：默认收起的折叠区，与全局表单互不影响 */}
+        <AiModulesConfig />
       </div>
     </Drawer>
   )
