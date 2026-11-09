@@ -224,7 +224,7 @@ class SelfHealEngine:
             return
         try:
             self.notifier.gave_up(
-                module=entry.module, ports=entry.ports, attempts=attempts, reason=reason
+                module=entry.module, ports=tuple(entry.ports), attempts=attempts, reason=reason
             )
         except Exception:
             _log.warning("自愈通知失败（已吞，不影响自愈主流程）", exc_info=True)
@@ -253,7 +253,7 @@ class SelfHealEngine:
         try:
             self.notifier.failure(
                 module=entry.module,
-                ports=entry.ports,
+                ports=tuple(entry.ports),
                 attempt=attempt,
                 max_attempts=self.max_restarts,
                 reason=reason,
@@ -368,7 +368,9 @@ class SelfHealEngine:
             return None
         self.ledger.reset_heal(module)
         self._log(entry, "人工解除：重拉窗口清零，健康回 ok")
-        return self._module_snapshot(module, entry.ports, self.ledger.get(module), self.clock())
+        return self._module_snapshot(
+            module, tuple(entry.ports), self.ledger.get(module), self.clock()
+        )
 
 
 __all__ = [

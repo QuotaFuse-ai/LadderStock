@@ -26,8 +26,10 @@ function renderAt(path: string) {
   )
 }
 
-function dataRows(): HTMLElement[] {
-  const table = screen.getByRole('table')
+async function dataRows(): Promise<HTMLElement[]> {
+  // demo 数据经 useAsync 异步到达：heading 先渲染、表格后出（CI 慢环境必现），
+  // 同步 getByRole('table') 会抢在 payload resolve 之前
+  const table = await screen.findByRole('table')
   return within(table).getAllByRole('row').slice(1)
 }
 
@@ -74,11 +76,13 @@ describe('涨停样本表格', () => {
     renderAt('/limit-up?demo=1')
     await screen.findByRole('heading', { name: '涨停样本', level: 1 })
 
-    expect(within(dataRows()[0]).getByText('002594')).toBeTruthy()
+    const rows = await dataRows()
+    expect(within(rows[0]).getByText('002594')).toBeTruthy()
 
+    // 上面的 await dataRows() 已确认表格渲染完成，此后同帧访问安全
     fireEvent.click(within(screen.getByRole('table')).getByRole('button', { name: /连板数/ }))
-    await waitFor(() => {
-      const codes = dataRows().map((row) => row.textContent ?? '')
+    await waitFor(async () => {
+      const codes = (await dataRows()).map((row) => row.textContent ?? '')
       expect(codes.findIndex((text) => text.includes('300750'))).toBeLessThan(
         codes.findIndex((text) => text.includes('002594')),
       )
@@ -90,7 +94,7 @@ describe('涨停样本表格', () => {
     renderAt('/limit-up?demo=1')
     await screen.findByRole('heading', { name: '涨停样本', level: 1 })
 
-    const maotai = dataRows().find((row) => within(row).queryByText('600519'))
+    const maotai = (await dataRows()).find((row) => within(row).queryByText('600519'))
     expect(maotai).toBeTruthy()
     expect(within(maotai!).getAllByText('—')).toHaveLength(4)
     expect(screen.getByTitle('后端未提供连板数')).toBeTruthy()

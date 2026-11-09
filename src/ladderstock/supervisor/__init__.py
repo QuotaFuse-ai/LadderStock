@@ -1,21 +1,32 @@
-"""supervisor 生命周期与自愈（QUOT-482 系列）。
+"""supervisor 生命周期内核（QUOT-482 系列）。
 
-本包由 **QUOT-491（482-C）** 落地「崩溃自愈 + 通知 + needs_human 失败态」。
+本包现在由两部分共存：
 
-依赖现状（写码时的真实状态）：QUOT-482-A（账本 + 顺序启停引擎 + 归属判定）与
-QUOT-482-B（模块适配器）两次运行失败、**尚未合并**。因此本包自带一个**最小账本承载**
-（`ledger.py`）与一个由外部命令表驱动的重拉通道（`restart.py`），并严格守住边界：
+- **QUOT-482-A（本单）**——进程账本 + 顺序启停引擎 + 归属判定：
+  - `adapters` —— 模块注册表（顺序 / 端口白名单，引用 `modules` 单源）与
+    `ModuleAdapter` 协议；482-B 的逐模块实现只依赖此协议。
+  - `ledger` —— 进程账本：每模块一条记录，原子落盘
+    `data/supervisor/ledger.json`，崩溃恢复时对账。归属判定只认账本 +
+    cmdline 匹配，不扫端口猜。该文件**平替** QUOT-491 的最小承载账本，
+    自愈内核（`selfheal`）零改动继续工作。
+  - `proctree` —— 进程树操作（存活 / cmdline / 父子链 / 整树终止）；
+    Windows 走 taskkill /T，全部可注入，测试用假实现。
+  - `engine` —— 顺序启停引擎：`start_all / stop_all / restart_module / state`，
+    并发互斥，停止路径带超时升级强杀并记 `forced_kill`。
 
-- 不实现启停顺序、不做归属判定（482-A 的职责）——账本的 `origin` 字段只存不判；
-- 不写任何模块启动命令（482-B 的职责）——重拉只认注入的命令表/适配器，表空即如实报「无通道」；
-- 不改 `frontend/`、不改任何 peer 仓库。
-
-482-A/482-B 落地后，把 `SelfHealEngine` 的 `ledger` 与 `restarter` 换成其实现即可，
-自愈内核无需改动。
+- **QUOT-491（482-C）**——崩溃自愈 + 通知 + needs_human 失败态：
+  `selfheal` / `notify` / `restart` / `logroll`。其重拉通道只认注入的
+  命令表 / 适配器（482-B 的职责），本包不写任何模块启动命令。
 """
 
-from __future__ import annotations
-
+from ladderstock.supervisor.adapters import (
+    MODULE_ORDER,
+    MODULE_PORTS,
+    ModuleAdapter,
+    SpawnedProcess,
+    module_registry,
+)
+from ladderstock.supervisor.engine import SupervisorEngine
 from ladderstock.supervisor.ledger import (
     HEALTH_NEEDS_HUMAN,
     HEALTH_OK,
@@ -23,6 +34,12 @@ from ladderstock.supervisor.ledger import (
     HEALTH_STOPPED,
     Ledger,
     LedgerEntry,
+    ModuleRecord,
+)
+from ladderstock.supervisor.proctree import (
+    ProcessOps,
+    default_process_ops,
+    split_windows_commandline,
 )
 from ladderstock.supervisor.selfheal import SelfHealEngine
 
@@ -31,7 +48,17 @@ __all__ = [
     "HEALTH_OK",
     "HEALTH_RESTARTING",
     "HEALTH_STOPPED",
+    "MODULE_ORDER",
+    "MODULE_PORTS",
     "Ledger",
     "LedgerEntry",
+    "ModuleAdapter",
+    "ModuleRecord",
+    "ProcessOps",
     "SelfHealEngine",
+    "SpawnedProcess",
+    "SupervisorEngine",
+    "default_process_ops",
+    "module_registry",
+    "split_windows_commandline",
 ]
