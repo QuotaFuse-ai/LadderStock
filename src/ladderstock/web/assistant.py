@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ladderstock.ai import fallback
+from ladderstock.ai import fallback, module_memory
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
@@ -35,6 +35,38 @@ MAX_QUESTION_CHARS = 2000
 MAX_CONTEXT_CHARS = 12000
 #: 与 `ai/cli_provider` / `orchestrator` 的默认值一致；页面侧再给 90s 的请求超时
 ASSISTANT_TIMEOUT_SEC = 60.0
+
+#: 页面键（`pageBindings.ts` 的路由前缀）→ 子模块（QUOT-498）。
+#: 未列出的页面落 `tickhub`：抽屉问答读的都是行情/自选这类 TickHub 数据。
+PAGE_KEY_MODULES: dict[str, str] = {
+    "/market": "tickhub",
+    "/watch": "tickhub",
+    "/intraday": "tickhub",
+    "/my-stocks": "tickhub",
+    "/review": "senate",
+    "/weekly": "senate",
+    "/pool": "senate",
+    "/journal": "senate",
+    "/validate": "senate",
+    "/limit-up": "senate",
+    "/research": "senate",
+    "/industry": "tickhub",
+    "/signals": "tickhub",
+    "/news": "wire",
+    "/calendar": "wire",
+    "/inbox": "wire",
+}
+#: 没给页面键 / 页面键未知时的兜底子模块
+DEFAULT_MODULE = "tickhub"
+
+
+def module_for(page_key: str | None) -> str:
+    """页面键 → 子模块；`/market?tab=x` 这类带查询串的键按路径部分匹配。"""
+    if not page_key:
+        return DEFAULT_MODULE
+    path = page_key.split("?", 1)[0].rstrip("/") or "/"
+    return PAGE_KEY_MODULES.get(path, DEFAULT_MODULE)
+
 
 SYSTEM_PROMPT = (
     "你是 LadderStock「个股深挖」页的研究助手。只依据【页级上下文】里给出的数据回答，"
@@ -128,8 +160,8 @@ def _failure_response(exc: AssistantFailure) -> JSONResponse:
     )
 
 
-def _load_client() -> tuple[Any, str]:
-    """读配置并构造既有通道的客户端；配置不可用时抛 `AssistantFailure`。"""
+def _load_client(module: str = DEFAULT_MODULE) -> tuple[Any, str]:
+    """读配置并构造既有通道的客户端；模型按 `module` 三级解析（QUOT-498）。"""
     try:
         config = fallback.load_config()
     except BoundaryViolation as exc:
@@ -144,7 +176,32 @@ def _load_client() -> tuple[Any, str]:
     client = build_chat_client(config)
     # 客户端构造没有暴露 timeout 参数；这里统一到单轮问答的上限。
     client.timeout = ASSISTANT_TIMEOUT_SEC
-    return client, config.default_model
+    return client, config.resolve_for(module).label
+
+
+def _ai_echo(module: str, model: str) -> dict[str, str]:
+    """响应信封的 `ai: {model, source}`；配置读不出来时来源只报 `global`。"""
+    try:
+        config = fallback.load_config()
+    except BoundaryViolation:
+        return {"model": model, "source": "global"}
+    return {"model": config.resolve_for(module).label, "source": config.source_for(module)}
+
+
+def memory_scope_for(module: str) -> dict[str, str] | None:
+    """该模块的记忆命名空间（QUOT-498）：`agent_id` + `kb_scope`，读不出来就没有。
+
+    记忆检索/写入统一从这里取名空间——**不另起通道**（QUOT-487 收口）。
+    """
+    try:
+        scope = fallback.load_config().memory_scope(module)
+    except BoundaryViolation:
+        return None
+    return {
+        "agent_id": scope.agent_id,
+        "kb_scope": scope.kb_scope,
+        "label": module_memory.scope_label(scope),
+    }
 
 
 def _is_timeout(exc: BaseException) -> bool:
@@ -161,9 +218,11 @@ def ask(
     tab: str | None = None,
     page_label: str = "个股深挖",
     system_prompt: str = SYSTEM_PROMPT,
+    module: str = DEFAULT_MODULE,
 ) -> dict[str, Any]:
-    """跑一轮问答。成功返回 `{reply, model, fetched_at}`；失败抛 `AssistantFailure`。"""
-    client, model = _load_client()
+    """跑一轮问答。成功返回 `{reply, model, ai, fetched_at}`；失败抛 `AssistantFailure`。"""
+    client, model = _load_client(module)
+    echo = _ai_echo(module, model)
     header = "【页级上下文】\n" + (context.strip() or "（这一页的数据还没取到。）")
     meta = f"页面：{page_label} · 视图 {tab or '未标注'} · 日期 {day or '未标注'}"
     user = f"{meta}\n{header}\n\n【问题】\n{question.strip()}"
@@ -200,6 +259,7 @@ def ask(
     return {
         "reply": text,
         "model": model,
+        "ai": echo,
         "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 
@@ -224,10 +284,7 @@ def _question_payload_error(question: str, context: str) -> JSONResponse | None:
         return JSONResponse(
             status_code=422,
             content={
-                "detail": (
-                    f"页级上下文过长（上限 {MAX_CONTEXT_CHARS} 字），"
-                    "请缩小页面数据后重试"
-                ),
+                "detail": (f"页级上下文过长（上限 {MAX_CONTEXT_CHARS} 字），请缩小页面数据后重试"),
                 "code": "context_too_long",
                 "retryable": False,
             },
@@ -246,7 +303,13 @@ def build_router() -> APIRouter:
         if error is not None:
             return error
         try:
-            return ask(question=question, context=body.context, day=body.date, tab=body.tab)
+            return ask(
+                question=question,
+                context=body.context,
+                day=body.date,
+                tab=body.tab,
+                module="senate",
+            )
         except AssistantFailure as exc:
             return _failure_response(exc)
 
@@ -281,6 +344,7 @@ def build_skills_router() -> APIRouter:
                 tab=body.page_key,
                 page_label=page_label,
                 system_prompt=SKILL_SYSTEM_PROMPT,
+                module=module_for(body.page_key),
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
@@ -319,6 +383,7 @@ def build_page_router() -> APIRouter:
                 tab=body.page_key,
                 page_label=page_label,
                 system_prompt=PAGE_SYSTEM_PROMPT,
+                module=module_for(body.page_key),
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
@@ -329,8 +394,10 @@ def build_page_router() -> APIRouter:
 __all__ = [
     "ASSISTANT_PREFIX",
     "ASSISTANT_TIMEOUT_SEC",
+    "DEFAULT_MODULE",
     "MAX_CONTEXT_CHARS",
     "MAX_QUESTION_CHARS",
+    "PAGE_KEY_MODULES",
     "PAGE_PREFIX",
     "PAGE_SYSTEM_PROMPT",
     "SKILLS_PREFIX",
@@ -344,4 +411,6 @@ __all__ = [
     "build_page_router",
     "build_router",
     "build_skills_router",
+    "memory_scope_for",
+    "module_for",
 ]

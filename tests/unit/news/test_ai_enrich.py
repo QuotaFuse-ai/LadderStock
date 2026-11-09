@@ -345,6 +345,7 @@ def test_as_dict_shape_is_stable() -> None:
         "enabled",
         "skipped_reason",
         "model",
+        "source",
         "attempted",
         "enriched",
         "failed",

@@ -18,6 +18,27 @@ ai:
   fallback_chain: [openai:model-a, openai:model-b, anthropic:claude-sonnet-4-5]
   structured_output: prefer
   on_all_failed: degrade_to_text
+
+  # 子模块 / 角色级模型覆盖（QUOT-498）。优先级：角色 > 子模块 > 全局。
+  # 留空 = 继承上一级（不是关闭）；`backend:model` 必须引用上面 backends[] 已声明的后端。
+  # 整段注释掉时行为与引入前完全一致。密钥只进 ai.env / 环境变量，不许写在这里。
+  # modules:
+  #   tickhub:                     # TickHub 行情 / 个人持仓
+  #     model: openai:model-a
+  #     fallback_chain: [openai:model-b]
+  #     memory: {agent_id: ladderstock-tickhub, kb_scope: tickhub}
+  #   tickhub_us:                  # TickHub 美股
+  #     memory: {agent_id: ladderstock-tickhub_us, kb_scope: tickhub_us}
+  #   wire:                        # QuotaFuse Wire 资讯
+  #     model: anthropic:claude-sonnet-4-5
+  #     memory: {agent_id: ladderstock-wire, kb_scope: wire}
+  #   senate:                      # StockSenate 辩论；roles 键与 ROLE_LLM_KEYS 一致
+  #     model: openai:model-a
+  #     memory: {agent_id: ladderstock-senate, kb_scope: senate}
+  #     roles:
+  #       bull: {model: anthropic:claude-sonnet-4-5}
+  #       bear: {model: openai:model-b}
+
   sections:
     sentiment:
       prompt_file: prompts/sentiment.md

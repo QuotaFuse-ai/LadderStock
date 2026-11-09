@@ -52,7 +52,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from ladderstock.ai import checkpoint, cli_provider, fallback
+from ladderstock.ai import ai_yaml_edit, checkpoint, cli_provider, fallback
+from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.cli.paths import config_dir, project_root
 from ladderstock.core.boundary import (
     PEER_DIR_ENV,
@@ -3326,6 +3327,219 @@ class ControlPlane:
         payload["cleared"] = sorted(removals)
         return payload
 
+    # ------------------------------------------------------------ 子模块模型（QUOT-498）
+    #
+    # 三件套只碰 `ai.yaml` 的 `modules:` 段：读现状（GET）、原地改（PUT）、
+    # 按解析结果真跑一次（POST /test）。凭据照旧只从 ai.env / 进程环境读。
+
+    def _modules_path(self) -> Path:
+        return fallback.config_path(self.config_root)
+
+    def ai_modules_status(self) -> dict[str, Any]:
+        """`GET /control/ai/modules`：每个子模块 / 角色的生效值、来源、继承值与可选模型。"""
+        config = self._load_ai_config()
+        document = config.module_document()
+        document["sources"] = list(fallback.SOURCES)
+        document["config_path"] = str(self._modules_path())
+        return document
+
+    def ai_modules_update(self, module: str, override: Mapping[str, Any]) -> dict[str, Any]:
+        """`PUT /control/ai/modules`：只重写 `modules:<module>` 这一段，注释原样保留。
+
+        写盘前把候选文本落到临时目录、用同一个解析器完整校验；不过就 400，
+        `ai.yaml` 一个字节都不动（fail closed）。
+        """
+        try:
+            fallback.check_module_role(module)
+        except BoundaryViolation as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        config = self._load_ai_config()
+        clean = self._normalize_module_override(module, override, config)
+
+        path = self._modules_path()
+        try:
+            before = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"读不到 {path.name}：{exc}；已中止，未改动配置",
+            ) from None
+        try:
+            after = ai_yaml_edit.edit_module(before, module, clean)
+        except BoundaryViolation as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+        changed = after != before
+        if changed:
+            try:
+                ai_yaml_edit.write_ai_yaml(path, after, self._validate_ai_candidate)
+            except BoundaryViolation as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+
+        payload = self.ai_modules_status()
+        payload["updated"] = module
+        payload["changed"] = changed
+        return payload
+
+    @staticmethod
+    def _validate_ai_candidate(candidate: Path) -> None:
+        """候选文件必须能被 `load_config` 完整读通，否则 writer 放弃替换。"""
+        fallback.load_config(candidate.parent)
+
+    def _build_chat_client(self, config: fallback.AiConfig) -> Any:
+        return cli_provider.build_chat_client(config)
+
+    def _load_ai_config(self) -> fallback.AiConfig:
+        try:
+            return fallback.load_config(self.config_root)
+        except BoundaryViolation as exc:
+            raise HTTPException(status_code=400, detail=f"读取 AI 配置失败：{exc}") from None
+
+    def _normalize_module_override(
+        self,
+        module: str,
+        override: Mapping[str, Any],
+        config: fallback.AiConfig,
+    ) -> dict[str, Any]:
+        """把请求体收敛成可以直接写进 yaml 的形状；不合法的一律 400，不做静默修补。"""
+        allowed = fallback.MODULE_FIELDS
+        unknown = sorted(set(override) - allowed)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"不允许的子模块字段：{', '.join(unknown)}"
+                    f"（允许：{', '.join(sorted(allowed))}）"
+                ),
+            )
+        declared = [backend.id for backend in config.declared_backends]
+        models = set(config.backend_models())
+        clean: dict[str, Any] = {}
+
+        if "model" in override:
+            clean["model"] = _require_declared_ref(
+                f"modules.{module}.model",
+                _ai_override_text("model", override["model"]),
+                declared,
+                models,
+            )
+        if "fallback_chain" in override:
+            raw_chain = override["fallback_chain"] or []
+            if not isinstance(raw_chain, (list, tuple)):
+                raise HTTPException(status_code=400, detail="fallback_chain 必须是字符串数组")
+            clean["fallback_chain"] = [
+                _require_declared_ref(
+                    f"modules.{module}.fallback_chain[{index}]",
+                    _ai_override_text("fallback_chain", item),
+                    declared,
+                    models,
+                )
+                for index, item in enumerate(raw_chain)
+            ]
+            clean["fallback_chain"] = [ref for ref in clean["fallback_chain"] if ref]
+        if "memory" in override:
+            memory = override["memory"] or {}
+            if not isinstance(memory, Mapping):
+                raise HTTPException(status_code=400, detail="memory 必须是对象")
+            extra = sorted(set(memory) - fallback.MEMORY_FIELDS)
+            if extra:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"不允许的记忆字段：{', '.join(extra)}"
+                        f"（允许：{', '.join(sorted(fallback.MEMORY_FIELDS))}）"
+                    ),
+                )
+            clean["memory"] = {
+                name: _ai_override_text(f"memory.{name}", memory[name])
+                for name in fallback.MEMORY_FIELDS
+                if name in memory
+            }
+        if "roles" in override:
+            roles = override["roles"] or {}
+            if not isinstance(roles, Mapping):
+                raise HTTPException(status_code=400, detail="roles 必须是对象")
+            clean["roles"] = {}
+            for role, body in roles.items():
+                try:
+                    fallback.check_module_role(module, str(role))
+                except BoundaryViolation as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from None
+                if not isinstance(body, Mapping):
+                    raise HTTPException(
+                        status_code=400, detail=f"roles.{role} 必须是对象"
+                    )
+                stray = sorted(set(body) - fallback.ROLE_FIELDS)
+                if stray:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"不允许的角色字段：{', '.join(stray)}"
+                            f"（允许：{', '.join(sorted(fallback.ROLE_FIELDS))}）"
+                        ),
+                    )
+                clean["roles"][str(role)] = {
+                    "model": _require_declared_ref(
+                        f"modules.{module}.roles.{role}.model",
+                        _ai_override_text("model", body.get("model", "")),
+                        declared,
+                        models,
+                    )
+                }
+        return clean
+
+    def ai_modules_test(self, module: str, role: str | None = None) -> dict[str, Any]:
+        """`POST /control/ai/modules/test`：用解析出的模型真跑一次，回显来源。
+
+        失败也回 200 —— 这是**探测结果**，由 `ok` 区分；错误信息过 `mask_secrets`。
+        """
+        try:
+            fallback.check_module_role(module, role)
+        except BoundaryViolation as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        config = self._load_ai_config()
+        target = config.resolve_for(module, role)
+        # 探针只打解析出的这一个落点（complete 不带链），所以只查它所在后端的凭据；
+        # 别的已声明后端缺凭据与本模块无关，不该拦下探测
+        missing = target.backend.missing_env()
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{target.label} 未配置凭据（缺少环境变量 {', '.join(missing)}），"
+                    "无法发起探测；请先在看板「模型接入」里填写"
+                ),
+            )
+        source = config.source_for(module, role)
+        result: dict[str, Any] = {
+            "ok": False,
+            "module": module,
+            "role": role,
+            "model": target.label,
+            "source": source,
+            "latency_ms": 0,
+            "reply_head": None,
+            "error": None,
+        }
+        started = time.monotonic()
+        try:
+            chat = self._build_chat_client(config)
+            text = chat.complete(
+                target.label,
+                "你是连通性探针，只回一个词。",
+                cli_provider.PROBE_PROMPT,
+                json_mode=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - 任何失败都只回探测结果
+            failure = classify_error(exc)
+            result["error"] = mask_secrets(failure.message, [])
+        else:
+            head = str(text or "").strip().splitlines()
+            result["ok"] = True
+            result["reply_head"] = head[0][:60] if head and head[0] else None
+        result["latency_ms"] = int((time.monotonic() - started) * 1000)
+        return result
+
     def self_ai_test(
         self, *, base_url: str, model: str, api_key: str | None = None
     ) -> dict[str, Any]:
@@ -3532,6 +3746,35 @@ class CliTestRequest(BaseModel):
     cli: str
 
 
+class AiModulesUpdateRequest(BaseModel):
+    """`PUT /control/ai/modules`（QUOT-498）：只动 `ai.yaml` 的 `modules:` 段。
+
+    白名单外的字段（`api_key`、`base_url` 之类）在请求模型层就拒绝（422），
+    凭据只能进 `ai.env` / 环境变量，不进 yaml。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    module: str
+    model: str | None = None
+    fallback_chain: list[str] | None = None
+    memory: dict[str, Any] | None = None
+    roles: dict[str, Any] | None = None
+
+    def override(self) -> dict[str, Any]:
+        """显式传了的字段才覆盖；没传 = 不动，空串 / 空数组 = 清掉本级覆盖。"""
+        return self.model_dump(exclude_unset=True, exclude={"module"})
+
+
+class AiModulesTestRequest(BaseModel):
+    """`POST /control/ai/modules/test`：按子模块 / 角色解析出的模型真跑一次。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    module: str
+    role: str | None = None
+
+
 class AiGenerateRequest(BaseModel):
     date: str
     force: bool = False
@@ -3556,6 +3799,40 @@ async def _json_body(request: Request) -> Any:
         return await request.json()
     except ValueError:  # json.JSONDecodeError / UnicodeDecodeError 都是 ValueError
         raise HTTPException(status_code=400, detail="请求体不是合法 JSON") from None
+
+
+def _ai_override_text(where: str, value: Any) -> str:
+    """覆盖值只收字符串：别的类型（数字 / 对象 / 列表）一律 400，不替用户猜。"""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail=f"ai.yaml: {where} 必须是字符串")
+    text = value.strip()
+    if "\n" in text or "\r" in text:
+        raise HTTPException(status_code=400, detail=f"ai.yaml: {where} 不允许包含换行")
+    return text
+
+
+def _require_declared_ref(
+    where: str, ref: str, declared: list[str], models: set[str]
+) -> str:
+    """`backend:model` 的后端与模型都必须是 `backends[]` 已声明的组合。"""
+    if not ref:
+        return ""
+    prefix, sep, model = ref.partition(":")
+    if not sep or prefix not in declared:
+        known = "、".join(declared) or "（未声明任何后端）"
+        raise HTTPException(
+            status_code=400,
+            detail=f"ai.yaml: {where} = {ref!r} 使用了未声明的后端（已声明：{known}）",
+        )
+    if ref not in models:
+        choices = "、".join(sorted(models))
+        raise HTTPException(
+            status_code=400,
+            detail=f"ai.yaml: {where} = {ref!r} 不是已声明后端的模型（可选：{choices}）",
+        )
+    return ref
 
 
 def build_router(plane: ControlPlane) -> APIRouter:
@@ -3670,6 +3947,21 @@ def build_router(plane: ControlPlane) -> APIRouter:
     def self_ai_cli_test(body: CliTestRequest) -> dict[str, Any]:
         """真跑一次本机 CLI 的探针；失败也回 200，由 `ok` 字段区分。"""
         return plane.self_ai_cli_test(body.cli)
+
+    @router.get("/ai/modules")
+    def ai_modules_status() -> dict[str, Any]:
+        """子模块 / 角色的生效模型、来源（role/module/global）与继承值（QUOT-498）。"""
+        return plane.ai_modules_status()
+
+    @router.put("/ai/modules")
+    def ai_modules_update(body: AiModulesUpdateRequest) -> dict[str, Any]:
+        """只写 `ai.yaml` 的 `modules:` 段；空串 = 清掉本级覆盖、回退继承。"""
+        return plane.ai_modules_update(body.module, body.override())
+
+    @router.post("/ai/modules/test")
+    def ai_modules_test(body: AiModulesTestRequest) -> dict[str, Any]:
+        """用该模块 / 角色解析出的模型真跑一次；失败也回 200，由 `ok` 区分。"""
+        return plane.ai_modules_test(body.module, body.role)
 
     @router.post("/ai/chat")
     async def ai_chat(body: chat_channel.ChatRequest, request: Request) -> Any:

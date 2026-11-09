@@ -51,6 +51,11 @@ class PromptPrivacyViolation(RuntimeError):
     """prompt 里出现了不该出现的字段——不发出去，直接停。"""
 
 
+#: 行业信号叙述所属子模块（QUOT-498 父单二节调用点表：行业信号 → tickhub）；
+#: 与页面映射 `/industry → tickhub` 一致，行业页助手与本叙述共用同一档配置
+MODULE = "tickhub"
+
+
 @dataclass
 class EnrichResult:
     events: list[NewsEvent] = field(default_factory=list)
@@ -60,6 +65,8 @@ class EnrichResult:
     skipped_reason: str = ""
     model: str = ""
     degraded: bool = False
+    #: 生效模型来自哪一级：`module` / `global`（QUOT-498）
+    source: str = ""
 
     @property
     def all_failed(self) -> bool:
@@ -70,6 +77,7 @@ class EnrichResult:
             "enabled": not self.skipped_reason,
             "skipped_reason": self.skipped_reason,
             "model": self.model,
+            "source": self.source,
             "attempted": self.attempted,
             "enriched": self.enriched,
             "failed": list(self.failed),
@@ -83,6 +91,8 @@ class ModelChat:
 
     client: Any
     model_label: str
+    #: 生效模型来自哪一级（`module` / `global`）
+    source: str = "global"
 
     def complete(
         self, model: str, system: str, user: str, *, json_mode: bool
@@ -140,6 +150,7 @@ def enrich_events(
 
     targets = [event for event in events if event.item_id in by_id][:capped]
     result.model = str(model or getattr(chat, "model_label", "") or "")
+    result.source = str(getattr(chat, "source", "") or "")
     position = {event.id: index for index, event in enumerate(result.events)}
     for event in targets:
         item = by_id[event.item_id]
@@ -186,7 +197,10 @@ def _normalize_note(text: Any) -> str:
 
 
 def _default_chat() -> ModelChat:
-    """延迟构造 HTTP 客户端：没配模型也不该在导入期炸掉。"""
+    """延迟构造 HTTP 客户端：没配模型也不该在导入期炸掉。
+
+    行业信号叙述归在 `tickhub` 子模块下（QUOT-498 父单二节表）：按三层配置解析，并回显来源。
+    """
     from ladderstock.ai import fallback
     from ladderstock.ai.cli_provider import build_chat_client
 
@@ -194,7 +208,11 @@ def _default_chat() -> ModelChat:
     if not fallback.is_configured(config):
         missing = ", ".join(fallback.missing_env(config)) or "ai.yaml 未配置模型链"
         raise RuntimeError(f"未配置模型（{missing}）；资讯叙述默认关闭，需要时加 --ai 并先配置")
-    return ModelChat(build_chat_client(config), str(config.default_model))
+    return ModelChat(
+        build_chat_client(config),
+        config.resolve_for(MODULE).label,
+        source=config.source_for(MODULE),
+    )
 
 
 def narrative_keys_ok(note: str, event: NewsEvent) -> bool:
@@ -233,6 +251,7 @@ def apply_to_stream(stream_result: StreamResult, *, enabled: bool) -> dict[str, 
 
 __all__ = [
     "AI_ENRICH_ENABLED_BY_DEFAULT",
+    "MODULE",
     "EnrichResult",
     "ModelChat",
     "PromptPrivacyViolation",

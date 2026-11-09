@@ -65,7 +65,9 @@ def test_skill_assistant_returns_text_and_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient()
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:deepseek-chat"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:deepseek-chat")
+    )
 
     response = _post(_client(tmp_path), page_key="/skills/a-share-tape", bound_skill="a-share-tape")
 
@@ -89,7 +91,9 @@ def test_skill_assistant_without_bound_skill_keeps_plain_label(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient()
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path), page_key="/")
 
@@ -137,7 +141,9 @@ def test_skill_assistant_timeout_is_readable_504(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(exc=httpx.ReadTimeout("timed out"))
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path))
 
@@ -151,7 +157,9 @@ def test_skill_assistant_network_failure_is_readable_502(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(exc=httpx.ConnectError("connection refused"))
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path))
 
@@ -165,7 +173,9 @@ def test_skill_assistant_empty_reply_is_not_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(reply="   ")
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path))
 

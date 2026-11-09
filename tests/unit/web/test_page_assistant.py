@@ -74,7 +74,9 @@ def test_page_assistant_returns_text_and_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient()
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:deepseek-chat"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:deepseek-chat")
+    )
 
     response = _post(_client(tmp_path), page_key="watch", bound_skill="a-share-tape")
 
@@ -100,7 +102,9 @@ def test_page_assistant_without_optional_labels_keeps_plain_label(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient()
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path), page_key="industries", bound_skill=None)
 
@@ -113,7 +117,9 @@ def test_page_assistant_empty_context_says_not_fetched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient()
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path), context="")
 
@@ -153,7 +159,9 @@ def test_page_assistant_accepts_text_context_not_only_dict(
     （dict_type, loc=body.context）；修复后与 research / skills 同构只认 str。
     """
     fake = _FakeClient()
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path), context="涨跌家数 1183/5237，跌停 12")
 
@@ -183,7 +191,9 @@ def test_page_assistant_timeout_is_readable_504(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(exc=httpx.ReadTimeout("timed out"))
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path))
 
@@ -197,7 +207,9 @@ def test_page_assistant_network_failure_is_readable_502(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(exc=httpx.ConnectError("connection refused"))
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path))
 
@@ -211,7 +223,9 @@ def test_page_assistant_rate_limit_is_readable_429(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(exc=ProviderError("HTTP 429: rate limit exceeded"))
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path))
 
@@ -224,7 +238,9 @@ def test_page_assistant_empty_reply_is_not_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(reply="   ")
-    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    )
 
     response = _post(_client(tmp_path))
 
