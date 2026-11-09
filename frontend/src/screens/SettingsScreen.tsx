@@ -64,6 +64,8 @@ import {
 } from '../components/ui'
 import AiConnectDialog from '../components/AiConnectDialog'
 import { StopListDialog } from '../components/supervisor/StopListDialog'
+import { ProxyPoolCard } from '../components/supervisor/ProxyPoolCard'
+import { findProxyPoolModule } from '../lib/proxyPoolView'
 import {
   buildStopCandidates,
   findModule,
@@ -2167,6 +2169,12 @@ export default function SettingsScreen() {
                     supervisorReady={supervisorReady}
                   />
                 ))}
+                {/* QUOT-507：代理池卡片与模块卡同列；状态只认后端 mappings[].state / owner */}
+                <ProxyPoolCard
+                  module={findProxyPoolModule(supervisor.data)}
+                  supervisorReady={supervisorReady}
+                  onRefresh={() => void supervisor.refresh()}
+                />
                 {components.length === 0 && state !== 'empty' && (
                   <li>
                     <EmptyState

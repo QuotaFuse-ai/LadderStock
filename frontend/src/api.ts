@@ -921,6 +921,8 @@ export interface SupervisorModule {
   listening?: boolean
   /** 482-B 未落地的停止预览接口若给出命令行，就在这里；缺省表示后端未提供 */
   cmdline?: string | null
+  /** 仅 proxypool 模块：端口映射清单（QUOT-490 / QUOT-506）；其余模块缺省 */
+  mappings?: ProxyMapping[]
 }
 
 export interface SupervisorStatePayload {
@@ -946,6 +948,56 @@ export interface SupervisorStatePayload {
 export interface SupervisorStopRequest {
   confirm: true
   modules: string[]
+}
+
+// ---------------------------------------------------------------- 代理池（QUOT-507）
+
+/**
+ * proxypool 模块载荷（QUOT-490 / QUOT-506 契约）：
+ * 模块条目在 supervisor 通用字段之外多带 `mappings`；每条 mapping 自带 `state`。
+ * `owner` 只由后端给出，前端不按端口 / 进程推断归属。
+ */
+export type ProxyMappingState = 'running' | 'stopped' | 'conflict' | 'needs_human'
+export type ProxyMappingOwner = 'ai' | 'human'
+
+export interface ProxyMapping {
+  id: string
+  /** 监听地址，后端原样给出（`127.0.0.1:8788` 或 `8788`）；前端只展示，不改端口 */
+  listen: string | number
+  upstream_host: string
+  upstream_port: number
+  enabled: boolean
+  owner: ProxyMappingOwner
+  /** 后端 `state` 直出；缺省按「已停止」呈现，不让行留空 */
+  state?: ProxyMappingState
+  /** 冲突端口（后端给出时优先；缺省才回落 `listen` 里的端口） */
+  conflict_port?: number | null
+  /** 最近一次探活 RTT（毫秒）；缺省显示「未探活」 */
+  rtt_ms?: number | null
+}
+
+/** `pool probe` 的单条结果。 */
+export interface ProxyProbeEntry {
+  id?: string
+  mapping_id?: string
+  ok: boolean
+  rtt_ms?: number | null
+  error?: string | null
+}
+
+export interface ProxyProbeResponse {
+  ok: boolean
+  results?: ProxyProbeEntry[]
+}
+
+export interface ProxyPoolTarget {
+  mapping_ids?: string[]
+}
+
+export interface ProxySetUpstreamRequest {
+  mapping_id: string
+  upstream_host: string
+  upstream_port: number
 }
 
 // ---------------------------------------------------------------- 端点
@@ -1179,6 +1231,35 @@ export const api = {
         method: 'POST',
         body,
         timeoutMs: 30000,
+      }),
+    /**
+     * QUOT-507 代理池动作（QUOT-490 / QUOT-506 契约）。
+     * 后端未落地时 404；调用方如实提示「接口未接入」，不把界面留在加载中。
+     * `mapping_ids` 缺省 = 整池。`setUpstream` **不会**自动重启（契约明确）。
+     */
+    poolStart: (body: ProxyPoolTarget = {}) =>
+      request<{ ok: boolean; started?: string[] }>('/supervisor/pool/start', {
+        method: 'POST',
+        body,
+        timeoutMs: 30000,
+      }),
+    poolStop: (body: ProxyPoolTarget = {}) =>
+      request<{ ok: boolean; stopped?: string[] }>('/supervisor/pool/stop', {
+        method: 'POST',
+        body,
+        timeoutMs: 30000,
+      }),
+    poolProbe: (body: ProxyPoolTarget = {}) =>
+      request<ProxyProbeResponse>('/supervisor/pool/probe', {
+        method: 'POST',
+        body,
+        timeoutMs: 30000,
+      }),
+    poolSetUpstream: (body: ProxySetUpstreamRequest) =>
+      request<{ ok: boolean; mapping_id?: string }>('/supervisor/pool/upstream', {
+        method: 'PUT',
+        body,
+        timeoutMs: CONTROL_TIMEOUT_MS,
       }),
   },
 }
