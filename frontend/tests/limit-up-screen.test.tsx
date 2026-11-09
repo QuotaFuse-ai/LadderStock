@@ -79,10 +79,14 @@ describe('涨停样本表格', () => {
     const rows = await dataRows()
     expect(within(rows[0]).getByText('002594')).toBeTruthy()
 
-    // 上面的 await dataRows() 已确认表格渲染完成，此后同帧访问安全
     fireEvent.click(within(screen.getByRole('table')).getByRole('button', { name: /连板数/ }))
-    await waitFor(async () => {
-      const codes = (await dataRows()).map((row) => row.textContent ?? '')
+    // waitFor 回调用同步断言：异步回调会让重试语义失真（QUOT-505）。
+    // 表格存在性已由上面的 await dataRows() 确认，这里只等同帧内的排序重渲染
+    await waitFor(() => {
+      const codes = within(screen.getByRole('table'))
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => row.textContent ?? '')
       expect(codes.findIndex((text) => text.includes('300750'))).toBeLessThan(
         codes.findIndex((text) => text.includes('002594')),
       )
