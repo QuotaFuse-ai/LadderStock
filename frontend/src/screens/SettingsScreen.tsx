@@ -7,6 +7,7 @@ import {
   FileText,
   Info,
   Play,
+  Power,
   RefreshCw,
   Sliders,
   Square,
@@ -31,6 +32,7 @@ import {
   type PortConflict,
   type PortOwner,
   type StateConfigPayload,
+  type SupervisorModule,
 } from '../api'
 import { useAsync, type AsyncResult } from '../lib/useAsync'
 import { setDemoPref, useDemoEnabled, useForcedState, resolveState, type PageState } from '../lib/pageState'
@@ -61,6 +63,16 @@ import {
   type ToastItem,
 } from '../components/ui'
 import AiConnectDialog from '../components/AiConnectDialog'
+import { StopListDialog } from '../components/supervisor/StopListDialog'
+import {
+  buildStopCandidates,
+  findModule,
+  needsConfirm,
+  selfHealView,
+  ownershipView,
+  type SelfHealView,
+  type StopCandidate,
+} from '../lib/supervisorView'
 import { setDensityPref, setTheme, useDensity, useThemeChoice } from '../lib/prefs'
 import type { Density, ThemeChoice } from '../lib/theme'
 import { cn } from '../lib/cn'
@@ -275,6 +287,9 @@ function PeerCard({
   peer,
   job,
   controlReady,
+  supervisor,
+  supervisorReady,
+  stoppedExternal,
   acting,
   onInstall,
   onStart,
@@ -282,10 +297,14 @@ function PeerCard({
   onLogs,
   onConfig,
   onMeta,
+  onRetryHeal,
 }: {
   peer: PeerSnapshot
   job: JobView | undefined
   controlReady: boolean
+  supervisor: SupervisorModule | null
+  supervisorReady: boolean
+  stoppedExternal: boolean
   acting: string | null
   onInstall: () => void
   onStart: () => void
@@ -293,13 +312,23 @@ function PeerCard({
   onLogs: () => void
   onConfig: () => void
   onMeta: () => void
+  onRetryHeal: () => void
 }) {
   const statusLabel = peer.status_label || PEER_STATUS_LABEL[peer.status]
   const uptime = peer.last_job?.action === 'start' && peer.last_job.status === 'ok' ? uptimeLabel(peer.last_job.started_at) : null
   const jobActive = job?.status === 'queued' || job?.status === 'running'
+  const ownership = ownershipView(supervisor)
+  const heal: SelfHealView | null = selfHealView(supervisor)
 
   return (
-    <li className="rounded border border-border bg-surface shadow-card">
+    <li
+      className={cn(
+        'rounded border bg-surface shadow-card',
+        heal?.failed ? 'border-danger bg-danger-soft' : 'border-border',
+      )}
+      data-testid={`peer-card-${peer.id}`}
+      data-self-heal={heal?.failed ? 'gave_up' : 'ok'}
+    >
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -309,6 +338,15 @@ function PeerCard({
               </StatusDot>
               <h3 className="truncate text-subtitle font-semibold text-text">{peer.product}</h3>
               {peer.version && <span className="ldst-num text-caption text-text-muted">v{peer.version}</span>}
+              {supervisorReady ? (
+                <Badge tone={ownership.tone} title={ownership.hint} className="ldst-num">
+                  {ownership.label}
+                </Badge>
+              ) : (
+                <Badge tone="flat" title="GET /api/supervisor/state 不可用：归属无法判定">
+                  归属未知（supervisor 未接入）
+                </Badge>
+              )}
             </div>
             <p className="mt-1 text-caption text-text-secondary">{peer.role}</p>
           </div>
@@ -318,6 +356,44 @@ function PeerCard({
             onClick={onMeta}
           />
         </div>
+
+        {heal && (
+          <div
+            className={cn(
+              'flex flex-wrap items-center gap-2 rounded border px-2 py-2',
+              heal.failed ? 'border-danger bg-surface' : 'border-border bg-surface-2',
+            )}
+            role="status"
+          >
+            {heal.failed && <AlertTriangle className="size-4 shrink-0 text-danger" aria-hidden="true" />}
+            <span className={cn('text-body font-medium', heal.failed ? 'text-danger' : 'text-text')}>
+              {heal.label}
+            </span>
+            {!heal.failed && (
+              <span className="text-caption text-text-secondary">每 1s 巡检一次，恢复后自动回到「运行中」</span>
+            )}
+            {heal.failed && (
+              <Button
+                variant="secondary"
+                onClick={onRetryHeal}
+                loading={acting === `${peer.id}:heal`}
+                disabled={!controlReady}
+                disabledReason={controlReady ? undefined : '控制面不可用'}
+                leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+                className="ml-auto"
+              >
+                重试
+              </Button>
+            )}
+          </div>
+        )}
+
+        {stoppedExternal && (
+          <p className="flex items-center gap-1 text-caption text-warn" data-testid={`not-stopped-${peer.id}`}>
+            <Info className="size-3.5 shrink-0" aria-hidden="true" />
+            未停止（外部进程）：上次停止清单已取消，该进程仍在运行
+          </p>
+        )}
 
         <p className="text-caption text-text-secondary">
           MCP <span className="ldst-num">{peer.ports.mcp}</span> · {peer.ports.web_label}{' '}
@@ -462,10 +538,25 @@ function PeerCard({
   )
 }
 
-function ComponentCard({ component }: { component: ComponentSnapshot }) {
+function ComponentCard({
+  component,
+  supervisor,
+  supervisorReady,
+}: {
+  component: ComponentSnapshot
+  supervisor: SupervisorModule | null
+  supervisorReady: boolean
+}) {
   const statusLabel = component.status_label || PEER_STATUS_LABEL[component.status]
+  const ownership = ownershipView(supervisor)
+  const heal: SelfHealView | null = selfHealView(supervisor)
   return (
-    <li className="rounded border border-border bg-surface shadow-card">
+    <li
+      className={cn(
+        'rounded border bg-surface shadow-card',
+        heal?.failed ? 'border-danger bg-danger-soft' : 'border-border',
+      )}
+    >
       <div className="flex flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -475,6 +566,15 @@ function ComponentCard({ component }: { component: ComponentSnapshot }) {
               </StatusDot>
               <h3 className="truncate text-subtitle font-semibold text-text">{component.product}</h3>
               <Badge tone="info">代理模块</Badge>
+              {supervisorReady ? (
+                <Badge tone={ownership.tone} title={ownership.hint}>
+                  {ownership.label}
+                </Badge>
+              ) : (
+                <Badge tone="flat" title="GET /api/supervisor/state 不可用：归属无法判定">
+                  归属未知（supervisor 未接入）
+                </Badge>
+              )}
             </div>
             <p className="mt-1 text-caption text-text-secondary">{component.role}</p>
           </div>
@@ -484,6 +584,11 @@ function ComponentCard({ component }: { component: ComponentSnapshot }) {
           控制台 <span className="ldst-num">{component.ports.console}</span> · 网关{' '}
           <span className="ldst-num">{component.ports.gateway ?? MISSING}</span> · {statusLabel}
         </p>
+        {heal && (
+          <p className={cn('text-caption', heal.failed ? 'font-medium text-danger' : 'text-text-secondary')}>
+            {heal.label}
+          </p>
+        )}
         <p className="text-caption text-text-muted">{component.detail}</p>
         <p className="truncate text-caption text-text-muted" title={component.directory}>
           目录 <span className="ldst-num">{component.directory}</span>
@@ -1568,6 +1673,9 @@ export default function SettingsScreen() {
   const board = useAsync((signal) => api.control.board(signal), [])
   const stateConfig = useAsync((signal) => api.stateConfig(signal), [])
   const health = useAsync((signal) => api.health(signal), [])
+  // QUOT-484：归属 / 自愈数据只取自后端账本视图（482-A 合并面）。取不到就如实
+  // 显示「归属未知（supervisor 未接入）」，不让整屏失败，也不拿端口猜。
+  const supervisor = useAsync((signal) => api.supervisor.state(signal), [])
 
   const { items, push, dismiss } = useToasts()
 
@@ -1580,6 +1688,27 @@ export default function SettingsScreen() {
   const [metaPeer, setMetaPeer] = useState<PeerSnapshot | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
+
+  // ---- QUOT-484：停止清单 ----
+  const [stopList, setStopList] = useState<StopCandidate[] | null>(null)
+  const [stopBusy, setStopBusy] = useState(false)
+  const [stopError, setStopError] = useState<string | null>(null)
+  /** 取消后仍在运行的外部进程（模块名）：卡片上保留可见标记，不静默消失 */
+  const [notStoppedExternal, setNotStoppedExternal] = useState<string[]>([])
+  const [stopNotice, setStopNotice] = useState<string | null>(null)
+
+  const supervisorReady = supervisor.status === 'ready' && supervisor.data !== null
+
+  const productOf = useCallback(
+    (moduleName: string): string => {
+      const key = moduleName.replace(/-/g, '_')
+      const peer = board.data?.peers.find((item) => item.id.replace(/-/g, '_') === key)
+      if (peer) return peer.product
+      const component = board.data?.components?.find((item) => item.id.replace(/-/g, '_') === key)
+      return component?.product ?? moduleName
+    },
+    [board.data],
+  )
 
   const tabParam = params.get('tab')
   const section: Section = isSection(tabParam) ? tabParam : 'peers'
@@ -1680,8 +1809,96 @@ export default function SettingsScreen() {
     }
   }
 
-  const confirmInstall = async (): Promise<void> => {
-    if (!installPeer) return
+  const stopFailureText = (error: unknown): string => {
+    if (isApiError(error) && error.kind === 'http' && error.status === 404) {
+      return '后端未提供停止接口（POST /api/supervisor/stop，482-B 尚未接入）；本次没有停止任何进程。'
+    }
+    return describeApiError(error).detail
+  }
+
+  const executeStop = async (candidates: readonly StopCandidate[], viaDialog: boolean): Promise<void> => {
+    if (candidates.length === 0) return
+    setStopBusy(true)
+    setStopError(null)
+    if (viaDialog) setStopNotice(null)
+    try {
+      await api.supervisor.stop({ confirm: true, modules: candidates.map((item) => item.module) })
+      setStopList(null)
+      setNotStoppedExternal((current) => current.filter((name) => !candidates.some((item) => item.module === name)))
+      push(`已停止 ${candidates.length} 个模块`, 'ok')
+      board.reload()
+      void supervisor.refresh()
+    } catch (error) {
+      const message = stopFailureText(error)
+      if (viaDialog) setStopError(message)
+      else setStopNotice(`停止未执行：${message}`)
+    } finally {
+      setStopBusy(false)
+    }
+  }
+
+  /**
+   * 打开停止清单。
+   * - 指定模块（点卡片「停止」）：总是先给清单确认，不做无提示停止；
+   * - 全停（「退出」）：清单里全是本程序启动的进程时按 D2 不弹冗余确认，
+   *   改为一行可见说明后直接发起（点了有反应，不误导说有外部进程）。
+   */
+  const requestStop = (moduleNames?: string[]): void => {
+    if (!supervisorReady) {
+      setStopNotice('归属数据不可用（supervisor 未接入）：无法生成停止清单，本次没有停止任何进程。')
+      return
+    }
+    const all = buildStopCandidates(supervisor.data, productOf)
+    const chosen = moduleNames ? all.filter((item) => moduleNames.includes(item.module)) : all
+    setStopError(null)
+    setStopNotice(null)
+    if (chosen.length === 0) {
+      setStopNotice('当前离线：没有正在运行的模块，没有需要停止的进程。')
+      return
+    }
+    if (!moduleNames && !needsConfirm(chosen)) {
+      setStopNotice(
+        `全部 ${chosen.length} 个模块均为本程序启动，没有需要逐个确认的外部进程；正在直接停止。`,
+      )
+      void executeStop(chosen, false)
+      return
+    }
+    setStopList(chosen)
+  }
+
+  const cancelStop = (): void => {
+    const external = (stopList ?? []).filter((item) => item.external)
+    if (external.length > 0) {
+      setNotStoppedExternal((current) => [
+        ...current,
+        ...external.map((item) => item.module).filter((name) => !current.includes(name)),
+      ])
+    }
+    setStopList(null)
+    setStopError(null)
+    push(
+      external.length > 0
+        ? `已取消停止：${external.length} 个外部进程继续运行`
+        : '已取消停止',
+      'info',
+    )
+  }
+
+  const retryHeal = async (peer: PeerSnapshot, moduleName: string): Promise<void> => {
+    setActing(`${peer.id}:heal`)
+    try {
+      await api.supervisor.reset(moduleName)
+      push(`已解除人工处理：${peer.product}。自愈窗口已清零，下一轮巡检重新判定。`, 'ok')
+      void supervisor.refresh()
+      board.reload()
+    } catch (error) {
+      push(`重试失败：${describeApiError(error).detail}`, 'danger')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const confirmInstall = async (): Promise<void> => {    if (!installPeer) return
     setInstallBusy(true)
     setInstallError(null)
     try {
@@ -1723,6 +1940,7 @@ export default function SettingsScreen() {
           board.reload()
           stateConfig.reload()
           health.reload()
+          void supervisor.refresh()
         },
       }}
     />
@@ -1851,18 +2069,41 @@ export default function SettingsScreen() {
               subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；前端不推断"
               bodyClassName="p-0"
               actions={
-                <Button
-                  variant="primary"
-                  leadingIcon={<Upload className="size-3.5" aria-hidden="true" />}
-                  onClick={() => setImportOpen(true)}
-                  disabled={!controlReady}
-                  disabledReason={controlReady ? undefined : '控制面不可用'}
-                >
-                  导入模块
-                </Button>
+                <>
+                  <Button
+                    variant="secondary"
+                    leadingIcon={<Power className="size-3.5" aria-hidden="true" />}
+                    onClick={() => requestStop()}
+                    disabled={!supervisorReady}
+                    disabledReason={
+                      supervisorReady
+                        ? undefined
+                        : '归属数据不可用（GET /api/supervisor/state 未接入），无法生成停止清单'
+                    }
+                    data-testid="exit-stop-all"
+                  >
+                    退出（停止清单）
+                  </Button>
+                  <Button
+                    variant="primary"
+                    leadingIcon={<Upload className="size-3.5" aria-hidden="true" />}
+                    onClick={() => setImportOpen(true)}
+                    disabled={!controlReady}
+                    disabledReason={controlReady ? undefined : '控制面不可用'}
+                  >
+                    导入模块
+                  </Button>
+                </>
               }
             >
               <ul className="flex flex-col gap-3 p-4">
+                {stopNotice && (
+                  <li>
+                    <Banner tone="info" title="停止清单">
+                      {stopNotice}
+                    </Banner>
+                  </li>
+                )}
                 {state === 'empty' && (
                   <li>
                     <EmptyState
@@ -1885,26 +2126,46 @@ export default function SettingsScreen() {
                     />
                   </li>
                 )}
-                {peers.map((peer) => (
-                  <PeerCard
-                    key={peer.id}
-                    peer={peer}
-                    job={jobs[peer.id]}
-                    controlReady={controlReady}
-                    acting={acting}
-                    onInstall={() => {
-                      setInstallError(null)
-                      setInstallPeer(peer)
-                    }}
-                    onStart={() => void runAction(peer, 'start')}
-                    onStop={() => void runAction(peer, 'stop')}
-                    onLogs={() => setLogsPeer(peer)}
-                    onConfig={() => setConfigPeer(peer)}
-                    onMeta={() => setMetaPeer(peer)}
-                  />
-                ))}
+                {peers.map((peer) => {
+                  const supervised = findModule(supervisor.data, peer.id)
+                  return (
+                    <PeerCard
+                      key={peer.id}
+                      peer={peer}
+                      job={jobs[peer.id]}
+                      controlReady={controlReady}
+                      supervisor={supervised}
+                      supervisorReady={supervisorReady}
+                      stoppedExternal={supervised ? notStoppedExternal.includes(supervised.module) : false}
+                      acting={acting}
+                      onInstall={() => {
+                        setInstallError(null)
+                        setInstallPeer(peer)
+                      }}
+                      onStart={() => void runAction(peer, 'start')}
+                      onStop={() => {
+                        if (supervisorReady && supervised) {
+                          requestStop([supervised.module])
+                        } else {
+                          void runAction(peer, 'stop')
+                        }
+                      }}
+                      onLogs={() => setLogsPeer(peer)}
+                      onConfig={() => setConfigPeer(peer)}
+                      onMeta={() => setMetaPeer(peer)}
+                      onRetryHeal={() => {
+                        if (supervised) void retryHeal(peer, supervised.module)
+                      }}
+                    />
+                  )
+                })}
                 {components.map((component) => (
-                  <ComponentCard key={component.id} component={component} />
+                  <ComponentCard
+                    key={component.id}
+                    component={component}
+                    supervisor={findModule(supervisor.data, component.id)}
+                    supervisorReady={supervisorReady}
+                  />
                 ))}
                 {components.length === 0 && state !== 'empty' && (
                   <li>
@@ -1926,6 +2187,12 @@ export default function SettingsScreen() {
               端口由后端预检给出：8001 被 WSL 转发占用时 TickHub-US 用 8002；US 本机构建没有管理端，不再占 8789；
               8788/8789 归 ProxyFleet，Senate WebUI 用 8786。前端只展示，不自动改端口。
               「非控制面启动」是归属提示，不是冲突。
+            </p>
+            <p className="text-caption text-text-muted">
+              归属（主程序托管 / 外部接管 / 非托管）与自愈状态只取后端账本视图{' '}
+              <code className="ldst-num">GET /api/supervisor/state</code>，前端不扫端口猜归属。
+              {supervisor.data?.configured === false &&
+                ' 当前启停引擎尚未接线（482-B）：清单可查看，停止动作以后端真实返回为准，未接入时页面不会假装已停。'}
             </p>
           </>
         )}
@@ -2020,6 +2287,17 @@ export default function SettingsScreen() {
           </dl>
         )}
       </Drawer>
+
+      <StopListDialog
+        open={stopList !== null}
+        candidates={stopList ?? []}
+        loading={stopBusy}
+        error={stopError}
+        onCancel={cancelStop}
+        onConfirm={() => {
+          if (stopList) void executeStop(stopList, true)
+        }}
+      />
 
       <Toasts items={items} onDismiss={dismiss} />
     </div>

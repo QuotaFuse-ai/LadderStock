@@ -93,7 +93,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const abortFromCaller = () => controller.abort()
   signal?.addEventListener('abort', abortFromCaller)
-  const isControlWrite = path.startsWith('/control/') && method !== 'GET'
+  const isControlWrite = (path.startsWith('/control/') || path.startsWith('/supervisor/')) && method !== 'GET'
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       method,
@@ -877,6 +877,77 @@ export interface JobHandle {
   status: string
 }
 
+// ---------------------------------------------------------------- supervisor（QUOT-482 / QUOT-484）
+
+/**
+ * 账本里的进程来源（QUOT-482-A `supervisor/ledger.py::LedgerOrigin`）。
+ * - `spawned`：本任 supervisor 生命周期内自己拉起；
+ * - `adopted`：崩溃重启后对账确认仍存活、继续托管的前任进程；
+ * - `spawned-via-task`：SYSTEM 计划任务垫片拉起（QUOT-485，账本 `task.origin`）。
+ * `null` = 账本没有这条记录（观测态）。
+ */
+export type SupervisorOrigin = 'spawned' | 'adopted' | 'spawned-via-task' | null
+
+/** 归属只来自后端账本（`engine._ownership`）：前端不扫端口、不推断。 */
+export type SupervisorOwnership = 'managed' | 'external'
+
+export type SelfHealStatus = 'ok' | 'healing' | 'gave_up'
+
+export interface SelfHealInfo {
+  attempts: number
+  max: number
+  status: SelfHealStatus
+}
+
+/** `GET /api/supervisor/state` 的每模块条目（482-A 归属视角 + 482-C 自愈视角）。 */
+export interface SupervisorModule {
+  module: string
+  ports: number[]
+  pid: number | null
+  /** 对外三值（stopped 折叠为 ok） */
+  health: 'ok' | 'restarting' | 'needs_human'
+  /** 原始生命周期：starting / running / stopping / stopped / failed / restarting / needs_human / down / unknown */
+  state: string
+  restarts_5min: number
+  restart_count: number
+  stopping_by_user: boolean
+  origin: SupervisorOrigin
+  cmdline_hash: string | null
+  last_exit_reason: string | null
+  self_heal: SelfHealInfo
+  /** 482-A 合并视图才有的字段；482-C 单独部署时缺省 */
+  ownership?: SupervisorOwnership
+  evidence?: string
+  listening?: boolean
+  /** 482-B 未落地的停止预览接口若给出命令行，就在这里；缺省表示后端未提供 */
+  cmdline?: string | null
+}
+
+export interface SupervisorStatePayload {
+  ok: boolean
+  engine: {
+    running: boolean
+    window_seconds: number
+    max_restarts: number
+    backoff: number[]
+  } | null
+  modules: SupervisorModule[]
+  order?: string[]
+  /** false = 启停引擎未接线（482-B），页面据此只显示观测
+   *  true = 引擎已注入，归属/自愈数据可用 */
+  configured?: boolean
+  supervisor_pid?: number | null
+}
+
+/**
+ * 停止执行请求：`confirm: true` 是显式确认意图，缺省时后端必须拒绝。
+ * 482-B 落地前该端点不存在（404），前端如实报「未接入」，不假装已停。
+ */
+export interface SupervisorStopRequest {
+  confirm: true
+  modules: string[]
+}
+
 // ---------------------------------------------------------------- 端点
 
 export const api = {
@@ -1079,6 +1150,35 @@ export const api = {
         method: 'POST',
         body: {},
         timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+  },
+
+  // supervisor（QUOT-482-A 归属 + 482-C 自愈；QUOT-484 前端消费）
+  supervisor: {
+    /** 每模块归属（managed/external，证据来自账本）+ 自愈三态；仅回环可读。 */
+    state: (signal?: AbortSignal) =>
+      request<SupervisorStatePayload>('/supervisor/state', {
+        signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /**
+     * 人工解除 `needs_human`（482-C 已有写面）：清重拉窗口、健康回 ok。
+     * 这是「需人工处理」卡片上「重试」调用的后端动作。
+     */
+    reset: (module: string) =>
+      request<{ ok: boolean; module: string }>(
+        `/supervisor/state/${encodeURIComponent(module)}/reset`,
+        { method: 'POST', body: {}, timeoutMs: CONTROL_TIMEOUT_MS },
+      ),
+    /**
+     * 停止清单执行（QUOT-484 契约）：必须显式 `confirm: true` + 模块清单，
+     * 不接受无参数全停。482-B 未落地时回 404，调用方按「未接入」如实提示。
+     */
+    stop: (body: SupervisorStopRequest) =>
+      request<{ ok: boolean; stopped: string[]; skipped: string[] }>('/supervisor/stop', {
+        method: 'POST',
+        body,
+        timeoutMs: 30000,
       }),
   },
 }

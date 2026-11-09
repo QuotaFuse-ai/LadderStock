@@ -1,0 +1,123 @@
+{
+  "ok": true,
+  "engine": {
+    "running": true,
+    "window_seconds": 300,
+    "max_restarts": 3,
+    "backoff": [
+      5,
+      15,
+      45
+    ]
+  },
+  "modules": [
+    {
+      "ports": [
+        8000,
+        8787
+      ],
+      "pid": 4500,
+      "health": "ok",
+      "state": "running",
+      "restarts_5min": 0,
+      "restart_count": 0,
+      "stopping_by_user": false,
+      "origin": "spawned",
+      "cmdline_hash": "a1b2c3d4",
+      "last_exit_reason": null,
+      "self_heal": {
+        "attempts": 0,
+        "max": 3,
+        "status": "ok"
+      },
+      "ownership": "managed",
+      "evidence": "ledger",
+      "listening": true,
+      "module": "tickhub",
+      "cmdline": "C:\\workplace\\TickHub-CN\\.venv\\Scripts\\python.exe -m tickhub.server --port 8000 --admin-port 8787 --data-dir C:\\workplace\\TickHub-CN\\data"
+    },
+    {
+      "ports": [
+        8790,
+        8791
+      ],
+      "pid": 2708,
+      "health": "ok",
+      "state": "running",
+      "restarts_5min": 0,
+      "restart_count": 0,
+      "stopping_by_user": false,
+      "origin": "adopted",
+      "cmdline_hash": "a1b2c3d4",
+      "last_exit_reason": null,
+      "self_heal": {
+        "attempts": 0,
+        "max": 3,
+        "status": "ok"
+      },
+      "ownership": "managed",
+      "evidence": "ledger",
+      "listening": true,
+      "module": "wire",
+      "cmdline": "C:\\workplace\\Wire\\quotafuse-wire\\.venv\\Scripts\\python.exe -m quotafuse_wire.serve --host 127.0.0.1 --port 8790 --mcp-port 8791 --config C:\\workplace\\Wire\\quotafuse-wire\\config\\sources.yaml"
+    },
+    {
+      "ports": [
+        8765,
+        8786
+      ],
+      "pid": 8312,
+      "health": "ok",
+      "state": "running",
+      "restarts_5min": 0,
+      "restart_count": 0,
+      "stopping_by_user": false,
+      "origin": "spawned-via-task",
+      "cmdline_hash": "a1b2c3d4",
+      "last_exit_reason": null,
+      "self_heal": {
+        "attempts": 0,
+        "max": 3,
+        "status": "ok"
+      },
+      "ownership": "managed",
+      "evidence": "ledger",
+      "listening": true,
+      "module": "senate",
+      "cmdline": "C:\\workplace\\StockSenate\\.venv\\Scripts\\python.exe -m stocksenate.mcp --transport http --port 8765"
+    },
+    {
+      "ports": [
+        8100
+      ],
+      "pid": null,
+      "health": "needs_human",
+      "state": "needs_human",
+      "restarts_5min": 0,
+      "restart_count": 0,
+      "stopping_by_user": false,
+      "origin": "spawned",
+      "cmdline_hash": null,
+      "last_exit_reason": "连续崩溃 3 次（5 分钟窗口），已停止自愈",
+      "self_heal": {
+        "attempts": 3,
+        "max": 3,
+        "status": "gave_up"
+      },
+      "ownership": "managed",
+      "evidence": "ledger",
+      "listening": false,
+      "module": "financecoffer"
+    }
+  ],
+  "configured": true,
+  "supervisor_pid": 5950,
+  "order": [
+    "tickhub",
+    "tickhub_us",
+    "wire",
+    "senate",
+    "financecoffer",
+    "proxyfleet"
+  ]
+}
