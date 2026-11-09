@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -320,6 +322,32 @@ def test_recall_rejects_cross_namespace_memories() -> None:
     assert hits == []
 
 
+def test_recall_sends_deployed_contract_payload() -> None:
+    """锁死真机契约（QUOT-486 实例实测）：`/search` + `top_k` 键 + 命名空间参数。
+
+    MockTransport 单测曾漏掉这条：路径写成 `/v1/memories/search/`、键写成 `limit`，
+    单测全绿但真机 404/400——真实取证时才暴露，故此处显式断言。
+    """
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"results": []})
+
+    memory.reset_runtime_state()
+    memory.recall("问题", symbol=None, settings=_settings(top_k=3), client=_client(handler))
+
+    assert len(seen) == 1
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/search"
+    assert json.loads(seen[0].content) == {
+        "query": "问题",
+        "user_id": "u-local",
+        "agent_id": memory.AGENT_ID,
+        "top_k": 6,
+    }
+
+
 def test_recall_failure_raises_memory_unavailable() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
@@ -367,30 +395,24 @@ def test_client_maps_non_json_to_unavailable() -> None:
         client.search({"query": "q"})
 
 
-def test_clear_uses_delete_then_falls_back() -> None:
-    seen: list[tuple[str, int]] = []
+def test_clear_uses_delete_with_namespace_params() -> None:
+    """真机契约：DELETE /memories?user_id&agent_id，响应只回 message 时条数记 -1。"""
+    seen: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append((request.url.path, 1))
+        seen.append((request.method, request.url.path))
+        return httpx.Response(200, json={"message": "All relevant memories deleted"})
+
+    removed = _client(handler).clear(user_id="u-local", agent_id=memory.AGENT_ID)
+    assert removed == -1
+    assert seen == [("DELETE", "/memories")]
+
+
+def test_clear_counts_deleted_ids_when_present() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"deleted_ids": ["m1", "m2", "m3"]})
 
-    removed = _client(handler).clear(user_id="u-local", agent_id=memory.AGENT_ID)
-    assert removed == 3
-    assert seen[0][0] == "/v1/memories/"
-
-
-def test_clear_falls_back_to_delete_all_endpoint() -> None:
-    paths: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        paths.append(request.url.path)
-        if request.method == "DELETE":
-            return httpx.Response(405)
-        return httpx.Response(200, json={"deleted": ["m1"]})
-
-    removed = _client(handler).clear(user_id="u-local", agent_id=memory.AGENT_ID)
-    assert removed == 1
-    assert paths == ["/v1/memories/", "/v1/memories/delete_all/"]
+    assert _client(handler).clear(user_id="u-local", agent_id=memory.AGENT_ID) == 3
 
 
 # --------------------------------------------------------------------------- #

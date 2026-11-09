@@ -80,10 +80,10 @@ class _FakeMemory:
         self.requests.append((request.method, str(request.url.path)))
         if self.exc is not None:
             raise self.exc
-        if request.url.path.rstrip("/").endswith("/v1/memories/search"):
+        if request.url.path.rstrip("/") == "/search":
             self.searched.append(json.loads(request.content))
             return httpx.Response(200, json={"results": self.hits})
-        if request.url.path.rstrip("/") == "/v1/memories" and request.method == "POST":
+        if request.url.path.rstrip("/") == "/memories" and request.method == "POST":
             if self.add_status >= 400:
                 return httpx.Response(self.add_status, json={"detail": "boom"})
             self.added.append(json.loads(request.content))
@@ -251,7 +251,7 @@ def test_low_score_memory_not_injected(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     _ask_direct(monkeypatch, fake, fake_memory, _settings())
 
-    assert ("POST", "/v1/memories/search/") in fake_memory.requests
+    assert ("POST", "/search") in fake_memory.requests
     assert fake.calls[0][1] == assistant_module.SYSTEM_PROMPT
     assert MEMORY_HEADER not in fake.calls[0][1]
 
@@ -354,7 +354,7 @@ def test_chitchat_not_stored(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result["reply"] == fake.reply  # 回复照常
     assert fake_memory.added == []  # 无意义闲聊不落库
-    assert ("POST", "/v1/memories/") not in fake_memory.requests
+    assert ("POST", "/memories") not in fake_memory.requests
 
 
 def test_secret_never_stored(monkeypatch: pytest.MonkeyPatch) -> None:

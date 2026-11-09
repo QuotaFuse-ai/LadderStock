@@ -335,7 +335,7 @@ ldst position list --output json                         # realized.total_pnl（
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
-| 50 | `ldst ai memory-clear` | 一键清空助手记忆：只删 `LDST_MEMORY_USER_ID` + `ladderstock-assistant` 名下（mem0 侧 `DELETE /v1/memories/`，兜底 `POST /v1/memories/delete_all/`）的全部对话记忆，清空动作写日志（`memory_cleared`） | `--yes`（跳过确认）、`--output` | 成功 0 + 结构化载荷 `{cleared, endpoint, user_id, agent_id, removed}`；通道未启用（`LDST_MEMORY_BASE_URL` 为空或被禁用）→ **3**（无事可做，不假装清了）；mem0 不可达 → **9**（未执行清空）。**绝不越命名空间**：不碰其他 user_id / agent_id 的记忆，也绝不连 9000 端口（Multica 的 mem0 后端）
+| 50 | `ldst ai memory-clear` | 一键清空助手记忆：只删 `LDST_MEMORY_USER_ID` + `ladderstock-assistant` 名下（mem0 侧 `DELETE /memories?user_id&agent_id`，QUOT-486 实例实测路由）的全部对话记忆，清空动作写日志（`memory_cleared`） | `--yes`（跳过确认）、`--output` | 成功 0 + 结构化载荷 `{cleared, endpoint, user_id, agent_id, removed}`；通道未启用（`LDST_MEMORY_BASE_URL` 为空或被禁用）→ **3**（无事可做，不假装清了）；mem0 不可达 → **9**（未执行清空）。**绝不越命名空间**：不碰其他 user_id / agent_id 的记忆，也绝不连 9000 端口（Multica 的 mem0 后端）
 
 ## F. 全局约定
 

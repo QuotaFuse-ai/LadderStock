@@ -74,10 +74,11 @@ ENV_ENABLED = "LDST_MEMORY_ENABLED"
 
 _FALSEY = {"", "0", "false", "no", "off"}
 
-SEARCH_PATH = "/v1/memories/search/"
-ADD_PATH = "/v1/memories/"
-LIST_PATH = "/v1/memories/"
-DELETE_PATH = "/v1/memories/"
+#: QUOT-486 自建 mem0（127.0.0.1:9100）的真实路由：`/search`、`/memories`，
+#: 没有托管平台那套 `/v1/memories/` 前缀（真机探测 2026-11-09，见 issue 取证）。
+SEARCH_PATH = "/search"
+ADD_PATH = "/memories"
+DELETE_PATH = "/memories"
 
 
 # --------------------------------------------------------------------------- #
@@ -230,10 +231,10 @@ class MemoryClient:
         return self._post(ADD_PATH, payload)
 
     def clear(self, *, user_id: str, agent_id: str) -> int:
-        """清空本命名空间全部记忆，返回删除条数（拿不到条数时返回 -1）。
+        """清空本命名空间全部记忆（`DELETE /memories?user_id&agent_id`）。
 
-        mem0 的批量删除端点在不同版本间是 `DELETE /v1/memories/`（query 参数）
-        或 `POST /v1/memories/delete_all/`；先试前者，405/404 再试后者。
+        自建实例只回 `{"message": "All relevant memories deleted"}`，不带条数，
+        拿不到就返回 -1；调用方以「再检索为空」作为清空生效的判据。
         """
         started = time.monotonic()
         try:
@@ -243,17 +244,6 @@ class MemoryClient:
         except (httpx.HTTPError, OSError) as exc:
             _note_failure(self.base_url)
             raise MemoryUnavailable(f"clear 请求失败：{exc!r}（{self.base_url}）") from None
-        if response.status_code in (404, 405):
-            try:
-                fallback = self._http.post(
-                    ADD_PATH + "delete_all/", json={"user_id": user_id, "agent_id": agent_id}
-                )
-            except (httpx.HTTPError, OSError) as exc:
-                _note_failure(self.base_url)
-                raise MemoryUnavailable(
-                    f"clear 兜底请求失败：{exc!r}（{self.base_url}）"
-                ) from None
-            response = fallback
         if response.status_code >= 400:
             _note_failure(self.base_url)
             raise MemoryUnavailable(
@@ -476,7 +466,7 @@ def recall(
             "query": question,
             "user_id": settings.user_id,
             "agent_id": AGENT_ID,
-            "limit": settings.top_k * 2,
+            "top_k": settings.top_k * 2,
         }
     raw = client.search(payload)
     threshold = settings.score_threshold
