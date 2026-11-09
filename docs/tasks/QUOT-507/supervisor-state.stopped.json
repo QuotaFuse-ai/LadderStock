@@ -1,0 +1,148 @@
+{
+  "ok": true,
+  "engine": {
+    "running": true,
+    "window_seconds": 300,
+    "max_restarts": 3,
+    "backoff": [
+      5,
+      15,
+      45
+    ]
+  },
+  "modules": [
+    {
+      "ports": [
+        8000,
+        8787
+      ],
+      "pid": 4500,
+      "health": "ok",
+      "state": "running",
+      "restarts_5min": 0,
+      "restart_count": 0,
+      "stopping_by_user": false,
+      "origin": "spawned",
+      "cmdline_hash": "a1b2c3d4",
+      "last_exit_reason": null,
+      "self_heal": {
+        "attempts": 0,
+        "max": 3,
+        "status": "ok"
+      },
+      "ownership": "managed",
+      "evidence": "ledger",
+      "listening": true,
+      "module": "tickhub",
+      "cmdline": "C:\\workplace\\TickHub-CN\\.venv\\Scripts\\python.exe -m tickhub.server --port 8000 --admin-port 8787"
+    },
+    {
+      "ports": [
+        8790,
+        8791
+      ],
+      "pid": 2708,
+      "health": "ok",
+      "state": "running",
+      "restarts_5min": 0,
+      "restart_count": 0,
+      "stopping_by_user": false,
+      "origin": "adopted",
+      "cmdline_hash": "a1b2c3d4",
+      "last_exit_reason": null,
+      "self_heal": {
+        "attempts": 0,
+        "max": 3,
+        "status": "ok"
+      },
+      "ownership": "managed",
+      "evidence": "ledger",
+      "listening": true,
+      "module": "wire",
+      "cmdline": "C:\\workplace\\Wire\\quotafuse-wire\\.venv\\Scripts\\python.exe -m quotafuse_wire.serve --port 8790 --mcp-port 8791"
+    },
+    {
+      "ports": [
+        8788,
+        8789
+      ],
+      "pid": null,
+      "health": "ok",
+      "state": "stopped",
+      "restarts_5min": 0,
+      "restart_count": 0,
+      "stopping_by_user": false,
+      "origin": "spawned",
+      "cmdline_hash": "a1b2c3d4",
+      "last_exit_reason": null,
+      "self_heal": {
+        "attempts": 0,
+        "max": 3,
+        "status": "ok"
+      },
+      "ownership": "managed",
+      "evidence": "ledger",
+      "listening": false,
+      "module": "proxypool",
+      "mappings": [
+        {
+          "listen": "127.0.0.1:8788",
+          "upstream_host": "api.openai.com",
+          "upstream_port": 443,
+          "enabled": true,
+          "owner": "human",
+          "state": "stopped",
+          "rtt_ms": null,
+          "id": "human-chat"
+        },
+        {
+          "listen": "127.0.0.1:8789",
+          "upstream_host": "api.deepseek.com",
+          "upstream_port": 443,
+          "enabled": true,
+          "owner": "human",
+          "state": "stopped",
+          "rtt_ms": null,
+          "id": "human-work"
+        },
+        {
+          "listen": "127.0.0.1:8801",
+          "upstream_host": "api.openai.com",
+          "upstream_port": 443,
+          "enabled": true,
+          "owner": "ai",
+          "state": "stopped",
+          "rtt_ms": null,
+          "id": "ai-codex"
+        },
+        {
+          "listen": "127.0.0.1:8802",
+          "upstream_host": "api.anthropic.com",
+          "upstream_port": 443,
+          "enabled": true,
+          "owner": "ai",
+          "state": "stopped",
+          "rtt_ms": null,
+          "id": "ai-claude"
+        },
+        {
+          "listen": "127.0.0.1:8803",
+          "upstream_host": "generativelanguage.googleapis.com",
+          "upstream_port": 443,
+          "enabled": true,
+          "owner": "ai",
+          "state": "stopped",
+          "rtt_ms": null,
+          "id": "ai-gemini"
+        }
+      ]
+    }
+  ],
+  "configured": true,
+  "supervisor_pid": 5950,
+  "order": [
+    "tickhub",
+    "wire",
+    "proxyfleet"
+  ]
+}
