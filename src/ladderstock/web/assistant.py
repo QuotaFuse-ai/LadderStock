@@ -13,7 +13,6 @@ AI 回答只是文本，不会回写页面上的行情 / 财务数据（页面�
 
 from __future__ import annotations
 
-import json
 import socket
 from datetime import UTC, datetime
 from typing import Any
@@ -96,13 +95,13 @@ class SkillAssistantRequest(BaseModel):
     bound_skill: str | None = None
 
 
-# QUOT-493：页面抽屉直接传页级上下文 JSON（页面有什么就传什么），由本端序列化后进
-# 同一条用户消息——上下文的形状由页面决定，这里不做 schema 约束。
+# QUOT-493/QUOT-477：page 通道与 research / skills 同构——上下文统一为前端序列化好的
+# 文本（`AiDock` 的 serializedContext），本端不再做 JSON 解析，避免两侧类型各执一端。
 class PageAssistantRequest(BaseModel):
-    """任意页面抽屉发来的载荷：问题 + 页级上下文 JSON。"""
+    """任意页面抽屉发来的载荷：问题 + 页级上下文文本（与另两条通道同一约定）。"""
 
     question: str = ""
-    context: dict[str, Any] | None = None
+    context: str = ""
     page_key: str | None = None
     bound_skill: str | None = None
 
@@ -292,26 +291,19 @@ def build_skills_router() -> APIRouter:
 PAGE_PREFIX = "/api/page"
 
 
-def _context_text(context: dict[str, Any] | None) -> str:
-    """把页级上下文 JSON 展平成一条文本，与原 `/skills` 通道的 context 文本同一形态。"""
-    if not context:
-        return ""
-    return json.dumps(context, ensure_ascii=False, default=str)
-
-
 def build_page_router() -> APIRouter:
-    """`POST /api/page/assistant`（QUOT-493）：任意页面抽屉的一问一答。
+    """`POST /api/page/assistant`（QUOT-493/QUOT-477）：任意页面抽屉的一问一答。
 
     与 `/api/research/{code}/assistant`、`/api/skills/assistant` 同一套客户端、闸门与
-    降级口径；差别有三点：上下文是页面传的任意 JSON（本端序列化），system prompt 换成
-    不含个股深挖预设的 `PAGE_SYSTEM_PROMPT`，meta 行只写页面键与绑定技能。
+    降级口径；差别有两点：system prompt 换成不含个股深挖预设的 `PAGE_SYSTEM_PROMPT`，
+    meta 行只写页面键与绑定技能。
     """
     router = APIRouter(prefix=PAGE_PREFIX, dependencies=[Depends(_guard)])
 
     @router.post("/assistant")
     def page_assistant(body: PageAssistantRequest) -> Any:
         question = body.question.strip()
-        context = _context_text(body.context)
+        context = body.context
         error = _question_payload_error(question, context)
         if error is not None:
             return error

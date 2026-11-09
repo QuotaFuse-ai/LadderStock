@@ -1,12 +1,14 @@
-"""QUOT-493：`POST /api/page/assistant` 的契约测试。
+"""QUOT-493/QUOT-477：`POST /api/page/assistant` 的契约测试。
 
 任意页面（watch / industry / calendar …）的抽屉问答：复用 `assistant.ask()` 的客户端与
-降级口径，上下文是前端传的任意 JSON（本端序列化后进同一条用户消息），system prompt 换成
-不含个股深挖预设的 `PAGE_SYSTEM_PROMPT`。模型调用用假客户端，不联网、不读密钥。
+降级口径，上下文是前端序列化好的文本（与 research / skills 同构，QUOT-477 修复 422），
+system prompt 换成不含个股深挖预设的 `PAGE_SYSTEM_PROMPT`。模型调用用假客户端，不联网、
+不读密钥。
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +59,11 @@ def _client(tmp_path: Path) -> TestClient:
 def _post(client: TestClient, **body: Any) -> Any:
     payload: dict[str, Any] = {
         "question": "今天自选股整体表现怎么样？",
-        "context": {"rows": [{"code": "600519", "change": -0.032}], "as_of": "2026-11-08"},
+        # 与 research / skills 两条通道同一约定：前端序列化好的文本，不是 dict（QUOT-477）
+        "context": json.dumps(
+            {"rows": [{"code": "600519", "change": -0.032}], "as_of": "2026-11-08"},
+            ensure_ascii=False,
+        ),
         **body,
     }
     # 与研究面其它 POST 同一条闸门：写请求需要来源证据（本机页面 / 显式客户端头）
@@ -83,7 +89,7 @@ def test_page_assistant_returns_text_and_model(
     assert "个股深挖" not in system
     assert "本页这项没取到" in system
     assert "不要给出买卖建议" in system
-    # meta 行写页面键与绑定技能；上下文 JSON 序列化后与问题进同一条用户消息
+    # meta 行写页面键与绑定技能；上下文文本与问题进同一条用户消息
     assert "页面：页面助手 · watch · a-share-tape" in user
     assert '"code": "600519"' in user
     assert '"change": -0.032' in user
@@ -109,7 +115,7 @@ def test_page_assistant_empty_context_says_not_fetched(
     fake = _FakeClient()
     monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
 
-    response = _post(_client(tmp_path), context=None)
+    response = _post(_client(tmp_path), context="")
 
     assert response.status_code == 200
     _, _, user, _ = fake.calls[0]
@@ -131,11 +137,29 @@ def test_page_assistant_rejects_overlong_question(tmp_path: Path) -> None:
 
 
 def test_page_assistant_rejects_overlong_context(tmp_path: Path) -> None:
-    # 上下文上限按序列化后的文本长度判定：嵌套 JSON 也能顶到上限
-    nested = {"rows": [{"blob": "长" * assistant_module.MAX_CONTEXT_CHARS}]}
-    response = _post(_client(tmp_path), context=nested)
+    # 上下文上限按文本长度判定：长文本（与前端 serializedContext 同形态）也能顶到上限
+    overlong = "长" * (assistant_module.MAX_CONTEXT_CHARS + 1)
+    response = _post(_client(tmp_path), context=overlong)
     assert response.status_code == 422
     assert response.json()["code"] == "context_too_long"
+
+
+def test_page_assistant_accepts_text_context_not_only_dict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QUOT-477 回归：前端 serializedContext 是字符串，收 str 的端点必须 200。
+
+    修复前 `context` 被定义成 `dict[str, Any]`，15 个绑定页全 422
+    （dict_type, loc=body.context）；修复后与 research / skills 同构只认 str。
+    """
+    fake = _FakeClient()
+    monkeypatch.setattr(assistant_module, "_load_client", lambda: (fake, "openai:model-a"))
+
+    response = _post(_client(tmp_path), context="涨跌家数 1183/5237，跌停 12")
+
+    assert response.status_code == 200
+    _, _, user, _ = fake.calls[0]
+    assert "涨跌家数 1183/5237，跌停 12" in user
 
 
 def test_page_assistant_missing_config_is_readable_503(
@@ -212,6 +236,6 @@ def test_page_assistant_requires_loopback_evidence(tmp_path: Path) -> None:
     # 与研究面同一条闸门：不带 X-LDST-Client 头的写请求被拒
     response = _client(tmp_path).post(
         "/api/page/assistant",
-        json={"question": "x", "context": {"rows": []}},
+        json={"question": "x", "context": ""},
     )
     assert response.status_code == 403
