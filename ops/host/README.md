@@ -7,7 +7,7 @@ Toast 通知（D5）、日志上限（D5）。全部脚本兼容 Windows PowerSh
 
 ```mermaid
 flowchart TD
-    Icon[桌面唯一图标 LadderStock 盯盘台.lnk] -->|双击| Vbs[wscript //B Launch-LdstPanel.vbs<br/>无黑窗启动器]
+    Icon[桌面唯一图标 LadderStock 控制台.lnk] -->|双击| Vbs[wscript //B Launch-LdstPanel.vbs<br/>无黑窗启动器]
     Vbs --> Panel[powershell -WindowStyle Hidden<br/>Show-LdstHostPanel.ps1]
     Panel --> Pre[Invoke-HostPrecheck.ps1 四步前置检查<br/>iphlpsvc / WSL IP / netsh portproxy / multica daemon]
     Panel --> Start[Start-LdstModules.ps1<br/>按依赖顺序拉起 12 模块]
