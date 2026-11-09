@@ -67,14 +67,16 @@ afterEach(() => {
 describe('顶栏本页命令（QUOT-457）', () => {
   it('控制面有本页命令时渲染一颗图标按钮，点击展开面板', async () => {
     renderBar()
+    // click 前把 commands 异步态收敛到确定：trigger 渲染即代表 command 已就位、
+    // 挂载 effect 已跑完，点击不被 commands 首次到达抢时序
+    await waitFor(() => expect(commands).toHaveBeenCalled())
     await waitFor(() => expect(trigger()).toBeTruthy())
     expect(screen.queryByRole('dialog')).toBeNull()
 
     fireEvent.click(trigger())
 
-    // commands 首次到达时 command?.key 的 effect 会执行一次 setOpen(false)，
-    // 与点击存在时序竞态：waitFor 轮询到面板稳定后再断言，而非同步断言第一帧
-    const panel = await waitFor(() => screen.getByRole('dialog', { name: '本页命令' }))
+    // open 切换是同步的：click 后第一帧即可见，用同步断言证明无时序依赖
+    const panel = screen.getByRole('dialog', { name: '本页命令' })
     expect(panel.textContent).toContain('拉取行情数据')
     expect(panel.textContent).toContain('ldst sync --date 2026-11-05')
     expect(panel.textContent).toContain('上次成功')
