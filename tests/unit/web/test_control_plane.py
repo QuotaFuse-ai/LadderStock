@@ -81,9 +81,11 @@ class FakeRuntime:
 def peer_dirs(tmp_path: Path) -> dict[str, Path]:
     alpha = tmp_path / "peers" / "alpha"
     beta = tmp_path / "peers" / "beta"
+    gamma = tmp_path / "peers" / "gamma"
     alpha.mkdir(parents=True)
     beta.mkdir(parents=True)
-    return {"alpha": alpha, "beta": beta}
+    gamma.mkdir(parents=True)
+    return {"alpha": alpha, "beta": beta, "gamma": gamma}
 
 
 def _peers(peer_dirs: dict[str, Path]) -> dict[str, Any]:
@@ -112,6 +114,25 @@ def _peers(peer_dirs: dict[str, Path]) -> dict[str, Any]:
             health_path="/api/health",
             start_commands=(("beta", "serve"),),
             config_keys=("QF_WIRE_PORT",),
+            has_wheel_dist=False,
+        ),
+        # 双面 + 分层 dotenv 的 peer（QUOT-481 缺陷 2/3）：形状对齐真实 Wire——
+        # `gamma mcp http` 只起 MCP 面（8765），`gamma webui` 只起 Web 面（8786）；
+        # `.env` 打底、`.env.local` 覆盖。仅在本文件的新用例里显式注册。
+        "gamma": PeerControl(
+            key="gamma",
+            directory=str(peer_dirs["gamma"]),
+            import_package="gamma_pkg",
+            mcp_port=8765,
+            web_port=8786,
+            web_port_label="WebUI",
+            health_path="/health",
+            start_commands=(("gamma", "mcp", "http"), ("gamma", "webui")),
+            start_command_faces=("mcp", "web"),
+            config_keys=("GAMMA_BASE", "GAMMA_MODEL", "GAMMA_API_KEY"),
+            secret_keys=("GAMMA_API_KEY",),
+            env_layer_base=".env",
+            env_filename=".env.local",
             has_wheel_dist=False,
         ),
     }
@@ -461,11 +482,14 @@ def test_config_get_masks_secrets_and_never_returns_plaintext(
     )
     plane = _plane(tmp_path, peer_dirs)
     payload = plane.read_config("alpha")
+    # source（QUOT-481 缺陷 2）：单文件 peer 的值恒来自生效层 env 文件
     assert payload["values"]["MCP_HTTP_PORT"] == {
         "set": True,
         "secret": False,
         "value": "8002",
+        "source": ".env.local",
     }
+    assert payload["env_layers"] == []  # 单文件 peer 不分层
     secret_row = payload["values"]["ALPHA_API_KEY"]
     assert secret_row["set"] is True
     assert secret_row["secret"] is True
@@ -1028,7 +1052,8 @@ def test_board_peer_cards_follow_sources_yaml(
     # peers 块缺失/写坏：load_sources_peers 返回 {} → 回退全表（QUOT-403 验收 2）
     plane_empty = _plane(tmp_path, peer_dirs, registered=())
     payload_empty = plane_empty.board()
-    assert [item["id"] for item in payload_empty["peers"]] == ["alpha", "beta"]
+    # 全表 = 夹具里的全部 peer（alpha/beta + QUOT-481 新增的双面 peer gamma）
+    assert [item["id"] for item in payload_empty["peers"]] == ["alpha", "beta", "gamma"]
 
 
 def test_unmanaged_peer_has_no_action_buttons(
@@ -2070,3 +2095,188 @@ def test_command_endpoints_expose_whitelist(
     started = client.post("/api/control/commands/pool")
     assert started.status_code == 200
     assert started.json()["job_id"]
+
+
+# --------------------------------------------------------------------------- #
+# 8. QUOT-481：分面启动/停止 + 分层 dotenv
+#    gamma 是双面 peer（形状对齐真实 Wire）：`gamma mcp http` 只起 MCP 面
+#    （8765），`gamma webui` 只起 Web 面（8786）；`.env` 打底、`.env.local` 覆盖。
+# --------------------------------------------------------------------------- #
+
+GAMMA_REGISTERED = ("alpha", "beta", "gamma")
+
+
+def test_config_layered_read_prefers_override_and_reports_source(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """缺陷 2：分层读取 = 底稿（.env）打底、生效层（.env.local）覆盖，逐键带 source。"""
+    d = peer_dirs["gamma"]
+    (d / ".env").write_text(
+        "GAMMA_BASE=https://base.example/v1\n"
+        "GAMMA_MODEL=base-model\n"
+        f"GAMMA_API_KEY={SENTINEL_KEY}\n",
+        encoding="utf-8",
+    )
+    (d / ".env.local").write_text("GAMMA_MODEL=override-model\n", encoding="utf-8")
+    plane = _plane(tmp_path, peer_dirs, registered=GAMMA_REGISTERED)
+    payload = plane.read_config("gamma")
+    assert payload["env_layers"] == [
+        {"file": ".env", "role": "base"},
+        {"file": ".env.local", "role": "override"},
+    ]
+    values = payload["values"]
+    assert values["GAMMA_MODEL"] == {
+        "set": True,
+        "secret": False,
+        "value": "override-model",
+        "source": ".env.local",
+    }
+    assert values["GAMMA_BASE"] == {
+        "set": True,
+        "secret": False,
+        "value": "https://base.example/v1",
+        "source": ".env",
+    }
+    # 密钥落在底稿层：照样只回打码预览，原文绝不出现
+    secret_row = values["GAMMA_API_KEY"]
+    assert secret_row["set"] is True and secret_row["secret"] is True
+    assert secret_row["source"] == ".env"
+    assert SENTINEL_KEY not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_config_put_writes_to_override_layer_and_keeps_base_intact(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """缺陷 2：写回只进生效层 .env.local；底稿 .env 字节不动；保存后回读一致。"""
+    d = peer_dirs["gamma"]
+    base = d / ".env"
+    override = d / ".env.local"
+    base_text = "GAMMA_MODEL=base-model\nGAMMA_API_KEY=sk-base-0000abcd\n"
+    base.write_text(base_text, encoding="utf-8")
+    override.write_text("GAMMA_MODEL=override-model\n", encoding="utf-8")
+    plane = _plane(tmp_path, peer_dirs, registered=GAMMA_REGISTERED)
+    payload = plane.update_config("gamma", {"GAMMA_MODEL": "new-model"}, [])
+    assert payload["updated"] == ["GAMMA_MODEL"]
+    assert "GAMMA_MODEL=new-model" in override.read_text(encoding="utf-8")
+    assert base.read_text(encoding="utf-8") == base_text  # 底稿一字未动
+    after = plane.read_config("gamma")["values"]["GAMMA_MODEL"]
+    assert after["value"] == "new-model" and after["source"] == ".env.local"
+
+
+def test_config_clear_base_key_writes_empty_override(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """缺陷 2：clear 底稿键删不掉行 → 在生效层写空值压掉；底稿原样；接口如实报未配置。"""
+    d = peer_dirs["gamma"]
+    base = d / ".env"
+    override = d / ".env.local"
+    base.write_text("GAMMA_MODEL=base-model\n", encoding="utf-8")
+    override.write_text("GAMMA_MODEL=override-model\n", encoding="utf-8")
+    plane = _plane(tmp_path, peer_dirs, registered=GAMMA_REGISTERED)
+    payload = plane.update_config("gamma", {}, ["GAMMA_MODEL"])
+    assert payload["values"]["GAMMA_MODEL"]["set"] is False
+    assert "GAMMA_MODEL=" in override.read_text(encoding="utf-8")
+    assert base.read_text(encoding="utf-8") == "GAMMA_MODEL=base-model\n"
+
+
+def test_can_start_when_one_face_down_and_can_stop_requires_recorded_pid(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """缺陷 3：mcp 活、web 挂 → can_start 必须是 True（只补跑 web 面）；
+    端口是外部进程占着、控制面没记录过 PID → can_stop 必须是 False（绝不误杀）。"""
+    _venv(peer_dirs["gamma"])
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        registered=GAMMA_REGISTERED,
+        ports=lambda port: [PortOwner(pid=999, process="python.exe")] if port == 8765 else [],
+    )
+    snapshot = plane.snapshot("gamma")
+    assert snapshot["actions"]["can_start"] is True
+    assert snapshot["actions"]["can_stop"] is False
+
+
+def test_can_start_false_when_all_faces_listening(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """缺陷 3：双面都在监听 → 不再给启动入口（避免重复拉起）。"""
+    _venv(peer_dirs["gamma"])
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        registered=GAMMA_REGISTERED,
+        ports=lambda port: [PortOwner(pid=999, process="python.exe")]
+        if port in {8765, 8786}
+        else [],
+    )
+    assert plane.snapshot("gamma")["actions"]["can_start"] is False
+
+
+def test_start_only_spawns_commands_for_down_face(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """缺陷 3：mcp 面已监听 → 启动只 spawn webui 命令，绝不停/不重跑 mcp。"""
+    _venv(peer_dirs["gamma"])
+    exe = _venv_script(peer_dirs["gamma"], "gamma")
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("", encoding="utf-8")
+    spawned: list[list[str]] = []
+
+    def ports(port: int) -> list[PortOwner]:
+        if port == 8765:  # mcp 面一直在监听（外部进程也行）
+            return [PortOwner(pid=999, process="python.exe")]
+        if port == 8786:  # web 面：spawn 之后立即监听，免去 30s 等待
+            return [PortOwner(pid=4242, process="python.exe")] if spawned else []
+        return []
+
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        registered=GAMMA_REGISTERED,
+        ports=ports,
+        spawn=lambda args, *, cwd, log_path: spawned.append(args) or SimpleNamespace(pid=4242),
+    )
+    job = plane.create_job("gamma", "start")
+    finished = _wait(plane, job.id)
+    assert finished.status == "ok", finished.error
+    assert spawned == [[str(exe), "webui"]]
+    assert "跳过 gamma：mcp 面端口 8765 已在监听" in "\n".join(finished.tail(50))
+    records = plane._peer_state("gamma")["pids"]
+    assert [record["pid"] for record in records] == [4242]
+
+
+def test_stop_skips_dead_pids_and_stops_live_one(
+    tmp_path: Path, peer_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """缺陷 3：双面 peer 的一面先退出 → 死 PID 跳过，活的那面照常终止并清状态。"""
+    monkeypatch.setattr(control, "_pid_alive", lambda pid: pid == 222)
+    exe = _venv_script(peer_dirs["gamma"], "gamma")
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("", encoding="utf-8")
+    runtime = FakeRuntime()
+    plane = _plane(
+        tmp_path,
+        peer_dirs,
+        registered=GAMMA_REGISTERED,
+        runtime=runtime,
+        process_info=lambda pid, cwd: (str(exe), "gamma.exe"),
+        ports=lambda port: [],  # 终止后端口立即释放
+    )
+    plane._peer_state("gamma")["pids"] = [
+        {"pid": 111, "exe": str(exe), "started_at": RECORDED_AT},
+        {"pid": 222, "exe": str(exe), "started_at": RECORDED_AT},
+    ]
+    job = plane.create_job("gamma", "stop")
+    finished = _wait(plane, job.id)
+    assert finished.status == "ok", finished.error
+    expected_stop = (
+        ["taskkill", "/PID", "222", "/T", "/F"]
+        if os.name == "nt"
+        else ["kill", "-TERM", "222"]
+    )
+    assert expected_stop in runtime.calls
+    assert not any("111" in " ".join(call) for call in runtime.calls)
+    assert "PID 111 已退出" in "\n".join(finished.tail(50))
+    entry = plane._peer_state("gamma")
+    assert entry["pids"] == []
+    assert entry["last_stop_at"]
