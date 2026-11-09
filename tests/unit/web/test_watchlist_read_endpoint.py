@@ -217,6 +217,44 @@ def test_note_is_not_exposed(tmp_path: Path) -> None:
     assert all("note" not in item for item in body["items"])
 
 
+# ---------------------------------------------------------------- freshness（QUOT-478）
+
+
+def test_flat_response_carries_freshness_and_no_envelope_keys_still(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """顶层显式给 `freshness`（QUOT-478），但平面响应纪律一个不破。
+
+    fixture 读数是 2026-11-04（周三）盘中整包；冻结请求时刻到 2026-11-08（周日）
+    正午：不在交易窗口，读数日期（周三）早于今天——按 `judge_freshness` 的口径，
+    非交易时段的过去读数就是 `archive`（缓存回放也不覆盖这一档）。
+    """
+    from datetime import datetime
+
+    import ladderstock.core.watch_prices as watch_prices
+
+    monkeypatch.setattr(
+        watch_prices,
+        "local_moment",
+        lambda *_args, **_kwargs: datetime(2026, 11, 8, 12, 0),
+    )
+    _seed_watchlist(tmp_path, PRICED)
+    body = _client(tmp_path).get("/api/watchlist").json()
+
+    assert body["freshness"] == "archive"
+    for envelope_key in ("payload", "domain", "fetched_at"):
+        assert envelope_key not in body
+
+
+def test_freshness_is_null_when_upstream_has_no_price(tmp_path: Path) -> None:
+    """一只价都取不到：`price_as_of=None` → `freshness=None`，前端出「未知」不猜档。"""
+    _seed_watchlist(tmp_path, PRICED)
+    body = _client(tmp_path, failing=True).get("/api/watchlist").json()
+
+    assert body["price_as_of"] is None
+    assert body["freshness"] is None
+
+
 # --------------------------------------------------------------------- 空态
 
 
