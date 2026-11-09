@@ -62,6 +62,7 @@ from ladderstock.data import archive
 from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
+from ladderstock.web.assistant import build_page_router
 from ladderstock.web.assistant import build_router as build_assistant_router
 from ladderstock.web.assistant import build_skills_router as build_skills_router
 from ladderstock.web.control import (
@@ -1598,6 +1599,13 @@ def create_app(
     # `POST /api/skills/assistant`：/skills 页没有 code，复用同一个 ask() 但换成
     # 不含个股深挖预设的 system prompt；闸门与上面同一条。
     app.include_router(build_skills_router())
+
+    # ------------------------------------------- 页面级助手（QUOT-493）
+    #
+    # `POST /api/page/assistant`：watch / industry / calendar 等任意页面抽屉的一问一答。
+    # 复用一个 ask()、同一条闸门与同一套降级口径；页面上下文由前端传任意 JSON，本端
+    # 序列化后进同一条用户消息，system prompt 不含个股深挖预设。
+    app.include_router(build_page_router())
 
     # -------------------------------------------------- 产业面（QUOT-276 / SPEC-INDUSTRY-PAGES §2）
     #
