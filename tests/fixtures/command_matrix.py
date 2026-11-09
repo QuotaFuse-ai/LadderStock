@@ -191,7 +191,8 @@ COMMAND_MATRIX: tuple[Any, ...] = (
 # 共 39 个叶子路径（含 R1-1 的 `research`）；R5（QUOT-143）再加 2 条
 # `industry list|show` → 41 个叶子路径；R11（QUOT-149）再加 1 条 `weekly` →
 # **42 个叶子路径**。QUOT-380（自选清单 `watch add|rm|list`）再加 3 条 →
-# **45 个叶子路径**。它们都是**增量命令**，
+# **45 个叶子路径**。QUOT-487（助手记忆清空 `ai memory-clear`）再加 1 条 →
+# **46 个叶子路径**。它们都是**增量命令**，
 # 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴ / §A′）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
@@ -237,6 +238,8 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("ai", "status"),
     ("ai", "retry"),
     ("ai", "chain", "test"),
+    # QUOT-487：助手记忆一键清空（不计入 31 条基线，见 docs/CLI.md §A″）
+    ("ai", "memory-clear"),
     # R1-1 新增叶子（不属 31 条基线，但同样受「全局 --output」契约管辖）
     ("research",),
     # R6（QUOT-144）新增的两个叶子命令，同上

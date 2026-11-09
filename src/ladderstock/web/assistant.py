@@ -9,11 +9,18 @@
 3. 把失败翻译成可读、可重试的 HTTP 状态：未配 Key、断网、超时分开说。
 
 AI 回答只是文本，不会回写页面上的行情 / 财务数据（页面数据仍以接口为准）。
+
+QUOT-487 在同一条调用链上接了跨会话记忆：提问前先召回（`ai/memory.py`），把
+结果作为独立分段注入系统提示；回复后按策略异步写入。记忆不可达时静默降级为
+无记忆模式——回答照常出，只在日志留一条 `memory_unavailable`。命名空间跟随
+模块（QUOT-498）：`agent_id` + `kb_scope` 两维同时到位，缺命名空间就不检索。
 """
 
 from __future__ import annotations
 
+import logging
 import socket
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,12 +29,14 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ladderstock.ai import fallback, module_memory
+from ladderstock.ai import fallback, memory, module_memory
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
 from ladderstock.core.boundary import BoundaryViolation
 from ladderstock.web.research import _guard
+
+logger = logging.getLogger("ladderstock.web.assistant")
 
 ASSISTANT_PREFIX = "/api/research"
 #: 单次问答的上限：问题够长，上下文只放摘要，避免把整页产物塞进 prompt
@@ -89,6 +98,15 @@ SKILL_SYSTEM_PROMPT = (
     "- 不要给出买卖建议，也不要预测价格。\n"
     "- 回答用简洁中文，必要时分点；不要输出 JSON，不要使用 Markdown 标记"
     "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。"
+)
+
+# QUOT-487：记忆段与档案段是系统提示里的独立分段，各自标注来源；
+# 冲突时以档案（带 as_of）与页级上下文为准，不许静默采用记忆。
+_MEMORY_CONFLICT_RULE = (
+    "- 【对话记忆】只是过往对话留下的模糊线索，可能已经过时；"
+    "【标的档案】带 as_of 与来源，优先级更高。"
+    "若记忆与档案或页级上下文冲突，以档案与页级上下文为准，"
+    "并在回答里说明「记忆里是旧说法」，不要静默采用记忆。"
 )
 
 
@@ -210,6 +228,24 @@ def _is_timeout(exc: BaseException) -> bool:
     return "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower()
 
 
+def _recall_memories(
+    question: str,
+    *,
+    symbol: str | None,
+    settings: memory.MemorySettings,
+    client: memory.MemoryClient | None,
+    scope: fallback.MemoryScope,
+) -> list[memory.MemoryHit]:
+    """召回跨会话记忆（模块命名空间）；mem0 不可达时静默降级（日志 `memory_unavailable`）。"""
+    if client is None:
+        return []
+    try:
+        return memory.recall(question, symbol=symbol, settings=settings, client=client, scope=scope)
+    except memory.MemoryUnavailable as exc:
+        logger.warning("memory_unavailable stage=search detail=%s", exc)
+        return []
+
+
 def ask(
     *,
     question: str,
@@ -219,15 +255,49 @@ def ask(
     page_label: str = "个股深挖",
     system_prompt: str = SYSTEM_PROMPT,
     module: str = DEFAULT_MODULE,
+    symbol: str | None = None,
+    page: str = "research",
+    memory_settings: memory.MemorySettings | None = None,
+    memory_client: memory.MemoryClient | None = None,
+    sync_memory: bool = False,
 ) -> dict[str, Any]:
-    """跑一轮问答。成功返回 `{reply, model, ai, fetched_at}`；失败抛 `AssistantFailure`。"""
+    """跑一轮问答。成功返回 `{reply, model, ai, fetched_at}`；失败抛 `AssistantFailure`。
+
+    QUOT-487：同一条链上先召回跨会话记忆并注入系统提示（独立分段，见
+    `ai/memory.render_memory_block`），回复完成后异步按策略写入记忆——
+    写入失败只记日志，绝不影响已经完成的回答。测试可用 `sync_memory=True`
+    同步等写入结束。
+
+    QUOT-498：记忆检索/写入走模块命名空间（`memory_scope_for`），`agent_id` 与
+    `kb_scope` 两维同时到位；配置读不出命名空间时跳过记忆，回答照常。
+    """
     client, model = _load_client(module)
     echo = _ai_echo(module, model)
+    scope_info = memory_scope_for(module)
+    scope = (
+        fallback.MemoryScope(scope_info["agent_id"], scope_info["kb_scope"])
+        if scope_info is not None
+        else None
+    )
+    settings = memory_settings if memory_settings is not None else memory.load_settings()
+    mem_client = memory_client if memory_client is not None else memory.shared_client(settings)
+    hits = (
+        _recall_memories(question, symbol=symbol, settings=settings, client=mem_client, scope=scope)
+        if scope is not None
+        else []
+    )
+    block = memory.render_memory_block(hits)
+    if block and scope_info is not None:
+        block = f"{scope_info['label']}\n{block}"
+    if block:
+        system = f"{system_prompt}\n\n{block}\n\n{_MEMORY_CONFLICT_RULE}"
+    else:
+        system = system_prompt
     header = "【页级上下文】\n" + (context.strip() or "（这一页的数据还没取到。）")
     meta = f"页面：{page_label} · 视图 {tab or '未标注'} · 日期 {day or '未标注'}"
     user = f"{meta}\n{header}\n\n【问题】\n{question.strip()}"
     try:
-        reply = client.complete(model, system_prompt, user, json_mode=False)
+        reply = client.complete(model, system, user, json_mode=False)
     except (UnconfiguredError, BoundaryViolation) as exc:
         raise AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}") from None
     except CliUnavailable as exc:
@@ -256,6 +326,19 @@ def ask(
     text = (reply or "").strip()
     if not text:
         raise AssistantFailure(502, "ai_empty", "AI 返回了空回答（模型未产出内容），请重试。")
+    if mem_client is not None and scope is not None:
+        # QUOT-487 写入：回答已经成立，异步落库；失败只记日志，不影响本次响应。
+        # 命名空间两维随载荷同行（QUOT-498），无命名空间时不落库
+        memory.dispatch_store(
+            question,
+            symbol=symbol,
+            page=page,
+            run_id=uuid.uuid4().hex,
+            settings=settings,
+            client=mem_client,
+            sync=sync_memory,
+            scope=scope,
+        )
     return {
         "reply": text,
         "model": model,
@@ -309,6 +392,8 @@ def build_router() -> APIRouter:
                 day=body.date,
                 tab=body.tab,
                 module="senate",
+                symbol=code,
+                page="research",
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
@@ -345,6 +430,7 @@ def build_skills_router() -> APIRouter:
                 page_label=page_label,
                 system_prompt=SKILL_SYSTEM_PROMPT,
                 module=module_for(body.page_key),
+                page="skills",
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
