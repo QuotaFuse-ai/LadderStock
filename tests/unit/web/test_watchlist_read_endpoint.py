@@ -229,8 +229,9 @@ def test_flat_response_carries_freshness_and_no_envelope_keys_still(
     正午：不在交易窗口，读数日期（周三）早于今天——按 `judge_freshness` 的口径，
     非交易时段的过去读数就是 `archive`（缓存回放也不覆盖这一档）。
     """
-    import ladderstock.core.watch_prices as watch_prices
     from datetime import datetime
+
+    import ladderstock.core.watch_prices as watch_prices
 
     monkeypatch.setattr(
         watch_prices,
