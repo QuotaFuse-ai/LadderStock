@@ -542,7 +542,6 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "MEM0_DEFAULT_LLM_MODEL",
             "MEM0_EMBEDDER_PROVIDER",
             "MEM0_DEFAULT_EMBEDDER_MODEL",
-            "MEM0_DEFAULT_EMBEDDER_DIM",
             "HF_ENDPOINT",
             "POSTGRES_COLLECTION_NAME",
             "APP_DB_NAME",
@@ -558,17 +557,34 @@ PEER_CONTROL: dict[str, PeerControl] = {
         env_filename=".env",
         compose_file="docker-compose.yml",
         config_notes=(
-            "config_keys 对照表（键名 → mem0 server 源码位置，实测读取，非白名单）——"
-            "POSTGRES_COLLECTION_NAME 在 server/main.py:113；APP_DB_NAME 在 server/db.py:12；"
-            "AUTH_DISABLED 在 server/auth.py:20；JWT_SECRET 在 server/auth.py:15；"
-            "MEM0_TELEMETRY 在 server/telemetry.py:27；OPENAI_BASE_URL / OPENAI_API_KEY / "
-            "MEM0_DEFAULT_LLM_MODEL / MEM0_EMBEDDER_PROVIDER / MEM0_DEFAULT_EMBEDDER_MODEL / "
-            "MEM0_DEFAULT_EMBEDDER_DIM / HF_ENDPOINT 由 mem0 OSS 库的 config 层读取"
-            "（容器内 mem0 包，非 server/ 目录），由 GET /configure 的返回印证。",
+            # 对照表口径（2026-11-09 逐键实测复核）：每个键给「注入侧 + 读取侧」两段
+            # 可核验位置。注入侧 = 部署目录 .env 的行号（.env 经 docker-compose.yml:29-30
+            # env_file 整文件注入）；读取侧 = 镜像内 /app/<file>.py:行——构建上下文是
+            # D:\QuotaFuseModules\Mem0\.build\server\，Dockerfile.patch 以 `COPY . /app/`
+            # 打进镜像，磁盘文件行号与容器内同行号一致（docker exec sed 复核过）。
+            "OPENAI_BASE_URL：.env:14 → /app/main.py:116；MEM0_DEFAULT_LLM_MODEL：.env:15 → "
+            "main.py:118；MEM0_EMBEDDER_PROVIDER：.env:21 → main.py:119；"
+            "MEM0_DEFAULT_EMBEDDER_MODEL：.env:22 → main.py:120。",
+            "OPENAI_API_KEY：.env 不写（.env:16-18 注明），经 docker-compose.yml:34 的 "
+            "environment 段从 Windows 机器级 LDST_LLM_API_KEY 透传 → main.py:115（密钥键）。",
+            "POSTGRES_COLLECTION_NAME：.env:28 → main.py:113；APP_DB_NAME：.env:29 + "
+            "docker-compose.yml:36 → db.py:12；MEM0_TELEMETRY：.env:11 → telemetry.py:27；"
+            "AUTH_DISABLED：.env:10 → auth.py:20；JWT_SECRET：.env:9 → auth.py:15（密钥键）。",
+            "POSTGRES_USER：.env:5 + docker-compose.yml:56 → main.py:111 / db.py:10；"
+            "POSTGRES_PASSWORD：.env:6 + docker-compose.yml:57 → main.py:112 / db.py:11"
+            "（密钥键）。",
+            "HF_ENDPOINT：.env:24 → 容器内 huggingface_hub/constants.py:69"
+            "（ENDPOINT = os.getenv(\"HF_ENDPOINT\", ...)，镜像 site-packages 固化）。",
+            "MEM0_DEFAULT_EMBEDDER_DIM 已移出白名单（2026-11-09 实测）：容器内 mem0ai 2.2.1 "
+            "包与 /app server 源码 grep 均无读取处，dims 由 main.py:126 在 huggingface 分支"
+            "硬编码 512——.env 保留该键仅为部署形态留档，改它不生效，不允许面板可改。",
             "启停形态：`wsl -d <默认发行版> -- docker compose -f "
             "<directory>/docker-compose.yml up -d / stop`，compose project 名 qf-mem0"
             "（与 Multica 的 mem0-dev 物理隔离：独立端口 9100/3200/8532、独立卷、"
             "集合 ladderstock_memories）。发行版名不写死：LDST_WSL_DISTRO > wsl -l -v 默认。",
+            "supervisor 拉起（QUOT-486 终审补齐）：机器级计划任务「LadderStock Modules」的 "
+            "start_all.cmd 以 :ensure 9100 幂等分支调用 ops/peers/start_mem0.cmd（wsl compose "
+            "up -d，发行版动态解析），重启后由 supervisor 拉起，非本模块开机自启（D6）。",
             "embedder 必须留在本地 huggingface BAAI/bge-small-zh-v1.5（云骏无 embedding "
             "接口，强改 OpenAI embedding 会 403）；LLM 走云骏 deepseek-v4.1-flash-1017。",
         ),
