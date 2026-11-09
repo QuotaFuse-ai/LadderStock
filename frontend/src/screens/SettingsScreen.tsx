@@ -768,9 +768,8 @@ const CONFIG_KEY_LABEL: Record<string, string> = {
   QF_WIRE_API_BASE: 'API Base URL',
   QF_WIRE_DIGEST_MODEL: '摘要模型',
   QF_WIRE_API_KEY: 'Wire API Key',
-  llm_provider: 'LLM 提供方',
-  deep_think_llm: '深度思考模型',
-  quick_think_llm: '快速思考模型',
+  // llm_provider / deep_think_llm / quick_think_llm 不在白名单（QUOT-481 缺陷 1）：
+  // 后端不再返回这些键，这里不留映射，避免看起来仍可配置
   MINIMAX_API_KEY: 'MiniMax API Key',
 }
 
@@ -1115,8 +1114,9 @@ function ImportPeerDrawer({
 interface AiTarget {
   id: string
   label: string
-  /** 写入的配置键；`base` 为 null 表示该模块端点不在白名单（由 llm_provider 决定） */
-  keys: { base: string | null; model: string; key: string }
+  /** 写入的配置键；`base` 为 null 表示该模块端点不在白名单（由 llm_provider 决定）；
+   * `model` 为 null 表示模型名由该模块自己的配置文件管理（写 env 不生效，QUOT-481） */
+  keys: { base: string | null; model: string | null; key: string }
 }
 
 const AI_TARGETS: readonly AiTarget[] = [
@@ -1128,7 +1128,9 @@ const AI_TARGETS: readonly AiTarget[] = [
   {
     id: 'senate',
     label: 'StockSenate',
-    keys: { base: null, model: 'deep_think_llm', key: 'MINIMAX_API_KEY' },
+    // llm_provider / deep_think_llm / quick_think_llm 由 Senate 的 config/llm_config.toml
+    // 管理（写 env 永远不生效），控制面白名单只保留 MINIMAX_API_KEY（QUOT-481 缺陷 1）
+    keys: { base: null, model: null, key: 'MINIMAX_API_KEY' },
   },
 ]
 
@@ -1193,7 +1195,7 @@ function AiSection({
       for (const target of targets) {
         const values: Record<string, string> = {}
         if (baseUrl.trim() !== '' && target.keys.base) values[target.keys.base] = baseUrl.trim()
-        if (model.trim() !== '') values[target.keys.model] = model.trim()
+        if (model.trim() !== '' && target.keys.model) values[target.keys.model] = model.trim()
         if (apiKey.trim() !== '') values[target.keys.key] = apiKey.trim()
         if (Object.keys(values).length === 0) continue
         await api.control.saveConfig(target.id, values)
@@ -1290,7 +1292,8 @@ function AiSection({
                 <span>
                   {target.label}
                   <span className="ml-2 text-caption text-text-muted">
-                    写入 {target.keys.base ?? '端点由 llm_provider 决定'} / {target.keys.model} / {target.keys.key}
+                    写入 {target.keys.base ?? '端点由 llm_provider 决定'} /{' '}
+                    {target.keys.model ?? '模型由该模块配置文件管理'} / {target.keys.key}
                   </span>
                 </span>
               </Checkbox>

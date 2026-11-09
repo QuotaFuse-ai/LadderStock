@@ -1015,6 +1015,34 @@ def write_env_file(
         raise
 
 
+def read_env_layered(ctl: PeerControl) -> tuple[dict[str, str], dict[str, str]]:
+    """按 peer 真实的 dotenv 语义分层读取（QUOT-481 缺陷 2）。
+
+    返回 `(values, sources)`：`values` 是合并后的 KEY=VALUE（生效层赢）；
+    `sources` 记录每个键实际来自哪个**文件名**（如 ".env" / ".env.local"）。
+
+    - 单文件 peer（`env_layer_base` 为空）：行为与 `read_env_file(env_filename)` 完全一致；
+    - 分层 peer（Wire：`.env` 打底、`.env.local` 覆盖，实测自其 config/dotenv.py）：
+      两层都读，同名键以 `env_filename` 层为准；
+    - 任一层**存在但读不出** → `EnvFileUnreadable`（fail closed，与单文件语义一致）；
+      **不存在** → 该层为空（新部署常见，不算错误）。
+    """
+    override_path = Path(ctl.directory) / ctl.env_filename
+    if not ctl.env_layer_base or ctl.env_layer_base == ctl.env_filename:
+        values = read_env_file(override_path, strict=True)
+        return values, {name: ctl.env_filename for name in values}
+    base_path = Path(ctl.directory) / ctl.env_layer_base
+    merged: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for name, raw in read_env_file(base_path, strict=True).items():
+        merged[name] = raw
+        sources[name] = base_path.name
+    for name, raw in read_env_file(override_path, strict=True).items():
+        merged[name] = raw
+        sources[name] = override_path.name
+    return merged, sources
+
+
 # --------------------------------------------------------------------------- #
 # 任务
 # --------------------------------------------------------------------------- #
@@ -1660,10 +1688,19 @@ class ControlPlane:
                 # 未托管的服务（如 WSL 里的 FinanceCoffer，QUOT-403）一律不出
                 # 安装/启停按钮：Windows 侧没有它的进程归属证据，也不能杀。
                 "can_install": ctl.managed and dir_exists and registered and not installed,
+                # 按面判定（QUOT-481 缺陷 3）：只要存在未监听的服务面就允许补跑
+                # 启动（如 Wire 的 web 面挂了、mcp 面还活着），不再要求全部端口
+                # 先停下来；启动也只补跑那些面（见 _start）。
                 "can_start": (
-                    ctl.managed and installed and not listening and not self._job_running(key)
+                    ctl.managed
+                    and installed
+                    and not self._job_running(key)
+                    and (not mcp_owners or (ctl.web_port is not None and not web_owners))
                 ),
-                "can_stop": ctl.managed and (bool(state_pids(self._peer_state(key))) or listening),
+                # 按「本控制面记录过 PID」判定（QUOT-481 缺陷 3）：外部手工拉起的
+                # 进程即使占着端口也不显示可停（DEC-014 硬约束 3：绝不终止非本
+                # 控制面启动的进程；面板上如实把它显示成运行中即可）。
+                "can_stop": ctl.managed and bool(state_pids(self._peer_state(key))),
                 "can_open": open_url is not None,
                 #  config_keys 为空 = 没有可写键（未配白名单的模块）：页面据此置灰
                 # 「编辑配置」，不给空抽屉与「保存后创建」的假承诺（QUOT-480）。
@@ -2290,8 +2327,38 @@ class ControlPlane:
             return self._start_task(job, ctl)
         directory = Path(ctl.directory)
 
-        # 1. 端口预检：已被占用直接失败，**不自动换端口**（DEC-004 / DEC-014 §3）
-        occupied = self._occupied_ports(ctl)
+        # 0. 按面挑命令（QUOT-481 缺陷 3）：已监听的面不重跑、也不停它——只补跑
+        #    未监听面的命令（如 Wire 的 web 面挂了只跑 `qfw serve`）。未声明
+        #    start_command_faces 的 peer 保持整体口径：全部命令一起跑。
+        face_ports = {"mcp": ctl.mcp_port}
+        if ctl.web_port:
+            face_ports["web"] = ctl.web_port
+        specs: list[tuple[str, ...]] = []
+        target_ports: set[int] = set()
+        for index, spec in enumerate(ctl.start_commands):
+            face = (
+                ctl.start_command_faces[index]
+                if ctl.start_command_faces and index < len(ctl.start_command_faces)
+                else None
+            )
+            port = face_ports.get(face) if face else None
+            if port is not None and self._port_probe(port):
+                job.log(f"  跳过 {spec[0]}：{face} 面端口 {port} 已在监听")
+                continue
+            specs.append(spec)
+            if port is not None:
+                target_ports.add(port)
+        if not specs:
+            raise JobFailure("所有服务面均已在监听，无需启动")
+
+        # 1. 端口预检（只查本次要拉起的面）：已被占用直接失败，**不自动换端口**
+        #    （DEC-004 / DEC-014 §3）。已监听面的端口不进预检，否则「web 挂了
+        #    补跑 web」永远会被 mcp 端口的监听挡住；未分面的 peer 查全部端口。
+        occupied = [
+            (port, owner)
+            for port, owner in self._occupied_ports(ctl)
+            if not ctl.start_command_faces or port in target_ports
+        ]
         if occupied:
             port, owner = occupied[0]
             raise JobFailure(
@@ -2307,7 +2374,7 @@ class ControlPlane:
         self._logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = self._log_path(job.peer)
         records: list[dict[str, Any]] = []
-        for spec in ctl.start_commands:
+        for spec in specs:
             exe = self._venv_script(ctl, spec[0])
             if not exe.exists():
                 raise JobFailure(f"入口不存在：{exe}（重新安装该 peer）")
@@ -2339,11 +2406,18 @@ class ControlPlane:
         entry.pop("last_stop_at", None)
         self._save_state()
 
-        # 4. 等端口（最多 30s），起不来就是「异常」，日志留着给人看
+        # 4. 等端口（最多 30s），起不来就是「异常」，日志留着给人看。
+        #    分面的 peer 只等本次拉起面的端口（已在服务的面不掺和判定）；
+        #    未分面的 peer 保持原口径：任一声明端口监听即算成功。
         job.step = "等待端口监听"
+        wait_ports = (
+            sorted(target_ports)
+            if ctl.start_command_faces
+            else [port for port in (ctl.mcp_port, ctl.web_port) if port]
+        )
         deadline = time.monotonic() + START_GRACE_SEC
         while time.monotonic() < deadline:
-            if self._port_probe(ctl.mcp_port) or (ctl.web_port and self._port_probe(ctl.web_port)):
+            if any(self._port_probe(port) for port in wait_ports):
                 job.log(f"  端口已监听（{time.monotonic() - (deadline - START_GRACE_SEC):.1f}s）")
                 return
             time.sleep(0.5)
@@ -2726,20 +2800,39 @@ class ControlPlane:
                 )
             raise JobFailure("未记录到该 peer 的进程，未执行任何终止")
 
-        # 先逐个校验归属，全部通过才开始终止：任一不过整单拒绝，绝不部分盲杀
+        # 先逐个校验归属，全部通过才开始终止：任一不过整单拒绝，绝不部分盲杀。
+        # 已退出的 PID 直接跳过（QUOT-481 缺陷 3）：双面 peer 的一面先退出时
+        # （如 web 进程死了、mcp 还活着），不能因死 PID 整单拒绝——死进程查不到
+        # 归属证据，强行校验只会永远失败，另一面就永远停不下来。
+        live: list[dict[str, Any]] = []
         refusals: list[str] = []
         for record in records:
             pid = int(record["pid"])
+            # 旧格式记录先于「死 PID 跳过」拒绝（D11/D12）：它只有裸 PID、没有归属
+            # 证据，无论进程是否已退出都必须拒绝——否则「均已退出」分支会把 pids
+            # 清空、写上 last_stop_at，D11/D12 要留给人看的证据就没了。
+            if record.get("legacy"):
+                reason = self._ownership_refusal(ctl, record)
+                if reason:
+                    refusals.append(reason)
+                continue
+            if not _pid_alive(pid):
+                job.log(f"  PID {pid} 已退出，跳过校验与终止")
+                continue
             job.step = f"校验 PID {pid} 归属"
             job.log(f"  校验 PID {pid} 的可执行文件是否在 {_abs_path(ctl.directory)} 之下")
             reason = self._ownership_refusal(ctl, record)
             if reason:
                 refusals.append(reason)
+            else:
+                live.append(record)
         if refusals:
             # 拒绝终止：不清空 pids、不写 last_stop_at（把证据和状态原样留给人看）
             raise JobFailure("；".join(refusals) + "。未执行任何终止，状态文件保持不变")
+        if not live:
+            job.log("  记录的进程均已退出，无需终止，仅清理状态")
 
-        for record in records:
+        for record in live:
             pid = int(record["pid"])
             job.step = f"终止 PID {pid}"
             job.log(f"  $ taskkill /PID {pid} /T /F")
@@ -2837,7 +2930,7 @@ class ControlPlane:
         ctl = self.peers[key]
         path = Path(ctl.directory) / ctl.env_filename
         try:
-            values = read_env_file(path, strict=True)
+            values, sources = read_env_layered(ctl)
         except EnvFileUnreadable as exc:
             # fail closed（QUOT-194 P1-3）：读不到就当「不可读」报错，
             # 不能退化成「全部未配置」骗下游去重填密钥
@@ -2848,17 +2941,33 @@ class ControlPlane:
         rows: dict[str, Any] = {}
         for name in ctl.config_keys:
             raw = values.get(name, "")
+            # 来源如实暴露（QUOT-481 缺陷 2）：分层 peer 的同名键可能来自底稿，
+            # 也可能来自生效层——写回只进生效层，UI 必须能看出这一差别
+            source = sources.get(name)
             if name in ctl.secret_keys:
                 rows[name] = {
                     "set": bool(raw),
                     "secret": True,
                     "preview": secret_preview(raw) if raw else "",
+                    "source": source,
                 }
             else:
-                rows[name] = {"set": bool(raw), "secret": False, "value": raw or None}
+                rows[name] = {
+                    "set": bool(raw),
+                    "secret": False,
+                    "value": raw or None,
+                    "source": source,
+                }
+        layers: list[dict[str, str]] = []
+        if ctl.env_layer_base and ctl.env_layer_base != ctl.env_filename:
+            layers = [
+                {"file": ctl.env_layer_base, "role": "base"},
+                {"file": ctl.env_filename, "role": "override"},
+            ]
         return {
             "peer": key,
             "env_file": str(path),
+            "env_layers": layers,
             "exists": path.is_file(),
             # 与快照 actions.can_config / update_config 的写入条件同源，前端只按它渲染，
             # 不在两边各判一次（QUOT-480）：白名单为空或 env 父目录缺失就是不可编辑。
@@ -2895,6 +3004,18 @@ class ControlPlane:
         path = Path(ctl.directory) / ctl.env_filename
         if not path.parent.is_dir():
             raise HTTPException(status_code=400, detail=f"peer 目录不存在：{path.parent}")
+        # 分层 peer（QUOT-481 缺陷 2）：clear 只能删生效层的行，底稿（如 Wire 的
+        # .env）只读不重写——删不掉，必须改写成空值压掉，否则合并值回落到底稿、
+        # 接口表面成功实际没清。先读底稿判断哪些 removal 需要「空值覆盖」；
+        # 底稿存在但读不出 → 同样 fail closed（防止误判「底稿没有这个键」）。
+        base_values: dict[str, str] = {}
+        if ctl.env_layer_base and ctl.env_layer_base != ctl.env_filename:
+            base_values = read_env_file(Path(ctl.directory) / ctl.env_layer_base, strict=True)
+        shadowed = [name for name in removals if base_values.get(name)]
+        if shadowed:
+            removals = [name for name in removals if name not in shadowed]
+            for name in shadowed:
+                updates[name] = ""
         try:
             write_env_file(path, updates, removals, harden=self._harden_acl)
         except EnvFileUnreadable as exc:
@@ -2927,7 +3048,9 @@ class ControlPlane:
             # 已存密钥只在白名单主机上回落，否则要求显式提供（QUOT-123 C10）
             ctl = self.peers[peer]
             try:
-                stored = read_env_file(Path(ctl.directory) / ctl.env_filename, strict=True)
+                # 分层读取（QUOT-481 缺陷 2）：Wire 的密钥可能存在底稿 .env，
+                # 只读生效层会漏判成「没有已存密钥」
+                stored, _ = read_env_layered(ctl)
             except EnvFileUnreadable as exc:
                 raise HTTPException(
                     status_code=500,
@@ -3238,7 +3361,9 @@ class ControlPlane:
         except OSError:
             lines = []
         try:
-            stored = read_env_file(Path(ctl.directory) / ctl.env_filename, strict=True)
+            # 分层读取（QUOT-481 缺陷 2）：Wire 的密钥也可能写在底稿 .env，
+            # 只查生效层会漏脱敏——宁可多查一层，不能漏明文
+            stored, _ = read_env_layered(ctl)
         except EnvFileUnreadable as exc:
             # 读不到密钥就脱不了敏（QUOT-194 P1-3）：宁可不给日志，也不能漏明文
             return {

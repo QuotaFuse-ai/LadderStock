@@ -309,6 +309,11 @@ class PeerControl:
     has_wheel_dist: bool = True
     #: 该 peer 真正会加载的 dotenv 文件名（实测自各仓库源码，不是猜的）
     env_filename: str = PEER_ENV_FILENAME
+    #: 分层 dotenv 的底层文件名（QUOT-481 缺陷 2）：非空时按 Wire 的
+    #: `config/dotenv.py` 语义读取——先读底稿 `<directory>/<env_layer_base>`
+    #: 打底，再用 `env_filename` 覆盖同名键。None = 单文件（其余 peer 的语义）。
+    #: 写回永远只改生效层 `env_filename`；底稿只读不进磁盘、也绝不重写。
+    env_layer_base: str | None = None
     #: 配置项与目标实现不一致时的说明（如实暴露，不静默）
     config_notes: tuple[str, ...] = ()
     #: GitHub 仓库（`owner/name`），期望版本源（QUOT-402）；None 表示不检测
@@ -330,6 +335,11 @@ class PeerControl:
     #: 除 mcp_port / web_port 之外还要探测的端口（QUOT-485 ProxyFleet 的 8789
     #: 出口网关）：面板归属探测与端口冲突检查都要覆盖它们，但不出「打开」按钮。
     extra_ports: tuple[int, ...] = ()
+    #: 每条 start_command 负责的服务面（QUOT-481 缺陷 3），与 start_commands 按
+    #: 索引一一对齐，取值 "mcp" / "web"。None = 不分面（保持整体口径：要么全
+    #: 起、要么全停）。分面后：某一面已在监听时，启动只补跑**未监听面**的命令、
+    #: 端口预检也只查那些面——不再要求已服务的面先停下来。
+    start_command_faces: tuple[str, ...] | None = None
 
 
 PEER_CONTROL: dict[str, PeerControl] = {
@@ -396,6 +406,9 @@ PEER_CONTROL: dict[str, PeerControl] = {
         web_port_label="HTTP 服务",
         health_path="/api/health",
         start_commands=(("qfw", "serve"), ("qfw", "mcp", "http")),
+        # `qfw serve` 只起 Web/HTTP 面（8790），`qfw mcp http` 只起 MCP 面（8791）：
+        # 分面后 web 挂了可以只补跑 serve，不要求 MCP 也停下来（QUOT-481 缺陷 3）
+        start_command_faces=("web", "mcp"),
         config_keys=(
             "QF_WIRE_HOST",
             "QF_WIRE_PORT",
@@ -406,7 +419,9 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "QF_WIRE_API_KEY",
         ),
         secret_keys=("QF_WIRE_API_KEY",),
-        # Wire 的 config/dotenv.py 明确读 .env / .env.local，且 .env.local 优先
+        # Wire 的 config/dotenv.py 实测语义：先读 .env 打底，再读 .env.local 覆盖
+        # （.env.local 优先）。控制面读值分层合并，写回只进生效层 .env.local。
+        env_layer_base=".env",
         env_filename=".env.local",
         config_notes=(
             "Wire 的 /api/health 在 8790（web/server.py:46），8791 是 MCP。",
@@ -426,14 +441,21 @@ PEER_CONTROL: dict[str, PeerControl] = {
             ("ssenate", "mcp", "http", "--host", "127.0.0.1", "--port", "8765"),
             ("ssenate", "webui", "--host", "127.0.0.1", "--port", "8786"),
         ),
-        config_keys=("llm_provider", "deep_think_llm", "quick_think_llm", "MINIMAX_API_KEY"),
+        # `ssenate mcp http` 只起 MCP 面（8765），`ssenate webui` 只起 WebUI 面（8786）
+        start_command_faces=("mcp", "web"),
+        # QUOT-481 缺陷 1：llm_provider / deep_think_llm / quick_think_llm 曾经挂在
+        # env 白名单里，但 Senate 只从 config/llm_config.toml 读它们
+        # （stock_senate/config/loader.py:31 → [llm] 节），写 env 永远不生效——
+        # 「能填但无效」比「不能填」更糟，故从白名单移除，归属写进 config_notes。
+        config_keys=("MINIMAX_API_KEY",),
         secret_keys=("MINIMAX_API_KEY",),
         env_filename=".env",
         config_notes=(
             "Senate 的 /healthz 在 WebUI（webui/auth.py:34），且强制鉴权例外仅此路径；"
             "8788 本机归 ProxyFleet REST/管理台，WebUI 改用 8786（DEC-047）。",
-            "llm_provider / deep_think_llm / quick_think_llm 实际是 config/llm_config.toml 的键，"
-            "写 env 不生效（PRD §5 注明「映射到 llm_config.toml」，待 P4 落地）。",
+            "llm_provider / deep_think_llm / quick_think_llm 由 config/llm_config.toml 的"
+            " [llm] 节管理（stock_senate/config/loader.py 直接读该文件，不走环境变量），"
+            "本控制面不提供这三个键；要改请直接编辑该 toml 后重启 Senate。",
         ),
     ),
     "financecoffer": PeerControl(
