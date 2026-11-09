@@ -148,7 +148,9 @@ describe('市场屏演示源', () => {
 
     expect(await screen.findByRole('heading', { name: '市场', level: 1 })).toBeTruthy()
     expect(screen.getByText('演示数据 · 设置开关')).toBeTruthy()
-    expect((screen.getByLabelText('交易日') as HTMLInputElement).value).toBe('2026-10-30')
+    // 交易日输入在主 body 里，演示 envelope resolve 前屏处于 skeleton 早退分支
+    // （MarketScreen 的 showSkeleton）：同步查询会抢跑，必须稳定等待（QUOT-505）
+    expect(((await screen.findByLabelText('交易日')) as HTMLInputElement).value).toBe('2026-10-30')
 
     // CH-01：折线拿到 20 个演示交易日点
     expect(screen.getByTestId('line-chart').getAttribute('data-points')).toBe('20')
