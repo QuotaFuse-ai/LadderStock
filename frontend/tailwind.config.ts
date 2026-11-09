@@ -73,12 +73,19 @@ export default {
         sans: cssVar(tokens.typography.sans.cssVar),
         mono: cssVar(tokens.typography.mono.cssVar),
       },
-      fontSize: Object.fromEntries(
-        Object.entries(tokens.typography.size).map(([key, size]) => [
-          key,
-          [cssVar(size.cssVar), `${size.lineHeight}`],
-        ]),
-      ),
+      fontSize: {
+        ...Object.fromEntries(
+          Object.entries(tokens.typography.size).map(([key, size]) => [
+            key,
+            [cssVar(size.cssVar), `${size.lineHeight}`],
+          ]),
+        ),
+        /* 结构字号（非视觉令牌）：QUOT-479 定稿「20px 点位 / 13px 卡内正文 / 11px 脚注」三档，
+           13px 落在 caption(12) 与 body(14) 之间、11px 比 caption 更小，tokens.json 无此两档；
+           验收标准允许新刻度直接进本配置。 */
+        '13px': ['13px', '1.5'],
+        '11px': ['11px', '1.5'],
+      },
       fontWeight: {
         regular: `${tokens.typography.weight.regular.value}`,
         medium: `${tokens.typography.weight.medium.value}`,
@@ -143,6 +150,9 @@ export default {
         textarea: cssVar(tokens.layout.textareaMin.cssVar),
         /* 结构尺寸（非视觉令牌）：月历格最小高，保证一天两枚胶囊可见 */
         'calendar-cell': '76px',
+        /* QUOT-479：指数主卡从 96px 降到 72px（4 列 × 2 行更透气）；
+           与 §4.5 的 min-h-metric(96) 是两回事，故不并档。 */
+        'index-cell': '72px',
       },
       minWidth: {
         icon: cssVar(tokens.layout.iconButton.cssVar),
