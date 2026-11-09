@@ -865,6 +865,60 @@ export interface CliTestResult extends AiTestResult {
   channel?: CliChannel
 }
 
+// ---------------------------------------------------------------- AI 按模块配置（QUOT-498 / QUOT-504）
+
+/** 生效来源三档；词表以后端 `sources` 为准，这里只列已知值。 */
+export type AiModelSource = 'role' | 'module' | 'global'
+
+/** 角色行：value 是生效值（含继承），configured 表示本级真的写了覆盖。 */
+export interface AiRoleStatus {
+  value: string
+  source: AiModelSource
+  configured: boolean
+  inherited_value: string | null
+}
+
+export interface AiModuleStatus extends AiRoleStatus {
+  fallback_chain: string[]
+  agent_id: string
+  kb_scope: string
+  roles: Record<string, AiRoleStatus>
+}
+
+/** `GET /control/ai/modules` 的真实响应形状（QUOT-503 交付后回读核对）。 */
+export interface AiModulesPayload {
+  modules: Record<string, AiModuleStatus>
+  models: string[]
+  sources: AiModelSource[]
+  config_path: string
+}
+
+/** PUT 与 GET 同形，多带写盘结果两个键。 */
+export interface AiModulesSavePayload extends AiModulesPayload {
+  updated: string
+  changed: boolean
+}
+
+/** PUT 请求体：只带要改的键；空串 / 空数组 = 清除本级覆盖、回退继承。 */
+export interface AiModuleOverride {
+  model?: string
+  fallback_chain?: string[]
+  memory?: { agent_id?: string; kb_scope?: string }
+  roles?: Record<string, { model: string }>
+}
+
+/** `POST /control/ai/modules/test`：失败也是 200，按 `ok` 分色。 */
+export interface AiModuleTestResult {
+  ok: boolean
+  module: string
+  role: string | null
+  model: string
+  source: AiModelSource
+  latency_ms: number
+  reply_head: string | null
+  error: string | null
+}
+
 export interface PeerLogs {
   peer: string
   path: string
@@ -1134,6 +1188,23 @@ export const api = {
       request<CliTestResult>('/control/self-ai/cli/test', {
         method: 'POST',
         body: { cli },
+        timeoutMs: 120000,
+      }),
+    /** 按模块配置（QUOT-498）：模块/角色清单、生效值与来源、模型全集都从这里读。 */
+    aiModules: (signal?: AbortSignal) =>
+      request<AiModulesPayload>('/control/ai/modules', { signal, timeoutMs: CONTROL_TIMEOUT_MS }),
+    /** 只写变更键；响应是回读后的全量状态，前端必须用它刷新而不是改本地 state。 */
+    saveAiModule: (module: string, override: AiModuleOverride) =>
+      request<AiModulesSavePayload>('/control/ai/modules', {
+        method: 'PUT',
+        body: { module, ...override },
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 用该模块/角色当前生效模型真跑一次；失败也是 200，按 `ok` 分色。 */
+    testAiModule: (module: string, role?: string) =>
+      request<AiModuleTestResult>('/control/ai/modules/test', {
+        method: 'POST',
+        body: { module, ...(role === undefined ? {} : { role }) },
         timeoutMs: 120000,
       }),
     /** 生成五段复盘（后台任务，轮询 `control.job` 直到 ok / failed）。 */
