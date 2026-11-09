@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ladderstock.calc import safe_ratio
+
 #: 成本法标识，出口字段 `realized.method` 的值（与 `journal stats` 的 FIFO 区分开）
 METHOD = "moving_weighted_average"
 
@@ -84,8 +86,10 @@ def compute_realized(trades: list[dict[str, Any]]) -> dict[str, Any]:
         lot["sells"] += 1.0
         matched = min(lot["qty"], qty)
         if matched > _EPSILON:
-            unit_cost = lot["cost_total"] / lot["qty"]
-            consumed = unit_cost * matched
+            # matched = min(在手, 卖出) > ε，故在手 qty > 0，除法必然有意义
+            cost_unit = safe_ratio(lot["cost_total"], lot["qty"], unit="元")
+            assert cost_unit.ok and cost_unit.value is not None
+            consumed = float(cost_unit.value) * matched
             lot["pnl"] += price * matched - consumed
             lot["matched"] += matched
             lot["qty"] -= matched

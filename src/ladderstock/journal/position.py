@@ -6,8 +6,8 @@
 三条硬约束：
 
 1. **只依赖本机隐私库**：`data/sqlite_store`、同侧的 `journal/log`（成交流水）与
-   `journal/realized`（纯算法），加标准库。不 import 适配器、行情缓存、MCP、AI，
-   不产生任何网络请求；
+   `journal/realized`（纯算法），加标准库与 `calc` 纯函数计算层（QUOT-512，无 IO）。
+   不 import 适配器、行情缓存、MCP、AI，不产生任何网络请求；
 2. **不出本机**：返回值只交给 CLI `emit()` 打到本机终端，不进 `LadderEnvelope`、
    不进 MCP 工具清单、不进 AI 上下文（`docs/MCP_TOOLS.md` §2、`scripts/check_privacy.py` 第 3 组）；
 3. **不自动导出**：只有 `ldst position list --export <path>` 显式指定才写文件。
@@ -27,6 +27,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from ladderstock.calc import growth, safe_ratio
 from ladderstock.data import sqlite_store
 from ladderstock.errors import EXIT_NOT_FOUND, EXIT_USAGE, LadderStockError
 from ladderstock.journal.log import list_trades
@@ -266,6 +267,27 @@ def _pct(value: float) -> float:
     return round(value * 100.0, 1)
 
 
+def _ratio(numerator: float, denominator: float) -> float | None:
+    """除法统一走计算层 `safe_ratio`（QUOT-512）；无意义给 `None`，不硬算。"""
+    result = safe_ratio(numerator, denominator)
+    if not result.ok or result.value is None:
+        return None
+    return float(result.value)
+
+
+def _pct_ratio(numerator: float, denominator: float) -> float | None:
+    value = _ratio(numerator, denominator)
+    return None if value is None else _pct(value)
+
+
+def _growth_pct(current: float, base: float) -> float | None:
+    """涨跌幅 = current / base - 1，走计算层 `growth.yoy`；基期 ≤ 0 判无意义。"""
+    result = growth.yoy(current=current, prior=base)
+    if not result.ok or result.value is None:
+        return None
+    return _pct(float(result.value))
+
+
 def _shares(rows: list[dict[str, Any]], weights: list[float]) -> list[dict[str, Any]]:
     total = sum(weights)
     if total <= 0:
@@ -274,7 +296,7 @@ def _shares(rows: list[dict[str, Any]], weights: list[float]) -> list[dict[str, 
     return [
         {
             "code": row["code"],
-            "weight_pct": _pct(weight / total),
+            "weight_pct": _pct_ratio(weight, total),
             "cost": round(float(row["cost"]) * float(row["qty"]), 2),
         }
         for weight, row in ordered
@@ -297,7 +319,10 @@ def _concentration(
         }
     shares = _shares(rows, weights)
     # 按权重降序取前三：`rows` 是「建仓日 + 代码」顺序，直接切片会把最轻的算进前三
-    fractions = sorted((weight / total for weight in weights), reverse=True)
+    fractions = sorted(
+        (value for weight in weights if (value := _ratio(weight, total)) is not None),
+        reverse=True,
+    )
     return {
         "available": True,
         "reason": None,
@@ -331,7 +356,7 @@ def _sector_distribution(
         buckets[key] = buckets.get(key, 0.0) + weight
     total = sum(buckets.values())
     industries = [
-        {"industry": name, "weight_pct": _pct(value / total), "cost": round(value, 2)}
+        {"industry": name, "weight_pct": _pct_ratio(value, total), "cost": round(value, 2)}
         for name, value in sorted(buckets.items(), key=lambda item: (-item[1], item[0]))
     ]
     return {
@@ -445,7 +470,7 @@ def compute_metrics(
         price = price_map.get(code)
         market_value = round(price * qty, 2) if price is not None else None
         pnl = round((price - cost) * qty, 2) if price is not None else None
-        pnl_pct = _pct(price / cost - 1.0) if price is not None and cost > 0 else None
+        pnl_pct = _growth_pct(price, cost) if price is not None else None
         daily_pnl, daily_status, daily_reason = _daily_pnl(
             daily_by_code.get(code), qty, provided=daily_provided
         )
@@ -495,11 +520,9 @@ def compute_metrics(
             "market_value": round(sum(value_weights), 2) if fully_priced else None,
             "priced_cost": round(priced_cost, 2),
             "unpriced_cost": round(unpriced_cost, 2),
-            "coverage_pct": _pct(priced_cost / total_cost) if total_cost > 0 else None,
+            "coverage_pct": _pct_ratio(priced_cost, total_cost),
             "unrealized_pnl": round(unrealized, 2) if priced_cost > 0 else None,
-            "unrealized_pnl_pct": (
-                _pct(unrealized / priced_cost) if priced_cost > 0 else None
-            ),
+            "unrealized_pnl_pct": _pct_ratio(unrealized, priced_cost),
             **_daily_summary(items, provided=daily_provided),
         },
         "realized": realized_block,

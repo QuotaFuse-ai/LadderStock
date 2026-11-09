@@ -303,6 +303,18 @@ def _rows_partial() -> list[dict[str, Any]]:
     ]
 
 
+def test_metrics_zero_cost_growth_is_null() -> None:
+    """成本 ≤ 0 时涨跌幅没有基期，计算层 yoy 判无意义，给 null 不硬算（QUOT-512）。"""
+    metrics = position_module.compute_metrics(
+        [_row("600000", 0.0, 100.0)], {"600000": 12.0}
+    )
+    item = metrics["items"][0]
+    assert item["unrealized_pnl"] == 1200.0
+    assert item["unrealized_pnl_pct"] is None
+    assert metrics["valuation"]["coverage_pct"] is None
+    assert metrics["valuation"]["unrealized_pnl_pct"] is None
+
+
 def test_metrics_partial_price_coverage_keeps_cost_basis() -> None:
     """有价 20000 / 总成本 22000：覆盖 90.9%，市值口径不成立就退回成本口径。
 

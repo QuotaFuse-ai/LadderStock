@@ -282,8 +282,15 @@ def test_position_does_not_import_market_or_ai() -> None:
     `ladderstock.journal.` 放开的是**同一侧的隐私库**：`journal.log`（成交流水，
     QUOT-292 的已实现盈亏复算要用）与 `journal.realized`（纯算法，只吃数据不读库）。
     它们和 `data.sqlite_store` 一样只在本地，不引入任何网络面；行情 / AI / MCP 仍然一个都不许出现。
+    `ladderstock.calc` 是纯函数计算层（不读文件、不联网、不读环境变量），
+    QUOT-512 起持仓公式统一走它，与隐私边界不冲突。
     """
-    allowed_prefixes = ("ladderstock.data", "ladderstock.errors", "ladderstock.journal.")
+    allowed_prefixes = (
+        "ladderstock.calc",
+        "ladderstock.data",
+        "ladderstock.errors",
+        "ladderstock.journal.",
+    )
     for rel in ("journal/position.py",):
         ladder = {m for m in _imports(rel) if m.startswith("ladderstock.")}
         assert ladder, rel
