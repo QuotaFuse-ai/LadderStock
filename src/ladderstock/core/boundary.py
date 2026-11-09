@@ -152,6 +152,18 @@ _PEER_FALLBACKS: dict[str, Peer] = {
         health_path="/readyz",
         repo=None,
     ),
+    "qdrant": Peer(
+        key="qdrant",
+        product="Qdrant",
+        package="qf-qdrant",
+        cli="docker",
+        mcp_name=None,
+        default_port=6333,
+        role="知识库向量层：档案向量存储 / 语义检索（REST 6333 · MCP 9300）",
+        consumption="基础设施",
+        health_path="/collections",
+        repo=None,
+    ),
 }
 
 
@@ -616,6 +628,58 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "按 PRD §5「核实不了就空白名单 + 置灰」处理。",
         ),
     ),
+    "qdrant": PeerControl(
+        key="qdrant",
+        directory=r"[modules-path]\Qdrant",
+        # 容器化服务（qdrant/qdrant:v1.20.0 + mcp-server-qdrant==0.8.1 docker build）：
+        # 没有 pip 分发，compose 分支不查 import（见 control.py），字段留空。
+        import_package="",
+        repo=None,
+        dist_name=None,
+        # mcp-server-qdrant 的 streamable-http 面（FASTMCP_SERVER_PORT 默认 9300）
+        mcp_port=9300,
+        # Qdrant REST 6333 自带 Dashboard Web UI（静态页在容器里）
+        web_port=6333,
+        web_port_label="Dashboard",
+        # 实测：/ 回版本号、/collections 回集合列表 JSON（轻量只读）；
+        # mem0 那种没有专用 /healthz 的情形同理，用 /collections 当健康探针。
+        health_path="/collections",
+        start_commands=(),
+        config_keys=(
+            "QDRANT_URL",
+            "QDRANT_API_KEY",
+            "QDRANT_LOCAL_PATH",
+            "COLLECTION_NAME",
+            "EMBEDDING_PROVIDER",
+            "EMBEDDING_MODEL",
+            "HF_ENDPOINT",
+            "FASTMCP_SERVER_HOST",
+            "FASTMCP_SERVER_PORT",
+            "QDRANT_SEARCH_LIMIT",
+            "QDRANT_READ_ONLY",
+        ),
+        secret_keys=("QDRANT_API_KEY",),
+        has_wheel_dist=False,
+        env_filename=".env",
+        compose_file="docker-compose.yml",
+        config_notes=(
+            "启停形态：`wsl -d <默认发行版> -- docker compose -f "
+            "<directory>/docker-compose.yml up -d / stop`，compose project 名 qf-qdrant"
+            "（与 mem0 的 qf-mem0 物理隔离：独立卷 qf_qdrant_storage / qf_qdrant_hf_cache，"
+            "不复用 mem0 的 pgvector）。发行版名不写死：LDST_WSL_DISTRO > wsl -l -v 默认。",
+            "集合契约（实测自 mcp-server-qdrant 0.8.1 源码）：①集合必须用具名向量 "
+            "fast-bge-small-zh-v1.5（server 按 fast-<模型名> 查询；匿名集合报 "
+            "Not existing vector name 400）；②payload 必须是 document/metadata 结构"
+            "（payload['document'] KeyError 即结构不符）；③EMBEDDING_MODEL 必须是 "
+            "fastembed 注册名 BAAI/bge-small-zh-v1.5（Qdrant/ 前缀同名模型不被 "
+            "TextEmbedding 支持）。512 维 / Cosine 建集合时显式指定。",
+            "READ_ONLY=true 时 tools/list 只剩 qdrant-find（qdrant-store 被移除）——"
+            "助手的只读检索链路；档案层的写入走程序直连 REST upsert，不经 MCP。",
+            "本机 WSL docker 实测容器内嵌 DNS 故障（bridge 网络解析 Temporary "
+            "failure in name resolution）：docker build / 临时容器跑 fastembed 需加 "
+            "--network host 与 HF_ENDPOINT=https://hf-mirror.com；compose 常规启停不受影响。",
+        ),
+    ),
 }
 
 
@@ -628,6 +692,7 @@ PEER_DIR_ENV: dict[str, str] = {
     "financecoffer": "LDST_PEER_DIR_FINANCECOFFER",
     "mem0": "LDST_PEER_DIR_MEM0",
     "proxyfleet": "LDST_PEER_DIR_PROXYFLEET",
+    "qdrant": "LDST_PEER_DIR_QDRANT",
 }
 
 #: 默认按同级目录探测：把 peer 仓库 clone 到 LadderStock 旁边即可直接安装。
@@ -642,6 +707,7 @@ PEER_SIBLING_DIRS: dict[str, str] = {
     "mem0": "Mem0",
     # ProxyFleet 与 LadderStock 同级：D:\workplace\ProxyFleet
     "proxyfleet": "ProxyFleet",
+    "qdrant": "Qdrant",
 }
 
 # --------------------------------------------------------------------------- #
