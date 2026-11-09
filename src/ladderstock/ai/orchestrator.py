@@ -35,6 +35,17 @@ from ladderstock.ai.providers import ToolTurn, UnconfiguredError
 from ladderstock.core.boundary import merge_narrative
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 
+#: 复盘归在哪个子模块下（QUOT-498 三层配置）；段落 → 角色的映射见 `SECTION_ROLES`
+REVIEW_MODULE = "senate"
+#: 五段复盘对应 StockSenate 的角色键；没有直接对应的段（题材轮动）只走子模块档
+SECTION_ROLES: dict[str, str | None] = {
+    "sentiment": "social",
+    "capital": "hot_money",
+    "theme": None,
+    "dragon_tiger": "lockup",
+    "leader": "market",
+}
+
 
 class ChatClient(Protocol):
     def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
@@ -131,6 +142,9 @@ class RunResult:
     reused: list[str] = field(default_factory=list)
     checkpoint_path: str | None = None
     configured: bool = True
+    #: 复盘所用子模块与它的生效模型 / 来源（QUOT-498）
+    module: str = REVIEW_MODULE
+    ai: dict[str, Any] = field(default_factory=dict)
 
     @property
     def exit_code(self) -> int:
@@ -157,6 +171,8 @@ class RunResult:
             ],
             "ai_failures": self.ai_failures,
             "checkpoint": self.checkpoint_path,
+            "module": self.module,
+            "ai": dict(self.ai),
         }
 
 
@@ -259,7 +275,11 @@ class Orchestrator:
         schema = structured_output.schema_for(
             name, fallback.section_config(self.config, name).output_schema
         )
-        models = fallback.model_chain(self.config)
+        role = SECTION_ROLES.get(name)
+        models = [
+            target.label
+            for target in self.config.chain_for(REVIEW_MODULE, role)
+        ]
         attempts: list[dict[str, Any]] = []
         last_failure: AiFailure | None = None
 
@@ -472,6 +492,10 @@ class Orchestrator:
             reused=reused,
             checkpoint_path=str(checkpoint.checkpoint_path(day, self.root)),
             configured=fallback.is_configured(self.config),
+            ai={
+                "model": self.config.resolve_for(REVIEW_MODULE).label,
+                "source": self.config.source_for(REVIEW_MODULE),
+            },
         )
 
 
@@ -505,6 +529,8 @@ def _payload(
 
 
 __all__ = [
+    "REVIEW_MODULE",
+    "SECTION_ROLES",
     "ChatClient",
     "HttpChatClient",
     "Orchestrator",

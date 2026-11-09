@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,6 @@ SWITCH_KINDS: frozenset[str] = frozenset({"network", "quota"})
 # 允许同模型重试的失败类型（格式错误重试一次）
 RETRY_KINDS: frozenset[str] = frozenset({"format"})
 
-# 协议类型 → (默认 base_url_env, 默认 api_key_env)
 # 协议类型 → (默认 base_url_env, 默认 api_key_env)
 # `cli` 是订阅通道（QUOT-401）：不读端点与密钥，凭据在本机 CLI 自己的登录态里，
 # 所以两个环境变量名都是空串，`configured` 由「可执行文件在不在」判定。
@@ -70,6 +69,89 @@ CLI_MODEL_ENV = "LDST_LLM_CLI_MODEL"
 MODEL_OVERRIDE_ENV = "LDST_LLM_MODEL"
 
 _ENV_KEY_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+
+# --------------------------------------------------------------------------- #
+# 模块级 / 角色级配置（QUOT-498）
+# --------------------------------------------------------------------------- #
+#
+# 解析顺序固定为 **角色 > 子模块 > 全局**，逐级回退、命中即止。空值或缺失一律
+# 表示「继承上一级」，绝不解释成「关闭」——把一段 `model: ""` 读成「不用模型」
+# 会让生产链路在用户毫无察觉的情况下降级。
+#
+# `modules` 段整个不存在时，下面所有查询都落到全局，行为与引入本机制之前一致。
+
+#: 允许出现在 `modules:` 下的键（未知模块按键保留、不参与解析；PUT 接口拒收）
+MODULE_KEYS: tuple[str, ...] = ("tickhub", "tickhub_us", "wire", "senate")
+#: 只有 senate 有辩论角色（其余模块的 `roles:` 视为配置错误）
+ROLE_MODULES: frozenset[str] = frozenset({"senate"})
+#: senate 的合法角色键，与 StockSenate `ROLE_LLM_KEYS` 逐字一致（含别名归一后的键）
+SENATE_ROLE_KEYS: tuple[str, ...] = (
+    "market",
+    "social",
+    "news",
+    "fundamentals",
+    "policy",
+    "hot_money",
+    "lockup",
+    "bull",
+    "bear",
+    "research_manager",
+    "trader",
+    "risk_aggressive",
+    "risk_neutral",
+    "risk_conservative",
+    "quality_gate",
+    "portfolio_manager",
+)
+#: 每个模块认识的角色键；没有角色概念的模块为空表
+ROLE_KEYS: Mapping[str, tuple[str, ...]] = {"senate": SENATE_ROLE_KEYS}
+#: `modules.<m>` 允许出现的字段
+MODULE_FIELDS: frozenset[str] = frozenset({"model", "fallback_chain", "memory", "roles"})
+#: `modules.<m>.roles.<r>` 允许出现的字段
+ROLE_FIELDS: frozenset[str] = frozenset({"model"})
+#: `modules.<m>.memory` 允许出现的字段
+MEMORY_FIELDS: frozenset[str] = frozenset({"agent_id", "kb_scope"})
+#: 键名里带这些片段的字段一律当明文密钥拒收（QUOT-498 禁止项）
+SECRET_FIELD_MARKERS: tuple[str, ...] = ("key", "secret", "token", "password", "credential")
+#: `memory.agent_id` 缺省值的前缀（缺省 = `ladderstock-<module>`）
+AGENT_ID_PREFIX = "ladderstock-"
+#: `memory.kb_scope` 缺省值
+DEFAULT_KB_SCOPE = "all"
+#: `memory` 段字段的固定顺序（配置文档与写回接口共用）
+MEMORY_ORDER: tuple[str, ...] = ("agent_id", "kb_scope")
+#: 生效来源的三档取值（对外接口同名词表）
+SOURCES: tuple[str, ...] = ("role", "module", "global")
+
+_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+_KB_SCOPE_RE = re.compile(r"^[A-Za-z0-9*][A-Za-z0-9._*-]{0,63}$")
+
+
+@dataclass(frozen=True)
+class MemoryScope:
+    """一个模块的记忆命名空间与知识库范围（QUOT-498 第三节）。
+
+    `agent_id` 与 `kb_scope` 必须**同时**参与检索：只带其中一个等于跨模块召回。
+    """
+
+    agent_id: str
+    kb_scope: str
+
+
+@dataclass(frozen=True)
+class RoleConfig:
+    """`modules.senate.roles.<role>`：只允许 `model`，其余字段在读取时拒绝。"""
+
+    model: str = ""
+
+
+@dataclass(frozen=True)
+class ModuleConfig:
+    """一个子模块的覆盖项；空缺字段保持空串，表示继承。"""
+
+    model: str = ""
+    fallback_chain: tuple[str, ...] = ()
+    roles: Mapping[str, RoleConfig] = field(default_factory=dict)
+    memory: MemoryScope | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +281,8 @@ class AiConfig:
     backends: tuple[BackendConfig, ...] = ()
     #: `ai.env` 里的值（用于旧配置回退时也能读到文件凭据）
     env_file: Mapping[str, str] = field(default_factory=dict)
+    #: `modules:` 段（QUOT-498）；为空表示未启用分层配置，全部落到全局
+    modules: Mapping[str, ModuleConfig] = field(default_factory=dict)
 
     @property
     def declared_backends(self) -> tuple[BackendConfig, ...]:
@@ -266,6 +350,157 @@ class AiConfig:
     def models(self) -> tuple[str, ...]:
         return tuple(target.label for target in self.targets)
 
+    # ---------------------------------------------------------------- 三层解析
+    #
+    # 角色 > 子模块 > 全局。每个查询都返回 `(生效值, 来源)`，`source_for` 就是这个
+    # 二元组的第二项——接口与页面徽标都用它说明「这条生效值来自哪一级」。
+
+    def module_config(self, module: str) -> ModuleConfig | None:
+        return self.modules.get(module)
+
+    def role_config(self, module: str, role: str | None) -> RoleConfig | None:
+        if not role:
+            return None
+        found = self.modules.get(module)
+        if found is None:
+            return None
+        return found.roles.get(role)
+
+    def _model_levels(self, module: str, role: str | None) -> list[tuple[str, str]]:
+        """候选值按优先级排列：`(source, ref)`，空值已在调用方过滤。"""
+        levels: list[tuple[str, str]] = []
+        role_cfg = self.role_config(module, role)
+        if role_cfg is not None and role_cfg.model:
+            levels.append(("role", role_cfg.model))
+        found = self.modules.get(module)
+        if found is not None and found.model:
+            levels.append(("module", found.model))
+        if self.default_model:
+            levels.append(("global", self.default_model))
+        return levels
+
+    def resolve_for(self, module: str, role: str | None = None) -> ModelTarget:
+        """按角色 > 子模块 > 全局解析一次调用的生效模型。"""
+        check_module_role(module, role)
+        levels = self._model_levels(module, role)
+        if not levels:
+            raise BoundaryViolation(
+                "ai.yaml: 没有任何可用的 default_model，无法解析模型；"
+                "请在 `default_model` 里声明一个 `backend:model`"
+            )
+        return self.resolve(levels[0][1])
+
+    def source_for(self, module: str, role: str | None = None) -> str:
+        """生效值来自哪一级：`role` / `module` / `global`。"""
+        check_module_role(module, role)
+        levels = self._model_levels(module, role)
+        if not levels:
+            raise BoundaryViolation("ai.yaml: 没有任何可用的 default_model，无法说明生效来源")
+        return levels[0][0]
+
+    def chain_for(self, module: str, role: str | None = None) -> tuple[ModelTarget, ...]:
+        """生效回调链：生效模型在前，其后按「角色链 → 子模块链 → 全局链」逐级补齐。
+
+        每一级的 `fallback_chain` **整体替换**上一级的链（父单约定的「声明即替换」），
+        不是合并；去重保留首次出现。
+        """
+        check_module_role(module, role)
+        primary = self.resolve_for(module, role)
+        refs: list[str] = [primary.label]
+        found = self.modules.get(module)
+        # 角色级没有自己的链，所以链从「子模块」开始；模型本身已按三级解析。
+        for chain in (
+            found.fallback_chain if found is not None else (),
+            self.fallback_chain,
+        ):
+            if chain:
+                refs.extend(chain)
+                break
+        ordered: list[ModelTarget] = []
+        seen: set[tuple[str, str]] = set()
+        for ref in refs:
+            target = self.resolve(ref)
+            key = (target.backend.id, target.model)
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(target)
+        return tuple(ordered)
+
+    def memory_scope(self, module: str) -> MemoryScope:
+        """模块的记忆命名空间；未配置时 `ladderstock-<module>` + `all`。"""
+        found = self.modules.get(module)
+        if found is not None and found.memory is not None:
+            return found.memory
+        return MemoryScope(agent_id=f"{AGENT_ID_PREFIX}{module}", kb_scope=DEFAULT_KB_SCOPE)
+
+    def module_document(self) -> dict[str, Any]:
+        """`GET /control/ai/modules` 的载荷：每个模块 / 角色的三件套。
+
+        - `value`：当前生效的 `backend:model`；
+        - `source`：`role` / `module` / `global`；
+        - `inherited_value`：把本级覆盖拿掉之后会生效的值（全局档时为 None）。
+        """
+        models = list(self.backend_models())
+        modules: dict[str, Any] = {}
+        known = list(MODULE_KEYS) + sorted(set(self.modules) - set(MODULE_KEYS))
+        for name in known:
+            found = self.modules.get(name) or ModuleConfig()
+            value, source = self._describe_model(name, None, found.model)
+            scope = self.memory_scope(name)
+            entry: dict[str, Any] = {
+                "value": value,
+                "source": source,
+                "configured": bool(found.model),
+                "inherited_value": self._inherited_value(name, None, found.model),
+                "fallback_chain": list(found.fallback_chain),
+                "agent_id": scope.agent_id,
+                "kb_scope": scope.kb_scope,
+                "roles": {},
+            }
+            # 角色全集来自 ROLE_KEYS：没覆盖过的角色也要带出来（source=module/global）
+            for role in ROLE_KEYS.get(name, ()):
+                role_model = found.roles[role].model if role in found.roles else ""
+                role_value, role_source = self._describe_model(name, role, role_model)
+                entry["roles"][role] = {
+                    "value": role_value,
+                    "source": role_source,
+                    "configured": bool(role_model),
+                    "inherited_value": self._inherited_value(name, role, role_model),
+                }
+            modules[name] = entry
+        return {"modules": modules, "models": models}
+
+    def backend_models(self) -> tuple[str, ...]:
+        """所有已声明后端的 `id:model` 全集（下拉选项的唯一来源）。"""
+        return tuple(
+            f"{backend.id}:{model}"
+            for backend in self.declared_backends
+            for model in backend.models
+        )
+
+    def _describe_model(self, module: str, role: str | None, override: str) -> tuple[str, str]:
+        if override:
+            return self._label(override), "role" if role else "module"
+        if role and self.modules.get(module) is not None and self.modules[module].model:
+            return self._label(self.modules[module].model), "module"
+        if not self.default_model:
+            return "", "global"
+        return self._label(self.default_model), "global"
+
+    def _inherited_value(self, module: str, role: str | None, override: str) -> str | None:
+        """拿掉本级覆盖后的值：模块档看全局；角色档看子模块（未配置则看全局）。"""
+        if not override:
+            return None
+        if role:
+            found = self.modules.get(module)
+            if found is not None and found.model:
+                return self._label(found.model)
+        return self._label(self.default_model) if self.default_model else None
+
+    def _label(self, ref: str) -> str:
+        return self.resolve(ref).label
+
 
 def config_path(config_root: Any = None) -> Path:
     base = Path(config_root) if config_root is not None else _config_dir()
@@ -286,6 +521,7 @@ def _config_dir() -> Path:
 # --------------------------------------------------------------------------- #
 # 读取与校验
 # --------------------------------------------------------------------------- #
+
 
 def load_config(config_root: Any = None) -> AiConfig:
     """读 `config/ai.yaml`；缺失或字段非法时抛 `BoundaryViolation`（配置错误）。"""
@@ -348,8 +584,151 @@ def load_config(config_root: Any = None) -> AiConfig:
         backends=backends,
         env_file=env_file,
     )
+
+    modules = _parse_modules(ai.get("modules"))
+    config = replace(config, modules=modules)
     _validate_refs(config)
     return config
+
+
+def check_module_role(module: str, role: str | None = None) -> None:
+    """模块 / 角色名必须是已声明的那一组，否则 `BoundaryViolation`。"""
+    if module not in MODULE_KEYS:
+        known = "、".join(MODULE_KEYS)
+        raise BoundaryViolation(f"ai.yaml: 未知子模块 {module!r}（已声明：{known}）")
+    if role and module not in ROLE_MODULES:
+        raise BoundaryViolation(f"ai.yaml: 子模块 {module!r} 不支持角色级覆盖")
+    if role:
+        allowed = ROLE_KEYS.get(module, ())
+        if role not in allowed:
+            raise BoundaryViolation(
+                f"ai.yaml: 子模块 {module!r} 没有角色 {role!r}（合法角色：{'、'.join(allowed)}）"
+            )
+
+
+def _parse_modules(raw: Any) -> dict[str, ModuleConfig]:
+    """读 `ai.yaml: modules`；整段缺失返回空表（行为与引入前 100% 一致）。
+
+    严格到这里：未知模块 / 未知字段 / 看起来像密钥的字段名 / `roles` 挂错模块
+    一律 `BoundaryViolation`——配置拼错了应该报错，而不是静默忽略。
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise BoundaryViolation("ai.yaml: modules 必须是对象")
+    parsed: dict[str, ModuleConfig] = {}
+    for name, item in raw.items():
+        module = str(name)
+        check_module_role(module)
+        if item is None:
+            item = {}
+        if not isinstance(item, dict):
+            raise BoundaryViolation(f"ai.yaml: modules.{module} 必须是对象")
+        unknown = sorted(set(item) - MODULE_FIELDS)
+        secret = sorted(
+            field
+            for field in unknown
+            if any(marker in field.lower() for marker in SECRET_FIELD_MARKERS)
+        )
+        if secret:
+            raise BoundaryViolation(
+                f"ai.yaml: modules.{module}.{secret[0]} 看起来是密钥字段；"
+                "密钥只允许放在 ai.env / 环境变量里"
+            )
+        if unknown:
+            raise BoundaryViolation(
+                f"ai.yaml: modules.{module} 含未知字段 {unknown[0]!r}"
+                f"（允许：{'、'.join(sorted(MODULE_FIELDS))}）"
+            )
+        model = _module_scalar(module, "model", item.get("model"))
+        chain_raw = item.get("fallback_chain")
+        fallback_chain: tuple[str, ...] = ()
+        if chain_raw is not None:
+            if not isinstance(chain_raw, list):
+                raise BoundaryViolation(f"ai.yaml: modules.{module}.fallback_chain 必须是数组")
+            fallback_chain = tuple(
+                ref
+                for ref in (
+                    _module_scalar(module, "fallback_chain", item_ref) for item_ref in chain_raw
+                )
+                if ref
+            )
+
+        roles_raw = item.get("roles")
+        roles: dict[str, RoleConfig] = {}
+        if roles_raw is not None:
+            if module not in ROLE_MODULES:
+                raise BoundaryViolation(
+                    f"ai.yaml: modules.{module}.roles 只在 {'、'.join(sorted(ROLE_MODULES))} 下可用"
+                )
+            if not isinstance(roles_raw, dict):
+                raise BoundaryViolation(f"ai.yaml: modules.{module}.roles 必须是对象")
+            for role_name, role_item in roles_raw.items():
+                role = str(role_name)
+                if role_item is None:
+                    role_item = {}
+                if not isinstance(role_item, dict):
+                    raise BoundaryViolation(f"ai.yaml: modules.{module}.roles.{role} 必须是对象")
+                check_module_role(module, role)
+                unknown_role = sorted(set(role_item) - ROLE_FIELDS)
+                if unknown_role:
+                    raise BoundaryViolation(
+                        f"ai.yaml: modules.{module}.roles.{role} 含未知字段 "
+                        f"{unknown_role[0]!r}（允许：{'、'.join(sorted(ROLE_FIELDS))}）"
+                    )
+                roles[role] = RoleConfig(
+                    model=_module_scalar(module, f"roles.{role}.model", role_item.get("model"))
+                )
+
+        memory = _parse_memory(module, item.get("memory"))
+        parsed[module] = ModuleConfig(
+            model=model,
+            fallback_chain=fallback_chain,
+            roles=roles,
+            memory=memory,
+        )
+    return parsed
+
+
+def _module_scalar(module: str, field: str, value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        raise BoundaryViolation(f"ai.yaml: modules.{module}.{field} 必须是字符串")
+    return str(value).strip()
+
+
+def _parse_memory(module: str, raw: Any) -> MemoryScope | None:
+    """`modules.<m>.memory`：`agent_id` / `kb_scope` 成对出现，缺省走默认值。
+
+    任一字段为空串视为「没填」——记忆命名空间必须两维齐全才能检索，
+    `agent_id: ''` 若被当成显式值就会落成跨模块召回。
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise BoundaryViolation(f"ai.yaml: modules.{module}.memory 必须是对象")
+    unknown = sorted(set(raw) - MEMORY_FIELDS)
+    if unknown:
+        raise BoundaryViolation(
+            f"ai.yaml: modules.{module}.memory 含未知字段 {unknown[0]!r}"
+            f"（允许：{'、'.join(sorted(MEMORY_FIELDS))}）"
+        )
+    agent_id = _module_scalar(module, "memory.agent_id", raw.get("agent_id")) or (
+        f"{AGENT_ID_PREFIX}{module}"
+    )
+    kb_scope = _module_scalar(module, "memory.kb_scope", raw.get("kb_scope")) or DEFAULT_KB_SCOPE
+    if not _AGENT_ID_RE.match(agent_id):
+        raise BoundaryViolation(
+            f"ai.yaml: modules.{module}.memory.agent_id 非法（{agent_id!r}）："
+            "只允许字母数字与 . _ -，且不超过 80 字符"
+        )
+    if not _KB_SCOPE_RE.match(kb_scope):
+        raise BoundaryViolation(
+            f"ai.yaml: modules.{module}.memory.kb_scope 非法（{kb_scope!r}）："
+            "只允许字母数字与 . _ - *，且不超过 64 字符"
+        )
+    return MemoryScope(agent_id=agent_id, kb_scope=kb_scope)
 
 
 def _apply_model_override(
@@ -453,17 +832,23 @@ def _cli_backend(env_file: Mapping[str, str] | None = None) -> BackendConfig | N
 
 
 def _validate_refs(config: AiConfig) -> None:
-    """`default_model` / `fallback_chain` 里的后端前缀必须已声明。"""
+    """`default_model` / `fallback_chain` / `modules.*` 里的后端前缀必须已声明。"""
     if not config.backends:
         return
     known = {backend.id for backend in config.backends}
-    for ref in config._chain_refs:
+    refs: list[tuple[str, str]] = [("default_model", ref) for ref in config._chain_refs]
+    for module, found in config.modules.items():
+        refs.append((f"modules.{module}.model", found.model))
+        refs.extend((f"modules.{module}.fallback_chain", ref) for ref in found.fallback_chain)
+        for role, role_cfg in found.roles.items():
+            refs.append((f"modules.{module}.roles.{role}.model", role_cfg.model))
+    for where, ref in refs:
         if ":" not in ref:
             continue
         prefix = ref.partition(":")[0]
         if prefix not in known:
             raise BoundaryViolation(
-                f"ai.yaml: {ref!r} 引用了未声明的后端 {prefix!r}"
+                f"ai.yaml: {where} = {ref!r} 引用了未声明的后端 {prefix!r}"
                 f"（已声明：{'、'.join(sorted(known))}）"
             )
 
@@ -471,6 +856,7 @@ def _validate_refs(config: AiConfig) -> None:
 # --------------------------------------------------------------------------- #
 # 对外查询
 # --------------------------------------------------------------------------- #
+
 
 def model_chain(config: AiConfig) -> list[str]:
     """可用的模型链标签：只保留凭据齐全的后端（未配置的后端静默跳过）。"""
@@ -557,6 +943,7 @@ def status_document(config: AiConfig) -> dict[str, Any]:
         "env_file_exists": bool(config.path and env_file_path(config.path.parent).is_file()),
         "model_override": _env_value(MODEL_OVERRIDE_ENV, config.env_file) or None,
         "sections": list(config.sections),
+        "modules": list(config.modules),
         "hint": (
             "未配置模型凭据：仅能走纯文本降级（不会崩溃，也不会发请求）"
             if not is_configured(config)
@@ -566,16 +953,31 @@ def status_document(config: AiConfig) -> dict[str, Any]:
 
 
 __all__ = [
+    "AGENT_ID_PREFIX",
     "AI_ENV_KEYS",
     "AI_ENV_FILENAME",
     "AiConfig",
     "BACKEND_KINDS",
     "BackendConfig",
+    "DEFAULT_KB_SCOPE",
     "LEGACY_BACKEND_ID",
     "MODEL_OVERRIDE_ENV",
+    "MODULE_FIELDS",
+    "MODULE_KEYS",
+    "MEMORY_FIELDS",
+    "MEMORY_ORDER",
+    "MemoryScope",
     "ModelTarget",
+    "ModuleConfig",
+    "ROLE_FIELDS",
+    "ROLE_KEYS",
+    "ROLE_MODULES",
+    "RoleConfig",
+    "SENATE_ROLE_KEYS",
+    "SOURCES",
     "SectionConfig",
     "SWITCH_KINDS",
+    "check_module_role",
     "api_key",
     "base_url",
     "config_path",
