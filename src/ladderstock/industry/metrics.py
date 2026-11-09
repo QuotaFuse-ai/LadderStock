@@ -18,6 +18,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from ladderstock.calc import growth, safe_ratio
+
 #: 保留位数（SPEC-INDUSTRY-METRICS.md §1.3）
 DIGITS_RATIO = 4
 DIGITS_PERCENT = 2
@@ -79,7 +81,10 @@ def percentile_rank(
     if not numbers:
         return None
     below = sum(1 for item in numbers if item <= value)
-    return round_half_up(below / len(numbers), digits)
+    share = safe_ratio(below, len(numbers))
+    if not share.ok or share.value is None:
+        return None
+    return round_half_up(float(share.value), digits)
 
 
 def mean(values: Iterable[Any], *, digits: int = DIGITS_PERCENT) -> float | None:
@@ -102,12 +107,16 @@ def sum_values(values: Iterable[Any], *, digits: int = DIGITS_AMOUNT) -> float |
 def ratio_share(
     numerator: float | None, denominator: float | None, *, digits: int = DIGITS_PERCENT
 ) -> float | None:
-    """占比 = 分子 / 分母 × 100；任一侧缺失或分母 ≤ 0 给 `None`（不除零、不取绝对值）。"""
+    """占比 = 分子 / 分母 × 100；任一侧缺失或分母 ≤ 0 给 `None`（不除零、不取绝对值）。
+
+    除法委托计算层 `safe_ratio`（QUOT-512），舍入仍在本层最后一步做。
+    """
     if numerator is None or denominator is None:
         return None
-    if denominator <= 0:
+    share = safe_ratio(numerator, denominator)
+    if not share.ok or share.value is None:
         return None
-    return round_half_up(numerator / denominator * 100.0, digits)
+    return round_half_up(float(share.value) * 100.0, digits)
 
 
 def window_series(
@@ -126,10 +135,11 @@ def window_series(
 def equal_weight_change(
     closes: Mapping[str, Sequence[Any]], window: int
 ) -> tuple[float | None, int]:
-    """成分股**等权**涨跌幅（%）：`(收盘价[-1] / 收盘价[-1-window] - 1) × 100` 的算术平均。
+    """成分股**等权**涨跌幅（%）：`收盘价[-1] / 收盘价[-1-window] - 1` × 100 的算术平均。
 
     返回 `(均值, 参与股票数)`。`window` 需要 `window + 1` 根 K 线，不足的股票
-    不计入（也不补 0），所以调用方必须把 `参与股票数` 一起输出——样本口径要可见。
+    不计入（也不补 0）；基期 ≤ 0 由计算层 `growth.yoy` 判无意义、同样不计入
+    （QUOT-512），所以调用方必须把 `参与股票数` 一起输出——样本口径要可见。
     全无样本时给 `(None, 0)`。
     """
     changes: list[float] = []
@@ -137,10 +147,10 @@ def equal_weight_change(
         numbers = finite_numbers(closes[code])
         if len(numbers) < window + 1:
             continue
-        base = numbers[-1 - window]
-        if base == 0:
+        rate = growth.yoy(current=numbers[-1], prior=numbers[-1 - window])
+        if not rate.ok or rate.value is None:
             continue
-        changes.append((numbers[-1] / base - 1.0) * 100.0)
+        changes.append(float(rate.value) * 100.0)
     if not changes:
         return None, 0
     return round_half_up(sum(changes) / len(changes), DIGITS_PERCENT), len(changes)

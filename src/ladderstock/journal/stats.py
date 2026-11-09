@@ -20,6 +20,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from ladderstock.calc import safe_ratio
 from ladderstock.errors import EXIT_USAGE, LadderStockError
 from ladderstock.journal.log import list_trades
 
@@ -63,18 +64,24 @@ def compute_stats(
         plan_price = trade.get("plan_price")
         if plan_price is not None:
             plan = float(plan_price)
-            if plan > 0 and abs(price - plan) / plan > deviation_threshold:
-                deviations.append(
-                    {
-                        "id": trade["id"],
-                        "trade_date": trade["trade_date"],
-                        "code": code,
-                        "side": trade["side"],
-                        "price": price,
-                        "plan_price": plan,
-                        "deviation_pct": round(abs(price - plan) / plan * 100.0, 2),
-                    }
-                )
+            if plan > 0:
+                deviation = safe_ratio(abs(price - plan), plan)
+                if (
+                    deviation.ok
+                    and deviation.value is not None
+                    and float(deviation.value) > deviation_threshold
+                ):
+                    deviations.append(
+                        {
+                            "id": trade["id"],
+                            "trade_date": trade["trade_date"],
+                            "code": code,
+                            "side": trade["side"],
+                            "price": price,
+                            "plan_price": plan,
+                            "deviation_pct": round(float(deviation.value) * 100.0, 2),
+                        }
+                    )
 
         if trade["side"] == "buy":
             lots.setdefault(code, deque()).append([qty, price])
@@ -99,7 +106,10 @@ def compute_stats(
         if matched_qty <= _EPSILON:
             continue
 
-        pnl = (price - matched_cost / matched_qty) * matched_qty
+        unit_cost = safe_ratio(matched_cost, matched_qty, unit="元")
+        # matched_qty > _EPSILON 已在上面保证，除法必然有意义
+        assert unit_cost.ok and unit_cost.value is not None
+        pnl = (price - float(unit_cost.value)) * matched_qty
         realized += pnl
         closed += 1
         if pnl > _EPSILON:
@@ -113,7 +123,17 @@ def compute_stats(
 
     avg_win = gross_win / wins if wins else None
     avg_loss = abs(gross_loss) / losses if losses else None
-    ratio = (avg_win / avg_loss) if (avg_win is not None and avg_loss) else None
+    ratio: float | None = None
+    if avg_win is not None and avg_loss is not None:
+        profit_loss = safe_ratio(avg_win, avg_loss, unit="倍")
+        if profit_loss.ok and profit_loss.value is not None:
+            ratio = float(profit_loss.value)
+
+    win_rate: float | None = None
+    if closed:
+        win_share = safe_ratio(wins, closed)
+        if win_share.ok and win_share.value is not None:
+            win_rate = round(float(win_share.value) * 100.0, 1)
 
     return {
         "local_only": True,
@@ -131,7 +151,7 @@ def compute_stats(
         "wins": wins,
         "losses": losses,
         "flats": flats,
-        "win_rate": round(wins / closed * 100.0, 1) if closed else None,
+        "win_rate": win_rate,
         "avg_win": round(avg_win, 2) if avg_win is not None else None,
         "avg_loss": round(avg_loss, 2) if avg_loss is not None else None,
         "profit_loss_ratio": round(ratio, 2) if ratio is not None else None,

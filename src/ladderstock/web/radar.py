@@ -49,6 +49,7 @@ from typing import Annotated, Any, Literal, TypeVar
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+from ladderstock.calc import safe_ratio
 from ladderstock.core import indices as indices_module
 from ladderstock.core import pool as pool_module
 from ladderstock.core.boundary import owner_of
@@ -438,18 +439,18 @@ def holding_item(
     daily_row = daily.get(row.symbol) or {}
     change = daily_row.get("change")
     prev_close = daily_row.get("prev_close")
-    change_pct = (
-        round4(float(change) / float(prev_close) * 100.0)
-        if change is not None and prev_close
-        else None
-    )
+    change_pct: float | None = None
+    if change is not None and prev_close:
+        daily_share = safe_ratio(float(change), float(prev_close))
+        if daily_share.ok and daily_share.value is not None:
+            change_pct = round4(float(daily_share.value) * 100.0)
     market_value = round4(price * row.shares) if price is not None else None
     pnl = round4(market_value - row.cost_total) if market_value is not None else None
-    pnl_pct = (
-        round4(pnl / row.cost_total * 100.0)
-        if pnl is not None and row.cost_total > 0
-        else None
-    )
+    pnl_pct: float | None = None
+    if pnl is not None and row.cost_total > 0:
+        cost_share = safe_ratio(pnl, row.cost_total)
+        if cost_share.ok and cost_share.value is not None:
+            pnl_pct = round4(float(cost_share.value) * 100.0)
     return {
         "symbol": row.symbol,
         "name": row.name,
@@ -507,13 +508,18 @@ def cny_totals(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     cost = round4(sum(float(item["cost_total"]) for item in priced))
     market_value = round4(sum(float(item["market_value"]) for item in priced))
     pnl = round4(market_value - cost)
+    pnl_pct: float | None = None
+    if cost > 0:
+        total_share = safe_ratio(pnl, cost)
+        if total_share.ok and total_share.value is not None:
+            pnl_pct = round4(float(total_share.value) * 100.0)
     return {
         "currency": "CNY",
         "available": True,
         "market_value": market_value,
         "cost": cost,
         "pnl": pnl,
-        "pnl_pct": round4(pnl / cost * 100.0) if cost > 0 else None,
+        "pnl_pct": pnl_pct,
         "priced_count": len(priced),
         "unpriced_count": unpriced,
         "reason": reason,
