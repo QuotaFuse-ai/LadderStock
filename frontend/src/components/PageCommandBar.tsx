@@ -43,6 +43,7 @@ export default function PageCommandBar() {
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
+  const routeKeyRef = useRef<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -60,11 +61,16 @@ export default function PageCommandBar() {
   // 路由精确匹配：`/market?tab=` 的四个视图共用一条命令，`/review/ai` 不与 `/review` 混淆
   const command = useMemo(() => commands.find((item) => item.route === pathname), [commands, pathname])
 
+  // 只在路由态真正变化（切页 / 换命令）时收起面板并复位 job。
+  // commands 首次到达会让 command?.key 从 undefined 变为实际值，不能据此关面板——
+  // 否则用户刚点开就会被这次 effect 立刻收起（CI 慢机上 commands 迟到，稳定复现）。
   useEffect(() => {
+    const routeKey = `${pathname}|${command?.key ?? ''}`
+    if (routeKeyRef.current !== null && routeKeyRef.current !== routeKey) setOpen(false)
+    routeKeyRef.current = routeKey
     setJob(command?.last_job ?? null)
     setError(null)
-    setOpen(false)
-  }, [command?.key, pathname])
+  }, [pathname, command?.key])
 
   const activeId = job && ACTIVE.has(job.status) ? job.id : null
 
