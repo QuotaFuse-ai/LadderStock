@@ -10,6 +10,8 @@
 #           WmiType=script 时经 powershell -WindowStyle Hidden 包装（不弹控制台窗口）；
 #           WmiType=raw 时按原样执行（空 = 无兜底）
 # DataDir   data_dir 校验（仅 LadderStock API：非部署树实例一律判错并拒绝接管）
+# 注意：Schedule 的 5952 不做端口探活（Port=0）——实测持有者是 watchdog python 进程而非 schedule
+# 服务本身，探通≠服务活着；健康判定以任务状态 Running 为准（QUOT-483 2026-11-09）。
 @{
 Modules = @(
     @{ Name = 'TickHub CN';        Task = 'TickHub CN 8000';            Port = 8000;  HealthUrl = ''; Wmi = 'C:\Users\Administrator\.tickhub\start_peer.cmd'; WmiArg = ''; WmiType = 'script'; DataDir = '' }
@@ -20,7 +22,7 @@ Modules = @(
     @{ Name = 'StockSenate MCP';   Task = 'QF-Peer-StockSenate-MCP';    Port = 8765;  HealthUrl = ''; Wmi = 'D:\QuotaFuseModules\LadderStock\ops\peers\start_stocksenate.cmd'; WmiArg = ''; WmiType = 'script'; DataDir = '' }
     @{ Name = 'StockSenate WebUI'; Task = 'QF-Peer-StockSenate-WebUI';  Port = 8786;  HealthUrl = ''; Wmi = 'D:\QuotaFuseModules\LadderStock\ops\peers\start_stocksenate_webui.cmd'; WmiArg = ''; WmiType = 'script'; DataDir = '' }
     @{ Name = 'LadderStock API';   Task = 'LadderStock API';            Port = 5950;  HealthUrl = 'http://127.0.0.1:5950/api/health'; Wmi = 'D:\QuotaFuseModules\LadderStock\ops\start_board_main.cmd'; WmiArg = '5950'; WmiType = 'script'; DataDir = 'D:\QuotaFuseModules\LadderStock\data' }
-    @{ Name = 'LadderStock Schedule'; Task = 'LadderStock Schedule';    Port = 5952;  HealthUrl = ''; Wmi = ''; DataDir = '' }
+    @{ Name = 'LadderStock Schedule'; Task = 'LadderStock Schedule';    Port = 0;     HealthUrl = ''; Wmi = ''; DataDir = '' }
     @{ Name = 'Vibe AStock API';   Task = 'Vibe AStock API';            Port = 8770;  HealthUrl = ''; Wmi = 'D:\vibe-astock\scripts\svc_api.cmd'; WmiArg = ''; WmiType = 'script'; DataDir = '' }
     @{ Name = 'Vibe AStock UI';    Task = 'Vibe AStock UI';             Port = 5940;  HealthUrl = ''; Wmi = 'D:\vibe-astock\scripts\svc_ui.cmd'; WmiArg = ''; WmiType = 'script'; DataDir = '' }
     @{ Name = 'ProxyFleet';        Task = 'ProxyFleet';                 Port = 0;     HealthUrl = ''; Wmi = 'D:\workplace\ruanjian\python312\python.exe'; WmiArg = 'D:\workplace\ProxyFleet\pfctl.py run'; WmiType = 'raw'; DataDir = '' }
@@ -33,12 +35,27 @@ StartOrder = @(
     'LadderStock API', 'LadderStock Schedule', 'Vibe AStock API', 'Vibe AStock UI'
 )
 
-# QUOT-483 查清结论：以下任务为幂等健康检查 / 保活 / 开机自启通道，无停服副作用，保留不禁。
+# 保留清单（QUOT-483 第 1 步逐条判定的 A 类，禁止禁用）：
+#   Peer Startup Check        保留（收编候选：待 482 验收后把默认 $Tasks 换成 QF-Peer-*+8000）
+#   TickHub CN 8000 Watchdog  保留（ensure 自愈专用、不抢端口，QUOT-456 修复版）
+#   LadderStock Modules       保留（幂等批量兜底，与 QF-Peer-* 不冲突）
+#   LadderStock Watchdog      暂保留；可禁但延后——豆包沙箱 python 脆点，须等 482 自愈就位
+#                             且确认 5952 守护唯一性后由 482 执行（2026-11-09 实测 5952 树唯一）
+#   LadderStock Watch Scan    暂保留待裁定——Action 指向已删 quot-200 脚本（实测 MISSING），
+#                             周期触发空失败；收编或退役由 supervisor 裁定
 KeepTasks = @('Peer Startup Check', 'TickHub CN 8000 Watchdog', 'LadderStock Modules', 'LadderStock Watchdog', 'LadderStock Watch Scan')
 
-# 死任务清单（旧对偶，Action 指向已废弃的 multica_workdir powershell）。
-# 对应 Disable-DeadScheduledTasks.ps1；【默认只报告不执行，等 supervisor 验收通过后再启用】。
-DeadTasks = @('QF Wire 8790', 'QF Wire MCP 8791', 'TickHub CN Admin 8787', 'TickHub US 8002', 'LadderStock UI 5950')
+# 死任务清单（QUOT-483 回炉版，2026-11-09 实测三类裁定）：
+#   * 前 6 条 = 旧入口同名任务，Action 指向已删 quot-200 run-logs 脚本（实测全部 MISSING），
+#     端口现由 QF-Peer-* 六条在供（StockSenate WebUI 实际在 8786，8788 属 ProxyFleet/DEC-047）；
+#   * LadderStock UI 5950 = 与 LadderStock API 任务同体（同 Action 同端口），双实例风险，维持 Disabled；
+#   * 对应 Disable / Restore 两脚本；【默认只报告不执行，等 supervisor 验收通过后再启用】。
+DeadTasks = @(
+    'QF Wire 8790', 'QF Wire MCP 8791',
+    'StockSenate MCP 8765', 'StockSenate WebUI 8788',
+    'TickHub CN Admin 8787', 'TickHub US 8002',
+    'LadderStock UI 5950'
+)
 
 # 日志上限（D5）
 LogMaxBytes = 10485760

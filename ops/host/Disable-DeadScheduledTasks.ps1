@@ -9,9 +9,11 @@
 
 .DESCRIPTION
     清单来源：LdstHostConfig.psd1 的 DeadTasks（与 KeepTasks 互斥校验）。
-    现状基线（2026-11-08 只读探测）：5 条均已 Disabled——
+    现状基线（2026-11-09 只读实测，回炉派单步骤 1）：7 条均已 Disabled——
       QF Wire 8790 / QF Wire MCP 8791 / TickHub CN Admin 8787 / TickHub US 8002
         Action 指向已废弃的 multica_workspaces 旧 run（quot-200）目录，真死任务；
+      StockSenate MCP 8765 / StockSenate WebUI 8788
+        Action 同指向 quot-200 旧 run 目录（旧入口，端口由 QF-Peer-* 对位任务在供）；
       LadderStock UI 5950
         Action 指向 start_board_main.cmd 5950（与现役 LadderStock API 同源），
         旧对偶命名，裁定可禁（现已是 Disabled）。

@@ -202,28 +202,62 @@ function Get-ModuleStatus {
     param()
     $cfg = Import-HostConfig
     $out = @()
+
+    # 批量预取：逐模块调 Get-NetTCPConnection 单次约 2s，12 个模块 ×2 次会到 45s+，面板因此卡死。
+    $listenMap = @{}
+    try {
+        foreach ($c in @(Get-NetTCPConnection -State Listen -ErrorAction Stop)) {
+            $p = [int]$c.LocalPort
+            if (-not $listenMap.ContainsKey($p)) { $listenMap[$p] = [int]$c.OwningProcess }
+        }
+    }
+    catch { }
+
+    $taskMap = @{}
+    try {
+        foreach ($t in @(Get-ScheduledTask -ErrorAction Stop)) { $taskMap[[string]$t.TaskName] = [string]$t.State }
+    }
+    catch { }
+
     foreach ($m in $cfg.Modules) {
         $taskState = 'absent'
-        try {
-            $t = Get-ScheduledTask -TaskName $m.Task -ErrorAction Stop
-            $taskState = [string]$t.State
+        if ($taskMap.ContainsKey([string]$m.Task)) { $taskState = $taskMap[[string]$m.Task] }
+        elseif (-not $taskMap.Count) {
+            try {
+                $t = Get-ScheduledTask -TaskName $m.Task -ErrorAction Stop
+                $taskState = [string]$t.State
+            }
+            catch { $taskState = 'absent' }
         }
-        catch { $taskState = 'absent' }
 
         $listening = $false
         $portPid = 0
-        if ($m.Port -gt 0) {
-            $listening = Test-PortListening -Port $m.Port
-            if ($listening) { $portPid = Get-PortProcessId -Port $m.Port }
+        if ($m.Port -gt 0 -and $listenMap.ContainsKey([int]$m.Port)) {
+            $listening = $true
+            $portPid = [int]$listenMap[[int]$m.Port]
+        }
+        elseif ($m.Port -gt 0) {
+            $listening = Test-PortListening -Port ([int]$m.Port)
+            if ($listening) { $portPid = Get-PortProcessId -Port ([int]$m.Port) }
         }
 
         $health = 'n/a'
         $healthy = $true
         $dataDirOk = $true
         $dataDirActual = ''
-        if ($m.HealthUrl) {
+        $healthUrl = ''
+        if ($m -is [System.Collections.IDictionary]) {
+            if ($m.Contains('HealthUrl') -and $m['HealthUrl']) { $healthUrl = [string]$m['HealthUrl'] }
+        }
+        elseif ($m.PSObject.Properties['HealthUrl'] -and $m.HealthUrl) { $healthUrl = [string]$m.HealthUrl }
+        if ($healthUrl -and $m.Port -gt 0 -and -not $listening) {
+            # 端口都没在听就别再打探针了：每个探针最多等 5 秒，12 个模块叠起来能把面板拖到十几秒
+            $health = 'fail'
+            $healthy = $false
+        }
+        elseif ($healthUrl) {
             try {
-                $r = Invoke-RestMethod -Uri $m.HealthUrl -TimeoutSec 5 -ErrorAction Stop
+                $r = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 2 -ErrorAction Stop
                 $health = 'ok'
                 $actual = $null
                 if ($r -and $r.PSObject.Properties['data_dir']) {
@@ -266,6 +300,7 @@ function Get-ModuleStatus {
             Port         = $m.Port
             Listening    = $listening
             PortPid      = $portPid
+            HealthUrl    = $healthUrl
             Health       = $health
             Healthy      = $healthy
             DataDirOk    = $dataDirOk
