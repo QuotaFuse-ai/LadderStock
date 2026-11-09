@@ -1032,15 +1032,15 @@ def read_env_layered(ctl: PeerControl) -> tuple[dict[str, str], dict[str, str]]:
         values = read_env_file(override_path, strict=True)
         return values, {name: ctl.env_filename for name in values}
     base_path = Path(ctl.directory) / ctl.env_layer_base
-    values: dict[str, str] = {}
+    merged: dict[str, str] = {}
     sources: dict[str, str] = {}
     for name, raw in read_env_file(base_path, strict=True).items():
-        values[name] = raw
+        merged[name] = raw
         sources[name] = base_path.name
     for name, raw in read_env_file(override_path, strict=True).items():
-        values[name] = raw
+        merged[name] = raw
         sources[name] = override_path.name
-    return values, sources
+    return merged, sources
 
 
 # --------------------------------------------------------------------------- #
@@ -2808,6 +2808,14 @@ class ControlPlane:
         refusals: list[str] = []
         for record in records:
             pid = int(record["pid"])
+            # 旧格式记录先于「死 PID 跳过」拒绝（D11/D12）：它只有裸 PID、没有归属
+            # 证据，无论进程是否已退出都必须拒绝——否则「均已退出」分支会把 pids
+            # 清空、写上 last_stop_at，D11/D12 要留给人看的证据就没了。
+            if record.get("legacy"):
+                reason = self._ownership_refusal(ctl, record)
+                if reason:
+                    refusals.append(reason)
+                continue
             if not _pid_alive(pid):
                 job.log(f"  PID {pid} 已退出，跳过校验与终止")
                 continue

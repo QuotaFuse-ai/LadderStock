@@ -1404,9 +1404,14 @@ def test_start_records_pid_metadata(
 
 
 def test_stop_refuses_legacy_pid_state(
-    tmp_path: Path, peer_dirs: dict[str, Path]
+    tmp_path: Path, peer_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D11/D12：旧格式（裸 PID）一律拒绝，不清状态、不执行 taskkill。"""
+    """D11/D12：旧格式（裸 PID）一律拒绝，不清状态、不执行 taskkill。
+
+    显式 patch `_pid_alive`为 True：拒绝必须来自 legacy 判据本身，
+    而不是碰巧该 PID 不在进程表里（宿主活着 / CI 容器里不存在，两种环境都拒绝）。
+    """
+    monkeypatch.setattr(control, "_pid_alive", lambda pid: True)
     runtime = FakeRuntime()
     plane = _plane(tmp_path, peer_dirs, runtime=runtime)
     plane._peer_state("alpha")["pids"] = [17136]
