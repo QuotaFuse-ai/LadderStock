@@ -385,6 +385,38 @@ def test_financecoffer_start_runs_compose_then_keeps_an_anchor(tmp_path: Path) -
     assert "Ubuntu-24.04" in anchor_argv
 
 
+def test_financecoffer_start_refuses_foreign_port_owner_without_side_effects(
+    tmp_path: Path,
+) -> None:
+    """QUOT-516：Windows 侧占口 → 拒绝启动，绝不先把 WSL 容器拉起来。"""
+    host, adapters = _adapters(tmp_path, _fc_host())
+    # 模块未运行（WSL 内无 api 容器）而端口被外部占住 = 真冲突形态
+    host.responses = [
+        (needle, result)
+        for needle, result in host.responses
+        if "com.docker.compose.service=api" not in needle
+    ]
+    host.respond("com.docker.compose.service=api", CommandResult(returncode=0, stdout=""))
+    fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
+    host.add_process(("D:/other/squatter.exe", "--port", "8100"), ports=(8100,))
+    with pytest.raises(SupervisorError, match="8100"):
+        fc.start()
+    assert host.spawns == []
+    # 只允许识别类查询（docker ps 探容器），绝不允许 compose up / docker start
+    joined_runs = [" ".join(argv) for argv in host.runs]
+    assert not any("docker compose" in line or "docker start" in line for line in joined_runs)
+
+
+def test_financecoffer_start_proceeds_when_own_container_already_listening(
+    tmp_path: Path,
+) -> None:
+    host, adapters = _adapters(tmp_path, _fc_host())
+    fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
+    host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
+    spawned = fc.start()
+    assert spawned.pid in host.procs
+
+
 def test_financecoffer_distro_override_wins_over_wsl_list(tmp_path: Path) -> None:
     env = _make_peer_dirs(tmp_path)
     env["LDST_WSL_DISTRO"] = "Debian-12"
@@ -432,6 +464,31 @@ def test_proxyfleet_start_and_stop_go_through_the_scheduled_task(tmp_path: Path)
     ended = [" ".join(argv) for argv in host.runs]
     assert any("/disable" in line for line in ended)
     assert any("/end" in line for line in ended)
+
+
+def test_proxyfleet_start_refuses_foreign_port_owner_without_triggering_task(
+    tmp_path: Path,
+) -> None:
+    """QUOT-516：占口 → 拒绝启动，绝不先 enable/run 计划任务再等超时装死。"""
+    host, adapters = _adapters(tmp_path)
+    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    host.add_process(("D:/other/gateway.exe", "--port", "8788"), ports=(8788,))
+    with pytest.raises(SupervisorError, match="8788"):
+        pf.start()
+    # 识别查询之外零命令：绝不 enable/run 计划任务
+    assert all(argv[0] != "schtasks.exe" for argv in host.runs)
+
+
+def test_proxyfleet_start_proceeds_when_own_pfctl_already_listening(tmp_path: Path) -> None:
+    host, adapters = _adapters(tmp_path)
+    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    host.respond("schtasks.exe /run", CommandResult(returncode=0, stdout="SUCCESS"))
+    host.add_process(
+        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        ports=(8788, 8789),
+    )
+    spawned = pf.start()
+    assert spawned.pid in host.procs
 
 
 def test_proxyfleet_probe_is_false_for_a_foreign_listener(tmp_path: Path) -> None:

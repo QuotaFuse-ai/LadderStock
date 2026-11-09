@@ -960,6 +960,15 @@ class FinanceCofferAdapter:
     # ------------------------------------------------------------------ 协议
 
     def start(self) -> SpawnedProcess:
+        # Windows 侧冲突预检（QUOT-516）：端口被非本模块进程占住时拒绝启动，
+        # 否则容器会在 WSL 内照常拉起，Windows 侧却永远连不上（静默假成功）。
+        for port in self.ports:
+            evidence = self._build_evidence(port)
+            if evidence.listening and not evidence.matched:
+                raise SupervisorError(
+                    f"financecoffer 的端口 {port} 已被非本模块进程占用"
+                    f"（pid={evidence.pid} cmd={' '.join(evidence.cmdline)[:160]}），拒绝启动"
+                )
         distro = self.distro()
         command = self._start_script()
         result = self._wsl(distro, command, timeout=WSL_COMMAND_TIMEOUT_SEC)
@@ -1211,6 +1220,15 @@ class ProxyFleetAdapter:
     # ------------------------------------------------------------------ 协议
 
     def start(self) -> SpawnedProcess:
+        # 冲突预检（QUOT-516）：占口时拒绝启动，绝不先触发任务再等超时装死——
+        # 那样报错文案不含占用信息，且任务已被 enable（自愈触发会接着捣乱）。
+        for port in self.ports:
+            evidence = self._build_evidence(port)
+            if evidence.listening and not evidence.matched:
+                raise SupervisorError(
+                    f"proxyfleet 的端口 {port} 已被非本模块进程占用"
+                    f"（pid={evidence.pid} cmd={' '.join(evidence.cmdline)[:160]}），拒绝启动"
+                )
         changed = self._host.run(
             ("schtasks.exe", "/change", "/tn", self.task_name, "/enable"),
             timeout=QUERY_TIMEOUT_SEC,
