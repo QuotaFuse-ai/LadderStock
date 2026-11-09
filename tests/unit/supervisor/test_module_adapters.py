@@ -1,27 +1,39 @@
-"""六模块适配器测试（QUOT-482-B）：全部走假宿主，不起真进程、不占真端口。
+"""模块适配器测试（QUOT-482-B + QUOT-506）：全部走假宿主，不起真进程、不占真端口。
 
 覆盖：
-- 注册表口径（六模块 + 端口白名单）；
+- 注册表口径（顺序模块 + 按需模块 proxypool + 端口白名单）；
 - 识别规则：端口在听 + cmdline 命中才算 probe 真，外部进程不算；
 - 多面模块 start 拉起两条命令、stop 连 adopted 的另一面一起停；
 - financecoffer 的 WSL 形态（发行版探测 / compose 停 / 容器回读）；
-- proxyfleet 只经计划任务启停（enable→run / disable→end），不下发 taskkill。
+- proxyfleet 只经计划任务启停（enable→run / disable→end），不下发 taskkill；
+- proxypool 的按需语义：双向探活、端口冲突报错、adopted 归属、停止无残留。
 """
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from ladderstock.supervisor.adapters import MODULE_ORDER, MODULE_PORTS
+from ladderstock.supervisor.adapters import (
+    MODULE_ORDER,
+    MODULE_PORTS,
+    ON_DEMAND_MODULES,
+)
+from ladderstock.supervisor.engine import SupervisorError
 from ladderstock.supervisor.module_adapters import (
     BaseAdapter,
     CommandResult,
     FinanceCofferAdapter,
+    PortEvidence,
     ProcessSnapshot,
     ProxyFleetAdapter,
+    ProxyPoolAdapter,
+    ProxyPoolConfig,
+    ProxyPoolMapping,
     build_default_adapters,
     load_env_file,
 )
@@ -53,6 +65,8 @@ class FakeHost:
         self.runs: list[tuple[str, ...]] = []
         self.responses: list[tuple[str, CommandResult]] = []
         self.listen_hidden: set[int] = set()
+        #: 端口在监听表里但真实建连失败（模拟「只 listen 不 accept」/ 半死服务）
+        self.unconnectable: set[int] = set()
         self._next_pid = 7000
 
     # ---- 数据准备
@@ -82,11 +96,25 @@ class FakeHost:
             return False
         return port in self.port_owner
 
+    def handshake(self, host: str, port: int) -> bool:
+        del host
+        if port in self.listen_hidden:
+            return False
+        return port in self.port_owner and port not in self.unconnectable
+
     def owner_pid(self, port: int) -> int | None:
         return self.port_owner.get(port)
 
     def snapshot(self, pid: int) -> ProcessSnapshot | None:
         return self.procs.get(pid)
+
+    def find_processes(self, marker: str) -> tuple[ProcessSnapshot, ...]:
+        needle = marker.replace("\\", "/").lower()
+        return tuple(
+            proc
+            for proc in self.procs.values()
+            if needle in " ".join(proc.cmdline).replace("\\", "/").lower()
+        )
 
     def parent_chain(self, pid: int, depth: int = 6) -> tuple[ProcessSnapshot, ...]:
         chain: list[ProcessSnapshot] = []
@@ -119,8 +147,10 @@ class FakeHost:
         argv_tuple = tuple(str(part) for part in argv)
         self.spawns.append((argv_tuple, cwd))
         port: int | None = None
-        if "--port" in argv_tuple:
-            port = int(argv_tuple[argv_tuple.index("--port") + 1])
+        for flag in ("--port", "--listen-port"):
+            if flag in argv_tuple:
+                port = int(argv_tuple[argv_tuple.index(flag) + 1])
+                break
         ports = (port,) if port else ()
         pid = self.add_process(argv_tuple, name=Path(argv_tuple[0]).name, ports=ports)
         return pid
@@ -189,11 +219,13 @@ def _wire(adapters: dict[str, Any]) -> BaseAdapter:
 # --------------------------------------------------------------------------- #
 
 
-def test_registry_contains_exactly_six_modules_with_registered_ports(tmp_path: Path) -> None:
+def test_registry_contains_registered_modules_with_registered_ports(tmp_path: Path) -> None:
     _host, adapters = _adapters(tmp_path)
-    assert set(adapters) == set(MODULE_ORDER)
-    for name, adapter in adapters.items():
-        assert tuple(adapter.ports) == MODULE_PORTS[name]
+    assert set(adapters) == set(MODULE_ORDER) | ON_DEMAND_MODULES
+    for name in MODULE_ORDER:
+        assert tuple(adapters[name].ports) == MODULE_PORTS[name]
+    # 按需模块的端口由宿主配置决定：假宿主读不到配置 → 未启用、无映射
+    assert adapters["proxypool"].ports == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -407,6 +439,237 @@ def test_proxyfleet_probe_is_false_for_a_foreign_listener(tmp_path: Path) -> Non
     pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
     host.add_process(("D:/other/gateway.exe", "--port", "8788"), ports=(8788,))
     assert pf.probe() is False
+
+
+# --------------------------------------------------------------------------- #
+# proxypool（按需模块）
+# --------------------------------------------------------------------------- #
+
+
+def _pool_mapping(
+    mapping_id: str = "multica-api", port: int = 18080, *, enabled: bool = True
+) -> ProxyPoolMapping:
+    return ProxyPoolMapping(
+        mapping_id=mapping_id,
+        listen_port=port,
+        upstream_host="127.0.0.1",
+        upstream_port=8080,
+        enabled=enabled,
+        owner="ai",
+    )
+
+
+def _pool(
+    host: FakeHost,
+    tmp_path: Path,
+    *,
+    mappings: tuple[ProxyPoolMapping, ...] | None = None,
+    listen_host: str = "127.0.0.1",
+) -> ProxyPoolAdapter:
+    config = ProxyPoolConfig(
+        enabled=False,
+        auto_start=False,
+        listen_host=listen_host,
+        mappings=mappings or (_pool_mapping(),),
+    )
+    return ProxyPoolAdapter(
+        config=config,
+        host=host,
+        log_dir=tmp_path / "logs",
+        evidence_cache_sec=0.0,
+        spawn_wait_sec=1.0,
+        graceful_wait_sec=1.0,
+        readback_wait_sec=1.0,
+    )
+
+
+def test_proxypool_is_registered_on_demand_and_build_never_spawns(tmp_path: Path) -> None:
+    assert "proxypool" in MODULE_PORTS
+    assert "proxypool" in ON_DEMAND_MODULES
+    assert "proxypool" not in MODULE_ORDER
+
+    host, adapters = _adapters(tmp_path)
+    pool = cast(ProxyPoolAdapter, adapters["proxypool"])
+    assert pool.ports == ()
+    assert host.spawns == []
+    # 装配期只读配置，不注册计划任务、不写任何自启入口
+    assert all("schtasks" not in argv for argv in host.runs)
+
+
+def test_proxypool_start_spawns_one_forwarder_per_enabled_mapping(tmp_path: Path) -> None:
+    host = FakeHost()
+    pool = _pool(
+        host,
+        tmp_path,
+        mappings=(
+            _pool_mapping("multica-api", 18080),
+            _pool_mapping("local-web", 18081),
+            _pool_mapping("disabled-one", 18082, enabled=False),
+        ),
+    )
+    spawned = pool.start()
+    assert len(host.spawns) == 2
+    assert spawned.cmdline[0] == sys.executable
+    assert "proxypool_forwarder" in " ".join(spawned.cmdline)
+    assert "multica-api" in spawned.cmdline
+    assert 18080 in host.port_owner
+    assert 18081 in host.port_owner
+    assert 18082 not in host.port_owner
+    assert pool.probe() is True
+
+
+def test_proxypool_probe_requires_a_real_tcp_handshake(tmp_path: Path) -> None:
+    """端口在监听表里但真实建连失败（只 listen 不 accept / 半死）→ probe 必须 False。"""
+    host = FakeHost()
+    pool = _pool(host, tmp_path)
+    pool.start()
+    assert pool.probe() is True
+
+    host.unconnectable.add(18080)
+    assert pool.probe() is False
+    evidence = cast(PortEvidence, pool.identify(18080))
+    assert evidence.listening is True
+    assert evidence.matched is True
+    assert "TCP 建连失败" in evidence.detail
+
+
+def test_proxypool_probe_fails_closed_for_a_foreign_listener(tmp_path: Path) -> None:
+    host = FakeHost()
+    host.add_process(("D:/other/relay.exe", "--port", "18080"), ports=(18080,))
+    pool = _pool(host, tmp_path)
+    assert pool.probe() is False
+    evidence = cast(PortEvidence, pool.identify(18080))
+    assert evidence.listening is True
+    assert evidence.matched is False
+
+
+def test_proxypool_start_refuses_a_port_that_collides_with_another_module(
+    tmp_path: Path,
+) -> None:
+    host = FakeHost()
+    pool = _pool(host, tmp_path, mappings=(_pool_mapping("clash", 8790),))
+    with pytest.raises(SupervisorError, match="8790"):
+        pool.start()
+    assert host.spawns == []
+
+
+def test_proxypool_start_refuses_a_foreign_occupant_and_names_the_port(
+    tmp_path: Path,
+) -> None:
+    host = FakeHost()
+    foreign = host.add_process(("D:/other/relay.exe", "--port", "18080"), ports=(18080,))
+    pool = _pool(host, tmp_path)
+    with pytest.raises(SupervisorError, match="18080"):
+        pool.start()
+    assert host.spawns == []
+    assert host.terminated == []
+    assert 18080 in host.port_owner
+    assert foreign in host.procs
+
+
+def test_proxypool_start_adopts_an_existing_forwarder_instead_of_spawning_another(
+    tmp_path: Path,
+) -> None:
+    host = FakeHost()
+    existing = host.add_process(
+        (
+            "C:/python/python.exe",
+            "C:/repo/src/ladderstock/supervisor/proxypool_forwarder.py",
+            "--id",
+            "multica-api",
+            "--listen-host",
+            "127.0.0.1",
+            "--listen-port",
+            "18080",
+        ),
+        name="python.exe",
+        ports=(18080,),
+    )
+    pool = _pool(host, tmp_path)
+    spawned = pool.start()
+    assert host.spawns == []
+    assert spawned.pid == existing
+    assert [item.ownership for item in pool.adopted] == ["adopted"]
+    assert pool.adopted[0].mapping_id == "multica-api"
+    assert pool.probe() is True
+
+
+def test_proxypool_stop_closes_ports_and_leaves_no_residual_process(tmp_path: Path) -> None:
+    host = FakeHost()
+    pool = _pool(host, tmp_path)
+    pool.start()
+    pid = pool._roots[0]
+    pool.stop()
+    assert 18080 not in host.port_owner
+    assert pid not in host.procs
+    assert host.find_processes("proxypool_forwarder") == ()
+    assert pool.probe() is False
+
+
+def test_proxypool_stop_refuses_to_claim_success_while_a_forwarder_remains(
+    tmp_path: Path,
+) -> None:
+    host = FakeHost()
+    pool = _pool(host, tmp_path)
+    pool.start()
+    # 同映射 Id 的遗留进程（不在端口上、也不是本次根）→ 停止后残留扫描必须能发现
+    host.add_process(
+        (
+            "C:/python/python.exe",
+            "C:/repo/src/ladderstock/supervisor/proxypool_forwarder.py",
+            "--id",
+            "multica-api",
+        ),
+        name="python.exe",
+    )
+    with pytest.raises(SupervisorError, match="残留"):
+        pool.stop()
+
+
+def test_proxypool_stop_never_touches_a_foreign_listener(tmp_path: Path) -> None:
+    host = FakeHost()
+    foreign = host.add_process(("D:/other/relay.exe", "--port", "18080"), ports=(18080,))
+    pool = _pool(host, tmp_path)
+    pool.stop()
+    assert host.terminated == []
+    assert foreign in host.procs
+
+
+def test_proxypool_config_is_loaded_from_host_config(tmp_path: Path) -> None:
+    host = FakeHost()
+    row = {
+        "Name": "proxypool",
+        "Enabled": False,
+        "AutoStart": False,
+        "ListenHost": "127.0.0.1",
+        "Mappings": [
+            {
+                "Id": "multica-api",
+                "Listen": 18080,
+                "UpstreamHost": "127.0.0.1",
+                "UpstreamPort": 8080,
+                "Enabled": True,
+                "Owner": "ai",
+            }
+        ],
+        "SelfHeal": {"MaxRestarts": 2, "WindowMinutes": 10},
+        "NeedsHumanOnLimit": True,
+    }
+    host.respond("Import-PowerShellDataFile", CommandResult(returncode=0, stdout=json.dumps(row)))
+    config_path = tmp_path / "LdstHostConfig.psd1"
+    config_path.write_text("", encoding="utf-8")
+    env = _make_peer_dirs(tmp_path)
+    env["LDST_HOST_CONFIG"] = str(config_path)
+
+    built = build_default_adapters(
+        host=host, env=env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+    )
+    pool = cast(ProxyPoolAdapter, built["proxypool"])
+    assert pool.config.enabled is False
+    assert pool.config.auto_start is False
+    assert pool.ports == (18080,)
+    assert pool.config.mappings[0].mapping_id == "multica-api"
+    assert pool.config.mappings[0].owner == "ai"
 
 
 # --------------------------------------------------------------------------- #
