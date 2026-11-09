@@ -1,9 +1,10 @@
-# 六模块启停矩阵（QUOT-482-B）
+# 六模块启停矩阵（QUOT-482-B）+ 按需代理池（QUOT-506）
 
-> 范围：`supervisor/module_adapters.py` 里六个模块的真实启动 / 停止 / 探活规则。
+> 范围：`supervisor/module_adapters.py` 里六个顺序模块与按需模块 `proxypool` 的真实
+> 启动 / 停止 / 探活规则。
 > 内核契约（账本、引擎、归属判定）见 [ledger-and-lifecycle.md](./ledger-and-lifecycle.md)。
 > 本文所有命令均为「可直接复制执行」的 PowerShell，目录按本机部署写死；
-> 适配器本身不写死目录，解析顺序见 §7。
+> 适配器本身不写死目录，解析顺序见 §8。
 
 ## 0. 总表
 
@@ -15,10 +16,16 @@
 | 4 | senate | 8765（mcp）, 8786（webui） | `StockSenate/.venv/Scripts/ssenate.exe` | 进程树 | `ssenate mcp http` / `ssenate webui` |
 | 5 | financecoffer | 8100（wslhost 转发） | WSL `docker compose up -d` + `wsl.exe` 锚进程 | WSL docker 容器 | compose project `financecoffer` + service `api` |
 | 6 | proxyfleet | 8788, 8789 | 计划任务 `ProxyFleet`（SYSTEM） | `schtasks /end` | `pfctl.py run` |
+| 7 | proxypool（按需） | 配置 `Mappings[].Listen`（默认 18080），**不在静态白名单** | `python proxypool_forwarder.py --id <映射>`（每条映射一个进程） | 进程树 | `proxypool_forwarder` + `--id` + 映射 Id |
 
 探活口径（适配器 `probe()`）：**端口在监听，且监听进程的 cmdline 命中该端口对应面的关键字**；
-金融柜没有 Windows 侧业务进程，改为「8100 在听 **且** WSL 内 financecoffer/api 容器在运行」。
+金融柜没有 Windows 侧业务进程，改为「8100 在听 **且** WSL 内 financecoffer/api 容器在运行」；
+代理池是**双向判据**：「端口在听 **且** 对该端口真实 TCP 建连成功 **且** 持有者 cmdline 命中本模块转发标记」。
 读不到证据一律判 False（失败关闭）。
+
+代理池是**按需模块**：登记在 `ON_DEMAND_MODULES`，不在 `MODULE_ORDER` 里——
+`start_all` / `stop_all` 不碰它，只能经单模块入口显式拉起；配置 `Enabled` / `AutoStart`
+均默认 `$false`，实现里没有任何自启分支。
 
 ## 1. tickhub（8000 / 8787）
 
@@ -235,7 +242,53 @@ schtasks.exe /end /tn ProxyFleet
 - 状态回读用 `Get-ScheduledTaskInfo ProxyFleet` 看 `LastTaskResult` / `LastRunTime`，
   再对端口，不要只看任务名存在。
 
-## 7. 目录与覆盖变量
+## 7. proxypool（按需，端口来自配置）
+
+不是常驻服务，而是**可被按需拉起、随主程序关闭一起停**的 TCP 直通转发层。
+配置在 `ops/host/LdstHostConfig.psd1` 的 `Modules` 表里（`Name='proxypool'`），
+`Enabled` / `AutoStart` 默认都是 `$false`，且**不在 `StartOrder` 里**——开机、
+launcher 与 supervisor 全启都不会碰它，只能显式启动。
+
+```powershell
+# 一个模块管 N 条映射：整池一次 start 拉起全部 Enabled 的映射（每条一个转发进程）
+& python 'src\ladderstock\supervisor\proxypool_forwarder.py' --id multica-api `
+    --listen-host 127.0.0.1 --listen-port 18080 `
+    --upstream-host 127.0.0.1 --upstream-port 8080
+```
+
+规则：
+
+- **默认不启动**：无计划任务、无 Run 键、无启动文件夹项；代码里没有自启分支。
+- **纯 TCP 直通**：不解析、不记录载荷、不带凭据；监听地址只允许 `ListenHost`（回环）。
+- **probe 双向判据**：端口监听表有持有者 **且** 对该端口真实 TCP 建连成功 **且**
+  持有者 cmdline 命中 `proxypool_forwarder` + `--id` + 映射 Id。只查端口在听不算数。
+- **端口冲突必须报错**：`Listen` 与其它模块端口表冲突、映射间重复、或被非本模块进程
+  占用时，`start()` 抛出含端口号的错误，**不许静默换端口**。
+- **归属**：本次拉起的记 `managed`；端口上已有同映射 Id 的转发进程（前任 supervisor
+  残留）记 `adopted`，不再拉第二条、不强杀，并在适配器的 `adopted` 结果里报出；
+  真正的外部进程一律拒绝启动。
+- **停止判据**：回读端口不可连接，且按 cmdline 关键字扫描无残留转发进程。
+- 不用 `netsh interface portproxy`（绑 IP 栈、WSL 重启即失效、不可见不可控，见 QUOT-490）。
+
+手工复现与验收：
+
+```powershell
+# 1) 启动后：监听端口 + pid + cmdline
+Get-NetTCPConnection -State Listen -LocalPort 18080 | Select-Object LocalAddress,LocalPort,OwningProcess
+Get-CimInstance Win32_Process -Filter "ProcessId=<pid>" | Select-Object ProcessId,ParentProcessId,CommandLine
+
+# 2) 真实建连（双向判据的第二条；只 listen 不 accept 的假服务不算通）
+(Test-NetConnection 127.0.0.1 -Port 18080).TcpTestSucceeded
+
+# 3) 停止后：不可连接 + 无残留进程
+@(Get-NetTCPConnection -State Listen -LocalPort 18080 -ErrorAction SilentlyContinue).Count   # 期望 0
+# 只看 python 进程：用 shell 查同关键字会把查询命令自己也算进去（自匹配）
+@(Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -like 'python*' -and $_.CommandLine -match 'proxypool_forwarder\.py'
+}).Count   # 期望 0
+```
+
+## 8. 目录与覆盖变量
 
 | 模块 | 默认目录（同级优先） | 覆盖变量 |
 |------|--------------------|---------|
@@ -245,6 +298,7 @@ schtasks.exe /end /tn ProxyFleet
 | senate | `D:\workplace\StockSenate` | `LDST_PEER_DIR_SENATE` |
 | financecoffer | `D:\workplace\FinanceCoffer` | `LDST_PEER_DIR_FINANCECOFFER` |
 | proxyfleet | 任务名 `ProxyFleet` | `LDST_PROXYFLEET_TASK` |
+| proxypool | `ops/host/LdstHostConfig.psd1` | `LDST_HOST_CONFIG` |
 
 其它：
 
@@ -253,9 +307,10 @@ schtasks.exe /end /tn ProxyFleet
 - `LDST_TICKHUB_ENV_FILES`：tickhub env 文件列表（`os.pathsep` 分隔）。
 - 日志目录：`%LOCALAPPDATA%\LadderStock\logs`（每个面一个文件：
   `tickhub-mcp.log` / `tickhub-admin.log` / `tickhub-us-mcp.log` / `wire-web.log` /
-  `wire-mcp.log` / `senate-mcp.log` / `senate-webui.log` / `financecoffer-anchor.log`）。
+  `wire-mcp.log` / `senate-mcp.log` / `senate-webui.log` / `financecoffer-anchor.log` /
+  `proxypool-<映射 Id>.log`）。
 
-## 8. 验收命令
+## 9. 验收命令
 
 单模块启动后回读端口：
 

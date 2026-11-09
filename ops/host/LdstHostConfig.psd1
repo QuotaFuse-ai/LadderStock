@@ -26,6 +26,18 @@ Modules = @(
     @{ Name = 'Vibe AStock API';   Task = 'Vibe AStock API';            Port = 8770;  HealthUrl = ''; Wmi = 'D:\vibe-astock\scripts\svc_api.cmd'; WmiArg = ''; WmiType = 'script'; DataDir = '' }
     @{ Name = 'Vibe AStock UI';    Task = 'Vibe AStock UI';             Port = 5940;  HealthUrl = ''; Wmi = 'D:\vibe-astock\scripts\svc_ui.cmd'; WmiArg = ''; WmiType = 'script'; DataDir = '' }
     @{ Name = 'ProxyFleet';        Task = 'ProxyFleet';                 Port = 0;     HealthUrl = ''; Wmi = 'D:\workplace\ruanjian\python312\python.exe'; WmiArg = 'D:\workplace\ProxyFleet\pfctl.py run'; WmiType = 'raw'; DataDir = '' }
+    # proxypool（QUOT-506）：按需拉起的 TCP 直通转发池。默认不启动——Enabled/AutoStart 均 false，
+    # 且【不在 StartOrder 里】：launcher 与 supervisor 全启都不碰它，只能经单模块入口显式拉起。
+    # ListenHost 只允许回环；Mappings[].Listen 与其它模块端口表冲突时 start() 直接报错，不换端口。
+    # Task/Port 为空是刻意的：本模块无计划任务、无固定端口（端口在 Mappings 里），
+    # 留全字段只为兼容 HostCommon.ps1 的 StrictMode 属性访问。
+    @{ Name = 'proxypool';         Enabled = $false; AutoStart = $false; ListenHost = '127.0.0.1'
+       Mappings = @(
+           @{ Id = 'multica-api'; Listen = 18080; UpstreamHost = '127.0.0.1'; UpstreamPort = 8080; Enabled = $true; Owner = 'ai' }
+       )
+       SelfHeal = @{ MaxRestarts = 2; WindowMinutes = 10 }
+       NeedsHumanOnLimit = $true
+       Task = ''; Port = 0; HealthUrl = ''; Wmi = ''; WmiArg = ''; WmiType = ''; DataDir = '' }
 )
 
 # 依赖顺序（Start 的排序依据；不在表中的名字忽略）

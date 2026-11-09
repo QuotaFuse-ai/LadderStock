@@ -32,6 +32,12 @@ MODULE_ORDER: tuple[str, ...] = (
     "proxyfleet",
 )
 
+#: 按需模块（QUOT-506）：在册、实现同一 `ModuleAdapter` 协议，但**不在** `MODULE_ORDER`。
+#: `start_all` / `stop_all` 不碰它们——只能经单模块入口（`start_module`）显式拉起，
+#: 这是「默认不启动」的结构保证，不是某个开关的默认值。
+#: 按需模块的端口由配置决定（`MODULE_PORTS` 登记为空元组），registry 不做等值校验。
+ON_DEMAND_MODULES: frozenset[str] = frozenset({"proxypool"})
+
 # MODULE_PORTS（模块 → 端口白名单）唯一来源是 `supervisor.modules`
 # （QUOT-491 / 482-C 落地）；这里 import 复用，避免两份清单漂移。
 
@@ -74,15 +80,20 @@ class ModuleAdapter(Protocol):
 def module_registry(adapters: dict[str, ModuleAdapter]) -> dict[str, ModuleAdapter]:
     """校验一张适配器表符合注册表口径，不合口径直接拒（施工期契约错误）。
 
-    - 键集合必须与 `MODULE_ORDER` 完全一致（少一个引擎就没法全停，多一个没户口）；
-    - 每个适配器的 `ports` 必须与 `MODULE_PORTS` 一致（账本落盘的 ports 以这里为准）。
+    - `MODULE_ORDER` 里的模块一个都不能少（少一个引擎就没法全停）；
+    - 多出来的键只能是 `ON_DEMAND_MODULES` 里登记的按需模块（多一个没户口）；
+    - 顺序模块的 `ports` 必须与 `MODULE_PORTS` 一致（账本落盘的 ports 以这里为准）；
+      按需模块端口由配置决定，不做等值校验。
     """
-    if set(adapters) != set(MODULE_ORDER):
+    missing = set(MODULE_ORDER) - set(adapters)
+    unknown = set(adapters) - set(MODULE_ORDER) - ON_DEMAND_MODULES
+    if missing or unknown:
         raise ValueError(
-            f"适配器集合与模块注册表不符：缺 {sorted(set(MODULE_ORDER) - set(adapters))}，"
-            f"多 {sorted(set(adapters) - set(MODULE_ORDER))}"
+            f"适配器集合与模块注册表不符：缺 {sorted(missing)}，多 {sorted(unknown)}"
         )
     for name, adapter in adapters.items():
+        if name in ON_DEMAND_MODULES:
+            continue
         if tuple(adapter.ports) != MODULE_PORTS[name]:
             raise ValueError(
                 f"模块 {name} 的端口 {tuple(adapter.ports)} 与注册表 {MODULE_PORTS[name]} 不符"
