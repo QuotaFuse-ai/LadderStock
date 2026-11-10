@@ -1,0 +1,404 @@
+# 增量同步与冷热分离（文档 §6.2 + DEC-006）
+#
+# 每个数据集必须能在 core/boundary.py 的 DATASET_CATALOG 找到生态归属；
+# 这里只写「用哪几个 source id（见 sources.yaml）」与增量模式。
+# 主源失败 → 同 peer 备源 → 本地缓存回放；不启用任何自建采集。
+
+sync:
+  datasets:
+    # 逐只取数的数据集（tencent_kline / stock_fund_flow / dragon_tiger_seats 的 code 必填）
+    # 需要一个**代码池**。解析优先级（QUOT-233）：
+    #   1. 本次命令行 `ldst sync --codes 600000,000001`
+    #   2. 下面这份 `codes`
+    #   3. 本机隐私库自选表 watchlist（只读代码；对外输出只出现数量）
+    # 三处都为空 → 该数据集判 failed 且**一次调用都不发**：空 `code` 会被 TickHub 拒回
+    # QFSD-9001，历史上这里发的是空参，才把整包压成 1 行、日期取成抓取时间。
+    # 单次上限 100 只（超过请分批判 --codes；全市场口径是盘后包备源，不在这里硬顶）。
+    daily_k:
+      primary: tickhub_kline
+      fallback: [tickhub_tdx_package]
+      watermark_field: trade_date
+      mode: append
+      # 本机基础代码池（QUOT-405 前的过渡）：搜索名称解析、估值、申万映射都
+      # 从本机缓存反查，池子为空时全部 failed（watchlist 也是空的）。
+      # 这里锚一份约 76 只的大盘样本（沪深300 核心票 + 轻工制造 anchors），
+      # 后续数据集用 YAML 锚点复用；标的字典工具就绪后这里可以收窄。
+      codes: &base_pool
+        - "600000"  # 浦发银行
+        - "600009"  # 上海机场
+        - "600016"  # 民生银行
+        - "600019"  # 宝钢股份
+        - "600028"  # 中国石化
+        - "600030"  # 中信证券
+        - "600036"  # 招商银行
+        - "600048"  # 保利发展
+        - "600050"  # 中国联通
+        - "600104"  # 上汽集团
+        - "600111"  # 北方稀土
+        - "600150"  # 中国船舶
+        - "600196"  # 复星医药
+        - "600276"  # 恒瑞医药
+        - "600309"  # 万华化学
+        - "600332"  # 白云山
+        - "600346"  # 恒力石化
+        - "600362"  # 江西铜业
+        - "600406"  # 国电南瑞
+        - "600438"  # 通威股份
+        - "600519"  # 贵州茅台
+        - "600522"  # 中天科技
+        - "600570"  # 恒生电子
+        - "600585"  # 海螺水泥
+        - "600588"  # 用友网络
+        - "600690"  # 海尔智家
+        - "600745"  # 闻泰科技
+        - "600754"  # 锦江酒店
+        - "600760"  # 中航沈飞
+        - "600779"  # 水井坊
+        - "600809"  # 山西汾酒
+        - "600887"  # 伊利股份
+        - "600893"  # 航发动力
+        - "600900"  # 长江电力
+        - "600938"  # 中国海油
+        - "600941"  # 中国移动
+        - "601012"  # 隆基绿能
+        - "601066"  # 中信建投
+        - "601088"  # 中国神华
+        - "601111"  # 中国国航
+        - "601127"  # 赛力斯
+        - "601166"  # 兴业银行
+        - "601169"  # 北京银行
+        - "601318"  # 中国平安
+        - "601328"  # 交通银行
+        - "601390"  # 中国中铁
+        - "601398"  # 工商银行
+        - "601601"  # 中国太保
+        - "601628"  # 中国人寿
+        - "601633"  # 长城汽车
+        - "601668"  # 中国建筑
+        - "601688"  # 华泰证券
+        - "601728"  # 中国电信
+        - "601766"  # 中国中车
+        - "601816"  # 京沪高铁
+        - "601857"  # 中国石油
+        - "601888"  # 中国中免
+        - "601899"  # 紫金矿业
+        - "601919"  # 中远海控
+        - "601939"  # 建设银行
+        - "601985"  # 中国核电
+        - "601988"  # 中国银行
+        - "601998"  # 中信银行
+        - "300059"  # 东方财富
+        - "300750"  # 宁德时代
+        - "000333"  # 美的集团
+        - "000651"  # 格力电器
+        - "000002"  # 万科A
+        - "000858"  # 五粮液
+        - "002415"  # 海康威视
+        - "002475"  # 立讯精密
+        - "002594"  # 比亚迪
+        - "002714"  # 牧原股份
+        - "002304"  # 洋河股份
+        - "002352"  # 顺丰控股
+        - "002078"  # 太阳纸业（轻工制造 anchor）
+        - "603816"  # 顾家家居（轻工制造 anchor）
+
+    limit_pool:
+      primary: tickhub_limit_pool
+      fallback: [tickhub_ths_limit_pool]
+      watermark_field: trade_date
+      mode: replace
+
+    broken_board:
+      primary: tickhub_broken_board
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    yesterday_limit_up:
+      primary: tickhub_yesterday_limit
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    sentiment:
+      primary: tickhub_sentiment
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    dragon_tiger:
+      primary: tickhub_dragon_tiger
+      fallback: [tickhub_dragon_tiger_backup]
+      watermark_field: trade_date
+      mode: replace
+
+    dragon_tiger_seats:
+      primary: tickhub_seats
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: []
+      codes_from: dragon_tiger
+
+    industry_board:
+      primary: tickhub_industry
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    concept_board:
+      primary: tickhub_concept
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    # 个股↔概念板块归属（QUOT-362，题材分项的正式输入）：逐只 `stock_concept_blocks`
+    # 快照，**代码池来自当日涨停池归档**（`codes_from`），不扩全市场。
+    # 必须排在 `limit_pool` 之后：同一轮 `ldst sync` 里读到的才是今天刚落的池子。
+    # `watermark_field: timestamp` 只表「取数时刻」，不是交易日水位（上游 TTL 60 秒，
+    # 没有 `since` 入参，每次都整批替换）——口径同 `_b("spot_quote", ...)`。
+    # `optional: true`：今天没有涨停池（休市/取数失败）时判 skipped 而不是 failed。
+    #
+    # 当日实时资金流（QUOT-371）：**一次批量调用取完整代码池**，不走逐只扇出。
+    # 与日线 `fund_flow` 双口径并存：这条给打榜「资金」分项的当日实时值，
+    # 日线那条留着做历史对比，两者不互相顶替（DEC-049）。
+    # 水位用 `timestamp`（取数时刻），盘中每轮整批替换；与 `spot_quote` 同一形状。
+    fund_flow_realtime:
+      primary: tickhub_fund_flow_batch
+      fallback: []
+      watermark_field: timestamp
+      mode: replace
+      codes: []
+      codes_from: limit_pool
+      optional: true
+
+    concept_membership:
+      primary: tickhub_concept_membership
+      fallback: []
+      watermark_field: timestamp
+      mode: replace
+      optional: true
+      codes_from: limit_pool
+
+    fund_flow:
+      primary: tickhub_fund_flow
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+
+    # ---- R5 产业研究（QUOT-143）----
+    # 前三只按代码池逐只取数：成分表是**懒缓存**（DEC-018），只同步用得到的代码，
+    # 不做全市场全量构建；代码池优先级同 daily_k（--codes > 这里 > 本机自选）。
+    sw_industry_map:
+      primary: tickhub_sw_map
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes: *base_pool
+
+    finance_indicators:
+      primary: tickhub_finance_indicators
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes: *base_pool
+
+    valuation_history:
+      primary: tickhub_valuation_history
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes: *base_pool
+
+    # 板块资金流：按日整批替换，board_type=industry 是登记在册的口径入参（不是猜默认值）
+    industry_fund_flow:
+      primary: tickhub_industry_fund_flow
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+
+    hot_rank:
+      primary: tickhub_hot_rank
+      fallback: [tickhub_hot_rank_em]
+      watermark_field: trade_date
+      mode: replace
+
+    # ---------------- 资讯雷达（R6 / QUOT-144）----------------
+    # 全部 `optional: true`：资讯是「按需按时间窗」的（`ldst news`），
+    # 定时增量只是顺带归档。取不到只记 skipped，不把整轮 sync 的退出码拖成 8/4。
+    # 三个 code 必填的栏目（巨潮 / 深交所 / 东财个股新闻）在裸 `ldst sync` 里
+    # 必然被 peer 拒（上游要求 code），这是预期行为，不是链路故障。
+    announcement_cninfo:
+      primary: tickhub_announce_cninfo
+      fallback: [tickhub_announce_cninfo_backup]
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    announcement_szse:
+      primary: tickhub_announce_szse
+      fallback: [tickhub_announce_szse_backup]
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    research_report:
+      primary: tickhub_research_report
+      fallback: [tickhub_research_report_sina]
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    news_eastmoney_stock:
+      primary: tickhub_news_stock
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    news_cctv:
+      primary: tickhub_news_cctv
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    flash_cls:
+      primary: tickhub_flash_cls
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    flash_wallstreetcn:
+      primary: tickhub_flash_wsc
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    flash_eastmoney:
+      primary: tickhub_flash_em
+      fallback: []
+      watermark_field: data_as_of
+      mode: append
+      optional: true
+
+    lockup_calendar:
+      primary: tickhub_lockup_calendar
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      # 逐只必填（lockup_expiry 的 code 是 required）：代码池同 daily_k 的 base_pool。
+      # 每只回 history（最近 15 批）+ upcoming（forward_days 内），两个数组都展开成行，
+      # 行内 `lift_status` 区分来源数组（QUOT-446）。
+      codes: *base_pool
+      optional: true
+
+    earnings_preview:
+      primary: tickhub_earnings_preview
+      fallback: []
+      watermark_field: notice_date
+      mode: replace
+      # 不带 code 的全市场请求被上游 limit=500 截断，正是「生产库 2000 行里 0 行 600000」
+      # 的根因（QUOT-446）。改为逐只代码池：和 daily_k 同一份 base_pool。
+      codes: *base_pool
+      optional: true
+
+    # ---------------- 财报前瞻 / 事件回看（QUOT-446）----------------
+    # 事件类（semi_static）按日更落 Parquet；行内 trade_date 取事件自己的公告日
+    # （notice_date / latest_notice），所以重跑只覆盖当天分区、旧事件不会重复堆积。
+    # 代码池复用 base_pool（约 76 只），研究页按代码本地回放。
+    consensus_forecast:
+      primary: tickhub_consensus_forecast
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    holder_trades:
+      primary: tickhub_holder_trades
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    institution_survey:
+      primary: tickhub_institution_survey
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    share_buyback:
+      primary: tickhub_share_buyback
+      fallback: []
+      watermark_field: trade_date
+      mode: replace
+      codes: *base_pool
+      optional: true
+
+    # 沪深300 日线：事件窗口超额收益的基准。`days=800` 交易日 ≈ 3.3 年，
+    # 覆盖「回看 3 年 × 前 5 后 20 交易日」的窗口需求；append 按 (code, trade_date) 幂等。
+    index_daily:
+      primary: tickhub_index_daily
+      fallback: []
+      watermark_field: trade_date
+      mode: append
+      codes:
+        - "000300"
+
+    # 可选：未安装 Wire 时整段跳过，题材段降级为纯指标叙述
+    #
+    # `topics` 是**赛道池**（QUOT-328）：`wire_get_digest` 的 `topic` 必填、只认 Wire 的
+    # 赛道 slug（`config/topics.yaml` 的 `id`），一次调用只覆盖一个赛道，所以逐个取数。
+    # 中文赛道名（`半导体`）上游直接判「未知赛道」，别往这里写。
+    # `fallback: []` 是**显式声明**「这条链只有主源」，不是漏写：`chain()` 认显式空值，
+    # 不会回填 `sources.yaml` 的 fallback。那里 `wire_timeline` 仍作为同 peer 备源登记着
+    # （DEC-006 合规），但它要的是 `event_id`（单事件下钻），按日摘要没有事件维度，
+    # 挂进链路等于备源永远和主源一起报错——所以挡在链路外、留给按事件调用（DEC-043）。
+    theme_news:
+      primary: wire_digest
+      fallback: []
+      watermark_field: data_as_of
+      mode: replace
+      optional: true
+      topics:
+        - ai
+        - semiconductor
+        - robotics
+        - automotive
+        - energy
+        - biotech
+        - aerospace
+        - cybersecurity
+        - tech
+        - consumer
+        - macro
+        - science
+
+    # 可选：只读拉取 Senate 已有报告，不发起合议
+    council_memo:
+      primary: senate_reports
+      fallback: []
+      watermark_field: data_as_of
+      mode: replace
+      optional: true
+
+  cold_hot:
+    intraday_cache_ttl_sec: 60
+    history_backend: duckdb
+
+  # ---- 上游限流退避（QFSD-7001，QUOT-349 / DEC-048）----
+  # 命中标 `rate_limited` 的返回时，链路内按上游给的 `retry_after_s` 等，等得起才重试。
+  # 预算是**一次取数**共享的（链路里主备工具用同一份），不是每个工具各来一遍：
+  # 盘中高频轮询（QUOT-345 范围 2，30–60s 一轮）不能被一次限流拖住整轮。
+  # 次数用完 / 建议时长超过 `max_wait_sec` → 不再等，照旧走备源 → 本地昨日池回放。
+  rate_limit:
+    max_retries: 2
+    max_wait_sec: 15
+    max_cooldown_sec: 900

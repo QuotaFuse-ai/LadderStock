@@ -4,16 +4,41 @@
 
 ## 1. 目录解析顺序
 
-配置目录与数据目录都不写死在代码里，按下列顺序解析（`src/ladderstock/cli/paths.py`）：
+配置目录与数据目录都不写死在代码里，按下列顺序解析（`src/ladderstock/cli/paths.py`，DEC-071）：
 
 | 优先级 | 配置目录 | 数据目录 |
 |---|---|---|
 | 1 | `LDST_CONFIG_DIR` | `LDST_DATA_DIR` |
 | 2 | 当前工作目录下的 `config/` | 当前工作目录下的 `data/` |
-| 3 | `~/.ladderstock/config` | `~/.ladderstock/data` |
+| 3 | platformdirs `user_data_dir/LadderStock/config` | platformdirs `user_data_dir/LadderStock/data` |
+
+安装态（优先级 3）落点由 [`platformdirs`](https://pypi.org/project/platformdirs/) 决定，
+**不含任何硬编码盘符或 `~/.ladderstock` 常量**：
+
+| 平台 | 落点 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\QuotaFuse\LadderStock\{config,data}` |
+| macOS | `~/Library/Application Support/LadderStock/{config,data}` |
+| Linux | `$XDG_DATA_HOME/LadderStock/{config,data}`（默认 `~/.local/share/LadderStock`） |
 
 `config/` 与 `data/` 进仓库、可提交；`data/` 已在 `.gitignore` 中——里面有本机隐私库
 （`data/journal.sqlite`）与迁移备份，**绝不入库**。
+
+### 1.1 首跑 seed（DEC-071）
+
+安装态干净目录首次 `ldst run` 时，会从**随包模板** `config/`（含 `schema/`）把
+**缺失**的配置文件逐份复制到用户配置目录，已存在的一律**不覆盖**（用户改过的配置
+永远优先，升级不回滚）。`cwd/config` 开发态与 `LDST_CONFIG_DIR` 显式目录都不 seed。
+
+手动补齐（幂等，输出 `seeded` / `skipped`）：
+
+```bash
+ldst config seed --output json
+```
+
+这修的是「文件整体缺失」的配置漂移（如 `sources.yaml` 没落盘、缺 `tickhub_us_index_quote`）；
+若用户已有 `sources.yaml` 但缺某个新增源，seed 不改写它，由 `ldst config validate`
+与边界审计（`config/validate` 的 `boundary:chain` 项）提示补登记。
 
 ## 2. 环境变量
 

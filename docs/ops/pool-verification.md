@@ -93,7 +93,7 @@ WSL `Ubuntu-24.04` 只跑了 Redis（docker-proxy → 宿主机 `127.0.0.1:6379`
 变量名（值不贴）：`LDST_DATA_DIR`、`LDST_CONFIG_DIR`，由 `serve-5950.ps1` 注入；
 另有 `LDST_PEER_DIR_TICKHUB` / `LDST_PEER_DIR_TICKHUB_US` / `LDST_PEER_DIR_WIRE` / `LDST_PEER_DIR_SENATE`、
 `LDST_TICKHUB_MCP_URL` / `LDST_TICKHUB_US_MCP_URL` / `LDST_WIRE_MCP_URL`。解析优先级见
-`src/ladderstock/cli/paths.py`（`LDST_*` > 旧前缀 `VRA_*` / `VIBE_ASTOCK_*` > `cwd/data` > `~/.ladderstock/data`）。
+`src/ladderstock/cli/paths.py`（`LDST_*` > 旧前缀 `VRA_*` / `VIBE_ASTOCK_*` > `cwd/data` > platformdirs 用户数据目录 `data/`，DEC-071）。
 
 ⚠️ **不要按 cwd 推断数据目录**——5950 当前进程从 `D:\workplace\LadderStock` 启动，却读中心库。
 用 API 自证，这是唯一可信的口径来源：

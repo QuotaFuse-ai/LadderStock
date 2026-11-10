@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sync.yaml",
+  "description": "数据集增量同步：只引用 sources.yaml 的 source id，主备必须同 peer（文档 §6.2 + §9）。",
+  "type": "object",
+  "required": ["sync"],
+  "additionalProperties": false,
+  "properties": {
+    "sync": {
+      "type": "object",
+      "required": ["datasets"],
+      "additionalProperties": false,
+      "properties": {
+        "datasets": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["primary", "watermark_field", "mode"],
+            "additionalProperties": false,
+            "properties": {
+              "primary": { "type": "string" },
+              "fallback": { "type": "array", "items": { "type": "string" }, "default": [] },
+              "optional": { "type": "boolean", "default": false },
+              "watermark_field": { "type": "string" },
+              "mode": { "enum": ["append", "replace"] },
+              "codes_from": {
+                "type": "string",
+                "description": "代码池取自另一个数据集的**当日归档**（QUOT-362 逐只归属：concept_membership 跟着当日涨停池走，不扩全市场）。优先级 --codes > codes > 本键 > 本机自选；本键非空时不回落自选表。引用的数据集必须登记在 core/boundary.py，且同步顺序上排在它之后（同一轮里才读得到今天的池子）。",
+                "default": ""
+              },
+              "codes": {
+                "type": "array",
+                "description": "代码池（QUOT-233）：tencent_kline / stock_fund_flow / dragon_tiger_seats 的 code 必填，逐只取数。优先级：--codes > 本键 > 本机自选表。为空则该数据集判 failed 且不发起调用。",
+                "items": { "type": "string", "pattern": "^[0-9A-Za-z.]{1,12}$" },
+                "maxItems": 100,
+                "default": []
+              },
+              "topics": {
+                "type": "array",
+                "description": "赛道池（QUOT-328）：Wire 的 wire_get_digest 的 topic 必填且只认赛道 slug（semiconductor，不是「半导体」），逐赛道取数。为空则该数据集判 skipped（optional 时）且不发起调用。",
+                "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{1,31}$" },
+                "maxItems": 100,
+                "default": []
+              }
+            }
+          }
+        },
+        "cold_hot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "intraday_cache_ttl_sec": { "type": "number", "minimum": 0 },
+            "history_backend": { "enum": ["duckdb", "parquet"] }
+          }
+        },
+        "rate_limit": {
+          "type": "object",
+          "description": "上游限流（QFSD-7001）退避口径（QUOT-349 / DEC-048）：命中标 rate_limited 的返回时，链路内按上游给的 retry_after_s 等，等得起才重试。预算由一次取数共享（链路里主备工具用同一份），不是每个工具各来一遍。上限是硬闸：定时任务不能因为一次限流被拖住整轮。",
+          "additionalProperties": false,
+          "properties": {
+            "max_retries": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5,
+              "default": 2,
+              "description": "一次取数内因限流退避重试的次数上限。超过 5 没有意义：建议时长本来就 capped 在 max_wait_sec。"
+            },
+            "max_wait_sec": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 60,
+              "default": 15,
+              "description": "单次愿意等待的上限。上游建议超过它 = 「等不起」，不重试，直接按失败降级（切备源 / 回放本地昨日池），并按建议时长设冷却。"
+            },
+            "max_cooldown_sec": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 3600,
+              "default": 900,
+              "description": "按 retry_after_s 设冷却的封顶值，防止一个异常大的建议时长把某个数据集冻死一整天。"
+            }
+          }
+        }
+      }
+    }
+  }
+}

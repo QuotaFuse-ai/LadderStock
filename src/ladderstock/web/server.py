@@ -1660,12 +1660,13 @@ def create_app(
     # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
     app.include_router(build_calc_router())
 
-    # -------------------------------------------- 回测运行卡面（QUOT-500）
+    # -------------------------------------------- 回测运行卡面（QUOT-500 / QUOT-535）
     #
-    # `/api/backtest/runs` + `latest` + `runs/{run_id}` + `runs/{run_id}/export.{json,md,html}`：
-    # **只读**本机已落盘的运行卡产物，页面不重算指标（实现见 `web/backtest.py`）。
-    # 写面只有本机 CLI `ldst backtest run`，这里不开放 POST。闸门同计算面（回环 + Host）。
-    app.include_router(build_backtest_router())
+    # 只读：`/runs` + `latest` + `runs/{run_id}` + `runs/{run_id}/export.{json,md,html}`
+    # 只读本机已落盘的运行卡产物，页面不重算指标（实现见 `web/backtest.py`）。
+    # 触发面（QUOT-535）：`GET /strategies` + `POST /run`（异步）+ `GET /jobs/{job_id}`；
+    # 写请求走与本机 CLI 相同的 `run_backtest`，闸门同现有写面（回环 + Host + 来源证据）。
+    app.include_router(build_backtest_router(root))
 
     # -------------------------------------------- 标的档案面（QUOT-488）
     #

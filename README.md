@@ -231,7 +231,7 @@ ladderstock/
 | CLI | `ldst` | 注册长别名 `ladderstock` |
 | 启动方式 | `ldst run` | 旧启动脚本委托新版并打印提示 |
 | 端口 | 5950（看板）/ 5951（MCP http）/ 5952（看门狗） | 被占用直接报错不换端口；旧 5940 / 8770 仅打印迁移提示 |
-| 配置与环境变量 | `~/.ladderstock/`、`LDST_*` | 首次启动只读迁移，兼容读取旧前缀 |
+| 配置与环境变量 | platformdirs 用户数据目录（Win `%LOCALAPPDATA%\QuotaFuse\LadderStock`、mac `~/Library/Application Support/LadderStock`、Linux `$XDG_DATA_HOME/LadderStock`）、`LDST_*` | 首跑从随包模板 seed 缺失配置（不覆盖已有）；首次启动只读迁移旧目录，兼容读取旧前缀 |
 
 ## 开发
 
