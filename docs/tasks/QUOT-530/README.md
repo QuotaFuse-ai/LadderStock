@@ -2,7 +2,7 @@
 
 - 日期：2026-11-10
 - 分支：`agent/agent/335291a61b69`
-- 决策：`docs/decisions/DEC-071-skills-index-pagination.md`
+- 决策：`docs/decisions/DEC-073-skills-index-pagination.md`
 - 规范：`docs/UI-SPEC.md` v1.21 §6.1 C-23、§9（状态不只靠颜色）
 
 ## 1. 交付内容

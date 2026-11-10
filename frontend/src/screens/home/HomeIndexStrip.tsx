@@ -2,6 +2,7 @@ import { formatTime, MISSING, formatAmount, formatChangePct } from '../../lib/fo
 import { quoteSourceLabel, indexMarketLabel, type IndicesPayload, type IndexCell } from '../../api/radar'
 import {
   Button,
+  CardRefreshButton,
   EmptyState,
   ErrorBlock,
   FreshnessBadge,
@@ -125,6 +126,13 @@ export function HomeIndexStrip({ view, session, pollSeconds, pollTicks = 0, poll
           )}
           {quoteTime && <span className="ldst-num text-text-muted">{formatTime(quoteTime)}</span>}
         </span>
+      }
+      actions={
+        <CardRefreshButton
+          label="刷新大盘与全球指数"
+          onClick={view.onRefresh}
+          loading={view.refreshing}
+        />
       }
       bodyClassName="p-3"
     >

@@ -94,6 +94,14 @@ export interface BlockView<T> {
   /** 端点 404：`empty` 状态下用来区分「接口未接入」与「本日无数据」。 */
   endpointMissing: boolean
   onRetry: () => void
+  /**
+   * 卡头 ⟳ 的手动重取（QUOT-521）：有数据时静默替换（不闪骨架、失败保留上一帧），
+   * 无数据（错误 / 空 / 离线）时走整块加载，错误态仍有出口。
+   * 不受交易时段门控——休市也能补一拍。
+   */
+  onRefresh: () => void
+  /** 本块取数在途（首屏加载或静默重取）；卡头 ⟳ 据此转圈并禁用。 */
+  refreshing: boolean
 }
 
 function asBlock<T>(
@@ -101,7 +109,19 @@ function asBlock<T>(
   isEmpty: (data: T) => boolean,
   isPartial?: (data: T) => boolean,
 ): BlockView<T> {
-  const base = { onRetry: request.reload, data: request.data, error: request.error }
+  const refresh = () => {
+    // `refresh` 在无数据时会把状态停在 loading（成功才落 ready），错误态就没有出口；
+    // 因此「无数据」这一支走 `reload`（load 模式会把失败写回 error）。
+    if (request.data !== null) void request.refresh({ manual: true })
+    else request.reload()
+  }
+  const base = {
+    onRetry: request.reload,
+    onRefresh: refresh,
+    refreshing: request.refreshing || request.status === 'loading',
+    data: request.data,
+    error: request.error,
+  }
 
   if (request.status === 'loading') {
     return { ...base, state: 'loading', offline: false, endpointMissing: false }

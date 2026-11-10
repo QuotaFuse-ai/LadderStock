@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { quoteSourceLabel, type PositionItem, type PositionsPayload } from '../../api/radar'
 import {
   Button,
+  CardRefreshButton,
   DataTable,
   EmptyState,
   ErrorBlock,
@@ -186,9 +187,16 @@ export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> 
         )
       }
       actions={
-        <Button variant="ghost" onClick={() => navigate('/positions')}>
-          看明细 →
-        </Button>
+        <>
+          <Button variant="ghost" onClick={() => navigate('/positions')}>
+            看明细 →
+          </Button>
+          <CardRefreshButton
+            label="刷新我的持仓"
+            onClick={view.onRefresh}
+            loading={view.refreshing}
+          />
+        </>
       }
       bodyClassName="p-0"
     >
