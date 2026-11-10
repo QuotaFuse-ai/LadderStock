@@ -185,6 +185,12 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("supervisor", "status"), {0}),
     # 体检
     (("doctor",), {0, 3}),
+    # QUOT-500 回测（M1，不计入 31 条基线，见 docs/CLI.md §M）：矩阵跑在临时数据目录，
+    # 那里没有本机历史库 → `run` 按 4 退出（数据源不可用）；空目录下 `list` 也是 0；
+    # `show` 的 run_id 不存在 → 6。
+    (("backtest", "run", "--strategy", "ma_cross", "--symbol", "600000"), {4}),
+    (("backtest", "list"), {0}),
+    (("backtest", "show", "bt_00000000"), {6}),
 )
 
 
@@ -202,13 +208,18 @@ COMMAND_MATRIX: tuple[Any, ...] = (
 # **42 个叶子路径**。QUOT-380（自选清单 `watch add|rm|list`）再加 3 条 →
 # **45 个叶子路径**。QUOT-487（助手记忆清空 `ai memory-clear`）再加 1 条 →
 # **46 个叶子路径**。QUOT-523（单入口 supervisor `start|stop|restart|status`）
-# 再加 4 条 → **50 个叶子路径**。它们都是**增量命令**，
+# 再加 4 条；QUOT-522（页面自启的 `__watch-guard` 长驻入口）再加 1 条。它们都是**增量命令**，
 # 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴ / §A′）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
     # QUOT-443 / DEC-063：独立看门狗（5952）。长驻进程，与 `run` 同口径不进 COMMAND_MATRIX；
     # 端口占用 / 回环 / Origin 契约由 tests/unit/cli/test_watchdog.py 覆盖。
     ("watchdog",),
+    # QUOT-522：看板打开时拉起的内部 watch 扫描守护（`ldst run` startup 自启）。
+    # 长驻进程、无结构化 stdout，与 `run` / `watchdog` 同口径不进 COMMAND_MATRIX /
+    # JSON_PATHS；进程生命周期由 tests/unit/supervisor/test_page_boot.py 与
+    # tests/ops/test_lifecycle_page_boot.py 覆盖。
+    ("__watch-guard",),
     # QUOT-523 单入口 supervisor：四个子命令都实现了 `--output`，逐条登记。
     # 只读 / 预演形态进 COMMAND_MATRIX；`start` / `restart` 会真起进程，不进矩阵
     # （开环形态由 tests/unit/cli/test_supervisor.py 用假引擎覆盖）。
@@ -271,6 +282,10 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("schedule", "list"),
     ("schedule", "run"),
     ("doctor",),
+    # QUOT-500 回测（M1，不计入 31 条基线，见 docs/CLI.md §M）
+    ("backtest", "run"),
+    ("backtest", "list"),
+    ("backtest", "show"),
 )
 
 def _with_output_json(entry: Any) -> Any:

@@ -45,10 +45,12 @@
 > `ldst watchdog`（独立看门狗，端口 `5952`，见 §J 与 `DEC-063-platform-watchdog-and-health`）。
 > **QUOT-523 增量（2026-11-10）**：基线 31 条口径**不变**，新增命令组
 > `ldst supervisor start|stop|restart|status`（单入口启停，见 §L）。
+> **QUOT-522 增量（2026-11-10）**：基线 31 条口径**不变**，`__watch-guard` 是页面自启的内部
+> 长驻入口（`ldst run` startup 拉起，不是用户命令；`hidden=True`），只登记叶子契约、不进矩阵。
 > **QUOT-524 增量（2026-11-10）**：基线 31 条口径**不变**，新增 `ldst config seed`
 > （从随包模板补齐配置，见 §C 的 `+1` 行与 `DEC-071-platformdirs-config-seed`）。
-> **以代码为准的当前计数**：`LEAF_PATHS` **54** 个叶子、`COMMAND_MATRIX` **49** 条可执行 argv
-> （54 − 6 个不进矩阵的叶子 `run` / `watchdog` / `mcp stdio` / `mcp http` /
+> **以代码为准的当前计数**：`LEAF_PATHS` **58** 个叶子、`COMMAND_MATRIX` **52** 条可执行 argv
+> （58 − 7 个不进矩阵的叶子 `run` / `watchdog` / `__watch-guard` / `mcp stdio` / `mcp http` /
 > `supervisor start` / `supervisor restart`，+ `sync` 的两种形态各跑一次；
 > 复核入口 `tests/unit/test_cli_output_option.py::test_registered_leaves_match_baseline`）。
 >
@@ -77,6 +79,7 @@
 | **R5 增量（2，非 P0 基线）** | `industry list`、`industry show` |
 | **R11 增量（1，非 P0 基线）** | `weekly` |
 | **QUOT-443 增量（1，非 P0 基线）** | `watchdog` |
+| **QUOT-500 增量（3，非 P0 基线）** | `backtest run`、`backtest list`、`backtest show` |
 | **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
 
 ## A. 启动、复盘与核心指标（9）
@@ -310,7 +313,7 @@ ldst position list --output json                         # realized.total_pnl（
 > 口径来源：`docs/decisions/DEC-063-platform-watchdog-and-health.md`。
 > 这 1 条**不属于** 31 条 P0 基线；与 `run` 一样是长驻进程，**不进** argv 矩阵，
 > 但叶子路径 `("watchdog",)` 必须登记在 `tests/fixtures/command_matrix.py`
-> （当前 `LEAF_PATHS` 共 **49** 个、矩阵 **46** 条）。
+> （当前 `LEAF_PATHS` 共 **58** 个、矩阵 **52** 条）。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
@@ -338,7 +341,7 @@ ldst position list --output json                         # realized.total_pnl（
 > 口径来源：issue QUOT-523「单 supervisor 单入口接线生产」与 `docs/supervisor/single-entry.md`。
 > 这 4 条**不属于** 31 条 P0 基线；叶子路径
 > `("supervisor", "start" | "stop" | "restart" | "status")` 已登记
-> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **54** 个）。
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **58** 个）。
 > 只动**账本能证明是本入口拉起**的进程，外部进程一律不碰（DEC-014）。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
@@ -352,13 +355,36 @@ ldst position list --output json                         # realized.total_pnl（
 
 > 口径来源：issue QUOT-487「助手通道接入 Mem0 记忆：召回/写入策略 + 注入边界」。
 > 这 1 条**不属于** 31 条 P0 基线；叶子路径 `("ai", "memory-clear")` 已登记
-> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **49** 个）。
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **58** 个）。
 > 读/写发生在 web 助手端点（`/api/research/assistant`、`/api/skills/assistant`），
 > CLI 只提供清空入口——记忆的写入与召回策略见 `src/ladderstock/ai/memory.py` 模块 docstring。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
 | 50 | `ldst ai memory-clear` | 一键清空助手记忆：只删 `LDST_MEMORY_USER_ID` + `ladderstock-assistant` 名下（mem0 侧 `DELETE /memories?user_id&agent_id`，QUOT-486 实例实测路由）的全部对话记忆，清空动作写日志（`memory_cleared`） | `--yes`（跳过确认）、`--output` | 成功 0 + 结构化载荷 `{cleared, endpoint, user_id, agent_id, removed}`；通道未启用（`LDST_MEMORY_BASE_URL` 为空或被禁用）→ **3**（无事可做，不假装清了）；mem0 不可达 → **9**（未执行清空）。**绝不越命名空间**：不碰其他 user_id / agent_id 的记忆，也绝不连 9000 端口（Multica 的 mem0 后端）
+
+## M. 回测（QUOT-500 增量，3）
+
+> 口径来源：issue QUOT-500「回测 M1：A 股日频策略回测最小闭环」，规格先看
+> `docs/specs/SPEC-BACKTEST.md`。这 3 条**不属于** 31 条 P0 基线；
+> 叶子路径 `("backtest", "run"|"list"|"show")` 登记在
+> `tests/fixtures/command_matrix.py`。只读本机历史库 `daily_k`，运行卡落
+> `<data_dir>/backtests/<run_id>/<run_id>.{json,md,html}`。
+> 默认成本 / 阈值写在 `config/backtest.yaml`（`config/schema/backtest.schema.json` 管形状），
+> 代码里不散落默认值；CLI 旗标只做覆盖，运行卡记录「本次实际生效值」+ 每项来源（`yaml` / `cli` / `fallback`）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 51 | `ldst backtest run` | 跑一次回测并落盘运行卡（JSON / Markdown / HTML）：撮合信号 t 收盘 → t+1 开盘 ± 滑点成交、佣金双边、印花税卖出单边、T+1 / 涨停买不进 / 跌停卖不出 / 停牌跳过 | `--strategy ma_cross\|momentum\|breakout`、`--symbol`、`--from` / `--to`、`--commission` / `--slippage` / `--stamp-duty`、`--min-trades`、`--in-sample-ratio`、`--cost-tiers`、`--initial-cash`、`--config`、策略参数 `--short-window` / `--long-window` / `--lookback` / `--threshold`、`--output` | 校验门通过 **0**；校验门未通过 **8**（运行卡与页面标红，仍写出产物）；参数 / 配置非法 **2**；本机无历史库或库不可用 **4** |
+| 52 | `ldst backtest list` | 列出本机已落盘的运行卡摘要（`run_id` / 策略 / 区间 / 校验门结论，新的在前，只读目录不重算） | `--limit 20`、`--output` | 始终 **0**（空目录也出结构化空列表） |
+| 53 | `ldst backtest show <run_id>` | 按 `run_id` 回读已落盘运行卡摘要（不重算指标） | `run_id`（`bt_[0-9a-f]{8}`）、`--output` | 存在 **0**；`run_id` 不合法 **2**；运行卡不存在 **6** |
+
+**契约**：
+
+- `run_id = "bt_" + sha256(canonical_params(参数) + "\x1f" + 数据指纹)[:8]`；同参数 + 同数据指纹 → 同 `run_id`、同运行卡（仅 `generated_at` 不同），重跑覆盖同一组产物。
+- 每项指标调用 calc 层算，`metrics_calc_ids` 逐指标记 `calc_id`（11 项），另有 `calc_ids.run_card / data / gate / benchmark`。
+- 校验门三项：最小完整交易次数、样本外收益 > 0（按时间顺序切分）、三档成本敏感性（只替换佣金率重跑）。任一项失败 → `gate.passed=false`，Markdown / HTML 置顶中文红标。
+- HTTP 只读端点（`ldst run` 托管，前缀 `/api/backtest`）：`GET /runs?limit=`、`GET /latest`、`GET /runs/{run_id}`、`GET /runs/{run_id}/export.{json,md,html}`；全部 GET，写面只有本机 CLI。非回环或 `Host` 不在白名单 → **403**，`run_id` 非法 → **400**，不存在 → **404**，产物损坏 → **500**。前端只读产物，不重算指标。
 
 ## F. 全局约定
 

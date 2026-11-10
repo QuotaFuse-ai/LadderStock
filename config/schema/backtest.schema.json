@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "backtest.yaml",
+  "type": "object",
+  "required": ["costs", "gate"],
+  "additionalProperties": false,
+  "properties": {
+    "costs": {
+      "type": "object",
+      "required": ["commission", "slippage", "stamp_duty", "tiers"],
+      "additionalProperties": false,
+      "properties": {
+        "commission": { "type": "number", "exclusiveMinimum": 0 },
+        "slippage": { "type": "number", "exclusiveMinimum": 0 },
+        "stamp_duty": { "type": "number", "exclusiveMinimum": 0 },
+        "tiers": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["min_trades", "in_sample_ratio"],
+      "additionalProperties": false,
+      "properties": {
+        "min_trades": { "type": "integer", "minimum": 1 },
+        "in_sample_ratio": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+      }
+    }
+  }
+}

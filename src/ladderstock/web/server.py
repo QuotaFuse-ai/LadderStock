@@ -66,6 +66,7 @@ from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRE
 from ladderstock.web.assistant import build_page_router
 from ladderstock.web.assistant import build_router as build_assistant_router
 from ladderstock.web.assistant import build_skills_router as build_skills_router
+from ladderstock.web.backtest import build_router as build_backtest_router
 from ladderstock.web.calc import build_router as build_calc_router
 from ladderstock.web.control import (
     ControlPlane,
@@ -89,9 +90,11 @@ from ladderstock.web.research import build_router as build_research_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
 from ladderstock.web.supervisor_api import (
+    build_page_boot,
     build_process_engine,
     build_selfheal_engine,
     build_supervisor_engines,
+    mount_page_boot,
     own_processes,
 )
 from ladderstock.web.supervisor_api import mount_supervisor as mount_supervisor_router
@@ -996,13 +999,14 @@ def create_app(
     radar_plane: Any | None = None,
     symbols_plane: Any | None = None,
     supervisor_engine: Any | None = None,
+    page_boot: Any | None = None,
     knowledge_plane: Any | None = None,
     supervisor_processes: Any | None = None,
     own_processes_on_lifecycle: bool | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
     / `industry_plane` / `radar_plane` / `symbols_plane` / `knowledge_plane` /
-    `supervisor_engine` / `supervisor_processes` 可注入，便于测试。
+    `supervisor_engine` / `supervisor_processes` / `page_boot` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -1656,6 +1660,13 @@ def create_app(
     # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
     app.include_router(build_calc_router())
 
+    # -------------------------------------------- 回测运行卡面（QUOT-500）
+    #
+    # `/api/backtest/runs` + `latest` + `runs/{run_id}` + `runs/{run_id}/export.{json,md,html}`：
+    # **只读**本机已落盘的运行卡产物，页面不重算指标（实现见 `web/backtest.py`）。
+    # 写面只有本机 CLI `ldst backtest run`，这里不开放 POST。闸门同计算面（回环 + Host）。
+    app.include_router(build_backtest_router())
+
     # -------------------------------------------- 标的档案面（QUOT-488）
     #
     # `/api/knowledge/{market}/{symbol}` 一个只读接口：标的档案（as_of / 状态 /
@@ -1710,6 +1721,14 @@ def create_app(
             own_processes() if own_processes_on_lifecycle is None else own_processes_on_lifecycle
         ),
     )
+
+    # --------------------------------------- 页面自启（QUOT-522：打开网页即自启自有子进程）
+    #
+    # startup 钩子 = 「用户打开首页」：watch 扫描守护 + 取数调度器按需拉起（幂等），
+    # peer 只认领记账（adopt-only，绝不自动重启 / 终止）；账本沿用上面同一份
+    # ledger.json。`LDST_PAGE_AUTOSTART=0` 关闭自有子进程；测试注入 `page_boot` 假件。
+    boot = page_boot if page_boot is not None else build_page_boot(root)
+    mount_page_boot(app, boot)
 
     # ------------------------------------------------------------ 静态看板
 
