@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -83,8 +84,18 @@ def collect_datas(repo_root: str | Path) -> list[tuple[str, str]]:
 
 
 def assert_relative_destinations(datas: Iterable[tuple[str, str]]) -> None:
-    """目标目录必须是相对路径：绝对路径会把产物绑定到构建机。"""
+    """目标目录必须是相对路径：绝对路径会把产物绑定到构建机。
+
+    POSIX 上的 `Path("C:\\\\x")` 既不是 absolute 也没有 drive，所以要单独按
+    盘符前缀判断，保证清单在 Windows 构建机之外也能被单测守住。
+    """
     for _src, dest in datas:
         path = Path(dest)
-        if path.is_absolute() or path.drive or dest.startswith(("/", "\\")):
+        windows_drive = bool(re.match(r"^[A-Za-z]:", dest))
+        if (
+            path.is_absolute()
+            or path.drive
+            or windows_drive
+            or dest.startswith(("/", "\\"))
+        ):
             raise ValueError(f"随包目标必须是相对路径，实际为 {dest!r}")

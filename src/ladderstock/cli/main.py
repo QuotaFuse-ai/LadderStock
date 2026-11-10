@@ -465,8 +465,10 @@ def watch_guard(tick: float = 30.0, output: OutputOption = None) -> None:
 def desktop_entry(
     port: Annotated[int, typer.Option(help="看板端口")] = DEFAULT_PORT,
     host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = "127.0.0.1",
+    output: OutputOption = None,
 ) -> None:
     """PyInstaller / py2app 双击启动：等价 `ldst run` + 打开浏览器。"""
+    del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
     warn_legacy_port(port)
     if not _port_free(port):
         error(f"端口 {port} 已被占用；请用 --port 指定其他端口（不会自动换端口，见 DEC-004）")
@@ -491,8 +493,10 @@ def proxypool_forwarder(
     upstream_host: Annotated[str, typer.Option("--upstream-host", help="上游主机")],
     upstream_port: Annotated[int, typer.Option("--upstream-port", help="上游端口")],
     listen_host: Annotated[str, typer.Option("--listen-host", help="监听地址")] = "127.0.0.1",
+    output: OutputOption = None,
 ) -> None:
     """冻结态没有可执行的 `.py`，转发器改由自身 exe 的隐藏子命令承载。"""
+    del output  # 长驻转发进程没有结构化输出；保留参数是为了全局 --output 契约
     from ladderstock.supervisor.proxypool_forwarder import main as forward_main
 
     raise SystemExit(

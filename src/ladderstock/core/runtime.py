@@ -108,12 +108,14 @@ def project_root() -> Path:
 
 
 def source_root() -> Path:
-    """源码扫描根（`core.boundary.scan_no_collection` 用）。
+    """源码扫描根（`repo_root()` 用）：源码态是 `<repo>/src`，冻结态是 bundle 根。
 
     冻结态没有 `.py` 源码，返回 bundle 根即可让扫描自然得到空结果，
     而不是去扫安装盘上的无关目录。
     """
-    return bundle_root()
+    if is_frozen():
+        return bundle_root()
+    return Path(__file__).resolve().parents[2]
 
 
 def package_dir() -> Path:

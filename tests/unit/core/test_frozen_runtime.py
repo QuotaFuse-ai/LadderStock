@@ -47,6 +47,8 @@ def test_source_tree_roots_are_repo_relative() -> None:
     assert runtime.app_dir() == repo
     assert runtime.project_root() == repo
     assert runtime.install_root() == repo.parent
+    # 边界扫描的根是 `src/`，不是仓库根（否则会扫到 scripts/ 里的夹具字符串）
+    assert runtime.source_root() == repo / "src"
     assert runtime.package_dir() == repo / "src" / "ladderstock"
     assert runtime.frontend_dist_dir() == repo / "frontend" / "dist"
     assert runtime.web_static_dir() == repo / "src" / "ladderstock" / "web" / "static"
