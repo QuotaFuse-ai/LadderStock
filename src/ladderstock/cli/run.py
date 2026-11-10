@@ -12,6 +12,9 @@ import errno
 import signal
 import socket
 import sys
+import threading
+import time
+import webbrowser
 
 import typer
 
@@ -79,8 +82,30 @@ def _log(message: str) -> None:
     sys.stderr.flush()
 
 
-def launch(*, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
-    """阻塞运行看板，直到 Ctrl+C。"""
+def _open_when_ready(host: str, port: int, *, timeout: float = 30.0) -> None:
+    """端口一就绪就打开默认浏览器（打包双击入口用）。
+
+    只做「打开」这一件事，失败（无默认浏览器 / 无图形会话）静默——服务本身
+    仍然可用，用户也可以手动访问 URL。
+    """
+    target = host if host in LOOPBACK_HOSTS else "127.0.0.1"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            if sock.connect_ex((target, port)) == 0:
+                try:
+                    webbrowser.open(f"http://{target}:{port}/")
+                except Exception:  # noqa: BLE001 - 打开浏览器失败不影响看板
+                    pass
+                return
+        time.sleep(0.2)
+
+
+def launch(
+    *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, open_browser: bool = False
+) -> None:
+    """阻塞运行看板，直到 Ctrl+C。`open_browser` 仅打包双击入口会置真。"""
     # 绑定策略先于端口检查：策略拒绝是配置问题，不能报成「端口无法监听」，
     # 也不能先打「看板已启动」再失败（QUOT-112）。判据仍只有 core/listener.py 一份。
     from ladderstock.web.server import require_binding_policy
@@ -129,6 +154,13 @@ def launch(*, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
         error(str(exc))
         raise typer.Exit(EXIT_CONFIG) from None
     _log(f"看板已启动 http://{host}:{port}（只读 API + 静态页面；Ctrl+C 退出）")
+    if open_browser:
+        threading.Thread(
+            target=_open_when_ready,
+            args=(host, port),
+            name="ldst-open-browser",
+            daemon=True,
+        ).start()
     previous_break = _install_break_handler()
     try:
         serve(app, host=host, port=port)

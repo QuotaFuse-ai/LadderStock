@@ -76,5 +76,11 @@ docs/tasks/QUOT-472/shots-1280/
 !docs/tasks/QUOT-531/
 !docs/tasks/QUOT-531/README.md
 docs/tasks/QUOT-531/shots/
+# 打包交付报告与冒烟证据随 PR 交付（QUOT-525）
+!docs/tasks/QUOT-525/
+!docs/tasks/QUOT-525/README.md
+!docs/tasks/QUOT-525/evidence/
+!docs/tasks/QUOT-525/evidence/*.json
+!docs/tasks/QUOT-525/evidence/*.log
 *.docx
 ~$*

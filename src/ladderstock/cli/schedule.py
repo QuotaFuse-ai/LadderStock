@@ -35,7 +35,7 @@ from typing import Annotated, Any, NoReturn
 import typer
 
 from ladderstock.cli.output import OutputOption, emit, error
-from ladderstock.cli.paths import config_dir, project_root
+from ladderstock.cli.paths import bundle_config_dir, config_dir
 from ladderstock.errors import (
     EXIT_CONFIG,
     EXIT_OK,
@@ -204,15 +204,16 @@ def schedule_config_path() -> Path:
 
 
 def _schema_path() -> Path:
-    """调度表的 schema：配置目录优先，否则退回仓库自带的 `config/schema/`。
+    """调度表的 schema：配置目录优先，否则退回随包模板的 `config/schema/`。
 
     自定义 `LDST_CONFIG_DIR` 往往只有一份 schedule.yaml；此时若找不到 schema 就
-    退化成"什么都能过"，等于没有校验。所以宁可读仓库里那份，也别静默放宽。
+    退化成"什么都能过"，等于没有校验。所以宁可读随包那份，也别静默放宽
+    （打包后没有工程根，必须走 `bundle_config_dir()`，QUOT-525）。
     """
     local = config_dir() / "schema" / "schedule.schema.json"
     if local.is_file():
         return local
-    return project_root() / "config" / "schema" / "schedule.schema.json"
+    return bundle_config_dir() / "schema" / "schedule.schema.json"
 
 
 def _digest_summaries() -> tuple[str, ...]:

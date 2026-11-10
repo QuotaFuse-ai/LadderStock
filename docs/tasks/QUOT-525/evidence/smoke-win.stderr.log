@@ -1,0 +1,11 @@
+ldst: 看板已启动 http://127.0.0.1:5965（只读 API + 静态页面；Ctrl+C 退出）
+ldst: INFO Started server process [31644]
+ldst: INFO Waiting for application startup.
+peer 认领 proxyfleet 失败（已吞）
+Traceback (most recent call last):
+  File "ladderstock\supervisor\page_boot.py", line 364, in ensure
+  File "ladderstock\supervisor\page_boot.py", line 545, in _adopt_peer
+  File "ladderstock\supervisor\page_boot.py", line 580, in _identify
+TypeError: ProxyFleetAdapter.identify() takes 1 positional argument but 2 were given
+ldst: INFO Application startup complete.
+ldst: INFO Uvicorn running on http://127.0.0.1:5965 (Press CTRL+C to quit)

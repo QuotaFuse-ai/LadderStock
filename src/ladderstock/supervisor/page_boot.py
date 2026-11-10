@@ -34,6 +34,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ladderstock.core import runtime
 from ladderstock.supervisor.ledger import HEALTH_OK, Ledger, ModuleRecord, now_iso
 from ladderstock.supervisor.module_adapters import (
     HostPivot,
@@ -375,7 +376,13 @@ class PageBoot:
     # ------------------------------------------------------------------ 命令
 
     def _self_exe_command(self) -> tuple[str, ...]:
-        """自有子进程的入口：优先本仓库 console-script，否则 `python -m`。"""
+        """自有子进程的入口：冻结态用自身 exe，源码态优先 console-script。
+
+        打包后的 exe 本身就是 CLI，再补 `-m ladderstock.cli.main` 会变成未知参数；
+        子命令（`__watch-guard` / `schedule run`）直接接在 exe 后面（QUOT-525）。
+        """
+        if runtime.is_frozen():
+            return (str(runtime.executable()),)
         exe = "ldst.exe" if os.name == "nt" else "ldst"
         console = Path(sys.executable).with_name(exe)
         if console.is_file():
@@ -461,11 +468,16 @@ class PageBoot:
         env = dict(self.env)
         env[TICK_ENV] = f"{self.tick_sec:g}"
         env["PYTHONUNBUFFERED"] = "1"
-        # 入口退化成 `python -m` 时，子进程要能找到本仓库（src 布局 / 未安装）
-        src = Path(__file__).resolve().parents[3] / "src"
-        if src.is_dir():
-            paths = [str(src), *[item for item in env.get("PYTHONPATH", "").split(os.pathsep)]]
-            env["PYTHONPATH"] = os.pathsep.join(item for item in paths if item)
+        # 入口退化成 `python -m` 时，子进程要能找到本仓库（src 布局 / 未安装）；
+        # 冻结态没有源码树，子进程就是同一个 exe，不需要 PYTHONPATH。
+        if not runtime.is_frozen():
+            src = Path(__file__).resolve().parents[3] / "src"
+            if src.is_dir():
+                paths = [
+                    str(src),
+                    *[item for item in env.get("PYTHONPATH", "").split(os.pathsep)],
+                ]
+                env["PYTHONPATH"] = os.pathsep.join(item for item in paths if item)
         return env
 
     # ----------------------------------------------------------- 自有：调度器

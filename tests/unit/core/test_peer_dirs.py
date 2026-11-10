@@ -6,7 +6,7 @@ from ladderstock.core.boundary import PEER_CONTROL, resolve_peer_control
 
 def test_env_override_wins(monkeypatch, tmp_path) -> None:
     # 环境变量优先于同级目录探测，且只认固定键
-    monkeypatch.setattr(boundary, "_REPO_ROOT", tmp_path / "LadderStock")
+    monkeypatch.setattr(boundary, "_install_root", lambda: tmp_path)
     (tmp_path / "LadderStock").mkdir()
     (tmp_path / "TickHub-CN").mkdir()
 
@@ -16,7 +16,7 @@ def test_env_override_wins(monkeypatch, tmp_path) -> None:
 
 
 def test_sibling_directory_discovered(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(boundary, "_REPO_ROOT", tmp_path / "LadderStock")
+    monkeypatch.setattr(boundary, "_install_root", lambda: tmp_path)
     (tmp_path / "LadderStock").mkdir()
     (tmp_path / "TickHub-CN").mkdir()
     # Wire 实际嵌套一层：D:\workplace\Wire\quotafuse-wire
@@ -29,7 +29,7 @@ def test_sibling_directory_discovered(monkeypatch, tmp_path) -> None:
 
 
 def test_missing_directory_keeps_placeholder(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(boundary, "_REPO_ROOT", tmp_path / "LadderStock")
+    monkeypatch.setattr(boundary, "_install_root", lambda: tmp_path)
     (tmp_path / "LadderStock").mkdir()
 
     resolved = resolve_peer_control({"LDST_PEER_DIR_SENATE": "   "})
