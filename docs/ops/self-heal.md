@@ -14,7 +14,8 @@
 
 ## 2. 崩溃识别：只有「非主动退出」才是崩溃（D4）
 
-账本条目带 `stopping_by_user` 标记（`Ledger.mark_stop_intent`）：
+账本条目带 `stopping_by_user` 标记：`SupervisorEngine.stop_module / stop_all`
+在停下前写入（`Ledger.mark_stop_intent` 的等价字段），显式 `start` 清除。
 
 - 主动停（面板「停止」/ 关机钩子）先落标记 → 巡检看到标记，**绝不重拉**，健康置 `stopped`；
 - 没有标记的进程消失 = 崩溃 → 进入退避重拉。
@@ -31,17 +32,23 @@
 
 「发起 ≠ 恢复」：重拉成功只置 `restarting`，下一轮巡检确认新 pid 存活才回 `ok`；等待期间进程自己恢复了（如外部拉起）则不重复拉起，防双实例。
 
-## 4. 重拉通道：命令表驱动（482-B 落地前的过渡）
+## 4. 重拉通道：bundle 命令表（QUOT-526）
 
-`<data_root>/supervisor/restart-commands.json`：
+生产实现是 `AdapterRestarter`（`restart.py`）：所有动作都交给 `SupervisorEngine`，
+用 482-B 适配器（`build_default_adapters`，路径全部相对安装根）作为**唯一**命令表。
 
-```json
-{"tickhub": ["python", "-m", "tickhub.server"], "senate": ["python", "-m", "senate.main"]}
-```
+- **先认领、后拉起**：端口上已有命中识别规则的实例 → `adopt_module()` 记账
+  （`origin=adopted`，pid 不变），不 spawn；否则按适配器启动面拉起；
+- **失败关闭**：端口被非本模块进程占着 / 读不到识别证据 → 不启动、不终止，
+  失败结论照常走退避与上限；
+- **冷启动**：`SelfHealEngine(modules=..., cold_start=True)` 时托管这份模块表，
+  账本里没有 pid 的模块立刻拉一次（0s），失败后按 5s→15s→45s 重试；
+- **模式闸门**：`LDST_SUPERVISOR_OWN_PROCESSES=1`（单入口）才允许 spawn；
+  默认附加模式只认领、绝不自动拉起（peer adopt-only，DEC-071）；
+- **旧通道**：`restart-commands.json` / `CommandTableRestarter` 仅作历史过渡保留，
+  生产装配不再读取。
 
-- `shell=False`，argv 全部来自部署侧，本仓代码里没有一条模块启动命令；
-- 表为空 / 缺条目 → 如实返回「无可用重拉通道」，照常走退避与上限，**绝不假装成功**；
-- 482-B 的 adapters 落地后把 `Restarter` 实现换掉即可，引擎无需改动（`restart.py:CommandTableRestarter`）。
+决策全文见 [DEC-075](../decisions/DEC-075-self-heal-cold-start-bundle-command-table.md)。
 
 ## 5. 通知（D5：失败必告警，通知失败必被吞）
 

@@ -1,12 +1,13 @@
-"""重拉通道 + 进程存活检测（QUOT-491 / 482-C）。
+"""重拉通道 + 进程存活检测（QUOT-491 / 482-C / QUOT-526）。
 
-**不写模块启动命令**（那是 482-B adapters 的职责）。482-A/482-B 落地前，重拉由一个
-外部命令表驱动（`data/supervisor/restart-commands.json`：`{"模块名": ["exe", "arg", ...]}`，
-`shell=False`）——命令内容全部来自部署侧，本仓代码里没有一条模块启动命令。
+生产实现是 `AdapterRestarter`（QUOT-526）：重拉**走 482-B 的适配器**（bundle
+自带命令表，路径全部相对安装根），先认领已在运行的匹配实例、再按适配器入口拉起；
+端口被非本模块进程占着时失败关闭（`SupervisorEngine` 拒绝启动），**绝不终止**。
 
-命令表为空/缺条目时，`restart()` 如实返回失败（「无可用重拉通道」），自愈引擎会照常
-走退避与上限判定、最终置 `needs_human`——**绝不假装重拉成功**。482-B 的 adapters
-落地后，把这里的实现换成其 `Adapter.start()` 即可，`SelfHealEngine` 无需改动。
+`CommandTableRestarter` 保留为 482-B 落地前的过渡实现（`restart-commands.json`，
+`shell=False`，命令内容全部来自部署侧）：表为空 / 缺条目时如实返回失败
+（「无可用重拉通道」），自愈引擎照常走退避与上限、最终置 `needs_human`——
+**绝不假装重拉成功**。
 """
 
 from __future__ import annotations
@@ -17,9 +18,13 @@ import os
 import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from ladderstock.supervisor.adapters import MODULE_ORDER
 from ladderstock.supervisor.ledger import LedgerEntry
+
+if TYPE_CHECKING:
+    from ladderstock.supervisor.engine import SupervisorEngine
 
 SYNCHRONIZE = 0x00100000
 WAIT_TIMEOUT = 0x00000102
@@ -109,4 +114,58 @@ class CommandTableRestarter:
         return RestartOutcome(ok=True, pid=process.pid)
 
 
-__all__ = ["CommandTableRestarter", "pid_alive", "posix_pid_alive", "windows_pid_alive"]
+class AdapterRestarter:
+    """bundle 命令表驱动的重拉通道（QUOT-526，生产实现）。
+
+    所有动作都交给 `SupervisorEngine`（与看板启停同一本账、同一套归属判定）：
+    端口上已有命中识别规则的实例 → 认领（pid 不变，`adopted=True`）；否则按
+    适配器入口拉起。`spawn=False`（默认附加模式）时只认领、绝不拉起——peer 的
+    adopt-only 边界在默认模式下原样保留。
+    """
+
+    def __init__(self, engine: SupervisorEngine, *, spawn: bool = True) -> None:
+        self._engine = engine
+        self.spawn = bool(spawn)
+
+    @property
+    def known_modules(self) -> tuple[str, ...]:
+        return MODULE_ORDER
+
+    def is_alive(self, entry: LedgerEntry) -> bool:
+        return pid_alive(entry.pid)
+
+    def restart(self, module: str) -> Any:
+        """认领既有实例或按 bundle 命令表拉起；结论用 `RestartOutcome` 表达。"""
+        from ladderstock.supervisor.engine import SupervisorError
+        from ladderstock.supervisor.selfheal import RestartOutcome
+
+        try:
+            adopted = self._engine.adopt_module(module)
+            if adopted is not None and adopted.pid is not None:
+                return RestartOutcome(
+                    ok=True,
+                    pid=adopted.pid,
+                    detail="已在运行：认领既有实例（pid 不变）",
+                    adopted=True,
+                )
+            if not self.spawn:
+                return RestartOutcome(
+                    ok=False,
+                    detail="附加模式不自动拉起（LDST_SUPERVISOR_OWN_PROCESSES=1 才启用冷启动）",
+                )
+            view = self._engine.start_module(module)
+            record = view.get("record") or {}
+            return RestartOutcome(ok=True, pid=record.get("pid"))
+        except SupervisorError as exc:
+            return RestartOutcome(ok=False, detail=str(exc))
+        except Exception as exc:  # noqa: BLE001 - 重拉通道异常统一转成失败结论
+            return RestartOutcome(ok=False, detail=f"重拉调用异常：{exc}")
+
+
+__all__ = [
+    "AdapterRestarter",
+    "CommandTableRestarter",
+    "pid_alive",
+    "posix_pid_alive",
+    "windows_pid_alive",
+]

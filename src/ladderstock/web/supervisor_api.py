@@ -30,13 +30,14 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ladderstock.supervisor.adapters import MODULE_ORDER
 from ladderstock.supervisor.engine import SupervisorEngine, SupervisorError
 from ladderstock.supervisor.ledger import Ledger
 from ladderstock.supervisor.module_adapters import build_default_adapters
 from ladderstock.supervisor.notify import build_default_notifier
 from ladderstock.supervisor.page_boot import PageBoot
 from ladderstock.supervisor.proctree import default_process_ops
-from ladderstock.supervisor.restart import CommandTableRestarter
+from ladderstock.supervisor.restart import AdapterRestarter
 from ladderstock.supervisor.selfheal import (
     DEFAULT_LOG_MAX_LINES,
     WINDOW_SECONDS,
@@ -90,22 +91,30 @@ def build_supervisor_engines(
     panel_url: str,
     env: Mapping[str, str] | None = None,
 ) -> SupervisorEngines:
-    """按 `<data_root>/supervisor/` 组装生产引擎：一张账本 + 自愈 + 顺序启停。"""
+    """按 `<data_root>/supervisor/` 组装生产引擎：一张账本 + 自愈 + 顺序启停。
+
+    重拉通道 = `AdapterRestarter`（bundle 自带命令表，QUOT-526），不再读
+    `restart-commands.json`。单入口模式（`LDST_SUPERVISOR_OWN_PROCESSES=1`）下
+    自愈还负责**冷启动**：托管 `MODULE_ORDER` 全表，账本无 pid 的模块按命令表
+    立刻拉起。默认附加模式只认领既有实例、绝不自动拉起（peer adopt-only）。
+    """
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
-    restarter = CommandTableRestarter.from_file(supervisor_dir / "restart-commands.json")
     notifier = build_default_notifier(supervisor_dir / "notifications.log", panel_url=panel_url)
-    heal = SelfHealEngine(
-        ledger,
-        restarter,
-        notifier,
-        log_dir=supervisor_dir / "logs",
-        log_max_lines=DEFAULT_LOG_MAX_LINES,
-    )
     processes = SupervisorEngine(
         adapters=build_default_adapters(env=env, log_dir=supervisor_dir / "logs"),
         ledger=ledger,
         procs=default_process_ops(),
+    )
+    cold_start = own_processes(env)
+    heal = SelfHealEngine(
+        ledger,
+        AdapterRestarter(processes, spawn=cold_start),
+        notifier,
+        log_dir=supervisor_dir / "logs",
+        log_max_lines=DEFAULT_LOG_MAX_LINES,
+        modules=MODULE_ORDER if cold_start else None,
+        cold_start=cold_start,
     )
     return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
 
