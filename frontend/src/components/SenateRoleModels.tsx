@@ -232,7 +232,8 @@ export function SenateRoleModels({
   }
 
   const testRow = (role: SenateRoleStatus): void => {
-    const draft = drafts[role.role]
+    // 首帧草稿 effect 还没跑完时按已保存值探测，避免丢 provider/model。
+    const draft = drafts[role.role] ?? { provider: role.provider ?? '', model: role.model ?? '' }
     const key = keyEnv.trim()
     void runTest(role.role, {
       ...(draft?.provider.trim() ? { provider: draft.provider.trim() } : {}),
