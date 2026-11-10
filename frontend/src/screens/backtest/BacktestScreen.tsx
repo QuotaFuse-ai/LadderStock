@@ -31,9 +31,9 @@ import { ResultSection } from './ResultSection'
 /**
  * 策略回测（`/backtest`，QUOT-534）。
  *
- * 三区：参数区（QUOT-535 前只搭骨架）/ 结果区 / 证据区。
- * 本屏只读 `GET /api/backtest/runs` 与 `GET /api/backtest/runs/{run_id}`，
- * 所有指标、曲线、成本档位与校验门都来自运行卡；页面不触发回测、不重算任何数值。
+ * 三区：参数区（QUOT-535 触发面）/ 结果区 / 证据区。
+ * 参数区提交参数并轮询任务，拿到 `run_id` 后本屏切换到该运行卡；
+ * 结果区的指标、曲线、成本档位与校验门**全部**读运行卡，前端不重算任何数值。
  * `?run=bt_xxxxxxxx` 可深链到指定运行卡，缺省取后端给出的 `latest`。
  */
 
@@ -99,6 +99,14 @@ export default function BacktestScreen() {
     if (runId !== null) card.reload()
   }
 
+  // 参数区跑完一张新卡：地址栏切到它，列表同步刷新；结果区随 runId 依赖自动重取。
+  const handleSettled = (nextRunId: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('run', nextRunId)
+    setSearchParams(next, { replace: true })
+    runs.reload()
+  }
+
   const runsMissing = runs.status === 'error' && isBacktestEndpointMissing(runs.error)
   const cardMissing = card.status === 'error' && isBacktestEndpointMissing(card.error)
   const busy = runs.status === 'loading' || card.status === 'loading'
@@ -114,7 +122,7 @@ export default function BacktestScreen() {
       · <span className="ldst-num">{cardData.period.trading_days ?? MISSING}</span> 交易日
     </span>
   ) : (
-    <span>只读运行卡 · 前端不重算 · 参数区待 QUOT-535 接线</span>
+    <span>只读运行卡 · 前端不重算 · 参数区可触发回测</span>
   )
 
   const runPicker =
@@ -195,8 +203,8 @@ export default function BacktestScreen() {
             title="还没有回测运行卡"
             description={
               <>
-                本机数据目录没有落盘产物。先用 CLI <code className="ldst-num">ldst backtest run</code> 生成一张运行卡，
-                再点「刷新」；参数化触发接口由 QUOT-535 提供。
+                本机数据目录还没有落盘产物。在上方参数区提交一次回测，或用 CLI{' '}
+                <code className="ldst-num">ldst backtest run</code> 生成运行卡后点「刷新」。
               </>
             }
             action={
@@ -262,7 +270,7 @@ export default function BacktestScreen() {
         }
         refresh={{ onClick: refresh, loading: busy, disabled: busy }}
       />
-      <ParamsSection />
+      <ParamsSection defaultPeriod={cardData?.period ?? null} onSettled={handleSettled} />
       {runPicker}
       {body}
     </div>

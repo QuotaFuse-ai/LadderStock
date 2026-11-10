@@ -226,7 +226,7 @@ function ConfigCard({ card }: { card: BacktestRunCard }) {
       )}
       <p className="mt-2 text-caption text-text-muted">
         成本口径（佣金万 / 免五 / 过户费 / 印花税）由后端参数与 broker preset 决定，前端只展示本次生效值；
-        可调参数区待 QUOT-535 合并后接线。
+        可调参数区在上方「参数区」提交。
       </p>
     </SectionCard>
   )

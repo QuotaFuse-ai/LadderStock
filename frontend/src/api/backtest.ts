@@ -1,19 +1,28 @@
 /**
- * 回测运行卡只读客户端（QUOT-534 / QUOT-500 契约）。
+ * 回测客户端（QUOT-534 / QUOT-500 + QUOT-535 契约）。
  *
- * 三个 GET 全部只读运行卡产物，页面**不重算任何指标 / 收益 / 曲线**：
+ * 只读运行卡产物，页面**不重算任何指标 / 收益 / 曲线**：
  * - `GET /api/backtest/runs?limit=`：落盘运行卡摘要（新的在前）
  * - `GET /api/backtest/runs/{run_id}`：运行卡 JSON（契约本体）
  * - `GET /api/backtest/runs/{run_id}/export.{json,md}`：产物下载（页面直接给链接）
  *
+ * 触发面（QUOT-535，PR #194 已合入 main）：
+ * - `GET /api/backtest/strategies`：策略清单 + 参数 schema + 成本默认值（唯一来源）
+ * - `POST /api/backtest/run`：提交参数 → `202 {job_id, status}`
+ * - `GET /api/backtest/jobs/{job_id}`：轮询 `{status, run_id, gate_passed, exit_code, error}`
+ *
  * 解析层只做类型收敛与结构校验：数值原样透传，缺的字段保持 `null` / 空数组，
- * 不补 0、不换算单位、不推导任何指标。写面（触发回测）在 QUOT-535，未接线。
+ * 不补 0、不换算单位、不推导任何指标；成本字段按用户输入原样透传，前端不换算万分比。
  */
 
 import { ApiError, isEndpointMissing } from '../api'
 
 const READ_TIMEOUT_MS = 8000
+const WRITE_TIMEOUT_MS = 20000
 const RUN_ID_PATTERN = /^bt_[0-9a-z_]+$/
+const JOB_ID_PATTERN = /^[0-9a-f]{8,64}$/i
+/** 控制面写请求的来源证据（QUOT-178）：dev 代理会换 Host，端口白名单读这个显式头。 */
+const CLIENT_HEADER = { 'X-LDST-Client': '1' }
 
 export const BACKTEST_PREFIX = '/api/backtest'
 
@@ -367,26 +376,257 @@ export function parseRunsPayload(raw: unknown): BacktestRunsPayload {
   }
 }
 
+// ---------------------------------------------------------------- 触发面解析（QUOT-535）
+
+export interface BacktestStrategyParam {
+  key: string
+  label: string
+  /** 后端给 `int` / `float`；未知类型按文本展示，不猜数值域。 */
+  type: string
+  default: number | string | null
+  min: number | null
+  max: number | null
+}
+
+export interface BacktestStrategy {
+  name: string
+  label: string
+  params: BacktestStrategyParam[]
+}
+
+export interface BacktestCostPreset {
+  key: string
+  label: string
+  commission_rate_wan: number | null
+  commission_floor_yuan: number | null
+}
+
+export interface BacktestConfigDefaults {
+  commission: number | null
+  slippage: number | null
+  stamp_duty: number | null
+  min_trades: number | null
+  in_sample_ratio: number | null
+  cost_tiers: number[]
+  commission_rate_wan: number | null
+  commission_floor_yuan: number | null
+  transfer_fee_wan: number | null
+  stamp_duty_wan: number | null
+  presets: BacktestCostPreset[]
+  config_sources: Record<string, string>
+}
+
+export interface BacktestStrategiesPayload {
+  strategies: BacktestStrategy[]
+  config_defaults: BacktestConfigDefaults
+  symbol_default: string
+}
+
+/** `POST /api/backtest/run` 的请求体：成本字段按用户输入原样透传（万分之口径）。 */
+export interface BacktestRunRequest {
+  strategy: string
+  strategy_params: Record<string, number | string>
+  symbol: string
+  start: string
+  end: string
+  commission_rate_wan: number
+  commission_floor_yuan: number
+  transfer_fee_wan: number
+  stamp_duty_wan: number
+  slippage: number
+}
+
+export interface BacktestRunAck {
+  job_id: string
+  status: string
+}
+
+export type BacktestJobStatus = 'queued' | 'running' | 'ok' | 'failed'
+
+export interface BacktestJob {
+  job_id: string
+  status: BacktestJobStatus
+  run_id: string | null
+  gate_passed: boolean | null
+  exit_code: number | null
+  error: string | null
+  strategy: string | null
+  symbol: string | null
+  start: string | null
+  end: string | null
+  created_at: string | null
+  started_at: string | null
+  ended_at: string | null
+}
+
+function scalarOrNull(value: unknown): number | string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') return value
+  return null
+}
+
+function parseStrategyParam(value: unknown): BacktestStrategyParam | null {
+  const source = record(value)
+  const key = text(source?.key)
+  if (!source || !key) return null
+  return {
+    key,
+    label: text(source.label) ?? key,
+    type: text(source.type) ?? 'str',
+    default: scalarOrNull(source.default),
+    min: numberOrNull(source.min),
+    max: numberOrNull(source.max),
+  }
+}
+
+function parseStrategy(value: unknown): BacktestStrategy | null {
+  const source = record(value)
+  const name = text(source?.name)
+  if (!source || !name) return null
+  return {
+    name,
+    label: text(source.label) ?? name,
+    params: list(source.params)
+      .map(parseStrategyParam)
+      .filter((item): item is BacktestStrategyParam => item !== null),
+  }
+}
+
+function parsePreset(value: unknown): BacktestCostPreset | null {
+  const source = record(value)
+  const key = text(source?.key)
+  if (!source || !key) return null
+  return {
+    key,
+    label: text(source.label) ?? key,
+    commission_rate_wan: numberOrNull(source.commission_rate_wan),
+    commission_floor_yuan: numberOrNull(source.commission_floor_yuan),
+  }
+}
+
+/**
+ * `GET /api/backtest/strategies` → 表单初始值。
+ *
+ * 清单与默认值**全部**来自后端：解析层不补策略、不填成本常量，缺什么就留空。
+ */
+export function parseStrategiesPayload(raw: unknown): BacktestStrategiesPayload {
+  const source = record(raw)
+  if (!source) throw new ApiError('parse', '策略清单响应不是对象')
+  const rawStrategies = source.strategies
+  if (!Array.isArray(rawStrategies)) throw new ApiError('parse', '策略清单响应缺少 strategies 数组')
+  const defaults = record(source.config_defaults)
+  if (!defaults) throw new ApiError('parse', '策略清单响应缺少 config_defaults')
+  return {
+    strategies: rawStrategies
+      .map(parseStrategy)
+      .filter((item): item is BacktestStrategy => item !== null),
+    config_defaults: {
+      commission: numberOrNull(defaults.commission),
+      slippage: numberOrNull(defaults.slippage),
+      stamp_duty: numberOrNull(defaults.stamp_duty),
+      min_trades: numberOrNull(defaults.min_trades),
+      in_sample_ratio: numberOrNull(defaults.in_sample_ratio),
+      cost_tiers: list(defaults.cost_tiers).filter(
+        (item): item is number => typeof item === 'number' && Number.isFinite(item),
+      ),
+      commission_rate_wan: numberOrNull(defaults.commission_rate_wan),
+      commission_floor_yuan: numberOrNull(defaults.commission_floor_yuan),
+      transfer_fee_wan: numberOrNull(defaults.transfer_fee_wan),
+      stamp_duty_wan: numberOrNull(defaults.stamp_duty_wan),
+      presets: list(defaults.presets)
+        .map(parsePreset)
+        .filter((item): item is BacktestCostPreset => item !== null),
+      config_sources: textRecord(defaults.config_sources),
+    },
+    symbol_default: text(source.symbol_default) ?? '',
+  }
+}
+
+export function parseRunAck(raw: unknown): BacktestRunAck {
+  const source = record(raw)
+  const jobId = text(source?.job_id)
+  if (!source || !jobId) throw new ApiError('parse', '回测提交响应缺少 job_id')
+  return { job_id: jobId, status: text(source.status) ?? 'queued' }
+}
+
+function jobStatus(value: unknown): BacktestJobStatus {
+  return value === 'queued' || value === 'running' || value === 'ok' || value === 'failed'
+    ? value
+    : 'queued'
+}
+
+export function parseJob(raw: unknown): BacktestJob {
+  const source = record(raw)
+  const jobId = text(source?.job_id)
+  if (!source || !jobId) throw new ApiError('parse', '回测任务响应缺少 job_id')
+  return {
+    job_id: jobId,
+    status: jobStatus(source.status),
+    run_id: text(source.run_id),
+    gate_passed: typeof source.gate_passed === 'boolean' ? source.gate_passed : null,
+    exit_code: numberOrNull(source.exit_code),
+    error: text(source.error),
+    strategy: text(source.strategy),
+    symbol: text(source.symbol),
+    start: text(source.start),
+    end: text(source.end),
+    created_at: text(source.created_at),
+    started_at: text(source.started_at),
+    ended_at: text(source.ended_at),
+  }
+}
+
+/** 后端 400 的 `detail` 是字符串；FastAPI 422 的 `detail` 是 `[{loc, msg}]` 数组。 */
+function errorDetailText(parsed: unknown): string | null {
+  const detail = record(parsed)?.detail
+  if (typeof detail === 'string' && detail.trim() !== '') return detail.trim()
+  if (!Array.isArray(detail)) return null
+  const parts: string[] = []
+  for (const entry of detail) {
+    const item = record(entry)
+    if (!item) continue
+    const where = list(item.loc)
+      .map((segment) => String(segment))
+      .filter((segment) => segment !== 'body')
+      .join('.')
+    const message = text(item.msg) ?? text(item.type) ?? '参数不合法'
+    parts.push(where ? `${where}：${message}` : message)
+  }
+  return parts.length > 0 ? parts.join('；') : null
+}
+
 // ---------------------------------------------------------------- 传输
 
-async function getJson(path: string, signal?: AbortSignal): Promise<unknown> {
+interface RequestOptions {
+  method?: 'GET' | 'POST'
+  body?: unknown
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
+async function requestJson(path: string, options: RequestOptions = {}): Promise<unknown> {
+  const { method = 'GET', body, signal, timeoutMs = READ_TIMEOUT_MS } = options
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), READ_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   const abortFromCaller = () => controller.abort()
   signal?.addEventListener('abort', abortFromCaller)
   try {
     const response = await fetch(path, {
-      method: 'GET',
+      method,
       signal: controller.signal,
       cache: 'no-store',
       credentials: 'same-origin',
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(method === 'POST' ? CLIENT_HEADER : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     if (!response.ok) {
       let detail: string | null = null
       try {
-        const parsed = (await response.json()) as { detail?: unknown }
-        detail = typeof parsed.detail === 'string' ? parsed.detail : null
+        detail = errorDetailText((await response.json()) as unknown)
       } catch {
         detail = null
       }
@@ -406,7 +646,7 @@ async function getJson(path: string, signal?: AbortSignal): Promise<unknown> {
     if (error instanceof ApiError) throw error
     if (error instanceof DOMException && error.name === 'AbortError') {
       if (signal?.aborted) throw new ApiError('timeout', `请求已取消：${path}`)
-      throw new ApiError('timeout', `本地接口 ${path} 超时（${READ_TIMEOUT_MS}ms）`)
+      throw new ApiError('timeout', `本地接口 ${path} 超时（${timeoutMs}ms）`)
     }
     throw new ApiError('not-connected', `本地接口 ${path} 未接入：需先启动 ldst run`)
   } finally {
@@ -420,6 +660,13 @@ export function assertRunId(runId: string): string {
     throw new ApiError('http', `run_id 不合法：${runId}`, 400)
   }
   return runId
+}
+
+function assertJobId(jobId: string): string {
+  if (!JOB_ID_PATTERN.test(jobId)) {
+    throw new ApiError('http', `job_id 不合法：${jobId}`, 400)
+  }
+  return jobId
 }
 
 export function backtestRunsPath(limit = 50): string {
@@ -436,18 +683,59 @@ export function backtestExportPath(runId: string, format: 'json' | 'md'): string
   return `${backtestCardPath(runId)}/export.${format}`
 }
 
+export function backtestStrategiesPath(): string {
+  return `${BACKTEST_PREFIX}/strategies`
+}
+
+export function backtestSubmitPath(): string {
+  return `${BACKTEST_PREFIX}/run`
+}
+
+export function backtestJobPath(jobId: string): string {
+  return `${BACKTEST_PREFIX}/jobs/${encodeURIComponent(assertJobId(jobId))}`
+}
+
 export async function fetchBacktestRuns(
   signal?: AbortSignal,
   limit = 50,
 ): Promise<BacktestRunsPayload> {
-  return parseRunsPayload(await getJson(backtestRunsPath(limit), signal))
+  return parseRunsPayload(await requestJson(backtestRunsPath(limit), { signal }))
 }
 
 export async function fetchBacktestCard(
   runId: string,
   signal?: AbortSignal,
 ): Promise<BacktestRunCard> {
-  return parseRunCard(await getJson(backtestCardPath(runId), signal))
+  return parseRunCard(await requestJson(backtestCardPath(runId), { signal }))
+}
+
+/** 策略清单 + 成本默认值；参数区的唯一数据来源（前端不硬编码策略/成本）。 */
+export async function fetchBacktestStrategies(
+  signal?: AbortSignal,
+): Promise<BacktestStrategiesPayload> {
+  return parseStrategiesPayload(await requestJson(backtestStrategiesPath(), { signal }))
+}
+
+/** 提交回测：后端同步校验后返回 `202 {job_id, status}`，执行结果走任务轮询。 */
+export async function submitBacktestRun(
+  request: BacktestRunRequest,
+  signal?: AbortSignal,
+): Promise<BacktestRunAck> {
+  return parseRunAck(
+    await requestJson(backtestSubmitPath(), {
+      method: 'POST',
+      body: request,
+      signal,
+      timeoutMs: WRITE_TIMEOUT_MS,
+    }),
+  )
+}
+
+export async function fetchBacktestJob(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<BacktestJob> {
+  return parseJob(await requestJson(backtestJobPath(jobId), { signal }))
 }
 
 /** 端点尚未上线（旧版后端 404）：页面按「回测接口暂缺」呈现，不编数据。 */

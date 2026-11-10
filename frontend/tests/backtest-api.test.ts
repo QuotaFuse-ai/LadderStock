@@ -5,20 +5,32 @@ import {
   assertRunId,
   backtestCardPath,
   backtestExportPath,
+  backtestJobPath,
   backtestRunsPath,
+  backtestStrategiesPath,
+  backtestSubmitPath,
   fetchBacktestCard,
+  fetchBacktestJob,
   fetchBacktestRuns,
+  fetchBacktestStrategies,
   isBacktestEndpointMissing,
+  parseJob,
+  parseRunAck,
   parseRunCard,
   parseRunsPayload,
+  parseStrategiesPayload,
+  submitBacktestRun,
+  type BacktestRunRequest,
 } from '../src/api/backtest'
+import { strategiesFixture, succeededJobFixture } from './fixtures/backtestStrategies'
 import { runCardFixture, runsPayloadFixture } from './fixtures/backtestRunCard'
 
 /**
- * QUOT-534 运行卡契约测试。
+ * QUOT-534 / QUOT-535 回测契约测试。
  *
- * 解析层只收敛类型，不改数值：原值、展示串、calc_id 三条通道各走各的。
- * 路径构造只允许 `bt_` 前缀的 run_id；导出链接必须直达后端 attachment 端点。
+ * 只读面：原值、展示串、calc_id 三条通道各走各的，路径只允许 `bt_` 前缀的 run_id。
+ * 触发面：策略清单/成本默认值原样收敛；提交体按用户输入原样透传（不做万分比换算）；
+ * 400 字符串 detail 与 422 数组 detail 都要能读成一句中文原因。
  */
 
 afterEach(() => {
@@ -97,6 +109,65 @@ describe('parseRunsPayload', () => {
   })
 })
 
+describe('parseStrategiesPayload', () => {
+  it('策略清单、参数 schema、成本默认值与三档预设原样收敛', () => {
+    const payload = parseStrategiesPayload(strategiesFixture)
+    expect(payload.symbol_default).toBe('600000')
+    expect(payload.strategies.map((strategy) => strategy.name)).toEqual([
+      'demo_cross',
+      'demo_break',
+      'demo_threshold',
+    ])
+    expect(payload.strategies[0].params[0]).toEqual({
+      key: 'short_window',
+      label: '短均线窗口',
+      type: 'int',
+      default: 5,
+      min: 1,
+      max: 250,
+    })
+    expect(payload.config_defaults.commission_rate_wan).toBe(0.9)
+    expect(payload.config_defaults.commission_floor_yuan).toBe(0.01)
+    expect(payload.config_defaults.transfer_fee_wan).toBe(0.1)
+    expect(payload.config_defaults.stamp_duty_wan).toBe(5)
+    expect(payload.config_defaults.slippage).toBe(0.001)
+    expect(payload.config_defaults.cost_tiers).toEqual([0.0002, 0.0005, 0.001])
+    expect(payload.config_defaults.presets.map((preset) => preset.key)).toEqual([
+      'wan09_free5_001',
+      'wan085_free5_1',
+      'wan065_min5',
+    ])
+  })
+
+  it('缺 strategies / config_defaults 直接解析失败，不编清单', () => {
+    expect(() => parseStrategiesPayload({})).toThrowError(/strategies/)
+    expect(() => parseStrategiesPayload({ strategies: [] })).toThrowError(/config_defaults/)
+    expect(() => parseStrategiesPayload(null)).toThrowError(/不是对象/)
+  })
+})
+
+describe('parseJob / parseRunAck', () => {
+  it('任务字段原样收敛', () => {
+    const job = parseJob(succeededJobFixture)
+    expect(job).toMatchObject({
+      status: 'ok',
+      run_id: 'bt_9f00c0de',
+      gate_passed: true,
+      exit_code: 0,
+      error: null,
+    })
+    expect(parseRunAck({ job_id: succeededJobFixture.job_id, status: 'queued' })).toEqual({
+      job_id: succeededJobFixture.job_id,
+      status: 'queued',
+    })
+  })
+
+  it('缺 job_id 视为解析失败', () => {
+    expect(() => parseJob({ status: 'ok' })).toThrowError(/job_id/)
+    expect(() => parseRunAck({ status: 'queued' })).toThrowError(/job_id/)
+  })
+})
+
 describe('路径构造', () => {
   it('列表 limit 收敛到 1–200', () => {
     expect(backtestRunsPath()).toBe('/api/backtest/runs?limit=50')
@@ -118,6 +189,17 @@ describe('路径构造', () => {
       '/api/backtest/runs/bt_2e6bab12/export.json',
     )
     expect(backtestExportPath('bt_2e6bab12', 'md')).toBe('/api/backtest/runs/bt_2e6bab12/export.md')
+  })
+
+  it('触发面路径固定，job_id 做白名单校验', () => {
+    expect(backtestStrategiesPath()).toBe('/api/backtest/strategies')
+    expect(backtestSubmitPath()).toBe('/api/backtest/run')
+    expect(backtestJobPath(succeededJobFixture.job_id)).toBe(
+      `/api/backtest/jobs/${succeededJobFixture.job_id}`,
+    )
+    for (const bad of ['', '../jobs', 'not-a-job', 'a1b2']) {
+      expect(() => backtestJobPath(bad)).toThrowError(ApiError)
+    }
   })
 })
 
@@ -154,6 +236,102 @@ describe('传输', () => {
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(404)
     expect(isBacktestEndpointMissing(error)).toBe(true)
+  })
+
+  it('策略清单按 GET 取回，且走 no-store', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(JSON.stringify(strategiesFixture))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const payload = await fetchBacktestStrategies()
+    expect(payload.strategies).toHaveLength(3)
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/backtest/strategies')
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('GET')
+    expect(fetchMock.mock.calls[0][1]?.cache).toBe('no-store')
+  })
+
+  it('提交只 POST 一次，请求体原样透传并带来源证据头', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ job_id: succeededJobFixture.job_id, status: 'queued' }), {
+        status: 202,
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const body: BacktestRunRequest = {
+      strategy: 'demo_cross',
+      strategy_params: { short_window: 5, long_window: 20 },
+      symbol: '600000',
+      start: '2024-03-14',
+      end: '2026-11-05',
+      commission_rate_wan: 0.65,
+      commission_floor_yuan: 5,
+      transfer_fee_wan: 0.1,
+      stamp_duty_wan: 5,
+      slippage: 0.001,
+    }
+    const ack = await submitBacktestRun(body)
+    expect(ack).toEqual({ job_id: succeededJobFixture.job_id, status: 'queued' })
+    const [path, init] = fetchMock.mock.calls[0]
+    expect(path).toBe('/api/backtest/run')
+    expect(init?.method).toBe('POST')
+    expect((init?.headers as Record<string, string>)['X-LDST-Client']).toBe('1')
+    expect(JSON.parse(String(init?.body))).toEqual(body)
+  })
+
+  it('400 字符串 detail 直接进 ApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ detail: '未知策略（内置：ma_cross, momentum, breakout）' }), {
+            status: 400,
+          }),
+      ),
+    )
+    const error = await submitBacktestRun({
+      strategy: 'nope',
+      strategy_params: {},
+      symbol: '600000',
+      start: '2024-03-14',
+      end: '2026-11-05',
+      commission_rate_wan: 0.9,
+      commission_floor_yuan: 0.01,
+      transfer_fee_wan: 0.1,
+      stamp_duty_wan: 5,
+      slippage: 0.001,
+    }).catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(400)
+    expect((error as ApiError).detail).toContain('未知策略')
+  })
+
+  it('422 数组 detail 收敛成「字段：原因」', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              detail: [
+                { loc: ['body', 'start'], msg: 'start 必须是 YYYY-MM-DD', type: 'value_error' },
+                { loc: ['body', 'symbol'], msg: 'field required', type: 'value_error' },
+              ],
+            }),
+            { status: 422 },
+          ),
+      ),
+    )
+    const error = await fetchBacktestJob(succeededJobFixture.job_id).catch((cause: unknown) => cause)
+    expect((error as ApiError).detail).toBe('start：start 必须是 YYYY-MM-DD；symbol：field required')
+    expect((error as ApiError).message).toContain('HTTP 422')
+  })
+
+  it('任务轮询解析 status / run_id / exit_code', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(succeededJobFixture))))
+    const job = await fetchBacktestJob(succeededJobFixture.job_id)
+    expect(job.status).toBe('ok')
+    expect(job.run_id).toBe('bt_9f00c0de')
+    expect(job.exit_code).toBe(0)
   })
 
   it('非 JSON 响应按解析失败处理', async () => {
