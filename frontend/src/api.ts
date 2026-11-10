@@ -27,13 +27,22 @@ export class ApiError extends Error {
   readonly status: number | null
   /** 服务端 `detail` 原文（FastAPI 的错误体），用于「先结论后原因」的文案 */
   readonly detail: string | null
+  /** 控制面 `detail.code`（如 `SENATE_STALE`）；没有结构化错误体时为 null */
+  readonly code: string | null
 
-  constructor(kind: ApiErrorKind, message: string, status: number | null = null, detail: string | null = null) {
+  constructor(
+    kind: ApiErrorKind,
+    message: string,
+    status: number | null = null,
+    detail: string | null = null,
+    code: string | null = null,
+  ) {
     super(message)
     this.name = 'ApiError'
     this.kind = kind
     this.status = status
     this.detail = detail
+    this.code = code
   }
 }
 
@@ -107,11 +116,20 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     if (!response.ok) {
-      // FastAPI 错误体统一是 {"detail": "..."}；控制面的 400/409 靠它给出可读原因
+      // FastAPI 错误体统一是 {"detail": "..."}；控制面的 400/409 靠它给出可读原因。
+      // Senate 桥接的错误体是 {"detail": {"code": "SENATE_*", "message": "..."}}，
+      // 这里把 message 当 detail、code 单独留出来给页面做中文映射。
       let detail: string | null = null
+      let code: string | null = null
       try {
         const parsed = (await response.json()) as { detail?: unknown }
-        detail = typeof parsed.detail === 'string' ? parsed.detail : null
+        if (typeof parsed.detail === 'string') {
+          detail = parsed.detail
+        } else if (parsed.detail !== null && typeof parsed.detail === 'object') {
+          const structured = parsed.detail as { code?: unknown; message?: unknown }
+          if (typeof structured.message === 'string') detail = structured.message
+          if (typeof structured.code === 'string') code = structured.code
+        }
       } catch {
         detail = null
       }
@@ -120,6 +138,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
         `本地接口 ${path} 返回 HTTP ${response.status}${detail ? `：${detail}` : ''}`,
         response.status,
         detail,
+        code,
       )
     }
     try {
@@ -919,6 +938,89 @@ export interface AiModuleTestResult {
   error: string | null
 }
 
+// ---------------------------------------------------------------- StockSenate 辩论角色多模型（QUOT-518 / QUOT-520）
+
+/** provider 清单逐项来自后端；`models` 是候选建议，前端不硬编码。 */
+export interface SenateProvider {
+  name: string
+  label: string
+  api_key_env: string | null
+  base_url: string | null
+  models: string[]
+}
+
+/** 16 个 canonical 角色之一；`api_key_env` 回显的是全局 `[llm].api_key_env`。 */
+export interface SenateRoleStatus {
+  role: string
+  label: string
+  configured: boolean
+  provider: string | null
+  model: string | null
+  api_key_env: string | null
+}
+
+export interface SenateEngine {
+  authority: string
+  reload: string
+  provider: string | null
+  file_provider: string | null
+  env_override: boolean | null
+  config_file: string
+  contract_source: string
+  roles_authoritative?: boolean
+  hint: string
+  reload_hint: string
+}
+
+export interface SenateGlobal {
+  provider: string | null
+  deep_think_llm: string | null
+  quick_think_llm: string | null
+  backend_url_set: boolean | null
+  api_key_env: string | null
+}
+
+/** `GET /control/peers/senate/role-models` 的真实响应形状（QUOT-518）。 */
+export interface SenateRoleModelsPayload {
+  engine: SenateEngine
+  roles: SenateRoleStatus[]
+  unconfigured_roles: string[]
+  role_count: number
+  global: SenateGlobal
+  providers: SenateProvider[]
+  aliases: Record<string, string>
+  directory_exists?: boolean
+  config_exists?: boolean
+  env_file?: string
+  env_keys?: string[]
+  revision: string
+  /** PUT 响应额外带回：本次写入的角色 / 别名归一 / 是否写了全局 key 变量。 */
+  updated?: string[]
+  aliases_rewritten?: Record<string, string>
+  api_key_env_written?: boolean
+}
+
+/** PUT 请求体里的单个角色：只允许 provider / model / 变量名。 */
+export interface SenateRoleEntry {
+  provider: string
+  model: string
+  api_key_env?: string
+}
+
+/** `POST /control/peers/senate/role-models/test`：失败也是 200，按 `ok` 区分。 */
+export interface SenateTestResult {
+  ok: boolean
+  skipped?: boolean
+  role: string
+  provider: string
+  provider_source?: string
+  model: string
+  latency_ms: number
+  error_code: string | null
+  message: string
+}
+
+
 export interface PeerLogs {
   peer: string
   path: string
@@ -1205,6 +1307,31 @@ export const api = {
       request<AiModuleTestResult>('/control/ai/modules/test', {
         method: 'POST',
         body: { module, ...(role === undefined ? {} : { role }) },
+        timeoutMs: 120000,
+      }),
+    /** StockSenate 辩论角色（QUOT-518）：16 角色、provider 清单与磁盘指纹。 */
+    senateRoleModels: (signal?: AbortSignal) =>
+      request<SenateRoleModelsPayload>('/control/peers/senate/role-models', {
+        signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 校验后原子写 `llm_config.toml`；`expected_revision` 不符回 `SENATE_STALE`。 */
+    saveSenateRoleModels: (roles: Record<string, SenateRoleEntry>, expectedRevision: string | null) =>
+      request<SenateRoleModelsPayload>('/control/peers/senate/role-models', {
+        method: 'PUT',
+        body: { roles, ...(expectedRevision ? { expected_revision: expectedRevision } : {}) },
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 对单个角色发一次最小 chat 探测；失败也是 200，按 `ok` / `error_code` 区分。 */
+    testSenateRoleModel: (body: {
+      role: string
+      provider?: string
+      model?: string
+      api_key_env?: string
+    }) =>
+      request<SenateTestResult>('/control/peers/senate/role-models/test', {
+        method: 'POST',
+        body,
         timeoutMs: 120000,
       }),
     /** 生成五段复盘（后台任务，轮询 `control.job` 直到 ok / failed）。 */

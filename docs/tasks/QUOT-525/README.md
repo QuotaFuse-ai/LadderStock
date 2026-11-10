@@ -42,7 +42,7 @@
   AppImage、`LDST_INSTALL_ROOT`、冻结态 cwd 隔离、冻结态子进程入口。
 - `tests/unit/test_package_manifest.py`：资源目标相对、缺失资源构建期失败、
   打包入口文件齐全。
-- `docs/specs/SPEC-PACKAGING.md`、`docs/decisions/DEC-075-bundled-interpreter-packaging.md`。
+- `docs/specs/SPEC-PACKAGING.md`、`docs/decisions/DEC-076-bundled-interpreter-packaging.md`。
 
 ## Windows 验真结果
 

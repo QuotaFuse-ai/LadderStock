@@ -82,5 +82,8 @@ docs/tasks/QUOT-531/shots/
 !docs/tasks/QUOT-525/evidence/
 !docs/tasks/QUOT-525/evidence/*.json
 !docs/tasks/QUOT-525/evidence/*.log
+# 验收任务产出例外：自愈冷启动交付报告随 PR 交付（QUOT-526）
+!docs/tasks/QUOT-526/
+!docs/tasks/QUOT-526/README.md
 *.docx
 ~$*

@@ -2,7 +2,7 @@
 
 状态：生效（QUOT-525）
 适用范围：Windows onedir EXE（先行）、macOS `.app`（py2app）、Linux AppImage
-关联：DEC-071（platformdirs 落点）、DEC-075（本方案决策）、QUOT-524（bundle 相对路径）
+关联：DEC-071（platformdirs 落点）、DEC-076（本方案决策）、QUOT-524（bundle 相对路径）
 
 ## 1. 目标
 

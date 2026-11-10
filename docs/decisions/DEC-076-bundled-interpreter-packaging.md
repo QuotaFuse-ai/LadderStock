@@ -1,6 +1,6 @@
-# DEC-075 · 打包自带固定解释器（PyInstaller / py2app / AppImage）
+# DEC-076 · 打包自带固定解释器（PyInstaller / py2app / AppImage）
 
-日期：2026-11-11
+日期：2026-11-11（重编号：main 已占用 DEC-075）
 状态：采纳
 关联：QUOT-525、QUOT-524（bundle 相对路径）、QUOT-523（supervisor）、QUOT-522（页面自启）
 

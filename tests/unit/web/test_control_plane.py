@@ -2010,6 +2010,14 @@ def test_page_commands_cover_routes_and_resolve_date(
     assert by_key["industry"]["route"] == "/industry"
     assert by_key["industry"]["label"] == "重算行业快照"
     assert by_key["industry"]["argv"] == ["industry", "list"]
+    # QUOT-533 / DEC-074：同一路由的第二条命令是**联网补齐**，不是只读重算。
+    # argv 是 `sync industry`（真实外呼），成本 / 范围由 note 明示（前端不自己猜）。
+    assert by_key["industry-sync"]["route"] == "/industry"
+    assert by_key["industry-sync"]["label"] == "同步补齐行业数据"
+    assert by_key["industry-sync"]["argv"] == ["sync", "industry"]
+    assert "成本非 0" in by_key["industry-sync"]["note"]
+    assert "全市场" in by_key["industry-sync"]["note"]
+    assert "note" not in by_key["industry"]
     assert all(
         item["last_job"] is None and item["running"] is False for item in payload["commands"]
     )
@@ -2031,6 +2039,19 @@ def test_page_command_runs_whitelisted_argv(
     row = next(item for item in plane.page_commands()["commands"] if item["key"] == "market")
     assert row["last_job"]["id"] == job.id
     assert row["running"] is False
+
+
+def test_industry_sync_command_runs_network_sync_not_recompute(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """QUOT-533：`industry-sync` 走 `ldst sync industry`，与只读 `industry list` 分开。"""
+    runtime = FakeRuntime()
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    done = _wait(plane, plane.create_command_job("industry-sync").id)
+
+    assert done.status == "ok"
+    assert runtime.calls[-1][-2:] == ["sync", "industry"]
 
 
 def test_page_command_exit_codes_map_to_status(
