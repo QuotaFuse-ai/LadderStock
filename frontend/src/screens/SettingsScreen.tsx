@@ -63,6 +63,7 @@ import {
   type ToastItem,
 } from '../components/ui'
 import AiConnectDialog from '../components/AiConnectDialog'
+import { SenateRoleModels } from '../components/SenateRoleModels'
 import { StopListDialog } from '../components/supervisor/StopListDialog'
 import { ProxyPoolCard } from '../components/supervisor/ProxyPoolCard'
 import { findProxyPoolModule } from '../lib/proxyPoolView'
@@ -300,6 +301,7 @@ function PeerCard({
   onConfig,
   onMeta,
   onRetryHeal,
+  children,
 }: {
   peer: PeerSnapshot
   job: JobView | undefined
@@ -315,6 +317,8 @@ function PeerCard({
   onConfig: () => void
   onMeta: () => void
   onRetryHeal: () => void
+  /** 卡片底部的模块专属面板（StockSenate 的辩论角色多模型，QUOT-520）。 */
+  children?: ReactNode
 }) {
   const statusLabel = peer.status_label || PEER_STATUS_LABEL[peer.status]
   const uptime = peer.last_job?.action === 'start' && peer.last_job.status === 'ok' ? uptimeLabel(peer.last_job.started_at) : null
@@ -535,6 +539,8 @@ function PeerCard({
             编辑配置
           </Button>
         </div>
+
+        {children}
       </div>
     </li>
   )
@@ -2158,7 +2164,11 @@ export default function SettingsScreen() {
                       onRetryHeal={() => {
                         if (supervised) void retryHeal(peer, supervised.module)
                       }}
-                    />
+                    >
+                      {peer.id.replace(/-/g, '_') === 'senate' && (
+                        <SenateRoleModels controlReady={controlReady} push={push} />
+                      )}
+                    </PeerCard>
                   )
                 })}
                 {components.map((component) => (
