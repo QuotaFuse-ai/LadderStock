@@ -35,6 +35,7 @@ from ladderstock.cli.run import launch as launch_dashboard
 from ladderstock.cli.schedule import register as register_schedule
 from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
+from ladderstock.cli.supervisor import register as register_supervisor
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
 from ladderstock.cli.watchdog import register as register_watchdog
@@ -168,6 +169,7 @@ def _dir_writable(path: Path) -> tuple[bool, str]:
 
 # ---------------------------------------------------------------- 启动与复盘
 
+
 @app.command(help="启动本地工作台（看板 + 本机 API），默认仅监听回环")
 def run(
     port: Annotated[int, typer.Option(help="看板端口")] = DEFAULT_PORT,
@@ -186,6 +188,9 @@ def run(
 # 独立看门狗（QUOT-443 / DEC-063）：5952 探活 + 重启入口；主服务挂了它仍活着。
 # 实现体在 cli/watchdog.py（只绑回环、Origin 白名单、只结束自己记录的 PID）。
 register_watchdog(app)
+
+# 单入口 supervisor（QUOT-523）：不进看板也能全起 / 全停 / 单模块重启。
+register_supervisor(app)
 
 
 # 实现体在 cli/review.py（指标直出 + 五段编排 + 验证条件；DEC-003 命令名不变）
@@ -299,6 +304,7 @@ def mcp_tools_list(output: OutputOption = None) -> None:
 
 # ---------------------------------------------------------------- 配置与调度
 
+
 @config_app.command("validate", help="校验配置与 JSON Schema")
 def config_validate(
     file: Annotated[str | None, typer.Option(help="只校验指定文件")] = None,
@@ -361,6 +367,7 @@ register_schedule(schedule_app)
 
 # ---------------------------------------------------------------- 体检
 
+
 @app.command(help="环境体检：Python、依赖、端口、目录、配置、数据源")
 def doctor(
     peers: bool = typer.Option(
@@ -416,8 +423,7 @@ def doctor(
     add(
         "python",
         sys.version_info >= (3, 11),
-        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-        f"（需 >= 3.11）",
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}（需 >= 3.11）",
     )
     for mod in ("pydantic", "typer", "yaml", "jsonschema", "duckdb", "httpx", "apscheduler"):
         try:
@@ -458,9 +464,7 @@ def doctor(
     report = boundary_audit()
     chain_texts = {str(problem) for problem in report.chain}
     others = [v for v in report.violations if v not in chain_texts]
-    config_violations = [
-        v for v in others if v.startswith(("sources.yaml:", "sync.yaml:"))
-    ]
+    config_violations = [v for v in others if v.startswith(("sources.yaml:", "sync.yaml:"))]
     code_violations = [v for v in others if v not in config_violations]
     add(
         "boundary:no_collection",
