@@ -18,6 +18,7 @@ import typer
 
 from ladderstock import __version__
 from ladderstock.cli.ai import register as register_ai
+from ladderstock.cli.backtest import register as register_backtest
 from ladderstock.cli.export import export as export_command
 from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
@@ -81,6 +82,7 @@ mcp_app = typer.Typer(no_args_is_help=True, help="MCP Server")
 tools_app = typer.Typer(no_args_is_help=True, help="MCP 工具枚举")
 config_app = typer.Typer(no_args_is_help=True, help="配置")
 schedule_app = typer.Typer(no_args_is_help=True, help="定时调度")
+backtest_app = typer.Typer(no_args_is_help=True, help="回测（A 股日频策略，M1）")
 
 for parent, child, name in (
     (app, review_app, "review"),
@@ -101,6 +103,7 @@ for parent, child, name in (
     (mcp_app, tools_app, "tools"),
     (app, config_app, "config"),
     (app, schedule_app, "schedule"),
+    (app, backtest_app, "backtest"),
 ):
     parent.add_typer(child, name=name)
 
@@ -357,6 +360,13 @@ def config_migrate(
 
 # 实现体在 cli/schedule.py（APScheduler；任务表见 config/schedule.yaml）
 register_schedule(schedule_app)
+
+
+# ---------------------------------------------------------------- 回测（QUOT-500）
+
+# 实现体在 cli/backtest.py + backtest/ 包（feed/universe/strategy/match/score/guard/card/runner）：
+# 只读本机 daily_k，运行卡落 <data_dir>/backtests/<run_id>/；口径见 docs/specs/SPEC-BACKTEST.md
+register_backtest(backtest_app)
 
 
 # ---------------------------------------------------------------- 体检

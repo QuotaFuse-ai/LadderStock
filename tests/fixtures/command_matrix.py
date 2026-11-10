@@ -176,6 +176,12 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("state", "reset", "--store", "review_draft", "--yes"), {0}),
     # 体检
     (("doctor",), {0, 3}),
+    # QUOT-500 回测（M1，不计入 31 条基线，见 docs/CLI.md §L）：矩阵跑在临时数据目录，
+    # 那里没有本机历史库 → `run` 按 4 退出（数据源不可用）；空目录下 `list` 也是 0；
+    # `show` 的 run_id 不存在 → 6。
+    (("backtest", "run", "--strategy", "ma_cross", "--symbol", "600000"), {4}),
+    (("backtest", "list"), {0}),
+    (("backtest", "show", "bt_00000000"), {6}),
 )
 
 
@@ -253,6 +259,10 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("schedule", "list"),
     ("schedule", "run"),
     ("doctor",),
+    # QUOT-500 回测（M1，不计入 31 条基线，见 docs/CLI.md §L）
+    ("backtest", "run"),
+    ("backtest", "list"),
+    ("backtest", "show"),
 )
 
 def _with_output_json(entry: Any) -> Any:

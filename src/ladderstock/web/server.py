@@ -65,6 +65,7 @@ from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRE
 from ladderstock.web.assistant import build_page_router
 from ladderstock.web.assistant import build_router as build_assistant_router
 from ladderstock.web.assistant import build_skills_router as build_skills_router
+from ladderstock.web.backtest import build_router as build_backtest_router
 from ladderstock.web.calc import build_router as build_calc_router
 from ladderstock.web.control import (
     ControlPlane,
@@ -1651,6 +1652,13 @@ def create_app(
     # 状态码纪律（实现见 `web/calc.py`）。闸门同研究面（回环 + `Host`，纯计算面，
     # 不受 `LDST_CONTROL_ENABLED` 影响）；注册在 SPA 兜底之前。
     app.include_router(build_calc_router())
+
+    # -------------------------------------------- 回测运行卡面（QUOT-500）
+    #
+    # `/api/backtest/runs` + `latest` + `runs/{run_id}` + `runs/{run_id}/export.{json,md,html}`：
+    # **只读**本机已落盘的运行卡产物，页面不重算指标（实现见 `web/backtest.py`）。
+    # 写面只有本机 CLI `ldst backtest run`，这里不开放 POST。闸门同计算面（回环 + Host）。
+    app.include_router(build_backtest_router())
 
     # -------------------------------------------- 标的档案面（QUOT-488）
     #
