@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "config"
 
 
-@pytest.mark.parametrize("name", ["sources", "sync", "ai", "state"])
+@pytest.mark.parametrize("name", ["sources", "sync", "ai", "state", "backfill"])
 def test_config_matches_schema(name: str) -> None:
     data = yaml.safe_load((CONFIG / f"{name}.yaml").read_text(encoding="utf-8"))
     schema = json.loads((CONFIG / "schema" / f"{name}.schema.json").read_text(encoding="utf-8"))

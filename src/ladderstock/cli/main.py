@@ -21,6 +21,7 @@ import typer
 
 from ladderstock import __version__
 from ladderstock.cli.ai import register as register_ai
+from ladderstock.cli.backfill import register as register_backfill
 from ladderstock.cli.backtest import register as register_backtest
 from ladderstock.cli.export import export as export_command
 from ladderstock.cli.industry import register as register_industry
@@ -212,6 +213,10 @@ register_weekly(app)
 # 实现体在 cli/sync.py / cli/sources.py；此处只做注册（DEC-003 命令名不变）
 register_sync(sync_app)
 register_sources(sources_app)
+
+# 历史日线回补 + 缺口报表（QUOT-501）：票池与窗口在 config/backfill.yaml，
+# 实现体在 cli/backfill.py + data/backfill.py（缺口口径见 docs/CLI.md §N）
+register_backfill(app)
 
 
 # ---------------------------------------------------------------- 盘中与提醒

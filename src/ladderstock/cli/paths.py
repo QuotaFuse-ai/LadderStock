@@ -30,6 +30,8 @@ CONFIG_FILES: tuple[str, ...] = (
     "industry.yaml",
     # 回测成本与阈值默认值（QUOT-500，口径见 SPEC-BACKTEST.md）
     "backtest.yaml",
+    # 历史日线回补的票池 / 窗口 / 阶段标注（QUOT-501，见 docs/CLI.md §N）
+    "backfill.yaml",
 )
 
 #: 随包发布的配置模板目录（相对源码树工程根）；运行时首次启动据此 seed

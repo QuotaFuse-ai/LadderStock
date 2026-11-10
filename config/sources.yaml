@@ -649,6 +649,33 @@ sources:
     cooldown_sec: 120
     weight: 1.0
 
+  # 长窗口回补出口（QUOT-501）：东财 push2his `fqt=1`，2000 根 ≈ 8 年，
+  # 腾讯日线单票只有 ~641 根（≈2.5 年），≥5 年回补必须走这里。
+  # 只做**能力登记**（primary: false）：日更链路仍是腾讯，`ldst backfill --source
+  # eastmoney` 在自己的 source policy 里把它提为主源。请求出口由 TickHub 的
+  # PROXY_PROVIDER / PROXY_POOL_URL 决定，凭据只走 env，不写进本文件。
+  - id: tickhub_em_kline
+    dataset: daily_k
+    via: tickhub
+    tool: em_kline
+    primary: false
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_em_index
+    dataset: index_daily
+    via: tickhub
+    tool: em_kline
+    primary: false
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
   # ---------------- 题材叙事：QuotaFuse Wire（可选） ----------------
   #
   # 这里登记 `wire_timeline` 是**能力登记**（同 peer 备源，DEC-006 闸门 3 合规），

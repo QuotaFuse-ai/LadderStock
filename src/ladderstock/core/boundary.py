@@ -858,7 +858,8 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
     for b in (
         # ---- TickHub-CN：行情与短线数据（工具名见 th-cn tools/list）----
         _b("daily_k", "tickhub", "tencent_kline", "append", "trade_date",
-           ("tdx_daily_package",), "日 K 前复权；盘后全市场包为备源"),
+           ("tdx_daily_package", "em_kline"),
+           "日 K 前复权；盘后全市场包与东财长窗口（≥5 年回补）为备源"),
         # K 线图端点（QUOT-410）：与 daily_k 同一工具，但 period / adjust 是
         # **运行时参数**（前端三档周期 × 三档复权按请求透传），不是 sync 写死的
         # `daily + qfq` 口径，所以是独立数据集、独立登记，不共用 daily_k 的链路。
@@ -974,6 +975,7 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # 指数日线（沪深300 等）：事件窗口超额收益的基准。`append` + (code, trade_date)
         # 幂等，增量入参是 `days`（上游按根数回溯），水位仍是 trade_date。
         _b("index_daily", "tickhub", "index_kline", "append", "trade_date",
+           ("em_kline",),
            note="指数日线（事件窗口超额收益基准）；code 为指数代码，如 000300"),
         # ---- QuotaFuse Wire：题材段叙事（可选）----
         # 摘要为主、时间线为同 peer 备源（DEC-008）：两者都是 Wire 的只读工具，

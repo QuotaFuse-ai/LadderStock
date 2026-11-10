@@ -1,0 +1,70 @@
+# A 股日频历史行情回补（QUOT-501）
+#
+# 目标：把 >=20 只票的日线（前复权 qfq）补齐到 >=5 年，并落上证指数基准。
+# 取数只走 TickHub-CN（`tencent_kline` / `em_kline`），不接任何自建采集。
+#
+# 阶段口径（验收不降）：
+# - `source: tencent`  —— 腾讯 qfq 单票上限约 641 根（≈2.5 年），阶段1 先把链路、
+#   幂等落库、缺口报表跑通；报表如实标注「当前 2.5 年 / 目标 5 年」。
+# - `source: eastmoney` —— 阶段2 在 TickHub-CN 接入 `em_kline`（东财 push2his
+#   `fqt=1`，2000 根 ≈8 年）并登记 sources.yaml 的两个 source id 后切过来，
+#   同一套命令、同一份报表重新收口。
+# - `source: config` —— 完全按 config/sync.yaml 的链路，不做覆盖。
+#
+# 换阶段只改下面两处：`source` 与 `stage`（stage 会原样写进缺口报表）。
+backfill:
+  source: eastmoney
+  stage: "阶段2：东财 push2his qfq 源（em_kline，单票 2000 根覆盖 ≥5 年），请求经本机代理池出口；目标窗口 5 年"
+
+  # 目标窗口：起点写死 5 年前；end 留空 = 以基准指数的最新交易日为准。
+  start: "2021-11-10"
+  end: ""
+  target_years: 5
+
+  # 取数节流与止损（单只失败不中断整批）
+  # TickHub 对东财 push2 端点限速 1 次/25 秒（跨股票共享同一个端点族），
+  # 26 秒一只才不会被判 endpoint_paced；连续失败放宽到 8 只：代理池偶发
+  # 抖动不该终止整批，真断网时仍会停（8 只都会失败）。
+  throttle_ms: 26000
+  max_consecutive_failures: 8
+
+  # 缺口率超过该阈值（区间内缺口 / 区间内预期交易日）的票，在报表里单独列名并解释
+  gap_rate_threshold: 0.02
+
+  # 报表目录：相对路径按 <data_dir> 解析；每次运行落一个 <source>-<时间戳>/ 子目录
+  report_dir: "backfill-reports"
+
+  # 基准：上证指数，落 index_daily；它的 bar 同时充当「预期交易日历」
+  benchmark:
+    code: "sh000001"
+    name: "上证指数"
+    days: 2000
+
+  # 票池 25 只：沪深主板 + 创业板，无 ST（2026-11-10 快照）。
+  # 回补窗口起点早于所有标的上市日，不会把「上市前」误判成缺口。
+  universe:
+    - { code: "600000", name: "浦发银行", board: "SH主板" }
+    - { code: "600036", name: "招商银行", board: "SH主板" }
+    - { code: "600519", name: "贵州茅台", board: "SH主板" }
+    - { code: "601318", name: "中国平安", board: "SH主板" }
+    - { code: "601899", name: "紫金矿业", board: "SH主板" }
+    - { code: "600030", name: "中信证券", board: "SH主板" }
+    - { code: "600887", name: "伊利股份", board: "SH主板" }
+    - { code: "601012", name: "隆基绿能", board: "SH主板" }
+    - { code: "600276", name: "恒瑞医药", board: "SH主板" }
+    - { code: "600309", name: "万华化学", board: "SH主板" }
+    - { code: "601166", name: "兴业银行", board: "SH主板" }
+    - { code: "601088", name: "中国神华", board: "SH主板" }
+    - { code: "000001", name: "平安银行", board: "SZ主板" }
+    - { code: "000333", name: "美的集团", board: "SZ主板" }
+    - { code: "000651", name: "格力电器", board: "SZ主板" }
+    - { code: "000858", name: "五粮液", board: "SZ主板" }
+    - { code: "000725", name: "京东方A", board: "SZ主板" }
+    - { code: "002594", name: "比亚迪", board: "SZ主板" }
+    - { code: "002415", name: "海康威视", board: "SZ主板" }
+    - { code: "002475", name: "立讯精密", board: "SZ主板" }
+    - { code: "300750", name: "宁德时代", board: "创业板" }
+    - { code: "300059", name: "东方财富", board: "创业板" }
+    - { code: "300124", name: "汇川技术", board: "创业板" }
+    - { code: "300760", name: "迈瑞医疗", board: "创业板" }
+    - { code: "300274", name: "阳光电源", board: "创业板" }
