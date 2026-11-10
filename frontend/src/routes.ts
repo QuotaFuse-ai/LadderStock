@@ -27,6 +27,8 @@ export const ROUTE_PATHS = [
   '/weekly',
   '/journal',
   '/validate',
+  // QUOT-534：策略回测（只读运行卡）挂在「验证」组，`?run=bt_xxxxxxxx` 深链
+  '/backtest',
   '/limit-up',
   '/news',
   '/calendar',

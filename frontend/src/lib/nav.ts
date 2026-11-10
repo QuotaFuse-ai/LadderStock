@@ -7,6 +7,7 @@ import {
   CalendarRange,
   CandlestickChart,
   ClipboardCheck,
+  FlaskConical,
   Flame,
   Gauge,
   Home,
@@ -130,6 +131,8 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: ClipboardCheck,
     pages: [
       { to: '/validate', label: '验证', icon: ClipboardCheck },
+      // QUOT-534：策略回测只读运行卡（参数 / 结果 / 证据三区）
+      { to: '/backtest', label: '策略回测', icon: FlaskConical },
       { to: '/limit-up', label: '涨停样本', icon: Flame },
     ],
   },

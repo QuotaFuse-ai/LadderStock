@@ -25,6 +25,8 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   { prefix: '/pool', pkg: 'review-journal' },
   { prefix: '/journal', pkg: 'review-journal' },
   { prefix: '/validate', pkg: 'review-journal' },
+  // QUOT-534：策略回测只读运行卡，暂不绑技能包（开放域），避免凭空接页面助手通道
+  { prefix: '/backtest', pkg: null },
   { prefix: '/limit-up', pkg: 'review-journal' },
   { prefix: '/my-stocks', pkg: 'portfolio-check' },
   { prefix: '/calendar', pkg: 'event-calendar' },
