@@ -7,7 +7,7 @@
     `strategy.py`（3 个内置策略）、`match.py`（A 股撮合引擎）、`score.py`（指标，调 calc 层）、
     `guard.py`（校验门）、`card.py`（运行卡渲染）、`config.py`（配置加载与覆盖）、
     `runner.py`（唯一入口：CLI 与 Web 共用）
-  - CLI：`src/ladderstock/cli/backtest.py`（`ldst backtest run|list|show`，见 `docs/CLI.md` §L）
+  - CLI：`src/ladderstock/cli/backtest.py`（`ldst backtest run|list|show`，见 `docs/CLI.md` §M）
   - HTTP：`src/ladderstock/web/backtest.py`（`/api/backtest/*`，只读）
 - 配置：`config/backtest.yaml`（成本 / 校验门默认值）+ `config/schema/backtest.schema.json`（形状）
 - 测试：`tests/unit/backtest/`（A 股规则 / 无未来函数 / run_id 复现 / 成本三档 / 配置校验 / 运行卡契约）
@@ -107,7 +107,7 @@ HTML 页头与横幅标红；CLI 打印红字并以 **8** 退出。**不允许�
   同参数 + 同数据指纹 → 同 `run_id`、同卡（仅 `generated_at` 不同），重跑覆盖同一组产物。
 - 产物：`<data_dir>/backtests/<run_id>/<run_id>.{json,md,html}`。
 - JSON 严格序列化（`allow_nan=False`），任何 inf / NaN 直接报错而不是写出坏文件。
-- 字段清单与类型见 `docs/CLI.md` §L 与运行卡 JSON 本体；前端据此只读渲染。
+- 字段清单与类型见 `docs/CLI.md` §M 与运行卡 JSON 本体；前端据此只读渲染。
 
 ## 6. HTTP（只读，`/api/backtest`）
 

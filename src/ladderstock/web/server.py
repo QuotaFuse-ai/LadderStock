@@ -60,6 +60,7 @@ from ladderstock.core.validation import load_validation, validation_path
 from ladderstock.core.validation import session_days as cached_session_days
 from ladderstock.data import archive
 from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
+from ladderstock.supervisor.selfheal import SelfHealEngine
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
 from ladderstock.web.assistant import build_page_router
@@ -88,7 +89,12 @@ from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
-from ladderstock.web.supervisor_api import build_selfheal_engine
+from ladderstock.web.supervisor_api import (
+    build_process_engine,
+    build_selfheal_engine,
+    build_supervisor_engines,
+    own_processes,
+)
 from ladderstock.web.supervisor_api import mount_supervisor as mount_supervisor_router
 from ladderstock.web.symbols import SymbolPlane
 from ladderstock.web.symbols import build_router as build_symbols_router
@@ -241,6 +247,7 @@ REMOTE_TOKEN_ENV = "LDST_WEB_TOKEN"
 # --------------------------------------------------------------------------- #
 # 小工具
 # --------------------------------------------------------------------------- #
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -410,9 +417,7 @@ def _journal_stats_payload(
     payload: dict[str, Any] = {
         "local_only": True,
         "store": "local_sqlite",
-        "data_source_status": (
-            "ok" if stats.get("data_source_status") == "ok" else "missing"
-        ),
+        "data_source_status": ("ok" if stats.get("data_source_status") == "ok" else "missing"),
         "range": {
             "from": day_from.isoformat() if day_from else None,
             "to": day_to.isoformat() if day_to else None,
@@ -616,9 +621,7 @@ def _theme_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if strength is not None and (row["strength"] is None or strength > row["strength"]):
             row["strength"] = strength
         count = _int_or_none(pick(record, THEME_LIMIT_KEYS))
-        if count is not None and (
-            row["limit_up_count"] is None or count > row["limit_up_count"]
-        ):
+        if count is not None and (row["limit_up_count"] is None or count > row["limit_up_count"]):
             row["limit_up_count"] = count
         if row["leader"] is None:
             row["leader"] = _leader_label(record)
@@ -995,9 +998,12 @@ def create_app(
     symbols_plane: Any | None = None,
     supervisor_engine: Any | None = None,
     knowledge_plane: Any | None = None,
+    supervisor_processes: Any | None = None,
+    own_processes_on_lifecycle: bool | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
-    / `industry_plane` / `radar_plane` / `symbols_plane` / `knowledge_plane` 可注入，便于测试。
+    / `industry_plane` / `radar_plane` / `symbols_plane` / `knowledge_plane` /
+    `supervisor_engine` / `supervisor_processes` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -1548,9 +1554,7 @@ def create_app(
     def state_config() -> dict[str, Any]:
         """配置与数据目录摘要——只报存在性与版本，不回显任何配置内容/凭据。"""
         base = config_dir()
-        files = [
-            {"file": name, "present": (base / name).is_file()} for name in CONFIG_FILES
-        ]
+        files = [{"file": name, "present": (base / name).is_file()} for name in CONFIG_FILES]
         files.append(
             {
                 "file": "schema/",
@@ -1680,18 +1684,40 @@ def create_app(
     # ------------------------------------------- 自愈状态面（QUOT-491 / 482-C）
     #
     # `/api/supervisor/state`（GET 只读）+ `/api/supervisor/state/{module}/reset`
-    # （POST 人工解除 needs_human）。引擎 = 最小账本 + 命令表重拉 + 通知
-    # （482-A/482-B 未落地，边界说明见 `supervisor/__init__.py`）；写面闸门复用
-    # 雷达面同一份实现（回环 + Host + 写方法来源证据），不新增鉴权。引擎随应用
-    # 启停（startup 起 / shutdown 停）；测试用 `supervisor_engine` 注入假件。
-    engine = supervisor_engine if supervisor_engine is not None else build_selfheal_engine(
-        root, panel_url=f"http://127.0.0.1:{WEB_PORT}/"
-    )
+    # （POST 人工解除 needs_human）。引擎 = 账本 + 命令表重拉 + 通知；写面闸门
+    # 复用雷达面同一份实现（回环 + Host + 写方法来源证据），不新增鉴权。自愈
+    # 巡检随应用启停（startup 起 / shutdown 停）；测试用 `supervisor_engine` /
+    # `supervisor_processes` 注入假件。
+    #
+    # 顺序启停（QUOT-523）：`/api/supervisor/start|restart|stop` 与自愈共用同一张
+    # 账本；看板启动 / 退出是否连子进程一起起停由 `LDST_SUPERVISOR_OWN_PROCESSES`
+    # 决定（默认附加模式：只观测、只响应用户显式操作，绝不因为关看板停生产进程）。
+    processes = supervisor_processes
+    if supervisor_engine is None and processes is None:
+        engines = build_supervisor_engines(root, panel_url=f"http://127.0.0.1:{WEB_PORT}/")
+        engine = engines.heal
+        processes = engines.processes
+    else:
+        engine = (
+            supervisor_engine
+            if supervisor_engine is not None
+            else build_selfheal_engine(root, panel_url=f"http://127.0.0.1:{WEB_PORT}/")
+        )
+        # 注入的自愈假件没有共享账本时只保留 482-C 面，不凭空造真启停引擎
+        if processes is None and isinstance(engine, SelfHealEngine):
+            processes = build_process_engine(root, heal=engine)
     if plane is not None:
         # 482-A 归属观测端点复用自愈快照做底（QUOT-482-A × 482-C 合并视图）；
         # control_plane 分支注册在 mount_supervisor_router 之前，GET /state 走合并版
         plane.selfheal = engine
-    mount_supervisor_router(app, engine)
+    mount_supervisor_router(
+        app,
+        engine,
+        processes=processes,
+        own_processes_on_lifecycle=(
+            own_processes() if own_processes_on_lifecycle is None else own_processes_on_lifecycle
+        ),
+    )
 
     # ------------------------------------------------------------ 静态看板
 
@@ -1753,6 +1779,7 @@ def _hint_page() -> str:
 # --------------------------------------------------------------------------- #
 # 启动
 # --------------------------------------------------------------------------- #
+
 
 def log_config() -> dict[str, Any]:
     """uvicorn 日志配置：全部写 stderr（docs/CLI.md §F）。"""

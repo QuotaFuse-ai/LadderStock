@@ -1,10 +1,10 @@
-# 六模块启停矩阵（QUOT-482-B）+ 按需代理池（QUOT-506）
+# 七模块启停矩阵（QUOT-482-B）+ 看门狗（QUOT-523）+ 按需代理池（QUOT-506）
 
-> 范围：`supervisor/module_adapters.py` 里六个顺序模块与按需模块 `proxypool` 的真实
-> 启动 / 停止 / 探活规则。
+> 范围：`supervisor/module_adapters.py` 里七个顺序模块（含 `watch` 看门狗）与按需
+> 模块 `proxypool` 的真实启动 / 停止 / 探活规则。
 > 内核契约（账本、引擎、归属判定）见 [ledger-and-lifecycle.md](./ledger-and-lifecycle.md)。
-> 本文所有命令均为「可直接复制执行」的 PowerShell，目录按本机部署写死；
-> 适配器本身不写死目录，解析顺序见 §8。
+> 本文所有命令均为「可直接复制执行」的 PowerShell，示例里的 `D:\workplace\...`
+> 只是 Peer 仓库在本开发机上的位置；适配器本身不写死目录，解析顺序见 §8。
 
 ## 0. 总表
 
@@ -16,7 +16,8 @@
 | 4 | senate | 8765（mcp）, 8786（webui） | `StockSenate/.venv/Scripts/ssenate.exe` | 进程树 | `ssenate mcp http` / `ssenate webui` |
 | 5 | financecoffer | 8100（wslhost 转发） | WSL `docker compose up -d` + `wsl.exe` 锚进程 | WSL docker 容器 | compose project `financecoffer` + service `api` |
 | 6 | proxyfleet | 8788, 8789 | 计划任务 `ProxyFleet`（SYSTEM） | `schtasks /end` | `pfctl.py run` |
-| 7 | proxypool（按需） | 配置 `Mappings[].Listen`（默认 18080），**不在静态白名单** | `python proxypool_forwarder.py --id <映射>`（每条映射一个进程） | 进程树 | `proxypool_forwarder` + `--id` + 映射 Id |
+| 7 | watch | 5952（看门狗） | `ldst -m ladderstock.cli.main watchdog --port 5952 --spawn-cmd '[... run --port 5950]'` | 进程树 | `ladderstock.cli.main` + `watchdog` + `--port` |
+| — | proxypool（按需） | 配置 `Mappings[].Listen`（默认 18080），**不在静态白名单** | `python proxypool_forwarder.py --id <映射>`（每条映射一个进程） | 进程树 | `proxypool_forwarder` + `--id` + 映射 Id |
 
 探活口径（适配器 `probe()`）：**端口在监听，且监听进程的 cmdline 命中该端口对应面的关键字**；
 金融柜没有 Windows 侧业务进程，改为「8100 在听 **且** WSL 内 financecoffer/api 容器在运行」；
@@ -290,25 +291,29 @@ Get-CimInstance Win32_Process -Filter "ProcessId=<pid>" | Select-Object ProcessI
 
 ## 8. 目录与覆盖变量
 
-| 模块 | 默认目录（同级优先） | 覆盖变量 |
+| 模块 | 默认目录（bundle 同级） | 覆盖变量 |
 |------|--------------------|---------|
-| tickhub | `D:\workplace\TickHub-CN` | `LDST_PEER_DIR_TICKHUB` |
-| tickhub_us | `D:\workplace\TickHub-US` | `LDST_PEER_DIR_TICKHUB_US` |
-| wire | `D:\workplace\Wire\quotafuse-wire` | `LDST_PEER_DIR_WIRE` |
-| senate | `D:\workplace\StockSenate` | `LDST_PEER_DIR_SENATE` |
-| financecoffer | `D:\workplace\FinanceCoffer` | `LDST_PEER_DIR_FINANCECOFFER` |
+| tickhub | `<安装根>\TickHub-CN` | `LDST_PEER_DIR_TICKHUB` |
+| tickhub_us | `<安装根>\TickHub-US` | `LDST_PEER_DIR_TICKHUB_US` |
+| wire | `<安装根>\Wire\quotafuse-wire` | `LDST_PEER_DIR_WIRE` |
+| senate | `<安装根>\StockSenate` | `LDST_PEER_DIR_SENATE` |
+| financecoffer | `<安装根>\FinanceCoffer` | `LDST_PEER_DIR_FINANCECOFFER` |
 | proxyfleet | 任务名 `ProxyFleet` | `LDST_PROXYFLEET_TASK` |
 | proxypool | `ops/host/LdstHostConfig.psd1` | `LDST_HOST_CONFIG` |
 
 其它：
 
-- `LDST_PEER_ROOT`：同级目录不存在时的部署根，默认 `D:\workplace`。
+- 安装根（QUOT-523，全部 bundle 相对）：`LDST_INSTALL_ROOT` > 打包 exe 所在目录 >
+  源码树仓库根的父目录；不再有写死的 `D:\workplace` 兜底。
+- `LDST_PEER_ROOT`：替换「安装根」作为同级目录基准（`<LDST_PEER_ROOT>\<同级名>`）。
+- `LDST_LAUNCHER`：看板 / 看门狗的自有启动器（打包后 `ldst.exe`）；空则找
+  `<安装根>\LadderStock\.venv` 下的 `ldst`，再退回当前解释器。
 - `LDST_WSL_DISTRO`：WSL 发行版覆盖。
 - `LDST_TICKHUB_ENV_FILES`：tickhub env 文件列表（`os.pathsep` 分隔）。
 - 日志目录：`%LOCALAPPDATA%\LadderStock\logs`（每个面一个文件：
   `tickhub-mcp.log` / `tickhub-admin.log` / `tickhub-us-mcp.log` / `wire-web.log` /
   `wire-mcp.log` / `senate-mcp.log` / `senate-webui.log` / `financecoffer-anchor.log` /
-  `proxypool-<映射 Id>.log`）。
+  `watchdog.log` / `proxypool-<映射 Id>.log`）。
 
 ## 9. 验收命令
 
@@ -332,6 +337,15 @@ Get-CimInstance Win32_Process |
   Select-Object ProcessId,ParentProcessId,Name,CommandLine
 ```
 
+看门狗（5952）同口径：在听 **且** 持有者 cmdline 同时命中
+`ladderstock.cli.main`、`watchdog`、`--port`；停止后 5952 不可连接、上面这条扫描
+也扫不到 `watchdog` 命令行：
+
+```powershell
+Get-NetTCPConnection -State Listen -LocalPort 5952 | Select-Object LocalAddress,LocalPort,OwningProcess
+@(Get-NetTCPConnection -State Listen -LocalPort 5952 -ErrorAction SilentlyContinue).Count  # 期望 0
+```
+
 金融柜双证据：
 
 ```powershell
@@ -346,4 +360,12 @@ wsl.exe -d $d -u root -e bash -lc "docker ps --filter label=com.docker.compose.p
 
 ```powershell
 Get-ScheduledTaskInfo -TaskName ProxyFleet | Select-Object LastRunTime,LastTaskResult,NextRunTime
+```
+
+启动前检查（`preflight()`，只看「起得来」，不碰进程、不占端口）：
+
+```powershell
+python -c "from ladderstock.supervisor.module_adapters import preflight; print(preflight().describe())"
+# 连同按需模块一起查：
+python -c "from ladderstock.supervisor.module_adapters import preflight; print(preflight(include_on_demand=True).describe())"
 ```

@@ -1,5 +1,14 @@
 export { Badge, SignedNumber, StatusDot, type BadgeTone, type DotTone } from './Badge'
-export { Button, IconButton, type ButtonProps, type ButtonSize, type ButtonVariant, type IconButtonProps } from './Button'
+export {
+  Button,
+  CardRefreshButton,
+  IconButton,
+  type ButtonProps,
+  type ButtonSize,
+  type ButtonVariant,
+  type CardRefreshButtonProps,
+  type IconButtonProps,
+} from './Button'
 export { Card, CardBody, CardFooter, CardHeader, MetricCard, SectionCard, type SectionTone } from './Card'
 export {
   Checkbox,
@@ -34,6 +43,7 @@ export {
 } from './Feedback'
 export { HBarList, Sparkline, type HBarItem, type HBarListProps, type SparklineProps } from './MiniChart'
 export { NavPills, type NavPillItem, type NavPillsProps } from './NavPills'
+export { Pagination, type PaginationProps } from './Pagination'
 export { PrivacyNotice } from './PrivacyNotice'
 export { ConfirmDialog, Drawer, useModalChrome, type ConfirmDialogProps, type DrawerProps } from './Overlay'
 export {
