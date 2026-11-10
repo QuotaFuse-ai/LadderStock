@@ -13,6 +13,7 @@ import {
   type StructuredMetrics,
   type ValuationBasis,
 } from '../../api/financecoffer'
+import type { PlainConclusion } from '../../api/plainConclusion'
 import {
   RESEARCH_STAGES,
   STAGE_TITLE,
@@ -33,6 +34,64 @@ import {
 export const DEMO_CODE = '600000'
 export const DEMO_DATE = '2026-10-31'
 export const DEMO_NAME = '浦发银行'
+
+/**
+ * 白话结论演示载荷（QUOT-537）：逐字段照 QUOT-536 契约样例，只把代码与日期换成本页演示值。
+ * 演示源只在 `?demo=1` 时使用；真实通道缺 `plain` 时页面如实降级，绝不复用这份数据。
+ */
+const DEMO_PLAIN: PlainConclusion = {
+  version: 'plain-v1',
+  what: {
+    text: '研究团队认为暂时看不出明显偏向。多空理由大体互相抵消，团队没有给出方向性结论；对普通人来说，这通常意味着「先观察、不急着下判断」。这只是研究评级，代表团队的研究观点，不是买卖指令。',
+    evidence: [
+      { domain: 'financial', source: 'local_json', data_as_of: DEMO_DATE, detail: `financial/${DEMO_CODE}/${DEMO_DATE}.json` },
+      { domain: 'dragon_tiger', source: 'local_json', data_as_of: DEMO_DATE, detail: `dragon_tiger/${DEMO_CODE}/${DEMO_DATE}.json` },
+      { domain: 'money_flow', source: 'local_json', data_as_of: DEMO_DATE, detail: `money_flow/${DEMO_CODE}/${DEMO_DATE}.json` },
+    ],
+    neutral: false,
+  },
+  why: [
+    {
+      text: '基本面分析师：未明确。',
+      evidence: [
+        { domain: 'financial', source: 'local_json', data_as_of: DEMO_DATE, detail: `financial/${DEMO_CODE}/${DEMO_DATE}.json` },
+      ],
+      neutral: false,
+    },
+  ],
+  risks: [
+    {
+      text: '激进视角：研究结论为 偏空，需按该视角衡量可承受的不确定性。',
+      evidence: [
+        { domain: 'kline', source: 'local_json', data_as_of: DEMO_DATE, detail: `kline/${DEMO_CODE}/${DEMO_DATE}.json` },
+        { domain: 'quote', source: 'local_json', data_as_of: DEMO_DATE, detail: `quote/${DEMO_CODE}/${DEMO_DATE}.json` },
+        { domain: 'money_flow', source: 'local_json', data_as_of: DEMO_DATE, detail: `money_flow/${DEMO_CODE}/${DEMO_DATE}.json` },
+      ],
+      neutral: false,
+    },
+  ],
+  confidence: 0.3836,
+  confidence_note:
+    '整体置信度 0.38（0~1，越高表示系统越有把握，但它不是上涨概率）；该数值直接沿用投资经理终审结果，没有另行计算。',
+  glossary: [
+    { term: '研究评级', note: '研究团队给出的综合意见档位，只代表研究观点，不是买卖指令。' },
+    { term: '置信度', note: '系统对自己判断的把握程度，0 到 1，越接近 1 越有把握；它不是上涨概率。' },
+  ],
+  risk_flags: [],
+  degraded: false,
+  omitted_claims: 0,
+  redline_blocked: 0,
+}
+
+/** 降级演示：上游摘掉了无证据论断并拦截了红线表述（数值照契约语义）。 */
+const DEMO_PLAIN_DEGRADED: PlainConclusion = {
+  ...DEMO_PLAIN,
+  degraded: true,
+  omitted_claims: 2,
+  redline_blocked: 1,
+}
+
+const DEMO_DISCLAIMER = '本报告由 AI 自动生成，仅用于研究与教学，不构成任何投资建议。'
 
 export type DemoVariant = 'full' | 'partial' | 'empty' | 'all-unverified'
 
@@ -389,6 +448,7 @@ function unverifiedDocument(name: ResearchStageName): ResearchStage {
 function assemble(
   seeds: Partial<Record<ResearchStageName, StageSeed>>,
   deleted: ResearchStageName[] = [],
+  plain: PlainConclusion | null = DEMO_PLAIN,
 ): ResearchStatus {
   const stages = RESEARCH_STAGES.map((name) => {
     if (deleted.includes(name)) {
@@ -412,6 +472,8 @@ function assemble(
     source_status: failed.length > 0 || pending.length > 0 ? 'partial' : 'ok',
     reason: failed.length > 0 ? `六段未完成，缺：${[...failed, ...pending].join('、')}` : null,
     data_source_status: failed.length > 0 || pending.length > 0 ? 'partial' : 'ok',
+    plain,
+    disclaimer: plain ? DEMO_DISCLAIMER : null,
   }
 }
 
@@ -478,6 +540,8 @@ export function demoResearchStatus(variant: DemoVariant = 'full'): ResearchStatu
           facts: {},
         },
       },
+      [],
+      DEMO_PLAIN_DEGRADED,
     )
   }
   return assemble({})
