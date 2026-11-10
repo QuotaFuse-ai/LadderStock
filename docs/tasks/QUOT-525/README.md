@@ -84,8 +84,13 @@ macOS / Linux 分别运行 `packaging/build_macos.sh`、`packaging/build_linux_a
   看板是它的子孙；只 `kill $PID` 会留下仍在监听 5967 的 python 子进程。
 - 修复：`packaging/smoke_posix.sh` 改为递归终止进程树（`pgrep -P`），并在退出后
   用最多 30s 的轮询确认端口释放；超时仍占用依旧判失败，未放宽断言。
-- macOS 首次 CI 在 1s 内 `cancelled` 且 `runner_name` 为空（未分配到 runner），
-  属基础设施取消，推送修复后重跑确认。
+- macOS 在 1s 内 `cancelled` 且 `runner_name` 为空、`steps` 为空（未分配到 runner）。
+  check-run 注解给出原因：`The configuration 'macos-14-arm64-us-default' is not
+  supported`——组织侧未启用该 macOS runner 配置。重跑（attempt 2）以同样的 1s
+  cancelled 复现，确认是基础设施/组织配置问题，仓库侧代码无法修正；
+  需要组织管理员启用 macOS runner 后才能产出 py2app 证据。
+- 本轮最终 head `323cf4a` 的 CI：linux / windows / frontend / backend 全绿，
+  macOS 仅剩上述 runner 配置阻塞。
 
 ## 已知问题与边界
 
