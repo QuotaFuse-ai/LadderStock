@@ -101,6 +101,15 @@
 **`available` 只看承诺的指标字段**（`METRIC_FIELDS`），不看 `reason` / `caliber` 这类
 说明性文字：说明字段永远有值，拿它们判断「有没有数」会让空缓存也报 `available=true`。
 
+### 1.4 缓存怎么来：读取仍只读，补齐是显式动作
+
+本章所有读取路径**仍然零外呼**（§1.1 硬约束 1）。缓存覆盖不足时，页面提供一条
+**显式**的补齐动作：`ldst sync industry`（控制面 key `industry-sync`，DEC-074）。
+它只同步 §1.1 的六个数据集，代码池取 `config/industry.yaml` 已启用行业的锚点股
+（`--codes` 可覆盖），不做全市场拉取，成本非 0 与请求上限在命令输出明示。
+`config/sync.yaml` 的懒缓存默认池、`data_as_of` 口径与 §9 的结构性缺口都不因它改变；
+`ldst industry list` / `show`（页面「重算行业快照」）依旧只读缓存。
+
 ## 2. 景气（prosperity）
 
 - 公式：成分股**各自最近一期报表**（按 `trade_date` = `report_date` 取最大，同一代码多期只取最新）

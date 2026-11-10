@@ -168,7 +168,10 @@ PAGE_COMMANDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "news": ("/news", "抓取资讯雷达", ("news",)),
     "pool": ("/pool", "重算候选池", ("pool",)),
     "validate": ("/validate", "提交收盘对账", ("validate", "reconcile", "--date", "{date}")),
+    # 两个 `/industry` 命令是**不同语义**：`industry` 只读缓存重算（零外呼），
+    # `industry-sync` 真实联网补齐（成本非 0，范围/上限见 `PAGE_COMMAND_NOTES`）。
     "industry": ("/industry", "重算行业快照", ("industry", "list")),
+    "industry-sync": ("/industry", "同步补齐行业数据", ("sync", "industry")),
     # `/positions` 不再挂命令条（QUOT-419 / DEC-055）：持仓页改为自动加载本机持仓，
     # 「查询持仓 ldst position list」不再是页面入口。CLI 本身仍在，只是不在页面上当主角。
     # `/calendar` 同理移除（QUOT-441 / DEC-061）：`ldst events` 是请求时现算的只读取数、
@@ -180,6 +183,15 @@ PAGE_COMMAND_DATE = "{date}"
 PAGE_COMMAND_TIMEOUT_SEC = 1800.0
 #: 允许视为「跑完但部分降级」的退出码：0 成功、8 部分数据源失败、9 AI 降级
 PAGE_COMMAND_OK_CODES = frozenset({0, 8, 9})
+#: 需要向前端明示成本 / 范围的命令（`GET /commands` 逐条带出，不靠前端自己猜）：
+#: 只有真实联网、可能产生上游请求成本的命令才在这里登记。
+PAGE_COMMAND_NOTES: dict[str, str] = {
+    "industry-sync": (
+        "联网同步（成本非 0）：按 config/industry.yaml 已启用行业的锚点股逐只回补"
+        "（单数据集上限 100 只，不做全市场拉取），水位增量 + 幂等落库 + QFSD-7001 退避。"
+        "与只读的「重算行业快照」不同，本命令会真正发起上游请求。"
+    ),
+}
 
 #: `import <pkg>` 探测超时（PRD §3.1）
 IMPORT_PROBE_TIMEOUT_SEC = 15.0
@@ -2123,17 +2135,19 @@ class ControlPlane:
         items: list[dict[str, Any]] = []
         for key, (route, label, argv) in PAGE_COMMANDS.items():
             last = self._last_command.get(key)
-            items.append(
-                {
-                    "key": key,
-                    "route": route,
-                    "label": label,
-                    "argv": _page_argv(argv),
-                    "running": last is not None
-                    and last.status in {"queued", "running"},
-                    "last_job": last.view() if last is not None else None,
-                }
-            )
+            item: dict[str, Any] = {
+                "key": key,
+                "route": route,
+                "label": label,
+                "argv": _page_argv(argv),
+                "running": last is not None
+                and last.status in {"queued", "running"},
+                "last_job": last.view() if last is not None else None,
+            }
+            note = PAGE_COMMAND_NOTES.get(key)
+            if note:
+                item["note"] = note
+            items.append(item)
         return {"ok": True, "commands": items}
 
     def create_command_job(self, key: str) -> Job:
@@ -4260,6 +4274,7 @@ __all__ = [
     "MAX_CONDITIONS",
     "MAX_TRIGGER_CHARS",
     "PAGE_COMMANDS",
+    "PAGE_COMMAND_NOTES",
     "STATUS_LABELS",
     "StatePersistError",
     "VALIDATION_CONDITION_FIELDS",
