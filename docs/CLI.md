@@ -79,6 +79,7 @@
 | **QUOT-443 增量（1，非 P0 基线）** | `watchdog` |
 | **QUOT-500 增量（3，非 P0 基线）** | `backtest run`、`backtest list`、`backtest show` |
 | **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
+| **QUOT-533 增量（1，非 P0 基线）** | `sync industry`（行业缓存真实联网补齐，DEC-074） |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -143,6 +144,25 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 **同库串行（QUOT-234）**：`ldst sync` 一进来先拿 `data/market.duckdb.lock` 这把进程级写锁，
 第二个 sync 排队而不是把第一个的 DuckDB 文件锁顶成崩溃。等待上限 `LDST_DB_LOCK_TIMEOUT`
 （秒，默认 30）；超时 **10**，一次取数都不发。`sync status` 只读水位文件，不参与排队。
+
+## B′. 行业缓存一键补齐（QUOT-533 增量，1）
+
+> **31 条 P0 基线之外的新增命令**。口径与取舍见 `docs/decisions/DEC-074-industry-sync-on-demand.md`。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 45 | `ldst sync industry` | 对 `/industry` 页面读的六个数据集（`SNAPSHOT_DATASETS`）做**真实联网同步**，补齐懒缓存（DEC-018）覆盖 | `--codes`（覆盖行业锚点池）、`--full`、`--output` | 与 `ldst sync` 同口径：0 全成、8 部分失败、4 一个都没成、3 配置/范围错误、2 超过代码池上限、10 库锁超时 |
+
+- **与只读重算的区别**：`ldst industry list` 只读本机缓存、零外呼（控制面 key `industry`，
+  文案「重算行业快照」）；`ldst sync industry` 会真正发起上游请求（key `industry-sync`，
+  文案「同步补齐行业数据」）。同一路由两条命令的文案与 `note` 由后端下发，前端不自己猜。
+- **范围**：六个数据集 = `sw_industry_map` / `finance_indicators` / `valuation_history` /
+  `fund_flow` / `industry_fund_flow` / `daily_k`；代码池 = `config/industry.yaml` 已启用
+  行业的锚点股（`--codes` 可覆盖），**不做全市场拉取**，单数据集上限 `MAX_POOL_CODES=100`。
+- **成本明示**：stderr 与载荷 `industry_scope`（`code_pool` / `estimated_requests` /
+  `full_market=false` / `note`）同时给出「成本非 0」与本次最多多少次上游请求。
+- **同步语义**：水位增量、`(code, trade_date)` 幂等、QFSD-7001 退避（DEC-048）、同库写锁
+  （QUOT-234）与 `ldst sync` 完全同一条路径；`config/sync.yaml` 的懒缓存默认池不变。
 
 ## C. 盘中、提醒与交易日志（7）
 

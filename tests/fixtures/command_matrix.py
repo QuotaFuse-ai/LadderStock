@@ -87,6 +87,9 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("sync", "--dataset", "daily_k"), {4, 8}),
     (("sync", "--full"), {4, 8}),
     (("sync", "status"), {0}),
+    # QUOT-533 / DEC-074：行业数据集显式联网补齐。空桩下六个数据集全失败 -> 4；
+    # 代码池来自 config/industry.yaml 锚点，不需要真实 peer 就能验范围与上限。
+    (("sync", "industry"), {4}),
     (("sources", "list"), {0}),
     (("sources", "validate"), {0, 3, 4}),
     (("sources", "health"), {0}),
@@ -235,6 +238,8 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("ladder", "show"),
     ("sync",),
     ("sync", "status"),
+    # QUOT-533 / DEC-074：行业缓存一键补齐（真实联网同步，非只读重算）
+    ("sync", "industry"),
     ("sources", "list"),
     ("sources", "validate"),
     ("sources", "health"),

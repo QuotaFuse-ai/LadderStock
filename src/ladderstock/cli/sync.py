@@ -82,6 +82,8 @@ from ladderstock.errors import (
     EXIT_USAGE,
     LadderStockError,
 )
+from ladderstock.industry import snapshot as industry_snapshot
+from ladderstock.industry.catalog import IndustryCatalog, load_catalog
 
 MODE_INCREMENTAL = "incremental"
 MODE_FULL = "full"
@@ -110,6 +112,21 @@ POOL_ARCHIVE = "当日归档"
 #: 剩余元素不发起调用。上限取 3：单个坏元素后面仍连着 1 次成功，不会误伤。
 FANOUT_FAILURE_STOP = 3
 POOL_WATCHLIST = "本机自选(watchlist)"
+
+#: 行业「同步补齐」的数据集组 = `/industry` 页面实际读的六个输入数据集
+#: （与 `industry/snapshot.py: SNAPSHOT_DATASETS` 是同一份，不另抄一遍）。
+#: 五个逐股数据集走 `sync_code_pool`，`industry_fund_flow` 按日整批替换；
+#: 这一组只钉范围，分发仍由 `sync_one` 按工具入参决定。
+INDUSTRY_SYNC_DATASETS: tuple[str, ...] = industry_snapshot.SNAPSHOT_DATASETS
+
+#: 行业同步的代码池 = `config/industry.yaml` 已启用行业的锚点股（DEC-018 懒缓存口径）。
+#: **不是全市场**：锚点是行业画像当前真正用得到的代码，超出部分不在这里硬顶。
+POOL_INDUSTRY = "config/industry.yaml 锚点"
+
+INDUSTRY_SYNC_NOTE = (
+    "联网同步，成本非 0：按行业锚点逐只回补（不做全市场拉取），"
+    "增量水位 + 幂等落库 + QFSD-7001 退避；与只读的「重算行业快照」不是同一件事"
+)
 
 # 视为「这一天跑成功了」的状态：只有 failed 才影响退出码
 GOOD_STATUSES = ("ok", "degraded", "empty")
@@ -276,6 +293,37 @@ def resolve_code_pool(
     if watched:
         return watched, POOL_WATCHLIST
     return [], "-"
+
+
+def industry_anchor_codes(catalog: IndustryCatalog) -> list[str]:
+    """已启用行业的锚点股（去重保序）：行业画像覆盖所需的最小代码池。
+
+    懒缓存口径（DEC-018）不变——这里只是把「页面要补哪些代码」从
+    `config/industry.yaml` 的清单里读出来，不扩成全市场。
+    """
+    codes: list[str] = []
+    for entry in catalog.enabled_entries():
+        for code in entry.anchors:
+            if code and code not in codes:
+                codes.append(code)
+    return codes
+
+
+def industry_request_budget(codes: int) -> int:
+    """本次同步最多发起多少次上游请求（成本明示用，不参与限流判断）。
+
+    逐只数据集一只一次；批量数据集按 `BATCH_CODES_PER_CALL` 分批；整批替换的
+    （`industry_fund_flow`）一次。宁可把上限报大，不把成本说小。
+    """
+    total = 0
+    for dataset in INDUSTRY_SYNC_DATASETS:
+        if needs_codes_batch(dataset):
+            total += max(1, -(-codes // BATCH_CODES_PER_CALL))
+        elif needs_code(dataset):
+            total += codes
+        else:
+            total += 1
+    return total
 
 
 # --------------------------------------------------------------------------- #
@@ -892,7 +940,12 @@ def sync_one(
             optional=optional,
             started=started,
         )
-    params: dict[str, Any] = {} if full or not before else {"since": before}
+    # 口径参数也走 `tool_params`：`industry_fund_flow` 的 board_type / page / page_size
+    # 是上游要求的显式入参（DEC-018 口径不许靠默认值）。其余整批数据集没有固定参数，
+    # 这里拼出来的仍是原来的 `{"since": ...}`，行为不变。
+    params = tool_params(dataset)
+    if not full and before:
+        params["since"] = before
     scope = "全量" if full else (f"水位 {before} 之后" if before else "首次全量")
     _log(f"sync {dataset}（{scope}）")
 
@@ -1102,6 +1155,75 @@ def sync_command(
     raise typer.Exit(payload["summary"]["exit_code"])
 
 
+def sync_industry_command(
+    full: Annotated[bool, typer.Option("--full", help="强制全量（忽略水位，维护用）")] = False,
+    codes: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--codes",
+            help=f"覆盖行业锚点池（逗号分隔 / 重复传）；上限同 MAX_POOL_CODES={MAX_POOL_CODES}",
+        ),
+    ] = None,
+    output: OutputOption = None,
+) -> None:
+    """行业研究数据集一键补齐：真实联网同步，不是只读重算快照。
+
+    范围 = `/industry` 页面读的六个数据集（`SNAPSHOT_DATASETS`）；代码池 =
+    `config/industry.yaml` 已启用行业的锚点股（或用 `--codes` 显式覆盖）。
+    遵守 `MAX_POOL_CODES`，**不做全市场拉取**；成本非 0 在 stderr 与载荷里明示。
+    水位增量 / 幂等落库 / QFSD-7001 退避与 `ldst sync` 走完全同一条路径。
+    """
+    try:
+        catalog = load_catalog()
+    except LadderStockError as exc:
+        error(exc.message)
+        raise typer.Exit(exc.code) from exc
+    override = clean_codes(codes)
+    pool = override or industry_anchor_codes(catalog)
+    pool_source = POOL_CLI if override else POOL_INDUSTRY
+    if not pool:
+        error(
+            "config/industry.yaml 没有可用的行业锚点（anchors 全空或行业全部 disabled），"
+            "无法确定同步范围；先用 `--codes` 显式给出要补的代码"
+        )
+        raise typer.Exit(EXIT_CONFIG)
+    if len(pool) > MAX_POOL_CODES:
+        error(
+            f"代码池 {len(pool)} 只，超过单次上限 {MAX_POOL_CODES} 只；"
+            "请用 `--codes` 分批补齐（全市场口径是盘后包备源，不在这里硬顶）"
+        )
+        raise typer.Exit(EXIT_USAGE)
+
+    scope = "全量" if full else "水位增量"
+    budget = industry_request_budget(len(pool))
+    _log(
+        f"sync industry（{scope}）：{len(INDUSTRY_SYNC_DATASETS)} 个数据集 × "
+        f"代码池 {len(pool)} 只（{pool_source}）"
+    )
+    _log(f"  成本非 0：最多 {budget} 次上游请求；不做全市场拉取；单数据集上限 {MAX_POOL_CODES} 只")
+
+    registry = ProviderRegistry()
+    store = watermark.WatermarkStore(root=registry.root)
+    with writer_lock(holder="ldst sync industry"):
+        payload = run_sync(
+            registry, store, list(INDUSTRY_SYNC_DATASETS), full=full, codes=pool
+        )
+    payload["industry_scope"] = {
+        "datasets": list(INDUSTRY_SYNC_DATASETS),
+        "code_pool": {
+            "size": len(pool),
+            "source": pool_source,
+            "limit": MAX_POOL_CODES,
+        },
+        "mode": MODE_FULL if full else MODE_INCREMENTAL,
+        "estimated_requests": budget,
+        "full_market": False,
+        "note": INDUSTRY_SYNC_NOTE,
+    }
+    emit(payload, output)
+    raise typer.Exit(payload["summary"]["exit_code"])
+
+
 def sync_status(output: OutputOption = None) -> None:
     from ladderstock.cli.paths import data_dir
 
@@ -1117,3 +1239,6 @@ def register(sync_app: typer.Typer) -> None:
     """把 `sync` 回调与子命令挂到 main.py 已建好的 Typer 组上。"""
     sync_app.callback()(sync_command)
     sync_app.command("status", help="水位线与最近同步状态")(sync_status)
+    sync_app.command("industry", help="行业研究数据集一键补齐（真实联网同步）")(
+        sync_industry_command
+    )
