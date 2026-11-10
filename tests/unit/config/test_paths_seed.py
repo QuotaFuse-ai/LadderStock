@@ -257,18 +257,13 @@ def test_packaged_templates_match_repo_config() -> None:
         assert (REPO_CONFIG / rel).read_bytes() == (packaged / rel).read_bytes(), rel
 
 
-def test_platformdirs_layout_per_platform() -> None:
-    """落点口径：Windows 带 appauthor，macOS 只带 appname，Linux 只带 appname。"""
-    from platformdirs.macos import MacOS
-    from platformdirs.unix import Unix
-    from platformdirs.windows import Windows
+def test_user_data_root_matches_platformdirs() -> None:
+    """落点口径：直接来自 platformdirs 的 user_data_dir(APP_NAME, APP_AUTHOR)，末段是应用名。"""
+    from platformdirs import user_data_dir
 
-    win = Path(Windows(appname=paths.APP_NAME, appauthor=paths.APP_AUTHOR).user_data_dir)
-    assert win.parts[-2:] == (paths.APP_AUTHOR, paths.APP_NAME)
-    mac = Path(MacOS(appname=paths.APP_NAME, appauthor=paths.APP_AUTHOR).user_data_dir)
-    assert mac.parts[-1] == paths.APP_NAME
-    unix = Path(Unix(appname=paths.APP_NAME, appauthor=paths.APP_AUTHOR).user_data_dir)
-    assert unix.parts[-1] == paths.APP_NAME
+    expected = Path(user_data_dir(paths.APP_NAME, paths.APP_AUTHOR))
+    assert user_data_root() == expected
+    assert user_data_root().name == paths.APP_NAME
 
 
 def test_source_template_matches_expected_files() -> None:
