@@ -95,6 +95,20 @@ def launch(*, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
         error(f"端口 {port} 已被占用；请用 --port 指定其他端口（不会自动换端口，见 DEC-004）")
         raise typer.Exit(EXIT_CONFIG)
 
+    # DEC-071：干净用户目录首跑从随包模板补齐完整配置（含 schema），已存在不覆盖。
+    # 先 seed 再迁移——迁移要读 state.yaml，seed 之前它还不存在。
+    from ladderstock.config.seed import seed_if_needed
+
+    try:
+        seeded = seed_if_needed()
+    except OSError as exc:
+        _log(f"警告：首跑配置补齐失败（{exc}）；继续使用现有目录")
+        seeded = None
+    if seeded is not None:
+        _log(f"已从随包模板补齐配置 {len(seeded.seeded)} 个文件（{seeded.config_root}）")
+        for message in seeded.warnings:
+            _log(f"警告：{message}")
+
     # 源文档 §6.5：首次启动自动检测旧配置/旧数据目录并只读迁移。
     # 迁移失败这里只告警、不阻塞启动（回退到现有目录继续跑）。
     from ladderstock.config.migrate import ensure_migrated

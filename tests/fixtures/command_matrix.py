@@ -170,6 +170,8 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     # `config migrate` 已实现（M5）：仓库配置已是 v2 -> up_to_date，幂等且不写任何文件，
     # 所以默认形态也必须稳定 0；`--dry-run` 只出计划，同样 0。
     (("config", "migrate"), {0}),
+    # DEC-071：`config seed` 从随包模板补齐缺失文件，已存在不覆盖 -> 幂等 0
+    (("config", "seed"), {0}),
     # 调度（M4 已实现）：list 只读；run --once 跑一轮即退出（任务失败只降级）-> 0
     (("schedule", "list"), {0}),
     (("schedule", "run", "--once"), {0}),
@@ -250,6 +252,7 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("mcp", "tools", "list"),
     ("config", "validate"),
     ("config", "migrate"),
+    ("config", "seed"),
     ("schedule", "list"),
     ("schedule", "run"),
     ("doctor",),
@@ -282,6 +285,8 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     ("config", "validate"),
     # M5：迁移结果（status / steps / backups / warnings）是结构化载荷，`--dry-run` 亦然
     ("config", "migrate"),
+    # DEC-071：seed 结果（seeded / skipped / warnings）是结构化载荷
+    ("config", "seed"),
     ("doctor",),
     # R7：`pool` 不在列——本机没同步涨停池时它按 6 退出（本表口径是 0/3），
     # 打分载荷由 tests/unit/core/test_pool_golden.py 覆盖。

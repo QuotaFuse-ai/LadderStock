@@ -214,6 +214,7 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 | 33 | `ldst schedule run` | 运行一轮启用的定时任务 | `--once` | 任务结果 |
 | 34 | `ldst state reset --store <name>` | 重置指定前端持久化分片 | `--store` | 需二次确认 |
 | 35 | `ldst doctor` | 环境体检：依赖、端口、缓存目录、数据源 | — | 对齐 `th-cn doctor` 习惯 |
+| +1 | `ldst config seed` | 从随包模板补齐缺失配置与 schema（DEC-071） | — | 已存在不覆盖；幂等，输出 `seeded`/`skipped`；不计入上面 31/33/35/32 基线 |
 
 > 表内编号 1–35 为**行号**；去重后为 **33 个叶子路径**（`sync` 的三种形态合并为一条、`validate` 的两级子命令各算一个叶子）。P0 基线口径的 **31 条命令**见第 0 节；`scripts/check_commands.py` 实测覆盖 **32 条可执行 argv**（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。四套数字的对应关系见文首「命令计数口径」。
 > §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，§E″ 的行 37–41（R7 增量 5 条）是 R7 基线之外的增量，§D‴ 的行 42–43（R5 增量 2 条）是 R5 基线之外的增量，§A′ 的行 44（`ldst weekly`）是 R11 基线之外的增量，**都不计入上面的 31/33/35/32**；算上它们则是 44 行 / 42 个叶子 / 41 条可执行 argv。
