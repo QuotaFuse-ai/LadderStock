@@ -257,8 +257,37 @@ def test_packaged_templates_match_repo_config() -> None:
         assert (REPO_CONFIG / rel).read_bytes() == (packaged / rel).read_bytes(), rel
 
 
+def test_platformdirs_layout_per_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """落点口径：Windows 带 appauthor，macOS / Linux 只带 appname（DEC-071）。
+
+    `Windows.user_data_dir` 读的是 Known Folder（ctypes），在非 Windows 上按库语义抛
+    `NotImplementedError`；这里把 `get_win_folder` 换成假路径，才能在 Linux CI 上验证
+    同一段拼接逻辑，而不是让测试裸抛。macOS / Unix 的落点只依赖 `expanduser`，全平台可跑。
+    """
+    from platformdirs import windows as platformdirs_windows
+    from platformdirs.macos import MacOS
+    from platformdirs.unix import Unix
+
+    monkeypatch.setattr(
+        platformdirs_windows,
+        "get_win_folder",
+        lambda _const: r"C:\Users\tester\AppData\Local",
+    )
+    win = platformdirs_windows.Windows(appname=paths.APP_NAME, appauthor=paths.APP_AUTHOR)
+    assert Path(win.user_data_dir.replace("\\", "/")).parts[-2:] == (
+        paths.APP_AUTHOR,
+        paths.APP_NAME,
+    )
+
+    mac = Path(MacOS(appname=paths.APP_NAME, appauthor=paths.APP_AUTHOR).user_data_dir)
+    assert mac.parts[-1] == paths.APP_NAME
+
+    unix = Path(Unix(appname=paths.APP_NAME, appauthor=paths.APP_AUTHOR).user_data_dir)
+    assert unix.parts[-1] == paths.APP_NAME
+
+
 def test_user_data_root_matches_platformdirs() -> None:
-    """落点口径：直接来自 platformdirs 的 user_data_dir(APP_NAME, APP_AUTHOR)，末段是应用名。"""
+    """本机安装态落点与 platformdirs 的 `user_data_dir(APP_NAME, APP_AUTHOR)` 一致。"""
     from platformdirs import user_data_dir
 
     expected = Path(user_data_dir(paths.APP_NAME, paths.APP_AUTHOR))
