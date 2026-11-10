@@ -30,10 +30,37 @@ from typer.main import get_command
 from typer.testing import CliRunner
 
 from ladderstock.cli import output
+from ladderstock.cli import supervisor as supervisor_cli
 from ladderstock.cli.main import app
 from ladderstock.cli.output import OutputOption
 
 runner = CliRunner()
+
+
+class _ScriptedSupervisorEngine:
+    """矩阵只跑 supervisor 的只读 / 预演形态：账本空、进程全 external。
+
+    真实引擎会读宿主账本并按模块探端口 —— 矩阵断言的是「`--output` 契约 +
+    退出码」，不该依赖本机有没有在跑 peer，更不该有任何起进程的路径。
+    """
+
+    order = ("tickhub", "tickhub_us", "wire", "senate", "financecoffer", "proxyfleet", "watch")
+
+    def state(self) -> dict[str, Any]:
+        return {
+            "supervisor_pid": 1,
+            "order": list(self.order),
+            "modules": {
+                name: {"ownership": "external", "listening": False, "pid": None}
+                for name in self.order
+            },
+        }
+
+    def start_all(self) -> dict[str, Any]:
+        return {"ok": True, "modules": {}}
+
+    def stop_all(self) -> dict[str, Any]:
+        return {"ok": True, "modules": {}}
 
 
 # --------------------------------------------------------------------------- #
@@ -80,6 +107,8 @@ def _offline_data_layer(repo, tmp_path, monkeypatch):
         "ladderstock.data.provider_registry.build_transport",
         lambda _peers: FakeTransport(),
     )
+    engine = _ScriptedSupervisorEngine()
+    monkeypatch.setattr(supervisor_cli, "_engine", lambda _root: engine)
 
 
 # --------------------------------------------------------------------------- #

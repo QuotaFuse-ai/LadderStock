@@ -7,7 +7,9 @@ httpx + fastapi/uvicorn（web 依赖，与 `ldst run` 相同）：
 - `GET /platform/health`：实时探测 `{api}/api/health`（超时 2s），三态
   `ok` / `degraded` / `offline`；只读健康字段，不读持仓、日志、任何隐私数据。
 - `POST /platform/restart`：先结束**自己记录的、且此刻仍占用 API 端口的那个 PID**，
-  再按 `--restart-task`（schtasks）→ `--restart-script`（固定绝对路径）顺序尝试。
+  再按 `--spawn-cmd`（直接拉起 argv）→ `--restart-task`（schtasks）→
+  `--restart-script`（固定绝对路径）顺序尝试。被 supervisor 托管时只给
+  `--spawn-cmd`（QUOT-523：同一进程树，不再经计划任务复活看板）。
   请求体不参与任何命令拼装；30s 内重复请求回 429。
 - `GET /`：纯内联离线壳页（无 CDN / 无外部依赖）。主服务已死时打开它，
   能看到状态和重启按钮，恢复后自动跳回看板。
@@ -33,7 +35,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +54,16 @@ from ladderstock.errors import EXIT_CONFIG, EXIT_OK
 DEFAULT_WATCHDOG_PORT = 5952
 DEFAULT_API_BASE = "http://127.0.0.1:5950"
 DEFAULT_RESTART_TASK = "LadderStock API"
+
+#: supervisor 托管标记（QUOT-523）：置 1 后看门狗只认 `--spawn-cmd`，不再回退
+#: 计划任务 / 重启脚本——否则「单入口关闭全停」会被 schtasks 复活看板破坏。
+SUPERVISED_ENV = "LDST_WATCHDOG_SUPERVISED"
+
+
+def supervised(env: Mapping[str, str] | None = None) -> bool:
+    values = os.environ if env is None else env
+    return (values.get(SUPERVISED_ENV) or "").strip() not in ("", "0")
+
 
 PROBE_TIMEOUT_SEC = 2.0
 RESTART_THROTTLE_SEC = 30.0
@@ -94,6 +106,11 @@ class WatchdogConfig:
     port: int = DEFAULT_WATCHDOG_PORT
     restart_task: str = DEFAULT_RESTART_TASK
     restart_script: str = ""
+    #: 直接拉起看板的固定 argv（JSON 数组）；被 supervisor 托管时由它给出，
+    #: 排在 task 之前——同一进程树里不再经 schtasks 复活看板（QUOT-523）。
+    spawn_cmd: str = ""
+    #: supervisor 托管（QUOT-523）：只按 spawn-cmd 拉起看板，schedule/脚本兜底一律不用
+    supervised: bool = False
     probe_interval: float = 2.0
     data_root: Path | None = None
 
@@ -381,6 +398,19 @@ def _run_command(run: Callable[..., Any], argv: list[str], *, timeout: float) ->
             pass
 
 
+def spawn_command_issue(spec: str) -> str | None:
+    """`--spawn-cmd` 的静态校验；返回 None 表示可用。"""
+    if not spec.strip():
+        return None
+    try:
+        argv = json.loads(spec)
+    except json.JSONDecodeError:
+        return "不是合法 JSON 数组"
+    if not isinstance(argv, list) or not argv or not all(isinstance(part, str) for part in argv):
+        return "必须是字符串数组"
+    return None
+
+
 def restart_service(
     config: WatchdogConfig,
     *,
@@ -390,13 +420,20 @@ def restart_service(
     terminate: Callable[[int], bool] = terminate_pid,
     wait: Callable[[float], None] = time.sleep,
 ) -> tuple[int, dict[str, Any]]:
-    """结束旧进程并按任务 → 脚本的顺序拉起；返回 (HTTP 状态码, 载荷)。"""
-    task = config.restart_task.strip()
-    script = config.restart_script.strip()
-    if not task and not script:
+    """结束旧进程并按 spawn-cmd → 任务 → 脚本的顺序拉起；返回 (HTTP 状态码, 载荷)。"""
+    if config.supervised:
+        # 托管模式下看板与看门狗同一棵树（QUOT-523）：计划任务会绕过 supervisor
+        # 的归属判定复活一个它管不到的看板，「关闭全停」因此失效——只留 spawn-cmd。
+        task = ""
+        script = ""
+    else:
+        task = config.restart_task.strip()
+        script = config.restart_script.strip()
+    spawn_spec = config.spawn_cmd.strip()
+    if not task and not script and not spawn_spec:
         return 409, {
             "ok": False,
-            "reason": "未配置重启方式：请用 --restart-task 或 --restart-script",
+            "reason": "未配置重启方式：请用 --spawn-cmd / --restart-task / --restart-script",
         }
 
     port = config.api_port
@@ -422,6 +459,25 @@ def restart_service(
                     break
 
     attempts: list[dict[str, Any]] = []
+    if spawn_spec:
+        # 被 supervisor 托管时优先直接拉起：同一进程树里不经 schtasks，
+        # 看板因此随 supervisor 的整树停一起停（QUOT-523）。
+        issue = spawn_command_issue(spawn_spec)
+        if issue is not None:
+            attempts.append({"via": "spawn", "ok": False, "detail": issue})
+        else:
+            argv = [str(part) for part in json.loads(spawn_spec)]
+            code, detail = _run_command(run, argv, timeout=30)
+            attempts.append({"via": "spawn", "ok": code == 0, "detail": detail})
+            if code == 0:
+                return 200, {
+                    "ok": True,
+                    "via": "spawn",
+                    "killed_pid": killed,
+                    "skipped": skipped,
+                    "attempts": attempts,
+                }
+
     if task:
         code, detail = _run_command(run, ["schtasks", "/run", "/tn", task], timeout=15)
         attempts.append({"via": "schtasks", "ok": code == 0, "detail": detail})
@@ -761,6 +817,10 @@ def serve_watchdog(config: WatchdogConfig) -> None:
     if issue is not None:
         error(f"--restart-script 不可用（{issue}）：{config.restart_script}")
         raise typer.Exit(EXIT_CONFIG)
+    issue = spawn_command_issue(config.spawn_cmd)
+    if issue is not None:
+        error(f"--spawn-cmd 不可用（{issue}）：{config.spawn_cmd}")
+        raise typer.Exit(EXIT_CONFIG)
 
     state = read_state(config.root)
     state["watchdog"] = {
@@ -813,6 +873,13 @@ def watchdog_command(
     restart_script: Annotated[
         str, typer.Option("--restart-script", help="无提权重启脚本的绝对路径（.ps1）")
     ] = "",
+    spawn_cmd: Annotated[
+        str,
+        typer.Option(
+            "--spawn-cmd",
+            help="直接拉起看板的 argv（JSON 字符串数组）；被 supervisor 托管时由它给出",
+        ),
+    ] = "",
     probe_interval: Annotated[
         float, typer.Option("--probe-interval", help="后台探活间隔（秒），用于跟踪 API PID")
     ] = 2.0,
@@ -827,6 +894,8 @@ def watchdog_command(
             port=port,
             restart_task=restart_task,
             restart_script=restart_script,
+            spawn_cmd=spawn_cmd,
+            supervised=supervised(),
             probe_interval=probe_interval,
         )
     )
@@ -845,6 +914,7 @@ __all__ = [
     "DEFAULT_RESTART_TASK",
     "DEFAULT_WATCHDOG_PORT",
     "RESTART_THROTTLE_SEC",
+    "SUPERVISED_ENV",
     "WatchdogConfig",
     "build_health_payload",
     "create_watchdog_app",
@@ -859,6 +929,8 @@ __all__ = [
     "restart_service",
     "script_issue",
     "serve_watchdog",
+    "spawn_command_issue",
+    "supervised",
     "state_path",
     "write_state",
 ]

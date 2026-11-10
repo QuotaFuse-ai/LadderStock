@@ -174,6 +174,13 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("schedule", "list"), {0}),
     (("schedule", "run", "--once"), {0}),
     (("state", "reset", "--store", "review_draft", "--yes"), {0}),
+    # QUOT-523 单入口 supervisor：只收录只读 / 预演形态。`supervisor stop` 缺省
+    # 就是预演（只读账本、不动任何进程），`status` 只读；`start` / `restart`
+    # 会真起进程（restart 无 `--only` 时按 3 退出，也不是可执行形态），
+    # 开环形态由 tests/unit/cli/test_supervisor.py 用假引擎覆盖。
+    # 临时数据目录下账本为空 → 预演 `would_stop` 为空、`status` 全 external → 0。
+    (("supervisor", "stop"), {0}),
+    (("supervisor", "status"), {0}),
     # 体检
     (("doctor",), {0, 3}),
 )
@@ -192,13 +199,21 @@ COMMAND_MATRIX: tuple[Any, ...] = (
 # `industry list|show` → 41 个叶子路径；R11（QUOT-149）再加 1 条 `weekly` →
 # **42 个叶子路径**。QUOT-380（自选清单 `watch add|rm|list`）再加 3 条 →
 # **45 个叶子路径**。QUOT-487（助手记忆清空 `ai memory-clear`）再加 1 条 →
-# **46 个叶子路径**。它们都是**增量命令**，
+# **46 个叶子路径**。QUOT-523（单入口 supervisor `start|stop|restart|status`）
+# 再加 4 条 → **50 个叶子路径**。它们都是**增量命令**，
 # 不改 31 条基线的计数口径（docs/CLI.md §D′ / §E″ / §D‴ / §A′）。
 LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("run",),
     # QUOT-443 / DEC-063：独立看门狗（5952）。长驻进程，与 `run` 同口径不进 COMMAND_MATRIX；
     # 端口占用 / 回环 / Origin 契约由 tests/unit/cli/test_watchdog.py 覆盖。
     ("watchdog",),
+    # QUOT-523 单入口 supervisor：四个子命令都实现了 `--output`，逐条登记。
+    # 只读 / 预演形态进 COMMAND_MATRIX；`start` / `restart` 会真起进程，不进矩阵
+    # （开环形态由 tests/unit/cli/test_supervisor.py 用假引擎覆盖）。
+    ("supervisor", "start"),
+    ("supervisor", "stop"),
+    ("supervisor", "restart"),
+    ("supervisor", "status"),
     ("review",),
     ("review", "show"),
     # R11 新增（QUOT-149，不计入 31 条基线，见 docs/CLI.md §A′）
@@ -305,6 +320,10 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     ("industry", "list"),
     # R11：`weekly` 不在列——那一周没有每日产物时它按 6 退出（本表口径是 0/3），
     # 载荷与降级路径由 tests/unit/weekly/ 覆盖。
+    # QUOT-523：supervisor 预演 / 状态视图都是 0 + 结构化载荷（`dry_run` + `would_stop`
+    # 与每模块 `ownership` / `listening` 已在引擎侧由 tests/unit/cli/test_supervisor.py 断言）。
+    ("supervisor", "stop"),
+    ("supervisor", "status"),
 )
 
 # `--output` 的可选值必须与 docs/CLI.md §F 一字不差
