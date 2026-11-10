@@ -34,6 +34,7 @@ from ladderstock.supervisor.engine import SupervisorEngine, SupervisorError
 from ladderstock.supervisor.ledger import Ledger
 from ladderstock.supervisor.module_adapters import build_default_adapters
 from ladderstock.supervisor.notify import build_default_notifier
+from ladderstock.supervisor.page_boot import PageBoot
 from ladderstock.supervisor.proctree import default_process_ops
 from ladderstock.supervisor.restart import CommandTableRestarter
 from ladderstock.supervisor.selfheal import (
@@ -107,6 +108,31 @@ def build_supervisor_engines(
         procs=default_process_ops(),
     )
     return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
+
+
+def build_page_boot(root: str | Path, *, ledger: Ledger | None = None) -> PageBoot:
+    """按 `<data_root>` 组装页面自启（QUOT-522）：同一份账本 + 真适配器识别 peer。
+
+    适配器构造不碰宿主（只在 ensure()/identify() 时才查询），Windows 之外的开发机
+    也能安全构建；任何一路失败都在 `ensure()` 内部折叠进报告。
+    """
+    from ladderstock.cli.paths import project_root
+    from ladderstock.supervisor.module_adapters import build_default_adapters
+
+    data_root = Path(root)
+    supervisor_dir = data_root / "supervisor"
+    resolved = ledger or Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
+    try:
+        adapters: dict[str, Any] = dict(build_default_adapters(log_dir=supervisor_dir / "logs"))
+    except Exception:  # noqa: BLE001 - 识别器组装失败时 peer 一律记 not_listening
+        adapters = {}
+    return PageBoot(
+        data_root=data_root,
+        ledger=resolved,
+        adapters=adapters,
+        run_cwd=project_root(),
+        log_dir=supervisor_dir / "logs",
+    )
 
 
 def build_process_engine(
@@ -217,6 +243,29 @@ def build_supervisor_router(heal: Any) -> APIRouter:
     return router
 
 
+def build_page_boot_router(boot: PageBoot | None) -> APIRouter:
+    """页面自启面（QUOT-522）：只读报告 + 回环写方法幂等再跑一次。"""
+    router = APIRouter(prefix=SUPERVISOR_PREFIX, tags=["supervisor"])
+
+    @router.get("/page-boot")
+    def page_boot_state() -> dict[str, Any]:
+        last = boot.last_report() if boot is not None else None
+        return {
+            "ok": True,
+            "configured": boot is not None,
+            "enabled": bool(boot.enabled) if boot is not None else False,
+            "last_report": last,
+        }
+
+    @router.post("/page-boot", dependencies=[Depends(_supervisor_write_guard)])
+    def page_boot_ensure() -> dict[str, Any]:
+        if boot is None:
+            raise HTTPException(status_code=503, detail="页面自启未接线")
+        return boot.ensure(trigger="api-request")
+
+    return router
+
+
 def mount_supervisor(
     app: FastAPI,
     heal: Any,
@@ -253,6 +302,16 @@ async def _in_thread(fn: Any) -> None:
     await asyncio.to_thread(fn)
 
 
+def mount_page_boot(app: FastAPI, boot: PageBoot) -> None:
+    """QUOT-522：路由 + startup 钩子（打开网页 = 拉起自有子进程，peer 只认领）。
+
+    引擎自身的启停另有 `mount_supervisor`；这里只管页面自启与 own children 的停。
+    """
+    app.include_router(build_page_boot_router(boot))
+    app.router.on_startup.append(boot.ensure)
+    app.router.on_shutdown.append(boot.stop_children)
+
+
 __all__ = [
     "OWN_PROCESSES_ENV",
     "STOP_CONFIRMATION_FIELD",
@@ -260,11 +319,14 @@ __all__ = [
     "SUPERVISOR_PREFIX",
     "SUPERVISOR_WRITE_DENIED",
     "SupervisorEngines",
+    "build_page_boot",
+    "build_page_boot_router",
     "build_selfheal_engine",
     "build_process_engine",
     "build_stop_router",
     "build_supervisor_engines",
     "build_supervisor_router",
+    "mount_page_boot",
     "mount_supervisor",
     "own_processes",
 ]

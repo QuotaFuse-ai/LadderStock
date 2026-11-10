@@ -45,8 +45,10 @@
 > `ldst watchdog`（独立看门狗，端口 `5952`，见 §J 与 `DEC-063-platform-watchdog-and-health`）。
 > **QUOT-523 增量（2026-11-10）**：基线 31 条口径**不变**，新增命令组
 > `ldst supervisor start|stop|restart|status`（单入口启停，见 §L）。
-> **以代码为准的当前计数**：`LEAF_PATHS` **53** 个叶子、`COMMAND_MATRIX` **48** 条可执行 argv
-> （53 − 6 个不进矩阵的叶子 `run` / `watchdog` / `mcp stdio` / `mcp http` /
+> **QUOT-522 增量（2026-11-10）**：基线 31 条口径**不变**，`__watch-guard` 是页面自启的内部
+> 长驻入口（`ldst run` startup 拉起，不是用户命令；`hidden=True`），只登记叶子契约、不进矩阵。
+> **以代码为准的当前计数**：`LEAF_PATHS` **54** 个叶子、`COMMAND_MATRIX` **48** 条可执行 argv
+> （54 − 7 个不进矩阵的叶子 `run` / `watchdog` / `__watch-guard` / `mcp stdio` / `mcp http` /
 > `supervisor start` / `supervisor restart`，+ `sync` 的两种形态各跑一次；
 > 复核入口 `tests/unit/test_cli_output_option.py::test_registered_leaves_match_baseline`）。
 >

@@ -6,11 +6,14 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import socket
 import subprocess
 import sys
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -362,10 +365,78 @@ def config_migrate(
 
 
 # 实现体在 cli/schedule.py（APScheduler；任务表见 config/schedule.yaml）
+# `schedule run` 看退出标记自退（见 `_stop_when_marked`）
+def _stop_when_marked(command: Callable[..., Any]) -> Callable[..., Any]:
+    """`schedule run` 的收尾：看板写的退出标记出现就让调度器停下，长驻进程自行退出。
+
+    Windows 上无控制台的 python 收不到优雅终止（taskkill 只能 /F），
+    所以由看板写标记、这里每 2 秒看一眼，走正常收尾再退。
+    """
+
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        from apscheduler.schedulers.base import BaseScheduler  # type: ignore[import-untyped]
+
+        from ladderstock.supervisor.page_boot import CHILD_STOP_ARG_ENV
+
+        raw = os.environ.get(CHILD_STOP_ARG_ENV)
+        marker = Path(raw) if raw else None
+        if marker is None:
+            return command(*args, **kwargs)
+        wake = threading.Event()
+        original_start = BaseScheduler.start
+
+        def start(scheduler: BaseScheduler) -> None:
+            scheduler.add_job(
+                lambda: wake.set(),
+                "interval",
+                seconds=2,
+                id="page-boot-stop",
+                replace_existing=True,
+            )
+
+            def watch() -> None:
+                wake.wait()
+                scheduler.shutdown(wait=False)
+
+            threading.Thread(target=watch, name="page-boot-stop", daemon=True).start()
+            original_start(scheduler)
+
+        BaseScheduler.start = start  # type: ignore[method-assign, unused-ignore]
+        try:
+            return command(*args, **kwargs)
+        finally:
+            BaseScheduler.start = original_start  # type: ignore[method-assign, unused-ignore]
+
+    functools.update_wrapper(wrapped, command)
+    return wrapped
+
+
+# 页面自启拉起的 `schedule run` 看退出标记自退（见 `_stop_when_marked`）
+for _entry in schedule_app.registered_commands:
+    if _entry.name == "run" and _entry.callback is not None:
+        _entry.callback = _stop_when_marked(_entry.callback)
+
+
 register_schedule(schedule_app)
 
 
 # ---------------------------------------------------------------- 体检
+
+# ---------------------------------------------------------------- 页面自启
+
+
+@app.command(
+    "__watch-guard",
+    hidden=True,
+    help="页面自启的内部入口：周期跑盯盘扫描（由看板启动时拉起，不是用户命令）",
+)
+def watch_guard(tick: float = 30.0, output: OutputOption = None) -> None:
+    """QUOT-522：看板打开时拉起的自有 watch 扫描守护（周期跑 `watch start`）。"""
+    del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
+    from ladderstock.supervisor.page_boot import TICK_ENV, watch_guard_main
+
+    os.environ[TICK_ENV] = f"{tick:g}"
+    sys.exit(watch_guard_main())
 
 
 @app.command(help="环境体检：Python、依赖、端口、目录、配置、数据源")
