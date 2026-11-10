@@ -916,8 +916,12 @@ class ProviderRegistry:
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
         ignore_cooldown: bool = False,
+        timeout: float | None = None,
     ) -> FetchOutcome:
         """按治理规则取数并返回带轨迹的结果。不可用且无缓存时抛 `SourceUnavailable`。
+
+        `timeout` 是**单次调用**的显式预算（覆盖 `sources.yaml` 的 `timeout_sec`）：
+        页级只读读取（如 `/api/research` 的白话结论）不能被某个可选 peer 拖满业务超时。
 
         `ignore_cooldown` 只给**扇出**用（`ldst sync` 的代码池 / 赛道池，QUOT-328）：
         冷却是「这个 source 现在不健康，下一轮别再来」的**跨轮**闸门，而扇出里一次的
@@ -934,6 +938,7 @@ class ProviderRegistry:
             params=params,
             allow_cache=allow_cache,
             ignore_cooldown=ignore_cooldown,
+            timeout=timeout,
         )
 
     def fetch_live(
@@ -943,6 +948,7 @@ class ProviderRegistry:
         trade_date: date | None = None,
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
+        timeout: float | None = None,
     ) -> FetchOutcome:
         """同 `fetch`，但链路按 `sources.yaml` 的登记组装（数据集不在 sync.yaml）。"""
         return self._fetch(
@@ -951,6 +957,7 @@ class ProviderRegistry:
             trade_date=trade_date,
             params=params,
             allow_cache=allow_cache,
+            timeout=timeout,
         )
 
     def _fetch(
@@ -962,6 +969,7 @@ class ProviderRegistry:
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
         ignore_cooldown: bool = False,
+        timeout: float | None = None,
     ) -> FetchOutcome:
         owner_of(dataset)
         key = (dataset, trade_date.isoformat() if trade_date else "", _key(params or {}))
@@ -1006,6 +1014,7 @@ class ProviderRegistry:
                 params or {},
                 allow_cache=allow_cache,
                 ignore_cooldown=ignore_cooldown,
+                timeout=timeout,
             )
             with self._guard:
                 self._cache[key] = (time.monotonic() + self.ttl_sec, outcome.envelope.model_copy())
@@ -1029,6 +1038,7 @@ class ProviderRegistry:
         *,
         allow_cache: bool,
         ignore_cooldown: bool = False,
+        timeout: float | None = None,
     ) -> FetchOutcome:
         trail: list[str] = []
         failures: list[str] = []
@@ -1051,7 +1061,7 @@ class ProviderRegistry:
                 )
                 continue
             try:
-                envelope = self._call_source(spec, params, trade_date, backoff)
+                envelope = self._call_source(spec, params, trade_date, backoff, timeout=timeout)
             except Exception as exc:
                 reason = _reason(exc)
                 trail.append(f"{spec.trail_label()}:{reason}")
@@ -1137,10 +1147,13 @@ class ProviderRegistry:
         params: dict[str, Any],
         trade_date: date | None,
         backoff: _Backoff,
+        *,
+        timeout: float | None = None,
     ) -> LadderEnvelope:
         peer = self.peers.get(spec.via)
         if peer is None:
             raise SourceUnavailable(f"sources.yaml 缺少 peer {spec.via}")
+        call_timeout = spec.timeout_sec if timeout is None else max(0.1, float(timeout))
         transport_left = max(0, spec.retries)
         last: Exception | None = None
         while True:
@@ -1150,7 +1163,7 @@ class ProviderRegistry:
                 self._enter_peer(peer)
                 try:
                     response = self.transport.call(
-                        peer, spec.tool, dict(params), timeout=spec.timeout_sec
+                        peer, spec.tool, dict(params), timeout=call_timeout
                     )
                     return self._to_envelope(spec, response, trade_date)
                 finally:

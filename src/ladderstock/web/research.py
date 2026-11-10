@@ -13,6 +13,9 @@
   复用 `web/control.py` 的 `Job` 模型与轮询形状，不新开一套任务机制。
 - **闸门照控制面、开关不受控制面影响**：写方法要正向来源证据（QUOT-178），但
   `LDST_CONTROL_ENABLED=0` 只关控制面——研究读取属于数据面，跟着关会让页面永久空态。
+- **白话结论只读透传**：状态载荷在 Senate 当日报告带 plain-v1 时附带顶层 `plain` /
+  `disclaimer`（QUOT-539），来源是既有 `stock_senate_report_query`；读不到只降级，
+  不影响六段状态本身。
 
 状态词表沿用 checkpoint 的四态（`ok / degraded / failed / pending`）；任务状态在它之上
 补 `queued / running`（与 `GET /api/control/jobs/{id}` 同一口径）。
@@ -20,6 +23,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 import uuid
@@ -66,6 +70,17 @@ UNKNOWN_CODE_DETAIL = (
     "北交所 43/83/87/92 开头的 6 位代码，可带 .SH/.SZ/.BJ 后缀）"
 )
 ENGINE_UNAVAILABLE_DETAIL = "研究引擎不可用：读取研究状态失败（{reason}）"
+
+# ---- StockSenate 白话结论透传（QUOT-539）----
+
+#: 白话结论的读取数据集：仍是 senate 的只读报告查询，不新开网络面
+SENATE_PLAIN_DATASET = "council_memo"
+#: 读取预算：默认 3s，`LDST_SENATE_PLAIN_TIMEOUT` 可覆盖（夹在 0.5–20s）。
+#: 研究状态是页级只读路径，可选 peer 读不到白话只能降级，不能把页面拖满业务超时。
+SENATE_PLAIN_TIMEOUT_ENV = "LDST_SENATE_PLAIN_TIMEOUT"
+SENATE_PLAIN_TIMEOUT_DEFAULT = 3.0
+SENATE_PLAIN_TIMEOUT_MIN = 0.5
+SENATE_PLAIN_TIMEOUT_MAX = 20.0
 
 #: 六段状态词表（与 `ai/checkpoint.STATUSES` 一致，SPEC §2.1 同形）
 STAGE_STATUSES = frozenset({"ok", "degraded", "failed", "pending"})
@@ -831,6 +846,20 @@ def _kline_series(
 # 研究面
 # --------------------------------------------------------------------------- #
 
+def senate_plain_timeout() -> float:
+    """白话结论的读取预算（秒）：默认 3s，`LDST_SENATE_PLAIN_TIMEOUT` 可覆盖。
+
+    非法值回落默认值，超出 0.5–20s 的夹到边界——这个预算只为「可选增强」服务，
+    不该因为一个环境变量写错把页级只读接口变成阻塞点。
+    """
+    raw = os.environ.get(SENATE_PLAIN_TIMEOUT_ENV, "").strip()
+    try:
+        value = float(raw) if raw else SENATE_PLAIN_TIMEOUT_DEFAULT
+    except ValueError:
+        value = SENATE_PLAIN_TIMEOUT_DEFAULT
+    return min(max(value, SENATE_PLAIN_TIMEOUT_MIN), SENATE_PLAIN_TIMEOUT_MAX)
+
+
 class ResearchPlane:
     """三个接口的实现；`run` / `command` 可注入，测试用假子进程顶掉。"""
 
@@ -842,12 +871,15 @@ class ResearchPlane:
         command: list[str] | None = None,
         timeout: float = RESEARCH_JOB_TIMEOUT_SEC,
         registry: ProviderRegistry | None = None,
+        senate_timeout: float | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         self._run = run or control_plane.run_step
         self._command = command
         self._timeout = timeout
         self._registry = registry
+        #: None = 每次读取时按 `senate_plain_timeout()` 取（环境变量可改）
+        self._senate_timeout = senate_timeout
         self._lock = threading.Lock()
         self._jobs: dict[str, ResearchJob] = {}
         #: 「同标的同日只允许一个任务」的登记表：键 `(code, day)`
@@ -962,7 +994,7 @@ class ResearchPlane:
             source_status = "degraded"
         else:
             source_status = "partial"
-        return {
+        payload: dict[str, Any] = {
             "code": code,
             "date": day,
             "available": True,
@@ -976,6 +1008,43 @@ class ResearchPlane:
             "reason": None if complete else _reason(missing),
             "data_source_status": "ok" if complete else "partial",
         }
+        # QUOT-539：Senate 当日报告带 plain-v1 白话结论时原样透传（不重算、不评级）；
+        # 读不到就不加这两个键，前端按「后端尚未透传」降级。
+        plain, disclaimer = self._senate_plain(code, day)
+        if plain is not None:
+            payload["plain"] = plain
+            if disclaimer:
+                payload["disclaimer"] = disclaimer
+        return payload
+
+    def _senate_plain(
+        self, code: str, day: str
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """只读拉取 StockSenate 当日报告的 `sections.plain`（QUOT-536 契约）。
+
+        走既有 Senate 读取路径：`council_memo` → MCP `stock_senate_report_query`
+        （`code` + `date`），**不触发辩论、不写 Senate 任何文件**。返回
+        `(plain, disclaimer)`；任何失败（不可达 / 超时 / 无报告 / 旧快照无 plain）
+        都返回 `(None, None)`——研究状态照常返回，不阻塞、不报错。
+        """
+        try:
+            outcome = self._live_registry().fetch_live(
+                SENATE_PLAIN_DATASET,
+                trade_date=date.fromisoformat(day),
+                params={"code": code.partition(".")[0], "date": day},
+                allow_cache=False,
+                timeout=self._senate_timeout or senate_plain_timeout(),
+            )
+        except Exception:  # noqa: BLE001 - 可选增强，失败只降级
+            return None, None
+        payload = getattr(outcome.envelope, "payload", None)
+        if not isinstance(payload, Mapping):
+            return None, None
+        plain = payload.get("plain")
+        if not isinstance(plain, Mapping) or not plain:
+            return None, None
+        disclaimer = payload.get("disclaimer")
+        return dict(plain), str(disclaimer) if disclaimer else None
 
     # ---------------------------------------------------------------- 概览
 
