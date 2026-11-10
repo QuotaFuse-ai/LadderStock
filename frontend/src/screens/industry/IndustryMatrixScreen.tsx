@@ -37,6 +37,7 @@ import { HEAT_MAX_PERCENT, HEAT_MIN_PERCENT, levelHeatStyle, rankRatio, signedHe
 import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
 import { LINK_BUTTON_CLASS } from './labels'
 import { industryHref, withParams } from './links'
+import IndustrySyncPanel, { type IndustryCoverage } from './IndustrySyncPanel'
 import { useIndustryListView } from './useIndustryView'
 
 /**
@@ -162,6 +163,7 @@ function MatrixEmpty({
           <>
             {payload?.reason ?? '六个输入数据集在本机缓存里都没有可用记录，矩阵不出伪行。'}{' '}
             行业快照由六个输入数据集汇总生成；可用顶部「本页命令」中的「重算行业快照」生成后，再点「刷新」。
+            缓存本身缺数据时，用右上角「同步补齐」联网回补（成本非 0、有条数上限）。
           </>
         }
         action={
@@ -345,6 +347,16 @@ export default function IndustryMatrixScreen() {
     state: forced,
   })
 
+  /** 覆盖口径只数接口给的 `data_source_status` 桶，供「同步补齐」结果态做前后对比。 */
+  const coverage = useMemo<IndustryCoverage | null>(() => {
+    if (!payload) return null
+    return {
+      total: payload.industries.length,
+      partial: payload.industries.filter((row) => row.data_source_status === 'partial').length,
+      missing: payload.industries.filter((row) => row.data_source_status === 'missing').length,
+    }
+  }, [payload])
+
   const header = (
     <PageHeader
       title="产业研究"
@@ -355,6 +367,7 @@ export default function IndustryMatrixScreen() {
         </span>
       }
       badge={<DemoStateBadge state={forced} />}
+      actions={<IndustrySyncPanel coverage={coverage} onCompleted={reload} />}
       refresh={{
         onClick: reload,
         disabled: state === 'loading',

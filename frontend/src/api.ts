@@ -786,6 +786,11 @@ export interface PageCommand {
   argv: string[]
   running: boolean
   last_job: JobView | null
+  /**
+   * 成本/范围原文（QUOT-533 契约）：目前只有 `industry-sync` 带回。
+   * 前端只渲染，不改写、不据此推导条数。
+   */
+  note?: string
 }
 
 export interface PageCommandsPayload {
