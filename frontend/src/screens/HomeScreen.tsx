@@ -14,6 +14,7 @@ import {
   Button,
   Card,
   CardHeader,
+  CardRefreshButton,
   EmptyState,
   ErrorBlock,
   SectionCard,
@@ -290,7 +291,17 @@ export default function HomeScreen() {
         <div className="flex flex-col gap-4 desk:col-span-7">
           {todos.length > 0 && (
             <Card>
-              <CardHeader title="待办" subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>} />
+              <CardHeader
+                title="待办"
+                subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>}
+                actions={
+                  <CardRefreshButton
+                    label="刷新待办"
+                    onClick={validationView.onRefresh}
+                    loading={validationView.refreshing}
+                  />
+                }
+              />
               <ul>
                 {todos.map((todo) => (
                   <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
@@ -315,6 +326,13 @@ export default function HomeScreen() {
           <SectionCard
             title="最近异动"
             subtitle={watchRows.length > 0 ? '按涨跌幅绝对值取前 3' : '快照不可用'}
+            actions={
+              <CardRefreshButton
+                label="刷新最近异动"
+                onClick={watchView.onRefresh}
+                loading={watchView.refreshing}
+              />
+            }
             bodyClassName="p-4"
           >
             {movers.length === 0 ? (

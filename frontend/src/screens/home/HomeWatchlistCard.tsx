@@ -8,6 +8,7 @@ import {
 } from '../../api/radar'
 import {
   Button,
+  CardRefreshButton,
   DataTable,
   EmptyState,
   ErrorBlock,
@@ -103,9 +104,16 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
         )
       }
       actions={
-        <Button variant="ghost" onClick={() => navigate('/watchlist')}>
-          管理自选 →
-        </Button>
+        <>
+          <Button variant="ghost" onClick={() => navigate('/watchlist')}>
+            管理自选 →
+          </Button>
+          <CardRefreshButton
+            label="刷新我的自选"
+            onClick={view.onRefresh}
+            loading={view.refreshing}
+          />
+        </>
       }
       bodyClassName="p-0"
     >

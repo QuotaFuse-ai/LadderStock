@@ -1,5 +1,5 @@
 import { forwardRef, useId, type ButtonHTMLAttributes, type ReactNode } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 
 import { cn } from '../../lib/cn'
 
@@ -115,3 +115,35 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
     </button>
   )
 })
+
+export interface CardRefreshButtonProps {
+  /** 无障碍名与 tooltip：说清刷的是哪一块，不只写「刷新」 */
+  label: string
+  onClick: () => void
+  /** 本块取数在途：图标转圈并禁用，避免重复点出两拍 */
+  loading?: boolean
+  disabled?: boolean
+}
+
+/**
+ * 卡头 ⟳（QUOT-521，对齐参考页卡头）：常显、休市也能点。
+ *
+ * 行为由卡的取数口给（`BlockView.onRefresh`），这里只管形状与可访问名；
+ * 盘中自动轮询照旧跑，手动 ⟳ 只是插一拍，不改节拍。
+ */
+export function CardRefreshButton({ label, onClick, loading = false, disabled = false }: CardRefreshButtonProps) {
+  return (
+    <IconButton
+      label={label}
+      onClick={onClick}
+      disabled={disabled || loading}
+      icon={
+        loading ? (
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <RefreshCw className="size-4" aria-hidden="true" />
+        )
+      }
+    />
+  )
+}
