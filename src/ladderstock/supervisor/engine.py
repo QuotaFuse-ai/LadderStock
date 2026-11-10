@@ -27,6 +27,8 @@ from ladderstock.supervisor.adapters import (
     module_registry,
 )
 from ladderstock.supervisor.ledger import (
+    HEALTH_OK,
+    HEALTH_STOPPED,
     STOP_BY_REQUEST,
     STOP_PID_REUSE,
     Ledger,
@@ -139,11 +141,14 @@ class SupervisorEngine:
             module=name, ports=list(MODULE_PORTS[name])
         )
         record.ports = list(MODULE_PORTS[name])
+        # 显式启动撤销之前的主动停意图：否则自愈会把这次合法运行当成「用户停过」。
+        record.stopping_by_user = False
 
         if adapter.probe():
             if self._verify_pid(record) == "alive":
                 # 幂等：已经在跑且账本对得上，直接续 running
                 record.state = "running"
+                record.health = HEALTH_OK
                 self._ledger.update(record)
                 return record
             raise SupervisorError(
@@ -168,6 +173,7 @@ class SupervisorEngine:
 
         if self._await_probe(adapter, self._start_grace):
             record.state = "running"
+            record.health = HEALTH_OK
             self._ledger.update(record)
             return record
 
@@ -220,6 +226,9 @@ class SupervisorEngine:
             # 非本控制面的进程）。stopping/failed 则继续走停（补刀半死进程）。
             return record
 
+        # 主动停意图（D4）：自愈看到标记绝不重拉；显式 start 会清掉它。
+        record.stopping_by_user = True
+        record.health = HEALTH_STOPPED
         record.state = "stopping"
         self._ledger.update(record)
 
@@ -289,6 +298,68 @@ class SupervisorEngine:
                 "record": _view(record),
                 "others_unchanged": True,
             }
+
+    # ------------------------------------------------------------------ 认领
+
+    def adopt_module(self, name: str) -> ModuleRecord | None:
+        """冷启动前先认领：端口监听者命中本模块识别规则就记账，不 spawn、不杀。
+
+        返回被认领的账本记录；没有可认领的实例（端口空闲 / 持有者不是本模块 /
+        读不到证据）返回 None，调用方据此决定是否真正拉起。判定口径与 PageBoot
+        的 adopt-only 一致：只认「端口在听 + 命令行命中 + 有 pid」，读不到不认。
+        """
+        with self._lock:
+            adapter = self._adapter(name)
+            record = self._ledger.record(name) or ModuleRecord(
+                module=name, ports=list(MODULE_PORTS[name])
+            )
+            record.ports = list(MODULE_PORTS[name])
+            if self._verify_pid(record) == "alive":
+                # 账本已经认得它（pid 存活 + cmdline 指纹匹配），只续健康态。
+                record.state = "running"
+                record.health = HEALTH_OK
+                record.stopping_by_user = False
+                self._ledger.update(record)
+                return record
+            evidence = self._matched_evidence(adapter)
+            if (
+                evidence is None
+                or evidence.pid is None
+                or not getattr(evidence, "cmdline", ())
+            ):
+                return None
+            parent_chain = getattr(evidence, "parent_chain", ())
+            parent = parent_chain[0].parent_pid if parent_chain else None
+            record.pid = int(evidence.pid)
+            record.parent_pid = parent
+            record.started_at = record.started_at or now_iso()
+            record.origin = "adopted"
+            record.cmdline_hash = cmdline_hash(evidence.cmdline)
+            record.state = "running"
+            record.forced_kill = False
+            record.stopped_at = None
+            record.stop_reason = None
+            record.stopping_by_user = False
+            record.health = HEALTH_OK
+            self._ledger.update(record)
+            return record
+
+    def _matched_evidence(self, adapter: ModuleAdapter) -> Any | None:
+        """适配器的识别证据里挑第一条命中的端口（读不到 / 抛错一律不认）。"""
+        identify = getattr(adapter, "identify", None)
+        if not callable(identify):
+            return None
+        try:
+            identification = identify()
+        except Exception:  # noqa: BLE001 - 识别失败按「无可认领实例」处理，失败关闭
+            return None
+        items = getattr(identification, "ports", None)
+        if items is None:
+            items = (identification,)
+        for item in items:
+            if getattr(item, "matched", False) and getattr(item, "pid", None) is not None:
+                return item
+        return None
 
     # ------------------------------------------------------------------ 归属可见
 

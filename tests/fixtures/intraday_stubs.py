@@ -213,6 +213,7 @@ class StubRegistry:
         trade_date: date | None = None,
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
+        timeout: float | None = None,
     ) -> FetchOutcome:
         return self._outcome(dataset, params)
 
@@ -223,6 +224,7 @@ class StubRegistry:
         trade_date: date | None = None,
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
+        timeout: float | None = None,
     ) -> FetchOutcome:
         return self._outcome(dataset, params)
 

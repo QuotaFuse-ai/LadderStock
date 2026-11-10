@@ -12,6 +12,12 @@ D4/D5 定稿的执行口径：
 - **日志有上限**：每模块滚动保留最近 `log_max_lines` 条（append_capped），绝不
   无限膨胀（C 盘只剩十几个 GB，D5 明令）。
 
+冷启动（QUOT-526）：给了 `modules=` 且 `cold_start=True` 时，巡检对象是这份
+bundle 模块表而不是账本里已有的条目；某模块账本无 pid（从没拉起过 / 账本丢了）
+就按命令表立刻拉起一次（delay 0），之后失败才走 5s→15s→45s 退避。重拉通道
+换成 `restart.AdapterRestarter`（适配器 = bundle 自带命令表），不再依赖空
+`restart-commands.json`。认领既有实例（`RestartOutcome.adopted`）不记重拉次数。
+
 clock / sleeper / restarter / notifier 全部可注入，引擎本身零 I/O 依赖注入点，
 pytest 用假件即可覆盖全部路径。
 """
@@ -38,7 +44,7 @@ from ladderstock.supervisor.logroll import append_capped, utc_line
 from ladderstock.supervisor.modules import MODULE_PORTS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
 
 _log = logging.getLogger(__name__)
 
@@ -57,15 +63,20 @@ SELF_HEAL_STATUS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class RestartOutcome:
-    """一次重拉的结论；`detail` 是失败原因摘要（进日志与通知）。"""
+    """一次重拉的结论；`detail` 是失败原因摘要（进日志与通知）。
+
+    `adopted=True` = 没有真正拉起，而是认领了一个已在运行的匹配实例（pid 不变），
+    自愈据此不累计重拉次数（它不是一次崩溃恢复）。
+    """
 
     ok: bool
     pid: int | None = None
     detail: str = ""
+    adopted: bool = False
 
 
 class Restarter(Protocol):
-    """存活探测 + 重拉通道（生产实现见 restart.CommandTableRestarter）。"""
+    """存活探测 + 重拉通道（生产实现见 restart.AdapterRestarter）。"""
 
     def is_alive(self, entry: LedgerEntry) -> bool: ...
 
@@ -101,6 +112,9 @@ class SelfHealEngine:
         backoff: tuple[float, ...] = BACKOFF_SECONDS,
         log_dir: str | Path | None = None,
         log_max_lines: int = DEFAULT_LOG_MAX_LINES,
+        modules: Sequence[str] | None = None,
+        cold_start: bool = False,
+        module_ports: Mapping[str, Sequence[int]] | None = None,
     ) -> None:
         self.ledger = ledger
         self.restarter = restarter
@@ -111,6 +125,13 @@ class SelfHealEngine:
         self.max_restarts = len(self.backoff)
         self.log_dir = Path(log_dir) if log_dir is not None else None
         self.log_max_lines = log_max_lines
+        #: 给了 modules = 托管这份 bundle 模块表（冷启动的前提）；None = 只看账本旧口径。
+        self.modules = tuple(modules) if modules is not None else None
+        #: 没有模块表就没有「该拉起谁」的依据，冷启动一律不生效。
+        self.cold_start = bool(cold_start) and self.modules is not None
+        self._module_ports: dict[str, tuple[int, ...]] = {
+            name: tuple(ports) for name, ports in (module_ports or MODULE_PORTS).items()
+        }
         self._sleeper: Callable[[float], None] = (
             sleeper if sleeper is not None else self._wait
         )
@@ -153,11 +174,22 @@ class SelfHealEngine:
     def tick(self) -> None:
         """单轮巡检：逐模块看账本、判死活、按需重拉。异常逐模块吞掉，不拖垮整轮。"""
         with self._tick_lock:
-            for entry in self.ledger.entries():
+            for module in self._managed_modules():
+                entry = self.ledger.get(module)
+                if entry is None:
+                    continue
                 try:
                     self._inspect(entry)
                 except Exception:
-                    _log.exception("自愈巡检模块 %s 异常（已吞，继续下一模块）", entry.module)
+                    _log.exception("自愈巡检模块 %s 异常（已吞，继续下一模块）", module)
+
+    def _managed_modules(self) -> list[str]:
+        """本轮巡检对象：给了 bundle 模块表就按表（缺的账本条目就地补齐）。"""
+        if self.modules is None:
+            return [entry.module for entry in self.ledger.entries()]
+        for module in self.modules:
+            self.ledger.ensure(module, self._module_ports.get(module, ()))
+        return list(self.modules)
 
     def _inspect(self, entry: LedgerEntry) -> None:
         now = self.clock()
@@ -177,31 +209,48 @@ class SelfHealEngine:
                 self.ledger.update(entry.module, health=HEALTH_STOPPED)
                 self._log(entry, f"进程退出（主动停：{entry.stop_reason or '用户停止'}），不自愈")
             return
-        if entry.pid is None and not window:
-            return  # 从未记账的进程，归属判定是 482-A 的职责，这里不越界。
         if entry.health == HEALTH_NEEDS_HUMAN:
             return  # 超限待人工；只有 reset 能解除，不再自动动作。
+        if entry.pid is None and not window:
+            if self.cold_start:
+                # 从没记账 / 账本丢了：按 bundle 命令表立刻拉一次（失败才进退避）。
+                self._pull(entry, window, cold_start=True)
+            return
         if len(window) >= self.max_restarts:
             self._gave_up(entry, len(window))
             return
         self._pull(entry, window)
 
-    def _pull(self, entry: LedgerEntry, window: list[float]) -> None:
+    def _pull(self, entry: LedgerEntry, window: list[float], *, cold_start: bool = False) -> None:
         attempt = len(window) + 1
-        delay = self.backoff[min(len(window), len(self.backoff) - 1)]
+        label = "冷启动" if cold_start else "重拉"
+        delay = (
+            0.0
+            if cold_start and not window
+            else self.backoff[min(len(window), len(self.backoff) - 1)]
+        )
         if entry.health != HEALTH_RESTARTING:
             self.ledger.update(entry.module, health=HEALTH_RESTARTING)
-        self._log(entry, f"第 {attempt}/{self.max_restarts} 次重拉：{delay:g}s 后发起")
+        self._log(entry, f"第 {attempt}/{self.max_restarts} 次{label}：{delay:g}s 后发起")
         self._sleeper(delay)
         if self._stop_event.is_set():
             return  # 引擎关停中被打断；不登记半截重拉。
         if self._alive(entry):
             # 等待期间进程已被拉活——按恢复处理，不再拉起（防双实例）。
             self.ledger.update(entry.module, health=HEALTH_OK)
-            self._log(entry, f"重拉等待期间进程已恢复（pid={entry.pid}），不重复拉起")
+            self._log(entry, f"{label}等待期间进程已恢复（pid={entry.pid}），不重复拉起")
             self._safe_notify_recovered(entry)
             return
         outcome = self._restart(entry)
+        if outcome.adopted:
+            # 认领既有实例不是一次崩溃恢复：pid 不变，不占重拉窗口。
+            # 账本必须换绑到认领到的 pid，否则下一轮会把它当「从没拉起」再冷启动。
+            fields: dict[str, Any] = {"health": HEALTH_OK}
+            if outcome.pid is not None:
+                fields.update(pid=int(outcome.pid), state="running", stopping_by_user=False)
+            self.ledger.update(entry.module, **fields)
+            self._log(entry, f"{label}认领已在运行的实例（pid={outcome.pid}），不重复拉起")
+            return
         self.ledger.record_restart(
             entry.module,
             ok=outcome.ok,
@@ -210,10 +259,12 @@ class SelfHealEngine:
             reason=outcome.detail,
         )
         if outcome.ok:
-            self._log(entry, f"第 {attempt}/{self.max_restarts} 次重拉已发起（pid={outcome.pid}）")
+            self._log(
+                entry, f"第 {attempt}/{self.max_restarts} 次{label}已发起（pid={outcome.pid}）"
+            )
         else:
-            reason = outcome.detail or "重拉失败"
-            self._log(entry, f"第 {attempt}/{self.max_restarts} 次重拉失败：{reason}")
+            reason = outcome.detail or f"{label}失败"
+            self._log(entry, f"第 {attempt}/{self.max_restarts} 次{label}失败：{reason}")
             self._safe_notify_failure(entry, attempt, reason)
 
     def _gave_up(self, entry: LedgerEntry, attempts: int) -> None:
@@ -290,6 +341,8 @@ class SelfHealEngine:
             known: dict[str, tuple[int, ...]] = {
                 module: tuple(ports) for module, ports in MODULE_PORTS.items()
             }
+            for module in self.modules or ():
+                known.setdefault(module, self._module_ports.get(module, ()))
             for entry in self.ledger.entries():
                 known.setdefault(entry.module, tuple(entry.ports))
             modules = [

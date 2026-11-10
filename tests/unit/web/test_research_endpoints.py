@@ -24,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ladderstock.core.boundary import Provenance, assert_provenance
+from ladderstock.data.provider_registry import SourceUnavailable
 from ladderstock.research import artifacts, checkpoint
 from ladderstock.web.control import CONTROL_ENABLED_ENV, StepResult
 from ladderstock.web.research import ResearchPlane
@@ -179,8 +180,21 @@ class _NullControlPlane:
     peers: dict[str, Any] = {}
 
 
+class _SenateOfflineRegistry:
+    """QUOT-539：状态载荷会顺带读 Senate 白话结论；本文件钉六段契约，peer 一律不可用。
+
+    不让默认 `ProviderRegistry` 上场，是因为开发机可能真跑着 Senate——那样
+    `plain` 会按当天报告时有时无，`STATUS_KEYS` 的精确键集合断言就会飘。
+    """
+
+    def fetch_live(self, dataset: str, **kwargs: Any) -> Any:
+        raise SourceUnavailable("senate 不可用（离线用例）")
+
+
 def _plane(root: Path, run: Any) -> ResearchPlane:
-    return ResearchPlane(data_root=root, run=run, command=["ldst"])
+    return ResearchPlane(
+        data_root=root, run=run, command=["ldst"], registry=_SenateOfflineRegistry()
+    )
 
 
 def _client(

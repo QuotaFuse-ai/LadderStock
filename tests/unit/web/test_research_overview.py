@@ -55,6 +55,7 @@ class _FakeRegistry:
         trade_date: Any = None,
         params: dict[str, Any] | None = None,
         allow_cache: bool = True,
+        timeout: float | None = None,
     ) -> Any:
         self.calls.append(
             {

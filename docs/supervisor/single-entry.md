@@ -29,6 +29,15 @@ proxyfleet）+ watch（5952 看门狗，`inherit_chain` 识别 venv `ldst.exe` �
 后代）。**5950 看板本身不在七个模块里**：停模块组不会关掉看板，看板仍由自己的
 任务 / 快捷方式管理，直到切换窗口被批准。
 
+### 2.1 自愈冷启动（QUOT-526）
+
+`LDST_SUPERVISOR_OWN_PROCESSES=1` 时，自愈引擎同时托管 `MODULE_ORDER` 全表
+（`modules=` + `cold_start=True`）：账本里没有 pid 的模块按 bundle 命令表
+（适配器，不读 `restart-commands.json`）立刻拉起；已在监听的匹配实例先
+`adopt_module()` 认领（pid 不变，不 spawn）。默认附加模式只看账本旧口径、只认领
+不拉起。主动 `stop` 会落 `stopping_by_user`，自愈不会把它撤销；要恢复用显式
+`start`。决策见 [DEC-075](../decisions/DEC-075-self-heal-cold-start-bundle-command-table.md)。
+
 ## 3. 安全边界（DEC-014）
 
 - 只停止**账本能证明由本控制面拉起**的进程树；`external`（`cmdline_mismatch` /

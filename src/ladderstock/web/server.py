@@ -1727,8 +1727,14 @@ def create_app(
     #
     # startup 钩子 = 「用户打开首页」：watch 扫描守护 + 取数调度器按需拉起（幂等），
     # peer 只认领记账（adopt-only，绝不自动重启 / 终止）；账本沿用上面同一份
-    # ledger.json。`LDST_PAGE_AUTOSTART=0` 关闭自有子进程；测试注入 `page_boot` 假件。
-    boot = page_boot if page_boot is not None else build_page_boot(root)
+    # ledger.json（QUOT-526：同一实例，避免两份内存视图互相覆盖）。
+    # `LDST_PAGE_AUTOSTART=0` 关闭自有子进程；测试注入 `page_boot` 假件。
+    boot = page_boot
+    if boot is None:
+        boot = build_page_boot(
+            root,
+            ledger=engine.ledger if isinstance(engine, SelfHealEngine) else None,
+        )
     mount_page_boot(app, boot)
 
     # ------------------------------------------------------------ 静态看板
