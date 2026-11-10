@@ -21,6 +21,7 @@
 
 import { ApiError } from '../api'
 import { parseKline, type KlineResult } from '../charts/klineView'
+import { parsePlainBlock, type PlainConclusion } from './plainConclusion'
 
 export const RESEARCH_STAGES = [
   'company',
@@ -124,6 +125,13 @@ export interface ResearchStatus {
   source_status: 'ok' | 'partial' | 'degraded'
   reason?: string | null
   data_source_status?: string
+  /**
+   * StockSenate 白话结论（plain-v1，QUOT-537）。载荷没透传时是 `null`，
+   * 页面如实显示「后端未透传」降级态，不自行生成结论。
+   */
+  plain?: PlainConclusion | null
+  /** 载荷自带的免责声明原文；缺失为 `null`（页面不补写） */
+  disclaimer?: string | null
 }
 
 export type ResearchJobStatus = 'queued' | 'running' | 'ok' | 'degraded' | 'failed'
@@ -324,6 +332,7 @@ export function parseResearchStatus(payload: unknown, expectedCode?: string): Re
   const failed = stages.filter((stage) => stage.status === 'failed').map((stage) => stage.name)
   const pending = stages.filter((stage) => stage.status === 'pending').map((stage) => stage.name)
   const available = root.available === true
+  const { plain, disclaimer } = parsePlainBlock(root)
   return {
     code,
     date,
@@ -344,6 +353,8 @@ export function parseResearchStatus(payload: unknown, expectedCode?: string): Re
           : 'partial',
     reason: asString(root.reason),
     data_source_status: asString(root.data_source_status) ?? undefined,
+    plain,
+    disclaimer,
   }
 }
 
