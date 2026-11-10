@@ -21,7 +21,16 @@ import type { BlockView } from '../src/screens/home/useHomeSource'
  */
 
 function normal<T>(data: T): BlockView<T> {
-  return { state: 'normal', data, error: null, offline: false, endpointMissing: false, onRetry: () => {} }
+  return {
+    state: 'normal',
+    data,
+    error: null,
+    offline: false,
+    endpointMissing: false,
+    onRetry: () => {},
+    onRefresh: () => {},
+    refreshing: false,
+  }
 }
 
 const INDICES: IndicesPayload = {
@@ -117,6 +126,8 @@ function emptyBundle(): HomeAssistantBundle {
     offline: true,
     endpointMissing: false,
     onRetry: () => {},
+    onRefresh: () => {},
+    refreshing: false,
   })
   return buildHomeAssistant('2026-11-06', {
     indices: offline<IndicesPayload>(),

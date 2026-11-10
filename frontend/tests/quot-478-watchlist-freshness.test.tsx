@@ -62,6 +62,8 @@ function viewOf(payload: WatchlistPayload): BlockView<WatchlistPayload> {
     offline: false,
     endpointMissing: false,
     onRetry: () => {},
+    onRefresh: () => {},
+    refreshing: false,
   }
 }
 

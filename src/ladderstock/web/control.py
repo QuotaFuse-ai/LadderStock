@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ladderstock.ai import ai_yaml_edit, checkpoint, cli_provider, fallback
 from ladderstock.ai.error_taxonomy import classify_error
@@ -78,7 +78,7 @@ from ladderstock.core.validation import load_validation, validation_path, write_
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.supervisor import MODULE_ORDER, SupervisorEngine
 from ladderstock.web import chat as chat_channel
-from ladderstock.web import peer_registry
+from ladderstock.web import peer_registry, senate_roles
 
 # --------------------------------------------------------------------------- #
 # 常量
@@ -3775,6 +3775,46 @@ class AiModulesTestRequest(BaseModel):
     role: str | None = None
 
 
+class SenateRoleEntry(BaseModel):
+    """`PUT /peers/senate/role-models` 的单个角色：只允许 provider / model / 变量名。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str
+    api_key_env: str | None = None
+
+
+class SenateRoleModelsUpdate(BaseModel):
+    """`PUT /peers/senate/role-models`：写 `config/llm_config.toml` 的 `[llm.role_llms]`。
+
+    `expected_revision` 来自 GET；与磁盘指纹不一致判 `SENATE_STALE`。请求模型
+    层就用 `extra="forbid"` 挡住 `api_key` 之类的字段（密钥只进 dotenv / 环境变量）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    roles: dict[str, SenateRoleEntry]
+    expected_revision: str | None = None
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            role: entry.model_dump(exclude_unset=True, exclude_none=True)
+            for role, entry in self.roles.items()
+        }
+
+
+class SenateRoleModelsTest(BaseModel):
+    """`POST /peers/senate/role-models/test`：不传的字段回落到已保存值。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: str
+    provider: str | None = None
+    model: str | None = None
+    api_key_env: str | None = None
+
+
 class AiGenerateRequest(BaseModel):
     date: str
     force: bool = False
@@ -3835,6 +3875,15 @@ def _require_declared_ref(
     return ref
 
 
+_SECRET_NAME_MARKERS = ("apikey", "api_key", "token", "secret", "password", "credential")
+
+
+def _secret_name_heuristic(name: str) -> bool:
+    """只按字段名判断（`api_key_env` 是合法的变量名，不算）：用于不回显提交值的报错分类。"""
+    lowered = name.lower()
+    return any(marker in lowered for marker in _SECRET_NAME_MARKERS)
+
+
 def build_router(plane: ControlPlane) -> APIRouter:
     """构造 `/api/control/*` 路由；所有路由都过 `_guard`（开关 + 回环来源）。"""
     router = APIRouter(prefix=CONTROL_PREFIX, dependencies=[Depends(_guard)])
@@ -3867,6 +3916,114 @@ def build_router(plane: ControlPlane) -> APIRouter:
     @router.get("/peers/{peer_id}")
     def get_peer(peer_id: str) -> dict[str, Any]:
         return plane.snapshot(_peer_or_404(peer_id))
+
+    # ------------------------------------------------ Senate 角色多模型桥接（QUOT-518）
+    #
+    # `/peers/senate/*` 是两段以上的静态路径，`/peers/{peer_id}` 只匹配单段，
+    # 不会抢走这些路由；`/peers/senate` 本体仍落到快照。写的是 Senate 自己的
+    # config/llm_config.toml；密钥只读 dotenv / 环境变量，绝不回传明文。
+
+    def _senate_role_models() -> senate_roles.SenateRoleModels:
+        _peer_or_404("senate")
+        ctl = plane.peers["senate"]
+
+        def _env_reader(target: PeerControl) -> dict[str, str]:
+            values, _ = read_env_layered(target)
+            return values
+
+        return senate_roles.SenateRoleModels(
+            ctl=ctl,
+            env_reader=_env_reader,
+            http_post=plane._http_post,  # noqa: SLF001 - 与 ai_test 共用注入点
+            environ=os.environ,
+            resolve=plane._resolve,  # noqa: SLF001
+            is_forbidden=is_forbidden_target_ip,
+            clock=time.monotonic,
+        )
+
+    def _senate_error(exc: senate_roles.SenateError) -> HTTPException:
+        return HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        )
+
+    async def _senate_body(request: Request, model: type[BaseModel]) -> Any:
+        """手工解析请求体：校验失败只报字段路径，不回显用户提交的内容（可能是密钥）。"""
+        data = await _json_body(request)
+        if not isinstance(data, dict):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "SENATE_INVALID_VALUE",
+                    "message": "请求体必须是 JSON 对象（不回显提交值）",
+                },
+            )
+        known = {
+            name: data.pop(name) for name in list(data) if name in model.model_fields
+        }
+        extra = sorted(set(data) - set(known))
+        if extra:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "SENATE_SECRET_REJECTED"
+                    if any(_secret_name_heuristic(name) for name in extra)
+                    else "SENATE_INVALID_VALUE",
+                    "message": "不接受字段（不回显提交值）：" + ", ".join(extra),
+                },
+            )
+        try:
+            return model.model_validate(known)
+        except ValidationError as exc:
+            errors = exc.errors(include_input=False, include_url=False)
+            rejected = any(
+                error.get("type") == "extra_forbidden"
+                and _secret_name_heuristic(str(error["loc"][-1]))
+                for error in errors
+            )
+            fields = [
+                ".".join(str(part) for part in error["loc"]) or "(body)" for error in errors
+            ]
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "SENATE_SECRET_REJECTED"
+                    if rejected
+                    else "SENATE_INVALID_VALUE",
+                    "message": "请求字段不合法（不回显提交值）：" + ", ".join(fields),
+                },
+            ) from None
+
+    @router.get("/peers/senate/role-models")
+    def senate_role_models_status() -> dict[str, Any]:
+        """16 个辩论角色的当前 provider/model、全局档、7 个真实 provider 与别名。"""
+        try:
+            return _senate_role_models().status()
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.put("/peers/senate/role-models")
+    async def senate_role_models_update(request: Request) -> dict[str, Any]:
+        """校验后原子写 llm_config.toml 的 `[llm.role_llms]`；冲突回 `SENATE_STALE`。"""
+        body: SenateRoleModelsUpdate = await _senate_body(request, SenateRoleModelsUpdate)
+        try:
+            return _senate_role_models().update(body.payload(), body.expected_revision)
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.post("/peers/senate/role-models/test")
+    async def senate_role_models_test(request: Request) -> dict[str, Any]:
+        """用一个最小 chat 探测该角色模型；失败也回 200，由 `ok` / `error_code` 区分。"""
+        body: SenateRoleModelsTest = await _senate_body(request, SenateRoleModelsTest)
+        try:
+            return _senate_role_models().test(
+                role=body.role,
+                provider=body.provider,
+                model=body.model,
+                api_key_env=body.api_key_env,
+            )
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
 
     @router.post("/peers/{peer_id}/install")
     def install(peer_id: str, body: InstallRequest | None = None) -> dict[str, Any]:
