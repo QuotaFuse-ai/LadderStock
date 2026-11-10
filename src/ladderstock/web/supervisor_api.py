@@ -1,29 +1,41 @@
-"""supervisor 自愈状态面（QUOT-491 / 482-C）。
+"""supervisor 面（QUOT-491 / 482-A / 482-C / 523）。
 
-两个路由：
+三类路由：
 
 - `GET /api/supervisor/state`：每模块 `health: ok|restarting|needs_human` 与
-  `restarts_5min`（任务书对外契约）；另附 `self_heal: {attempts, max, status}`
-  与 `state`（484 前端面板契约，stopped 的静息态在 health 里折叠为 ok）。
-- `POST /api/supervisor/state/{module}/reset`：人工解除 `needs_human`
-  （清重拉窗口、健康回 ok）。写面闸门**复用雷达面同一份实现**
+  `restarts_5min`（任务书对外契约）；另附 `self_heal: {attempts, max, status}`、
+  `state`（484 前端面板契约）与 482-A 归属视角（`ownership` / `evidence` /
+  `listening`）。
+- `POST /api/supervisor/state/{module}/reset`：人工解除 `needs_human`。
+- `POST /api/supervisor/start|restart|stop`（QUOT-523 单入口）：按注册表顺序
+  全起 / 单模块重起 / 反向全停；**只动账本能证明是我们拉起的进程**（归属判定
+  见 `SupervisorEngine`，外部进程一律不碰）。写面闸门**复用雷达面同一份实现**
   （`privacy_write_guard`：回环 + Host 白名单 + 写方法来源证据），不新增鉴权。
 
-引擎组装（`build_selfheal_engine`）：最小账本（482-A 未落地，见
-`supervisor/__init__.py` 的边界说明）+ 命令表重拉（482-B 未落地）+ 事件日志 /
-Windows Toast 通知。落盘全部收在 `<data_root>/supervisor/` 下。
+引擎组装（`build_supervisor_engines`）：一张账本同时供自愈巡检（482-C）与
+顺序启停（482-A）使用——两边看到的是同一份 pid / state，不会各记各的。
+`own_processes()`（`LDST_SUPERVISOR_OWN_PROCESSES=1`）决定看板启动 / 退出时
+是否连子进程一起起停；默认关闭（附加模式）：看板只是观测 + 按需操作，
+绝不因为开关看板而碰生产上的 5950/8000/9100/9000 进程。
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ladderstock.supervisor.engine import SupervisorEngine, SupervisorError
 from ladderstock.supervisor.ledger import Ledger
+from ladderstock.supervisor.module_adapters import build_default_adapters
 from ladderstock.supervisor.notify import build_default_notifier
 from ladderstock.supervisor.page_boot import PageBoot
+from ladderstock.supervisor.proctree import default_process_ops
 from ladderstock.supervisor.restart import CommandTableRestarter
 from ladderstock.supervisor.selfheal import (
     DEFAULT_LOG_MAX_LINES,
@@ -40,6 +52,19 @@ SUPERVISOR_PREFIX = "/api/supervisor"
 SUPERVISOR_DENIED = "自愈状态面只对本机回环开放（127.0.0.1 / localhost / ::1）"
 SUPERVISOR_WRITE_DENIED = "自愈写面只接受同源来源（Origin 或 X-LDST-Client: 1）"
 
+#: 看板启动 / 退出时是否连子进程一起起停（QUOT-523 单入口）。默认 0 = 附加模式：
+#: 只观测、只响应用户显式操作，看板开关本身不碰任何进程。
+OWN_PROCESSES_ENV = "LDST_SUPERVISOR_OWN_PROCESSES"
+
+#: 全停是不可逆批量动作，请求体必须带 `confirm: true`（或给出 modules 只停单个）
+STOP_CONFIRMATION_FIELD = "confirm"
+
+
+def own_processes(env: Mapping[str, str] | None = None) -> bool:
+    """单入口模式开关：`LDST_SUPERVISOR_OWN_PROCESSES` 非空且不为 0。"""
+    values = os.environ if env is None else env
+    return (values.get(OWN_PROCESSES_ENV) or "").strip() not in ("", "0")
+
 
 async def _supervisor_write_guard(request: Request) -> None:
     await privacy_write_guard(
@@ -50,19 +75,39 @@ async def _supervisor_write_guard(request: Request) -> None:
     )
 
 
-def build_selfheal_engine(root: str | Path, *, panel_url: str) -> SelfHealEngine:
-    """按 `<data_root>/supervisor/` 组装生产引擎：账本 + 命令表 + 通知。"""
+@dataclass
+class SupervisorEngines:
+    """看板侧的 supervisor 装配：自愈巡检 + 顺序启停共用一张账本。"""
+
+    heal: SelfHealEngine
+    processes: SupervisorEngine
+    ledger: Ledger
+
+
+def build_supervisor_engines(
+    root: str | Path,
+    *,
+    panel_url: str,
+    env: Mapping[str, str] | None = None,
+) -> SupervisorEngines:
+    """按 `<data_root>/supervisor/` 组装生产引擎：一张账本 + 自愈 + 顺序启停。"""
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
     restarter = CommandTableRestarter.from_file(supervisor_dir / "restart-commands.json")
     notifier = build_default_notifier(supervisor_dir / "notifications.log", panel_url=panel_url)
-    return SelfHealEngine(
+    heal = SelfHealEngine(
         ledger,
         restarter,
         notifier,
         log_dir=supervisor_dir / "logs",
         log_max_lines=DEFAULT_LOG_MAX_LINES,
     )
+    processes = SupervisorEngine(
+        adapters=build_default_adapters(env=env, log_dir=supervisor_dir / "logs"),
+        ledger=ledger,
+        procs=default_process_ops(),
+    )
+    return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
 
 
 def build_page_boot(root: str | Path, *, ledger: Ledger | None = None) -> PageBoot:
@@ -90,16 +135,107 @@ def build_page_boot(root: str | Path, *, ledger: Ledger | None = None) -> PageBo
     )
 
 
-def build_supervisor_router(engine: SelfHealEngine) -> APIRouter:
+def build_process_engine(
+    root: str | Path,
+    *,
+    heal: SelfHealEngine,
+    env: Mapping[str, str] | None = None,
+) -> SupervisorEngine:
+    """只组装顺序启停引擎，复用既有自愈账本（`supervisor_engine=` 注入时用）。"""
+    supervisor_dir = Path(root) / "supervisor"
+    return SupervisorEngine(
+        adapters=build_default_adapters(env=env, log_dir=supervisor_dir / "logs"),
+        ledger=heal.ledger,
+        procs=default_process_ops(),
+    )
+
+
+def build_selfheal_engine(root: str | Path, *, panel_url: str) -> SelfHealEngine:
+    """只组装自愈引擎（482-C 旧入口；测试与只读观测仍可用）。"""
+    return build_supervisor_engines(root, panel_url=panel_url).heal
+
+
+def _stop_result(processes: Any, modules: list[str]) -> dict[str, Any]:
+    """按前端契约 `{confirm: true, modules: [...]}` 停模块；空列表 = 反向全停。"""
+    stopped: list[str] = []
+    skipped: list[str] = []
+    if not modules:
+        outcome = processes.stop_all()
+        for name, item in (outcome.get("modules") or {}).items():
+            (stopped if item.get("ok") else skipped).append(name)
+        return {"ok": bool(outcome.get("ok")), "stopped": stopped, "skipped": skipped}
+    for name in modules:
+        try:
+            processes.stop_module(name)
+        except SupervisorError:
+            skipped.append(name)
+        else:
+            stopped.append(name)
+    return {"ok": not skipped, "stopped": stopped, "skipped": skipped}
+
+
+def build_stop_router(processes: Any) -> APIRouter:
+    """`/api/supervisor/{start,restart,stop}`（QUOT-523）：全部走写面闸门。"""
+    router = APIRouter(prefix=SUPERVISOR_PREFIX, tags=["supervisor"])
+
+    @router.post("/start", dependencies=[Depends(_supervisor_write_guard)])
+    def start(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        modules = [str(name) for name in (payload or {}).get("modules") or []]
+        if not modules:
+            outcome = processes.start_all()
+            return {"ok": bool(outcome.get("ok")), "modules": outcome.get("modules") or {}}
+        results: dict[str, Any] = {}
+        for name in modules:
+            try:
+                processes.start_module(name)
+            except SupervisorError as exc:
+                results[name] = {"ok": False, "error": str(exc)}
+            else:
+                results[name] = {"ok": True, "error": None}
+        return {"ok": all(item["ok"] for item in results.values()), "modules": results}
+
+    @router.post("/restart", dependencies=[Depends(_supervisor_write_guard)])
+    def restart(payload: dict[str, Any]) -> dict[str, Any]:
+        modules = [str(name) for name in payload.get("modules") or []]
+        if not modules:
+            raise HTTPException(status_code=422, detail="restart 需要 modules: [模块名]")
+        results: dict[str, Any] = {}
+        for name in modules:
+            try:
+                processes.restart_module(name)
+            except SupervisorError as exc:
+                results[name] = {"ok": False, "error": str(exc)}
+            else:
+                results[name] = {"ok": True, "error": None}
+        return {"ok": all(item["ok"] for item in results.values()), "modules": results}
+
+    @router.post("/stop", dependencies=[Depends(_supervisor_write_guard)])
+    def stop(payload: dict[str, Any]) -> dict[str, Any]:
+        # 全停是不可逆动作（七个模块一起下），必须显式确认；单模块停不要求
+        modules = [str(name) for name in payload.get("modules") or []]
+        if not modules and payload.get(STOP_CONFIRMATION_FIELD) is not True:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"全停需要 {STOP_CONFIRMATION_FIELD}: true"
+                    "（或给出 modules: [模块名] 只停指定模块）"
+                ),
+            )
+        return _stop_result(processes, modules)
+
+    return router
+
+
+def build_supervisor_router(heal: Any) -> APIRouter:
     router = APIRouter(prefix=SUPERVISOR_PREFIX, tags=["supervisor"])
 
     @router.get("/state")
     def state() -> dict[str, Any]:
-        return engine.snapshot()
+        return heal.snapshot()
 
     @router.post("/state/{module}/reset", dependencies=[Depends(_supervisor_write_guard)])
     def reset(module: str) -> dict[str, Any]:
-        result = engine.reset(module)
+        result = heal.reset(module)
         if result is None:
             raise HTTPException(status_code=404, detail=f"账本中无模块：{module}")
         return {"ok": True, **result}
@@ -130,11 +266,40 @@ def build_page_boot_router(boot: PageBoot | None) -> APIRouter:
     return router
 
 
-def mount_supervisor(app: FastAPI, engine: SelfHealEngine) -> None:
-    """挂路由 + 引擎随应用启停（startup 起 / shutdown 停，等待打断巡检等待）。"""
-    app.include_router(build_supervisor_router(engine))
-    app.router.on_startup.append(engine.start)
-    app.router.on_shutdown.append(lambda: engine.stop(timeout=2.0))
+def mount_supervisor(
+    app: FastAPI,
+    heal: Any,
+    *,
+    processes: Any | None = None,
+    own_processes_on_lifecycle: bool = False,
+) -> None:
+    """挂路由 + 引擎随应用启停。
+
+    `processes` 给出时注册启停路由；`own_processes_on_lifecycle` 为真时启动
+    全起、退出反向全停（单入口模式）；否则退出只停自愈巡检线程，不碰任何
+    子进程（附加模式——绝不因为关看板而停生产进程）。
+    """
+    app.include_router(build_supervisor_router(heal))
+    if processes is not None:
+        app.include_router(build_stop_router(processes))
+
+    async def startup() -> None:
+        if processes is not None and own_processes_on_lifecycle:
+            await _in_thread(processes.start_all)
+        await _in_thread(heal.start)
+
+    async def shutdown() -> None:
+        if processes is not None and own_processes_on_lifecycle:
+            await _in_thread(processes.stop_all)
+        await _in_thread(lambda: heal.stop(timeout=2.0))
+
+    app.router.on_startup.append(startup)
+    app.router.on_shutdown.append(shutdown)
+
+
+async def _in_thread(fn: Any) -> None:
+    """起停是阻塞调用（等端口 / 等进程），挪出事件循环，别卡住启动/关闭握手。"""
+    await asyncio.to_thread(fn)
 
 
 def mount_page_boot(app: FastAPI, boot: PageBoot) -> None:
@@ -148,11 +313,20 @@ def mount_page_boot(app: FastAPI, boot: PageBoot) -> None:
 
 
 __all__ = [
+    "OWN_PROCESSES_ENV",
+    "STOP_CONFIRMATION_FIELD",
+    "SUPERVISOR_DENIED",
     "SUPERVISOR_PREFIX",
+    "SUPERVISOR_WRITE_DENIED",
+    "SupervisorEngines",
     "build_page_boot",
     "build_page_boot_router",
     "build_selfheal_engine",
+    "build_process_engine",
+    "build_stop_router",
+    "build_supervisor_engines",
     "build_supervisor_router",
     "mount_page_boot",
     "mount_supervisor",
+    "own_processes",
 ]

@@ -31,6 +31,8 @@ flowchart TD
 | `Launch-LdstPanel.vbs` | wscript 无黑窗启动器（面板批量预取优化配套：桌面入口走它彻底不闪控制台） |
 | `New-DesktopShortcut.ps1` | 创建/更新桌面唯一图标；扫描并存旧入口清单（只报告不移除） |
 | `Disable-DeadScheduledTasks.ps1` | 死任务禁用脚本——**默认干跑，禁用动作整体推迟，等 supervisor 验收通过后再启用** |
+| `Get-LegacyTaskReceipt.ps1` | QUOT-523 单入口收编回执（缺省只读）：逐任务分类 `legacy-autostart / stat-monitor / keep-board-loop / peer-peer`，`-Json` 机读，`-Apply` **只导出 XML**、不改 State |
+| `Invoke-SingleEntry.ps1` | QUOT-523 单入口包装器：`-Action start\|stop\|restart\|status` 调 `ldst supervisor`；`stop` 缺省预演，`-Force` 才真停；`-DryRun` 只打印 |
 | `Restore-ScheduledTasks.ps1` | 应急回滚：把 Disabled 任务恢复启用（干跑 / `-Apply`） |
 | `adapters/Repair-WslHost.ps1` | `/etc/wsl.conf` + `/usr/local/bin/wsl-boot.sh` 幂等校验/安装（Check / Install） |
 | `adapters/Stop-WslServices.ps1` | WSL 内 FinanceCoffer 优雅停（compose stop → stop → kill + 回读确认）；`-IncludeWslShutdown` 显式关 VM |
