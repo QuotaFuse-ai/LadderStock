@@ -41,6 +41,7 @@ import {
   type Column,
 } from '../../components/ui'
 import { MarkdownView } from '../../components/research/MarkdownView'
+import { PlainConclusionCard } from '../../components/research/PlainConclusionCard'
 import { ProvenanceDrawer } from '../../components/research/ProvenanceDrawer'
 import { ResearchSymbolBar } from '../../components/research/ResearchSymbolBar'
 import { StageRail } from '../../components/research/StageRail'
@@ -939,6 +940,8 @@ export default function ResearchDetailScreen() {
           研究报告页可对单段「重试本段」。
         </Banner>
       )}
+
+      <PlainConclusionCard plain={status?.plain ?? null} disclaimer={status?.disclaimer ?? null} />
 
       <div className="grid gap-4 desk:grid-cols-12 desk:items-start">
         <div className="min-w-0 desk:col-span-7">
