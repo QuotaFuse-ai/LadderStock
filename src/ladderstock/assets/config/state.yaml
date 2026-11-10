@@ -1,0 +1,23 @@
+# 前端持久化分片（文档 §6.4）
+# schema_version 2：分片结构在 v1 基础上做了拆分（复盘单块正文 → 五段式、
+# 验证条件补 id/confirmed、盯盘快照补 fetchedAt），迁移实现见
+# frontend/persist/migrate.ts（v1→v2 逐级迁移，失败丢弃该分片）。
+state:
+  backend: indexeddb
+  schema_version: 2
+  stores:
+    - name: watch_snapshot
+      persist: true
+      ttl_sec: 300
+    - name: review_draft
+      persist: true
+    - name: validation_draft
+      persist: true
+    # 用户偏好，无 TTL：刷新 / 重启 / 多窗口共用同一份（DEC-037）
+    - name: watch_settings
+      persist: true
+    # 我的论点与判断（QUOT-452）：私有内容，无 TTL，只存本机、不参与上报内容
+    - name: thesis_notes
+      persist: true
+    - name: journal_draft
+      persist: true

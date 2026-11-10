@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "schedule.yaml",
+  "type": "object",
+  "required": ["scheduler", "jobs"],
+  "additionalProperties": false,
+  "properties": {
+    "scheduler": {
+      "type": "object",
+      "required": ["timezone", "misfire_grace_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "timezone": { "type": "string", "minLength": 1 },
+        "misfire_grace_seconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "kind", "trigger", "enabled"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+          "name": { "type": "string", "minLength": 1 },
+          "kind": {
+            "enum": [
+              "notify",
+              "reconcile",
+              "snapshot",
+              "sync_close",
+              "snapshot_fast",
+              "sync_batch",
+              "digest"
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "pattern": "^(([01][0-9]|2[0-3]):[0-5][0-9]|[1-9][0-9]*s)$"
+          },
+          "enabled": { "type": "boolean" },
+          "channel": { "enum": ["console", "desktop"] },
+          "message": { "type": "string" },
+          "summary": { "enum": ["premarket", "close", "watch"] },
+          "dataset": { "type": "string", "minLength": 1 }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "kind": { "const": "sync_batch" } },
+              "required": ["kind"]
+            },
+            "then": { "required": ["dataset"] }
+          },
+          {
+            "if": {
+              "properties": { "kind": { "const": "digest" } },
+              "required": ["kind"]
+            },
+            "then": { "required": ["summary"] }
+          }
+        ]
+      }
+    }
+  }
+}

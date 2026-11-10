@@ -73,14 +73,16 @@ try {
     Write-Warning "python cannot import ladderstock. Run: `"$Python`" -m pip install -e `"$RepoRoot`""
 }
 
-# Same precedence as ladderstock.cli.paths.data_dir()
+# Same precedence as ladderstock.cli.paths.data_dir()（DEC-071）
+# 安装态落点由 platformdirs 决定：Windows 上 user_data_dir("LadderStock","QuotaFuse")
+# 即 %LOCALAPPDATA%\QuotaFuse\LadderStock\data，不再假设 ~\.ladderstock。
 $DataDir = ''
 if ($env:LDST_DATA_DIR) {
     $DataDir = $env:LDST_DATA_DIR
 } elseif (Test-Path -LiteralPath (Join-Path $RepoRoot 'data')) {
     $DataDir = Join-Path $RepoRoot 'data'
 } else {
-    $DataDir = Join-Path $env:USERPROFILE '.ladderstock\data'
+    $DataDir = Join-Path (Join-Path (Join-Path $env:LOCALAPPDATA 'QuotaFuse') 'LadderStock') 'data'
 }
 $StateDir = Join-Path $DataDir 'state'
 New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
