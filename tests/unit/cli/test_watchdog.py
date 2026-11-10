@@ -241,6 +241,68 @@ def test_restart_falls_back_from_task_to_script(tmp_path: Path) -> None:
     assert payload["attempts"][1]["ok"] is True
 
 
+def test_restart_prefers_spawn_cmd_over_task(tmp_path: Path) -> None:
+    """被 supervisor 托管时只给 spawn-cmd：直接拉起，不再碰 schtasks（QUOT-523）。"""
+    calls: list[list[str]] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(list(argv))
+        return _completed(0)
+
+    code, payload = restart_service(
+        WatchdogConfig(
+            data_root=tmp_path,
+            restart_task="LadderStock API",
+            spawn_cmd='["C:\\\\tools\\\\ldst.exe", "-m", "ladderstock.cli.main", "run"]',
+        ),
+        run=runner,
+        lookup_pid=lambda _port: None,
+    )
+
+    assert code == 200
+    assert payload["via"] == "spawn"
+    assert calls == [["C:\\tools\\ldst.exe", "-m", "ladderstock.cli.main", "run"]]
+
+
+def test_restart_falls_back_from_spawn_cmd_to_task(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(argv[0])
+        return _completed(1 if argv[0] == "ldst.exe" else 0)
+
+    code, payload = restart_service(
+        WatchdogConfig(
+            data_root=tmp_path,
+            restart_task="LadderStock API",
+            spawn_cmd='["ldst.exe", "run"]',
+        ),
+        run=runner,
+        lookup_pid=lambda _port: None,
+    )
+
+    assert code == 200
+    assert payload["via"] == "schtasks"
+    assert calls == ["ldst.exe", "schtasks"]
+    assert [attempt["via"] for attempt in payload["attempts"]] == ["spawn", "schtasks"]
+    assert payload["attempts"][0]["ok"] is False
+
+
+def test_restart_rejects_bad_spawn_cmd_without_running(tmp_path: Path) -> None:
+    def runner(*_args, **_kwargs):
+        raise AssertionError("spawn-cmd 非法时不该执行任何命令")
+
+    code, payload = restart_service(
+        WatchdogConfig(data_root=tmp_path, restart_task="", spawn_cmd="{not json"),
+        run=runner,
+        lookup_pid=lambda _port: None,
+    )
+
+    assert code == 503
+    assert payload["attempts"][0]["via"] == "spawn"
+    assert payload["attempts"][0]["ok"] is False
+
+
 def test_restart_uses_task_when_it_succeeds(tmp_path: Path) -> None:
     script = tmp_path / "restart-api.ps1"
     script.write_text("exit 0", encoding="utf-8")
@@ -263,6 +325,44 @@ def test_restart_uses_task_when_it_succeeds(tmp_path: Path) -> None:
     assert code == 200
     assert payload["via"] == "schtasks"
     assert calls == ["schtasks"]
+
+
+def test_supervised_watchdog_never_falls_back_to_the_scheduled_task(tmp_path: Path) -> None:
+    """托管模式（QUOT-523）：spawn-cmd 失败也只回 503，不碰 schtasks / 脚本。"""
+    script = tmp_path / "restart-api.ps1"
+    script.write_text("exit 0", encoding="utf-8")
+    calls: list[str] = []
+
+    def runner(argv, **_kwargs):
+        calls.append(argv[0])
+        return _completed(1)
+
+    code, payload = restart_service(
+        WatchdogConfig(
+            data_root=tmp_path,
+            restart_task="LadderStock API",
+            restart_script=str(script),
+            spawn_cmd='["ldst.exe", "run"]',
+            supervised=True,
+        ),
+        run=runner,
+        lookup_pid=lambda _port: None,
+    )
+
+    assert code == 503
+    assert payload["ok"] is False
+    assert calls == ["ldst.exe"]
+    assert [attempt["via"] for attempt in payload["attempts"]] == ["spawn"]
+
+
+def test_supervised_flag_is_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(watchdog.SUPERVISED_ENV, raising=False)
+    assert watchdog.supervised() is False
+    monkeypatch.setenv(watchdog.SUPERVISED_ENV, "0")
+    assert watchdog.supervised() is False
+    monkeypatch.setenv(watchdog.SUPERVISED_ENV, "1")
+    assert watchdog.supervised() is True
+    assert watchdog.supervised({}) is False
 
 
 def test_restart_returns_503_when_everything_fails(tmp_path: Path) -> None:

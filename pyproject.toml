@@ -21,6 +21,8 @@ dependencies = [
   "jsonschema>=4.20,<5",
   "duckdb>=1.0,<3",
   "httpx>=0.27,<1",
+  # QUOT-523：跨平台进程识别（Windows/Linux/macOS 一套实现）；缺失时回退 Windows CIM
+  "psutil>=5.9,<8",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +31,7 @@ web = ["fastapi>=0.110,<1", "uvicorn>=0.29,<1"]
 pdf = ["reportlab>=4.0,<6", "fonttools>=4.50,<5"]
 schedule = ["apscheduler>=3.10,<4"]
 all = ["ladderstock[mcp,web,pdf,schedule]"]
-dev = ["pytest>=8.0,<10", "ruff>=0.5,<1", "mypy>=1.10,<3"]
+dev = ["pytest>=8.0,<10", "ruff>=0.5,<1", "mypy>=1.10,<3", "types-psutil>=5.9"]
 
 [project.scripts]
 ldst = "ladderstock.cli.main:main"

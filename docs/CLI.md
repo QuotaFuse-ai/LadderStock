@@ -43,8 +43,12 @@
 >
 > **QUOT-443 增量（2026-11-06）**：基线 31 条口径**不变**，新增 1 条长驻命令
 > `ldst watchdog`（独立看门狗，端口 `5952`，见 §J 与 `DEC-063-platform-watchdog-and-health`）。
-> **以代码为准的当前计数**：`LEAF_PATHS` **48** 个叶子、`COMMAND_MATRIX` **46** 条可执行 argv
-> （48 − 4 个长驻服务 `run` / `watchdog` / `mcp stdio` / `mcp http`，+ `sync` 的两种形态各跑一次）。
+> **QUOT-523 增量（2026-11-10）**：基线 31 条口径**不变**，新增命令组
+> `ldst supervisor start|stop|restart|status`（单入口启停，见 §L）。
+> **以代码为准的当前计数**：`LEAF_PATHS` **53** 个叶子、`COMMAND_MATRIX` **48** 条可执行 argv
+> （53 − 6 个不进矩阵的叶子 `run` / `watchdog` / `mcp stdio` / `mcp http` /
+> `supervisor start` / `supervisor restart`，+ `sync` 的两种形态各跑一次；
+> 复核入口 `tests/unit/test_cli_output_option.py::test_registered_leaves_match_baseline`）。
 >
 > **前置约束**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
@@ -71,6 +75,7 @@
 | **R5 增量（2，非 P0 基线）** | `industry list`、`industry show` |
 | **R11 增量（1，非 P0 基线）** | `weekly` |
 | **QUOT-443 增量（1，非 P0 基线）** | `watchdog` |
+| **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -324,6 +329,21 @@ ldst position list --output json                         # realized.total_pnl（
 （`LadderStock API` → `ldst run`，`LadderStock Watchdog` → `ldst watchdog --restart-task "LadderStock API"`），
 并生成 `%LOCALAPPDATA%\LadderStock\restart-api.ps1` 作为脚本兜底。失败重启间隔为 `PT1M`
 （任务计划程序的最小值是 1 分钟，`PT30S` 会被注册接口拒绝）。
+
+## L. 单入口 supervisor（QUOT-523 增量，4）
+
+> 口径来源：issue QUOT-523「单 supervisor 单入口接线生产」与 `docs/supervisor/single-entry.md`。
+> 这 4 条**不属于** 31 条 P0 基线；叶子路径
+> `("supervisor", "start" | "stop" | "restart" | "status")` 已登记
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **53** 个）。
+> 只动**账本能证明是本入口拉起**的进程，外部进程一律不碰（DEC-014）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 51 | `ldst supervisor start` | 按注册表顺序全起（单模块失败不挡后面的） | `--only <模块>`（可重复）、`--data-root`、`--output` | 全部成功 0；有模块失败 **8**（`EXIT_PARTIAL`）；不进 argv 矩阵（会真起进程，开环形态由 `tests/unit/cli/test_supervisor.py` 覆盖） |
+| 52 | `ldst supervisor stop` | 反向全停；**不带 `--force` 只预演**（列 `would_stop` + `order`，不动进程） | `--force`（确认执行）、`--only`、`--data-root`、`--output` | 预演与成功 0；有模块失败 **8** |
+| 53 | `ldst supervisor restart` | 单模块重启，其它模块 pid 不变 | `--only`（**必填**）、`--data-root`、`--output` | 无 `--only` → **3**；全部成功 0；有模块失败 **8**；不进 argv 矩阵（会真起进程） |
+| 54 | `ldst supervisor status` | 每模块 state / 归属 / 监听 / 账本 PID | `--data-root`、`--output` | 只读视图，始终 0 + 结构化载荷 |
 
 ## K. 助手记忆（QUOT-487 增量，1）
 

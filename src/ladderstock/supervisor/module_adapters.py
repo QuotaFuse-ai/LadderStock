@@ -42,9 +42,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+# psutil 是可选依赖：缺失时回退 Windows CIM 实现（见 default_host_pivot）
+try:
+    import psutil
+except ImportError:  # pragma: no cover - 依赖探测
+    psutil = None  # type: ignore[assignment]
+
 from ladderstock.core.boundary import PEER_DIR_ENV, PEER_SIBLING_DIRS
 from ladderstock.supervisor.adapters import (
+    MODULE_ORDER,
     MODULE_PORTS,
+    ON_DEMAND_MODULES,
     ModuleAdapter,
     SpawnedProcess,
     module_registry,
@@ -78,9 +86,16 @@ LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 HOST_CONFIG_ENV = "LDST_HOST_CONFIG"
 HOST_CONFIG_REL = Path("ops") / "host" / "LdstHostConfig.psd1"
 
-#: 默认 peer 根目录：环境变量 > LadderStock 同级目录 > 本机既有部署根
+#: peer 根覆盖：`LDST_PEER_ROOT/<同级名>`，空 = `<安装根>/<同级名>`（bundle 相对）
 DEFAULT_PEER_ROOT_ENV = "LDST_PEER_ROOT"
-DEFAULT_PEER_ROOT = Path(r"D:\workplace")
+#: 安装根覆盖（bundle 相对解析的根；见 `install_root()`）
+INSTALL_ROOT_ENV = "LDST_INSTALL_ROOT"
+#: 自有服务（看板 / 看门狗）的启动器覆盖；空 = 按安装根找 venv
+LAUNCHER_ENV = "LDST_LAUNCHER"
+#: watch 模块（5952 看门狗）默认端口，与 ops/start_watchdog.cmd 同口径
+WATCH_PORT = 5952
+#: 看板端口（DEC-004 固定 5950）：看门狗重启看板时用它，且看板「不是」被托管模块
+PANEL_PORT = 5950
 #: 日志目录默认收在既有宿主日志目录下（与 ops/host 的约定一致）
 DEFAULT_LOG_SUBDIR = Path("LadderStock") / "logs" / "supervisor"
 #: WSL 发行版覆盖；空 = 运行时 `wsl -l -v` 取默认发行版（不许写死）
@@ -133,6 +148,8 @@ class PortEvidence:
     name: str = ""
     cmdline: tuple[str, ...] = ()
     parent_chain: tuple[ProcessSnapshot, ...] = ()
+    #: 命中的是父链里哪一级（0 = 监听者本身；`ldst.exe` 形态下是它的子进程）
+    matched_pid: int | None = None
     detail: str = ""
 
 
@@ -435,7 +452,123 @@ class WindowsHostPivot:
         return ""
 
 
+class PsutilHostPivot(WindowsHostPivot):
+    """psutil 进程识别（跨平台）：Windows / macOS / Linux 同一套查询。
+
+    只替换「读进程」的那几条（owner_pid / snapshot / parent_chain /
+    find_processes / terminate_tree / alive），端口探测、拉起、命令执行仍走基类：
+
+    - 原实现每次识别都起一次 PowerShell + `Get-NetTCPConnection`，在非 Windows
+      宿主上根本不存在这两个命令；本类用 `psutil.net_connections` 与
+      `psutil.Process` 直读，三平台一致；
+    - 拉起后短窗内 `posix` 的监听要过几轮 `net_connections` 才可见，调用方必须
+      走 `BaseAdapter` 的证据缓存（引擎 0.25s 轮询 -> 1s 缓存），不要直接高频调；
+    - psutil 缺失时 `available()` 返回 False，装配侧回退 CIM 实现。
+    """
+
+    @staticmethod
+    def available() -> bool:  # pragma: no cover - 依赖探测
+        return psutil is not None
+
+    def owner_pid(self, port: int) -> int | None:  # pragma: no cover - 子进程查询
+        port_number = int(port)
+        try:
+            for conn in psutil.net_connections(kind="tcp"):
+                if conn.status != psutil.CONN_LISTEN or not conn.laddr:
+                    continue
+                if conn.laddr.port == port_number:
+                    return int(conn.pid) if conn.pid else None
+        except (psutil.Error, OSError):
+            return None
+        return None
+
+    def _snapshot_of(self, proc: Any) -> ProcessSnapshot | None:  # pragma: no cover
+        try:
+            info = proc.as_dict(attrs=["pid", "ppid", "name", "cmdline"])
+        except psutil.Error:
+            return None
+        raw = info.get("cmdline") or []
+        return ProcessSnapshot(
+            pid=int(info["pid"]),
+            parent_pid=int(info["ppid"]) if info.get("ppid") is not None else None,
+            name=str(info.get("name") or ""),
+            cmdline=tuple(str(part) for part in raw),
+        )
+
+    def snapshot(self, pid: int) -> ProcessSnapshot | None:  # pragma: no cover - 子进程查询
+        try:
+            return self._snapshot_of(psutil.Process(int(pid)))
+        except (psutil.Error, OSError):
+            return None
+
+    def parent_chain(  # pragma: no cover - 子进程查询
+        self, pid: int, depth: int = 6
+    ) -> tuple[ProcessSnapshot, ...]:
+        chain: list[ProcessSnapshot] = []
+        current: Any
+        try:
+            current = psutil.Process(int(pid))
+        except (psutil.Error, OSError):
+            return ()
+        while current is not None and len(chain) < depth:
+            snap = self._snapshot_of(current)
+            if snap is None:
+                break
+            chain.append(snap)
+            try:
+                current = current.parent()
+            except (psutil.Error, OSError):
+                current = None
+        return tuple(chain)
+
+    def find_processes(  # pragma: no cover - 子进程查询
+        self, marker: str
+    ) -> tuple[ProcessSnapshot, ...]:
+        needle = str(marker).replace("\\", "/").lower()
+        if not needle:
+            return ()
+        found: list[ProcessSnapshot] = []
+        for proc in psutil.process_iter(["pid"]):
+            snap = self._snapshot_of(proc)
+            if snap is None:
+                continue
+            if needle in " ".join(snap.cmdline).replace("\\", "/").lower():
+                found.append(snap)
+        return tuple(found)
+
+    def terminate_tree(self, pid: int, *, force: bool) -> None:  # pragma: no cover
+        try:
+            root = psutil.Process(int(pid))
+        except (psutil.Error, OSError):
+            return
+        # 先收子孙再收根：父进程先死会让子进程被重挂到 init，找不回原树
+        try:
+            victims = root.children(recursive=True) + [root]
+        except (psutil.Error, OSError):
+            victims = [root]
+        for proc in victims:
+            try:
+                proc.terminate() if not force else proc.kill()
+            except (psutil.Error, OSError):
+                continue
+        _, alive = psutil.wait_procs(victims, timeout=QUERY_TIMEOUT_SEC)
+        for proc in alive:
+            try:
+                proc.kill()
+            except (psutil.Error, OSError):
+                continue
+
+    def alive(self, pid: int) -> bool:  # pragma: no cover - 子进程查询
+        try:
+            return psutil.Process(int(pid)).is_running()
+        except (psutil.Error, OSError):
+            return False
+
+
 def default_host_pivot() -> HostPivot:
+    """生产宿主：psutil 可用则用跨平台实现，否则回退 Windows CIM 实现。"""
+    if PsutilHostPivot.available():
+        return PsutilHostPivot()
     return WindowsHostPivot()
 
 
@@ -456,6 +589,10 @@ class StartFace:
     match: tuple[str, ...]
     #: 日志文件名
     log_name: str
+    #: 允许在父链上逐级向上找命中（`ldst.exe` 一类启动器把监听留给孙进程时用）
+    inherit_chain: bool = False
+    #: 备用识别关键字组（同一模块的第二形态，如 `ldst <子命令>` 与 `-m ... <子命令>`）
+    alt_match: tuple[str, ...] = ()
 
 
 def _norm_tokens(tokens: Sequence[str]) -> tuple[str, ...]:
@@ -489,23 +626,230 @@ def _local_appdata_log_dir() -> Path:
     return base / DEFAULT_LOG_SUBDIR
 
 
+def install_root() -> Path:
+    """安装根：「LadderStock 目录的同级」——peer 都放在它下面。
+
+    三态，全部相对，不含任何写死的盘符：
+
+    - 显式覆盖 `LDST_INSTALL_ROOT`（打包后在 `.env` 里一次性写死部署位置用）；
+    - PyInstaller 冻结：`sys.executable` 的父目录（exe 所在目录）；
+    - 源码树：`<repo>/src/ladderstock/supervisor/` 上溯 3 层 = 仓库根，取父目录。
+
+    生产部署里 `ops/host/LdstHostConfig.psd1` 的 `InstallRoot` 与之一致
+    （`D:\\QuotaFuseModules\\LadderStock` 的父目录 = `D:\\QuotaFuseModules`）。
+    """
+    override = (os.environ.get(INSTALL_ROOT_ENV) or "").strip()
+    if override:
+        return Path(override)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent
+    return Path(__file__).resolve().parents[3].parent
+
+
+def _install_root_from(values: Mapping[str, str]) -> Path:
+    """`install_root()` 的显式环境版本（`preflight(env=...)` 用，不读进程环境）。"""
+    override = (values.get(INSTALL_ROOT_ENV) or "").strip()
+    if override:
+        return Path(override)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent
+    return Path(__file__).resolve().parents[3].parent
+
+
 def default_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path:
-    """peer 目录：环境变量 > LadderStock 同级目录 > LDST_PEER_ROOT > 既有部署根。"""
+    """peer 目录：`LDST_PEER_DIR_<MODULE>` > `LDST_PEER_ROOT/<同级名>` > `<安装根>/<同级名>`。
+
+    后两级都相对安装根（`install_root()`，bundle 相对），没有「本机既有部署根」这种
+    写死兜底——找不到就是找不到，由 `preflight()` 报出缺哪个目录，而不是悄悄去猜
+    一个旧路径。
+    """
     values = os.environ if env is None else env
     override = (values.get(PEER_DIR_ENV[key]) or "").strip()
     if override:
         return Path(override)
     sibling_name = PEER_SIBLING_DIRS[key]
-    repo_root = Path(__file__).resolve().parents[3]
-    sibling = repo_root.parent / sibling_name
-    if sibling.is_dir():
-        return sibling
     root = (values.get(DEFAULT_PEER_ROOT_ENV) or "").strip()
-    return Path(root) / sibling_name if root else DEFAULT_PEER_ROOT / sibling_name
+    base = Path(root) if root else _install_root_from(values)
+    return base / sibling_name
+
+
+def _ldst_repo_root() -> Path:
+    """本程序源码树根（仓库根）：看门狗被 supervisor 拉起时 `--spawn-cmd` 的定位基准。"""
+    return Path(__file__).resolve().parents[3]
+
+
+CONTROL_ARGS: tuple[str, ...] = ("-m", "ladderstock.cli.main")
+
+
+def launcher_entry(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """看板/看门狗等「本程序自有服务」的**完整**启动前缀（bundle 相对）。
+
+    `LDST_LAUNCHER` 显式给出时用它（打包为 exe 后就是 `...\\ldst.exe`）；
+    否则找 `<peer 根>/LadderStock` 下 venv 的 `ldst` 启动器。两者都是 `ldst`
+    入口点，只能接子命令、**不接受** `-m`；退回当前解释器时才需要
+    `-m ladderstock.cli.main`（源码树形态与 `ldst ...` 等价）。
+
+    QUOT-523 实测：两者混用会让被拉起的看门狗以 `No such option: -m` 秒退。
+    """
+    values = os.environ if env is None else env
+    override = (values.get(LAUNCHER_ENV) or "").strip()
+    if override:
+        return (override,)
+    merged = {**os.environ, **values}
+    root = (merged.get(DEFAULT_PEER_ROOT_ENV) or "").strip()
+    candidate = (Path(root) / "LadderStock") if root else _install_root_from(merged) / "LadderStock"
+    for exe in ("ldst.exe", "ldst"):
+        path = candidate / ".venv" / "Scripts" / exe
+        if path.is_file():
+            return (str(path),)
+        path = candidate / ".venv" / "bin" / exe
+        if path.is_file():
+            return (str(path),)
+    return (sys.executable, *CONTROL_ARGS)
 
 
 def _venv_exe(peer: Path, exe: str) -> Path:
     return peer / ".venv" / "Scripts" / exe
+
+
+# --------------------------------------------------------------------------- #
+# 启动前检查（bundle 相对路径是否真的落位）
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class PreflightItem:
+    """一个模块的启动前提：目录 / 入口 / 启动器 / 识别依据。"""
+
+    module: str
+    ok: bool
+    detail: str
+    #: 该模块的启动依赖路径（日志里照原样给出，不再二次猜测）
+    paths: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreflightReport:
+    ok: bool
+    install_root: Path
+    items: tuple[PreflightItem, ...]
+
+    def failures(self) -> tuple[PreflightItem, ...]:
+        return tuple(item for item in self.items if not item.ok)
+
+    def describe(self) -> str:
+        lines = [f"安装根：{self.install_root}"]
+        for item in self.items:
+            flag = "OK  " if item.ok else "FAIL"
+            lines.append(f"[{flag}] {item.module}: {item.detail}")
+        return "\n".join(lines)
+
+
+def preflight(
+    env: Mapping[str, str] | None = None,
+    *,
+    include_on_demand: bool = False,
+) -> PreflightReport:
+    """按 bundle 相对规则逐模块核启动前提，缺什么就报什么（不抛异常）。
+
+    检查的是「起得来」的必要条件，不碰进程、不占端口：
+    `MODULE_ORDER` 每项检查 peer 目录与各启动面的入口文件（watch 额外查看板
+    启动器）；「没有启动命令」的模块（financecoffer，属于观测托管）只报形态。
+    按需模块（proxypool）默认不查——它不在全启路径上，要查就显式
+    `include_on_demand=True`。ProxyFleet 只经计划任务启停，没有可查的入口文件，
+    报告里说明识别关键字即可。
+    """
+    values = os.environ if env is None else env
+    root = _install_root_from(values)
+    names = list(MODULE_ORDER) + (list(ON_DEMAND_MODULES) if include_on_demand else [])
+    built: dict[str, Any] | None = None
+    items: list[PreflightItem] = []
+    for name in names:
+        if name == "proxyfleet":
+            task = (values.get(PROXYFLEET_TASK_ENV) or DEFAULT_PROXYFLEET_TASK).strip()
+            items.append(
+                PreflightItem(
+                    module=name,
+                    ok=True,
+                    detail=f"只经计划任务启停（任务名 {task}）；运行期由 schtasks 结果判定",
+                )
+            )
+            continue
+        if name in ON_DEMAND_MODULES:
+            path = _host_config_path(values)
+            config = load_proxypool_config(host=default_host_pivot(), path=path)
+            count = len(config.enabled_mappings())
+            items.append(
+                PreflightItem(
+                    module=name,
+                    ok=True,
+                    detail=f"按需模块（{path}）："
+                    + (f"启用 {count} 条映射" if count else "未启用或无映射"),
+                    paths=(path,),
+                )
+            )
+            continue
+        if name == "watch":
+            launcher = launcher_entry(values)
+            entry = Path(launcher[0])
+            # 退回当前解释器时没有可查的文件，但解释器本身一定在
+            usable = str(entry) == sys.executable or entry.is_file()
+            source = (
+                "LDST_LAUNCHER"
+                if (values.get(LAUNCHER_ENV) or "").strip()
+                else ("venv 启动器" if len(launcher) > 1 else "当前解释器")
+            )
+            items.append(
+                PreflightItem(
+                    module=name,
+                    ok=usable,
+                    detail=(
+                        f"启动器 {entry}（{source}）"
+                        f"· 看门狗端口 {WATCH_PORT} / 看板端口 {PANEL_PORT}"
+                        + ("" if usable else "：启动器不存在")
+                    ),
+                    paths=(entry,),
+                )
+            )
+            continue
+
+        peer = default_peer_dir(name, values)
+        if name == "financecoffer":
+            deploy = peer / "deploy"
+            ok = deploy.is_dir()
+            items.append(
+                PreflightItem(
+                    module=name,
+                    ok=ok,
+                    detail=f"peer {peer} · WSL compose 目录 {deploy}"
+                    + ("" if ok else "：不存在（起不来）"),
+                    paths=(peer, deploy),
+                )
+            )
+            continue
+        if built is None:
+            built = dict(build_default_adapters(env=values, host=default_host_pivot()))
+        faces = getattr(built[name], "faces", ())
+        if not faces:
+            items.append(PreflightItem(module=name, ok=False, detail=f"peer {peer}：没有启动命令"))
+            continue
+        missing = list(
+            dict.fromkeys(Path(face.argv[0]) for face in faces if not Path(face.argv[0]).is_file())
+        )
+        items.append(
+            PreflightItem(
+                module=name,
+                ok=not missing,
+                detail=f"peer {peer} · {len(faces)} 个启动面"
+                + ("" if not missing else "；缺入口 " + "、".join(str(p) for p in missing)),
+                paths=(peer, *missing),
+            )
+        )
+    return PreflightReport(
+        ok=all(item.ok for item in items),
+        install_root=root,
+        items=tuple(items),
+    )
 
 
 class BaseAdapter:
@@ -637,23 +981,42 @@ class BaseAdapter:
         snap = chain[0] if chain else self._host.snapshot(pid)
         if snap is None:
             return PortEvidence(port=port, listening=True, pid=pid, detail="查不到进程命令行")
-        tokens = self._match_tokens(port)
-        matched = self._matches(snap, tokens)
+        groups = self._match_tokens(port)
+        matched_snap = self._match_chain(chain, groups) if self._inherit_chain(port) else None
+        if matched_snap is None and any(self._matches(snap, tokens) for tokens in groups):
+            matched_snap = snap
         return PortEvidence(
             port=port,
             listening=True,
-            matched=matched,
+            matched=matched_snap is not None,
             pid=pid,
             name=snap.name,
             cmdline=snap.cmdline,
             parent_chain=chain,
+            matched_pid=matched_snap.pid if matched_snap is not None else None,
         )
 
-    def _match_tokens(self, port: int) -> tuple[str, ...]:
+    def _match_tokens(self, port: int) -> tuple[tuple[str, ...], ...]:
         for face in self.faces:
             if face.port == port:
-                return _norm_tokens(face.match)
+                groups = [_norm_tokens(face.match)]
+                if face.alt_match:
+                    groups.append(_norm_tokens(face.alt_match))
+                return tuple(groups)
         return ()
+
+    def _inherit_chain(self, port: int) -> bool:
+        return any(face.port == port and face.inherit_chain for face in self.faces)
+
+    @classmethod
+    def _match_chain(
+        cls, chain: Sequence[ProcessSnapshot], groups: Sequence[Sequence[str]]
+    ) -> ProcessSnapshot | None:
+        for snap in chain:
+            for tokens in groups:
+                if cls._matches(snap, tokens):
+                    return snap
+        return None
 
     @staticmethod
     def _matches(snap: ProcessSnapshot, tokens: Sequence[str]) -> bool:
@@ -897,7 +1260,68 @@ def _command_adapters(
             clock=clock,
             sleep=sleep,
         ),
+        # 看门狗（5952）过去由 `LadderStock Watchdog` 计划任务独立拉起，是「散落
+        # 计划任务」里最难拆的一条：它守护看板 5950 本身，关掉看板它还要活着才能
+        # 重启看板。收进 supervisor 后它只是同一条进程树里的普通子进程——看板退出
+        # 即随全停一起停，不再跨入口存活。识别关键字 = 本仓库 CLI 的 watchdog 子命令，
+        # 不靠端口猜（5952 被别的进程占着时 probe 失败关闭，不会误认）。
+        "watch": BaseAdapter(
+            "watch",
+            MODULE_PORTS["watch"],
+            (
+                StartFace(
+                    face="watchdog",
+                    argv=(
+                        *launcher_entry(env),
+                        "watchdog",
+                        "--port",
+                        str(WATCH_PORT),
+                        # 看板由同一条 supervisor 托管时，重启看板不再走 schtasks：
+                        # 直接以同一启动器拉起看板 `run`（5950 不变）。命令由
+                        # `_panel_spawn_command()` 算好，argv 形式避免 shell 引号问题。
+                        "--spawn-cmd",
+                        _panel_spawn_command(env),
+                    ),
+                    cwd=_ldst_repo_root(),
+                    port=WATCH_PORT,
+                    match=("ladderstock.cli.main", "watchdog", "--port"),
+                    log_name="watchdog.log",
+                    # venv 的 `ldst.exe` 是 setuptools 启动器，监听者（它的子进程）
+                    # 的 cmdline 里没有 `-m ladderstock.cli.main`；`ldst` 入口点本身
+                    # 就是本 CLI，看到它 + 子命令即可判定归属
+                    inherit_chain=True,
+                    alt_match=("ldst", "watchdog", "--port"),
+                ),
+            ),
+            host=host,
+            log_dir=log_dir,
+            env_overrides={
+                # 被 supervisor 拉起后，看门狗的「重启看板」不再是 schtasks：看板
+                # 和它同一棵树，只允许按 spawn-cmd 直接拉起——supervised 模式下
+                # schtasks / --restart-script 两条兜底都被忽略（QUOT-523）。
+                "LDST_WATCHDOG_SUPERVISED": "1",
+            },
+            evidence_cache_sec=evidence_cache_sec,
+            clock=clock,
+            sleep=sleep,
+        ),
     }
+
+
+def _panel_spawn_command(env: Mapping[str, str]) -> str:
+    """看门狗用的看板拉起命令（JSON 字符串数组；`ldst watchdog --spawn-cmd` 解析）。"""
+    return json.dumps(
+        [
+            str(part)
+            for part in (
+                *launcher_entry(env),
+                "run",
+                "--port",
+                str(PANEL_PORT),
+            )
+        ],
+        ensure_ascii=False,
+    )
 
 
 def _tickhub_env_files(env: Mapping[str, str]) -> tuple[Path, ...]:
@@ -906,7 +1330,7 @@ def _tickhub_env_files(env: Mapping[str, str]) -> tuple[Path, ...]:
         return tuple(Path(item) for item in override.split(os.pathsep) if item.strip())
     candidates = [
         Path.home() / ".tickhub" / "proxy.env",
-        Path(r"D:\QuotaFuseModules\TickHub-CN\ops\peer.env"),
+        default_peer_dir("tickhub", env) / "ops" / "peer.env",
     ]
     return tuple(path for path in candidates if path.is_file())
 
@@ -978,8 +1402,7 @@ class FinanceCofferAdapter:
                 f"{(result.stderr or result.stdout).strip()[:300]}"
             )
         anchor = (
-            f"cd '{self._wsl_path(self._deploy)}' 2>/dev/null; "
-            "exec -a fc-anchor sleep infinity"
+            f"cd '{self._wsl_path(self._deploy)}' 2>/dev/null; exec -a fc-anchor sleep infinity"
         )
         argv = (
             "wsl.exe",
@@ -1074,9 +1497,7 @@ class FinanceCofferAdapter:
             return override
         if self._distro_cache:
             return self._distro_cache
-        result = self._host.run(
-            ("wsl.exe", "-l", "-v"), timeout=WSL_LIST_TIMEOUT_SEC
-        )
+        result = self._host.run(("wsl.exe", "-l", "-v"), timeout=WSL_LIST_TIMEOUT_SEC)
         distro = _parse_default_distro(result.stdout)
         if not distro:
             fallback = self._host.run(("wsl.exe", "-l", "-q"), timeout=WSL_LIST_TIMEOUT_SEC)
@@ -1101,9 +1522,7 @@ class FinanceCofferAdapter:
             result = self._wsl(self.distro(), script, timeout=WSL_LIST_TIMEOUT_SEC)
         except SupervisorError:
             result = CommandResult(returncode=-1)
-        names = " ".join(
-            line.strip() for line in result.stdout.splitlines() if line.strip()
-        )
+        names = " ".join(line.strip() for line in result.stdout.splitlines() if line.strip())
         self._fc_cache = (now, names)
         return names
 
@@ -1130,7 +1549,7 @@ class FinanceCofferAdapter:
             'if [ -f "$DEPLOY/.env" ] && [ -f "$DEPLOY/compose.yaml" ]; then '
             'cd "$DEPLOY" && docker compose --env-file .env -f compose.yaml up -d; '
             "else "
-            'ids=$(docker ps -aq --filter label=com.docker.compose.project=financecoffer); '
+            "ids=$(docker ps -aq --filter label=com.docker.compose.project=financecoffer); "
             '[ -n "$ids" ] || { echo "no deploy/.env and no financecoffer containers" >&2; '
             "exit 1; }; "
             "docker start $ids >/dev/null; "
@@ -1139,7 +1558,7 @@ class FinanceCofferAdapter:
 
     def _stop_script(self) -> str:
         deploy = self._wsl_path(self._deploy)
-        filter_expr = 'label=com.docker.compose.project=financecoffer'
+        filter_expr = "label=com.docker.compose.project=financecoffer"
         return (
             "set -u; "
             # 锚进程跨 supervisor 重启后拿不到 pid：锚在 WSL 侧 argv[0] 是
@@ -1149,20 +1568,20 @@ class FinanceCofferAdapter:
             'if [ -f "$DEPLOY/.env" ] && [ -f "$DEPLOY/compose.yaml" ]; then '
             'cd "$DEPLOY" && docker compose --env-file .env -f compose.yaml stop -t 20; '
             "fi; "
-            f'ids=$(docker ps -q --filter {filter_expr}); '
+            f"ids=$(docker ps -q --filter {filter_expr}); "
             '[ -n "$ids" ] && echo "$ids" | xargs -r docker stop -t 20; '
-            f'remain=$(docker ps -q --filter {filter_expr}); '
+            f"remain=$(docker ps -q --filter {filter_expr}); "
             '[ -n "$remain" ] && echo "$remain" | xargs -r docker kill; '
-            f'after=$(docker ps -q --filter {filter_expr}); '
+            f"after=$(docker ps -q --filter {filter_expr}); "
             'if [ -z "$after" ]; then echo FC_STOPPED=yes; else '
-            'echo FC_STOPPED=no; exit 1; fi'
+            "echo FC_STOPPED=no; exit 1; fi"
         )
 
     def _kill_script(self) -> str:
         return (
             "set -u; "
             "pkill -f '^fc-anchor' 2>/dev/null || true; "
-            'ids=$(docker ps -q --filter label=com.docker.compose.project=financecoffer); '
+            "ids=$(docker ps -q --filter label=com.docker.compose.project=financecoffer); "
             '[ -n "$ids" ] && echo "$ids" | xargs -r docker kill'
         )
 
@@ -1512,9 +1931,7 @@ class ProxyPoolAdapter:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.config = config
-        self.ports: tuple[int, ...] = tuple(
-            item.listen_port for item in config.enabled_mappings()
-        )
+        self.ports: tuple[int, ...] = tuple(item.listen_port for item in config.enabled_mappings())
         self._host = host or default_host_pivot()
         self._log_dir = log_dir or _local_appdata_log_dir()
         self._cache_sec = float(evidence_cache_sec)
@@ -1588,9 +2005,7 @@ class ProxyPoolAdapter:
         if spawned:
             self._await_ready(mappings)
             _mapping, primary_argv, primary_pid = spawned[0]
-            return SpawnedProcess(
-                pid=primary_pid, parent_pid=os.getpid(), cmdline=primary_argv
-            )
+            return SpawnedProcess(pid=primary_pid, parent_pid=os.getpid(), cmdline=primary_argv)
 
         if adopted and adopted[0].pid is not None:
             snap = self._snapshot(adopted[0].pid)
@@ -1640,9 +2055,7 @@ class ProxyPoolAdapter:
         mappings = self.config.enabled_mappings()
         if not mappings:
             return False
-        return all(
-            self._healthy(self._probe_mapping(mapping)) for mapping in mappings
-        )
+        return all(self._healthy(self._probe_mapping(mapping)) for mapping in mappings)
 
     # ------------------------------------------------------------------ 识别
 
@@ -1656,8 +2069,7 @@ class ProxyPoolAdapter:
                 return PortEvidence(port=port, listening=False, detail="没有配置该端口的映射")
             return self._probe_mapping(mapping).evidence
         items = tuple(
-            self._probe_mapping(mapping).evidence
-            for mapping in self.config.enabled_mappings()
+            self._probe_mapping(mapping).evidence for mapping in self.config.enabled_mappings()
         )
         return Identification(
             module=self.name, matched=any(item.matched for item in items), ports=items
@@ -1691,8 +2103,7 @@ class ProxyPoolAdapter:
                     cmdline=snap.cmdline if snap else (),
                     parent_chain=chain,
                     detail=(
-                        f"映射 {mapping.mapping_id}；TCP 建连"
-                        f"{'成功' if connectable else '失败'}"
+                        f"映射 {mapping.mapping_id}；TCP 建连{'成功' if connectable else '失败'}"
                     ),
                 ),
                 connectable=connectable,
@@ -1779,9 +2190,7 @@ class ProxyPoolAdapter:
             if not pending:
                 return
             if self._clock() >= deadline:
-                listed = ", ".join(
-                    f"{item.listen_port}({item.mapping_id})" for item in pending
-                )
+                listed = ", ".join(f"{item.listen_port}({item.mapping_id})" for item in pending)
                 self.kill()
                 raise SupervisorError(
                     f"proxypool 端口 {listed} 在 {self._spawn_wait:.0f}s 内未就绪"
@@ -1853,15 +2262,17 @@ def build_default_adapters(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, ModuleAdapter]:
-    """生产装配：六个顺序模块 + 按需模块 proxypool。
+    """生产装配：七个顺序模块（含 watch 看门狗）+ 按需模块 proxypool。
 
     键集合 = `MODULE_ORDER` ∪ `ON_DEMAND_MODULES`；proxypool 不在启动顺序里，
     只能由单模块入口按需拉起（默认不启动）。
 
-    目录解析顺序（每个模块）：`LDST_PEER_DIR_<MODULE>` > LadderStock 同级目录 >
-    `LDST_PEER_ROOT`（默认 `D:\\workplace`）。WSL 发行版与 ProxyFleet 任务名同理
-    可用环境变量覆盖；proxypool 的映射走 `LDST_HOST_CONFIG`（默认仓库内
-    `ops/host/LdstHostConfig.psd1`）。全部不写死。
+    路径全部 bundle 相对（QUOT-523）：peer 目录 = `LDST_PEER_DIR_<MODULE>` >
+    `LDST_PEER_ROOT/<peer>` > `<安装根>/<peer>`（`install_root()` 见下）；
+    看板/看门狗启动器 = `LDST_LAUNCHER` > `<peer 根>/LadderStock/.venv/.../ldst` >
+    当前解释器。不再有 `D:\\workplace` 这类写死兜底。WSL 发行版与 ProxyFleet
+    任务名仍可用环境变量覆盖；proxypool 的映射走 `LDST_HOST_CONFIG`（默认仓库内
+    `ops/host/LdstHostConfig.psd1`）。缺目录不会静默：`preflight()` 逐项报出。
     """
     values = os.environ if env is None else env
     pivot = host or default_host_pivot()
