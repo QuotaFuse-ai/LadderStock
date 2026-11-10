@@ -160,6 +160,75 @@ BUILTIN: Final[dict[str, type]] = {
 BUILTIN_NAMES: Final[tuple[str, ...]] = tuple(BUILTIN.keys())
 
 
+@dataclass(frozen=True, slots=True)
+class ParamSpec:
+    """策略参数元数据（页面表单用）；默认值必须与策略 dataclass 的默认值一致。"""
+
+    key: str
+    label: str
+    type: str  # "int" | "float"
+    default: int | float
+    min: float
+    max: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "type": self.type,
+            "default": self.default,
+            "min": self.min,
+            "max": self.max,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StrategySpec:
+    """内置策略清单条目：清单必须来自后端常量（前端不许硬编码）。"""
+
+    name: str
+    label: str
+    params: tuple[ParamSpec, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "label": self.label,
+            "params": [param.as_dict() for param in self.params],
+        }
+
+
+#: 页面参数区的策略目录；与 ``BUILTIN`` 同名同序，新增策略时两处一起加
+CATALOG: Final[dict[str, StrategySpec]] = {
+    "ma_cross": StrategySpec(
+        name="ma_cross",
+        label="双均线交叉",
+        params=(
+            ParamSpec("short_window", "短均线窗口", "int", 5, 1, 250),
+            ParamSpec("long_window", "长均线窗口", "int", 20, 2, 500),
+        ),
+    ),
+    "momentum": StrategySpec(
+        name="momentum",
+        label="N 日动量",
+        params=(
+            ParamSpec("lookback", "回看天数", "int", 20, 1, 250),
+            ParamSpec("threshold", "触发阈值（小数）", "float", 0.0, -0.5, 0.5),
+        ),
+    ),
+    "breakout": StrategySpec(
+        name="breakout",
+        label="N 日突破",
+        params=(ParamSpec("lookback", "通道窗口", "int", 20, 1, 250),),
+    ),
+}
+
+
+def catalog() -> list[dict[str, Any]]:
+    """按 ``BUILTIN_NAMES`` 的顺序返回策略清单（``GET /api/backtest/strategies``）。"""
+    return [CATALOG[name].as_dict() for name in BUILTIN_NAMES]
+
+
 def make(name: str, **kwargs: Any) -> Strategy:
     """按名字构造内置策略；未知参数直接报错（不吞掉）。"""
     cls = BUILTIN.get(name)
@@ -179,10 +248,14 @@ __all__ = [
     "BUILTIN",
     "BUILTIN_NAMES",
     "Breakout",
+    "CATALOG",
     "MACross",
     "Momentum",
+    "ParamSpec",
     "Strategy",
     "StrategyError",
+    "StrategySpec",
+    "catalog",
     "describe",
     "make",
 ]

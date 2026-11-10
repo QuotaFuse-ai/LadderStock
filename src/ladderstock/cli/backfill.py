@@ -362,6 +362,7 @@ def run_backfill(
     # ---- 3. 一个事务落库 + 水位 ----
     before_rows = duckdb_store.dataset_rows("daily_k", root=root)
     daily_wm_before = store.value("daily_k")
+    daily_wm_after: str | None = daily_wm_before
     written = 0
     after_rows = before_rows
     status_wm = "ok" if not (failures or empty or not_attempted) else "degraded"

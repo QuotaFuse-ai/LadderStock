@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "backtest.yaml",
+  "type": "object",
+  "required": ["costs", "gate"],
+  "additionalProperties": false,
+  "properties": {
+    "costs": {
+      "description": "两种写法二选一：新式（万分之口径，QUOT-535）或旧式（小数口径，QUOT-500 兼容）。",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "commission_rate_wan",
+            "commission_floor_yuan",
+            "transfer_fee_wan",
+            "stamp_duty_wan",
+            "slippage",
+            "tiers"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "commission_rate_wan": { "type": "number", "exclusiveMinimum": 0 },
+            "commission_floor_yuan": { "type": "number", "minimum": 0 },
+            "transfer_fee_wan": { "type": "number", "minimum": 0 },
+            "stamp_duty_wan": { "type": "number", "exclusiveMinimum": 0 },
+            "slippage": { "type": "number", "exclusiveMinimum": 0 },
+            "tiers": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "type": "number", "minimum": 0 }
+            },
+            "presets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["key", "label", "commission_rate_wan", "commission_floor_yuan"],
+                "additionalProperties": false,
+                "properties": {
+                  "key": { "type": "string", "minLength": 1 },
+                  "label": { "type": "string", "minLength": 1 },
+                  "commission_rate_wan": { "type": "number", "exclusiveMinimum": 0 },
+                  "commission_floor_yuan": { "type": "number", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["commission", "slippage", "stamp_duty", "tiers"],
+          "additionalProperties": false,
+          "properties": {
+            "commission": { "type": "number", "exclusiveMinimum": 0 },
+            "slippage": { "type": "number", "exclusiveMinimum": 0 },
+            "stamp_duty": { "type": "number", "exclusiveMinimum": 0 },
+            "tiers": {
+              "type": "array",
+              "minItems": 2,
+              "items": { "type": "number", "minimum": 0 }
+            },
+            "presets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["key", "label", "commission_rate_wan", "commission_floor_yuan"],
+                "additionalProperties": false,
+                "properties": {
+                  "key": { "type": "string", "minLength": 1 },
+                  "label": { "type": "string", "minLength": 1 },
+                  "commission_rate_wan": { "type": "number", "exclusiveMinimum": 0 },
+                  "commission_floor_yuan": { "type": "number", "minimum": 0 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gate": {
+      "type": "object",
+      "required": ["min_trades", "in_sample_ratio"],
+      "additionalProperties": false,
+      "properties": {
+        "min_trades": { "type": "integer", "minimum": 1 },
+        "in_sample_ratio": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+      }
+    }
+  }
+}

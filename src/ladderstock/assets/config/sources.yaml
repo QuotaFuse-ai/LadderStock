@@ -1,0 +1,719 @@
+# 数据源与主备顺序（文档 §6.1 + DEC-006 四层边界）
+#
+# 硬约束：本文件只描述「向哪个生态 peer 的哪个工具取数」，不描述行情供应商。
+# - 每个 source 必须有 via（tickhub / wire / senate）与 tool（该 peer 的工具名）。
+# - 不允许出现采集库、行情站点域名或第三方数据商；越界由
+#   src/ladderstock/core/boundary.py 与 tests/contract/test_ecosystem_boundary.py 拦截。
+# - 备源只能是**同一个 peer 的另一个工具**；peer 整体不可用时降级为缓存回放，
+#   绝不启用自建采集（文档第九节禁区）。
+
+# peers 块是生态 peer 注册表的**唯一真源**（QUOT-403）：core/boundary.py 的
+# PEERS 由此生成，控制面面板的模块卡、ldst doctor 的 peer 行都跟着走。
+# 字段口径：
+#   health_path  —— 该 peer 真实提供的健康检查路径（探测用，不许在代码里写死 /healthz）
+#   default_port —— 该 peer 的主服务端口（MCP 或 HTTP；与 boundary.Peer.default_port 一致）
+#   role         —— 模块卡上显示的一句话职责
+#   repo         —— GitHub 仓库名（owner/name），QUOT-402 版本三态检测的期望版本来源
+peers:
+  tickhub:
+    product: TickHub-CN
+    package: tickhub-cn
+    cli: th-cn
+    mcp_name: tickhub-cn
+    url_env: LDST_TICKHUB_MCP_URL
+    default_url: http://127.0.0.1:8000/mcp
+    timeout_sec: 10
+    health_path: /healthz
+    default_port: 8000
+    role: 数据底座：行情 / 涨停池 / 龙虎榜 / 情绪指标 / 资金
+    repo: QuotaFuse-ai/TickHub-CN
+  # TickHub-US：8001 被 WSL 转发服务占用、admin 8787 与 CN 撞车，
+  # 故 MCP 走 8002、admin 走 8789（DEC-013 / DEC-014 §3）。
+  tickhub_us:
+    product: TickHub-US
+    package: tickhub-us
+    cli: th-us
+    mcp_name: tickhub-us
+    url_env: LDST_TICKHUB_US_MCP_URL
+    default_url: http://127.0.0.1:8002/mcp
+    timeout_sec: 10
+    health_path: /healthz
+    default_port: 8002
+    role: 数据底座：美股行情 / 财报 / 监管披露
+    repo: QuotaFuse-ai/TickHub-US
+  wire:
+    product: QuotaFuse Wire
+    package: quotafuse-wire
+    cli: qfw
+    mcp_name: qf-wire
+    url_env: LDST_WIRE_MCP_URL
+    default_url: http://127.0.0.1:8791/mcp
+    timeout_sec: 15
+    health_path: /api/health
+    default_port: 8790
+    role: 资讯感知：新闻 / 政策 / 产业链 / 多源聚合
+    repo: QuotaFuse-ai/quotafuse-wire
+  senate:
+    product: StockSenate
+    package: stocksenate
+    cli: ssenate
+    mcp_name: stock-senate
+    url_env: LDST_SENATE_MCP_URL
+    default_url: http://127.0.0.1:8765/mcp
+    timeout_sec: 20
+    health_path: /healthz
+    default_port: 8765
+    role: 投研合议：7 分析师 → 辩论 → 风控 → 终审 / 回测
+    repo: QuotaFuse-ai/StockSenate
+  # FinanceCoffer（QUOT-403）：数据存储，不是取数通道——sources 不允许 via 它，
+  # 只登记注册表让控制面出第 5 张卡。服务跑在 WSL（8100），控制面只读观测不接管启停；
+  # /health 回 status=degraded（如 embedding unreachable）时面板如实显示，不是故障。
+  financecoffer:
+    product: FinanceCoffer
+    package: financecoffer
+    cli: fc
+    mcp_name: null            # FC 当前没有 MCP 面，写 null，探测走 HTTP
+    url_env: LDST_FINANCECOFFER_URL
+    default_url: http://127.0.0.1:8100
+    timeout_sec: 10
+    health_path: /health
+    default_port: 8100
+    role: 数据存储：结构化宽表 / 公告检索 / 风险
+    repo: QuotaFuse-ai/FinanceCoffer
+  # mem0（QUOT-486）：LadderStock 助手的记忆后端，同 FinanceCoffer 口径——不是取数
+  # 通道，sources 不允许 via 它，只登记注册表让控制面出卡。服务是 WSL 里的
+  # docker compose（project qf-mem0，端口 9100/3200/8532），与 Multica 的 mem0-dev
+  # 物理隔离；控制面托管启停（compose 分支），不查 import/不装 wheel。
+  # /configure 是实测确认的健康端点（server 无 /healthz）。
+  mem0:
+    product: Mem0
+    package: qf-mem0
+    cli: docker               # 占位：实际启停是 WSL docker compose（PEER_CONTROL.compose_file），cli 不执行
+    mcp_name: null            # 没有 MCP 面，9100 是 REST API
+    url_env: LDST_MEM0_API_URL
+    default_url: http://127.0.0.1:9100
+    timeout_sec: 10
+    health_path: /configure
+    default_port: 9100
+    role: 助手记忆：add / search / 历史回放（本地 bge-small-zh 向量，云骏 LLM）
+    repo: null
+  # ProxyFleet（QUOT-485）：生态基础设施（出口代理池），从「工具组件只读观测」
+  # 升级为纳管 peer——但同 FinanceCoffer / mem0 口径：不是取数通道，sources 不允许
+  # via 它，DATASET_CATALOG 不给它任何数据集，四层边界的保护点不变。
+  # 服务是 Windows 计划任务 ProxyFleet（SYSTEM）带起的 `python -m proxyfleet serve`：
+  # 控制面启停走该垫片任务（PEER_CONTROL.task_name），账本记 origin=spawned-via-task；
+  # 8788 既是控制台/REST 也是 LS 视角的 MCP 面（ProxyFleet 自带 stdio MCP 就是这个
+  # REST 的客户端），8789 是出口网关（PEER_CONTROL.extra_ports，只探测不出「打开」）。
+  proxyfleet:
+    product: ProxyFleet
+    package: proxyfleet
+    cli: pfctl                # 占位：实际启停是 Windows 计划任务 ProxyFleet（PEER_CONTROL.task_name），cli 不执行
+    mcp_name: null            # 面板不直连它的 MCP；LS 侧走本仓 mcp 的 proxyfleet_* 工具（薄封装 8788 REST）
+    url_env: LDST_PROXYFLEET_API_URL
+    default_url: http://127.0.0.1:8788
+    timeout_sec: 10
+    health_path: /readyz      # 实测确认：免鉴权健康端点，ready = biz_ok >= 1
+    default_port: 8788
+    role: 代理池：节点采集 / 健康检查 / 出口网关（8788 控制台 · 8789 网关）
+    repo: null
+  # qdrant（QUOT-488）：标的档案知识库的向量层，同 mem0 口径——不是取数通道，
+  # sources 不允许 via 它，只登记注册表让控制面出卡。两个容器（project qf-qdrant）：
+  # qdrant REST/Dashboard 6333、mcp-server-qdrant streamable-http 9300，主机侧均绑
+  # 127.0.0.1。独立卷存储，不复用 mem0 的 pgvector；控制面托管启停（compose 分支）。
+  # /collections 是实测确认的健康端点（Qdrant 无 /healthz）。
+  qdrant:
+    product: Qdrant
+    package: qf-qdrant
+    cli: docker               # 占位：实际启停是 WSL docker compose（PEER_CONTROL.compose_file），cli 不执行
+    mcp_name: null            # MCP 面是 mcp-server-qdrant（9300，streamable-http），不经 sources 注册
+    url_env: LDST_QDRANT_API_URL
+    default_url: http://127.0.0.1:6333
+    timeout_sec: 10
+    health_path: /collections
+    default_port: 6333
+    role: 知识库向量层：档案向量存储 / 语义检索（REST 6333 · MCP 9300）
+
+sources:
+  # ---------------- 行情与短线数据：TickHub-CN ----------------
+  - id: tickhub_kline
+    dataset: daily_k
+    via: tickhub
+    tool: tencent_kline
+    primary: true
+    fallback: [tickhub_tdx_package]
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # K 线图端点（QUOT-410）：与 `tickhub_kline` 同一工具，但 period / adjust 是
+  # **运行时参数**（请求透传，三档周期 × 三档复权），不能挂 sync 的写死口径，
+  # 所以是独立数据集 `kline_chart` 的独立登记。不进 sync.yaml、不落库。
+  # 无备源：`tdx_daily_package` 是日线全市场包，不收 period / adjust，挂了必败
+  # （同 peer 无第二个支持周 / 月 / 复权的 K 线工具，DEC-006 主备同口径）。
+  - id: tickhub_kline_chart
+    dataset: kline_chart
+    via: tickhub
+    tool: tencent_kline
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_tdx_package
+    dataset: daily_k
+    via: tickhub
+    tool: tdx_daily_package
+    primary: false
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.8
+
+  - id: tickhub_limit_pool
+    dataset: limit_pool
+    via: tickhub
+    tool: limit_up_pool
+    primary: true
+    fallback: [tickhub_ths_limit_pool]
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_ths_limit_pool
+    dataset: limit_pool
+    via: tickhub
+    tool: ths_limit_up_pool
+    primary: false
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 0.9
+
+  - id: tickhub_broken_board
+    dataset: broken_board
+    via: tickhub
+    tool: broken_board_pool
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_yesterday_limit
+    dataset: yesterday_limit_up
+    via: tickhub
+    tool: yesterday_limit_up_pool
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_sentiment
+    dataset: sentiment
+    via: tickhub
+    tool: market_sentiment
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 盘中 6 时点快照（QUOT-286）：实时报价只给 `schedule` 的 kind=snapshot 用，
+  # **不进 sync.yaml / 不进台账**（机器存的盘面读数 vs 用户自己记的东西分开）。
+  # 无备源：同 peer 没有第二个批量报价工具；取不到就按 status=missing 记，不补跑。
+  - id: tickhub_spot_quote
+    dataset: spot_quote
+    via: tickhub
+    tool: tencent_quote_batch
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 首页指数条（QUOT-380）：与 `spot_quote` 同构的实时报价——**不进 sync.yaml / 不进台账**，
+  # 非交易时段 peer 照旧回上一交易日收盘（`as_of` 如实带出），不需要日更。
+  # 无备源：同 peer 的 `index_list` 是「按涨幅排序的 100 条榜」（实测不含这四个指数、
+  # 还混老三板个股），`index_kline` 是历史 K 线，都不是同一口径的换源（DEC-006 主备同口径）。
+  - id: tickhub_index_quote
+    dataset: index_quote
+    via: tickhub
+    tool: index_quote
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 首页指数条的美股 2 格（QUOT-471）：TickHub-US 的 `th_us_get_quote` 逐 symbol 取
+  # （`DJI` / `IXIC`，一次一个），与 `spot_quote` 同构——**不进 sync.yaml / 不进台账**。
+  # 无备源：同 peer 的 `th_us_get_market_data` 是指数 K 线（不是同一口径的换源），
+  # 且恒指 / 恒生科技在该 peer 上对 `HSI.HK` 等写法一律 `isError`（DEC-006 主备同口径）。
+  # `commercial_use` 由调用方显式带（非商用），合规分级随回包落进 `source_detail`。
+  - id: tickhub_us_index_quote
+    dataset: index_quote_us
+    via: tickhub_us
+    tool: th_us_get_quote
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_dragon_tiger
+    dataset: dragon_tiger
+    via: tickhub
+    tool: dragon_tiger
+    primary: true
+    fallback: [tickhub_dragon_tiger_backup]
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 90
+    weight: 1.0
+
+  - id: tickhub_dragon_tiger_backup
+    dataset: dragon_tiger
+    via: tickhub
+    tool: dragon_tiger_backup
+    primary: false
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 180
+    weight: 0.7
+
+  - id: tickhub_seats
+    dataset: dragon_tiger_seats
+    via: tickhub
+    tool: dragon_tiger_seats
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 90
+    weight: 1.0
+
+  - id: tickhub_industry
+    dataset: industry_board
+    via: tickhub
+    tool: industry_boards
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_concept
+    dataset: concept_board
+    via: tickhub
+    tool: concept_boards
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 个股↔概念板块归属（QUOT-362）：逐只实时快照，**不进台账**（水位是取数时刻，
+  # 见 `core/boundary.py` 的 `concept_membership` 登记）。同步入口只取当日候选池那批
+  # 代码（`sync.yaml` 的 `codes_from: limit_pool`），不扩全市场。
+  # `cooldown_sec` 不小于上游 60 秒 TTL：命中限流后立刻重试只会再撞一次同一个
+  # 还没刷新的窗口，等于把一次等待变成两次失败。
+  - id: tickhub_concept_membership
+    dataset: concept_membership
+    via: tickhub
+    tool: stock_concept_blocks
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 90
+    weight: 1.0
+
+  - id: tickhub_fund_flow
+    dataset: fund_flow
+    via: tickhub
+    tool: stock_fund_flow
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 当日实时资金流（批量）。与上面的日线 `fund_flow` 是两个口径，不互相顶替：
+  # 日线用于历史对比，这条用于打榜「资金」分项的当日实时值（DEC-049）。
+  # 一个请求覆盖 ≤150 只，超出的由工具内部自动分批，所以 timeout 比逐只那条宽。
+  - id: tickhub_fund_flow_batch
+    dataset: fund_flow_realtime
+    via: tickhub
+    tool: stock_fund_flow_batch
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 60
+    weight: 1.0
+
+  # ---------------- R5 产业研究：行业画像输入（QUOT-143） ----------------
+  # 三只逐股取数（代码池见 sync.yaml 的 codes）+ 一只按日整批替换的板块资金流。
+  # `board_fund_flow` 的上游 source 会在东财 BK 与新浪行业之间切换，口径由缓存里的
+  # `source` 列决定，输出字段逐条标注（DEC-018），所以这里不设备源。
+  - id: tickhub_sw_map
+    dataset: sw_industry_map
+    via: tickhub
+    tool: sw_industry_history
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 300
+    weight: 1.0
+
+  - id: tickhub_finance_indicators
+    dataset: finance_indicators
+    via: tickhub
+    tool: eastmoney_finance_indicators
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_valuation_history
+    dataset: valuation_history
+    via: tickhub
+    tool: baostock_valuation_history
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 1
+    cooldown_sec: 300
+    weight: 1.0
+
+  - id: tickhub_industry_fund_flow
+    dataset: industry_fund_flow
+    via: tickhub
+    tool: board_fund_flow
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_hot_rank
+    dataset: hot_rank
+    via: tickhub
+    tool: ths_hot_rank
+    primary: true
+    fallback: [tickhub_hot_rank_em]
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_hot_rank_em
+    dataset: hot_rank
+    via: tickhub
+    tool: eastmoney_hot_rank
+    primary: false
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 0.8
+
+  # ---------------- 资讯雷达（R6 / QUOT-144）：公告 / 研报 / 快讯 / 新闻 ----------------
+  # 全部是 TickHub-CN 的只读工具；`ldst news` 按需按时间窗取，不进 `sync.yaml`
+  # 的按日增量（资讯是「越来越多」，不是「整日覆盖」，幂等靠 news/store 的 upsert）。
+  - id: tickhub_announce_cninfo
+    dataset: announcement_cninfo
+    via: tickhub
+    tool: cninfo_announcements
+    primary: true
+    fallback: [tickhub_announce_cninfo_backup]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_announce_cninfo_backup
+    dataset: announcement_cninfo
+    via: tickhub
+    tool: announcements_backup
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  - id: tickhub_announce_szse
+    dataset: announcement_szse
+    via: tickhub
+    tool: szse_announcements
+    primary: true
+    fallback: [tickhub_announce_szse_backup]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_announce_szse_backup
+    dataset: announcement_szse
+    via: tickhub
+    tool: announcements_backup
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  - id: tickhub_research_report
+    dataset: research_report
+    via: tickhub
+    tool: eastmoney_reports
+    primary: true
+    fallback: [tickhub_research_report_sina]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_research_report_sina
+    dataset: research_report
+    via: tickhub
+    tool: sina_research_reports
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  - id: tickhub_news_stock
+    dataset: news_eastmoney_stock
+    via: tickhub
+    tool: eastmoney_stock_news
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_news_cctv
+    dataset: news_cctv
+    via: tickhub
+    tool: cctv_news
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_flash_cls
+    dataset: flash_cls
+    via: tickhub
+    tool: cls_telegraph
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_flash_wsc
+    dataset: flash_wallstreetcn
+    via: tickhub
+    tool: wallstreetcn_lives
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_flash_em
+    dataset: flash_eastmoney
+    via: tickhub
+    tool: eastmoney_global_news
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  # ---------------- 事件日历的结构化源（R6）----------------
+  - id: tickhub_lockup_calendar
+    dataset: lockup_calendar
+    via: tickhub
+    tool: lockup_expiry
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_earnings_preview
+    dataset: earnings_preview
+    via: tickhub
+    tool: earnings_forecast
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  # ---------------- 财报前瞻 / 事件回看（QUOT-446）----------------
+  # 五个事件/一致预期工具，全部是 TickHub-CN 已注册的只读工具（实测 2026-11-05）：
+  # earnings_forecast 6 条 / holder_trades 125 条 / institution_survey 0 条（真实空）/
+  # share_buyback 0 条（真实空）/ ths_eps_forecast 快照 / lockup_expiry history+upcoming。
+  # 无备源：同 peer 没有第二种口径的同类工具（DEC-006 主备同口径），取不到就按
+  # 缓存回放处理，不自建采集。
+  - id: tickhub_consensus_forecast
+    dataset: consensus_forecast
+    via: tickhub
+    tool: ths_eps_forecast
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 300
+    weight: 1.0
+
+  # 股东增减持：上游是半静态事件表（ttl=semi_static），cooldown 比行情类宽。
+  - id: tickhub_holder_trades
+    dataset: holder_trades
+    via: tickhub
+    tool: holder_trades
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0
+
+  - id: tickhub_institution_survey
+    dataset: institution_survey
+    via: tickhub
+    tool: institution_survey
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0
+
+  - id: tickhub_share_buyback
+    dataset: share_buyback
+    via: tickhub
+    tool: share_buyback
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0
+
+  # 指数日线（沪深300）：一次回溯 ≥3 年（days=800 交易日），落 append 分区。
+  - id: tickhub_index_daily
+    dataset: index_daily
+    via: tickhub
+    tool: index_kline
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  # 长窗口回补出口（QUOT-501）：东财 push2his `fqt=1`，2000 根 ≈ 8 年，
+  # 腾讯日线单票只有 ~641 根（≈2.5 年），≥5 年回补必须走这里。
+  # 只做**能力登记**（primary: false）：日更链路仍是腾讯，`ldst backfill --source
+  # eastmoney` 在自己的 source policy 里把它提为主源。请求出口由 TickHub 的
+  # PROXY_PROVIDER / PROXY_POOL_URL 决定，凭据只走 env，不写进本文件。
+  - id: tickhub_em_kline
+    dataset: daily_k
+    via: tickhub
+    tool: em_kline
+    primary: false
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_em_index
+    dataset: index_daily
+    via: tickhub
+    tool: em_kline
+    primary: false
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  # ---------------- 题材叙事：QuotaFuse Wire（可选） ----------------
+  #
+  # 这里登记 `wire_timeline` 是**能力登记**（同 peer 备源，DEC-006 闸门 3 合规），
+  # 不等于它进日更链路：`config/sync.yaml` 的 `theme_news.fallback` 显式留空，
+  # `chain()` 会尊重这个显式空值（DEC-043）。理由是入参维度不匹配——
+  # `wire_get_digest(topic, date)` 要赛道 slug，`wire_get_timeline(event_id)` 要**单个事件**
+  # id，而按日同步没有事件维度，挂它当备源等于「主源失败后备源必然一起报错」，
+  # 白烧一次调用还污染降级轨迹。事件下钻留给日报/复盘按 event_id 单独调。
+  - id: wire_digest
+    dataset: theme_news
+    via: wire
+    tool: wire_get_digest
+    primary: true
+    fallback: [wire_timeline]
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: wire_timeline
+    dataset: theme_news
+    via: wire
+    tool: wire_get_timeline
+    primary: false
+    fallback: []
+    timeout_sec: 15
+    retries: 1
+    cooldown_sec: 120
+    weight: 0.7
+
+  # ---------------- 合议结果：StockSenate（只读，可选） ----------------
+  - id: senate_reports
+    dataset: council_memo
+    via: senate
+    tool: stock_senate_report_query
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 1
+    cooldown_sec: 180
+    weight: 1.0

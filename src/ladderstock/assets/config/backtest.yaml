@@ -1,0 +1,51 @@
+# 回测成本与阈值默认值（QUOT-500 / 规格 §5.3；真实券商口径 QUOT-535）
+#
+# 本文件是回测默认值**唯一**来源：代码里的兜底只为「配置目录被搬走」兜底，
+# 运行卡会明确记录每个字段的实际来源（yaml / cli / fallback）。
+# CLI 覆盖：ldst backtest run --commission 0.00009 --slippage 0.001 --stamp-duty 0.0005 ...
+#
+# 严格校验：任何字段缺失、负数、为 0 的佣金/滑点/印花税、切分比例不在 (0, 1) 内、
+# 成本档位未按升序排列，都会直接报错退出（EXIT_CONFIG），不会回落到默认值。
+#
+# 口径（单位写进字段名，避免「千 1 写成万 1」）：
+#   commission_rate_wan    佣金率（万分之），双向
+#   commission_floor_yuan  单笔最低佣金（元）：5 = 不免五；0.01 / 1 / 0 = 免五或自定义起收
+#   transfer_fee_wan       过户费（万分之），双向（现行官方口径万 0.1）
+#   stamp_duty_wan         印花税（万分之），仅卖出（2023-08-28 起千 1 减半为万 5）
+# 单笔佣金 = max(成交额 × 佣金率, 最低佣金)；买入再叠加过户费，卖出再叠加过户费与印花税。
+#
+# 旧式写法（costs.commission / costs.stamp_duty 小数口径）仍可读，最低佣金与过户费按 0 处理。
+
+costs:
+  # 用户券商默认：万 0.9、免五、0.01 元起收（预设第 1 档）
+  commission_rate_wan: 0.9
+  commission_floor_yuan: 0.01
+  # 过户费万 0.1，买卖双边
+  transfer_fee_wan: 0.1
+  # 印花税万 5，仅卖出
+  stamp_duty_wan: 5
+  # 滑点率（千 1，按成交价）；买 +滑、卖 −滑；不得为 0
+  slippage: 0.001
+  # 成本敏感性三档：只替换佣金率（最低佣金 / 过户费 / 滑点 / 印花税固定），
+  # 档位数量 >= 2，顺序必须从小到大
+  tiers: [0.0002, 0.0005, 0.001]
+  # 用户券商三档（均不含过户费，过户费由上面 transfer_fee_wan 另加）；页面下拉用
+  presets:
+    - key: wan09_free5_001
+      label: 万0.9 免五 0.01 元起收
+      commission_rate_wan: 0.9
+      commission_floor_yuan: 0.01
+    - key: wan085_free5_1
+      label: 万0.85 免五 1 元起收
+      commission_rate_wan: 0.85
+      commission_floor_yuan: 1
+    - key: wan065_min5
+      label: 万0.65 不免五 5 元起收
+      commission_rate_wan: 0.65
+      commission_floor_yuan: 5
+
+gate:
+  # 校验门最小完整交易次数：低于此值即使收益好看也标红
+  min_trades: 20
+  # 样本切分：前 N 样本内 / 后 (1-N) 样本外；必须按时间顺序，不许随机
+  in_sample_ratio: 0.7
