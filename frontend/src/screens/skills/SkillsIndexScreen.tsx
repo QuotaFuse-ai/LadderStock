@@ -1,13 +1,23 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowRight, ExternalLink, Wrench } from 'lucide-react'
 
 import { DemoStateBadge, PageHeader } from '../../components/PageShell'
-import { Badge, Card, CardBody, ErrorBlock, SectionCard } from '../../components/ui'
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  ErrorBlock,
+  Pagination,
+  SectionCard,
+  Switch,
+} from '../../components/ui'
 import { cn } from '../../lib/cn'
 import {
   CATALOG_STATUS_LABEL,
   existingPageTarget,
+  isUsableCatalogItem,
   priorityTone,
   readCatalog,
   type CatalogItem,
@@ -23,12 +33,24 @@ import {
  *
  * 交互：
  * - 顶部 12 类分组 chip（可横向滚动）+ 「全部」，默认「全部」，落进 `?group=` 便于分享；
+ * - 「只看可用」开关（`?usable=1`）：只留可用 / 部分可用 / 已在页面，排除未接通 / 待建 / 本阶段不做；
+ * - 每页 10 条，底部固定的分页条（上一页 / 页码 / 下一页），页码落进 `?page=`；
+ *   切分组或切过滤时回到第 1 页；
  * - 每条给 编号 · 中文名 · 优先级 · 状态 · 归属包 · 一句话说明；
  * - 点 `ready` / `partial` 条目 → `/skills/:id`（目录条目 id）；
  * - `unconnected` 条目 → 仍可进 `/skills/:id` 看步骤与提示词，只显示未接通说明；
  * - `existing_page` 条目 → 直达对应页面（例：涨停样本 → `/limit-up`）；
  * - 点归属包名 → `/skills/pkg/:name` 看整包全貌。
  */
+
+/** 一页 10 条：70 条方向落成 7 页，一屏可扫完。 */
+const PAGE_SIZE = 10
+
+/** `?page=` 解析：非数字 / 0 / 负数都当第 1 页；上界在拿到结果集后收敛。 */
+function pageFromParam(raw: string | null): number {
+  const parsed = raw === null ? 1 : Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+}
 
 const STATUS_TONE: Record<CatalogStatus, 'ok' | 'warn' | 'neutral' | 'info' | 'danger'> = {
   ready: 'ok',
@@ -129,6 +151,7 @@ export default function SkillsIndexScreen() {
   const catalog = useMemo(() => readCatalog(), [])
   const [params, setParams] = useSearchParams()
   const activeGroup = params.get('group') ?? '全部'
+  const usableOnly = params.get('usable') === '1'
 
   const groups = useMemo(
     () => ['全部', ...catalog.groups.map((group) => group.key)],
@@ -139,7 +162,7 @@ export default function SkillsIndexScreen() {
     return (key: string) => map.get(key) ?? key
   }, [catalog.groups])
 
-  const items = useMemo(
+  const groupItems = useMemo(
     () =>
       activeGroup === '全部'
         ? catalog.items
@@ -147,11 +170,59 @@ export default function SkillsIndexScreen() {
     [catalog.items, activeGroup],
   )
 
-  const selectGroup = (key: string) => {
+  const usableCount = useMemo(
+    () => groupItems.filter(isUsableCatalogItem).length,
+    [groupItems],
+  )
+
+  const items = useMemo(
+    () => (usableOnly ? groupItems.filter(isUsableCatalogItem) : groupItems),
+    [groupItems, usableOnly],
+  )
+
+  const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+  const page = Math.min(pageFromParam(params.get('page')), pageCount)
+  const pageItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  // URL 是页码唯一真源：深链带超界 / 非规范页码（`?page=99`、`?page=07`）时就地收敛，
+  // 保证地址栏与页面显示的是同一页，刷新 / 分享不会跳回另一页。
+  useEffect(() => {
+    const raw = params.get('page')
+    if (raw === null || raw === String(page)) return
     const next = new URLSearchParams(params)
-    if (key === '全部') next.delete('group')
-    else next.set('group', key)
+    if (page === 1) next.delete('page')
+    else next.set('page', String(page))
     setParams(next, { replace: true })
+  }, [page, params, setParams])
+
+  const updateParams = (change: (next: URLSearchParams) => void) => {
+    const next = new URLSearchParams(params)
+    change(next)
+    setParams(next, { replace: true })
+  }
+
+  const selectGroup = (key: string) => {
+    updateParams((next) => {
+      if (key === '全部') next.delete('group')
+      else next.set('group', key)
+      // 换分组后结果集变了，页码回到第 1 页，避免停在空白页
+      next.delete('page')
+    })
+  }
+
+  const toggleUsable = (nextUsable: boolean) => {
+    updateParams((next) => {
+      if (nextUsable) next.set('usable', '1')
+      else next.delete('usable')
+      next.delete('page')
+    })
+  }
+
+  const selectPage = (nextPage: number) => {
+    updateParams((next) => {
+      if (nextPage <= 1) next.delete('page')
+      else next.set('page', String(nextPage))
+    })
   }
 
   return (
@@ -214,16 +285,50 @@ export default function SkillsIndexScreen() {
             })}
           </div>
 
-          {items.length === 0 ? (
+          {/* 未完成态收窄：普通用户只想看「现在能用的」，口径在关闭时明确写在左侧。 */}
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <p className="text-caption text-text-muted">
+              可用 / 部分可用 / 已在页面 · 当前分类共{' '}
+              <span className="ldst-num font-medium text-text-secondary">{usableCount}</span> 条
+            </p>
+            <Switch checked={usableOnly} onChange={toggleUsable} label="只看可用" />
+          </div>
+
+          {groupItems.length === 0 ? (
             <p className="rounded border border-border bg-surface p-4 text-body text-text-secondary">
               「{activeGroup}」这一类下暂时没有条目。
             </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {items.map((item) => (
-                <CatalogRow key={item.id} item={item} />
-              ))}
+          ) : items.length === 0 ? (
+            <div className="flex flex-wrap items-center gap-3 rounded border border-border bg-surface p-4">
+              <p className="text-body text-text-secondary">
+                「{activeGroup}」这一类下没有可用的条目。
+              </p>
+              <Button variant="secondary" onClick={() => toggleUsable(false)}>
+                关闭「只看可用」
+              </Button>
             </div>
+          ) : (
+            <>
+              <div role="list" aria-label="研究方向" className="flex flex-col gap-2">
+                {pageItems.map((item) => (
+                  <div key={item.id} role="listitem">
+                    <CatalogRow item={item} />
+                  </div>
+                ))}
+              </div>
+
+              {/* 底部固定分页：滚动时贴住内容区下沿，换页不用滚回列表底。 */}
+              <div className="sticky bottom-0 z-sticky border-t border-border bg-bg pb-1 pt-2">
+                <Pagination
+                  page={page}
+                  pageCount={pageCount}
+                  onPageChange={selectPage}
+                  total={items.length}
+                  pageSize={PAGE_SIZE}
+                  label="研究方向分页"
+                />
+              </div>
+            </>
           )}
 
           <SectionCard title="这些方向是什么" subtitle="来源、状态口径与包的关系" tone="info">

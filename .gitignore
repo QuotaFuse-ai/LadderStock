@@ -66,6 +66,9 @@ docs/tasks/*
 !docs/tasks/QUOT-472/gate-logs/*.json
 docs/tasks/QUOT-472/shots/
 docs/tasks/QUOT-472/shots-1280/
+# 验收任务产出例外：交付报告随 PR 交付（QUOT-530）；截图仅作评论附件，不入库
+!docs/tasks/QUOT-530/
+!docs/tasks/QUOT-530/README.md
 # 验收任务产出例外：交付报告随 PR 交付（QUOT-531）；截图仅作评论附件，不入库
 !docs/tasks/QUOT-531/
 !docs/tasks/QUOT-531/README.md
