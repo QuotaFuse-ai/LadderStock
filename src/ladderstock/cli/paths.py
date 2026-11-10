@@ -24,6 +24,8 @@ CONFIG_FILES: tuple[str, ...] = (
     "industry.yaml",
     # 回测成本与阈值默认值（QUOT-500，口径见 SPEC-BACKTEST.md）
     "backtest.yaml",
+    # 历史日线回补的票池 / 窗口 / 阶段标注（QUOT-501，见 docs/CLI.md §N）
+    "backfill.yaml",
 )
 
 #: 旧版环境变量前缀，按顺序兜底（旧前缀双读，新前缀优先）

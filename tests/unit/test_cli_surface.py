@@ -26,6 +26,7 @@ HELP_GROUPS = (
     "ladder",
     "sync",
     "sources",
+    "backfill",
     "watch",
     "notify",
     "journal",

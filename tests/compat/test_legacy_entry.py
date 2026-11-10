@@ -66,6 +66,8 @@ DOCUMENTED_GROUPS = {
     "watchdog",
     # QUOT-500 增量：回测 M1，见 docs/CLI.md §M
     "backtest",
+    # QUOT-501 增量：历史日线回补 + 缺口报表，见 docs/CLI.md §N
+    "backfill",
     # QUOT-523 增量：单入口 supervisor，见 docs/CLI.md §L
     "supervisor",
     "mcp",

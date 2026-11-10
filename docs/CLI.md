@@ -47,10 +47,11 @@
 > `ldst supervisor start|stop|restart|status`（单入口启停，见 §L）。
 > **QUOT-522 增量（2026-11-10）**：基线 31 条口径**不变**，`__watch-guard` 是页面自启的内部
 > 长驻入口（`ldst run` startup 拉起，不是用户命令；`hidden=True`），只登记叶子契约、不进矩阵。
-> **以代码为准的当前计数**：`LEAF_PATHS` **54** 个叶子、`COMMAND_MATRIX` **48** 条可执行 argv
-> （54 − 7 个不进矩阵的叶子 `run` / `watchdog` / `__watch-guard` / `mcp stdio` / `mcp http` /
+> **以代码为准的当前计数**：`LEAF_PATHS` **55** 个叶子、`COMMAND_MATRIX` **49** 条可执行 argv
+> （55 − 7 个不进矩阵的叶子 `run` / `watchdog` / `__watch-guard` / `mcp stdio` / `mcp http` /
 > `supervisor start` / `supervisor restart`，+ `sync` 的两种形态各跑一次；
 > 复核入口 `tests/unit/test_cli_output_option.py::test_registered_leaves_match_baseline`）。
+> **QUOT-501 增量（2026-11-10）**：新增 1 条 `ldst backfill`（历史日线回补 + 缺口报表，见 §N）。
 >
 > **前置约束**：所有取数命令只向生态 peer 取数——TickHub-CN（只消费）、QuotaFuse Wire（可选消费）、StockSenate（只读消费）。`sources` / `sync` 里的"源"指 **peer 的工具**，不是行情供应商；主备必须同 peer，peer 整体不可用时回放本地缓存，绝不启用自建采集。
 
@@ -78,6 +79,7 @@
 | **R11 增量（1，非 P0 基线）** | `weekly` |
 | **QUOT-443 增量（1，非 P0 基线）** | `watchdog` |
 | **QUOT-500 增量（3，非 P0 基线）** | `backtest run`、`backtest list`、`backtest show` |
+| **QUOT-501 增量（1，非 P0 基线）** | `backfill` |
 | **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
 
 ## A. 启动、复盘与核心指标（9）
@@ -382,6 +384,29 @@ ldst position list --output json                         # realized.total_pnl（
 - 每项指标调用 calc 层算，`metrics_calc_ids` 逐指标记 `calc_id`（11 项），另有 `calc_ids.run_card / data / gate / benchmark`。
 - 校验门三项：最小完整交易次数、样本外收益 > 0（按时间顺序切分）、三档成本敏感性（只替换佣金率重跑）。任一项失败 → `gate.passed=false`，Markdown / HTML 置顶中文红标。
 - HTTP 只读端点（`ldst run` 托管，前缀 `/api/backtest`）：`GET /runs?limit=`、`GET /latest`、`GET /runs/{run_id}`、`GET /runs/{run_id}/export.{json,md,html}`；全部 GET，写面只有本机 CLI。非回环或 `Host` 不在白名单 → **403**，`run_id` 非法 → **400**，不存在 → **404**，产物损坏 → **500**。前端只读产物，不重算指标。
+
+## N. 历史日线回补（QUOT-501 增量，1）
+
+> 口径来源：issue QUOT-501「A 股日频历史行情补齐（>=5 年 / >=20 只票 + 上证指数）」。
+> 这 1 条**不属于** 31 条 P0 基线；叶子路径 `("backfill",)` 登记在
+> `tests/fixtures/command_matrix.py`。票池 / 窗口 / 阶段标注在 `config/backfill.yaml`
+> （`config/schema/backfill.schema.json` 管形状），代码里不写死票池。
+> 取数只走 TickHub-CN，不接自建采集；落库沿用 `daily_k` / `index_daily` 的
+> append 幂等键 `(code, trade_date)`，重跑行数不增长。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 54 | `ldst backfill` | 先补上证指数基准到 `index_daily`，再按票池逐只回补 `daily_k`（daily + qfq），一个事务落库；产出缺口报表 `gap-report.{md,csv}`（每票首末日 / 缺口率 / 覆盖年数 / amount 缺失率、缺口率 >2% 单独列名并解释、失败清单、`daily_k` 总量前后差） | `--codes`（只在票池内取子集）、`--start` / `--end`、`--source config\|tencent\|eastmoney`、`--report-dir`、`--output` | 全部取数成功 **0**；有失败 / 空结果 / 止损未发起 **8**；基准取不到或一只都没取到 **4**；配置 / 阶段源未登记 **3**；库被占用 **10**。「覆盖率不足 5 年」**不改变退出码**，如实写进报表 |
+
+**契约**：
+
+- **阶段标注**：`config/backfill.yaml` 的 `source` + `stage` 原样进报表。阶段1 用腾讯 qfq（单票上限约 641 根 ≈2.5 年，报表写明「当前 2.5 年 / 目标 5 年」）；阶段2 在 TickHub-CN 接入 `em_kline`（东财 push2his `fqt=1`，2000 根）并在 `sources.yaml` 登记以后切 `eastmoney`，**同一份验收口径**重新收口。`--source eastmoney` 在 source id 未登记时按 3 退出，**不会静默退回腾讯**。
+- **不编数**：只写上游返回的行；停牌日不补 bar，缺口报表按「预期交易日 − 实际」计入并注明「未接停牌日历，停牌或上游缺数同口径，未编造」；`amount` 缺失保留 null 并统计缺失率，**不写 0、不估算**。
+- **单只失败隔离**：一只票失败只记进失败清单，整批继续；连续 `max_consecutive_failures` 只失败才止损（剩余标的不再发请求，报表列出「止损未发起」）。
+- **限频与重试上限**：`throttle_ms` 落成 TickHub peer 的最小调用间隔；单次请求的重试次数由 `sources.yaml` 的 `retries` 封顶（现为 2）。
+- **去重证明**：报表「去重与幂等」段与 `--output json` 的 `daily_k.before_rows / written / after_rows / new_rows / existing_rows` 对齐；同一命令重跑，`new_rows` 必须为 0。
+- **水位**：`daily_k` / `index_daily` 各自 `advance()` 到本轮最大交易日，并在 `state/watermark.json` 的 `runs` 里留一条 `mode=backfill` 记录（dataset / rows / source / status）。
+
 
 ## F. 全局约定
 

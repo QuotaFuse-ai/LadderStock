@@ -189,6 +189,9 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("backtest", "run", "--strategy", "ma_cross", "--symbol", "600000"), {4}),
     (("backtest", "list"), {0}),
     (("backtest", "show", "bt_00000000"), {6}),
+    # QUOT-501 历史日线回补（不计入 31 条基线，见 docs/CLI.md §N）：
+    # 矩阵跑在空桩上（peer 全挂），基准取不到 -> 4；不落任何报表，也不写仓库 data/。
+    (("backfill",), {4}),
 )
 
 
@@ -283,6 +286,8 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("backtest", "run"),
     ("backtest", "list"),
     ("backtest", "show"),
+    # QUOT-501 历史日线回补（不计入 31 条基线，见 docs/CLI.md §N）
+    ("backfill",),
 )
 
 def _with_output_json(entry: Any) -> Any:
