@@ -43,13 +43,16 @@ from ladderstock.cli.paths import data_dir
 
 BACKTEST_DIRNAME: Final = "backtests"
 DEFAULT_INITIAL_CASH: Final = 1_000_000.0
+#: 页面参数区的默认标的（M1 真机验证用 600000）
+DEFAULT_SYMBOL: Final = "600000"
 
 #: 执行假设：写死在代码里，同时写进运行卡 ``assumptions``（人要能读到「是什么规则」）
 ASSUMPTIONS: Final[tuple[str, ...]] = (
     "信号 t，成交 t+1：策略只看到 t 及之前的 K 线，t+1 开盘价 ± 滑点成交（无未来函数）。",
     "成交价：买入 = 开盘 × (1 + 滑点)；卖出 = 开盘 × (1 − 滑点)。",
-    "佣金：按成交额双边收取（本次实际值见 config.commission）。",
-    "印花税：只对卖出成交额收取（本次实际值见 config.stamp_duty）。",
+    "佣金：按成交额双边收取，单笔 = max(成交额 × 佣金率, 最低佣金)（本次实际值见 config）。",
+    "过户费：按成交额双边收取（本次实际值见 config.transfer_fee_wan）。",
+    "印花税：只对卖出成交额收取（本次实际值见 config.stamp_duty_wan）。",
     "涨跌停：以昨收为基准，开盘价 >= 涨停价 → 买不进；开盘价 <= 跌停价 → 卖不出。",
     "停牌：当日成交量为 0 视为不可成交，持仓保持不动、当日不下单（不补价、不延后）。",
     "T+1：当日买入的股数当日不可卖出。",
@@ -108,6 +111,8 @@ def _config_param_block(config: BacktestConfig) -> dict[str, Any]:
         "min_trades": config.min_trades,
         "in_sample_ratio": config.in_sample_ratio,
         "cost_tiers": list(config.cost_tiers),
+        "commission_floor_yuan": config.commission_floor_yuan,
+        "transfer_fee": config.transfer_fee,
     }
 
 
@@ -269,7 +274,13 @@ def run_backtest(
     run_id = compute_run_id(params=params, data_fp=series.data_fp)
 
     # —— 撮合（全区间）
-    costs = CostModel(commission=cfg.commission, slippage=cfg.slippage, stamp_duty=cfg.stamp_duty)
+    costs = CostModel(
+        commission=cfg.commission,
+        slippage=cfg.slippage,
+        stamp_duty=cfg.stamp_duty,
+        commission_floor=cfg.commission_floor_yuan,
+        transfer_fee=cfg.transfer_fee,
+    )
     matched = Engine(
         strategy=strat, costs=costs, initial_cash=float(initial_cash), limit_pct=sym.limit_pct()
     ).run(series.bars)
@@ -369,6 +380,7 @@ __all__ = [
     "BACKTEST_DIRNAME",
     "BacktestError",
     "DEFAULT_INITIAL_CASH",
+    "DEFAULT_SYMBOL",
     "RunResult",
     "artifacts_root",
     "compute_run_id",

@@ -375,7 +375,7 @@ ldst position list --output json                         # realized.total_pnl（
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
-| 51 | `ldst backtest run` | 跑一次回测并落盘运行卡（JSON / Markdown / HTML）：撮合信号 t 收盘 → t+1 开盘 ± 滑点成交、佣金双边、印花税卖出单边、T+1 / 涨停买不进 / 跌停卖不出 / 停牌跳过 | `--strategy ma_cross\|momentum\|breakout`、`--symbol`、`--from` / `--to`、`--commission` / `--slippage` / `--stamp-duty`、`--min-trades`、`--in-sample-ratio`、`--cost-tiers`、`--initial-cash`、`--config`、策略参数 `--short-window` / `--long-window` / `--lookback` / `--threshold`、`--output` | 校验门通过 **0**；校验门未通过 **8**（运行卡与页面标红，仍写出产物）；参数 / 配置非法 **2**；本机无历史库或库不可用 **4** |
+| 51 | `ldst backtest run` | 跑一次回测并落盘运行卡（JSON / Markdown / HTML）：撮合信号 t 收盘 → t+1 开盘 ± 滑点成交、佣金双边且单笔取 max(额×率, 最低佣金)、过户费双边、印花税卖出单边、T+1 / 涨停买不进 / 跌停卖不出 / 停牌跳过 | `--strategy ma_cross\|momentum\|breakout`、`--symbol`、`--from` / `--to`、`--commission` / `--slippage` / `--stamp-duty`、`--min-trades`、`--in-sample-ratio`、`--cost-tiers`、`--initial-cash`、`--config`、策略参数 `--short-window` / `--long-window` / `--lookback` / `--threshold`、`--output` | 校验门通过 **0**；校验门未通过 **8**（运行卡与页面标红，仍写出产物）；参数 / 配置非法 **2**；本机无历史库或库不可用 **4** |
 | 52 | `ldst backtest list` | 列出本机已落盘的运行卡摘要（`run_id` / 策略 / 区间 / 校验门结论，新的在前，只读目录不重算） | `--limit 20`、`--output` | 始终 **0**（空目录也出结构化空列表） |
 | 53 | `ldst backtest show <run_id>` | 按 `run_id` 回读已落盘运行卡摘要（不重算指标） | `run_id`（`bt_[0-9a-f]{8}`）、`--output` | 存在 **0**；`run_id` 不合法 **2**；运行卡不存在 **6** |
 
@@ -384,7 +384,7 @@ ldst position list --output json                         # realized.total_pnl（
 - `run_id = "bt_" + sha256(canonical_params(参数) + "\x1f" + 数据指纹)[:8]`；同参数 + 同数据指纹 → 同 `run_id`、同运行卡（仅 `generated_at` 不同），重跑覆盖同一组产物。
 - 每项指标调用 calc 层算，`metrics_calc_ids` 逐指标记 `calc_id`（11 项），另有 `calc_ids.run_card / data / gate / benchmark`。
 - 校验门三项：最小完整交易次数、样本外收益 > 0（按时间顺序切分）、三档成本敏感性（只替换佣金率重跑）。任一项失败 → `gate.passed=false`，Markdown / HTML 置顶中文红标。
-- HTTP 只读端点（`ldst run` 托管，前缀 `/api/backtest`）：`GET /runs?limit=`、`GET /latest`、`GET /runs/{run_id}`、`GET /runs/{run_id}/export.{json,md,html}`；全部 GET，写面只有本机 CLI。非回环或 `Host` 不在白名单 → **403**，`run_id` 非法 → **400**，不存在 → **404**，产物损坏 → **500**。前端只读产物，不重算指标。
+- HTTP 端点（`ldst run` 托管，前缀 `/api/backtest`，QUOT-535）：只读 `GET /runs?limit=`、`GET /latest`、`GET /runs/{run_id}`、`GET /runs/{run_id}/export.{json,md,html}`；触发面 `GET /strategies`（策略清单 + 成本默认值）、`POST /run`（异步，202 + job_id）、`GET /jobs/{job_id}`（`status/run_id/gate_passed/exit_code`）。写面走与本机 CLI 相同的 `run_backtest`，不另写撮合逻辑；写请求需回环 + 合法 `Host` + 来源证据（同源 `Origin` 或 `X-LDST-Client: 1`），否则 **403**；参数非法 **400** + 结构化错误，请求体形状错 **422**，`run_id` 非法 **400**，不存在 **404**，产物损坏 / 配置不可读 **500**。前端只读产物，不重算指标（DEC-074）。
 
 ## F. 全局约定
 
