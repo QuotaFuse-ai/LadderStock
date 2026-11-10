@@ -92,6 +92,20 @@ export default function IndustrySyncPanel({
   const active = isJobActive(job)
   const activeId = active ? job?.id ?? null : null
 
+  // onCompleted 可能是每次渲染新建的函数；用 ref 持有最新值，避免轮询定时器被重置
+  const onCompletedRef = useRef(onCompleted)
+  useEffect(() => {
+    onCompletedRef.current = onCompleted
+  })
+
+  // 同一个 job 只通知父页刷新一次。轮询拿到结果时与 setJob 同批调用，
+  // 父页的新 coverage 和成功态在同一次提交里出现，不会先闪一帧旧覆盖。
+  const notifyCompleted = useCallback((id: string) => {
+    if (completedIdRef.current === id) return
+    completedIdRef.current = id
+    onCompletedRef.current()
+  }, [])
+
   useEffect(() => {
     if (!activeId) return
     const timer = window.setInterval(() => {
@@ -99,14 +113,15 @@ export default function IndustrySyncPanel({
         .job(activeId)
         .then((next) => {
           setJob(next)
-          if (!isJobActive(next) && next.status === 'ok') void loadCommand()
+          if (next.status === 'ok') notifyCompleted(next.id)
+          if (!isJobActive(next)) void loadCommand()
         })
         .catch(() => {
           /* 单次轮询失败不终止任务，下一拍再试 */
         })
     }, 1500)
     return () => window.clearInterval(timer)
-  }, [activeId, loadCommand])
+  }, [activeId, loadCommand, notifyCompleted])
 
   // 任务从别的入口启动时，打开抽屉先同步一次最近状态
   useEffect(() => {
@@ -116,13 +131,10 @@ export default function IndustrySyncPanel({
     })
   }, [open, demo, loadCommand])
 
-  // 成功一次只通知父页刷新一次（父页刷新会更新 coverage，供「同步前 → 同步后」对比）
+  // 打开抽屉时从 last_job 接管一个已完成任务，也补一次父页刷新
   useEffect(() => {
-    if (job?.status === 'ok' && completedIdRef.current !== job.id) {
-      completedIdRef.current = job.id
-      onCompleted()
-    }
-  }, [job, onCompleted])
+    if (job?.status === 'ok') notifyCompleted(job.id)
+  }, [job, notifyCompleted])
 
   if (demo || !command) return null
 
