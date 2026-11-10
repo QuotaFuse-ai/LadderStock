@@ -223,7 +223,11 @@ def evaluate(
     in_bars = list(bars[:split])
     out_bars = list(bars[split:])
     cost_model = CostModel(
-        commission=config.commission, slippage=config.slippage, stamp_duty=config.stamp_duty
+        commission=config.commission,
+        slippage=config.slippage,
+        stamp_duty=config.stamp_duty,
+        commission_floor=config.commission_floor_yuan,
+        transfer_fee=config.transfer_fee,
     )
     in_match, in_metrics = _run_segment(
         in_bars,
@@ -296,7 +300,11 @@ def evaluate(
     tiers: list[CostTier] = []
     for rate in config.cost_tiers:
         tier_costs = CostModel(
-            commission=rate, slippage=config.slippage, stamp_duty=config.stamp_duty
+            commission=rate,
+            slippage=config.slippage,
+            stamp_duty=config.stamp_duty,
+            commission_floor=config.commission_floor_yuan,
+            transfer_fee=config.transfer_fee,
         )
         tier_match = Engine(
             strategy=strategy_factory(),

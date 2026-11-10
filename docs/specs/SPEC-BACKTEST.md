@@ -8,7 +8,7 @@
     `guard.py`（校验门）、`card.py`（运行卡渲染）、`config.py`（配置加载与覆盖）、
     `runner.py`（唯一入口：CLI 与 Web 共用）
   - CLI：`src/ladderstock/cli/backtest.py`（`ldst backtest run|list|show`，见 `docs/CLI.md` §M）
-  - HTTP：`src/ladderstock/web/backtest.py`（`/api/backtest/*`，只读）
+  - HTTP：`src/ladderstock/web/backtest.py`（`/api/backtest/*`：只读运行卡 + QUOT-535 触发面）
 - 配置：`config/backtest.yaml`（成本 / 校验门默认值）+ `config/schema/backtest.schema.json`（形状）
 - 测试：`tests/unit/backtest/`（A 股规则 / 无未来函数 / run_id 复现 / 成本三档 / 配置校验 / 运行卡契约）
 - 红线：不复制参考库代码；默认成本非 0；**不允许未来函数**；校验门失败必须标红
@@ -40,24 +40,33 @@
 
 ### 1.3 成本与参数（默认值在配置文件，不在代码常量）
 
-`config/backtest.yaml`：
+`config/backtest.yaml`（QUOT-535 起对接真实券商，单位写进字段名）：
 
 ```yaml
 costs:
-  commission: 0.00025       # 佣金（双边）
-  slippage: 0.001           # 滑点（买入 +、卖出 −）
-  stamp_duty: 0.001         # 印花税（仅卖出）
-  tiers: [0.0002, 0.0005, 0.001]   # 成本敏感性三档（只替换佣金率）
+  commission_rate_wan: 0.9        # 佣金率（万分之），双向
+  commission_floor_yuan: 0.01     # 单笔最低佣金（元）：5=不免五；0.01/1/0=免五或自定义起收
+  transfer_fee_wan: 0.1           # 过户费（万分之），双向（现行官方口径）
+  stamp_duty_wan: 5               # 印花税（万分之），仅卖出（2023-08-28 起千1减半）
+  slippage: 0.001                 # 滑点（千1）
+  tiers: [0.0002, 0.0005, 0.001]  # 成本敏感性三档（小数口径，只替换佣金率）
+  presets:                        # 用户券商三档（均不含过户费，过户费另加）
+    - {key: wan09_free5_001, label: 万0.9 免五 0.01 元起收, commission_rate_wan: 0.9,  commission_floor_yuan: 0.01}
+    - {key: wan085_free5_1,  label: 万0.85 免五 1 元起收,    commission_rate_wan: 0.85, commission_floor_yuan: 1}
+    - {key: wan065_min5,     label: 万0.65 不免五 5 元起收,  commission_rate_wan: 0.65, commission_floor_yuan: 5}
 gate:
   min_trades: 20            # 校验门：最小完整交易次数
   in_sample_ratio: 0.7      # 校验门：样本内占比（按时间顺序）
 ```
 
+- 单笔佣金 = `max(成交额 × commission_rate, commission_floor_yuan)`；买入成本再叠加过户费，
+  卖出成本再叠加过户费与印花税。印花税**只对卖出**、过户费**双边**。
 - **默认成本必须非 0**；佣金 / 滑点 / 印花税为 0 → 配置错误（退出码 2），不静默用默认值顶上。
-- CLI 旗标只做**覆盖**；运行卡 `config` 记「本次实际生效值」，`config_sources` 逐项记来源
-  （`yaml` / `cli` / `fallback`）。
-- 非法配置（负数、滑点 0、`in_sample_ratio` 不在 `(0,1)`、三档不升序或不足 3 档、
-  `min_trades` 非正整数、未知覆盖键、NaN/inf、bool 冒充数值）**一律报错**。
+- CLI / HTTP 覆盖只做**覆盖**；运行卡 `config` 记「本次实际生效值」，`config_sources` 逐项记来源
+  （`yaml` / `cli` / `fallback`）。旧小数口径键（`commission` / `stamp_duty`）仍可读，
+  按 `×10000` 换算为万分之口径，最低佣金与过户费记为 0（旧撮合口径）。
+- 非法配置（负数、滑点 0、`in_sample_ratio` 不在 `(0,1)`、三档不升序或不足 2 档、
+  `min_trades` 非正整数、未知覆盖键、NaN/inf、bool 冒充数值、presets 缺字段）**一律报错**。
 
 ## 2. 撮合（`match.py`）
 
@@ -65,8 +74,9 @@ gate:
 |---|---|
 | 信号 / 成交时点 | 信号在 `t` 收盘产生，**`t+1` 开盘价 ± 滑点**成交 |
 | 买入价 / 卖出价 | `open·(1+slippage)` / `open·(1−slippage)` |
-| 佣金 | 双边，`notional·commission` |
-| 印花税 | 仅卖出，`notional·stamp_duty` |
+| 佣金 | 双边，单笔 `max(notional·commission, commission_floor)` |
+| 过户费 | 双边，`notional·transfer_fee`（默认万 0.1） |
+| 印花税 | 仅卖出，`notional·stamp_duty`（默认万 5） |
 | 涨停买不进 | `round(open, 2) >= limit_up` → 当日买单拒绝 |
 | 跌停卖不出 | `round(open, 2) <= limit_down` → 当日卖单拒绝 |
 | 停牌跳过 | `volume <= 0` 当日不成交 |
@@ -109,7 +119,7 @@ HTML 页头与横幅标红；CLI 打印红字并以 **8** 退出。**不允许�
 - JSON 严格序列化（`allow_nan=False`），任何 inf / NaN 直接报错而不是写出坏文件。
 - 字段清单与类型见 `docs/CLI.md` §M 与运行卡 JSON 本体；前端据此只读渲染。
 
-## 6. HTTP（只读，`/api/backtest`）
+## 6. HTTP（`/api/backtest`）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -119,12 +129,27 @@ HTML 页头与横幅标红；CLI 打印红字并以 **8** 退出。**不允许�
 | GET | `/api/backtest/runs/{run_id}/export.json` | 下载 JSON |
 | GET | `/api/backtest/runs/{run_id}/export.md` | 下载 Markdown |
 | GET | `/api/backtest/runs/{run_id}/export.html` | 下载自包含 HTML（未过门标红） |
+| GET | `/api/backtest/strategies` | 策略清单 + `config_defaults` + `symbol_default`（QUOT-535） |
+| POST | `/api/backtest/run` | 提交回测，`202 {job_id, status:"queued"}`，异步执行（QUOT-535） |
+| GET | `/api/backtest/jobs/{job_id}` | `{status, run_id, gate_passed, exit_code}`（QUOT-535） |
 
-闸门同计算面：回环独占 + `Host` 白名单，非回环 / 坏 Host → 403；`run_id` 非法 → 400；
-不存在 → 404；产物损坏 → 500。写面只有本机 CLI，**不开放 POST**。
+- `strategies` 数据源是后端常量 `strategy.BUILTIN` + `load_config()`：策略 name / label / params
+  （key / label / type / default / min / max）与成本默认值（旧小数键 + 万分之键 + presets）
+  都由后端给出，前端不硬编码。
+- `run` 请求体：`{strategy, strategy_params, symbol, start, end, commission?, slippage?,
+  stamp_duty?, min_trades?, in_sample_ratio?, cost_tiers?}`，并兼容
+  `commission_rate_wan / commission_floor_yuan / transfer_fee_wan / stamp_duty_wan`。
+  执行走与 CLI 相同的 `run_backtest`（同 runner / guard / 运行卡落盘），不另写撮合逻辑。
+- 闸门同现有写面：回环独占 + `Host` 白名单 + 写方法来源证据（本机页面 `Origin` 或
+  `X-LDST-Client: 1`）；非回环 / 坏 `Host` / 坏 `Origin` → 403。
+- 参数非法 → **400** + `{error, message}`（未知策略 / 坏标的 / 坏日期 / 坏策略参数 / 坏成本）；
+  请求体形状不对 → 422；`run_id` 非法 → 400；不存在 → 404；产物损坏 / 配置不可读 → 500。
+- 参见 DEC-074：这是对 DEC-014「控制面写接口不接受参数」的单点例外——参数走结构化字段，
+  不拼 argv、不进 shell。
 
 ## 7. 已知边界（M1）
 
 - 单标的、日频；不做组合 / 仓位管理 / ATR 止损 / 有状态策略（M2）。
 - 基准用该标的买入持有（本机 `index_daily` 只有 000300，不编造上证指数）。
-- 成本敏感性只替换佣金率，滑点 / 印花税固定为配置值。
+- 成本敏感性只替换佣金率，最低佣金 / 过户费 / 滑点 / 印花税固定为配置值。
+- 成本只覆盖股票：过户费按万 0.1 双边、印花税按万 5 卖出单边；债券 / 基金 / 可转债不参与 M1。
