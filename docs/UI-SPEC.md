@@ -1,6 +1,6 @@
 # 看板信息架构与视觉规范（21 屏）
 
-- 版本：v1.20
+- 版本：v1.21
 - 日期：2026-11-10
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
@@ -34,6 +34,7 @@
 | v1.20 | 2026-11-10 | 首页卡级 ⟳（QUOT-521 / DEC-071，产品回退 QUOT-457/458「只留顶部一条刷新」）。A/C/D/E/F 五张取数卡的卡头右侧常显手动 ⟳（`CardRefreshButton`，走 `SectionCard` / `CardHeader` 的 `actions` 槽）：点击只重取本块（`BlockView.onRefresh`），有数据时静默替换不闪骨架，无数据时走整块加载；**休市也可补拍**。盘中 15s 轮询与节拍文案不变，顶栏「刷新全部」保留。只改视觉与刷新交互，不改数据口径 / 缺数口径 / 接口契约。§3.5 首屏五行与 §11.5 验收同步 | QUOT-521 |
 | v1.19 | 2026-11-06 | 「我的股票」三模块文档收口（QUOT-440；DEC-058 / 059 / 060 / 065 / 066）。**只改文档，不改代码 / 设计**。§0 第 11 屏由「我的持仓 `/positions`」改为「我的股票 `/my-stocks?tab=watch\|hold`」：一页两标签，自选为默认；旧 `/watchlist` → `?tab=watch`、`/positions` → `?tab=hold`，客户端 `replace` 重定向，不再单独挂屏。**屏数 20 → 21**：QUOT-435 交付提醒页 `/inbox`，新登记为第 21 屏（新增 §3.21 与 §11.21），§0 / §2 / §4.5 / §6 / §10 / §11 的屏数口径全部对齐。§3.11 重写为两标签：**3.11-A 自选**七列（名称 / 代码 / 现价 / 涨跌% / PE(TTM) / PB / 换手%，每列可排序；缺数 `—` + 单元格 `title` 原因；批量添加先预览后确认；点行渲染 K 线卡；移除 `aria-label` 含代码）；**3.11-B 持仓**改为 QUOT-434 实际落地的 `PortfolioPanel`——数量、成本、市值、盈亏、已实现、分红全部由 `GET /api/portfolio` 按流水重放推出，页面不重算，含成本法 `Segmented`、人民币合计、记一笔、旧仓迁移卡、问题流水横幅、收益 / 交易流水两子页。隐私遮罩改为**遮 数量 / 成本价 / 市值 / 浮动盈亏 / 已实现 / 分红，不遮 现价 与 盈亏%**；此前登记的「隐私模式未禁用排序」偏差已由 QUOT-434 收口（`sortable(masked, …)`，`tests/portfolio-panel.test.tsx:333`），本版删除该条。**剩余偏差按代码登记**：自选页无自动轮询、无页内搜索（仅挂载 / 手动 / 增删后取数）。**K 线卡**按实际 ECharts 配置登记：按需注册 Candlestick，蜡烛 + MA5/10/20/60 四条线 + 成交量副图（`xAxisIndex:1`）+ inside/slider 双 dataZoom，`zoomOnMouseWheel:'ctrl'`，高 420；数据位空值 `'-'`、文本空值 `—`，红涨绿跌。§7.1 补 6 个图表令牌深浅值。§3.21 提醒页只列 console / desktop 两条本机渠道与只读定时任务，不出现 webhook / 免打扰的空 UI。**未落地不提前写**：持仓「体检穿透」`/api/portfolio/xray`（QUOT-437）与「历史回放」`/api/portfolio/replay`（QUOT-438）接口与屏都不存在，`GET /api/events/timeline` 同样不存在（事件日历实读 `GET /api/events?month=&code=`），见 `SPEC-RESEARCH-PAGES` §8.2 缺口表。版本号说明：本单原定 v1.17，但 v1.17 / v1.18 已由 QUOT-457 / QUOT-421 占用且顶部版本行停在 v1.16（历史漂移），本版补齐为 v1.19。 |
 | v1.20 | 2026-11-07 | 顶栏服务状态灯 + 全局重启（QUOT-443 / DEC-063-platform-watchdog-and-health）：顶栏工具区**最左**新增 `PlatformStatusLight`（`lib/usePlatformHealth.ts`，2s 轮询独立看门狗 `5952` 的 `/platform/health`；生产直连 `http://127.0.0.1:5952`，开发走 Vite `/platform` 代理）。**三态 + 灰**：`ok` 绿、`degraded`（`db_ok=false`）黄、`offline` 红（含 `animate-pulse`）、未探测灰；**连续两次失败才转红**，单次抖动保持上一色，但看门狗明确回 `status=offline` 时立即转红。悬浮浮层显示状态 / 已运行 / 版本 / 数据库 / 检查时间；**重启按钮只在红灯渲染**（绿黄不占位），两步确认 → `POST /platform/restart` →「重启中」禁用 → 至多 90s 轮询 → 恢复后整页刷新，超时给出真实原因。`document.hidden` 暂停轮询，回前台立即补一拍。状态灯不读持仓 / 金额，浮层只含运行态字段。`PageShell` 离线横幅与 `SearchPanel` 的「先运行 `ldst run`」改为「看顶栏状态灯 → 点重启平台 → 仍不行查看看门狗日志」。§2 顶栏工具区与断点两行同步。版本号说明：v1.19 已被 QUOT-440 占用，本版顺延为 v1.20。证据：`frontend/tests/quot-443-platform-health.test.tsx`（三态、两拍才红、单次抖动保持绿、默认轮询间隔 2s（≤2.5s 断言）、可见性暂停 / 恢复、绿黄不渲染重启、红灯两步确认、浮层字段、超时文案）；`typecheck` / `test` / `build` 全绿。 |
+| v1.21 | 2026-11-10 | 研究方向目录分页与「只看可用」过滤（QUOT-530，决策 DEC-073）：`/skills` 每页 10 条、页码进 `?page=`、切分组 / 开关过滤回第 1 页，底部分页条 sticky；「只看可用」= `ready` / `partial` / `existing_page`（`lib/skills.ts` 的 `USABLE_CATALOG_STATUSES`）。§6.1 登记 **C-23 `Pagination`**（`components/ui/Pagination.tsx`，受控、无请求；当前页以实心底色 + `font-semibold` + `aria-current="page"` 三重表达，不只靠颜色）。目录数据链路、六状态徽标与既有跳转零变更。证据：`frontend/tests/skills-pagination.test.tsx` 11 例 + 1440×900 实机 26/26 断言，见 `docs/tasks/QUOT-530/README.md`。 |
 
 
 ## 0. 范围与非目标
@@ -764,6 +765,7 @@ QUOT-435 落地（DEC-058）。整屏在 `frontend/src/screens/my-stocks/InboxSc
 | C-20 / CH-03 | `Sparkline` `HBarList` | `ui/MiniChart.tsx:4` | 迷你趋势与横向条（值带 `.ldst-num`） | 周度、持仓、市场、研究 |
 | C-21 | `HomeSearchTrigger`（已实装） | `components/search/HomeSearchTrigger.tsx` | 首页搜索入口：纯展示 + `onOpen`，不请求、不禁用（离线也可点） | 首页（§3.20） |
 | C-22 | `SearchPanel`（已实装，含内部件 `SearchGroupView` 等；取数与判定在 `screens/home/useHomeSearch.ts`） | `components/search/SearchPanel.tsx` | `role=dialog` 搜索面板：输入 + 三组结果 + 四态；只吃 props 与 `onSelect(href)`，复用 C-12 `Badge` / C-17 `EmptyState` / C-18 `SkeletonRows` / C-19 `Banner` / `SourceStatusBadge` | 首页（§3.20） |
+| C-23 | `Pagination`（受控，无请求） | `ui/Pagination.tsx:65` | 页码按钮组：上一页 / 页码 / 下一页 + 「第 X / Y 页 · 共 N 条 · 每页 M 条」；≤7 页全量、更多页首末页 + 当前页 ±2 + `…`；当前页实心底色 + `font-semibold` + `aria-current="page"`，翻页按钮 `disabled` 表达边界 | 研究方向目录（`/skills`） |
 | CH-01/CH-02 | `LineChart` `BarChart` | `charts/Chart.tsx:10,151` | uPlot；色值必须来自 `chartPalette()`/`cssVar()` | 市场（情绪折线 + 梯队柱） |
 | — | `AiErrorNotice` | `kit/AiErrorNotice.tsx` | §5.4 五类 AI 错误 | 复盘、周度 |
 | — | `PageHeader` `DemoStateBadge` `OfflineBanner` `ScreenSkeleton` | `PageShell.tsx:24,47,56,80` | 页壳与整屏态 | 全 21 屏 |

@@ -64,6 +64,8 @@ DOCUMENTED_GROUPS = {
     "events",
     # QUOT-443 增量：独立看门狗（5952），见 docs/CLI.md §J
     "watchdog",
+    # QUOT-523 增量：单入口 supervisor，见 docs/CLI.md §L
+    "supervisor",
     "mcp",
     "config",
     "schedule",

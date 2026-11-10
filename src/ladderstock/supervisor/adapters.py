@@ -10,9 +10,12 @@
 | 4 | senate | 8765 MCP / 8786 WebUI |
 | 5 | financecoffer | 8100（WSL） |
 | 6 | proxyfleet | 8788 控制台 / 8789 网关 |
+| 7 | watch | 5952 看门狗（QUOT-523 收编） |
 
-启动按升序，停止按反向。**本模块不写任何模块的具体启动命令**——那是
-482-B 的 `adapters.py`；引擎只依赖下面的 `ModuleAdapter` 协议。
+启动按升序，停止按反向。`watch` 排最后：它探活的是看板 5950 本身，必须等
+被守护的模块都就位后再起；停止时它第一个停，避免全停过程中触发「看板挂了」的重启。
+**本模块不写任何模块的具体启动命令**——那是 482-B 的 `module_adapters.py`；引擎只
+依赖下面的 `ModuleAdapter` 协议。
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from ladderstock.supervisor.modules import MODULE_PORTS
 
-#: 启动顺序（QUOT-482 派单正文）；`stop_all` 严格取反向。
+#: 启动顺序（QUOT-482 派单正文 + QUOT-523 追加 watch）；`stop_all` 严格取反向。
 MODULE_ORDER: tuple[str, ...] = (
     "tickhub",
     "tickhub_us",
@@ -30,6 +33,7 @@ MODULE_ORDER: tuple[str, ...] = (
     "senate",
     "financecoffer",
     "proxyfleet",
+    "watch",
 )
 
 #: 按需模块（QUOT-506）：在册、实现同一 `ModuleAdapter` 协议，但**不在** `MODULE_ORDER`。

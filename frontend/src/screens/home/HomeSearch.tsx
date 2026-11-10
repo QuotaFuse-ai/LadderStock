@@ -6,6 +6,7 @@ import { Card, CardBody } from '../../components/ui'
 import { HomeSearchTrigger } from '../../components/search/HomeSearchTrigger'
 import { GUIDE_ROWS, SearchPanel } from '../../components/search/SearchPanel'
 import { HomeResearchChat } from './HomeResearchChat'
+import { HomeResearchShortcuts } from './HomeResearchShortcuts'
 import { useHomeSearch } from './useHomeSearch'
 import type { HomeAssistantBundle } from './homeAssistant'
 
@@ -15,6 +16,9 @@ import type { HomeAssistantBundle } from './homeAssistant'
  * 上半是对话：起步问题 / 多行输入 / Enter 发送 / 停止 / 清空 / 「本轮来源」，
  * 通道路由与降级复用 QUOT-454 的 `POST /api/research/{scope}/assistant` 与
  * `describeAssistantError`（见 `HomeResearchChat.tsx`）。
+ *
+ * 对话下方是「研究工具快捷入口」（QUOT-531）：从 `content/skills/catalog.json`
+ * 按组随机抽 4 条可点条目，点一下直达 `/skills/:id` 或已承载页面；与起步问题并存。
  *
  * 下半保留**原有聚合搜索**，一个能力都没少：`useHomeSearch`（状态机）/
  * `SearchPanel`（呈现件）/ `lib/searchCore.ts` `searchIntent.ts` `searchRoutes.ts`
@@ -68,6 +72,8 @@ export function HomeSearch({ assistant, date }: HomeSearchProps) {
     <Card>
       <CardBody className="flex flex-col gap-4">
         <HomeResearchChat assistant={assistant} date={date} />
+
+        <HomeResearchShortcuts />
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
           <div className="flex items-center gap-2 text-caption text-text-secondary">

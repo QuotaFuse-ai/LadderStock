@@ -29,14 +29,39 @@ from ladderstock.supervisor.module_adapters import (
     CommandResult,
     FinanceCofferAdapter,
     PortEvidence,
+    PreflightReport,
     ProcessSnapshot,
     ProxyFleetAdapter,
     ProxyPoolAdapter,
     ProxyPoolConfig,
     ProxyPoolMapping,
     build_default_adapters,
+    launcher_entry,
     load_env_file,
+    load_proxypool_config,
+    preflight,
 )
+
+_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_host_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`install_root()` / `launcher_entry()` 会读真实环境：隔离掉本机变量与 cwd。
+
+    否则开发机上恰好配好的 `LDST_LAUNCHER` / `LDST_INSTALL_ROOT` 会让断言时过时不过。
+    """
+    for key in (
+        "LDST_INSTALL_ROOT",
+        "LDST_PEER_ROOT",
+        "LDST_LAUNCHER",
+        "LDST_HOST_CONFIG",
+        "LDST_TICKHUB_ENV_FILES",
+        "LDST_PROXYFLEET_TASK",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(_ROOT)
+
 
 # --------------------------------------------------------------------------- #
 # 假宿主
@@ -60,7 +85,7 @@ class FakeHost:
     def __init__(self) -> None:
         self.port_owner: dict[int, int] = {}
         self.procs: dict[int, ProcessSnapshot] = {}
-        self.spawns: list[tuple[tuple[str, ...], Path]] = []
+        self.spawns: list[tuple[tuple[str, ...], Path, dict[str, str]]] = []
         self.terminated: list[tuple[int, bool]] = []
         self.runs: list[tuple[str, ...]] = []
         self.responses: list[tuple[str, CommandResult]] = []
@@ -145,7 +170,7 @@ class FakeHost:
 
     def spawn(self, argv: Any, *, cwd: Path, env: Any, log_path: Path) -> int:
         argv_tuple = tuple(str(part) for part in argv)
-        self.spawns.append((argv_tuple, cwd))
+        self.spawns.append((argv_tuple, cwd, dict(env)))
         port: int | None = None
         for flag in ("--port", "--listen-port"):
             if flag in argv_tuple:
@@ -286,7 +311,7 @@ def test_start_spawns_every_face_with_absolute_venv_entry(tmp_path: Path) -> Non
     wire = _wire(adapters)
     spawned = wire.start()
     assert len(host.spawns) == 2
-    for argv, _cwd in host.spawns:
+    for argv, _cwd, _env in host.spawns:
         assert argv[0].endswith("qfw.exe")
         assert Path(argv[0]).is_absolute()
     assert spawned.parent_pid is not None
@@ -332,7 +357,7 @@ def test_tickhub_starts_mcp_and_admin_as_two_faces(tmp_path: Path) -> None:
     host, adapters = _adapters(tmp_path)
     tickhub = cast(BaseAdapter, adapters["tickhub"])
     tickhub.start()
-    commands = [argv for argv, _cwd in host.spawns]
+    commands = [argv for argv, _cwd, _env in host.spawns]
     assert any("start-all" in argv for argv in commands)
     assert any("admin" in argv and "serve" in argv for argv in commands)
     assert len(commands) == 2
@@ -363,9 +388,7 @@ def test_financecoffer_probe_needs_both_windows_port_and_wsl_api_container(tmp_p
     assert fc.probe() is True
 
     # 端口还在转发（wslhost 残留），但 WSL 内没有 api 容器 → 失败关闭
-    host.responses = [
-        ("com.docker.compose.service=api", CommandResult(returncode=0, stdout=""))
-    ]
+    host.responses = [("com.docker.compose.service=api", CommandResult(returncode=0, stdout=""))]
     host.port_owner[8100] = host.add_process(("wslhost.exe",), name="wslhost.exe")
     fc._cache.clear()
     fc._fc_cache = (0.0, "")
@@ -738,3 +761,239 @@ def test_load_env_file_ignores_comments_and_strips_quotes(tmp_path: Path) -> Non
     path = tmp_path / "peer.env"
     path.write_text("# comment\nA=1\nB='two words'\n\nC=\"three\"\n", encoding="utf-8")
     assert load_env_file(path) == {"A": "1", "B": "two words", "C": "three"}
+
+
+# --------------------------------------------------------------------------- #
+# watch 看门狗（QUOT-523）
+# --------------------------------------------------------------------------- #
+
+
+def _watch_launcher(tmp_path: Path) -> tuple[str, ...]:
+    exe = tmp_path / "launcher" / "ldst.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    return (str(exe),)
+
+
+def _build_watch(host: FakeHost, tmp_path: Path, env: dict[str, str]) -> BaseAdapter:
+    built = build_default_adapters(
+        host=host, env=env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+    )
+    return cast(BaseAdapter, built["watch"])
+
+
+def test_watch_is_a_supervised_module_on_5952(tmp_path: Path) -> None:
+    assert "watch" in MODULE_ORDER
+    assert MODULE_ORDER[-1] == "watch"
+    assert MODULE_PORTS["watch"] == (5952,)
+    _host, adapters = _adapters(tmp_path)
+    assert adapters["watch"].ports == (5952,)
+
+
+def test_watch_start_spawns_the_watchdog_that_spawns_the_panel(tmp_path: Path) -> None:
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    launcher = _watch_launcher(tmp_path)
+    env["LDST_LAUNCHER"] = launcher[0]
+
+    spawned = _build_watch(host, tmp_path, env).start()
+    assert len(host.spawns) == 1
+    argv, cwd, child_env = host.spawns[0]
+    # `ldst` 是入口点、不吃 `-m`：启动器后必须直接跟子命令（QUOT-523 实测回归）
+    assert argv[:5] == (launcher[0], "watchdog", "--port", "5952", "--spawn-cmd")
+    assert cwd == _ROOT
+    assert spawned.cmdline == argv
+    # 看板重启走同启动器的 `run --port 5950`，不再经 schtasks
+    assert json.loads(argv[-1]) == [launcher[0], "run", "--port", "5950"]
+    # 托管标记落到子进程环境（进程级开关，不依赖继承自启动它的外壳）
+    assert child_env["LDST_WATCHDOG_SUPERVISED"] == "1"
+
+
+def test_watch_probe_fails_closed_for_a_foreign_5952_listener(tmp_path: Path) -> None:
+    host, adapters = _adapters(tmp_path)
+    host.add_process(("other-watchdog.exe", "--port", "5952"), ports=(5952,))
+    watch = cast(BaseAdapter, adapters["watch"])
+    assert watch.probe() is False
+    with pytest.raises(SupervisorError, match="5952"):
+        watch.start()
+
+
+def test_watch_probe_requires_every_match_token(tmp_path: Path) -> None:
+    host, adapters = _adapters(tmp_path)
+    watch = cast(BaseAdapter, adapters["watch"])
+    # 别的 CLI 的 watchdog 子命令不算本模块
+    host.add_process(
+        ("python.exe", "-m", "someother.cli.main", "watchdog", "--port", "5952"),
+        ports=(5952,),
+    )
+    assert watch.probe() is False
+    host.port_owner.clear()
+    host.procs.clear()
+    # ldst.exe 形态：监听者的 cmdline 没有 `-m ladderstock.cli.main`，走备用令牌组
+    host.add_process(
+        (
+            r"D:\LadderStock\.venv\Scripts\python.exe",
+            r"D:\LadderStock\.venv\Scripts\ldst.exe",
+            "watchdog",
+            "--port",
+            "5952",
+        ),
+        ports=(5952,),
+    )
+    assert watch.probe() is True
+    host.port_owner.clear()
+    host.procs.clear()
+    host.add_process(
+        ("python.exe", "-m", "ladderstock.cli.main", "watchdog", "--port", "5952"),
+        ports=(5952,),
+    )
+    assert watch.probe() is True
+
+
+def test_launcher_entry_prefers_env_then_venv_next_to_install_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    explicit = tmp_path / "explicit" / "ldst.exe"
+    assert launcher_entry({"LDST_LAUNCHER": str(explicit)}) == (str(explicit),)
+
+    root = tmp_path / "install"
+    venv_exe = root / "LadderStock" / ".venv" / "Scripts" / "ldst.exe"
+    venv_exe.parent.mkdir(parents=True)
+    venv_exe.write_bytes(b"")
+    monkeypatch.setenv("LDST_INSTALL_ROOT", str(root))
+    assert launcher_entry({}) == (str(venv_exe),)
+
+    # 找不到 venv 启动器就退回当前解释器（源码树形态：python -m ... 等价）
+    monkeypatch.setenv("LDST_INSTALL_ROOT", str(tmp_path / "empty"))
+    assert launcher_entry({}) == (sys.executable, "-m", "ladderstock.cli.main")
+
+    # 显式 LDST_LAUNCHER 是 ldst 入口点：原样使用，不追加 -m
+    assert launcher_entry({"LDST_LAUNCHER": str(explicit)}) == (str(explicit),)
+
+
+# --------------------------------------------------------------------------- #
+# 启动前检查：bundle 相对（QUOT-523）
+# --------------------------------------------------------------------------- #
+
+
+def _item(report: PreflightReport, name: str) -> Any:
+    return next(item for item in report.items if item.module == name)
+
+
+def test_preflight_reports_peers_that_miss_their_entry_files(tmp_path: Path) -> None:
+    env = dict(_make_peer_dirs(tmp_path))
+    empty = tmp_path / "no-such-peer"
+    env["LDST_PEER_DIR_WIRE"] = str(empty)
+    (tmp_path / "peers" / "financecoffer" / "deploy").mkdir(parents=True)
+
+    report = preflight(env)
+    assert _item(report, "tickhub").ok is True
+    wire = _item(report, "wire")
+    assert wire.ok is False
+    assert str(empty / ".venv" / "Scripts" / "qfw.exe") in wire.detail
+    assert report.ok is False
+    assert {item.module for item in report.failures()} == {"wire"}
+    assert "[FAIL] wire" in report.describe()
+
+
+def test_preflight_financecoffer_needs_the_wsl_compose_dir(tmp_path: Path) -> None:
+    env = dict(_make_peer_dirs(tmp_path))
+    assert _item(preflight(env), "financecoffer").ok is False
+
+    (tmp_path / "peers" / "financecoffer" / "deploy").mkdir(parents=True)
+    assert _item(preflight(env), "financecoffer").ok is True
+
+
+def test_preflight_watch_needs_a_launcher_and_reports_both_ports(tmp_path: Path) -> None:
+    env = dict(_make_peer_dirs(tmp_path))
+    env["LDST_LAUNCHER"] = _watch_launcher(tmp_path)[0]
+
+    watch = _item(preflight(env), "watch")
+    assert watch.ok is True
+    assert "5952" in watch.detail and "5950" in watch.detail
+    assert "LDST_LAUNCHER" in watch.detail
+
+    env["LDST_LAUNCHER"] = str(tmp_path / "missing" / "ldst.exe")
+    watch = _item(preflight(env), "watch")
+    assert watch.ok is False
+    assert "不存在" in watch.detail
+
+
+def test_preflight_proxyfleet_reports_the_scheduled_task_only(tmp_path: Path) -> None:
+    env = dict(_make_peer_dirs(tmp_path))
+    env["LDST_PROXYFLEET_TASK"] = "ProxyFleet-Canary"
+    item = _item(preflight(env), "proxyfleet")
+    assert item.ok is True
+    assert "ProxyFleet-Canary" in item.detail
+    assert item.paths == ()
+
+
+def test_preflight_leaves_proxypool_out_of_the_startup_path(tmp_path: Path) -> None:
+    env = dict(_make_peer_dirs(tmp_path))
+    assert all(item.module != "proxypool" for item in preflight(env).items)
+    assert all(item.module != "proxypool" for item in preflight(env, include_on_demand=False).items)
+
+
+def test_preflight_include_on_demand_reports_the_proxypool_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "LdstHostConfig.psd1"
+    config_path.write_text("", encoding="utf-8")
+    env = dict(_make_peer_dirs(tmp_path))
+    env["LDST_HOST_CONFIG"] = str(config_path)
+
+    report = preflight(env, include_on_demand=True)
+    item = _item(report, "proxypool")
+    # 隔离环境下宿主 pivot 读不到 psd1（真实 powershell）：报告「未启用或无映射」，不判定失败
+    assert item.ok is True
+    assert str(config_path) in item.detail
+    assert item.paths == (config_path,)
+
+
+def test_preflight_round_trips_the_psd1_through_the_proxypool_loader(tmp_path: Path) -> None:
+    host = FakeHost()
+    host.respond(
+        "Import-PowerShellDataFile",
+        CommandResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "Name": "proxypool",
+                    "Enabled": False,
+                    "AutoStart": False,
+                    "ListenHost": "127.0.0.1",
+                    "Mappings": [
+                        {
+                            "Id": "multica-api",
+                            "Listen": 18080,
+                            "UpstreamHost": "127.0.0.1",
+                            "UpstreamPort": 8080,
+                            "Enabled": True,
+                            "Owner": "ai",
+                        }
+                    ],
+                }
+            ),
+        ),
+    )
+    config_path = tmp_path / "LdstHostConfig.psd1"
+    config_path.write_text("", encoding="utf-8")
+    config = load_proxypool_config(host=host, path=config_path)
+    assert [mapping.mapping_id for mapping in config.enabled_mappings()] == ["multica-api"]
+
+
+def test_preflight_never_falls_back_to_hardcoded_workplace_paths(tmp_path: Path) -> None:
+    root = tmp_path / "install"
+    env = {"LDST_INSTALL_ROOT": str(root), "LDST_LAUNCHER": sys.executable}
+    report = preflight(env)
+
+    assert report.install_root == root
+    assert report.ok is False
+    for item in report.items:
+        for path in item.paths:
+            if path == Path(sys.executable):
+                continue  # 退回当前解释器：那是解释器自己的位置，不是 peer 路径
+            text = str(path)
+            assert "workplace" not in text.lower()
+            assert "QuotaFuseModules" not in text
+            assert text.startswith(str(root))
+    # 各 peer 缺的是安装根下的同级目录，而不是某个旧部署路径
+    assert str(root / "TickHub-CN") in _item(report, "tickhub").detail
