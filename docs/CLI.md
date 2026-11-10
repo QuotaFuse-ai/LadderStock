@@ -81,6 +81,7 @@
 | **QUOT-443 增量（1，非 P0 基线）** | `watchdog` |
 | **QUOT-500 增量（3，非 P0 基线）** | `backtest run`、`backtest list`、`backtest show` |
 | **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
+| **QUOT-533 增量（1，非 P0 基线）** | `sync industry`（行业缓存真实联网补齐，DEC-074） |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -145,6 +146,25 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 **同库串行（QUOT-234）**：`ldst sync` 一进来先拿 `data/market.duckdb.lock` 这把进程级写锁，
 第二个 sync 排队而不是把第一个的 DuckDB 文件锁顶成崩溃。等待上限 `LDST_DB_LOCK_TIMEOUT`
 （秒，默认 30）；超时 **10**，一次取数都不发。`sync status` 只读水位文件，不参与排队。
+
+## B′. 行业缓存一键补齐（QUOT-533 增量，1）
+
+> **31 条 P0 基线之外的新增命令**。口径与取舍见 `docs/decisions/DEC-074-industry-sync-on-demand.md`。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 45 | `ldst sync industry` | 对 `/industry` 页面读的六个数据集（`SNAPSHOT_DATASETS`）做**真实联网同步**，补齐懒缓存（DEC-018）覆盖 | `--codes`（覆盖行业锚点池）、`--full`、`--output` | 与 `ldst sync` 同口径：0 全成、8 部分失败、4 一个都没成、3 配置/范围错误、2 超过代码池上限、10 库锁超时 |
+
+- **与只读重算的区别**：`ldst industry list` 只读本机缓存、零外呼（控制面 key `industry`，
+  文案「重算行业快照」）；`ldst sync industry` 会真正发起上游请求（key `industry-sync`，
+  文案「同步补齐行业数据」）。同一路由两条命令的文案与 `note` 由后端下发，前端不自己猜。
+- **范围**：六个数据集 = `sw_industry_map` / `finance_indicators` / `valuation_history` /
+  `fund_flow` / `industry_fund_flow` / `daily_k`；代码池 = `config/industry.yaml` 已启用
+  行业的锚点股（`--codes` 可覆盖），**不做全市场拉取**，单数据集上限 `MAX_POOL_CODES=100`。
+- **成本明示**：stderr 与载荷 `industry_scope`（`code_pool` / `estimated_requests` /
+  `full_market=false` / `note`）同时给出「成本非 0」与本次最多多少次上游请求。
+- **同步语义**：水位增量、`(code, trade_date)` 幂等、QFSD-7001 退避（DEC-048）、同库写锁
+  （QUOT-234）与 `ldst sync` 完全同一条路径；`config/sync.yaml` 的懒缓存默认池不变。
 
 ## C. 盘中、提醒与交易日志（7）
 
@@ -375,7 +395,7 @@ ldst position list --output json                         # realized.total_pnl（
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
-| 51 | `ldst backtest run` | 跑一次回测并落盘运行卡（JSON / Markdown / HTML）：撮合信号 t 收盘 → t+1 开盘 ± 滑点成交、佣金双边、印花税卖出单边、T+1 / 涨停买不进 / 跌停卖不出 / 停牌跳过 | `--strategy ma_cross\|momentum\|breakout`、`--symbol`、`--from` / `--to`、`--commission` / `--slippage` / `--stamp-duty`、`--min-trades`、`--in-sample-ratio`、`--cost-tiers`、`--initial-cash`、`--config`、策略参数 `--short-window` / `--long-window` / `--lookback` / `--threshold`、`--output` | 校验门通过 **0**；校验门未通过 **8**（运行卡与页面标红，仍写出产物）；参数 / 配置非法 **2**；本机无历史库或库不可用 **4** |
+| 51 | `ldst backtest run` | 跑一次回测并落盘运行卡（JSON / Markdown / HTML）：撮合信号 t 收盘 → t+1 开盘 ± 滑点成交、佣金双边且单笔取 max(额×率, 最低佣金)、过户费双边、印花税卖出单边、T+1 / 涨停买不进 / 跌停卖不出 / 停牌跳过 | `--strategy ma_cross\|momentum\|breakout`、`--symbol`、`--from` / `--to`、`--commission` / `--slippage` / `--stamp-duty`、`--min-trades`、`--in-sample-ratio`、`--cost-tiers`、`--initial-cash`、`--config`、策略参数 `--short-window` / `--long-window` / `--lookback` / `--threshold`、`--output` | 校验门通过 **0**；校验门未通过 **8**（运行卡与页面标红，仍写出产物）；参数 / 配置非法 **2**；本机无历史库或库不可用 **4** |
 | 52 | `ldst backtest list` | 列出本机已落盘的运行卡摘要（`run_id` / 策略 / 区间 / 校验门结论，新的在前，只读目录不重算） | `--limit 20`、`--output` | 始终 **0**（空目录也出结构化空列表） |
 | 53 | `ldst backtest show <run_id>` | 按 `run_id` 回读已落盘运行卡摘要（不重算指标） | `run_id`（`bt_[0-9a-f]{8}`）、`--output` | 存在 **0**；`run_id` 不合法 **2**；运行卡不存在 **6** |
 
@@ -384,7 +404,7 @@ ldst position list --output json                         # realized.total_pnl（
 - `run_id = "bt_" + sha256(canonical_params(参数) + "\x1f" + 数据指纹)[:8]`；同参数 + 同数据指纹 → 同 `run_id`、同运行卡（仅 `generated_at` 不同），重跑覆盖同一组产物。
 - 每项指标调用 calc 层算，`metrics_calc_ids` 逐指标记 `calc_id`（11 项），另有 `calc_ids.run_card / data / gate / benchmark`。
 - 校验门三项：最小完整交易次数、样本外收益 > 0（按时间顺序切分）、三档成本敏感性（只替换佣金率重跑）。任一项失败 → `gate.passed=false`，Markdown / HTML 置顶中文红标。
-- HTTP 只读端点（`ldst run` 托管，前缀 `/api/backtest`）：`GET /runs?limit=`、`GET /latest`、`GET /runs/{run_id}`、`GET /runs/{run_id}/export.{json,md,html}`；全部 GET，写面只有本机 CLI。非回环或 `Host` 不在白名单 → **403**，`run_id` 非法 → **400**，不存在 → **404**，产物损坏 → **500**。前端只读产物，不重算指标。
+- HTTP 端点（`ldst run` 托管，前缀 `/api/backtest`，QUOT-535）：只读 `GET /runs?limit=`、`GET /latest`、`GET /runs/{run_id}`、`GET /runs/{run_id}/export.{json,md,html}`；触发面 `GET /strategies`（策略清单 + 成本默认值）、`POST /run`（异步，202 + job_id）、`GET /jobs/{job_id}`（`status/run_id/gate_passed/exit_code`）。写面走与本机 CLI 相同的 `run_backtest`，不另写撮合逻辑；写请求需回环 + 合法 `Host` + 来源证据（同源 `Origin` 或 `X-LDST-Client: 1`），否则 **403**；参数非法 **400** + 结构化错误，请求体形状错 **422**，`run_id` 非法 **400**，不存在 **404**，产物损坏 / 配置不可读 **500**。前端只读产物，不重算指标（DEC-074）。
 
 ## F. 全局约定
 

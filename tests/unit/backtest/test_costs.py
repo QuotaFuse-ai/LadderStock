@@ -61,12 +61,132 @@ def test_slippage_moves_price_against_you() -> None:
 
 
 def test_default_rates_match_spec_units() -> None:
-    """口径钉子：默认佣金万 2.5、滑点千 1、印花税千 1；档位万2 / 万5 / 千1。"""
+    """口径钉子：默认佣金万 0.9、过户费万 0.1、印花税万 5（QUOT-535 真实券商口径）。
+
+    最低佣金 0.01 元 = 免五；档位仍是万2 / 万5 / 千1 的压力档（小数口径不变）。
+    """
     cfg = load_config(None)
-    assert cfg.commission == pytest.approx(0.00025)
+    assert cfg.commission == pytest.approx(0.00009)
+    assert cfg.commission_rate_wan == pytest.approx(0.9)
+    assert cfg.commission_floor_yuan == pytest.approx(0.01)
+    assert cfg.transfer_fee == pytest.approx(0.00001)
+    assert cfg.transfer_fee_wan == pytest.approx(0.1)
+    assert cfg.stamp_duty == pytest.approx(0.0005)
+    assert cfg.stamp_duty_wan == pytest.approx(5.0)
     assert cfg.slippage == pytest.approx(0.001)
-    assert cfg.stamp_duty == pytest.approx(0.001)
     assert cfg.cost_tiers == (pytest.approx(0.0002), pytest.approx(0.0005), pytest.approx(0.001))
+    # 三档券商预设：万0.9 免五0.01 / 万0.85 免五1 / 万0.65 不免五5
+    assert [(p.commission_rate_wan, p.commission_floor_yuan) for p in cfg.presets] == [
+        (pytest.approx(0.9), pytest.approx(0.01)),
+        (pytest.approx(0.85), pytest.approx(1.0)),
+        (pytest.approx(0.65), pytest.approx(5.0)),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# 1b. 真实佣金金样例：单笔 max(额×率, 下限) + 过户费双边 + 印花税单边
+# --------------------------------------------------------------------------- #
+
+def test_commission_floor_and_fees_gold_sample() -> None:
+    """金样例（手算）：成交额 10,000，万0.9 + 最低 5 元 + 过户费万0.1 + 印花税万5。
+
+    买入：max(10000×0.00009=0.9, 5) = 5.0，过户费 0.1 → 5.1
+    卖出：5.0 + 过户费 0.1 + 印花税 10000×0.0005=5.0 → 10.1
+    """
+    costs = CostModel(
+        commission=0.00009,
+        slippage=0.0,
+        stamp_duty=0.0005,
+        commission_floor=5.0,
+        transfer_fee=0.00001,
+    )
+    assert costs.commission_on(10_000.0) == pytest.approx(5.0)
+    assert costs.buy_cost(10_000.0) == pytest.approx(5.1)
+    assert costs.sell_cost(10_000.0) == pytest.approx(10.1)
+
+
+def test_commission_floor_boundary_above_and_below() -> None:
+    """门槛两侧：成交额×率超过下限时按下限、低于下限时按最低收费。"""
+    costs = CostModel(
+        commission=0.00009,
+        slippage=0.0,
+        stamp_duty=0.0005,
+        commission_floor=5.0,
+        transfer_fee=0.00001,
+    )
+    # 1,000,000 × 万0.9 = 90 > 5 → 90；过户费 10
+    assert costs.commission_on(1_000_000.0) == pytest.approx(90.0)
+    assert costs.buy_cost(1_000_000.0) == pytest.approx(100.0)
+    # 10,000 × 万0.9 = 0.9 < 5 → 5；过户费 0.1
+    assert costs.commission_on(10_000.0) == pytest.approx(5.0)
+    # 免五档：万0.9 + 0.01 起收，10,000 → max(0.9, 0.01) = 0.9
+    free_five = CostModel(
+        commission=0.00009,
+        slippage=0.0,
+        stamp_duty=0.0005,
+        commission_floor=0.01,
+        transfer_fee=0.00001,
+    )
+    assert free_five.commission_on(10_000.0) == pytest.approx(0.9)
+    assert free_five.commission_on(50.0) == pytest.approx(0.01)
+    # 零成交额不收费（不能凭空收一笔最低佣金）
+    assert costs.commission_on(0.0) == 0.0
+    assert costs.buy_cost(0.0) == 0.0
+
+
+def test_three_broker_presets_gold_sample() -> None:
+    """三档预设同一笔 10,000 元成交的手算结果（过户费万0.1 另加，印花税万5 卖出）。"""
+    profiles = (
+        (0.00009, 0.01),  # 万0.9 免五 0.01 起收
+        (0.000085, 1.0),  # 万0.85 免五 1 元起收
+        (0.000065, 5.0),  # 万0.65 不免五 5 元起收
+    )
+    expected_buy = (0.9 + 0.1, 1.0 + 0.1, 5.0 + 0.1)
+    expected_sell = (0.9 + 0.1 + 5.0, 1.0 + 0.1 + 5.0, 5.0 + 0.1 + 5.0)
+    for (rate, floor), buy, sell in zip(profiles, expected_buy, expected_sell, strict=True):
+        costs = CostModel(
+            commission=rate,
+            slippage=0.0,
+            stamp_duty=0.0005,
+            commission_floor=floor,
+            transfer_fee=0.00001,
+        )
+        assert costs.buy_cost(10_000.0) == pytest.approx(buy)
+        assert costs.sell_cost(10_000.0) == pytest.approx(sell)
+
+
+def test_transfer_fee_is_double_sided_and_stamp_duty_single_sided() -> None:
+    costs = CostModel(
+        commission=0.0,
+        slippage=0.0,
+        stamp_duty=0.0005,
+        commission_floor=0.0,
+        transfer_fee=0.00001,
+    )
+    assert costs.buy_cost(100_000.0) == pytest.approx(1.0)
+    assert costs.sell_cost(100_000.0) == pytest.approx(1.0 + 50.0)
+
+
+def test_buy_sizing_never_overspends_with_floor(tmp_path: Path) -> None:
+    """最低佣金让「成交额 + 费用」不再是直线：撮合层买不进就不能让现金变负。"""
+    bars = [
+        flat_bar("2025-01-02", 10.0),
+        flat_bar("2025-01-03", 10.0),
+        flat_bar("2025-01-06", 10.0),
+    ]
+    # 一手 100 股 = 1000 元，佣金 max(0.09, 5)=5 + 过户费 0.01 → 1005.01 > 1000 → 买不进
+    costs = CostModel(
+        commission=0.00009,
+        slippage=0.0,
+        stamp_duty=0.0005,
+        commission_floor=5.0,
+        transfer_fee=0.00001,
+    )
+    strategy = Scripted({"2025-01-02": 1.0})
+    result = Engine(strategy=strategy, costs=costs, initial_cash=1_000.0, limit_pct=0.10).run(bars)
+    assert result.trades == []
+    assert result.final_equity == pytest.approx(1_000.0)
+    assert all(row.shares_after == 0 for row in result.log)
 
 
 # --------------------------------------------------------------------------- #

@@ -37,6 +37,29 @@ gate:
   in_sample_ratio: 0.7
 """
 
+#: QUOT-535 真实券商写法（万分之口径）
+NEW_YAML = """
+costs:
+  commission_rate_wan: 0.9
+  commission_floor_yuan: 0.01
+  transfer_fee_wan: 0.1
+  stamp_duty_wan: 5
+  slippage: 0.001
+  tiers: [0.0002, 0.0005, 0.001]
+  presets:
+    - key: wan09_free5_001
+      label: 万0.9 免五 0.01 元起收
+      commission_rate_wan: 0.9
+      commission_floor_yuan: 0.01
+    - key: wan065_min5
+      label: 万0.65 不免五 5 元起收
+      commission_rate_wan: 0.65
+      commission_floor_yuan: 5
+gate:
+  min_trades: 20
+  in_sample_ratio: 0.7
+"""
+
 
 def _write(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "backtest.yaml"
@@ -77,6 +100,54 @@ def test_good_yaml_is_loaded_and_marked(tmp_path: Path) -> None:
     assert cfg.yaml_path == path
     assert set(cfg.provenance().values()) == {"yaml"}
     assert cfg.cost_tiers == (pytest.approx(0.0002), pytest.approx(0.0005), pytest.approx(0.001))
+
+
+def test_legacy_yaml_keeps_old_cost_caliber(tmp_path: Path) -> None:
+    """旧式小数口径仍可读：最低佣金 / 过户费按 0（与 QUOT-500 撮合口径一致）。"""
+    cfg = load_config(_write(tmp_path, GOOD_YAML))
+    assert cfg.commission == pytest.approx(0.00025)
+    assert cfg.stamp_duty == pytest.approx(0.001)
+    assert cfg.commission_floor_yuan == pytest.approx(0.0)
+    assert cfg.transfer_fee == pytest.approx(0.0)
+    assert cfg.presets == ()
+
+
+def test_new_style_yaml_converts_wan_units(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, NEW_YAML))
+    assert cfg.commission_rate_wan == pytest.approx(0.9)
+    assert cfg.commission == pytest.approx(0.00009)
+    assert cfg.commission_floor_yuan == pytest.approx(0.01)
+    assert cfg.transfer_fee_wan == pytest.approx(0.1)
+    assert cfg.transfer_fee == pytest.approx(0.00001)
+    assert cfg.stamp_duty_wan == pytest.approx(5.0)
+    assert cfg.stamp_duty == pytest.approx(0.0005)
+    assert [preset.key for preset in cfg.presets] == ["wan09_free5_001", "wan065_min5"]
+    assert dict(cfg.provenance())["transfer_fee_wan"] == "yaml"
+
+
+def test_new_style_missing_cost_field_raises(tmp_path: Path) -> None:
+    broken = NEW_YAML.replace("  transfer_fee_wan: 0.1\n", "")
+    with pytest.raises(BacktestConfigError, match="transfer_fee_wan"):
+        load_config(_write(tmp_path, broken))
+
+
+def test_new_style_missing_preset_field_raises(tmp_path: Path) -> None:
+    broken = NEW_YAML.replace("      commission_floor_yuan: 5\n", "")
+    with pytest.raises(BacktestConfigError, match="commission_floor_yuan"):
+        load_config(_write(tmp_path, broken))
+
+
+def test_override_new_style_keys_and_legacy_alias_converge() -> None:
+    by_wan = _fallback().with_overrides(commission_rate_wan=0.5, stamp_duty_wan=2)
+    by_decimal = _fallback().with_overrides(commission=0.00005, stamp_duty=0.0002)
+    assert by_wan.commission == pytest.approx(by_decimal.commission)
+    assert by_wan.stamp_duty == pytest.approx(by_decimal.stamp_duty)
+    floor = _fallback().with_overrides(commission_floor_yuan=5.0, transfer_fee_wan=1.0)
+    assert floor.commission_floor_yuan == pytest.approx(5.0)
+    assert floor.transfer_fee == pytest.approx(0.0001)
+    # 来源按同一内部字段记账：旧键与新键都能读到 cli
+    assert floor.provenance()["commission_floor_yuan"] == "cli"
+    assert floor.provenance()["transfer_fee_wan"] == "cli"
 
 
 def test_repo_config_file_is_valid() -> None:
@@ -125,13 +196,27 @@ def test_tiers_non_numeric_raises(tmp_path: Path) -> None:
 # 3. 数值规则
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize("field", ["commission", "slippage", "stamp_duty", "in_sample_ratio"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "commission",
+        "slippage",
+        "stamp_duty",
+        "in_sample_ratio",
+        "commission_rate_wan",
+        "commission_floor_yuan",
+        "transfer_fee_wan",
+        "stamp_duty_wan",
+    ],
+)
 def test_negative_numbers_raise(field: str) -> None:
     with pytest.raises(BacktestConfigError):
         _fallback().with_overrides(**{field: -0.01})
 
 
-@pytest.mark.parametrize("field", ["commission", "slippage", "stamp_duty"])
+@pytest.mark.parametrize(
+    "field", ["commission", "slippage", "stamp_duty", "commission_rate_wan", "stamp_duty_wan"]
+)
 def test_zero_cost_fields_raise(field: str) -> None:
     with pytest.raises(BacktestConfigError):
         _fallback().with_overrides(**{field: 0.0})

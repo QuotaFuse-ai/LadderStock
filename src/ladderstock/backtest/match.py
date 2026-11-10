@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Final
@@ -34,15 +35,26 @@ class MatchError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class CostModel:
+    """撮合成本：佣金（单笔取 max(额×率, 下限)）+ 过户费（双边）+ 印花税（仅卖出）。
+
+    ``commission`` / ``stamp_duty`` / ``transfer_fee`` 都是**小数口径**（0.00009 = 万 0.9）；
+    ``commission_floor`` 是**元**。旧调用方只传前三个参数时，下限 = 0、过户费 = 0，
+    行为与 QUOT-500 完全一致。
+    """
+
     commission: float
     slippage: float
     stamp_duty: float
+    commission_floor: float = 0.0
+    transfer_fee: float = 0.0
 
     def __post_init__(self) -> None:
-        for name in ("commission", "slippage", "stamp_duty"):
+        for name in ("commission", "slippage", "stamp_duty", "commission_floor", "transfer_fee"):
             value = getattr(self, name)
             if value < 0:
                 raise MatchError(f"{name} 不能为负，收到 {value!r}")
+            if not math.isfinite(value):
+                raise MatchError(f"{name} 必须是有限数值，收到 {value!r}")
 
     def buy_price(self, open_price: float) -> float:
         return open_price * (1.0 + self.slippage)
@@ -50,11 +62,25 @@ class CostModel:
     def sell_price(self, open_price: float) -> float:
         return open_price * (1.0 - self.slippage)
 
+    def commission_on(self, notional: float) -> float:
+        """单笔佣金：``max(成交额 × 佣金率, 单笔最低)``；零成交额不收费。"""
+        if notional <= 0:
+            return 0.0
+        return max(notional * self.commission, self.commission_floor)
+
     def buy_cost(self, notional: float) -> float:
-        return notional * self.commission
+        if notional <= 0:
+            return 0.0
+        return self.commission_on(notional) + notional * self.transfer_fee
 
     def sell_cost(self, notional: float) -> float:
-        return notional * (self.commission + self.stamp_duty)
+        if notional <= 0:
+            return 0.0
+        return (
+            self.commission_on(notional)
+            + notional * self.transfer_fee
+            + notional * self.stamp_duty
+        )
 
 
 @dataclass(slots=True)
@@ -165,21 +191,26 @@ def _is_suspended(bar: Bar) -> bool:
 
 
 def _size_buy(open_price: float, cash: float, costs: CostModel) -> tuple[int, float, float]:
-    """在给定 open_price 下，用可用 cash 能买的最大股数（整百），返回 (shares, notional, cost)。"""
+    """在给定 open_price 下，用可用 cash 能买的最大股数（整百），返回 (shares, notional, cost)。
+
+    单笔最低佣金让「成交额 + 费用 <= cash」不再是一条直线，按整手逐次收敛：
+    先按无下限口径估一个上界，再按超额所需的股数（向上取整到整手）回退，
+    最多几次就收敛（最低佣金相对一手金额很小）；退到 0 手 = 这笔买不进。
+    """
     price = costs.buy_price(open_price)
     if price <= 0:
         return 0, 0.0, 0.0
-    # cash >= price * shares + commission * price * shares = price * shares * (1 + commission)
-    per_share = price * (1 + costs.commission)
-    if per_share <= 0:
-        return 0, 0.0, 0.0
-    shares = int(cash // per_share)
+    shares = int(cash // price)
     shares -= shares % 100
-    if shares <= 0:
-        return 0, 0.0, 0.0
-    notional = price * shares
-    cost = costs.buy_cost(notional)
-    return shares, notional, cost
+    while shares > 0:
+        notional = price * shares
+        total = notional + costs.buy_cost(notional)
+        if total <= cash + 1e-6:
+            return shares, notional, costs.buy_cost(notional)
+        excess = total - cash
+        drop = max(100, math.ceil(excess / price / 100) * 100)
+        shares -= drop
+    return 0, 0.0, 0.0
 
 
 def _size_sell(
