@@ -66,5 +66,8 @@ docs/tasks/*
 !docs/tasks/QUOT-472/gate-logs/*.json
 docs/tasks/QUOT-472/shots/
 docs/tasks/QUOT-472/shots-1280/
+# 验收任务产出例外：页面自启交付报告随 PR 交付（QUOT-522）
+!docs/tasks/QUOT-522/
+!docs/tasks/QUOT-522/README.md
 *.docx
 ~$*

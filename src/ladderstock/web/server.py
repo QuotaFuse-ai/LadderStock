@@ -87,7 +87,7 @@ from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
-from ladderstock.web.supervisor_api import build_selfheal_engine
+from ladderstock.web.supervisor_api import build_page_boot, build_selfheal_engine, mount_page_boot
 from ladderstock.web.supervisor_api import mount_supervisor as mount_supervisor_router
 from ladderstock.web.symbols import SymbolPlane
 from ladderstock.web.symbols import build_router as build_symbols_router
@@ -993,10 +993,12 @@ def create_app(
     radar_plane: Any | None = None,
     symbols_plane: Any | None = None,
     supervisor_engine: Any | None = None,
+    page_boot: Any | None = None,
     knowledge_plane: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
-    / `industry_plane` / `radar_plane` / `symbols_plane` / `knowledge_plane` 可注入，便于测试。
+    / `industry_plane` / `radar_plane` / `symbols_plane` / `supervisor_engine`
+    / `page_boot` / `knowledge_plane` 可注入，便于测试。
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
@@ -1684,6 +1686,14 @@ def create_app(
         # control_plane 分支注册在 mount_supervisor_router 之前，GET /state 走合并版
         plane.selfheal = engine
     mount_supervisor_router(app, engine)
+
+    # --------------------------------------- 页面自启（QUOT-522：打开网页即自启自有子进程）
+    #
+    # startup 钩子 = 「用户打开首页」：watch 扫描守护 + 取数调度器按需拉起（幂等），
+    # peer 只认领记账（adopt-only，绝不自动重启 / 终止）；账本沿用上面同一份
+    # ledger.json。`LDST_PAGE_AUTOSTART=0` 关闭自有子进程；测试注入 `page_boot` 假件。
+    boot = page_boot if page_boot is not None else build_page_boot(root)
+    mount_page_boot(app, boot)
 
     # ------------------------------------------------------------ 静态看板
 
