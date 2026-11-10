@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 
 import Layout from './components/Layout'
 import AiReviewScreen from './screens/AiReviewScreen'
+import BacktestScreen from './screens/backtest/BacktestScreen'
 import HomeScreen from './screens/HomeScreen'
 import IndustryDetailScreen from './screens/industry/IndustryDetailScreen'
 import IndustryMatrixScreen from './screens/industry/IndustryMatrixScreen'
@@ -78,6 +79,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/weekly': <WeeklyScreen />,
   '/journal': <JournalScreen />,
   '/validate': <ValidateScreen />,
+  // QUOT-534：策略回测，三区（参数 / 结果 / 证据）只读本机运行卡
+  '/backtest': <BacktestScreen />,
   // 涨停样本：「验证」分组下的二级入口，支持 `?date=YYYY-MM-DD` 深链
   '/limit-up': <LimitUpScreen />,
   // R10 资讯雷达挂「市场」；事件日历 / 我的持仓挂 DEC-044 的「我的股票」，候选池留在「复盘」，都不新增一级路由
