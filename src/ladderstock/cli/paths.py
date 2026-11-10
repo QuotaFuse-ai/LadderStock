@@ -22,6 +22,8 @@ CONFIG_FILES: tuple[str, ...] = (
     "schedule.yaml",
     # R5 产业研究的行业清单与窗口参数（QUOT-143，口径见 SPEC-INDUSTRY-METRICS.md）
     "industry.yaml",
+    # 回测成本与阈值默认值（QUOT-500，口径见 SPEC-BACKTEST.md）
+    "backtest.yaml",
 )
 
 #: 旧版环境变量前缀，按顺序兜底（旧前缀双读，新前缀优先）
