@@ -337,6 +337,21 @@ export const CATALOG_STATUS_LABEL: Record<CatalogStatus, string> = {
 }
 
 /**
+ * 「只看可用」口径：能力当前已经能用（`ready`）、部分能用（`partial`），
+ * 或已由别的页面承载（`existing_page`）。
+ * 未接通 / 待建 / 本阶段不做都还不能给普通用户交付结果，过滤时排除。
+ */
+export const USABLE_CATALOG_STATUSES: readonly CatalogStatus[] = [
+  'ready',
+  'partial',
+  'existing_page',
+]
+
+export function isUsableCatalogItem(item: CatalogItem): boolean {
+  return USABLE_CATALOG_STATUSES.includes(item.status)
+}
+
+/**
  * 「已在页面」条目点击直达的页面（打回项：例，涨停样本 → `/limit-up`）。
  * 这张表只登记**页面归属**，不是第二份清单——`catalog.json` 仍是唯一数据源，
  * 这里只把 `note` 里那句「已由 X 页承载」落成可跳转的路径。

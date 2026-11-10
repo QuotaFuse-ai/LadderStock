@@ -34,6 +34,7 @@ export {
 } from './Feedback'
 export { HBarList, Sparkline, type HBarItem, type HBarListProps, type SparklineProps } from './MiniChart'
 export { NavPills, type NavPillItem, type NavPillsProps } from './NavPills'
+export { Pagination, type PaginationProps } from './Pagination'
 export { PrivacyNotice } from './PrivacyNotice'
 export { ConfirmDialog, Drawer, useModalChrome, type ConfirmDialogProps, type DrawerProps } from './Overlay'
 export {
