@@ -76,6 +76,17 @@ powershell -ExecutionPolicy Bypass -File packaging/smoke_win.ps1 -Exe dist\Ladde
 macOS / Linux 分别运行 `packaging/build_macos.sh`、`packaging/build_linux_appimage.sh`
 后接 `packaging/smoke_posix.sh`；CI 的 `Package` workflow 已按同一命令矩阵配置。
 
+## CI 修复（#197 linux AppImage smoke）
+
+首轮 CI 中 linux 失败在 `FAIL: port still served after shutdown`，构建与看板本身都成功：
+
+- 根因：`APPIMAGE_EXTRACT_AND_RUN=1` 下 `$!` 是 AppImage 运行时包装进程，真正的
+  看板是它的子孙；只 `kill $PID` 会留下仍在监听 5967 的 python 子进程。
+- 修复：`packaging/smoke_posix.sh` 改为递归终止进程树（`pgrep -P`），并在退出后
+  用最多 30s 的轮询确认端口释放；超时仍占用依旧判失败，未放宽断言。
+- macOS 首次 CI 在 1s 内 `cancelled` 且 `runner_name` 为空（未分配到 runner），
+  属基础设施取消，推送修复后重跑确认。
+
 ## 已知问题与边界
 
 - 本次 Windows 冒烟 stderr 有一条**既有**告警：`ProxyFleetAdapter.identify() takes 1

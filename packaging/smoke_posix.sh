@@ -57,11 +57,29 @@ echo "runtime-info: frozen + bundled resources OK"
 LOG="$TMP/app.log"
 run_env "$EXE" __desktop --port "$PORT" > "$LOG" 2>&1 &
 PID=$!
+
+# AppImage（APPIMAGE_EXTRACT_AND_RUN=1）的 $! 是运行时包装进程，真正的看板是它的
+# 子孙。只 kill 包装进程会留下仍在监听的 python 子进程（CI 实测），必须递归终止。
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
+
+stop_app() {
+  kill_tree "$PID"
+  for _ in $(seq 1 40); do
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill -KILL "$PID" 2>/dev/null || true
+  wait "$PID" 2>/dev/null || true
+}
+
 cleanup() {
-  if kill -0 "$PID" 2>/dev/null; then
-    kill "$PID" 2>/dev/null || true
-    wait "$PID" 2>/dev/null || true
-  fi
+  stop_app
 }
 trap cleanup EXIT
 
@@ -98,9 +116,15 @@ fi
 echo "health: $HEALTH"
 echo "html: $(wc -c < "$HTML") bytes, #root present"
 
-kill "$PID" 2>/dev/null || true
-wait "$PID" 2>/dev/null || true
+stop_app
 trap - EXIT
+# 优雅退出可能不是瞬时完成：给端口最多 30s 释放窗口，超时仍占用才算失败。
+for _ in $(seq 1 60); do
+  if ! curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
 if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
   echo "FAIL: port still served after shutdown" >&2
   exit 1
