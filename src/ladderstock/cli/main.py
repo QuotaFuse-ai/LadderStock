@@ -349,6 +349,14 @@ def config_validate(
     raise typer.Exit(EXIT_OK if ok else EXIT_CONFIG)
 
 
+@config_app.command("seed", help="从随包模板补齐缺失配置与 schema（已存在不覆盖，DEC-071）")
+def config_seed(output: OutputOption = None) -> None:
+    from ladderstock.config.seed import seed_config
+
+    emit(seed_config().to_dict(), output)
+    raise typer.Exit(EXIT_OK)
+
+
 @config_app.command("migrate", help="旧版配置与数据目录迁移（旧文件只读保留，迁移前自动备份）")
 def config_migrate(
     dry_run: Annotated[

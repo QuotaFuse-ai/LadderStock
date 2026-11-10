@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ai.yaml",
+  "type": "object",
+  "required": ["ai"],
+  "additionalProperties": false,
+  "properties": {
+    "ai": {
+      "type": "object",
+      "required": ["fallback_chain", "sections"],
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["backends"] }, { "required": ["default_model"] }],
+      "properties": {
+        "backends": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "models"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "type": { "enum": ["openai", "anthropic"] },
+              "base_url_env": { "type": "string", "minLength": 1 },
+              "api_key_env": { "type": "string", "minLength": 1 },
+              "models": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        "default_model": { "type": "string", "minLength": 1 },
+        "base_url_env": { "type": "string" },
+        "api_key_env": { "type": "string" },
+        "fallback_chain": { "type": "array", "items": { "type": "string" } },
+        "structured_output": { "enum": ["prefer", "require", "off"] },
+        "on_all_failed": { "enum": ["degrade_to_text", "fail"] },
+        "sections": {
+          "type": "object",
+          "required": ["sentiment", "capital", "theme", "dragon_tiger", "leader"],
+          "additionalProperties": {
+            "type": "object",
+            "required": ["prompt_file", "output_schema"],
+            "additionalProperties": false,
+            "properties": {
+              "prompt_file": { "type": "string" },
+              "output_schema": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

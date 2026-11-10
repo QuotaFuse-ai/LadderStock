@@ -47,8 +47,10 @@
 > `ldst supervisor start|stop|restart|status`（单入口启停，见 §L）。
 > **QUOT-522 增量（2026-11-10）**：基线 31 条口径**不变**，`__watch-guard` 是页面自启的内部
 > 长驻入口（`ldst run` startup 拉起，不是用户命令；`hidden=True`），只登记叶子契约、不进矩阵。
-> **以代码为准的当前计数**：`LEAF_PATHS` **54** 个叶子、`COMMAND_MATRIX` **48** 条可执行 argv
-> （54 − 7 个不进矩阵的叶子 `run` / `watchdog` / `__watch-guard` / `mcp stdio` / `mcp http` /
+> **QUOT-524 增量（2026-11-10）**：基线 31 条口径**不变**，新增 `ldst config seed`
+> （从随包模板补齐配置，见 §C 的 `+1` 行与 `DEC-071-platformdirs-config-seed`）。
+> **以代码为准的当前计数**：`LEAF_PATHS` **58** 个叶子、`COMMAND_MATRIX` **52** 条可执行 argv
+> （58 − 7 个不进矩阵的叶子 `run` / `watchdog` / `__watch-guard` / `mcp stdio` / `mcp http` /
 > `supervisor start` / `supervisor restart`，+ `sync` 的两种形态各跑一次；
 > 复核入口 `tests/unit/test_cli_output_option.py::test_registered_leaves_match_baseline`）。
 >
@@ -222,6 +224,7 @@ ldst sync --dataset daily_k --codes 600000,000001   # 一次同步两只票，�
 | 33 | `ldst schedule run` | 运行一轮启用的定时任务 | `--once` | 任务结果 |
 | 34 | `ldst state reset --store <name>` | 重置指定前端持久化分片 | `--store` | 需二次确认 |
 | 35 | `ldst doctor` | 环境体检：依赖、端口、缓存目录、数据源 | — | 对齐 `th-cn doctor` 习惯 |
+| +1 | `ldst config seed` | 从随包模板补齐缺失配置与 schema（DEC-071） | — | 已存在不覆盖；幂等，输出 `seeded`/`skipped`；不计入上面 31/33/35/32 基线 |
 
 > 表内编号 1–35 为**行号**；去重后为 **33 个叶子路径**（`sync` 的三种形态合并为一条、`validate` 的两级子命令各算一个叶子）。P0 基线口径的 **31 条命令**见第 0 节；`scripts/check_commands.py` 实测覆盖 **32 条可执行 argv**（长驻服务 `run` / `mcp stdio` / `mcp http` 不入矩阵）。四套数字的对应关系见文首「命令计数口径」。
 > §D′ 的行 36（`ldst research`）是 R1-1 基线之外的增量，§E″ 的行 37–41（R7 增量 5 条）是 R7 基线之外的增量，§D‴ 的行 42–43（R5 增量 2 条）是 R5 基线之外的增量，§A′ 的行 44（`ldst weekly`）是 R11 基线之外的增量，**都不计入上面的 31/33/35/32**；算上它们则是 44 行 / 42 个叶子 / 41 条可执行 argv。
@@ -310,7 +313,7 @@ ldst position list --output json                         # realized.total_pnl（
 > 口径来源：`docs/decisions/DEC-063-platform-watchdog-and-health.md`。
 > 这 1 条**不属于** 31 条 P0 基线；与 `run` 一样是长驻进程，**不进** argv 矩阵，
 > 但叶子路径 `("watchdog",)` 必须登记在 `tests/fixtures/command_matrix.py`
-> （当前 `LEAF_PATHS` 共 **49** 个、矩阵 **46** 条）。
+> （当前 `LEAF_PATHS` 共 **58** 个、矩阵 **52** 条）。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
@@ -338,7 +341,7 @@ ldst position list --output json                         # realized.total_pnl（
 > 口径来源：issue QUOT-523「单 supervisor 单入口接线生产」与 `docs/supervisor/single-entry.md`。
 > 这 4 条**不属于** 31 条 P0 基线；叶子路径
 > `("supervisor", "start" | "stop" | "restart" | "status")` 已登记
-> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **53** 个）。
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **58** 个）。
 > 只动**账本能证明是本入口拉起**的进程，外部进程一律不碰（DEC-014）。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
@@ -352,7 +355,7 @@ ldst position list --output json                         # realized.total_pnl（
 
 > 口径来源：issue QUOT-487「助手通道接入 Mem0 记忆：召回/写入策略 + 注入边界」。
 > 这 1 条**不属于** 31 条 P0 基线；叶子路径 `("ai", "memory-clear")` 已登记
-> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **49** 个）。
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **58** 个）。
 > 读/写发生在 web 助手端点（`/api/research/assistant`、`/api/skills/assistant`），
 > CLI 只提供清空入口——记忆的写入与召回策略见 `src/ladderstock/ai/memory.py` 模块 docstring。
 
