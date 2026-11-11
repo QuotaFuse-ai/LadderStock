@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ladderstock.supervisor.health_events import (
     DEFAULT_PORT_PROBE_INTERVAL,
+    OWNER_OWN_CHILD,
     HealthEventBus,
     HealthEventMonitor,
     PortInspector,
@@ -124,6 +125,8 @@ class SelfHealEngine:
         event_bus: HealthEventBus | None = None,
         port_inspector: PortInspector | None = None,
         port_probe_interval: float = DEFAULT_PORT_PROBE_INTERVAL,
+        port_conflict_restarter: Callable[[str, int], Any] | None = None,
+        is_pid_alive: Callable[[int], bool] | None = None,
     ) -> None:
         self.ledger = ledger
         self.restarter = restarter
@@ -155,10 +158,14 @@ class SelfHealEngine:
                 port_inspector=port_inspector,
                 clock=clock,
                 port_probe_interval=port_probe_interval,
+                is_pid_alive=is_pid_alive,
             )
             if event_bus is not None
             else None
         )
+        #: S4 端口冲突安全处置通道（QUOT-557）：(module, 自有占用者 pid) → 重拉结论。
+        #: 只对 own_child 冲突调用；外来 / adopted 一律不处置（只上报弹窗）。None = 不启用。
+        self._port_conflict_restarter = port_conflict_restarter
 
     # ---------------------------------------------------------------- 生命周期
 
@@ -208,6 +215,10 @@ class SelfHealEngine:
                     self._monitor.observe(entries, is_alive=self._alive)
                 except Exception:
                     _log.exception("健康事件观测异常（已吞，不影响自愈主流程）")
+                try:
+                    self._treat_port_conflicts(entries)
+                except Exception:
+                    _log.exception("端口冲突安全处置异常（已吞，不影响自愈主流程）")
             for module in modules:
                 entry = self.ledger.get(module)
                 if entry is None:
@@ -224,6 +235,55 @@ class SelfHealEngine:
         for module in self.modules:
             self.ledger.ensure(module, self._module_ports.get(module, ()))
         return list(self.modules)
+
+    def _treat_port_conflicts(self, entries: Sequence[LedgerEntry]) -> None:
+        """S4 端口冲突安全处置（QUOT-557）：只重拉 own_child，外来 / adopted 只上报。
+
+        与观测同一口径（`monitor.port_conflicts`）：仅当冲突占用者是 own_child 才
+        调处置通道（引擎会再验「可证明自有」，证明不了绝不终止）；foreign / adopted
+        冲突一律不动——它们的健康事件已在观测侧发出，供 S5 弹窗引导用户确认。
+        复用自愈失败窗口限次，超限不再自动重试（交 needs_human / 弹窗）。绝不改端口
+        配置（DEC-004），绝不终止外来 / adopted / 非控制面进程（DEC-014 / QUOT-545）。
+        """
+        if self._monitor is None or self._port_conflict_restarter is None:
+            return
+        for entry in entries:
+            if entry.stopping_by_user or entry.health == HEALTH_NEEDS_HUMAN:
+                continue
+            conflicts = self._monitor.port_conflicts(entry)
+            own = [c for c in conflicts if c.owner == OWNER_OWN_CHILD and c.pid is not None]
+            if not own:
+                continue  # 外来 / adopted 冲突：只上报弹窗，绝不自动处置
+            window = self.ledger.prune_window(entry, self.clock())
+            if len(window) >= self.max_restarts:
+                continue  # 超限：不再自动重试，交人工 / 弹窗
+            occupant = own[0]
+            occupant_pid = occupant.pid
+            if occupant_pid is None:
+                continue
+            self._log(
+                entry,
+                f"端口 {occupant.port} 被自有进程 pid={occupant_pid} 占用，安全重启解冲突",
+            )
+            try:
+                outcome = self._port_conflict_restarter(entry.module, occupant_pid)
+            except Exception as exc:  # noqa: BLE001 - 处置失败如实记账，不拖垮整轮
+                self.ledger.record_restart(
+                    entry.module, ok=False, pid=None, now=self.clock(), reason=str(exc)
+                )
+                self._log(entry, f"端口冲突安全重启失败（未终止任何外来进程）：{exc}")
+                continue
+            self.ledger.record_restart(
+                entry.module,
+                ok=bool(outcome.ok),
+                pid=outcome.pid,
+                now=self.clock(),
+                reason=outcome.detail or "port_conflict_safe_restart",
+            )
+            if outcome.ok:
+                self._log(entry, f"端口冲突已安全解除（新 pid={outcome.pid}）")
+            else:
+                self._log(entry, f"端口冲突安全重启失败：{outcome.detail}")
 
     def _inspect(self, entry: LedgerEntry) -> None:
         now = self.clock()

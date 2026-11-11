@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -49,11 +49,12 @@ from ladderstock.supervisor.ledger import Ledger
 from ladderstock.supervisor.module_adapters import build_default_adapters
 from ladderstock.supervisor.notify import build_default_notifier
 from ladderstock.supervisor.page_boot import PageBoot
-from ladderstock.supervisor.proctree import default_process_ops
-from ladderstock.supervisor.restart import AdapterRestarter
+from ladderstock.supervisor.proctree import cmdline_hash, default_process_ops
+from ladderstock.supervisor.restart import AdapterRestarter, pid_alive
 from ladderstock.supervisor.selfheal import (
     DEFAULT_LOG_MAX_LINES,
     WINDOW_SECONDS,
+    RestartOutcome,
     SelfHealEngine,
 )
 from ladderstock.web.port_diagnostics import classify_port_owner
@@ -107,13 +108,20 @@ class SupervisorEngines:
     ledger: Ledger
 
 
-def build_port_inspector() -> PortInspector:
-    """生产端口观测（QUOT-556）：一次连接表扫描看全部托管模块的端口归属。
+def build_port_inspector(
+    spawned_pids: Callable[[], Mapping[int, str]] | None = None,
+) -> PortInspector:
+    """生产端口观测（QUOT-556 / QUOT-557）：一次连接表扫描看全部托管模块的端口归属。
 
-    分类口径与 QUOT-547 诊断同一份实现（`classify_port_owner`，失败关闭）；
-    `mine_pids` 为空——本观测按「该模块的账本记录」判归属，端口被**别的**模块
-    持有对本模块就是冲突。psutil 不可用 / 扫描失败返回空映射：监控本轮只看
-    存活类事件（crash/recovered），不误报端口类。只读，绝不终止任何进程。
+    分类口径与 QUOT-547 诊断同一份实现（`classify_port_owner`，失败关闭）。
+    QUOT-557（S4）：
+    - 观测结果带占用者 `pid`，供冲突事件与「自有 vs 外来」精确区分；
+    - `spawned_pids` 给出本任 supervisor spawn 过的 pid→指纹时，把**此刻仍存活且
+      指纹相符**的那些 pid 作为 `mine_pids`——残留自有进程占口也能认成 own_child
+      （可安全重启）。死 pid / 指纹不符（PID 复用）绝不进 mine_pids，防把外来进程
+      误认成自有。未提供时退化为 QUOT-556 口径（mine_pids 为空，只按该模块账本判）。
+    psutil 不可用 / 扫描失败返回空映射：监控本轮只看存活类事件，不误报端口类。
+    只读，绝不终止任何进程。
     """
 
     def inspect(entries: Sequence[LedgerEntry]) -> dict[str, tuple[PortObservation, ...]]:
@@ -137,6 +145,18 @@ def build_port_inspector() -> PortInspector:
                     cmdline_cache[pid] = None
             return cmdline_cache[pid]
 
+        # S4：可证明自有的 pid 才进 mine_pids（存活 + 指纹相符，防 PID 复用误认）。
+        mine: set[int] = set()
+        if spawned_pids is not None:
+            try:
+                candidates = spawned_pids()
+            except Exception:  # noqa: BLE001 - 归属证据查询失败按「无自有证据」降级
+                candidates = {}
+            for owned_pid, expected in candidates.items():
+                live = _cmdline(int(owned_pid))
+                if live is not None and cmdline_hash(live) == expected:
+                    mine.add(int(owned_pid))
+
         report: dict[str, tuple[PortObservation, ...]] = {}
         for entry in entries:
             observations: list[PortObservation] = []
@@ -149,11 +169,13 @@ def build_port_inspector() -> PortInspector:
                 pid = listeners[port]
                 owner, _reason = classify_port_owner(
                     pid=pid,
-                    mine_pids=(),
+                    mine_pids=mine,
                     record=entry,
                     live_cmdline=_cmdline(pid) if pid is not None else None,
                 )
-                observations.append(PortObservation(port=port, listening=True, owner=owner))
+                observations.append(
+                    PortObservation(port=port, listening=True, owner=owner, pid=pid)
+                )
             report[entry.module] = tuple(observations)
         return report
 
@@ -193,9 +215,32 @@ def build_supervisor_engines(
         modules=MODULE_ORDER if cold_start else None,
         cold_start=cold_start,
         event_bus=HealthEventBus(),
-        port_inspector=build_port_inspector(),
+        port_inspector=build_port_inspector(spawned_pids=lambda: processes.spawned_pids),
+        port_conflict_restarter=_own_conflict_restarter(processes),
+        is_pid_alive=pid_alive,
     )
     return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
+
+
+def _own_conflict_restarter(processes: SupervisorEngine) -> Callable[[str, int], RestartOutcome]:
+    """S4 端口冲突安全处置通道（QUOT-557）：只对可证明自有的占用者重绑 + 重启。
+
+    包装 `engine.restart_own_occupant`（引擎内再验「本任 spawn + 存活 + 指纹相符」，
+    证明不了自有绝不终止）。成功回新 pid；失败 / 拒绝回 `ok=False`，自愈照常记窗口。
+    外来 / adopted 占用者根本不会走到这里（观测侧已按分类只上报弹窗）。
+    """
+
+    def restart(module: str, occupant_pid: int) -> RestartOutcome:
+        try:
+            view = processes.restart_own_occupant(module, occupant_pid)
+        except SupervisorError as exc:
+            return RestartOutcome(ok=False, detail=str(exc))
+        except Exception as exc:  # noqa: BLE001 - 处置异常统一转成失败结论
+            return RestartOutcome(ok=False, detail=f"端口冲突处置异常：{exc}")
+        record = view.get("record") or {}
+        return RestartOutcome(ok=True, pid=record.get("pid"), detail="自有进程安全重启解冲突")
+
+    return restart
 
 
 def build_page_boot(root: str | Path, *, ledger: Ledger | None = None) -> PageBoot:
