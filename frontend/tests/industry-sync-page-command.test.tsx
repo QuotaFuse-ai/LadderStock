@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -77,11 +77,23 @@ function renderBar(path = '/industry') {
   )
 }
 
+/**
+ * 与 page-command-bar.test.tsx 的 openPanel 同口径：click 前空跑一次 act，把首次
+ * commands 到达那次提交挂起的 passive effect（路由态复位）落到点击之前。真实浏览器
+ * 里 passive effect 先于下一次用户事件冲刷，用户点不到这个窗口；测试在 waitFor 轮询
+ * 里紧接着 click 才会把迟到的 setOpen(false) 挂进 click 的 act，关掉刚开的面板
+ * （CI 慢机复现为 dialog 不出现）。空跑 act 是恢复点击语义，不是放宽断言。
+ */
+async function openPanel() {
+  await waitFor(() => expect(screen.getByRole('button', { name: '本页命令' })).toBeTruthy())
+  await act(async () => {})
+  fireEvent.click(screen.getByRole('button', { name: '本页命令' }))
+}
+
 describe('本页命令：同路由两条命令（QUOT-538）', () => {
   it('两条命令都渲染，note 原样展示', async () => {
     renderBar()
-    await waitFor(() => expect(screen.getByRole('button', { name: '本页命令' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '本页命令' }))
+    await openPanel()
 
     const panel = screen.getByRole('dialog', { name: '本页命令' })
     expect(panel.textContent).toContain('重算行业快照')
@@ -94,8 +106,7 @@ describe('本页命令：同路由两条命令（QUOT-538）', () => {
 
   it('只读命令直接运行；联网同步命令先二次确认再提交', async () => {
     renderBar()
-    await waitFor(() => expect(screen.getByRole('button', { name: '本页命令' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '本页命令' }))
+    await openPanel()
 
     const runButtons = screen.getAllByRole('button', { name: '运行' })
     fireEvent.click(runButtons[1])
