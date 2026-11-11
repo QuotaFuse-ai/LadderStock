@@ -20,9 +20,11 @@ export interface TabsProps<T extends string> {
   onChange: (next: T) => void
   ariaLabel: string
   className?: string
+  /** 窄卡（首页研究面板 ~325px）用：px-2 + text-caption，三个页签一行放下 */
+  dense?: boolean
 }
 
-export function Tabs<T extends string>({ tabs, value, onChange, ariaLabel, className }: TabsProps<T>) {
+export function Tabs<T extends string>({ tabs, value, onChange, ariaLabel, className, dense = false }: TabsProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([])
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -56,7 +58,8 @@ export function Tabs<T extends string>({ tabs, value, onChange, ariaLabel, class
             onClick={() => onChange(tab.value)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              '-mb-px inline-flex h-control items-center gap-1.5 border-b-2 px-3 text-body transition-colors duration-fast ease-ldst',
+              '-mb-px inline-flex h-control items-center whitespace-nowrap border-b-2 transition-colors duration-fast ease-ldst',
+              dense ? 'gap-1 px-2 text-caption' : 'gap-1.5 px-3 text-body',
               selected
                 ? 'border-accent font-medium text-text'
                 : 'border-transparent text-text-secondary hover:text-text',

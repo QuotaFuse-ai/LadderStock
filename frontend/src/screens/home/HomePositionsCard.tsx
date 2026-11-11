@@ -1,14 +1,15 @@
 import { RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
-import { quoteSourceLabel, type PositionItem, type PositionsPayload } from '../../api/radar'
+import { type PositionItem, type PositionsPayload } from '../../api/radar'
 import {
+  Badge,
   Button,
   CardRefreshButton,
   DataTable,
   EmptyState,
   ErrorBlock,
-  PrivacyNotice,
+  PrivacyBadge,
   SectionCard,
   SignedNumber,
   SourceStatusBadge,
@@ -18,118 +19,39 @@ import {
   MISSING,
   countOrMissing,
   formatAmount,
+  formatInboxTime,
   formatMoney,
-  formatRatePct,
   formatSignedAmount,
-  formatTime,
 } from '../../lib/format'
+import { cn } from '../../lib/cn'
 import { useDensity } from '../../lib/prefs'
 import type { BlockView } from './useHomeSource'
 
 /**
- * 首页 D 块「我的持仓」（SPEC-HOME-V2 §5）。
+ * 首页「我的持仓」紧凑摘要（QUOT-552 / SPEC-HOME-V2 v2.0 §5）。
  *
- * 两张表都是 C-09 的实例（同一 `DataTable`，不写第二份表体）：
- * ① 币种汇总 —— 后端没有 `currency` 分组，退化为单行「合计」，并把原因写在表下（不猜币种、不按代码前缀推）；
- * ② 逐条持仓 —— 名称 / 代码·股数 / 现价 / 市值 / 持仓盈亏 / 当日盈亏，列宽 `剩余/176/112/112/112/112`。
+ * 首页只压 **3 列**：名称 / 市值 / 持仓盈亏 + 合计行（C-09 列级 `summary`，不写第二份表体）；
+ * **全 6 列双表（币种汇总 + 逐条）原样保留在 `/positions`**，不删列不丢信息——
+ * 收益率 / 当日盈亏 / 代码·股数 / 现价都在那边，「完整持仓 →」直达。
  *
- * 逐条表**只放金额**：参考页在「现价」「持仓盈亏」里塞了第二行百分比，我们的行高刻度是单行 38px，
- * 两行格要么新增行高档要么放弃唯一表体，两条都比「少一个百分比」贵（§5.1）。收益率只在汇总行出现。
+ * 两颗口径徽标常驻卡头（不随数据状态消失）：
+ * - 「毛额·未扣费」：持仓盈亏是毛额（`fee_included=false`，trades 无费用列），不是净盈亏；
+ * - 「仅本机」：隐私长文案收进徽标，hover 出全文、点击展开 `PrivacyNotice` 本体（§5.4）。
  *
- * 缺数口径（§5.2）：名称缺 → 「名称未接入」，不拿 code / industry 顶替；`qty` 缺 → `—`，不写 `0 股`；
- * 市值 / 盈亏 / 当日盈亏缺 → `—` + 脚注说明，不补 0、不拿持仓盈亏的差冒充当日盈亏。
+ * 缺数口径（§5.2）不变：名称缺 → 「名称未接入」，不拿 code 顶替（代码在悬浮文案与全表里）；
+ * 市值 / 盈亏缺 → `—`，不补 0。
  */
 
-const HOLDING_COLUMNS: Array<Column<PositionItem>> = [
-  {
-    key: 'name',
-    header: '名称',
-    // 有 `width` 时以宽度为准（`truncate` 仍负责省略号）：名称列此前吃剩余宽度，
-    // 1280px 下把后面四个数字列挤到换行，这里钉成 §7.3 的 128 刻度
-    width: '128px',
-    truncate: true,
-    render: (row) => (
-      <span className={row.name ? 'font-medium' : 'text-text-muted'}>{row.name ?? '名称未接入'}</span>
-    ),
-  },
-  {
-    key: 'code',
-    header: '代码 · 股数',
-    width: '168px',
-    render: (row) => (
-      <span className="ldst-num text-text-secondary">
-        {row.code}
-        {row.qty === null ? ` · ${MISSING}` : ` · ${formatAmount(row.qty)}`}
-      </span>
-    ),
-  },
-  {
-    key: 'price',
-    header: '现价',
-    width: '112px',
-    numeric: true,
-    sort: (a, b) => (a.latest_price ?? Number.NEGATIVE_INFINITY) - (b.latest_price ?? Number.NEGATIVE_INFINITY),
-    render: (row) => (
-      <span className={row.latest_price === null ? 'text-text-muted' : undefined}>
-        {row.latest_price === null ? MISSING : row.latest_price.toFixed(2)}
-      </span>
-    ),
-  },
-  {
-    key: 'value',
-    header: '市值',
-    width: '128px',
-    numeric: true,
-    sort: (a, b) => (a.market_value ?? Number.NEGATIVE_INFINITY) - (b.market_value ?? Number.NEGATIVE_INFINITY),
-    render: (row) => (
-      <span className={row.market_value === null ? 'text-text-muted' : undefined}>
-        {formatIntOrMissing(row.market_value)}
-      </span>
-    ),
-  },
-  {
-    key: 'pnl',
-    header: '持仓盈亏',
-    width: '112px',
-    numeric: true,
-    sort: (a, b) => (a.unrealized_pnl ?? Number.NEGATIVE_INFINITY) - (b.unrealized_pnl ?? Number.NEGATIVE_INFINITY),
-    render: (row) => {
-      const pnl = formatSignedAmount(row.unrealized_pnl)
-      return <SignedNumber text={pnl.text} tone={pnl.tone} arrow="" />
-    },
-  },
-  {
-    key: 'day',
-    header: '当日盈亏',
-    width: '112px',
-    numeric: true,
-    sort: (a, b) => (a.daily_pnl ?? Number.NEGATIVE_INFINITY) - (b.daily_pnl ?? Number.NEGATIVE_INFINITY),
-    render: (row) => {
-      const pnl = formatSignedAmount(row.daily_pnl ?? null)
-      return <SignedNumber text={pnl.text} tone={pnl.tone} arrow="" />
-    },
-  },
-]
-
-/** 市值等金额列：`null` 一律 `—`；有值走 `formatAmount` 的原样读数（§8），不用「13.92 万」折算——
- *  折算带空格，在 112px 列里会折成「13.92 / 万」两行。 */
+/** 市值等金额列：`null` 一律 `—`；有值走 `formatAmount` 原样读数（§8），不折算万 / 亿。 */
 function formatIntOrMissing(value: number | null | undefined): string {
   if (value === null || value === undefined) return MISSING
   return formatAmount(value)
 }
 
-interface SummaryRow {
-  currency: string
-  marketValue: string
-  pnl: string
-  pnlTone: 'up' | 'down' | 'flat'
-  pnlPct: string
-  pnlPctTone: 'up' | 'down' | 'flat'
-  dayPnl: string
-  dayPnlTone: 'up' | 'down' | 'flat'
-}
+const GROSS_TITLE =
+  '持仓盈亏为毛额口径（fee_included=false）：trades 表无费用列，未扣佣金 / 印花税 / 过户费，不是净盈亏。'
 
-export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> }) {
+export function HomePositionsCard({ view, className }: { view: BlockView<PositionsPayload>; className?: string }) {
   const density = useDensity()
   const navigate = useNavigate()
   const payload = view.state === 'normal' || view.state === 'partial' ? view.data : null
@@ -137,60 +59,75 @@ export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> 
   const valuation = payload?.valuation ?? null
   const pricedCount = payload ? payload.position_count : null
   const unpricedCost = valuation?.unpriced_cost ?? 0
-  const dayMissing = valuation?.daily_pnl_missing ?? []
-  const dayStatus = valuation?.daily_pnl_status
-  const dayUnavailable = !valuation || valuation.daily_pnl === null || valuation.daily_pnl === undefined
 
-  const pnl = formatSignedAmount(valuation?.unrealized_pnl ?? null)
-  const pnlPct = formatRatePct(valuation?.unrealized_pnl_pct ?? null)
-  const dayPnl = formatSignedAmount(valuation?.daily_pnl ?? null)
-
-  const summary: SummaryRow[] = valuation
-    ? [
-        {
-          // 后端这一版恒为 CNY 且不分组，汇总卡退化为单行「合计」（§5.2）
-          currency: '合计',
-          marketValue: formatIntOrMissing(valuation.market_value),
-          pnl: pnl.text,
-          pnlTone: pnl.tone,
-          pnlPct: pnlPct.text,
-          pnlPctTone: pnlPct.tone,
-          dayPnl: dayUnavailable ? MISSING : dayPnl.text,
-          dayPnlTone: dayUnavailable ? 'flat' : dayPnl.tone,
-        },
-      ]
-    : []
-
-  const summaryColumns: Array<Column<SummaryRow>> = [
-    { key: 'currency', header: '币种', width: '88px', render: (row) => <span className="font-medium">{row.currency}</span> },
-    { key: 'value', header: '市值', numeric: true, render: (row) => <span>{row.marketValue}</span> },
-    { key: 'pnl', header: '持仓盈亏', width: '112px', numeric: true, render: (row) => <SignedNumber text={row.pnl} tone={row.pnlTone} arrow="" /> },
-    { key: 'pnlPct', header: '收益率', width: '112px', numeric: true, render: (row) => <SignedNumber text={row.pnlPct} tone={row.pnlPctTone} arrow="" /> },
-    { key: 'day', header: '当日盈亏', width: '112px', numeric: true, render: (row) => <SignedNumber text={row.dayPnl} tone={row.dayPnlTone} arrow="" /> },
+  const columns: Array<Column<PositionItem>> = [
+    {
+      key: 'name',
+      header: '名称',
+      truncate: true,
+      cellTitle: (row) => `${row.code} ${row.name ?? '名称未接入'}`,
+      render: (row) => (
+        <span className={row.name ? 'font-medium' : 'text-text-muted'}>{row.name ?? '名称未接入'}</span>
+      ),
+      summary: () => <span className="font-medium">合计</span>,
+    },
+    {
+      key: 'value',
+      header: '市值',
+      width: '112px',
+      numeric: true,
+      sort: (a, b) => (a.market_value ?? Number.NEGATIVE_INFINITY) - (b.market_value ?? Number.NEGATIVE_INFINITY),
+      render: (row) => (
+        <span className={row.market_value === null ? 'text-text-muted' : undefined}>
+          {formatIntOrMissing(row.market_value)}
+        </span>
+      ),
+      summary: () => formatIntOrMissing(valuation?.market_value),
+    },
+    {
+      key: 'pnl',
+      header: '持仓盈亏',
+      width: '112px',
+      numeric: true,
+      sort: (a, b) => (a.unrealized_pnl ?? Number.NEGATIVE_INFINITY) - (b.unrealized_pnl ?? Number.NEGATIVE_INFINITY),
+      render: (row) => {
+        const pnl = formatSignedAmount(row.unrealized_pnl)
+        return <SignedNumber text={pnl.text} tone={pnl.tone} arrow="" />
+      },
+      summary: () => {
+        const pnl = formatSignedAmount(valuation?.unrealized_pnl ?? null)
+        return <SignedNumber text={pnl.text} tone={pnl.tone} arrow="" />
+      },
+    },
   ]
+
+  const grossBadge = (
+    <Badge tone="flat" title={GROSS_TITLE}>
+      毛额·未扣费
+    </Badge>
+  )
+  const privacyBadge = <PrivacyBadge subject="持仓" storeCommand="ldst position" />
 
   return (
     <SectionCard
       title={payload ? `我的持仓 · (${countOrMissing(pricedCount)})` : '我的持仓'}
       tone={payload && payload.data_source_status !== 'ok' ? 'warn' : 'neutral'}
+      className={cn('flex flex-col', className)}
       subtitle={
-        payload ? (
-          <span className="flex flex-wrap items-center gap-1">
+        <span className="flex flex-wrap items-center gap-1">
+          {grossBadge}
+          {payload && (
             <SourceStatusBadge
               status={payload.data_source_status}
               detail={payload.price_lookup?.reason ?? null}
             />
-            {payload.as_of && <span className="ldst-num text-text-muted">估值 {formatTime(payload.as_of)}</span>}
-          </span>
-        ) : (
-          '持仓只在本机'
-        )
+          )}
+        </span>
       }
       actions={
         <>
-          <Button variant="ghost" onClick={() => navigate('/positions')}>
-            看明细 →
-          </Button>
+          {/* 隐私徽标常驻卡头操作区（§5.4），不随数据状态消失 */}
+          {privacyBadge}
           <CardRefreshButton
             label="刷新我的持仓"
             onClick={view.onRefresh}
@@ -198,13 +135,8 @@ export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> 
           />
         </>
       }
-      bodyClassName="p-0"
+      bodyClassName="flex grow flex-col p-0"
     >
-      {/* 隐私承诺不随数据状态消失：加载中 / 失败 / 空态都常驻（§5.3） */}
-      <div className="p-4 pb-0">
-        <PrivacyNotice />
-      </div>
-
       {view.state === 'loading' && (
         <div className="flex flex-col gap-2 p-4" aria-hidden="true">
           <div className="h-row rounded bg-surface-2" />
@@ -231,40 +163,22 @@ export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> 
         </div>
       )}
 
-      {(view.state === 'normal' || view.state === 'partial') && valuation && (
-        <>
-          <div className="pt-4">
-            <DataTable<SummaryRow>
-              columns={summaryColumns}
-              rows={summary}
-              rowKey={(row) => row.currency}
-              caption="持仓币种汇总"
-              density={density}
+      {(view.state === 'normal' || view.state === 'partial') && (
+        <DataTable<PositionItem>
+          columns={columns}
+          rows={items}
+          rowKey={(row) => row.code}
+          caption={`持仓摘要（${countOrMissing(pricedCount)} 只），合计行与逐条同源`}
+          density={density}
+          maxHeight="240px"
+          empty={
+            <EmptyState
+              compact
+              title="本机还没有持仓"
+              description="在「我的持仓」页点「新增持仓」录入第一条，保存后这里自动出现。"
             />
-          </div>
-          <p className="px-4 pb-3 pt-2 text-caption leading-body text-text-muted">
-            持仓表无 <code className="ldst-num">currency</code> 列，未按币种拆分，不猜币种。
-            {unpricedCost > 0 && `其中 ${formatMoney(unpricedCost)} 成本未定价，市值不含它们。`}
-          </p>
-
-          <div className="border-t border-border">
-            <DataTable<PositionItem>
-              columns={HOLDING_COLUMNS}
-              rows={items}
-              rowKey={(row) => row.code}
-              caption={`逐条持仓（${countOrMissing(pricedCount)} 只）`}
-              density={density}
-              maxHeight="240px"
-              empty={
-                <EmptyState
-                  compact
-                  title="本机还没有持仓"
-                  description="在「我的持仓」页点「新增持仓」录入第一条，保存后这里自动出现。"
-                />
-              }
-            />
-          </div>
-        </>
+          }
+        />
       )}
 
       {view.state === 'empty' &&
@@ -296,18 +210,28 @@ export function HomePositionsCard({ view }: { view: BlockView<PositionsPayload> 
           </div>
         ))}
 
-      <div className="border-t border-border px-4 py-3 text-caption leading-body text-text-muted">
-        <p>成本法：移动加权平均（DEC-038）；不含分红，已实现盈亏在交易日志页。</p>
-        <p>
-          当日盈亏 =（现价 − 昨收）× 股数
-          {dayUnavailable
-            ? `；本次未算出（${dayStatus === 'not_computed' ? '本次没计算' : (payload?.daily_lookup?.reason ?? '本机缺昨收价')}），整列显示 ${MISSING}，不推算。`
-            : `；${dayMissing.length > 0 ? `有 ${dayMissing.length} 只算不出，整列按合计数展示。` : '逐条与合计同源。'}`}
+      {/* 一行页脚：口径短句 + 全表入口（322px 宽卡放不下长文案，全文在 title） */}
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border px-4 py-1">
+        <p
+          className="min-w-0 truncate text-11px leading-body text-text-muted"
+          title={
+            '成本法：移动加权平均（DEC-038），不含分红；盈亏为毛额·未扣费。' +
+            (payload?.as_of ? `估值时间 ${payload.as_of}。` : '') +
+            (unpricedCost > 0 ? `其中 ${formatMoney(unpricedCost)} 成本未定价，市值不含它们。` : '') +
+            '当日盈亏与完整六列见「我的持仓」页。'
+          }
+        >
+          移动加权平均 · 不含分红
+          {payload?.as_of ? ` · ${formatInboxTime(payload.as_of)}` : ' · 毛额'}
+          {unpricedCost > 0 && ` · 未定价成本 ${formatMoney(unpricedCost)}`}
         </p>
-        <p>
-          表头排序状态只记在这台浏览器的 localStorage；行情源：
-          {quoteSourceLabel(payload?.price_source ?? 'spot_quote')}。持仓只走 127.0.0.1，不上传、不进 AI、不被 MCP 读取。
-        </p>
+        <button
+          type="button"
+          onClick={() => navigate('/positions')}
+          className="inline-flex h-5 shrink-0 items-center rounded px-2 text-caption text-text-secondary transition-colors duration-fast ease-ldst hover:bg-surface-3 hover:text-text"
+        >
+          完整持仓 →
+        </button>
       </div>
     </SectionCard>
   )

@@ -263,11 +263,11 @@ export function useHomeSearch(options: HomeSearchOptions = {}) {
   const remember = useCallback((term: string) => {
     const text = term.trim()
     if (!text) return
-    setRecent((current) => {
-      const next = [text, ...current.filter((item) => item !== text)].slice(0, RECENT_MAX)
-      writeRecent(next)
-      return next
-    })
+    // 先同步落本机存储再 setState：跳转会在同一批次里卸载本组件，
+    // 只写在 setState updater 里的副作用会随卸载被丢弃（QUOT-552 代码直达暴露）。
+    const next = [text, ...readRecent().filter((item) => item !== text)].slice(0, RECENT_MAX)
+    writeRecent(next)
+    setRecent(next)
   }, [])
 
   const navigateTo = useCallback(

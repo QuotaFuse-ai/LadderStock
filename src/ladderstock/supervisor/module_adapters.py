@@ -890,6 +890,7 @@ class BaseAdapter:
                 f"（pid={evidence.pid} cmd={' '.join(evidence.cmdline)[:160]}），拒绝重复拉起"
             )
         primary: StartFace | None = None
+        primary_pid: int | None = None
         for face in self.faces:
             exe = Path(face.argv[0])
             if not exe.is_file():
@@ -903,11 +904,14 @@ class BaseAdapter:
             self._roots.append(pid)
             if primary is None:
                 primary = face
-        if primary is None:
+                primary_pid = pid
+        if primary is None or primary_pid is None:
             raise SupervisorError(f"{self.name} 没有配置启动命令")
         self._cache.clear()
+        # 返回本次拉起的 pid，不是 _roots[0]：自愈重拉不走 stop()，_roots 里
+        # 还留着上次崩溃的旧 pid——拿旧 pid 换绑账本会让恢复判定永远失败。
         return SpawnedProcess(
-            pid=self._roots[0],
+            pid=primary_pid,
             parent_pid=os.getpid(),
             cmdline=tuple(primary.argv),
         )

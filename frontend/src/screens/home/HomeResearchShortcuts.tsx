@@ -26,6 +26,11 @@ export interface HomeResearchShortcutsProps {
   className?: string
   /** 注入随机源（测试用）；默认 `Math.random`。 */
   random?: () => number
+  /**
+   * 嵌入研究面板「快捷入口」页签（QUOT-552）：去掉步骤标 / 说明段 / 顶部分隔线，
+   * 标题、换一批与 2×2 卡片原样保留；独立用法（默认）一个像素不动。
+   */
+  embedded?: boolean
 }
 
 const TITLE_ID = 'ldst-home-research-shortcuts-title'
@@ -36,7 +41,7 @@ function subtitle(item: CatalogItem): string {
   return item.group
 }
 
-export function HomeResearchShortcuts({ className, random }: HomeResearchShortcutsProps) {
+export function HomeResearchShortcuts({ className, random, embedded = false }: HomeResearchShortcutsProps) {
   const catalog = useMemo(() => readCatalog(), [])
   const [items, setItems] = useState<CatalogItem[]>(() =>
     pickHomeShortcuts(catalog, { count: HOME_SHORTCUT_COUNT, random }),
@@ -52,22 +57,26 @@ export function HomeResearchShortcuts({ className, random }: HomeResearchShortcu
   return (
     <section
       aria-labelledby={TITLE_ID}
-      className={cn('flex flex-col gap-2 border-t border-border pt-3', className)}
+      className={cn('flex flex-col gap-2', !embedded && 'border-t border-border pt-3', className)}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-half">
-          <HomePathLabel step="2" tone="secondary">
-            开现成工具 · 点一下直达
-          </HomePathLabel>
+          {!embedded && (
+            <HomePathLabel step="2" tone="secondary">
+              开现成工具 · 点一下直达
+            </HomePathLabel>
+          )}
           <div className="flex items-center gap-2">
             <Wrench className="size-4 shrink-0 text-accent" aria-hidden="true" />
             <h3 id={TITLE_ID} className="text-13px font-semibold text-text">
               研究工具快捷入口
             </h3>
           </div>
-          <p className="text-caption text-text-secondary">
-            不想提问？按分类随机 {HOME_SHORTCUT_COUNT} 条，点一下直接打开对应研究工具。
-          </p>
+          {!embedded && (
+            <p className="text-caption text-text-secondary">
+              不想提问？按分类随机 {HOME_SHORTCUT_COUNT} 条，点一下直接打开对应研究工具。
+            </p>
+          )}
         </div>
         <Button
           variant="ghost"

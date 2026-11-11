@@ -44,7 +44,8 @@ export {
 export { HBarList, Sparkline, type HBarItem, type HBarListProps, type SparklineProps } from './MiniChart'
 export { NavPills, type NavPillItem, type NavPillsProps } from './NavPills'
 export { Pagination, type PaginationProps } from './Pagination'
-export { PrivacyNotice } from './PrivacyNotice'
+export { PrivacyNotice, privacyNoticeText } from './PrivacyNotice'
+export { PrivacyBadge, type PrivacyBadgeProps } from './PrivacyBadge'
 export { ConfirmDialog, Drawer, useModalChrome, type ConfirmDialogProps, type DrawerProps } from './Overlay'
 export {
   asSourceBadgeStatus,
