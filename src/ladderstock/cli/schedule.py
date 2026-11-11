@@ -1,9 +1,10 @@
 """`ldst schedule list|run`：定时任务表（APScheduler）与单轮 tick。
 
 调度表落 `config/schedule.yaml`（JSON Schema 校验，`ldst config validate` 一并检查），
-默认 **09:05 盘前摘要**（digest）、**盘中 6 时点快照**（snapshot，QUOT-286）、
-**15:05 收盘对账**（reconcile）、**15:35 收盘全量同步**（sync_close，QUOT-347）、
-**15:40 收盘摘要**与 **16:15 自选变化**（digest，DEC-058）。
+默认 **07:30 题材资讯采集**（wire_news，QUOT-554）、**09:05 盘前摘要**（digest）、
+**盘中 6 时点快照**（snapshot，QUOT-286）、**15:05 收盘对账**（reconcile）、
+**15:35 收盘全量同步**（sync_close，QUOT-347）、**15:40 收盘摘要**与 **16:15 自选变化**
+（digest，DEC-058）。
 
 `trigger` 支持两种写法：`HH:MM` 定点（cron）与 `Ns` 间隔（如 `30s` / `60s`）。
 盘中高频（QUOT-352 / DEC-056）就是两条间隔任务：`snapshot_fast`（关键盘面快照）与
@@ -12,7 +13,7 @@
 边界（DEC-006 / DEC-004）：
 
 - 任务只跑本机动作（发本机通知、对账本地已落盘数据、复用 sync 链路按治理取 peer 读数、
-  生成当日复盘、生成三类本机摘要）；
+  触发 Wire peer 自己的采集（`qfw run`，QUOT-554）、生成当日复盘、生成三类本机摘要）；
 - 单个任务失败只记 `degraded` / `skipped`，不拖垮整轮、不中断调度器；
 - 摘要任务（`kind: digest`）先写 `inbox` 行再投递通知：通知失败只把 `delivery` 记为
   `degraded`，收件箱里那条**仍然在**；同一 `dedupe_key` 重跑只更新同一条。
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
@@ -51,6 +53,8 @@ DEFAULT_MISFIRE_GRACE_SECONDS = 300
 #: 任务类型白名单。`snapshot_fast` / `sync_batch` 是盘中高频（QUOT-352）：
 #: 前者按秒级间隔抓「昨日涨停股 × 此刻报价」，后者按间隔刷一条批量数据集。
 #: `digest` 是三类本机摘要（DEC-058）：生成正文 + 写 `inbox` + 投递通知。
+#: `wire_news` 是题材资讯每日采集（QUOT-554）：先触发 Wire 自己的 `qfw run`
+#: （采集+提炼），再走既有 `theme_news` 同步链路落库。
 JOB_KINDS: tuple[str, ...] = (
     "notify",
     "reconcile",
@@ -59,7 +63,12 @@ JOB_KINDS: tuple[str, ...] = (
     "snapshot_fast",
     "sync_batch",
     "digest",
+    "wire_news",
 )
+
+#: 单次 `qfw run`（全赛道采集 + LLM 提炼）的时长上限：正常 1–3 分钟，超上限即终止
+#: 记 failed，再按 Wire 实际已落库的数据同步。cron 任务 max_instances=1，不会重叠。
+WIRE_RUN_TIMEOUT_SEC = 900
 
 
 def trigger_interval_seconds(trigger: Any) -> int | None:
@@ -91,6 +100,16 @@ CLOSE_SYNC_DATASETS: tuple[str, ...] = (
 # 这样「第一次装上就能跑」和「配置坏了不静默」两件事都不牺牲——坏了的那份会
 # 解析失败并按退出码 3 报出来。
 DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
+    {
+        # QUOT-554：题材/资讯每日自动新鲜——先触发 Wire 本机 `qfw run`（采集+提炼，
+        # QF_WIRE_API_KEY 由 Wire 从自己的 .env 加载，不经 LadderStock），再走既有
+        # theme_news 同步链路落库推水位。每天跑（含周末）；部分源不可用只记 degraded。
+        "id": "wire_news_daily",
+        "name": "07:30 题材资讯采集",
+        "kind": "wire_news",
+        "trigger": "07:30",
+        "enabled": True,
+    },
     {
         # QUOT-432 / DEC-058：`premarket_reminder`（静态口播文案）退役，换成
         # `premarket_digest`——同一触发时刻（09:05）改为按真实行情生成摘要并写收件箱。
@@ -475,6 +494,142 @@ def _run_sync_close(
     return {**base, "status": status, "detail": f"{detail}；复盘：{review_detail}"}
 
 
+def _wire_qfw_entry(wire_dir: Path) -> Path | None:
+    """Wire venv 里的 qfw 入口（Windows `Scripts/qfw.exe` / POSIX `bin/qfw`）。"""
+    for parts in ((".venv", "Scripts", "qfw.exe"), (".venv", "bin", "qfw")):
+        candidate = wire_dir.joinpath(*parts)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _collect_wire_news() -> dict[str, Any]:
+    """触发 Wire 自己的采集+提炼（`qfw run`），返回 {status, detail}。
+
+    子进程 cwd 钉在 Wire 目录：QF_WIRE_API_KEY 由 Wire 从它自己的 .env/.env.local
+    加载（真实环境 > .env.local > .env），LadderStock 的配置、argv、日志都不碰密钥。
+    采集由 Wire peer 自己完成——LadderStock 不直连资讯站点（DEC-006）。
+    退出码口径取 Wire 的 `core/errors.py`：0 全成、8 部分源失败、其余失败。
+    """
+    from ladderstock.supervisor.module_adapters import default_peer_dir
+
+    wire_dir = default_peer_dir("wire")
+    entry = _wire_qfw_entry(wire_dir)
+    if entry is None:
+        return {
+            "status": "skipped",
+            "detail": f"Wire 未安装（{wire_dir} 下没有 qfw 入口），跳过采集",
+        }
+    try:
+        proc = subprocess.run(  # noqa: S603 — argv 来自本机 peer 目录解析，无 shell
+            [str(entry), "--output", "json", "run"],
+            cwd=str(wire_dir),
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=WIRE_RUN_TIMEOUT_SEC,
+            creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "failed",
+            "detail": f"qfw run 超时（>{WIRE_RUN_TIMEOUT_SEC}s）已终止",
+        }
+    except OSError as exc:
+        return {"status": "failed", "detail": f"qfw run 启动失败：{_one_line(exc)}"}
+
+    summary: dict[str, Any] = {}
+    try:
+        parsed = json.loads(proc.stdout)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        summary = parsed
+    code = proc.returncode
+    status = "ok" if code == 0 else ("degraded" if code == 8 else "failed")
+    items, total = summary.get("items"), summary.get("sources_total")
+    if isinstance(items, int) and isinstance(total, int):
+        detail = (
+            f"qfw run {summary.get('day') or '-'}：采集 {items} 条资讯，"
+            f"信源 {summary.get('sources_ok')}/{total} 成功、"
+            f"{summary.get('sources_unavailable')} 不可用"
+        )
+    else:
+        detail = f"qfw run 退出码 {code}（无 JSON 摘要，详情见 Wire 日志）"
+    if status == "degraded":
+        detail += "；部分源不可用，如实记 degraded"
+    return {"status": status, "detail": detail}
+
+
+#: theme_news 同步行状态 → 任务状态。与 sync_batch 的差别：采集已经跑过，同步再
+#: skipped（peer 不可达 / 赛道池为空）就是失败而不是安静跳过；empty（Wire 当日无
+#: 内容）记 degraded——水位保持、不拿旧数据顶替。
+_WIRE_SYNC_STATUS_MAP = {
+    "ok": "ok",
+    "degraded": "degraded",
+    "empty": "degraded",
+    "skipped": "failed",
+    "failed": "failed",
+}
+_WIRE_STATUS_RANK = {"ok": 0, "degraded": 1, "failed": 2}
+
+
+def _run_wire_news(
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """07:30 题材资讯每日采集（QUOT-554）：先 `qfw run`，再 theme_news 同步落库。
+
+    **每天跑（含周末）**——资讯不收盘，与 sync_close 的仅交易日口径刻意不同。
+    两段各自如实、整体取差者：采集失败不挡落库（Wire 手里有什么就同步什么，水位跟
+    data_as_of 走，不拿旧数据顶替当日），但当日采集没达成整体就记 failed，明细保留
+    同步结果；部分免费 RSS 源 403/不可用 → degraded，不补造。
+    幂等由 replace 整日覆盖 + `qfw run` 同日重跑只覆盖当日兜底；手动补跑
+    `ldst schedule run --once --job wire_news_daily`。
+    """
+    from ladderstock.core import intraday
+
+    moment = intraday.local_moment(now, timezone)
+    base = {"date": moment.date().isoformat(), "dataset": "theme_news"}
+
+    collect = _collect_wire_news()
+    if collect["status"] == "skipped":
+        return {**base, "status": "skipped", "detail": collect["detail"]}
+
+    from ladderstock.cli import sync as sync_module
+    from ladderstock.data import watermark
+    from ladderstock.data.db_lock import writer_lock
+    from ladderstock.data.provider_registry import ProviderRegistry
+
+    if registry is None:
+        registry = ProviderRegistry(root=root)
+    store = watermark.WatermarkStore(root=getattr(registry, "root", root))
+    try:
+        with writer_lock(root, holder="ldst schedule wire_news"):
+            row = sync_module.sync_one(registry, store, "theme_news")
+    except LadderStockError as exc:
+        return {
+            **base,
+            "status": "failed",
+            "detail": f"{collect['detail']}；同步中止：{exc.message}",
+        }
+
+    sync_status = _WIRE_SYNC_STATUS_MAP.get(str(row.get("status") or ""), "degraded")
+    status = max((collect["status"], sync_status), key=lambda s: _WIRE_STATUS_RANK[s])
+    return {
+        **base,
+        "status": status,
+        "detail": f"{collect['detail']}；同步：{row.get('detail')}",
+        "collect_status": collect["status"],
+        "sync_status": str(row.get("status") or ""),
+        "rows": row.get("rows"),
+        "watermark_after": row.get("watermark_after"),
+    }
+
+
 def _run_sync_batch(
     job: Mapping[str, Any],
     *,
@@ -641,6 +796,10 @@ def run_job(
             )
         elif kind == "sync_close":
             result.update(_run_sync_close(now=now, timezone=timezone, root=root))
+        elif kind == "wire_news":
+            result.update(
+                _run_wire_news(now=now, timezone=timezone, root=root, registry=registry)
+            )
         elif kind == "snapshot_fast":
             from ladderstock.core import intraday
 
@@ -851,6 +1010,7 @@ __all__ = [
     "DEFAULT_MISFIRE_GRACE_SECONDS",
     "DEFAULT_TIMEZONE",
     "JOB_KINDS",
+    "WIRE_RUN_TIMEOUT_SEC",
     "jobs_view",
     "load_schedule",
     "register",

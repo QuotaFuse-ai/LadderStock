@@ -213,14 +213,15 @@ def test_notify_test_unavailable_channel_exits_4(
 # --------------------------------------------------------------------------- #
 
 def test_schedule_list_shows_default_jobs(repo: Path) -> None:
-    """仓库自带 config/schedule.yaml：三份摘要 + 6 时点快照 + 收盘对账 + 收盘全量同步。"""
+    """仓库自带 config/schedule.yaml：资讯采集 + 三份摘要 + 6 时点快照 + 对账 + 收盘同步。"""
     result = runner.invoke(app, ["schedule", "list", "--output", "json"])
 
     assert result.exit_code == 0, result.stderr
     payload = _json(result)
-    assert payload["job_count"] == 13
+    assert payload["job_count"] == 14
     assert payload["timezone"] == "Asia/Shanghai"
     assert [job["trigger"] for job in payload["jobs"]] == [
+        "07:30",
         "09:05",
         "09:25",
         "09:35",
@@ -236,6 +237,7 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "60s",
     ]
     assert [job["kind"] for job in payload["jobs"]] == [
+        "wire_news",
         "digest",
         "snapshot",
         "snapshot",
@@ -271,7 +273,7 @@ def test_schedule_list_falls_back_to_builtin_table(
     assert result.exit_code == 0
     payload = _json(result)
     assert payload["config"] == "builtin"
-    assert payload["job_count"] == 13
+    assert payload["job_count"] == 14
     assert payload["warnings"] and "内置默认表" in payload["warnings"][0]
 
 

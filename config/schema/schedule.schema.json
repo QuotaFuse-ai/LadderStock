@@ -32,7 +32,8 @@
               "sync_close",
               "snapshot_fast",
               "sync_batch",
-              "digest"
+              "digest",
+              "wire_news"
             ]
           },
           "trigger": {
