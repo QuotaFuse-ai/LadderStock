@@ -195,7 +195,7 @@ def tray(
 def register(app: typer.Typer) -> None:
     group = typer.Typer(
         no_args_is_help=True,
-        help="跨平台服务/开机自启：install / uninstall / status / render / tray",
+        help="跨平台服务、开机自启与托盘（三平台原生）",
     )
     group.command("render", help="生成三平台服务定义（不注册，任何平台可验证）")(render)
     group.command("install", help="安装为服务/开机自启（缺省 dry-run；--apply 执行）")(install)
