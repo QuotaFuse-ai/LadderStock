@@ -17,14 +17,17 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from ladderstock.supervisor.ledger import Ledger
 from ladderstock.supervisor.module_adapters import (
     CommandResult,
+    FinanceCofferAdapter,
     PortEvidence,
     ProcessSnapshot,
+    ProxyFleetAdapter,
 )
 from ladderstock.supervisor.page_boot import (
     GUARD_RETRY_DELAYS,
@@ -210,7 +213,7 @@ def _boot(
     tmp_path: Path,
     host: FakeHost,
     *,
-    adapters: dict[str, FakePeerAdapter] | None = None,
+    adapters: dict[str, Any] | None = None,
     env: dict[str, str] | None = None,
     threshold: float = 3.0,
 ) -> PageBoot:
@@ -462,6 +465,180 @@ def test_foreign_occupant_reported_and_never_killed(tmp_path: Path) -> None:
     assert squatter in host.procs
     assert host.terminated == []
     assert all("financecoffer" not in " ".join(argv) for argv, _, _ in host.spawns)
+
+
+# --------------------------------------------------------------------------- #
+# 真实适配器 peer 认领（QUOT-546）：identify(port) 对齐 BaseAdapter 契约
+# --------------------------------------------------------------------------- #
+#
+# 上面的用例走 FakePeerAdapter（天生带 port 参数），测不出真实适配器的签名缺陷。
+# 这里直接注入 FinanceCofferAdapter / ProxyFleetAdapter：修复前 identify(port)
+# 抛 TypeError，被 ensure() 兜成 failed、peer 不被认领；修复后返回 PortEvidence，
+# _adopt_peer 正常认领记账。全程假宿主，不碰生产 peer / 看板。
+
+
+def _real_financecoffer(
+    tmp_path: Path, host: FakeHost, *, container: str = "financecoffer-api-1"
+) -> FinanceCofferAdapter:
+    host.responses.append(
+        ("com.docker.compose.service=api", CommandResult(returncode=0, stdout=container))
+    )
+    return FinanceCofferAdapter(
+        peer_dir=tmp_path / "peers" / "financecoffer",
+        host=host,
+        log_dir=tmp_path / "logs",
+        env={"LDST_WSL_DISTRO": "Ubuntu-24.04"},
+        evidence_cache_sec=0.0,
+    )
+
+
+def _real_proxyfleet(host: FakeHost) -> ProxyFleetAdapter:
+    return ProxyFleetAdapter(host=host, evidence_cache_sec=0.0)
+
+
+def test_real_financecoffer_peer_is_adopted_with_correct_pid(tmp_path: Path) -> None:
+    """8100 在听 + WSL api 容器命中：_adopt_peer 返回 adopted、PID 正确、无 TypeError。"""
+    host = FakeHost()
+    fc = _real_financecoffer(tmp_path, host)
+    peer_pid = host.add_process(
+        ("C:/windows/system32/lxss/wslhost.exe", "{guid}", "932"),
+        name="wslhost.exe",
+        ports=(8100,),
+    )
+    boot = _boot(tmp_path, host, adapters={"financecoffer": fc})
+
+    peer = boot._adopt_peer("financecoffer")
+
+    assert peer.state == STATE_ADOPTED
+    assert peer.pid == peer_pid
+    assert peer.origin == "adopted"
+    record = boot.ledger.record("financecoffer")
+    assert record is not None
+    assert record.pid == peer_pid
+    assert record.origin == "adopted"
+    assert record.adopted_peer is True
+    assert host.terminated == []
+    assert host.spawns == []
+    assert peer_pid in host.procs
+
+
+def test_real_proxyfleet_peer_is_adopted_with_correct_pid(tmp_path: Path) -> None:
+    """pfctl.py run 在听：_adopt_peer 返回 adopted、PID 正确、无 TypeError。"""
+    host = FakeHost()
+    pf = _real_proxyfleet(host)
+    peer_pid = host.add_process(
+        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        ports=(8788, 8789),
+    )
+    boot = _boot(tmp_path, host, adapters={"proxyfleet": pf})
+
+    peer = boot._adopt_peer("proxyfleet")
+
+    assert peer.state == STATE_ADOPTED
+    assert peer.pid == peer_pid
+    assert peer.origin == "adopted"
+    record = boot.ledger.record("proxyfleet")
+    assert record is not None
+    assert record.pid == peer_pid
+    assert record.origin == "adopted"
+    assert record.adopted_peer is True
+    assert host.terminated == []
+    assert host.spawns == []
+    assert peer_pid in host.procs
+
+
+def test_real_peer_adoption_survives_ensure_full_path(tmp_path: Path) -> None:
+    """修复前 identify(port) 的 TypeError 被 ensure() 兜成 failed；修复后如实 adopted。
+
+    二次打开幂等：peer PID 不变、绝不终止（adopt-only 红线）。
+    """
+    host = FakeHost()
+    fc = _real_financecoffer(tmp_path, host)
+    pf = _real_proxyfleet(host)
+    fc_pid = host.add_process(
+        ("C:/windows/system32/lxss/wslhost.exe", "{guid}"), name="wslhost.exe", ports=(8100,)
+    )
+    pf_pid = host.add_process(
+        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        ports=(8788, 8789),
+    )
+    boot = _boot(tmp_path, host, adapters={"financecoffer": fc, "proxyfleet": pf})
+
+    report = boot.ensure()
+    boot.ensure()
+
+    assert report["peers"]["financecoffer"]["state"] == STATE_ADOPTED
+    assert report["peers"]["financecoffer"]["pid"] == fc_pid
+    assert report["peers"]["proxyfleet"]["state"] == STATE_ADOPTED
+    assert report["peers"]["proxyfleet"]["pid"] == pf_pid
+    assert boot.ledger.record("financecoffer").pid == fc_pid  # type: ignore[union-attr]
+    assert boot.ledger.record("proxyfleet").pid == pf_pid  # type: ignore[union-attr]
+    assert host.terminated == []
+    assert fc_pid in host.procs and pf_pid in host.procs
+
+
+def test_real_financecoffer_not_listening_is_left_alone(tmp_path: Path) -> None:
+    host = FakeHost()
+    fc = _real_financecoffer(tmp_path, host)
+    boot = _boot(tmp_path, host, adapters={"financecoffer": fc})
+
+    peer = boot._adopt_peer("financecoffer")
+
+    assert peer.state == STATE_NOT_LISTENING
+    assert peer.pid is None
+    assert boot.ledger.record("financecoffer") is None
+    assert host.terminated == []
+    assert host.spawns == []
+
+
+def test_real_proxyfleet_not_listening_is_left_alone(tmp_path: Path) -> None:
+    host = FakeHost()
+    pf = _real_proxyfleet(host)
+    boot = _boot(tmp_path, host, adapters={"proxyfleet": pf})
+
+    peer = boot._adopt_peer("proxyfleet")
+
+    assert peer.state == STATE_NOT_LISTENING
+    assert peer.pid is None
+    assert boot.ledger.record("proxyfleet") is None
+    assert host.terminated == []
+    assert host.spawns == []
+
+
+def test_real_proxyfleet_foreign_occupant_never_adopted_or_killed(tmp_path: Path) -> None:
+    """端口在听但命令行不命中：port_occupied，不认领、绝不终止。"""
+    host = FakeHost()
+    pf = _real_proxyfleet(host)
+    squatter = host.add_process(
+        ("D:/other/gateway.exe", "--port", "8788"), name="gateway.exe", ports=(8788,)
+    )
+    boot = _boot(tmp_path, host, adapters={"proxyfleet": pf})
+
+    peer = boot._adopt_peer("proxyfleet")
+
+    assert peer.state == STATE_PORT_OCCUPIED
+    assert boot.ledger.record("proxyfleet") is None
+    assert squatter in host.procs
+    assert host.terminated == []
+    assert host.spawns == []
+
+
+def test_real_financecoffer_residual_forward_without_container_not_adopted(tmp_path: Path) -> None:
+    """wslhost 残留转发但 WSL 内无 api 容器：失败关闭，不认领、绝不终止。"""
+    host = FakeHost()
+    fc = _real_financecoffer(tmp_path, host, container="")
+    squatter = host.add_process(
+        ("C:/windows/system32/lxss/wslhost.exe", "{guid}"), name="wslhost.exe", ports=(8100,)
+    )
+    boot = _boot(tmp_path, host, adapters={"financecoffer": fc})
+
+    peer = boot._adopt_peer("financecoffer")
+
+    assert peer.state == STATE_PORT_OCCUPIED
+    assert boot.ledger.record("financecoffer") is None
+    assert squatter in host.procs
+    assert host.terminated == []
+    assert host.spawns == []
 
 
 def test_child_failure_is_contained_in_report(tmp_path: Path) -> None:

@@ -97,5 +97,8 @@ docs/tasks/QUOT-531/shots/
 # 验收任务产出例外：跨平台服务抽象交付报告随 PR 交付（QUOT-527）
 !docs/tasks/QUOT-527/
 !docs/tasks/QUOT-527/README.md
+# 验收任务产出例外：peer 认领 identify 签名修复报告随 PR 交付（QUOT-546）
+!docs/tasks/QUOT-546/
+!docs/tasks/QUOT-546/README.md
 *.docx
 ~$*
