@@ -168,4 +168,82 @@
       animation: none;
     }
   }
+
+  /* QUOT-564 工作流粒子：环境类动画（同骨架扫光），不进交互过渡预算。
+     粒子只在上游模块有后端报 ok 的阶段事件时渲染；颜色走令牌（蓝=数据 / 紫=认知）。
+     <640px 管线竖排走 flow-y，≥640px 横排走 flow-x；
+     prefers-reduced-motion 下退化为静态流向点（--wf-pos 由组件按 25/50/75% 给出）。 */
+  .ldst-wf-dot {
+    left: 50%;
+    top: 0;
+    transform: translate(-50%, -50%);
+    animation: ldst-wf-flow-y 1800ms linear infinite;
+  }
+
+  .ldst-wf-dot-static {
+    left: 50%;
+    top: var(--wf-pos, 50%);
+    transform: translate(-50%, -50%);
+  }
+
+  @keyframes ldst-wf-flow-y {
+    0% {
+      top: 0%;
+      opacity: 0;
+    }
+    20% {
+      opacity: 1;
+    }
+    80% {
+      opacity: 1;
+    }
+    100% {
+      top: 100%;
+      opacity: 0;
+    }
+  }
+
+  @keyframes ldst-wf-flow-x {
+    0% {
+      left: 0%;
+      opacity: 0;
+    }
+    20% {
+      opacity: 1;
+    }
+    80% {
+      opacity: 1;
+    }
+    100% {
+      left: 100%;
+      opacity: 0;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .ldst-wf-dot {
+      left: 0;
+      top: 50%;
+      animation-name: ldst-wf-flow-x;
+    }
+
+    .ldst-wf-dot-static {
+      left: var(--wf-pos, 50%);
+      top: 50%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ldst-wf-dot {
+      animation: none;
+      top: var(--wf-pos, 50%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) and (min-width: 640px) {
+    .ldst-wf-dot {
+      left: var(--wf-pos, 50%);
+      top: 50%;
+    }
+  }
 }
