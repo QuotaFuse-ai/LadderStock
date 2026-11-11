@@ -9,7 +9,8 @@
   `events_latest`（最新事件 seq，供既有轮询发现新事件）。
 - `GET /api/supervisor/events?since=<seq>`（QUOT-556）：peer 级健康事件通道
   （crash / offline / port_conflict / needs_human / recovered），前端弹窗
-  定时轮询订阅；只读，回环 + Host 闸门。
+  定时轮询订阅；只读，回环 + Host 闸门。QUOT-562 起同一通道还承载采集→
+  入库七阶段 `stage` 事件（`/state` 带整链路 `stages` 快照）。
 - `POST /api/supervisor/state/{module}/reset`：人工解除 `needs_human`（辅助
   清窗口；前端「一键重启」走真 `/restart`，不是 reset）。
 - `POST /api/supervisor/start|restart|stop`（QUOT-523 单入口）：按注册表顺序
@@ -32,11 +33,30 @@ import asyncio
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ladderstock.core.boundary import DATASET_CATALOG
+from ladderstock.core.stage_events import (
+    HEALTH_DOWN,
+    HEALTH_OK,
+    HEALTH_WARN,
+    STAGE_COLLECT_PROCESS,
+    STAGE_COLLECT_SCRIPT,
+    STAGE_COLLECT_STORE,
+    STAGE_COLLECT_SUCCESS,
+    STAGE_INGEST_IDEMPOTENT,
+    STAGE_INGEST_PERSIST,
+    STAGE_INGEST_WATERMARK,
+    StageSample,
+)
+from ladderstock.data import duckdb_store
+from ladderstock.data.watermark import WatermarkError, WatermarkStore
+from ladderstock.errors import EXIT_DB_BUSY, LadderStockError
 from ladderstock.supervisor.adapters import MODULE_ORDER
 from ladderstock.supervisor.engine import SupervisorEngine, SupervisorError
 from ladderstock.supervisor.health_events import (
@@ -57,6 +77,7 @@ from ladderstock.supervisor.selfheal import (
     RestartOutcome,
     SelfHealEngine,
 )
+from ladderstock.supervisor.stage_monitor import StageHealthMonitor
 from ladderstock.web.port_diagnostics import classify_port_owner
 from ladderstock.web.radar import privacy_write_guard
 
@@ -182,6 +203,305 @@ def build_port_inspector(
     return inspect
 
 
+#: 阶段探针的锚点数据集：行情主链路（`daily_k`），采集与入库都以它为准。
+#: 不做全数据集轮询——七阶段是管线级状态，主链路断了一切都断；主链路在而
+#: 某个次要数据集挂了，由 `ldst sync` 自己的 exit code / runs 记录表达。
+STAGE_PROBE_DATASET = "daily_k"
+
+#: 「陈旧」阈值：水位 / 最新记录落后今天超过该天数即如实报 warn / down。
+STAGE_STALE_DAYS = 7
+
+#: 最近一次同步成功但距今超过该时长 → warn（盘后同步的日常节奏，超过一天没跑就是陈旧）
+STAGE_RUN_STALE = timedelta(hours=24)
+
+
+def _stage_sample(stage: str, health: str, reason: str) -> StageSample:
+    """探针结论 → schema 样本（注册表口径补齐 module / module_class / phase）。"""
+    return StageSample.of(stage, health=health, reason=reason)
+
+
+def build_stage_probes(
+    root: str | Path,
+    *,
+    ledger: Ledger,
+    is_pid_alive: Callable[[int], bool] | None = None,
+    sync_yaml: Path | None = None,
+) -> dict[str, Callable[[], StageSample]]:
+    """生产阶段探针（QUOT-562）：只读观测采集 → 入库七阶段，绝不触发采集。
+
+    口径（全部「如实标注」，不编数）：
+
+    - `collect_script`：sync 配置存在、可解析且声明了数据集（链路就绪的最小证据）；
+    - `collect_process`：DATASET_CATALOG 涉及的采集 peer 按账本 pid 判活——与 S3
+      同一份口径（`pid_alive`），面板未登记 / 已退出都如实计入不在线；
+    - `collect_store`：本机历史库（DuckDB）有没有**今天**的行情记录；没有但有
+      近 7 天记录 → warn，更旧 / 空库 → down；
+    - `collect_success`：水位 runs 里最近一次同步的 status（ok 超 24h 也算陈旧）；
+    - `ingest_watermark`：主数据集水位推进到今天 → ok，落后 → warn / down；
+    - `ingest_persist`：历史库可读且有行（issue 字面写 SQLite，实际管线按
+      DEC-007 落 DuckDB + Parquet，以真实架构为准）；
+    - `ingest_idempotent`：当天 (code, trade_date) 无重复行。
+
+    DuckDB 被写入进程占用（`EXIT_DB_BUSY`）是**瞬态争用**不是故障，报 warn
+    并说明稍后自动恢复；其余异常失败关闭报 down。探针只读，绝不写库。
+    """
+    data_root = Path(root)
+    config_path = Path(sync_yaml) if sync_yaml is not None else None
+
+    def _today() -> date:
+        return datetime.now().astimezone().date()
+
+    def _store() -> WatermarkStore:
+        # 每次新建（sync 是另一个进程在写盘，复用实例会读到陈旧缓存）
+        return WatermarkStore(path=data_root / "state" / "watermark.json")
+
+    def _connect():
+        return duckdb_store.connect(duckdb_store.db_path(data_root), read_only=True)
+
+    def _probe_sync_yaml() -> StageSample:
+        path = config_path if config_path is not None else None
+        if path is None:
+            from ladderstock.cli.paths import config_dir
+
+            path = config_dir() / "sync.yaml"
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except FileNotFoundError:
+            return _stage_sample(
+                STAGE_COLLECT_SCRIPT, HEALTH_DOWN, "同步配置缺失，采集链路未就绪"
+            )
+        except (OSError, yaml.YAMLError):
+            return _stage_sample(
+                STAGE_COLLECT_SCRIPT, HEALTH_DOWN, "同步配置读不出来（文件损坏或不可读）"
+            )
+        if (doc.get("sync") or {}).get("datasets"):
+            return _stage_sample(STAGE_COLLECT_SCRIPT, HEALTH_OK, "采集链路就绪（同步配置齐备）")
+        return _stage_sample(
+            STAGE_COLLECT_SCRIPT, HEALTH_DOWN, "同步配置里没有声明任何数据集，采集链路未就绪"
+        )
+
+    def _probe_collect_process() -> StageSample:
+        peers = sorted({binding.peer for binding in DATASET_CATALOG.values()})
+        online: list[str] = []
+        offline: list[str] = []
+        for peer in peers:
+            entry = ledger.get(peer)
+            pid = entry.pid if entry is not None else None
+            if pid is not None and (is_pid_alive is None or is_pid_alive(pid)):
+                online.append(peer)
+            else:
+                offline.append(peer)
+        if offline and online:
+            return _stage_sample(
+                STAGE_COLLECT_PROCESS,
+                HEALTH_WARN,
+                f"部分采集 peer 不在线：{'、'.join(offline)}（其余正常）",
+            )
+        if online:
+            return _stage_sample(
+                STAGE_COLLECT_PROCESS,
+                HEALTH_OK,
+                f"采集 peer 全部在线：{'、'.join(online)}",
+            )
+        return _stage_sample(
+            STAGE_COLLECT_PROCESS,
+            HEALTH_DOWN,
+            "采集 peer 全部不在线（或未在面板登记），行情取不到数",
+        )
+
+    def _probe_collect_store() -> StageSample:
+        try:
+            if duckdb_store.query_dataset(
+                STAGE_PROBE_DATASET, day=_today(), limit=1, root=data_root
+            ):
+                return _stage_sample(
+                    STAGE_COLLECT_STORE, HEALTH_OK, "今天的行情数据已经落到本机库"
+                )
+            latest = _latest_trade_date()
+        except LadderStockError as exc:
+            return _db_error_sample(STAGE_COLLECT_STORE, exc)
+        if latest is None:
+            return _stage_sample(
+                STAGE_COLLECT_STORE, HEALTH_DOWN, "本机行情库还是空的，还没有任何采集记录"
+            )
+        if latest >= _today() - timedelta(days=STAGE_STALE_DAYS):
+            return _stage_sample(
+                STAGE_COLLECT_STORE,
+                HEALTH_WARN,
+                f"本机行情库还没有今天的记录（最新到 {latest.isoformat()}）",
+            )
+        return _stage_sample(
+            STAGE_COLLECT_STORE,
+            HEALTH_DOWN,
+            f"本机行情库停留在 {latest.isoformat()}，超过一周没有新数据",
+        )
+
+    def _latest_trade_date() -> date | None:
+        path = duckdb_store.db_path(data_root)
+        if not path.is_file():
+            return None
+        conn = _connect()
+        try:
+            if not duckdb_store.table_exists(conn, STAGE_PROBE_DATASET):
+                return None
+            # 表名与 duckdb_store._table 同规则；数据集名是本模块硬编码字面量，
+            # 已被 DATASET_CATALOG 校验域覆盖，无注入面。
+            row = conn.execute(
+                f'SELECT MAX(trade_date) FROM "{STAGE_PROBE_DATASET}"'
+            ).fetchone()
+        finally:
+            duckdb_store.close(conn)
+        return row[0] if row and row[0] else None
+
+    def _db_error_sample(stage: str, exc: LadderStockError) -> StageSample:
+        if exc.code == EXIT_DB_BUSY:
+            return _stage_sample(
+                stage, HEALTH_WARN, "本机数据库正被同步进程占用，稍后会自动恢复可读"
+            )
+        return _stage_sample(stage, HEALTH_DOWN, "本机数据库打不开，采集结果读不到")
+
+    def _probe_collect_success() -> StageSample:
+        try:
+            runs = _store().runs(limit=1)
+        except WatermarkError:
+            return _stage_sample(
+                STAGE_COLLECT_SUCCESS, HEALTH_DOWN, "同步运行记录损坏，无法判断最近一次采集"
+            )
+        if not runs:
+            return _stage_sample(
+                STAGE_COLLECT_SUCCESS, HEALTH_DOWN, "还没有运行过任何同步"
+            )
+        run = runs[0]
+        status = str(run.get("status") or "")
+        detail = str(run.get("detail") or "").strip()[:80]
+        suffix = f"：{detail}" if detail else ""
+        if status == "ok":
+            stale_after = _parse_iso(run.get("finished_at")) + STAGE_RUN_STALE
+            if datetime.now().astimezone() > stale_after:
+                return _stage_sample(
+                    STAGE_COLLECT_SUCCESS,
+                    HEALTH_WARN,
+                    f"最近一次同步成功是在 {str(run.get('finished_at'))[:16]}，之后一直没有再跑",
+                )
+            return _stage_sample(
+                STAGE_COLLECT_SUCCESS, HEALTH_OK, "最近一次同步成功完成"
+            )
+        if status == "degraded":
+            return _stage_sample(
+                STAGE_COLLECT_SUCCESS, HEALTH_WARN, f"最近一次同步降级完成{suffix}"
+            )
+        if status == "empty":
+            return _stage_sample(
+                STAGE_COLLECT_SUCCESS, HEALTH_WARN, "最近一次同步没有取到新数据"
+            )
+        if status == "skipped":
+            return _stage_sample(
+                STAGE_COLLECT_SUCCESS, HEALTH_WARN, "最近一次同步被跳过（上游不可用）"
+            )
+        return _stage_sample(
+            STAGE_COLLECT_SUCCESS, HEALTH_DOWN, f"最近一次同步失败{suffix}"
+        )
+
+    def _parse_iso(value: Any) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            return datetime.fromtimestamp(0).astimezone()
+        return parsed if parsed.tzinfo else parsed.astimezone()
+
+    def _probe_ingest_watermark() -> StageSample:
+        try:
+            value = _store().value(STAGE_PROBE_DATASET)
+        except WatermarkError:
+            return _stage_sample(
+                STAGE_INGEST_WATERMARK, HEALTH_DOWN, "入库水位文件损坏，无法判断同步进度"
+            )
+        if not value:
+            return _stage_sample(
+                STAGE_INGEST_WATERMARK, HEALTH_DOWN, "还没有入库水位（同步从未完成过）"
+            )
+        today = _today().isoformat()
+        stale_line = (_today() - timedelta(days=STAGE_STALE_DAYS)).isoformat()
+        if value >= today:
+            return _stage_sample(
+                STAGE_INGEST_WATERMARK, HEALTH_OK, "入库水位已推进到最新"
+            )
+        if value >= stale_line:
+            return _stage_sample(
+                STAGE_INGEST_WATERMARK,
+                HEALTH_WARN,
+                f"入库水位停留在 {value}，今天还没有新数据落库",
+            )
+        return _stage_sample(
+            STAGE_INGEST_WATERMARK,
+            HEALTH_DOWN,
+            f"入库水位停留在 {value}，超过一周没有推进",
+        )
+
+    def _probe_ingest_persist() -> StageSample:
+        try:
+            rows = duckdb_store.dataset_rows(STAGE_PROBE_DATASET, root=data_root)
+        except LadderStockError as exc:
+            return _db_error_sample(STAGE_INGEST_PERSIST, exc)
+        if rows > 0:
+            return _stage_sample(
+                STAGE_INGEST_PERSIST, HEALTH_OK, f"本机历史库已有 {rows} 条行情记录，可正常读写"
+            )
+        return _stage_sample(
+            STAGE_INGEST_PERSIST, HEALTH_DOWN, "本机历史库还没有数据，入库从未成功"
+        )
+
+    def _probe_ingest_idempotent() -> StageSample:
+        try:
+            path = duckdb_store.db_path(data_root)
+            if not path.is_file():
+                return _stage_sample(
+                    STAGE_INGEST_IDEMPOTENT, HEALTH_DOWN, "本机历史库还没有建立，没有可校验的数据"
+                )
+            conn = _connect()
+            try:
+                if not duckdb_store.table_exists(conn, STAGE_PROBE_DATASET):
+                    return _stage_sample(
+                        STAGE_INGEST_IDEMPOTENT,
+                        HEALTH_DOWN,
+                        "本机历史库还没有行情表，没有可校验的数据",
+                    )
+                row = conn.execute(
+                    f'SELECT COUNT(*) AS total, '
+                    f'(SELECT COUNT(*) FROM (SELECT code FROM "{STAGE_PROBE_DATASET}" '
+                    f"WHERE trade_date = ? GROUP BY code HAVING COUNT(*) > 1 LIMIT 1)) AS dupes "
+                    f'FROM "{STAGE_PROBE_DATASET}" WHERE trade_date = ?',
+                    [_today().isoformat(), _today().isoformat()],
+                ).fetchone()
+            finally:
+                duckdb_store.close(conn)
+        except LadderStockError as exc:
+            return _db_error_sample(STAGE_INGEST_IDEMPOTENT, exc)
+        total = int(row[0]) if row else 0
+        dupes = int(row[1]) if row else 0
+        if dupes:
+            return _stage_sample(
+                STAGE_INGEST_IDEMPOTENT, HEALTH_WARN, "今天的行情数据存在重复行，重跑没有正确去重"
+            )
+        if not total:
+            return _stage_sample(
+                STAGE_INGEST_IDEMPOTENT, HEALTH_WARN, "今天还没有入库数据，幂等校验暂无可查对象"
+            )
+        return _stage_sample(
+            STAGE_INGEST_IDEMPOTENT, HEALTH_OK, "今天的行情数据没有重复行，幂等校验通过"
+        )
+
+    return {
+        STAGE_COLLECT_SCRIPT: _probe_sync_yaml,
+        STAGE_COLLECT_PROCESS: _probe_collect_process,
+        STAGE_COLLECT_STORE: _probe_collect_store,
+        STAGE_COLLECT_SUCCESS: _probe_collect_success,
+        STAGE_INGEST_WATERMARK: _probe_ingest_watermark,
+        STAGE_INGEST_PERSIST: _probe_ingest_persist,
+        STAGE_INGEST_IDEMPOTENT: _probe_ingest_idempotent,
+    }
+
+
 def build_supervisor_engines(
     root: str | Path,
     *,
@@ -196,6 +516,9 @@ def build_supervisor_engines(
     立刻拉起。默认附加模式只认领既有实例、绝不自动拉起（peer adopt-only）。
     QUOT-556：自愈巡检同时驱动健康事件观测（`HealthEventBus` + 端口归属
     探针），事件经 `GET /api/supervisor/events` 供前端轮询。
+    QUOT-562：同一条巡检还驱动采集→入库七阶段观测（`StageHealthMonitor` +
+    `build_stage_probes` 只读探针），`/state` 带 `stages` 快照、`/events`
+    承载 `stage` 事件，schema 单一来源见 `core/stage_events`。
     """
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
@@ -206,6 +529,7 @@ def build_supervisor_engines(
         procs=default_process_ops(),
     )
     cold_start = own_processes(env)
+    bus = HealthEventBus()
     heal = SelfHealEngine(
         ledger,
         AdapterRestarter(processes, spawn=cold_start),
@@ -214,10 +538,14 @@ def build_supervisor_engines(
         log_max_lines=DEFAULT_LOG_MAX_LINES,
         modules=MODULE_ORDER if cold_start else None,
         cold_start=cold_start,
-        event_bus=HealthEventBus(),
+        event_bus=bus,
         port_inspector=build_port_inspector(spawned_pids=lambda: processes.spawned_pids),
         port_conflict_restarter=_own_conflict_restarter(processes),
         is_pid_alive=pid_alive,
+        stage_monitor=StageHealthMonitor(
+            bus,
+            probes=build_stage_probes(root, ledger=ledger, is_pid_alive=pid_alive),
+        ),
     )
     return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
 

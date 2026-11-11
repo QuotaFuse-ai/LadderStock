@@ -12,6 +12,12 @@
 `GET /api/supervisor/events?since=<seq>` 定时轮询；端口归属分类口径与
 QUOT-547 一致（own_child / adopted_peer / foreign / free），由装配侧注入
 （本层不依赖 web 层，避免反向导入）。
+
+QUOT-562 起通道还承载**阶段级事件**（`event=stage`）：采集 → 入库七阶段的
+`StageSample`（schema 见 `core/stage_events.py`，单一来源）经
+`HealthEventBus.publish_stage()` 进同一环形缓冲，与 peer 级事件共用
+`/events` 轮询端点；`stage` / `module_class` / `phase` / `as_of` 四个负载
+字段只在 stage 事件上非空。
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from ladderstock.core.stage_events import StageSample
 from ladderstock.supervisor.ledger import (
     HEALTH_NEEDS_HUMAN,
     HEALTH_OK,
@@ -36,12 +43,13 @@ from ladderstock.supervisor.ledger import (
 
 _log = logging.getLogger(__name__)
 
-#: 事件类型（前端弹窗契约，QUOT-556 派单正文）
+#: 事件类型（前端弹窗契约，QUOT-556 派单正文；QUOT-562 增 stage）
 EVENT_CRASH = "crash"
 EVENT_OFFLINE = "offline"
 EVENT_PORT_CONFLICT = "port_conflict"
 EVENT_NEEDS_HUMAN = "needs_human"
 EVENT_RECOVERED = "recovered"
+EVENT_STAGE = "stage"
 
 EVENT_TYPES: tuple[str, ...] = (
     EVENT_CRASH,
@@ -49,6 +57,7 @@ EVENT_TYPES: tuple[str, ...] = (
     EVENT_PORT_CONFLICT,
     EVENT_NEEDS_HUMAN,
     EVENT_RECOVERED,
+    EVENT_STAGE,
 )
 
 #: 端口占用分类（与 web/port_diagnostics.py 同一套取值；本层只消费字符串）
@@ -106,6 +115,11 @@ class HealthEvent:
     QUOT-557（S4）：`port_conflict` 事件额外带 `conflicts`——逐冲突端口的占用者
     分类（`{port, owner, pid}`，owner ∈ own_child / adopted_peer / foreign），供
     前端弹窗区分「自有可安全重启」与「外来 / 认领需用户确认」。其余事件该字段为空。
+
+    QUOT-562：`stage` 事件额外带 `stage` / `module_class` / `phase` / `as_of`
+    （统一 schema 见 `core/stage_events.py`）；此时 `state` = 阶段标识、
+    `health` = schema 三值（ok/warn/down，与账本 health 同名不同义，按 event 分流）。
+    其余事件这四个字段为 None。
     """
 
     seq: int
@@ -120,6 +134,10 @@ class HealthEvent:
     origin: str | None
     adopted_peer: bool
     conflicts: tuple[dict[str, Any], ...] = ()
+    stage: str | None = None
+    module_class: str | None = None
+    phase: str | None = None
+    as_of: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -158,6 +176,10 @@ class HealthEventBus:
         origin: str | None = None,
         adopted_peer: bool = False,
         conflicts: Sequence[Mapping[str, Any]] = (),
+        stage: str | None = None,
+        module_class: str | None = None,
+        phase: str | None = None,
+        as_of: str | None = None,
     ) -> HealthEvent:
         with self._lock:
             self._seq += 1
@@ -174,9 +196,32 @@ class HealthEventBus:
                 origin=origin,
                 adopted_peer=bool(adopted_peer),
                 conflicts=tuple(dict(conflict) for conflict in conflicts),
+                stage=stage,
+                module_class=module_class,
+                phase=phase,
+                as_of=as_of,
             )
             self._events.append(item)
             return item
+
+    def publish_stage(self, sample: StageSample) -> HealthEvent:
+        """发一条阶段级事件（QUOT-562）：schema 样本 → 总线通用字段的映射。
+
+        `module` / `health` / `reason` 直传；`stage` 同时落 `stage` 负载字段与
+        `state`（state 即阶段标识，与 peer 级事件的 state 语义按 event 分流）；
+        `module_class` / `phase` / `as_of` 原样随事件走，前端拿一条事件即可渲染。
+        """
+        return self.publish(
+            module=sample.module,
+            event=EVENT_STAGE,
+            health=sample.health,
+            state=sample.stage,
+            reason=sample.reason,
+            stage=sample.stage,
+            module_class=sample.module_class or None,
+            phase=sample.phase or None,
+            as_of=sample.as_of or None,
+        )
 
     def since(
         self,
@@ -421,6 +466,7 @@ __all__ = [
     "EVENT_OFFLINE",
     "EVENT_PORT_CONFLICT",
     "EVENT_RECOVERED",
+    "EVENT_STAGE",
     "EVENT_TYPES",
     "OWNER_ADOPTED_PEER",
     "OWNER_FOREIGN",
