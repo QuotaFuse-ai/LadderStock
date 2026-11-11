@@ -13,9 +13,9 @@
 QUOT-547 一致（own_child / adopted_peer / foreign / free），由装配侧注入
 （本层不依赖 web 层，避免反向导入）。
 
-QUOT-562 起通道还承载**阶段级事件**（`event=stage`）：采集 → 入库七阶段的
-`StageSample`（schema 见 `core/stage_events.py`，单一来源）经
-`HealthEventBus.publish_stage()` 进同一环形缓冲，与 peer 级事件共用
+QUOT-562 起通道还承载**阶段级事件**（`event=stage`）：采集 → 入库 → 辩论
+（QUOT-563）各阶段的 `StageSample`（schema 见 `core/stage_events.py`，单一来源）
+经 `HealthEventBus.publish_stage()` 进同一环形缓冲，与 peer 级事件共用
 `/events` 轮询端点；`stage` / `module_class` / `phase` / `as_of` 四个负载
 字段只在 stage 事件上非空。
 """

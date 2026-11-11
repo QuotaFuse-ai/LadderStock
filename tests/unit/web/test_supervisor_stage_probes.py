@@ -1,4 +1,4 @@
-"""生产阶段探针（QUOT-562）：`build_stage_probes` 七路只读观测的真实口径。
+"""生产阶段探针（QUOT-562 / 563）：`build_stage_probes` 数据七路 + `build_debate_probes` 辩论三路。
 
 钉住：
 
@@ -12,9 +12,10 @@
 | ingest_persist | 有行 → ok；0 行 / 无库 → down |
 | ingest_idempotent | 当日无重复 → ok；有重复 → warn；当日无数据 → warn；无库 / 无表 → down |
 | DEC-006 | 探针前后库与水位文件字节不变（只读，绝不触发采集 / 不写库） |
-| /state | 接线 stage 观测后快照带 `stages` 七条；/events 承载 schema 完整的 stage 事件 |
+| /state | 快照带注册表全量（数据七 + 辩论三）；/events 承载 schema 完整的 stage 事件 |
 
-真实 DuckDB 与水位文件都落在 tmp 目录；不起 peer 进程（判活注入），不联网。
+真实 DuckDB 与水位文件都落在 tmp 目录；辩论探针 home 注入 tmp（不读真实家目录）。
+不起 peer 进程（判活注入），不联网。
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from ladderstock.core.stage_events import (
     HEALTH_DOWN,
     HEALTH_OK,
     HEALTH_WARN,
+    MODULE_CLASS_COG,
+    MODULE_CLASS_DATA,
     STAGE_ORDER,
 )
 from ladderstock.data import duckdb_store
@@ -39,7 +42,7 @@ from ladderstock.supervisor.ledger import Ledger, ModuleRecord
 from ladderstock.supervisor.selfheal import SelfHealEngine
 from ladderstock.supervisor.stage_monitor import StageHealthMonitor
 from ladderstock.web.server import create_app
-from ladderstock.web.supervisor_api import build_stage_probes
+from ladderstock.web.supervisor_api import build_debate_probes, build_stage_probes
 
 TODAY = datetime.now().astimezone().date()
 PEERS = ("senate", "tickhub", "tickhub_us", "wire")
@@ -342,8 +345,10 @@ def test_probes_are_readonly_never_write(tmp_path: Path) -> None:
     before_ledger = fingerprint(ledger.path.parent.parent)
 
     probes = _probes(root, ledger=ledger, is_pid_alive=lambda pid: True, sync_yaml=sync_yaml)
-    for stage in STAGE_ORDER:
-        probes[stage]()  # 每个探针都跑，绝不留下写痕
+    probes.update(build_debate_probes(home=root))  # 辩论三路同受只读约束
+    for stage, probe in probes.items():
+        assert stage in STAGE_ORDER, f"探针 {stage} 不在注册表里"
+        probe()  # 每个探针都跑，绝不留下写痕
 
     assert fingerprint(root) == before, "探针在数据目录留下了写痕（违反 DEC-006 只读口径）"
     assert fingerprint(ledger.path.parent.parent) == before_ledger
@@ -361,9 +366,12 @@ def test_state_endpoint_exposes_stages_and_events_carry_schema(tmp_path: Path) -
     bus = HealthEventBus()
     monitor = StageHealthMonitor(
         bus,
-        probes=build_stage_probes(
-            root, ledger=ledger, is_pid_alive=lambda pid: pid == 101, sync_yaml=sync_yaml
-        ),
+        probes={
+            **build_stage_probes(
+                root, ledger=ledger, is_pid_alive=lambda pid: pid == 101, sync_yaml=sync_yaml
+            ),
+            **build_debate_probes(home=root),
+        },
     )
     heal = SelfHealEngine(
         ledger,
@@ -382,12 +390,18 @@ def test_state_endpoint_exposes_stages_and_events_carry_schema(tmp_path: Path) -
     assert unobserved["health"] == HEALTH_DOWN
     assert unobserved["reason"], "未观测占位也要有白话原因，不能是空串"
 
-    monitor.observe()  # TestClient 不触发 startup；显式跑首轮观测（发全量七条）
+    monitor.observe()  # TestClient 不触发 startup；显式跑首轮观测（发注册表全量）
     events = client.get("/api/supervisor/events").json()
     stage_events = [item for item in events["events"] if item["event"] == EVENT_STAGE]
-    assert len(stage_events) == 7, "首轮观测后 /events 应发全量七条 stage 事件"
+    assert len(stage_events) == len(STAGE_ORDER), "首轮观测后 /events 应发全量 stage 事件"
+    debate = [item for item in stage_events if item["module"] == "debate"]
+    data = [item for item in stage_events if item["module"] != "debate"]
+    assert len(data) == 7 and len(debate) == 3
+    for item in data:
+        assert item["module_class"] == MODULE_CLASS_DATA
+    for item in debate:
+        assert item["module_class"] == MODULE_CLASS_COG
     for item in stage_events:
-        assert item["module_class"] == "data"
         assert item["as_of"]
 
 
