@@ -1,6 +1,6 @@
 # 看板信息架构与视觉规范（21 屏）
 
-- 版本：v1.22
+- 版本：v1.23
 - 日期：2026-11-11
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
@@ -36,6 +36,7 @@
 | v1.20 | 2026-11-07 | 顶栏服务状态灯 + 全局重启（QUOT-443 / DEC-063-platform-watchdog-and-health）：顶栏工具区**最左**新增 `PlatformStatusLight`（`lib/usePlatformHealth.ts`，2s 轮询独立看门狗 `5952` 的 `/platform/health`；生产直连 `http://127.0.0.1:5952`，开发走 Vite `/platform` 代理）。**三态 + 灰**：`ok` 绿、`degraded`（`db_ok=false`）黄、`offline` 红（含 `animate-pulse`）、未探测灰；**连续两次失败才转红**，单次抖动保持上一色，但看门狗明确回 `status=offline` 时立即转红。悬浮浮层显示状态 / 已运行 / 版本 / 数据库 / 检查时间；**重启按钮只在红灯渲染**（绿黄不占位），两步确认 → `POST /platform/restart` →「重启中」禁用 → 至多 90s 轮询 → 恢复后整页刷新，超时给出真实原因。`document.hidden` 暂停轮询，回前台立即补一拍。状态灯不读持仓 / 金额，浮层只含运行态字段。`PageShell` 离线横幅与 `SearchPanel` 的「先运行 `ldst run`」改为「看顶栏状态灯 → 点重启平台 → 仍不行查看看门狗日志」。§2 顶栏工具区与断点两行同步。版本号说明：v1.19 已被 QUOT-440 占用，本版顺延为 v1.20。证据：`frontend/tests/quot-443-platform-health.test.tsx`（三态、两拍才红、单次抖动保持绿、默认轮询间隔 2s（≤2.5s 断言）、可见性暂停 / 恢复、绿黄不渲染重启、红灯两步确认、浮层字段、超时文案）；`typecheck` / `test` / `build` 全绿。 |
 | v1.21 | 2026-11-10 | 研究方向目录分页与「只看可用」过滤（QUOT-530，决策 DEC-073）：`/skills` 每页 10 条、页码进 `?page=`、切分组 / 开关过滤回第 1 页，底部分页条 sticky；「只看可用」= `ready` / `partial` / `existing_page`（`lib/skills.ts` 的 `USABLE_CATALOG_STATUSES`）。§6.1 登记 **C-23 `Pagination`**（`components/ui/Pagination.tsx`，受控、无请求；当前页以实心底色 + `font-semibold` + `aria-current="page"` 三重表达，不只靠颜色）。目录数据链路、六状态徽标与既有跳转零变更。证据：`frontend/tests/skills-pagination.test.tsx` 11 例 + 1440×900 实机 26/26 断言，见 `docs/tasks/QUOT-530/README.md`。 |
 | v1.22 | 2026-11-11 | 设置页「数据与端口」新增**端口诊断 + 安全自愈面板**（QUOT-548，消费 QUOT-547 `GET /api/control/ports` / `POST /api/control/ports/{peer}/heal`）：逐模块四分类徽标（自有残留 / 已接管 / 外来进程 / 空闲）+ 健康三态 + 白话原因（已接管写「这是你自己启动的 X，已被平台接管…运行正常」，不再出现「被占用」误导）；安全按钮与后端 heal 优先级一一对应——重启类只对 own_child 启用，adopted_peer 只有「复检健康」，foreign 禁用并给可见理由「不会终止外来进程」，free 禁用「端口空闲，无需修复」；技术细节（PID / 命令行 / 判定原文）默认收起；自愈结果用后端回读的最新诊断覆盖展示，前端不重算、不硬编码模块清单。原「一键体检」永久禁用按钮移除，由面板「重新诊断」取代。设置页二级导航补响应式：`desk:` 以下堆叠为单列（`flex-col desk:flex-row` + `w-full desk:w-menu`），与全仓单列约定对齐，390px 视口无横向溢出。§3.18 主区 / 六态行与 §11.18 清单同步。证据：`frontend/tests/quot-548-port-diagnostics.test.tsx` 16 例 + 备用端口 5960 实机 19/19 断言（生产 ledger 副本 + 真实 8000 peer，复检后 PID 不变），见 `docs/tasks/QUOT-548/README.md` 与 `docs/screenshots/quot-548-*.png`。 |
+| v1.23 | 2026-11-11 | CH-02 柱图 x 轴重复类目修复（QUOT-553，呈现 only）：uPlot 自动撒的小数刻度经 round 折叠成重复标签（1板×3 / 2板×5）且多余刻度位无柱。`charts/Chart.tsx` 把 x 刻度钉在数据索引——柱图 `splits` 恒等于类目索引（刻度数=类目数，不抽稀）、x 量程左右各留半个类目位（首尾柱与标签不被裁）、柱身 `align: 0` 居中于刻度；低于 6px 的小值柱在柱顶如实标家数（不改数据、不抬高柱身）。折线同根因收敛：整数索引刻度 + 按画布宽度步长抽稀（标签唯一不重叠）。§3.6 图表口径同步。数据形状 / 后端聚合 / 家数口径零变更。证据：`frontend/tests/quot-553-chart-splits.test.tsx` 8 例 + 5950 实机 before/after 截图（`docs/tasks/QUOT-553/`，截图随评论附件交付）。版本号说明：v1.22 已由 QUOT-548 占用，本版顺延为 v1.23。 |
 
 
 ## 0. 范围与非目标
@@ -346,7 +347,7 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | 六态 | 整屏 loading/offline/error/partial 齐全；空态在 theme 段被抑制（R-14）；每段有 `NotSynced` 空态（含 `ldst sync --date` 与「重新检查」）；**缺段级 error**：404 被吞成 null，只靠全局 partial 条 | `MarketScreen.tsx:473-504,136-169,307-322` |
 | 溯源 | 屏内第三份 `SourceBadge`（实时/缓存/归档）+ `SourceLine` 页脚「来源/数据时间/取数」 | `MarketScreen.tsx:93-130,609,650,691` |
 
-**图表口径**：网格 `width:1`、轴标签 `12px`、轴线尺寸 44/36、容器 padding `[8,8,0,0]`、隐藏 legend、`minWidth 240` + ResizeObserver。**折线线宽必须是 1.5px**（token 注释口径），当前实现为 2 → R-23。
+**图表口径**：网格 `width:1`、轴标签 `12px`、轴线尺寸 44/36、容器 padding `[8,8,0,0]`、隐藏 legend、`minWidth 240` + ResizeObserver。**折线线宽必须是 1.5px**（token 注释口径），当前实现为 2 → R-23。**x 轴刻度钉在数据索引**（QUOT-553）：柱图刻度数=类目数、量程左右各留半格、柱身居中（`align: 0`）、低于 6px 的柱柱顶如实标家数；折线按画布宽度对整数索引刻度步长抽稀，标签唯一。
 
 ### 3.7 AI周报（`/weekly`）— 主任务：一周一次，把五段结论回看成趋势
 
