@@ -10,7 +10,7 @@
 | `sh000001` 被解析成个股 | **不认**：按 `(market, code)` 匹配，那一格 `available=false` |
 | A 股 peer 不可用 | 200 + 四格 `available=false`（不是 500、不自采、不猜价），美股照出 |
 | 美股 peer 不可用 | 美股两格 `available=false` + 原因，A 股照出（块间不连坐） |
-| 港股两格（QUOT-560） | 同一工具逐 symbol 取（peer 端别名映射 `HSI.HK`/`HSTECH.HK`，零 key 免费源） |
+| 港股两格（QUOT-560） | 同工具逐 symbol 取（peer 别名映射 `HSI.HK`/`HSTECH.HK`，零 key 源） |
 
 行数据用 `tests/fixtures/peer_responses/index_quote.json`——2026-11-03 从真实 peer
 `index_quote` 抓的原始返回，不是手写的形状。全程离线：`FakeTransport` 从不去拨。
