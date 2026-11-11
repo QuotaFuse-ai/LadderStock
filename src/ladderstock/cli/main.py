@@ -83,6 +83,7 @@ position_app = typer.Typer(no_args_is_help=True, help="我的持仓（仅本机 
 state_app = typer.Typer(no_args_is_help=True, help="前端持久化状态")
 ai_app = typer.Typer(no_args_is_help=True, help="AI 编排")
 chain_app = typer.Typer(no_args_is_help=True, help="多后端兼容矩阵")
+ai_tools_app = typer.Typer(no_args_is_help=True, help="平台工具注册表（C1）")
 mcp_app = typer.Typer(no_args_is_help=True, help="MCP Server")
 tools_app = typer.Typer(no_args_is_help=True, help="MCP 工具枚举")
 config_app = typer.Typer(no_args_is_help=True, help="配置")
@@ -104,6 +105,7 @@ for parent, child, name in (
     (app, state_app, "state"),
     (app, ai_app, "ai"),
     (ai_app, chain_app, "chain"),
+    (ai_app, ai_tools_app, "tools"),
     (app, mcp_app, "mcp"),
     (mcp_app, tools_app, "tools"),
     (app, config_app, "config"),
@@ -266,7 +268,7 @@ register_state(state_app)
 # ---------------------------------------------------------------- AI
 
 # 实现体在 cli/ai.py；此处只做注册（模型链 / 段落重试 / 兼容矩阵）
-register_ai(ai_app, chain_app)
+register_ai(ai_app, chain_app, ai_tools_app)
 
 
 # ---------------------------------------------------------------- 个股研究（R1）

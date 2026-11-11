@@ -83,6 +83,7 @@
 | **QUOT-500 增量（3，非 P0 基线）** | `backtest run`、`backtest list`、`backtest show` |
 | **QUOT-501 增量（1，非 P0 基线）** | `backfill` |
 | **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
+| **QUOT-543 增量（1，非 P0 基线）** | `ai tools list` |
 | **QUOT-533 增量（1，非 P0 基线）** | `sync industry`（行业缓存真实联网补齐，DEC-074） |
 
 ## A. 启动、复盘与核心指标（9）
@@ -335,7 +336,7 @@ ldst position list --output json                         # realized.total_pnl（
 > 口径来源：`docs/decisions/DEC-063-platform-watchdog-and-health.md`。
 > 这 1 条**不属于** 31 条 P0 基线；与 `run` 一样是长驻进程，**不进** argv 矩阵，
 > 但叶子路径 `("watchdog",)` 必须登记在 `tests/fixtures/command_matrix.py`
-> （当前 `LEAF_PATHS` 共 **58** 个、矩阵 **52** 条）。
+> （当前 `LEAF_PATHS` 共 **59** 个、矩阵 **52** 条）。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
@@ -363,7 +364,7 @@ ldst position list --output json                         # realized.total_pnl（
 > 口径来源：issue QUOT-523「单 supervisor 单入口接线生产」与 `docs/supervisor/single-entry.md`。
 > 这 4 条**不属于** 31 条 P0 基线；叶子路径
 > `("supervisor", "start" | "stop" | "restart" | "status")` 已登记
-> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **58** 个）。
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **59** 个）。
 > 只动**账本能证明是本入口拉起**的进程，外部进程一律不碰（DEC-014）。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
@@ -377,7 +378,7 @@ ldst position list --output json                         # realized.total_pnl（
 
 > 口径来源：issue QUOT-487「助手通道接入 Mem0 记忆：召回/写入策略 + 注入边界」。
 > 这 1 条**不属于** 31 条 P0 基线；叶子路径 `("ai", "memory-clear")` 已登记
-> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **58** 个）。
+> `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS` 共 **59** 个）。
 > 读/写发生在 web 助手端点（`/api/research/assistant`、`/api/skills/assistant`），
 > CLI 只提供清空入口——记忆的写入与召回策略见 `src/ladderstock/ai/memory.py` 模块 docstring。
 
@@ -430,6 +431,21 @@ ldst position list --output json                         # realized.total_pnl（
 - **去重证明**：报表「去重与幂等」段与 `--output json` 的 `daily_k.before_rows / written / after_rows / new_rows / existing_rows` 对齐；同一命令重跑，`new_rows` 必须为 0。
 - **水位**：`daily_k` / `index_daily` 各自 `advance()` 到本轮最大交易日，并在 `state/watermark.json` 的 `runs` 里留一条 `mode=backfill` 记录（dataset / rows / source / status）。
 
+
+## O. 平台工具注册表（QUOT-543 增量，1）
+
+> 口径来源：issue QUOT-543「战略 C1 工具注册表」，决策见
+> `docs/decisions/DEC-076-platform-tool-registry.md`。
+> 这 1 条**不属于** 31 条 P0 基线；叶子路径 `("ai", "tools", "list")` 已登记
+> `tests/fixtures/command_matrix.py`。注册表只聚合**真实返回**的工具：本地 MCP
+> `TOOL_SPECS` + `config/sources.yaml` 中声明了 MCP 面的 peer 的 `tools/list`；
+> 没有 MCP 面的 peer（mem0 / FinanceCoffer / qdrant / ProxyFleet）不列入发现。
+> 快照只落 `<data_dir>/ai/tool_registry/<agent_id>/<kb_scope>.json`，查询与落盘
+> 都必须同时带 `agent_id` / `kb_scope`（与记忆命名空间同一口径），缺一即参数错误。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 55 | `ldst ai tools list` | 列出/检索平台当前可用工具：每个条目带来源、用途、参数 schema；`--refresh` 向真实 peer 重新发现并覆盖本命名空间快照（默认读快照，没有才现发现） | `--agent-id`（必填）、`--kb-scope`（必填）、`--query`/`-q`（名字/描述子串）、`--source`（ladderstock / tickhub / tickhub_us / wire / senate）、`--limit`（0 = 全部）、`--refresh`、`--output` | 成功 **0** + `{agent_id, kb_scope, generated_at, count, total, sources[], tools[]}`；命名空间缺失或非法、来源打错 **2**；快照损坏/命名空间不一致 **3**。单个 peer 不可达**不改变退出码**：该来源记 `status=unreachable` + `tool_count=0` + `error`，其余来源照常列出，绝不回填历史名单 |
 
 ## F. 全局约定
 

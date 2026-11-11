@@ -276,6 +276,10 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("ai", "chain", "test"),
     # QUOT-487：助手记忆一键清空（不计入 31 条基线，见 docs/CLI.md §A″）
     ("ai", "memory-clear"),
+    # QUOT-543 / DEC-076：平台工具注册表（C1，不计入 31 条基线，见 docs/CLI.md §O）。
+    # 必填 --agent-id / --kb-scope，故不进 COMMAND_MATRIX / JSON_PATHS；
+    # 离线假传输与本命令的覆盖见 tests/unit/ai/test_tool_registry.py。
+    ("ai", "tools", "list"),
     # R1-1 新增叶子（不属 31 条基线，但同样受「全局 --output」契约管辖）
     ("research",),
     # R6（QUOT-144）新增的两个叶子命令，同上

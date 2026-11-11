@@ -126,6 +126,16 @@ _AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 _KB_SCOPE_RE = re.compile(r"^[A-Za-z0-9*][A-Za-z0-9._*-]{0,63}$")
 
 
+def is_valid_agent_id(value: str) -> bool:
+    """`agent_id` 口径（工具注册表 `ai/tool_registry.py` 复用同一正则）。"""
+    return bool(_AGENT_ID_RE.match(value))
+
+
+def is_valid_kb_scope(value: str) -> bool:
+    """`kb_scope` 口径（同上；`*` 允许通配语义，但不能直接进文件名）。"""
+    return bool(_KB_SCOPE_RE.match(value))
+
+
 @dataclass(frozen=True)
 class MemoryScope:
     """一个模块的记忆命名空间与知识库范围（QUOT-498 第三节）。
@@ -718,12 +728,12 @@ def _parse_memory(module: str, raw: Any) -> MemoryScope | None:
         f"{AGENT_ID_PREFIX}{module}"
     )
     kb_scope = _module_scalar(module, "memory.kb_scope", raw.get("kb_scope")) or DEFAULT_KB_SCOPE
-    if not _AGENT_ID_RE.match(agent_id):
+    if not is_valid_agent_id(agent_id):
         raise BoundaryViolation(
             f"ai.yaml: modules.{module}.memory.agent_id 非法（{agent_id!r}）："
             "只允许字母数字与 . _ -，且不超过 80 字符"
         )
-    if not _KB_SCOPE_RE.match(kb_scope):
+    if not is_valid_kb_scope(kb_scope):
         raise BoundaryViolation(
             f"ai.yaml: modules.{module}.memory.kb_scope 非法（{kb_scope!r}）："
             "只允许字母数字与 . _ - *，且不超过 64 字符"
