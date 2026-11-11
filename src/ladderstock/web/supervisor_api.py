@@ -1,15 +1,22 @@
-"""supervisor 面（QUOT-491 / 482-A / 482-C / 523）。
+"""supervisor 面（QUOT-491 / 482-A / 482-C / 523 / 556）。
 
 三类路由：
 
 - `GET /api/supervisor/state`：每模块 `health: ok|restarting|needs_human` 与
   `restarts_5min`（任务书对外契约）；另附 `self_heal: {attempts, max, status}`、
   `state`（484 前端面板契约）与 482-A 归属视角（`ownership` / `evidence` /
-  `listening`）。
-- `POST /api/supervisor/state/{module}/reset`：人工解除 `needs_human`。
+  `listening`）。QUOT-556 起每模块带 `adopted_peer`，接事件总线时顶层带
+  `events_latest`（最新事件 seq，供既有轮询发现新事件）。
+- `GET /api/supervisor/events?since=<seq>`（QUOT-556）：peer 级健康事件通道
+  （crash / offline / port_conflict / needs_human / recovered），前端弹窗
+  定时轮询订阅；只读，回环 + Host 闸门。
+- `POST /api/supervisor/state/{module}/reset`：人工解除 `needs_human`（辅助
+  清窗口；前端「一键重启」走真 `/restart`，不是 reset）。
 - `POST /api/supervisor/start|restart|stop`（QUOT-523 单入口）：按注册表顺序
   全起 / 单模块重起 / 反向全停；**只动账本能证明是我们拉起的进程**（归属判定
-  见 `SupervisorEngine`，外部进程一律不碰）。写面闸门**复用雷达面同一份实现**
+  见 `SupervisorEngine`，外部进程一律不碰）。QUOT-556 起认领态 peer 的
+  `/restart` 必须 `confirm: true`（用户确认），确认只授权拉起替代实例，
+  绝不授权终止外部进程。写面闸门**复用雷达面同一份实现**
   （`privacy_write_guard`：回环 + Host 白名单 + 写方法来源证据），不新增鉴权。
 
 引擎组装（`build_supervisor_engines`）：一张账本同时供自愈巡检（482-C）与
@@ -23,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -32,6 +39,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ladderstock.supervisor.adapters import MODULE_ORDER
 from ladderstock.supervisor.engine import SupervisorEngine, SupervisorError
+from ladderstock.supervisor.health_events import (
+    OWNER_FREE,
+    HealthEventBus,
+    PortInspector,
+    PortObservation,
+)
 from ladderstock.supervisor.ledger import Ledger
 from ladderstock.supervisor.module_adapters import build_default_adapters
 from ladderstock.supervisor.notify import build_default_notifier
@@ -43,10 +56,18 @@ from ladderstock.supervisor.selfheal import (
     WINDOW_SECONDS,
     SelfHealEngine,
 )
+from ladderstock.web.port_diagnostics import classify_port_owner
 from ladderstock.web.radar import privacy_write_guard
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - 依赖探测（与 module_adapters 同一形态）
+    psutil = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+
+    from ladderstock.supervisor.ledger import LedgerEntry
 
 SUPERVISOR_PREFIX = "/api/supervisor"
 
@@ -57,8 +78,9 @@ SUPERVISOR_WRITE_DENIED = "自愈写面只接受同源来源（Origin 或 X-LDST
 #: 只观测、只响应用户显式操作，看板开关本身不碰任何进程。
 OWN_PROCESSES_ENV = "LDST_SUPERVISOR_OWN_PROCESSES"
 
-#: 全停是不可逆批量动作，请求体必须带 `confirm: true`（或给出 modules 只停单个）
-STOP_CONFIRMATION_FIELD = "confirm"
+#: 显式确认字段：全停是不可逆批量动作、外部 peer 重启碰 adopt-only 边界，
+#: 两者都要求请求体带 `confirm: true`（全停也可用 modules 只停单个来免确认）。
+CONFIRMATION_FIELD = "confirm"
 
 
 def own_processes(env: Mapping[str, str] | None = None) -> bool:
@@ -85,6 +107,59 @@ class SupervisorEngines:
     ledger: Ledger
 
 
+def build_port_inspector() -> PortInspector:
+    """生产端口观测（QUOT-556）：一次连接表扫描看全部托管模块的端口归属。
+
+    分类口径与 QUOT-547 诊断同一份实现（`classify_port_owner`，失败关闭）；
+    `mine_pids` 为空——本观测按「该模块的账本记录」判归属，端口被**别的**模块
+    持有对本模块就是冲突。psutil 不可用 / 扫描失败返回空映射：监控本轮只看
+    存活类事件（crash/recovered），不误报端口类。只读，绝不终止任何进程。
+    """
+
+    def inspect(entries: Sequence[LedgerEntry]) -> dict[str, tuple[PortObservation, ...]]:
+        if psutil is None:  # pragma: no cover - 依赖探测
+            return {}
+        try:
+            listeners: dict[int, int | None] = {}
+            for conn in psutil.net_connections(kind="tcp"):
+                if conn.status != psutil.CONN_LISTEN or not conn.laddr:
+                    continue
+                listeners.setdefault(int(conn.laddr.port), int(conn.pid) if conn.pid else None)
+        except (psutil.Error, OSError):  # pragma: no cover - 宿主查询失败
+            return {}
+        cmdline_cache: dict[int, tuple[str, ...] | None] = {}
+
+        def _cmdline(pid: int) -> tuple[str, ...] | None:
+            if pid not in cmdline_cache:
+                try:
+                    cmdline_cache[pid] = tuple(psutil.Process(pid).cmdline())
+                except (psutil.Error, OSError):
+                    cmdline_cache[pid] = None
+            return cmdline_cache[pid]
+
+        report: dict[str, tuple[PortObservation, ...]] = {}
+        for entry in entries:
+            observations: list[PortObservation] = []
+            for port in entry.ports:
+                if port not in listeners:
+                    observations.append(
+                        PortObservation(port=port, listening=False, owner=OWNER_FREE)
+                    )
+                    continue
+                pid = listeners[port]
+                owner, _reason = classify_port_owner(
+                    pid=pid,
+                    mine_pids=(),
+                    record=entry,
+                    live_cmdline=_cmdline(pid) if pid is not None else None,
+                )
+                observations.append(PortObservation(port=port, listening=True, owner=owner))
+            report[entry.module] = tuple(observations)
+        return report
+
+    return inspect
+
+
 def build_supervisor_engines(
     root: str | Path,
     *,
@@ -97,6 +172,8 @@ def build_supervisor_engines(
     `restart-commands.json`。单入口模式（`LDST_SUPERVISOR_OWN_PROCESSES=1`）下
     自愈还负责**冷启动**：托管 `MODULE_ORDER` 全表，账本无 pid 的模块按命令表
     立刻拉起。默认附加模式只认领既有实例、绝不自动拉起（peer adopt-only）。
+    QUOT-556：自愈巡检同时驱动健康事件观测（`HealthEventBus` + 端口归属
+    探针），事件经 `GET /api/supervisor/events` 供前端轮询。
     """
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
@@ -115,6 +192,8 @@ def build_supervisor_engines(
         log_max_lines=DEFAULT_LOG_MAX_LINES,
         modules=MODULE_ORDER if cold_start else None,
         cold_start=cold_start,
+        event_bus=HealthEventBus(),
+        port_inspector=build_port_inspector(),
     )
     return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
 
@@ -196,6 +275,27 @@ def _stop_result(processes: Any, modules: list[str]) -> dict[str, Any]:
     return {"ok": not failed, "stopped": stopped, "skipped": skipped}
 
 
+def _adopted_restart_gate(processes: Any, modules: list[str]) -> list[str]:
+    """重启前需要用户显式确认的模块（QUOT-556）：认领态一律要 confirm。
+
+    口径与 DEC-079 一致（失败关闭）：`adopted_peer=True` 或 `origin="adopted"`
+    （含旧账本滞后标记）都按外部 peer 对待。读不到账本（假件 / 未接线）时不
+    加闸——引擎层的停止边界（DEC-078）仍然兜底，外部进程绝不会被终止。
+    """
+    ledger = getattr(processes, "ledger", None)
+    record_of = getattr(ledger, "record", None)
+    if not callable(record_of):
+        return []
+    gated: list[str] = []
+    for name in modules:
+        record = record_of(name)
+        if record is not None and (
+            getattr(record, "adopted_peer", False) or getattr(record, "origin", None) == "adopted"
+        ):
+            gated.append(name)
+    return gated
+
+
 def build_stop_router(processes: Any) -> APIRouter:
     """`/api/supervisor/{start,restart,stop}`（QUOT-523）：全部走写面闸门。"""
     router = APIRouter(prefix=SUPERVISOR_PREFIX, tags=["supervisor"])
@@ -221,6 +321,18 @@ def build_stop_router(processes: Any) -> APIRouter:
         modules = [str(name) for name in payload.get("modules") or []]
         if not modules:
             raise HTTPException(status_code=422, detail="restart 需要 modules: [模块名]")
+        # QUOT-556：外部认领的 peer 一键重启必须用户显式确认（前端弹窗主操作）。
+        # 确认只授权「拉起替代实例」，绝不授权终止外部进程（引擎闸门兜底）。
+        gated = _adopted_restart_gate(processes, modules)
+        if gated and payload.get(CONFIRMATION_FIELD) is not True:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"模块 {', '.join(gated)} 是外部认领的 peer（adopt-only）："
+                    f"一键重启需要用户确认 {CONFIRMATION_FIELD}: true"
+                    "（不会终止任何外来进程）"
+                ),
+            )
         results: dict[str, Any] = {}
         for name in modules:
             try:
@@ -229,17 +341,23 @@ def build_stop_router(processes: Any) -> APIRouter:
                 results[name] = {"ok": False, "error": str(exc)}
             else:
                 results[name] = {"ok": True, "error": None}
+                if name in gated:
+                    # 确认重启成功 = 归属已回本控制面（引擎 spawn 清标记）；
+                    # 清掉自愈失败窗口，让 526 自愈重新有完整预算看护新进程。
+                    reset_heal = getattr(getattr(processes, "ledger", None), "reset_heal", None)
+                    if callable(reset_heal):
+                        reset_heal(name)
         return {"ok": all(item["ok"] for item in results.values()), "modules": results}
 
     @router.post("/stop", dependencies=[Depends(_supervisor_write_guard)])
     def stop(payload: dict[str, Any]) -> dict[str, Any]:
         # 全停是不可逆动作（七个模块一起下），必须显式确认；单模块停不要求
         modules = [str(name) for name in payload.get("modules") or []]
-        if not modules and payload.get(STOP_CONFIRMATION_FIELD) is not True:
+        if not modules and payload.get(CONFIRMATION_FIELD) is not True:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"全停需要 {STOP_CONFIRMATION_FIELD}: true"
+                    f"全停需要 {CONFIRMATION_FIELD}: true"
                     "（或给出 modules: [模块名] 只停指定模块）"
                 ),
             )
@@ -254,6 +372,27 @@ def build_supervisor_router(heal: Any) -> APIRouter:
     @router.get("/state")
     def state() -> dict[str, Any]:
         return heal.snapshot()
+
+    @router.get("/events", dependencies=[Depends(_supervisor_write_guard)])
+    def events(
+        since: int = 0, module: str | None = None, limit: int = 200
+    ) -> dict[str, Any]:
+        """peer 级健康事件轮询通道（QUOT-556，前端 S5 弹窗订阅源）。
+
+        `since` = 上次见过的最大 seq；返回其后事件（升序）与当前 `latest`。
+        事件含模块 / 状态 / 白话原因；seq 出现空洞 = 客户端落后被环形缓冲挤掉，
+        应重新对齐（重拉 /state 全量）。未接事件总线时 configured=False 降级。
+        """
+        bus = getattr(heal, "event_bus", None)
+        if bus is None:
+            return {"ok": True, "configured": False, "latest": 0, "events": []}
+        items = bus.since(max(0, since), module=module, limit=limit)
+        return {
+            "ok": True,
+            "configured": True,
+            "latest": bus.latest_seq,
+            "events": [item.to_dict() for item in items],
+        }
 
     @router.post("/state/{module}/reset", dependencies=[Depends(_supervisor_write_guard)])
     def reset(module: str) -> dict[str, Any]:
@@ -337,14 +476,15 @@ def mount_page_boot(app: FastAPI, boot: PageBoot) -> None:
 
 
 __all__ = [
+    "CONFIRMATION_FIELD",
     "OWN_PROCESSES_ENV",
-    "STOP_CONFIRMATION_FIELD",
     "SUPERVISOR_DENIED",
     "SUPERVISOR_PREFIX",
     "SUPERVISOR_WRITE_DENIED",
     "SupervisorEngines",
     "build_page_boot",
     "build_page_boot_router",
+    "build_port_inspector",
     "build_selfheal_engine",
     "build_process_engine",
     "build_stop_router",

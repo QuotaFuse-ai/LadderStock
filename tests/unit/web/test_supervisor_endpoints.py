@@ -43,6 +43,8 @@ MODULE_SNAPSHOT_KEYS = {
     "restart_count",
     "stopping_by_user",
     "origin",
+    # QUOT-556：外部 peer 认领标记上状态面，前端据此知道重启要 confirm
+    "adopted_peer",
     "cmdline_hash",
     "last_exit_reason",
     "self_heal",
