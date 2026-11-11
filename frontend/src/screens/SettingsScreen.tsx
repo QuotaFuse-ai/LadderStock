@@ -66,6 +66,7 @@ import AiConnectDialog from '../components/AiConnectDialog'
 import { SenateRoleModels } from '../components/SenateRoleModels'
 import { StopListDialog } from '../components/supervisor/StopListDialog'
 import { ProxyPoolCard } from '../components/supervisor/ProxyPoolCard'
+import { PortDiagnosticsPanel } from '../components/supervisor/PortDiagnosticsPanel'
 import { findProxyPoolModule } from '../lib/proxyPoolView'
 import {
   buildStopCandidates,
@@ -88,7 +89,8 @@ import { cn } from '../lib/cn'
  *              `status` / `status_label`，前端不推断。模块清单与数量一律来自后端
  *              注册表（唯一真源是 config/sources.yaml 的 peers 块，QUOT-403/420）。
  *   AI 接入  —— 端点 / 模型 / 密钥；密钥只写不读回（只显示 `set` + `preview`）。
- *   数据与端口 —— 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
+ *   数据与端口 —— 端口诊断 + 安全自愈面板（QUOT-548，四分类白话诊断 + 一键安全修复）
+ *              + 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
  *   关于     —— 版本、数据目录、DEC-006 边界、主题与密度（与侧栏同一状态）。
  *
  * 控制面未接入时：卡片退化为静态目录表 + 全按钮禁用 + 可见原因（§4.8 占位要求），
@@ -1464,21 +1466,38 @@ function AiSection({
 /**
  * `?tab=ports` 的内容。控制面未启用时也要渲染本段（§11.18「每段有自身
  * loading/empty/error」），端口取不到就逐行 `—`，不显示假定默认值。
+ * QUOT-548：顶部新增「端口诊断 + 安全自愈」面板（消费 QUOT-547 诊断 API）；
+ * 原「一键体检」占位按钮由面板的「重新诊断」取代（体检接口已落地）。
  */
 function PortsSection({
   board,
   portRows,
   stateConfig,
+  controlReady,
+  productOf,
+  push,
+  onHealed,
 }: {
   board: AsyncResult<BoardPayload>
   portRows: PortRow[]
   stateConfig: AsyncResult<StateConfigPayload>
+  controlReady: boolean
+  productOf: (peerId: string) => string
+  push: (message: string, tone?: ToastItem['tone']) => void
+  onHealed: () => void
 }) {
   const density = useDensity()
   // 同一屏的数字口径：端口区也按注册表实际出卡数走，不写死模块个数
   const moduleCount = board.data ? board.data.peers.length + (board.data.components?.length ?? 0) : null
   return (
     <div className="flex flex-col gap-4">
+      <PortDiagnosticsPanel
+        controlReady={controlReady}
+        productOf={productOf}
+        push={push}
+        onHealed={onHealed}
+      />
+
       <SectionCard
         title="端口占用"
         subtitle={
@@ -1489,11 +1508,6 @@ function PortsSection({
           </>
         }
         bodyClassName="p-0"
-        actions={
-          <Button variant="secondary" disabled disabledReason="本轮无体检接口，网页暂不提供一键体检">
-            一键体检
-          </Button>
-        }
       >
         <DataTable<PortRow>
           columns={PORT_COLUMNS}
@@ -1955,7 +1969,7 @@ export default function SettingsScreen() {
   )
 
   const menu = (
-    <nav aria-label="设置分区" className="w-menu shrink-0">
+    <nav aria-label="设置分区" className="w-full shrink-0 desk:w-menu">
       <ul className="flex flex-col gap-1">
         {SECTIONS.map((item) => {
           const active = item.value === section
@@ -1995,7 +2009,17 @@ export default function SettingsScreen() {
       <div className="flex flex-col gap-4">
         <ErrorBlock {...describeApiError(controlError)} onRetry={board.reload} />
         {section === 'ai' && <AiSection controlReady={false} push={push} />}
-        {section === 'ports' && <PortsSection board={board} portRows={portRows} stateConfig={stateConfig} />}
+        {section === 'ports' && (
+          <PortsSection
+            board={board}
+            portRows={portRows}
+            stateConfig={stateConfig}
+            controlReady={false}
+            productOf={productOf}
+            push={push}
+            onHealed={() => void board.refresh()}
+          />
+        )}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
     )
@@ -2016,7 +2040,17 @@ export default function SettingsScreen() {
           </ul>
         )}
         {section === 'ai' && <AiSection controlReady={false} push={push} />}
-        {section === 'ports' && <PortsSection board={board} portRows={portRows} stateConfig={stateConfig} />}
+        {section === 'ports' && (
+          <PortsSection
+            board={board}
+            portRows={portRows}
+            stateConfig={stateConfig}
+            controlReady={false}
+            productOf={productOf}
+            push={push}
+            onHealed={() => void board.refresh()}
+          />
+        )}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
     )
@@ -2217,7 +2251,21 @@ export default function SettingsScreen() {
 
         {section === 'ai' && <AiSection controlReady={controlReady} push={push} />}
 
-        {section === 'ports' && <PortsSection board={board} portRows={portRows} stateConfig={stateConfig} />}
+        {section === 'ports' && (
+          <PortsSection
+            board={board}
+            portRows={portRows}
+            stateConfig={stateConfig}
+            controlReady={controlReady}
+            productOf={productOf}
+            push={push}
+            onHealed={() => {
+              // 静默重取：reload 会整屏回 loading 骨架，把自愈结果横幅连同面板一起卸载掉。
+              void board.refresh()
+              void supervisor.refresh()
+            }}
+          />
+        )}
 
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
@@ -2228,7 +2276,7 @@ export default function SettingsScreen() {
     <div className="flex flex-col gap-5">
       {header}
 
-      <div className="flex items-start gap-5">
+      <div className="flex flex-col gap-5 desk:flex-row desk:items-start">
         {menu}
         <div className="min-w-0 flex-1">{body}</div>
       </div>

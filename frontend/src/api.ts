@@ -677,6 +677,48 @@ export interface PortConflict {
   severity?: 'conflict' | 'info'
 }
 
+// ---------------------------------------------------------------- 端口诊断 + 安全自愈（QUOT-547 契约 / QUOT-548 消费）
+// 字段与 `web/control.py::_diagnose_peer` / `heal_ports` 一一对应。
+// 占用分类 / 健康 / 可修复性全部由后端判定（DEC-079 origin 口径），前端只翻译展示。
+
+/** 占用四分类：自有残留 / 已认领 peer / 外来进程 / 空闲。 */
+export type PortClass = 'own_child' | 'adopted_peer' | 'foreign' | 'free'
+
+export interface PortDiagnosisEntry {
+  port: number
+  role: 'mcp' | 'web' | 'extra' | string
+  class: PortClass
+  pid: number | null
+  process: string | null
+  /** 实时命令行（后端已打码）；查不到为 null */
+  cmdline: string[] | null
+  listening: boolean
+  /** 后端白话理由（技术口径原文，面板收进「技术细节」） */
+  reason: string
+}
+
+export interface PeerPortDiagnosis {
+  peer: string
+  health: { ok: boolean | null; detail: string }
+  ports: PortDiagnosisEntry[]
+}
+
+export interface PortsDiagnosisPayload {
+  ok: boolean
+  peers: PeerPortDiagnosis[]
+}
+
+/** 安全自愈结果：动作由后端按占用分类决定（adopt / restart / report / none）。 */
+export interface PortHealResult {
+  ok: boolean
+  peer: string
+  action: 'adopt' | 'restart' | 'report' | 'none'
+  detail: string
+  /** adopt / restart 后后端回读的最新诊断（前端直接用它刷新，不重算） */
+  ports: PortDiagnosisEntry[]
+  health: { ok: boolean | null; detail: string }
+}
+
 export interface JobView {
   id: string
   peer: string
@@ -1255,6 +1297,19 @@ export const api = {
       }),
     logs: (id: string, tail = 200, signal?: AbortSignal) =>
       request<PeerLogs>(`/control/peers/${encodeURIComponent(id)}/logs?tail=${tail}`, { signal }),
+    /** 端口诊断（QUOT-547）：逐模块端口占用四分类 + PID + health + 白话理由，只读。 */
+    ports: (signal?: AbortSignal) =>
+      request<PortsDiagnosisPayload>('/control/ports', { signal, timeoutMs: CONTROL_TIMEOUT_MS }),
+    /**
+     * 安全自愈（QUOT-547）：只重拉 own_child；adopted_peer 只认领 + 健康复检；
+     * foreign 只报告 + 引导。动作选择在后端，前端不传动作参数、不执行命令。
+     */
+    healPorts: (peerId: string) =>
+      request<PortHealResult>(`/control/ports/${encodeURIComponent(peerId)}/heal`, {
+        method: 'POST',
+        body: {},
+        timeoutMs: 30000,
+      }),
     config: (id: string, signal?: AbortSignal) =>
       request<PeerConfig>(`/control/peers/${encodeURIComponent(id)}/config`, { signal }),
     saveConfig: (id: string, values: Record<string, string>, clear: string[] = []) =>
