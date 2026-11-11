@@ -1,7 +1,7 @@
 # 看板信息架构与视觉规范（21 屏）
 
-- 版本：v1.21
-- 日期：2026-11-10
+- 版本：v1.22
+- 日期：2026-11-11
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -35,6 +35,7 @@
 | v1.19 | 2026-11-06 | 「我的股票」三模块文档收口（QUOT-440；DEC-058 / 059 / 060 / 065 / 066）。**只改文档，不改代码 / 设计**。§0 第 11 屏由「我的持仓 `/positions`」改为「我的股票 `/my-stocks?tab=watch\|hold`」：一页两标签，自选为默认；旧 `/watchlist` → `?tab=watch`、`/positions` → `?tab=hold`，客户端 `replace` 重定向，不再单独挂屏。**屏数 20 → 21**：QUOT-435 交付提醒页 `/inbox`，新登记为第 21 屏（新增 §3.21 与 §11.21），§0 / §2 / §4.5 / §6 / §10 / §11 的屏数口径全部对齐。§3.11 重写为两标签：**3.11-A 自选**七列（名称 / 代码 / 现价 / 涨跌% / PE(TTM) / PB / 换手%，每列可排序；缺数 `—` + 单元格 `title` 原因；批量添加先预览后确认；点行渲染 K 线卡；移除 `aria-label` 含代码）；**3.11-B 持仓**改为 QUOT-434 实际落地的 `PortfolioPanel`——数量、成本、市值、盈亏、已实现、分红全部由 `GET /api/portfolio` 按流水重放推出，页面不重算，含成本法 `Segmented`、人民币合计、记一笔、旧仓迁移卡、问题流水横幅、收益 / 交易流水两子页。隐私遮罩改为**遮 数量 / 成本价 / 市值 / 浮动盈亏 / 已实现 / 分红，不遮 现价 与 盈亏%**；此前登记的「隐私模式未禁用排序」偏差已由 QUOT-434 收口（`sortable(masked, …)`，`tests/portfolio-panel.test.tsx:333`），本版删除该条。**剩余偏差按代码登记**：自选页无自动轮询、无页内搜索（仅挂载 / 手动 / 增删后取数）。**K 线卡**按实际 ECharts 配置登记：按需注册 Candlestick，蜡烛 + MA5/10/20/60 四条线 + 成交量副图（`xAxisIndex:1`）+ inside/slider 双 dataZoom，`zoomOnMouseWheel:'ctrl'`，高 420；数据位空值 `'-'`、文本空值 `—`，红涨绿跌。§7.1 补 6 个图表令牌深浅值。§3.21 提醒页只列 console / desktop 两条本机渠道与只读定时任务，不出现 webhook / 免打扰的空 UI。**未落地不提前写**：持仓「体检穿透」`/api/portfolio/xray`（QUOT-437）与「历史回放」`/api/portfolio/replay`（QUOT-438）接口与屏都不存在，`GET /api/events/timeline` 同样不存在（事件日历实读 `GET /api/events?month=&code=`），见 `SPEC-RESEARCH-PAGES` §8.2 缺口表。版本号说明：本单原定 v1.17，但 v1.17 / v1.18 已由 QUOT-457 / QUOT-421 占用且顶部版本行停在 v1.16（历史漂移），本版补齐为 v1.19。 |
 | v1.20 | 2026-11-07 | 顶栏服务状态灯 + 全局重启（QUOT-443 / DEC-063-platform-watchdog-and-health）：顶栏工具区**最左**新增 `PlatformStatusLight`（`lib/usePlatformHealth.ts`，2s 轮询独立看门狗 `5952` 的 `/platform/health`；生产直连 `http://127.0.0.1:5952`，开发走 Vite `/platform` 代理）。**三态 + 灰**：`ok` 绿、`degraded`（`db_ok=false`）黄、`offline` 红（含 `animate-pulse`）、未探测灰；**连续两次失败才转红**，单次抖动保持上一色，但看门狗明确回 `status=offline` 时立即转红。悬浮浮层显示状态 / 已运行 / 版本 / 数据库 / 检查时间；**重启按钮只在红灯渲染**（绿黄不占位），两步确认 → `POST /platform/restart` →「重启中」禁用 → 至多 90s 轮询 → 恢复后整页刷新，超时给出真实原因。`document.hidden` 暂停轮询，回前台立即补一拍。状态灯不读持仓 / 金额，浮层只含运行态字段。`PageShell` 离线横幅与 `SearchPanel` 的「先运行 `ldst run`」改为「看顶栏状态灯 → 点重启平台 → 仍不行查看看门狗日志」。§2 顶栏工具区与断点两行同步。版本号说明：v1.19 已被 QUOT-440 占用，本版顺延为 v1.20。证据：`frontend/tests/quot-443-platform-health.test.tsx`（三态、两拍才红、单次抖动保持绿、默认轮询间隔 2s（≤2.5s 断言）、可见性暂停 / 恢复、绿黄不渲染重启、红灯两步确认、浮层字段、超时文案）；`typecheck` / `test` / `build` 全绿。 |
 | v1.21 | 2026-11-10 | 研究方向目录分页与「只看可用」过滤（QUOT-530，决策 DEC-073）：`/skills` 每页 10 条、页码进 `?page=`、切分组 / 开关过滤回第 1 页，底部分页条 sticky；「只看可用」= `ready` / `partial` / `existing_page`（`lib/skills.ts` 的 `USABLE_CATALOG_STATUSES`）。§6.1 登记 **C-23 `Pagination`**（`components/ui/Pagination.tsx`，受控、无请求；当前页以实心底色 + `font-semibold` + `aria-current="page"` 三重表达，不只靠颜色）。目录数据链路、六状态徽标与既有跳转零变更。证据：`frontend/tests/skills-pagination.test.tsx` 11 例 + 1440×900 实机 26/26 断言，见 `docs/tasks/QUOT-530/README.md`。 |
+| v1.22 | 2026-11-11 | CH-02 柱图 x 轴重复类目修复（QUOT-553，呈现 only）：uPlot 自动撒的小数刻度经 round 折叠成重复标签（1板×3 / 2板×5）且多余刻度位无柱。`charts/Chart.tsx` 把 x 刻度钉在数据索引——柱图 `splits` 恒等于类目索引（刻度数=类目数，不抽稀）、x 量程左右各留半个类目位（首尾柱与标签不被裁）、柱身 `align: 0` 居中于刻度；低于 6px 的小值柱在柱顶如实标家数（不改数据、不抬高柱身）。折线同根因收敛：整数索引刻度 + 按画布宽度步长抽稀（标签唯一不重叠）。§3.6 图表口径同步。数据形状 / 后端聚合 / 家数口径零变更。证据：`frontend/tests/quot-553-chart-splits.test.tsx` 8 例 + 5950 实机 before/after 截图（`docs/tasks/QUOT-553/`，截图随评论附件交付）。 |
 
 
 ## 0. 范围与非目标
@@ -345,7 +346,7 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 | 六态 | 整屏 loading/offline/error/partial 齐全；空态在 theme 段被抑制（R-14）；每段有 `NotSynced` 空态（含 `ldst sync --date` 与「重新检查」）；**缺段级 error**：404 被吞成 null，只靠全局 partial 条 | `MarketScreen.tsx:473-504,136-169,307-322` |
 | 溯源 | 屏内第三份 `SourceBadge`（实时/缓存/归档）+ `SourceLine` 页脚「来源/数据时间/取数」 | `MarketScreen.tsx:93-130,609,650,691` |
 
-**图表口径**：网格 `width:1`、轴标签 `12px`、轴线尺寸 44/36、容器 padding `[8,8,0,0]`、隐藏 legend、`minWidth 240` + ResizeObserver。**折线线宽必须是 1.5px**（token 注释口径），当前实现为 2 → R-23。
+**图表口径**：网格 `width:1`、轴标签 `12px`、轴线尺寸 44/36、容器 padding `[8,8,0,0]`、隐藏 legend、`minWidth 240` + ResizeObserver。**折线线宽必须是 1.5px**（token 注释口径），当前实现为 2 → R-23。**x 轴刻度钉在数据索引**（QUOT-553）：柱图刻度数=类目数、量程左右各留半格、柱身居中（`align: 0`）、低于 6px 的柱柱顶如实标家数；折线按画布宽度对整数索引刻度步长抽稀，标签唯一。
 
 ### 3.7 AI周报（`/weekly`）— 主任务：一周一次，把五段结论回看成趋势
 
