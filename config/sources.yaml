@@ -273,6 +273,21 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 首页指数条的港股 2 格（QUOT-560）：同一工具 `th_us_get_quote` 逐 symbol 取
+  # （`HSI.HK` / `HSTECH.HK`，peer 端 ticker 规范化后行键带 `.HK` 后缀），
+  # 与 `index_quote_us` 同构——**不进 sync.yaml / 不进台账**。零 key（腾讯/新浪公开源），
+  # `commercial_use` 由调用方显式带（非商用），合规分级随回包落进 `source_detail`。
+  - id: tickhub_hk_index_quote
+    dataset: index_quote_hk
+    via: tickhub_us
+    tool: th_us_get_quote
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   - id: tickhub_dragon_tiger
     dataset: dragon_tiger
     via: tickhub

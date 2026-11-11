@@ -434,6 +434,7 @@ def us_quote_payload(
     prev_close: float = 51523.0586,
     change: float = 47.03,
     change_pct: float = 0.09,
+    market: str = "US",
     source: str = "sina",
     compliance_tier: str = "C",
     fetched_at: str = "2026-11-06T22:10:00+08:00",
@@ -446,6 +447,7 @@ def us_quote_payload(
     （`symbol` / `payload` / `source` / `compliance_tier` / `warnings` / `cache_hit`），
     没有「记录数组」。`compliance_tier=C` + 警告句是 `sina` 的实测口径——合规字段
     必须原样落进信封 `source_detail`（`data/adapters/tickhub_us.py`），不吞不降级。
+    `payload.market` 是真实回包的一部分（个股 US / 港股指数 HK，QUOT-560）。
     """
     if warnings is None:
         warnings = [f"新浪财经 属 Tier {compliance_tier}：商用需事先书面许可，当前为非商用调用。"]
@@ -455,11 +457,12 @@ def us_quote_payload(
         "symbol": symbol,
         "payload": {
             "symbol": symbol,
+            "market": market,
             "price": price,
             "prev_close": prev_close,
             "change": change,
             "change_pct": change_pct,
-            "currency": "USD",
+            "currency": "HKD" if market == "HK" else "USD",
             "as_of": fetched_at[:10],
             "timestamp": fetched_at,
         },

@@ -1,18 +1,18 @@
-"""首页指数条：A 股四个指数 + 美股两个指数的实时报价投影（QUOT-380 / QUOT-471）。
+"""首页指数条：A 股四个 + 美股两个 + 港股两个指数的实时报价投影
+（QUOT-380 / QUOT-471 / QUOT-560）。
 
 **白名单写死在本层八条**，不向 peer 动态要清单：实测 `index_list` 是按涨幅排序的
 100 条榜，不含首页这些指数，还混进老三板个股（`400224 苏阳光5`）。榜是日单一的，
 照它建注册表等于首页那几格「今天有、明天没」。
 
-三块指数走三条不同的路（**不是**同一工具换参数）：
+三块指数走两条路（**不是**同一工具换参数）：
 
 - **A 股 4 格**（SH/SZ）走 `index_quote`（peer `tickhub`），一次批量请求拿全。
-- **美股 2 格**（US）走 `th_us_get_quote`（peer `tickhub_us`），**逐 symbol** 一次一个
-  （该工具必填单个 `symbol`，没有批量入参），首页一次拉取 = 2 个上游请求。
-- **港股 2 格**（HK）**无源**：`index_quote` 只覆盖 SH/SZ/BSE；`tickhub_us` 对
-  `HSI.HK` / `HSTECH.HK` 一律 `isError`（港股支路按数字代码解析，指数名不是数字）。
-  DEC-006 闸门 4 禁止自采，所以这两格**结构性地**不取数，恒为 `available=false` +
-  「源未接入」+ 具体原因（不补 0、不留白、不静默删格）。
+- **美股 2 格 + 港股 2 格**都走 `th_us_get_quote`（peer `tickhub_us`），**逐 symbol**
+  一次一个（该工具必填单个 `symbol`，没有批量入参），一次首页拉取 = 4 个上游请求。
+  两块各用独立数据集登记（`index_quote_us` / `index_quote_hk`），互不连坐。
+  港股 2 格经 peer 端 ticker 别名映射（`HSI.HK` / `HSTECH.HK`）后由腾讯/新浪免费
+  公开源供给（零 key，Tier C 非商用），合规分级随回包落进信封 `source_detail`。
 
 A 股那批实测出来的坑（2026-11-03 对真实 peer `index_quote` 复测），判据逐条对着它们写：
 
@@ -54,19 +54,18 @@ DATASET = "index_quote"
 #: （peer `tickhub_us` / 工具 `th_us_get_quote`）。**不进 sync 台账**，同 `index_quote`。
 DATASET_US = "index_quote_us"
 
+#: 港股逐 symbol 取数入口：`DATASET_CATALOG` 里登记的 `index_quote_hk`
+#: （peer `tickhub_us` / 工具 `th_us_get_quote`，peer 端别名映射到腾讯/新浪免费源）。
+DATASET_HK = "index_quote_hk"
+
 #: 首页脚注（`HOME-V2-DATA-SURFACE.md` A-1 的口径：这不是逐笔实时）
 FOOTNOTE = "快照，不是逐笔实时"
 
 #: 整批取数失败时写进 `reason` 的前缀
 FETCH_FAILED = "index_quote 取数失败"
 FETCH_US_FAILED = "index_quote_us 取数失败"
+FETCH_HK_FAILED = "index_quote_hk 取数失败"
 NO_ROWS = "index_quote 没有返回任何匹配的行"
-
-#: 港股两格恒显的原因：无合规源（DEC-006 闸门 4 禁止自采），不是「这次没取到」
-HK_UNSOURCED = (
-    "源未接入：index_quote 只覆盖 SH/SZ/BSE；tickhub_us 对 HSI/HSTECH 一律报错"
-    "（港股支路按数字代码解析）。无合规源，按 DEC-006 闸门 4 不自采"
-)
 
 Status = Literal["ok", "partial", "missing"]
 
@@ -96,10 +95,10 @@ US_WHITELIST: tuple[IndexSpec, ...] = (
     IndexSpec("IXIC", "US", "IXIC", "纳斯达克综合"),
 )
 
-#: 港股两格：无源，占位保证顺序与标题一致（恒为 `available=false`）
+#: 港股两格：同一工具逐 symbol 取，peer 规范化后的行键带 `.HK` 后缀
 HK_WHITELIST: tuple[IndexSpec, ...] = (
-    IndexSpec("HSI", "HK", "HSI", "恒生指数"),
-    IndexSpec("HSTECH", "HK", "HSTECH", "恒生科技"),
+    IndexSpec("HSI", "HK", "HSI.HK", "恒生指数"),
+    IndexSpec("HSTECH", "HK", "HSTECH.HK", "恒生科技"),
 )
 
 #: 首页八格全表（顺序即上屏顺序）：A 股 → 美股 → 港股
@@ -125,9 +124,9 @@ class IndexStrip:
 def fetch_indices(registry: Any) -> IndexStrip:
     """一次请求取回八格。
 
-    取数按块分头走、互不连坐：A 股一次的批量 `index_quote` 失败不影响美股两格，
-    美股某一 symbol 失败也不影响另一格。港股两格不取数（无源，恒 `available=false`）。
-    某一块整体不可用 → 那一块的格子出原因，其余照常显示。
+    取数按块分头走、互不连坐：A 股一次的批量 `index_quote` 失败不影响美股两格；
+    美股 / 港股某一 symbol 失败也不影响其余格。某一块整体不可用 → 那一块的格子
+    出原因，其余照常显示。
     """
     cells: list[dict[str, Any]] = []
 
@@ -139,8 +138,9 @@ def fetch_indices(registry: Any) -> IndexStrip:
     us_rows, us_reason, us_detail = _fetch_us(registry)
     cells.extend(_cells_for(US_WHITELIST, _index_by_symbol(us_rows), reason=us_reason))
 
-    # --- 港股 2 格：无源，不取数（DEC-006 闸门 4），恒显「源未接入」 ---
-    cells.extend(_cells_for(HK_WHITELIST, {}, reason=HK_UNSOURCED))
+    # --- 港股 2 格：同工具逐 symbol（peer 端别名映射，零 key 免费源） ---
+    hk_rows, hk_reason, hk_detail = _fetch_hk(registry)
+    cells.extend(_cells_for(HK_WHITELIST, _index_by_symbol(hk_rows), reason=hk_reason))
 
     filled = [cell for cell in cells if cell["available"]]
     day = max(
@@ -154,12 +154,14 @@ def fetch_indices(registry: Any) -> IndexStrip:
         status = "ok"
     else:
         status = "partial"
-    miss_reason: str | None = None if filled else _miss_detail(cn_reason, us_reason)
+    miss_reason: str | None = (
+        None if filled else _miss_detail(cn_reason, us_reason, hk_reason)
+    )
     return IndexStrip(
         payload=_payload(cells, available=bool(filled), reason=miss_reason),
         status=status,
         day=day,
-        source_detail=_source_detail(us_detail, cn_reason, us_reason),
+        source_detail=_source_detail(us_detail, hk_detail, cn_reason, us_reason, hk_reason),
     )
 
 
@@ -178,37 +180,53 @@ def _fetch_cn(registry: Any) -> tuple[list[dict[str, Any]], str | None]:
 
 
 def _fetch_us(registry: Any) -> tuple[list[dict[str, Any]], str | None, str]:
-    """美股两格：逐 `symbol` 调 `th_us_get_quote`（peer `tickhub_us`，一 symbol 一次）。
+    """美股两格：逐 `symbol` 调 `th_us_get_quote`（peer `tickhub_us`，一 symbol 一次）。"""
+    return _fetch_per_symbol(US_WHITELIST, DATASET_US, FETCH_US_FAILED, registry)
 
-    任何一格失败都只影响那一格：这里只在**两格全失败**时回一个整体原因，单格失败
-    走 `_cells_for` 的按格原因。返回的行用 `symbol` 建键；第三个返回值是美股块的
-    合规详述（从信封 `payload` 读 `compliance_tier` / `warnings`——`ProviderRegistry`
-    会在成功路径用轨迹覆盖信封 `source_detail`，所以合规字段从载荷读，不靠它）。
+
+def _fetch_hk(registry: Any) -> tuple[list[dict[str, Any]], str | None, str]:
+    """港股两格：同一工具逐 `symbol`（`HSI.HK` / `HSTECH.HK`，peer 端别名映射）。"""
+    return _fetch_per_symbol(HK_WHITELIST, DATASET_HK, FETCH_HK_FAILED, registry)
+
+
+def _fetch_per_symbol(
+    specs: tuple[IndexSpec, ...],
+    dataset: str,
+    failed_prefix: str,
+    registry: Any,
+) -> tuple[list[dict[str, Any]], str | None, str]:
+    """逐 `symbol` 取数，美股与港股两块共用的执行器。
+
+    任何一格失败都只影响那一格：这里只在**整块全失败**时回一个整体原因，单格失败
+    走 `_cells_for` 的按格原因。返回的行用 `(market, symbol)` 建键（见 `_index_by_symbol`）；
+    第三个返回值是本块的合规详述（从信封 `payload` 读 `compliance_tier` / `warnings`——
+    `ProviderRegistry` 会在成功路径用轨迹覆盖信封 `source_detail`，所以合规字段从
+    载荷读，不靠它）。
     """
     rows: list[dict[str, Any]] = []
     fail_reasons: list[str] = []
     tiers: set[str] = set()
     warnings: list[str] = []
-    for spec in US_WHITELIST:
+    for spec in specs:
         params = {"symbol": spec.symbol, "commercial_use": False}
         try:
-            outcome = registry.fetch_live(DATASET_US, params=params)
+            outcome = registry.fetch_live(dataset, params=params)
         except Exception as exc:  # noqa: BLE001 - 一格失败不连坐另一格
-            failure = f"{FETCH_US_FAILED}（{spec.symbol}）：{getattr(exc, 'message', None) or exc}"
+            failure = f"{failed_prefix}（{spec.symbol}）：{getattr(exc, 'message', None) or exc}"
             _log.warning("%s", failure)
             fail_reasons.append(failure)
             continue
         rows.extend(_rows(outcome.envelope))
-        tier, warns = _us_compliance(outcome.envelope)
+        tier, warns = _envelope_compliance(outcome.envelope)
         if tier:
             tiers.add(tier)
         warnings.extend(w for w in warns if w not in warnings)
-    reason: str | None = _us_overall_reason(rows, fail_reasons)
-    return rows, reason, _us_detail(tiers, warnings)
+    reason: str | None = _block_overall_reason(dataset, rows, fail_reasons)
+    return rows, reason, _compliance_detail(tiers, warnings)
 
 
-def _us_compliance(envelope: Any) -> tuple[str, list[str]]:
-    """从 US 信封 `payload` 取 (compliance_tier, warnings)——合规字段的落地位置。"""
+def _envelope_compliance(envelope: Any) -> tuple[str, list[str]]:
+    """从逐 symbol 信封 `payload` 取 (compliance_tier, warnings)——合规字段的落地位置。"""
     payload = getattr(envelope, "payload", {}) or {}
     tier = str(payload.get("compliance_tier") or "").strip().upper()
     raw = payload.get("warnings")
@@ -216,8 +234,8 @@ def _us_compliance(envelope: Any) -> tuple[str, list[str]]:
     return tier, warns
 
 
-def _us_detail(tiers: set[str], warnings: list[str]) -> str:
-    """美股块 `source_detail`：`th_us_get_quote@上游` + 合规分级 + 警告句（不吞）。"""
+def _compliance_detail(tiers: set[str], warnings: list[str]) -> str:
+    """逐 symbol 块的 `source_detail`：`th_us_get_quote` + 合规分级 + 警告句（不吞）。"""
     if not tiers and not warnings:
         return ""
     tier_text = "/".join(sorted(tiers)) if tiers else "未知"
@@ -228,18 +246,33 @@ def _us_detail(tiers: set[str], warnings: list[str]) -> str:
     return "".join(parts)
 
 
-def _us_overall_reason(rows: list[dict[str, Any]], fail_reasons: list[str]) -> str | None:
-    """美股整块的兜底原因：**只在两格都没数据**时才有值（单格失败留给按格原因）。"""
+def _block_overall_reason(
+    dataset: str, rows: list[dict[str, Any]], fail_reasons: list[str]
+) -> str | None:
+    """整块的兜底原因：**只在块内一格都没数据**时才有值（单格失败留给按格原因）。"""
     if rows:
         return None
     if fail_reasons:
         return "；".join(fail_reasons)
-    return f"{DATASET_US} 没有返回任何匹配的行"
+    return f"{dataset} 没有返回任何匹配的行"
 
 
-def _source_detail(us_detail: str, cn_reason: str | None, us_reason: str | None) -> str:
-    """信封 `source_detail`：美股成功详述（含合规字段）+ 各块失败原因。"""
-    parts = [us_detail, *[x for x in (cn_reason, us_reason) if x]]
+def _source_detail(
+    us_detail: str,
+    hk_detail: str,
+    cn_reason: str | None,
+    us_reason: str | None,
+    hk_reason: str | None,
+) -> str:
+    """信封 `source_detail`：逐 symbol 块的合规详述 + 各块失败原因。
+
+    美股与港股走同一工具、同一上游（合规分级相同），详述去重后只出现一次。
+    """
+    details: list[str] = []
+    for detail in (us_detail, hk_detail):
+        if detail and detail not in details:
+            details.append(detail)
+    parts = [*details, *[x for x in (cn_reason, us_reason, hk_reason) if x]]
     return "；".join(x for x in parts if x)
 
 
@@ -261,7 +294,11 @@ def _index_by_market_code(rows: list[dict[str, Any]]) -> dict[tuple[str, str], d
 
 
 def _index_by_symbol(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-    """美股按 `(market, symbol)` 建键：US 行没有 `code`，`symbol` 才是行键。"""
+    """美股 / 港股按 `(market, symbol)` 建键：行没有 `code`，`symbol` 才是行键。
+
+    港股行的 `market` 是 `HK`、`symbol` 带 `.HK` 后缀（peer 规范化后的形状），
+    与 `HK_WHITELIST` 的 `spec.symbol` 同形。
+    """
     matched: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         market = str(row.get("market") or "US").strip().upper()
@@ -347,7 +384,7 @@ def _payload(cells: list[dict[str, Any]], *, available: bool, reason: str | None
         "footnote": FOOTNOTE,
         # 上屏主口径仍是 A 股那条（页面脚注「源：」跟它）；多源在 `datasets` 里全带出
         "price_source": DATASET,
-        "datasets": [DATASET, DATASET_US],
+        "datasets": [DATASET, DATASET_US, DATASET_HK],
         "cells": [
             {key: value for key, value in cell.items() if key not in _INTERNAL_KEYS}
             for cell in cells
@@ -356,16 +393,19 @@ def _payload(cells: list[dict[str, Any]], *, available: bool, reason: str | None
 
 
 def _cell_miss_detail(spec: IndexSpec) -> str:
-    dataset = DATASET_US if spec.market == "US" else DATASET
+    datasets = {"US": DATASET_US, "HK": DATASET_HK}
+    dataset = datasets.get(spec.market, DATASET)
     return (
         f"{dataset} 未返回 ({spec.market}, {spec.symbol}) 的行"
         f"（入参 {spec.code} 被上游静默丢弃，不补值）"
     )
 
 
-def _miss_detail(cn_reason: str | None, us_reason: str | None) -> str:
-    """全盘无数据时的整体原因（两块原因都并进来）。"""
-    parts = [x for x in (cn_reason, us_reason) if x]
+def _miss_detail(
+    cn_reason: str | None, us_reason: str | None, hk_reason: str | None
+) -> str:
+    """全盘无数据时的整体原因（三块原因都并进来）。"""
+    parts = [x for x in (cn_reason, us_reason, hk_reason) if x]
     return "；".join(parts) or NO_ROWS
 
 
@@ -399,11 +439,11 @@ def _rows(envelope: Any) -> list[dict[str, Any]]:
 __all__ = [
     "DATASET",
     "DATASET_US",
+    "DATASET_HK",
     "FOOTNOTE",
     "CN_WHITELIST",
     "US_WHITELIST",
     "HK_WHITELIST",
-    "HK_UNSOURCED",
     "INDEX_WHITELIST",
     "iso_timestamp",
     "IndexSpec",
