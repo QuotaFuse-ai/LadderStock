@@ -1,25 +1,18 @@
 import { useMemo } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 
 import { describeApiError, isApiError } from '../api'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import {
   MISSING,
-  formatChangePct,
   localDateIso,
 } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
   Button,
-  Card,
-  CardHeader,
-  CardRefreshButton,
   EmptyState,
   ErrorBlock,
-  SectionCard,
-  SignedNumber,
-  StatusDot,
   type SourceBadgeMeta,
 } from '../components/ui'
 import { draftCharCount, selectSlot, useReviewDraft } from '../../stores/reviewDraft'
@@ -27,17 +20,22 @@ import { DEMO_TRADE_DATE } from './home/demo'
 import { HomeIndexStrip } from './home/HomeIndexStrip'
 import { HomePositionsCard } from './home/HomePositionsCard'
 import { HomeSearch } from './home/HomeSearch'
+import { HomeTodoMoversCard, type HomeTodo } from './home/HomeTodoMoversCard'
 import { HomeWatchlistCard } from './home/HomeWatchlistCard'
 import { buildHomeAssistant } from './home/homeAssistant'
 import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/useHomeSource'
 
 /**
- * 首页（SPEC-HOME-V2 v1.0 / QUOT-381 S3 接线）。
+ * 首页（SPEC-HOME-V2 v2.0 / QUOT-552 一页工作台）。
  *
- * 从「收盘后的市场体检报告」改成「开盘前 5 分钟的工作台」，四块纵向满宽：
- * A 大盘与全球指数 → B 今天，想研究什么 → C 我的自选 → D 我的持仓；E 待办 / F 最近异动并排下移。
- * 情绪温度 / 连板梯队 Top 10 / 题材强度 Top 5 移出首页（信息不丢，都在 `/market` 对应 tab）；
- * 屏体只负责装配与五路状态合成，块内取数与缺数口径各自收在 `screens/home/` 的块件里。
+ * desk（≥1280）两行 12 列，一屏装下、无整页滚动：
+ * row1 = 大盘与全球指数（8）+ 待办与异动合并表（4）；
+ * row2 = 我的自选摘要（4）+ 我的持仓摘要（4）+ 研究面板（4）。
+ * 1024–1279 保底单栏（内容下移，0 横向溢出）；更窄视口同单栏。
+ *
+ * 待办 / 异动不再各占一块：判定与排序口径留在本屏（todos / movers 两个 memo），
+ * 呈现合进 `HomeTodoMoversCard` 的一张 C-09 表。情绪温度 / 连板梯队 / 题材强度
+ * 仍在 `/market` 对应 tab；持仓 / 自选全表仍在 `/positions`、`/watchlist`。
  *
  * 五态演示统一走 `?state=empty|loading|error|partial|offline`；
  * 演示数据走 `home/useHomeSource`，与真实通道互斥，**真实请求失败不回落到演示数据**（§5.6）。
@@ -45,14 +43,6 @@ import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/
 
 /** 溯源徽标只需要 envelope 的公共字段（§5.5 单一实现）；平面响应（自选）四键恒为 null。 */
 type EnvelopeMeta = SourceBadgeMeta
-
-interface Todo {
-  tone: 'warn' | 'danger' | 'accent'
-  tag: string
-  title: string
-  to: string
-  action: string
-}
 
 export default function HomeScreen() {
   const forced = useForcedState()
@@ -162,8 +152,8 @@ export default function HomeScreen() {
             ? `${tradeDate} · 今日无数据`
             : undefined
 
-  const todos = useMemo<Todo[]>(() => {
-    const list: Todo[] = []
+  const todos = useMemo<HomeTodo[]>(() => {
+    const list: HomeTodo[] = []
     if (usable && conditions.length > 0 && !reconcile) {
       list.push({
         tone: 'warn',
@@ -175,7 +165,7 @@ export default function HomeScreen() {
     }
     if (usable && reviewChars === 0) {
       list.push({
-        tone: 'accent',
+        tone: 'info',
         tag: '待写',
         title: '今日复盘草稿还是空的',
         to: '/review',
@@ -240,7 +230,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       {header}
 
       {offline && <OfflineBanner onRetry={reloadAll} />}
@@ -274,96 +264,28 @@ export default function HomeScreen() {
         />
       )}
 
-      {/* A/B/C/D 四块各自满宽纵向堆叠（§1.1：持仓六列下限 824px，并排必然叠字） */}
-      <HomeIndexStrip
-        view={indexView}
-        session={session}
-        pollSeconds={INDICES_POLL_SECONDS}
-        pollTicks={indicesTicks}
-        pollFailures={indicesFailures}
-      />
-      <HomeSearch assistant={assistant} date={tradeDate} />
-      <HomeWatchlistCard view={watchlistView} />
-      <HomePositionsCard view={positionsView} />
-
-      {/* 只有 E/F 并排：7 / 5 */}
-      <div className="grid gap-4 desk:grid-cols-12">
-        <div className="flex flex-col gap-4 desk:col-span-7">
-          {todos.length > 0 && (
-            <Card>
-              <CardHeader
-                title="待办"
-                subtitle={<><span className="ldst-num">{todos.length}</span> 条需要处理</>}
-                actions={
-                  <CardRefreshButton
-                    label="刷新待办"
-                    onClick={validationView.onRefresh}
-                    loading={validationView.refreshing}
-                  />
-                }
-              />
-              <ul>
-                {todos.map((todo) => (
-                  <li key={todo.tag + todo.title} className="border-b border-border last:border-b-0">
-                    <Link
-                      to={todo.to}
-                      className="flex min-h-row items-center gap-3 px-4 transition-colors duration-fast ease-ldst hover:bg-surface-3"
-                    >
-                      <StatusDot tone={todo.tone}>{todo.tag}</StatusDot>
-                      <span className="min-w-0 flex-1 truncate text-body text-text" title={todo.title}>
-                        {todo.title}
-                      </span>
-                      <span className="shrink-0 text-caption text-text-secondary">{todo.action} →</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
-        </div>
-
-        <div className="desk:col-span-5">
-          <SectionCard
-            title="最近异动"
-            subtitle={watchRows.length > 0 ? '按涨跌幅绝对值取前 3' : '快照不可用'}
-            actions={
-              <CardRefreshButton
-                label="刷新最近异动"
-                onClick={watchView.onRefresh}
-                loading={watchView.refreshing}
-              />
-            }
-            bodyClassName="p-4"
-          >
-            {movers.length === 0 ? (
-              <EmptyState compact title="还没有异动信号" description="盯盘快照为空或已过期，去盯盘页取数。" />
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {movers.map((row) => {
-                  const change = formatChangePct(row.change_pct)
-                  return (
-                    <li key={row.code} className="flex min-h-row items-center justify-between gap-2 rounded-xs px-1">
-                      <span className="min-w-0 truncate text-body text-text" title={`${row.code} ${row.name ?? MISSING}`}>
-                        <span className="ldst-num mr-2 text-caption text-text-muted">{row.code}</span>
-                        {row.name ?? MISSING}
-                      </span>
-                      <SignedNumber text={change.text} tone={change.tone} arrow={change.arrow} className="text-body" />
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-            <p className="mt-3 border-t border-border pt-2 text-caption text-text-muted">
-              口径：快照涨跌幅绝对值排序；仅供扫读，不构成建议。
-            </p>
-          </SectionCard>
-        </div>
+      {/* 两行工作台（§1.1）：8+4 / 4+4+4；卡片是直接的网格子项，行内等高由 stretch 保证。
+          行距 12px（gap-3）：1280×800 一屏预算的一部分，不是装饰性留白 */}
+      <div className="grid gap-3 desk:grid-cols-12">
+        <HomeIndexStrip
+          view={indexView}
+          session={session}
+          pollSeconds={INDICES_POLL_SECONDS}
+          pollTicks={indicesTicks}
+          pollFailures={indicesFailures}
+          className="desk:col-span-8"
+        />
+        <HomeTodoMoversCard
+          todos={todos}
+          movers={movers}
+          validation={validationView}
+          watch={watchView}
+          className="desk:col-span-4"
+        />
+        <HomeWatchlistCard view={watchlistView} className="desk:col-span-4" />
+        <HomePositionsCard view={positionsView} className="desk:col-span-4" />
+        <HomeSearch assistant={assistant} date={tradeDate} className="desk:col-span-4" />
       </div>
-
-      <p className="text-caption leading-body text-text-muted">
-        指标口径：指数与自选为行情快照，不是逐笔实时；持仓成本法移动加权平均（DEC-038），当日盈亏不含分红。
-        {todos.length === 0 && ' 今日无待办。'}
-      </p>
     </div>
   )
 }

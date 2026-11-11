@@ -13,44 +13,46 @@ import {
   EmptyState,
   ErrorBlock,
   FreshnessBadge,
+  PrivacyBadge,
   SectionCard,
   SignedNumber,
   SourceStatusBadge,
   type Column,
 } from '../../components/ui'
-import { MISSING, countOrMissing, formatChangePct, formatTime } from '../../lib/format'
+import { MISSING, countOrMissing, formatChangePct, formatInboxTime } from '../../lib/format'
+import { cn } from '../../lib/cn'
 import { useDensity } from '../../lib/prefs'
 import type { BlockView } from './useHomeSource'
 
 /**
- * 首页 C 块「我的自选」（SPEC-HOME-V2 §4）。
+ * 首页「我的自选」紧凑摘要（QUOT-552 / SPEC-HOME-V2 v2.0 §4）。
  *
- * 4 列满宽单块：代码 / 名称 / 现价 / 涨跌，列宽 88 / 剩余 / 112 / 112 全落在 §7.3 刻度上。
- * 不做参考页的「名称 + 代码两行格」和「调整顺序」按钮：前者要新行高档，后者是排序的第二套入口。
+ * 首页只压 **3 列**：名称（含代码）/ 现价 / 涨跌，列宽 剩余/88/88；
+ * 全列宽表原样保留在 `/watchlist`（管理自选 →），这里不丢信息只收起来。
+ * 排序、溯源徽标（QUOT-478）、五态与缺数口径一条不动：
+ * 代码缺 → 行不渲染；名称缺 → 「名称未接入」，不拿代码顶替；现价 / 涨跌缺 → `—`，不补 0。
  *
- * 缺数口径（§4.2）：代码缺 → 行不渲染（主键缺是脏数据）；名称缺 → 「名称未接入」，
- * 不拿代码顶替；现价 / 涨跌缺 → `—` + 原因，不回落到成本价。只数缺 → `—`，不 `?? 0`。
+ * 隐私长文案收进卡头「仅本机」徽标（QUOT-552 §5.4）：hover 出全文、点击展开
+ * `PrivacyNotice` 本体；加载中 / 失败 / 空态徽标常驻，不随数据状态消失。
  */
 
 const COLUMNS: Array<Column<WatchlistItem>> = [
   {
-    key: 'code',
-    header: '代码',
-    width: '88px',
-    render: (row) => <span className="ldst-num text-text-secondary">{row.code}</span>,
-  },
-  {
     key: 'name',
     header: '名称',
     truncate: true,
+    cellTitle: (row) => `${row.name ?? '名称未接入'} ${row.code}`,
     render: (row) => (
-      <span className={row.name ? 'font-medium' : 'text-text-muted'}>{row.name ?? '名称未接入'}</span>
+      <>
+        <span className={row.name ? 'font-medium' : 'text-text-muted'}>{row.name ?? '名称未接入'}</span>{' '}
+        <span className="ldst-num text-caption text-text-muted">{row.code}</span>
+      </>
     ),
   },
   {
     key: 'price',
     header: '现价',
-    width: '112px',
+    width: '88px',
     numeric: true,
     sort: (a, b) => (a.latest_price ?? Number.NEGATIVE_INFINITY) - (b.latest_price ?? Number.NEGATIVE_INFINITY),
     render: (row) => (
@@ -62,7 +64,7 @@ const COLUMNS: Array<Column<WatchlistItem>> = [
   {
     key: 'change',
     header: '涨跌',
-    width: '112px',
+    width: '88px',
     numeric: true,
     sort: (a, b) => (a.change_pct ?? Number.NEGATIVE_INFINITY) - (b.change_pct ?? Number.NEGATIVE_INFINITY),
     render: (row) => {
@@ -72,17 +74,19 @@ const COLUMNS: Array<Column<WatchlistItem>> = [
   },
 ]
 
-export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> }) {
+export function HomeWatchlistCard({ view, className }: { view: BlockView<WatchlistPayload>; className?: string }) {
   const density = useDensity()
   const navigate = useNavigate()
   const payload = view.state === 'normal' || view.state === 'partial' ? view.data : null
   const items = (payload?.items ?? []).filter((item) => Boolean(item.code))
   const count = countOrMissing(payload?.watch_count ?? (payload ? items.length : null))
+  const privacyBadge = <PrivacyBadge subject="自选" storeCommand="ldst watch" />
 
   return (
     <SectionCard
       title={payload ? `我的自选 · (${count})` : '我的自选'}
       tone={payload && payload.data_source_status !== 'ok' ? 'warn' : 'neutral'}
+      className={cn('flex flex-col', className)}
       subtitle={
         payload ? (
           <span className="flex flex-wrap items-center gap-1">
@@ -95,19 +99,13 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
               status={payload.data_source_status}
               detail={payload.reason ?? payload.source_detail}
             />
-            {payload.price_as_of && (
-              <span className="ldst-num text-text-muted">{formatTime(payload.price_as_of)}</span>
-            )}
           </span>
-        ) : (
-          '自选只存本机'
-        )
+        ) : undefined
       }
       actions={
         <>
-          <Button variant="ghost" onClick={() => navigate('/watchlist')}>
-            管理自选 →
-          </Button>
+          {/* 隐私徽标常驻卡头操作区（§5.4）：副标题让位给溯源徽标 + 快照时间，一行放下 */}
+          {privacyBadge}
           <CardRefreshButton
             label="刷新我的自选"
             onClick={view.onRefresh}
@@ -115,7 +113,7 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
           />
         </>
       }
-      bodyClassName="p-0"
+      bodyClassName="flex grow flex-col p-0"
     >
       {view.state === 'loading' && (
         <div className="flex flex-col gap-2 p-4" aria-hidden="true">
@@ -148,7 +146,7 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
           columns={COLUMNS}
           rows={items}
           rowKey={(row) => row.code}
-          caption={`我的自选（${count} 只），现价与涨跌来自本机行情快照`}
+          caption={`我的自选（${count} 只），现价与涨跌来自本机行情快照，非逐笔实时`}
           density={density}
           maxHeight="240px"
           empty={
@@ -190,10 +188,23 @@ export function HomeWatchlistCard({ view }: { view: BlockView<WatchlistPayload> 
           </div>
         ))}
 
-      <p className="border-t border-border px-4 py-3 text-caption leading-body text-text-muted">
-        现价与涨跌来自本机行情快照（{quoteSourceLabel(payload?.price_source ?? 'spot_quote')}），非逐笔实时；
-        自选只存本机，不上传、不进 AI。
-      </p>
+      {/* 一行页脚：口径短句 + 全表入口（322px 宽卡放不下长文案，全文在 title） */}
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border px-4 py-1">
+        <p
+          className="min-w-0 truncate text-11px leading-body text-text-muted"
+          title={`现价与涨跌来自本机行情快照（${quoteSourceLabel(payload?.price_source ?? 'spot_quote')}），非逐笔实时；全列宽表在「我的自选」页。`}
+        >
+          源：{quoteSourceLabel(payload?.price_source ?? 'spot_quote')}
+          {payload?.price_as_of ? ` · ${formatInboxTime(payload.price_as_of)}` : ''}
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate('/watchlist')}
+          className="inline-flex h-5 shrink-0 items-center rounded px-2 text-caption text-text-secondary transition-colors duration-fast ease-ldst hover:bg-surface-3 hover:text-text"
+        >
+          管理自选 →
+        </button>
+      </div>
     </SectionCard>
   )
 }
