@@ -10,6 +10,7 @@ import {
   pickHomeShortcuts,
   shortcutHref,
 } from './homeShortcuts'
+import { HomePathLabel } from './HomePathLabel'
 
 /**
  * 首页 B 块「研究工具快捷入口」（QUOT-531）。
@@ -55,6 +56,9 @@ export function HomeResearchShortcuts({ className, random }: HomeResearchShortcu
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-half">
+          <HomePathLabel step="2" tone="secondary">
+            开现成工具 · 点一下直达
+          </HomePathLabel>
           <div className="flex items-center gap-2">
             <Wrench className="size-4 shrink-0 text-accent" aria-hidden="true" />
             <h3 id={TITLE_ID} className="text-13px font-semibold text-text">
@@ -62,7 +66,7 @@ export function HomeResearchShortcuts({ className, random }: HomeResearchShortcu
             </h3>
           </div>
           <p className="text-caption text-text-secondary">
-            按分类随机 {HOME_SHORTCUT_COUNT} 条，点一下直接打开对应研究工具。
+            不想提问？按分类随机 {HOME_SHORTCUT_COUNT} 条，点一下直接打开对应研究工具。
           </p>
         </div>
         <Button

@@ -7,18 +7,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import { Link } from 'react-router-dom'
-import {
-  Building2,
-  ChartLine,
-  FileSearch,
-  Loader2,
-  Network,
-  Send,
-  Sparkles,
-  Square,
-  Trash2,
-  type LucideIcon,
-} from 'lucide-react'
+import { Loader2, Send, Sparkles, Square, TextCursorInput, Trash2 } from 'lucide-react'
 
 import { askHomeAssistant } from '../../api/research'
 import { cn } from '../../lib/cn'
@@ -32,6 +21,7 @@ import {
   type HomeAssistantBundle,
   type HomeContextSource,
 } from './homeAssistant'
+import { HomePathLabel } from './HomePathLabel'
 
 /**
  * 首页 B 块的 AI 研究对话（QUOT-472）。
@@ -62,15 +52,16 @@ interface ChatTurn {
 }
 
 /**
- * 起步问题 → 建议卡（QUOT-479 定稿：2×2，只改视觉，问题文本与填入行为不变）。
- * 卡的可访问名必须钉死为问题原文：卡内副 label 属于卡，但测试与读屏都按
+ * 起步问题 → 问句 chip（QUOT-551：从与工具卡同款的 2×2 卡片改为 pill，暗示「填入输入框」）。
+ * 问题文本与填入行为不变；chip 的可访问名必须钉死为问题原文：测试与读屏都按
  * `getByRole('button', { name: question })` 找它，不加 aria-label 会被副文本污染。
+ * `label` 只作 title 提示（分类），不进可见标签，避免「可见名 ⊄ 可访问名」。
  */
-const SUGGESTIONS: { text: string; label: string; Icon: LucideIcon }[] = [
-  { text: '今天大盘和自选有哪些值得注意的变化？', label: '大盘与自选异动', Icon: ChartLine },
-  { text: '帮我看一家公司的估值和风险，该先问哪几个问题？', label: '个股估值与风险', Icon: Building2 },
-  { text: '产业链最近有哪些新变化值得跟踪？', label: '产业链动态', Icon: Network },
-  { text: '核对一份研报的结论，该先查哪些证据？', label: '研报证据核对', Icon: FileSearch },
+const SUGGESTIONS: { text: string; label: string }[] = [
+  { text: '今天大盘和自选有哪些值得注意的变化？', label: '大盘与自选异动' },
+  { text: '帮我看一家公司的估值和风险，该先问哪几个问题？', label: '个股估值与风险' },
+  { text: '产业链最近有哪些新变化值得跟踪？', label: '产业链动态' },
+  { text: '核对一份研报的结论，该先查哪些证据？', label: '研报证据核对' },
 ]
 
 function SourceList({ sources }: { sources: HomeContextSource[] }) {
@@ -218,6 +209,9 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
     <div className={cn('flex flex-col gap-3', className)}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col gap-half">
+          <HomePathLabel step="1" tone="primary">
+            问 AI · 自由提问
+          </HomePathLabel>
           <div className="flex items-center gap-2">
             <Sparkles className="size-4 shrink-0 text-accent" aria-hidden="true" />
             <h2 className="text-subtitle font-semibold text-text">今天，想研究什么？</h2>
@@ -247,24 +241,22 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
       >
         {!hasTurns && !pending && !failure && (
           <div className="flex flex-col gap-2">
-            <p className="text-11px text-text-muted">四条起步问题，点一下填进输入框：</p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {SUGGESTIONS.map(({ text, label, Icon }) => (
+            <p className="text-11px text-text-muted">不知道问什么？点一条填进输入框，改完再发：</p>
+            <div className="flex flex-wrap gap-2">
+              {SUGGESTIONS.map(({ text, label }) => (
                 <button
                   key={text}
                   type="button"
                   aria-label={text}
+                  title={label}
                   onClick={() => pickSuggestion(text)}
-                  className="group relative flex min-h-16 items-start rounded-lg border border-border bg-surface p-3 text-left transition-colors duration-fast hover:border-accent hover:shadow-card"
+                  className="group inline-flex max-w-full items-center gap-1.5 rounded-pill border border-border bg-accent-soft px-3 py-1.5 text-left text-13px leading-tight text-text transition-colors duration-fast ease-ldst hover:border-accent hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
-                  <span className="flex min-w-0 flex-col gap-1 pr-5">
-                    <span className="whitespace-normal text-13px leading-tight text-text">{text}</span>
-                    <span className="text-11px text-text-muted">{label}</span>
-                  </span>
-                  <Icon
-                    className="absolute right-2 top-2 size-4 shrink-0 text-text-muted transition-colors duration-fast group-hover:text-accent"
+                  <TextCursorInput
+                    className="size-3.5 shrink-0 text-accent transition-colors duration-fast group-hover:text-accent-hover"
                     aria-hidden="true"
                   />
+                  <span className="whitespace-normal">{text}</span>
                 </button>
               ))}
             </div>

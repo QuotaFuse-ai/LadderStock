@@ -5,6 +5,7 @@ import { Search } from 'lucide-react'
 import { Card, CardBody } from '../../components/ui'
 import { HomeSearchTrigger } from '../../components/search/HomeSearchTrigger'
 import { GUIDE_ROWS, SearchPanel } from '../../components/search/SearchPanel'
+import { HomePathLabel } from './HomePathLabel'
 import { HomeResearchChat } from './HomeResearchChat'
 import { HomeResearchShortcuts } from './HomeResearchShortcuts'
 import { useHomeSearch } from './useHomeSearch'
@@ -12,6 +13,11 @@ import type { HomeAssistantBundle } from './homeAssistant'
 
 /**
  * 首页 B 块「今天，想研究什么？」（QUOT-472 起为 AI 研究对话入口）。
+ *
+ * QUOT-551 起三条研究路径用统一序号标签（`HomePathLabel`）摆明主次：
+ * ① 问 AI（自由提问，主体）／② 开现成工具（点一下直达，为辅）／③ 直接搜（不经过 AI，再次）。
+ * 起步问题改为问句 pill（暗示「填入输入框」），与工具卡（带箭头直达）不再同款；
+ * 只改呈现 / 文案 / 视觉区分，三条路径的行为口径零回退。
  *
  * 上半是对话：起步问题 / 多行输入 / Enter 发送 / 停止 / 清空 / 「本轮来源」，
  * 通道路由与降级复用 QUOT-454 的 `POST /api/research/{scope}/assistant` 与
@@ -76,9 +82,11 @@ export function HomeSearch({ assistant, date }: HomeSearchProps) {
         <HomeResearchShortcuts />
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <div className="flex items-center gap-2 text-caption text-text-secondary">
+          <div className="flex items-center gap-2">
             <Search className="size-3.5 shrink-0 text-text-muted" aria-hidden="true" />
-            <span>不经过 AI，直接搜</span>
+            <HomePathLabel step="3" tone="tertiary">
+              直接搜 · 不经过 AI
+            </HomePathLabel>
           </div>
 
           <HomeSearchTrigger
