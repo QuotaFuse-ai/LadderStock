@@ -21,6 +21,16 @@
   5. **B-1 按建议落地**：`index_quote` 的 `watermark_field=timestamp`，**不进 `config/sync.yaml`**。
   6. §2.3 那条「持仓现价走 `spot_quote` → `ProviderRegistry.fetch_live()`」的任务书误记已在
      原表中纠正，实现按纠正后的口径走。
+  7. **（2026-11-11，QUOT-560 / DEC-081）§3 C-1「恒指 / 恒生科技无源，建议直接砍港股两格」
+     已被推翻，不再有效**。2026-11-03 实测的「`HSI.HK` / `HSTECH.HK` 一律 `isError`」
+     不是生态无源，而是 TickHub-US 港股支路只按数字个股代码解析的缺口：腾讯
+     `r_hkHSI` / 新浪 `rt_hkHSI` 对港股指数免费公开、零 key 回完整行情。QUOT-560 在
+     peer 侧补别名表（`HSI` / `HSTECH` → `HSI.HK` / `HSTECH.HK`），app 侧新增
+     `index_quote_hk` 数据集逐 symbol 取数，首页港股两格已接真实读数（Tier C 非商用，
+     `commercial_use=False`）。本文 §2.1 第 7/8 行、§3 C-1、§4 工作量表的「砍掉」
+     结论均按历史快照保留，现行口径以 DEC-081 与 SPEC-HOME-V2 v1.5 为准。
+     另：§3 C-2「美股两格砍掉」此前已被 QUOT-471 推翻（适配器 + 合规字段已落地），
+     同属历史快照。
 - 关联：QUOT-377（父任务）/ QUOT-379（本任务）/ DEC-033（持仓读写面）/ DEC-015（隐私库不进信封）
   / `docs/SOURCES.md` §2.1、§2.3 / `scripts/check_privacy.py` 第 3 组 / 本目录
   `DEC-052-watchlist-read-endpoint.md`（**草稿，未生效**）

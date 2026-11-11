@@ -903,6 +903,13 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # `warnings`（sina = Tier C），由 `data/adapters/tickhub_us.py` 落进信封。
         _b("index_quote_us", "tickhub_us", "th_us_get_quote", "replace", "timestamp",
            note="美股指数实时报价（首页指数条美股格）；逐 symbol 取，不进 sync 台账"),
+        # 港股指数实时报价（QUOT-560）：首页指数条的港股 2 格，同一个 peer 工具
+        # `th_us_get_quote` 逐 symbol 取（规范形 `HSI.HK` / `HSTECH.HK`，一次一个）。
+        # peer 侧 QUOT-560 加了港股指数别名表后，tencent/sina 免费公开源可取（零 key，
+        # Tier C 非商用），回包 `market=HK`；其余口径与 `index_quote_us` 完全同构：
+        # 现取现显、不进 sync.yaml / 不落库，`timestamp` 不作交易日水位。
+        _b("index_quote_hk", "tickhub_us", "th_us_get_quote", "replace", "timestamp",
+           note="港股指数实时报价（首页指数条港股格）；逐 symbol 取，不进 sync 台账"),
         _b("dragon_tiger", "tickhub", "dragon_tiger", "replace", "trade_date",
            ("dragon_tiger_backup",), "备源为交易所官方榜"),
         _b("dragon_tiger_seats", "tickhub", "dragon_tiger_seats", "replace", "trade_date",

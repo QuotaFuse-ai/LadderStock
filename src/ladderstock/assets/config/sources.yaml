@@ -259,11 +259,26 @@ sources:
 
   # 首页指数条的美股 2 格（QUOT-471）：TickHub-US 的 `th_us_get_quote` 逐 symbol 取
   # （`DJI` / `IXIC`，一次一个），与 `spot_quote` 同构——**不进 sync.yaml / 不进台账**。
-  # 无备源：同 peer 的 `th_us_get_market_data` 是指数 K 线（不是同一口径的换源），
-  # 且恒指 / 恒生科技在该 peer 上对 `HSI.HK` 等写法一律 `isError`（DEC-006 主备同口径）。
+  # 无备源：同 peer 的 `th_us_get_market_data` 是指数 K 线（不是同一口径的换源，
+  # DEC-006 主备同口径）。港股 2 格是独立数据集 `index_quote_hk`（见下条，QUOT-560）。
   # `commercial_use` 由调用方显式带（非商用），合规分级随回包落进 `source_detail`。
   - id: tickhub_us_index_quote
     dataset: index_quote_us
+    via: tickhub_us
+    tool: th_us_get_quote
+    primary: true
+    fallback: []
+    timeout_sec: 10
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 首页指数条的港股 2 格（QUOT-560）：同一个 peer 工具 `th_us_get_quote` 逐 symbol 取
+  # （规范形 `HSI.HK` / `HSTECH.HK`，一次一个）。peer 侧加了港股指数别名表后，
+  # tencent/sina 免费公开源可取（零 key，Tier C 非商用）——此前「HSI.HK 一律 isError」
+  # 的结论已作废。与美股格同构：**不进 sync.yaml / 不进台账**；无备源（理由同上）。
+  - id: tickhub_hk_index_quote
+    dataset: index_quote_hk
     via: tickhub_us
     tool: th_us_get_quote
     primary: true
