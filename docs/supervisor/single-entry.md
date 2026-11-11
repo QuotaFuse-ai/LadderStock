@@ -43,6 +43,9 @@ proxyfleet）+ watch（5952 看门狗，`inherit_chain` 识别 venv `ldst.exe` �
 
 - 只停止**账本能证明由本控制面拉起**的进程树；`external`（`cmdline_mismatch` /
   `port_taken_by_unknown`）一律不碰，启动前端口被外人占用则拒绝启动该模块、如实报错。
+- 外部 peer 认领（账本 `adopted_peer` 标记，QUOT-545 / DEC-078）同样绝不终止：
+  `stop_all` / 单模块停 / 重启一律跳过，退出后原样保留；前任 supervisor 遗留的
+  自有进程（对账续托管、无标记）仍可被全停正常停止。
 - `stop` 默认预演，真正执行要求 `--force`；包装器对应 `-Force`。
 - 外部占了本模块端口时整套启停是**失败关闭**的（单入口不再假装全起）。
 

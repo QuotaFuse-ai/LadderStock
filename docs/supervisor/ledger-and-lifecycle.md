@@ -46,7 +46,8 @@ supervisor 回答一个问题：**这 6 个模块的进程，哪些是我们拉�
 | `ports` | 该模块的端口清单（拷贝自 `MODULE_PORTS`） |
 | `pid` / `parent_pid` | 入口进程 PID / supervisor 自身 PID（用于核对父子链） |
 | `started_at` / `stopped_at` | ISO-8601 UTC 时间戳 |
-| `origin` | `spawned` = 本任 supervisor 生命周期内自己拉起；`adopted` = 崩溃重启后对账确认仍存活、继续托管的前任进程 |
+| `origin` | `spawned` = 本任 supervisor 生命周期内自己拉起；`adopted` = 认领的既有实例（前任遗留自有进程，或外部 peer 认领，见 `adopted_peer`） |
+| `adopted_peer` | 外部 peer 认领标记（QUOT-545 / DEC-078）：按识别规则认领、账本证明不了是本控制面拉的实例。停止路径一律跳过；真正 spawn / 重拉成功才清除。前任遗留自有进程不带此标记 |
 | `cmdline_hash` | 拉起时命令行的 sha256（lowercase 归一后 JSON 序列化再哈希），对账时与实时 cmdline 比对，**堵 PID 复用** |
 | `state` | `starting / running / stopping / stopped / failed`（状态机见 §4） |
 | `forced_kill` | 优雅停超时被强杀过——升级强杀必须记账 |
@@ -78,6 +79,11 @@ supervisor 回答一个问题：**这 6 个模块的进程，哪些是我们拉�
 `origin` 语义由引擎维护：引擎内存里持有 `_spawned_here` 集合（本任 spawn 成功即加入），
 对账时传给 `reconcile(spawned_this_session=...)`——这区分了「我拉起的」和
 「上一任留下的」，两者都是 managed，但证据链不同。
+
+`adopted_peer` 标记对账时**原样保留**（QUOT-545 / DEC-078）：外部 peer 认领
+跨会话仍然只认领不终止；前任遗留自有进程（无标记）崩溃恢复后仍可被 `stop_all`
+正常停止。标记只在两处写入：`adopt_module()` 证据认领 / PageBoot peer 记账置
+True，真正 spawn（`_start_module` / `record_restart` 成功）置 False。
 
 ### 3.4 归属判定（`engine._ownership`）
 
@@ -121,6 +127,11 @@ supervisor 回答一个问题：**这 6 个模块的进程，哪些是我们拉�
 - 每步失败都写 `stop_reason` / `forced_kill`，事后可完整回放。
 
 ## 5. 停止策略：优雅停 → 超时 → 整树强杀
+
+**停止边界（QUOT-545 / DEC-078）**：`_stop_module()` 入口先查 `adopted_peer`
+标记——外部 peer 认领一律跳过（不写停止意图、不改状态、不调适配器），
+`stop_all` 汇总记 `skipped=adopted_peer`。以下策略只作用于本控制面自有进程
+（本任 spawn + 前任遗留对账续托管）。
 
 每条等待路径都带超时（`stop_grace_sec` / `kill_grace_sec`，可注入时钟驱动）：
 

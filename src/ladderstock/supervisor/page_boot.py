@@ -607,6 +607,9 @@ class PageBoot:
                 parent_pid=snap.parent_pid,
                 started_at=record.started_at if record else stamp,
                 origin="adopted",
+                # 外部 peer 认领（QUOT-545）：与 engine.adopt_module 同一口径，
+                # 停止路径一律跳过
+                adopted_peer=True,
                 cmdline_hash=digest,
                 state="running",
                 health=HEALTH_OK,

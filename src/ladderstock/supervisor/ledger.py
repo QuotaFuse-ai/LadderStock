@@ -39,7 +39,9 @@ ModuleState = Literal["starting", "running", "stopping", "stopped", "failed"]
 MODULE_STATES: tuple[str, ...] = ("starting", "running", "stopping", "stopped", "failed")
 
 #: origin：spawned = 本 supervisor 生命周期内自己拉起；
-#: adopted = 崩溃重启后对账确认仍存活、继续托管的前任进程。
+#: adopted = 认领的既有实例。adopted 内部再分两种证据链（QUOT-545）：
+#: 对账确认的前任 supervisor 遗留自有进程（可停）vs 外部 peer 认领
+#: （`adopted_peer=True`，只认领、绝不终止）。
 LedgerOrigin = Literal["spawned", "adopted"]
 
 #: stop_reason 取值（写进账本给人看，不做 if 分支）
@@ -73,6 +75,10 @@ class ModuleRecord:
     parent_pid: int | None = None
     started_at: str | None = None
     origin: LedgerOrigin = "spawned"
+    #: 外部 peer 认领标记（QUOT-545）：账本证明不了是本控制面拉的、按识别规则
+    #: 认领的既有实例。任何停止路径一律跳过；只有真正 spawn 才清除。
+    #: 前任 supervisor 遗留的自有进程走对账（reconcile）续托管，不带此标记。
+    adopted_peer: bool = False
     #: 拉起时命令行的 sha256；对账与归属判定时与实时 cmdline 比对（堵 PID 复用）
     cmdline_hash: str = ""
     state: ModuleState = "stopped"
@@ -112,6 +118,7 @@ class ModuleRecord:
             parent_pid=int(parent_raw) if parent_raw is not None else None,
             started_at=raw.get("started_at"),
             origin=origin,  # type: ignore[arg-type]
+            adopted_peer=bool(raw.get("adopted_peer")),
             cmdline_hash=str(raw.get("cmdline_hash") or ""),
             state=state,  # type: ignore[arg-type]
             forced_kill=bool(raw.get("forced_kill")),
@@ -232,6 +239,8 @@ class Ledger:
                 entry.last_exit_reason = None
                 entry.stopped_at = None
                 entry.state = "running"
+                # 重拉成功 = 换绑到新 spawn 的进程，不再是外部 peer 认领
+                entry.adopted_peer = False
             else:
                 entry.last_exit_reason = reason
             entry.updated_at = now_iso()
@@ -323,7 +332,9 @@ class Ledger:
         `probe(record)` 返回三态：
         - `"alive"` —— PID 存活且 cmdline_hash 匹配 → 继续托管；
           `origin` 按调用方给的会话身份定：本次会话自己拉起的保持 `spawned`，
-          只有上一任 supervisor 留下的活进程才标 `adopted`；
+          只有上一任 supervisor 留下的活进程才标 `adopted`。
+          `adopted_peer` 标记原样保留：外部 peer 认领跨会话仍然只认领不终止，
+          前任自有进程（无标记）崩溃恢复后仍可被 stop_all 正常停止；
         - `"reuse"` —— PID 存活但 cmdline 对不上（疑似 PID 复用）→
           标 stopped，原因写明疑似复用；
         - `"dead"` —— PID 已不存在 → 标 stopped（**绝不误判 running**）。
