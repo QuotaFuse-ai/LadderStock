@@ -86,11 +86,18 @@ macOS / Linux 分别运行 `packaging/build_macos.sh`、`packaging/build_linux_a
   用最多 30s 的轮询确认端口释放；超时仍占用依旧判失败，未放宽断言。
 - macOS 在 1s 内 `cancelled` 且 `runner_name` 为空、`steps` 为空（未分配到 runner）。
   check-run 注解给出原因：`The configuration 'macos-14-arm64-us-default' is not
-  supported`——组织侧未启用该 macOS runner 配置。重跑（attempt 2）以同样的 1s
-  cancelled 复现，确认是基础设施/组织配置问题，仓库侧代码无法修正；
-  需要组织管理员启用 macOS runner 后才能产出 py2app 证据。
-- 本轮最终 head `323cf4a` 的 CI：linux / windows / frontend / backend 全绿，
-  macOS 仅剩上述 runner 配置阻塞。
+  supported`——组织侧未启用该 macOS runner 配置。修复是把 macOS job 的
+  `runs-on` 从 `macos-14` 换成 `macos-latest`（走 macos-15 池，已在
+  `test/macos13-runner` 验证可分到机器）。
+- 分到真机后暴露第二处问题：py2app 产物缺 `anyio._backends._asyncio`，
+  首个 ASGI 请求即 `ModuleNotFoundError: No module named 'anyio._backends'` /
+  `KeyError: 'asyncio'`，`/api/health` 轮询超时。根因是 anyio 用
+  `importlib.import_module("anyio._backends._asyncio")` 动态选后端，静态分析抓不到；
+  PyInstaller 自带 contrib hook，py2app 没有。修复：在共用的
+  `packaging/bundle_manifest.py` 的 `HIDDEN_IMPORTS` 增加该子模块，三平台同一份清单。
+- 最终 head `322c62c`：linux / windows / macOS / frontend / backend 五绿。macOS
+  smoke 日志含 `runtime-info: frozen + bundled resources OK`、
+  `health: {"ok":true,...}`、`OK: packaged app starts the dashboard without system Python`。
 
 ## 已知问题与边界
 
@@ -98,5 +105,6 @@ macOS / Linux 分别运行 `packaging/build_macos.sh`、`packaging/build_linux_a
   positional argument but 2 were given`（page_boot 认领 peer 时被吞，不影响看板启动）。
   与本任务路径改动无关，未在本 PR 修改，建议单独提单。
 - 未做代码签名 / 公证；macOS 首启需右键打开，Windows 可能提示未知发布者。
-- macOS / Linux 产物需在对应 runner 上实际构建后补齐同格式证据。
+- 三平台产物均已由 CI 在对应 runner 上实际构建并通过同格式冒烟；产物仅验证到
+  「双击/直接执行起看板」，未做跨机器分发验证。
 - 托盘常驻 / 开机自启归 QUOT-527；生产端口未参与任何冒烟。
