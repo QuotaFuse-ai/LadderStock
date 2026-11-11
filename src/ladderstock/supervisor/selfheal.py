@@ -49,6 +49,7 @@ from ladderstock.supervisor.ledger import (
 )
 from ladderstock.supervisor.logroll import append_capped, utc_line
 from ladderstock.supervisor.modules import MODULE_PORTS
+from ladderstock.supervisor.stage_monitor import StageHealthMonitor
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -127,6 +128,7 @@ class SelfHealEngine:
         port_probe_interval: float = DEFAULT_PORT_PROBE_INTERVAL,
         port_conflict_restarter: Callable[[str, int], Any] | None = None,
         is_pid_alive: Callable[[int], bool] | None = None,
+        stage_monitor: StageHealthMonitor | None = None,
     ) -> None:
         self.ledger = ledger
         self.restarter = restarter
@@ -166,6 +168,9 @@ class SelfHealEngine:
         #: S4 端口冲突安全处置通道（QUOT-557）：(module, 自有占用者 pid) → 重拉结论。
         #: 只对 own_child 冲突调用；外来 / adopted 一律不处置（只上报弹窗）。None = 不启用。
         self._port_conflict_restarter = port_conflict_restarter
+        #: 阶段级健康观测（QUOT-562）：采集 → 入库七阶段，探针由装配侧注入。
+        #: None = 不观测（旧装配零影响）；内部自带节流，不随 tick 每秒重探。
+        self._stage_monitor = stage_monitor
 
     # ---------------------------------------------------------------- 生命周期
 
@@ -219,6 +224,12 @@ class SelfHealEngine:
                     self._treat_port_conflicts(entries)
                 except Exception:
                     _log.exception("端口冲突安全处置异常（已吞，不影响自愈主流程）")
+            if self._stage_monitor is not None:
+                # 阶段观测与 peer 存活观测互不阻塞：内部自带节流，异常吞掉。
+                try:
+                    self._stage_monitor.observe()
+                except Exception:
+                    _log.exception("阶段健康观测异常（已吞，不影响自愈主流程）")
             for module in modules:
                 entry = self.ledger.get(module)
                 if entry is None:
@@ -457,6 +468,9 @@ class SelfHealEngine:
             if self.event_bus is not None:
                 # 前端拿既有 /state 轮询即可发现「有没有新事件」，再按需拉 /events。
                 payload["events_latest"] = self.event_bus.latest_seq
+            if self._stage_monitor is not None:
+                # 采集 → 入库七阶段整链路快照（QUOT-562）：schema 见 core/stage_events。
+                payload["stages"] = self._stage_monitor.snapshot()
             return payload
 
     def _module_snapshot(

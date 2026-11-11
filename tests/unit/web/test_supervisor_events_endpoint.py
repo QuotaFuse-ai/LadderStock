@@ -52,6 +52,12 @@ EVENT_KEYS = {
     "adopted_peer",
     # QUOT-557（S4）契约扩展：port_conflict 事件带占用者分类（其余事件为空列表）。
     "conflicts",
+    # QUOT-562（S4）契约扩展：同一通道承载 stage 事件带整链路口径
+    # （peer 事件这四个字段为 None，形状统一、前端一套解析）。
+    "stage",
+    "module_class",
+    "phase",
+    "as_of",
 }
 
 
