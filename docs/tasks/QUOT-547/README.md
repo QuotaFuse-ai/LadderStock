@@ -61,9 +61,10 @@ CI 双绿（后端 pytest/ruff/mypy + 前端 tsc/vitest/build）。
 | `tests/integration/test_stop_all_ownership.py`（4 项，真实临时进程） | 全过（Windows） |
 | `tests/unit/supervisor/`（164 项，回归） | 全过 |
 | control / supervisor 端点 / 接线回归（168 项 + 1 既有 skip） | 全过 |
+| AI 聊天 / 研究假件控制面回归（176 项，CI 首轮捕获后补跑） | 全过 |
 | `ruff check .` / `mypy`（191 文件） | 干净 |
 | 现网只读核验（部署机 8000，PID 27572） | 分类 `adopted_peer`（非 foreign）；`probe_mcp_alive(8000/mcp)=True`；全程只读 |
-| PR CI（backend pytest/ruff/mypy + frontend tsc/vitest/build） | 见 PR |
+| PR #210 CI（backend pytest/ruff/mypy + frontend tsc/vitest/build） | 双绿（backend 9m29s / frontend 1m43s） |
 
 四分类与自愈安全断言（`test_port_diagnostics.py`）：
 
@@ -100,3 +101,8 @@ CI 双绿（后端 pytest/ruff/mypy + 前端 tsc/vitest/build）。
 - **真实宿主生命周期（tests/ops）本机不跑**：会起停生产端口红线，沿用 QUOT-526 / 545
   先例，由运维在批准窗口显式开启；本单在 fake-host 单元 + 受控真实临时进程集成层证明
   四分类、统一口径、健康修复与自愈安全边界。
+- **接线只接真控制面（CI 首轮捕获）**：`create_app` 的 `wire_supervisor` 接线起初直接读
+  `plane.supervisor`，但 AI 聊天 / 研究等测试假件（`_Plane` / `_NullControlPlane`）不声明
+  该属性 → CI 后端 162 项 `AttributeError`。补 `hasattr(plane, "supervisor")` 守卫：只接
+  `__init__` 必置 `self.supervisor` 的真控制面，假件保持原样，生产接线语义不变。本地补跑
+  全部受影响文件（176 项）+ 接线契约（56 项）全过，CI 复跑双绿。
