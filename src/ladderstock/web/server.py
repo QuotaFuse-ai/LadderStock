@@ -1004,6 +1004,7 @@ def create_app(
     knowledge_plane: Any | None = None,
     supervisor_processes: Any | None = None,
     own_processes_on_lifecycle: bool | None = None,
+    open_ensure: Any | None = None,
 ) -> FastAPI:
     """构建 FastAPI 应用；`data_root` / `dist_dir` / `control_plane` / `research_plane`
     / `industry_plane` / `radar_plane` / `symbols_plane` / `knowledge_plane` /
@@ -1011,6 +1012,9 @@ def create_app(
 
     控制面（`/api/control/*`，DEC-014）与数据面严格分层：控制面单独成前缀，
     路由注册在 SPA 兜底之前；`control_plane` 不传时按 `data_root` 自建。
+
+    `open_ensure`（QUOT-555 / DEC-080）：打开即补取闸门，缺省 None = 四个只读 GET
+    纯只读、行为与改造前逐字节一致；只有生产入口显式传入 `OpenEnsure()` 才启用懒补取。
     """
     root = _resolve_data_root(data_root)
     dist = Path(dist_dir) if dist_dir is not None else default_dist_dir()
@@ -1533,10 +1537,15 @@ def create_app(
         """
         _journal_guard(request)
         target = _parse_day_param(date_str, "date") or date.today()
+        note = ""
+        if open_ensure is not None:
+            note = open_ensure.ensure("theme", day=target).note()
         records, backend = dataset_snapshot("theme_news", target, root)
         themes = _theme_rows(records)
         available = bool(themes)
         detail, reason = _theme_status(target, backend, len(records), len(themes))
+        if note:
+            detail = f"{detail}；{note}" if detail else note
         raw: dict[str, Any] = {
             "date": target.isoformat(),
             "available": available,
@@ -1628,7 +1637,11 @@ def create_app(
     # `/api/industry`、`/api/industry/{name}`、`/api/signals` 三个只读接口：R5 快照的投影 +
     # 后端的规则判定。闸门同研究面，同样**不受 `LDST_CONTROL_ENABLED` 影响**（纯数据面）。
     # 注册在 SPA 兜底之前，路径本身没接时才会落到兜底的 404。
-    industry = industry_plane if industry_plane is not None else IndustryPlane(data_root=root)
+    industry = (
+        industry_plane
+        if industry_plane is not None
+        else IndustryPlane(data_root=root, ensure=open_ensure)
+    )
     app.include_router(build_industry_router(industry))
 
     # ------------------------------------------- 雷达面（QUOT-279 / SPEC-RADAR-PAGES §3–§6.1）
@@ -1637,7 +1650,11 @@ def create_app(
     # 既有实现的投影，字段照 SPEC 定稿，前端零改动切真实通道。前三个属于数据面（公开数据，
     # 与控制面 / 产业面同样**不受 `LDST_CONTROL_ENABLED` 影响**）；`/api/positions` 是隐私
     # 数据，回环独占 + 平面 JSON（`radar._positions_guard`，同 DEC-015 的日志面）。
-    radar = radar_plane if radar_plane is not None else RadarPlane(data_root=root)
+    radar = (
+        radar_plane
+        if radar_plane is not None
+        else RadarPlane(data_root=root, ensure=open_ensure)
+    )
     app.include_router(build_radar_router(radar))
 
     # -------------------------------------------- 提醒收件箱面（QUOT-432 / DEC-058）

@@ -593,9 +593,12 @@ class RadarPlane:
         *,
         data_root: Path | None = None,
         registry: ProviderRegistry | None = None,
+        ensure: Any | None = None,
     ) -> None:
         self.data_root = Path(data_root) if data_root is not None else None
         self._registry = registry
+        # 打开即补取（QUOT-555 / DEC-080）：缺省 None = 纯只读，行为与改造前逐字节一致。
+        self._ensure = ensure
 
     # -------------------------------------------------------------- 资讯流 §3
 
@@ -623,14 +626,18 @@ class RadarPlane:
         codes = parse_codes(raw_codes)
         limit = parse_limit(raw_limit, default=NEWS_DEFAULT_LIMIT)
 
+        note = self._ensure_note("news", day=day, end=end)
         view = self._read(lambda: self._news_projection(day, end, datasets, codes, limit))
+        detail = view["source_detail"]
+        if note:
+            detail = f"{detail}；{note}" if detail else note
         return _envelope(
             domain=NEWS_DOMAIN,
             topic=NEWS_TOPIC,
             day=end,
             payload=view["payload"],
             status=view["status"],
-            source_detail=view["source_detail"],
+            source_detail=detail,
             freshness="cached",
         )
 
@@ -793,6 +800,7 @@ class RadarPlane:
     def pool_view(self, raw_date: str | None, raw_limit: int | None) -> dict[str, Any]:
         day = parse_day(raw_date)
         limit = parse_limit(raw_limit, default=POOL_DEFAULT_LIMIT)
+        note = self._ensure_note("pool", day=day)
         result = self._read(
             lambda: pool_module.compute_pool(day, root=self.data_root, limit=limit)
         )
@@ -807,13 +815,16 @@ class RadarPlane:
             if isinstance(raw, dict):
                 code = str(row.get("code") or "")
                 raw["main_net_pct"] = fund_pcts.get(code)
+        pool_detail = str(result.get("source_detail") or "")
+        if note:
+            pool_detail = f"{pool_detail}；{note}" if pool_detail else note
         return _envelope(
             domain=POOL_DOMAIN,
             topic=POOL_TOPIC,
             day=day,
             payload=result,
             status="ok" if available else "missing",
-            source_detail=str(result.get("source_detail") or ""),
+            source_detail=pool_detail,
             # freshness 按资金数据的真实来源给（QUOT-372）：命中当日实时批量分区
             # 才是 realtime；回落日线仍是本地缓存回放，如实标 cached。
             freshness="realtime" if fund_freshness == "realtime" else "cached",
@@ -1247,6 +1258,16 @@ class RadarPlane:
         }
 
     # ------------------------------------------------------------------ 内部
+
+    def _ensure_note(self, group: str, *, day: date, end: date | None = None) -> str:
+        """打开即补取（QUOT-555）：未接线返回空串；接线时触发懒补取并取回一个说明短语。
+
+        补取永不抛异常（`OpenEnsure` 内部全收），失败也只产出一句 note，GET 仍按本机真实
+        读取出空态——不回落演示数据（SPEC-HOME-V2 §5.6）。
+        """
+        if self._ensure is None:
+            return ""
+        return self._ensure.ensure(group, day=day, end=end).note()
 
     def _active_registry(self) -> ProviderRegistry | None:
         """测试注入的注册表优先；默认每次请求按 `config/sources.yaml` 现建一个。"""

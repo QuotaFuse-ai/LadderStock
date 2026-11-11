@@ -111,6 +111,9 @@ docs/tasks/QUOT-551/*.png
 !docs/tasks/QUOT-553/
 !docs/tasks/QUOT-553/README.md
 docs/tasks/QUOT-553/*.png
+# 验收任务产出例外：打开即补取 ensure-on-open 交付报告随 PR 交付（QUOT-555）
+!docs/tasks/QUOT-555/
+!docs/tasks/QUOT-555/README.md
 *.docx
 ~$*
 # 验收任务产出例外：工作流健康监控交付报告随 PR 交付（QUOT-564）；截图入 docs/screenshots/ 随 PR
