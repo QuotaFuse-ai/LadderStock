@@ -67,6 +67,7 @@ import { SenateRoleModels } from '../components/SenateRoleModels'
 import { StopListDialog } from '../components/supervisor/StopListDialog'
 import { ProxyPoolCard } from '../components/supervisor/ProxyPoolCard'
 import { PortDiagnosticsPanel } from '../components/supervisor/PortDiagnosticsPanel'
+import { WorkflowHealthMonitor } from '../components/supervisor/WorkflowHealthMonitor'
 import { findProxyPoolModule } from '../lib/proxyPoolView'
 import {
   buildStopCandidates,
@@ -2074,6 +2075,9 @@ export default function SettingsScreen() {
 
         {section === 'peers' && (
           <>
+            {/* QUOT-564：工作流健康监控（采集→入库→辩论），独立取数、自带未接入降级 */}
+            <WorkflowHealthMonitor />
+
             <SectionCard
               title="模块注册表"
               subtitle="唯一真源 config/sources.yaml 的 peers: 块；刷新只读探测，不执行命令"
