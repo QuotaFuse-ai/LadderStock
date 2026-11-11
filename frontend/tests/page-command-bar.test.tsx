@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -47,6 +47,22 @@ function renderBar(path = '/market') {
 
 const trigger = () => screen.getByRole('button', { name: '本页命令' })
 
+/**
+ * 点开「本页命令」面板。
+ *
+ * 不能在 waitFor(trigger) 之后紧接着 click：waitFor 轮询期间 RTL 会关掉 React 的
+ * act 环境，首次 commands 到达那次提交的 passive effect（路由态复位）会挂在队列里。
+ * 若它挂到 click 的 act 里才被冲刷，React 会先应用 click 的 setOpen(true)、再应用这条
+ * 迟到的 setOpen(false)，把刚打开的面板关掉——CI 慢机上稳定复现为「dialog 一直不出现」，
+ * 这种丢失不是查询过早，findByRole 等到超时也等不到。
+ * click 前空跑一次 act 把挂起的 effect 落到点击之前，点击语义就恢复成普通切换。
+ */
+async function openPanel() {
+  await waitFor(() => expect(trigger()).toBeTruthy())
+  await act(async () => {})
+  fireEvent.click(trigger())
+}
+
 beforeEach(() => {
   commands.mockResolvedValue({ ok: true, commands: [command] })
   runCommand.mockResolvedValue({ job_id: 'job-2' })
@@ -67,16 +83,13 @@ afterEach(() => {
 describe('顶栏本页命令（QUOT-457）', () => {
   it('控制面有本页命令时渲染一颗图标按钮，点击展开面板', async () => {
     renderBar()
-    // click 前把 commands 异步态收敛到确定：trigger 渲染即代表 command 已就位、
-    // 挂载 effect 已跑完，点击不被 commands 首次到达抢时序
     await waitFor(() => expect(commands).toHaveBeenCalled())
-    await waitFor(() => expect(trigger()).toBeTruthy())
     expect(screen.queryByRole('dialog')).toBeNull()
 
-    fireEvent.click(trigger())
+    await openPanel()
 
-    // open 切换是同步的：click 后第一帧即可见，用同步断言证明无时序依赖
-    const panel = screen.getByRole('dialog', { name: '本页命令' })
+    // popover 以 dialog 角色出现，等它真正进入 DOM 再断言；断言内容不放宽
+    const panel = await screen.findByRole('dialog', { name: '本页命令' })
     expect(panel.textContent).toContain('拉取行情数据')
     expect(panel.textContent).toContain('ldst sync --date 2026-11-05')
     expect(panel.textContent).toContain('上次成功')
@@ -86,25 +99,23 @@ describe('顶栏本页命令（QUOT-457）', () => {
 
   it('面板里点「运行」走后端队列，并显示排队状态', async () => {
     renderBar()
-    await waitFor(() => expect(trigger()).toBeTruthy())
-    fireEvent.click(trigger())
-    await waitFor(() => expect(screen.getByRole('button', { name: '运行' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '运行' }))
+    await openPanel()
+    fireEvent.click(await screen.findByRole('button', { name: '运行' }))
 
     await waitFor(() => expect(runCommand).toHaveBeenCalledWith('sync'))
-    const panel = screen.getByRole('dialog', { name: '本页命令' })
-    expect(panel.textContent).toContain('已排队')
-    expect(screen.getByRole('button', { name: '执行中' })).toBeTruthy()
+    // 排队态来自 runCommand() 的异步回包，等它落到面板上再断言
+    const panel = await screen.findByRole('dialog', { name: '本页命令' })
+    await waitFor(() => expect(panel.textContent).toContain('已排队'))
+    await waitFor(() => expect(screen.getByRole('button', { name: '执行中' })).toBeTruthy())
   })
 
   it('Esc 收起面板', async () => {
     renderBar()
-    await waitFor(() => expect(trigger()).toBeTruthy())
-    fireEvent.click(trigger())
-    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    await openPanel()
+    await screen.findByRole('dialog', { name: '本页命令' })
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   it('本页没有命令或处于演示态时整颗不渲染', async () => {

@@ -79,5 +79,8 @@ docs/tasks/QUOT-531/shots/
 # 验收任务产出例外：自愈冷启动交付报告随 PR 交付（QUOT-526）
 !docs/tasks/QUOT-526/
 !docs/tasks/QUOT-526/README.md
+# 验收任务产出例外：测试 flake 根治说明随 PR 交付（QUOT-542）
+!docs/tasks/QUOT-542/
+!docs/tasks/QUOT-542/README.md
 *.docx
 ~$*
