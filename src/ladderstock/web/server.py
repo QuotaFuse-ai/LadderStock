@@ -1720,8 +1720,14 @@ def create_app(
         # 482-A 归属观测端点复用自愈快照做底（QUOT-482-A × 482-C 合并视图）；
         # control_plane 分支注册在 mount_supervisor_router 之前，GET /state 走合并版
         plane.selfheal = engine
-        # 已显式注入的引擎（测试假件）优先，不覆盖。
-        if wire_supervisor and plane.supervisor is None and processes is not None:
+        # 已显式注入的引擎（测试假件）优先，不覆盖。只接声明了 supervisor 的真控制面：
+        # AI 聊天 / 研究等测试假件（_Plane / _NullControlPlane）不定义该属性，保持原样。
+        if (
+            wire_supervisor
+            and hasattr(plane, "supervisor")
+            and plane.supervisor is None
+            and processes is not None
+        ):
             plane.supervisor = processes
     mount_supervisor_router(
         app,
