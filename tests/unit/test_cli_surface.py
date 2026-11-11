@@ -40,6 +40,8 @@ HELP_GROUPS = (
     "config",
     "schedule",
     "doctor",
+    # QUOT-527：跨平台服务/开机自启/托盘（见 docs/CLI.md §P）
+    "service",
 )
 
 

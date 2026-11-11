@@ -38,6 +38,7 @@ from ladderstock.cli.research import research as research_command
 from ladderstock.cli.review import register as register_review
 from ladderstock.cli.run import launch as launch_dashboard
 from ladderstock.cli.schedule import register as register_schedule
+from ladderstock.cli.service import register as register_service
 from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.supervisor import register as register_supervisor
@@ -200,6 +201,9 @@ register_watchdog(app)
 
 # 单入口 supervisor（QUOT-523）：不进看板也能全起 / 全停 / 单模块重启。
 register_supervisor(app)
+
+# 跨平台服务/开机自启/托盘（QUOT-527）：三平台原生机制 + dry-run 安装面。
+register_service(app)
 
 
 # 实现体在 cli/review.py（指标直出 + 五段编排 + 验证条件；DEC-003 命令名不变）
@@ -487,6 +491,70 @@ def desktop_entry(
         "yes",
     }
     launch_dashboard(host=host, port=port, open_browser=open_browser)
+
+
+@app.command(
+    "__service",
+    hidden=True,
+    help="跨平台服务入口：起看板并托管自有子进程；托盘退出只停自有子进程（QUOT-527）",
+)
+def service_entry(
+    port: Annotated[int, typer.Option(help="看板端口")] = DEFAULT_PORT,
+    host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = "127.0.0.1",
+    output: OutputOption = None,
+) -> None:
+    """OS 服务/开机自启实际执行的命令：看板 + 自愈 + 自有子进程，不打开浏览器。"""
+    del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
+    os.environ["LDST_SUPERVISOR_OWN_PROCESSES"] = "1"
+    os.environ["LDST_NO_BROWSER"] = "1"
+    if not _port_free(port):
+        error(f"端口 {port} 已被占用；服务不会自动换端口（见 DEC-004）")
+        raise typer.Exit(EXIT_CONFIG)
+
+    from ladderstock.service.tray import (
+        TrayController,
+        TrayUnavailable,
+        build_tray_backend,
+        tray_available,
+    )
+    from ladderstock.web.server import create_app
+    from ladderstock.web.supervisor_api import build_supervisor_engines
+
+    root = str(data_dir())
+    panel_url = f"http://{host}:{port}/"
+    engines = build_supervisor_engines(root, panel_url=panel_url)
+    stop_event = threading.Event()
+
+    def quit_handler() -> dict[str, Any]:
+        report = engines.processes.stop_owned()
+        stop_event.set()
+        return report
+
+    available, detail = tray_available()
+    if available:
+        try:
+            backend = build_tray_backend()
+        except TrayUnavailable as exc:
+            available, detail = False, str(exc)
+        else:
+            threading.Thread(
+                target=lambda: backend.run(
+                    TrayController(quit_handler, panel_url=panel_url)
+                ),
+                name="ldst-tray",
+                daemon=True,
+            ).start()
+    if not available:
+        sys.stderr.write(f"ldst: 托盘不可用（{detail}）；服务继续运行，可用 OS 服务停止或 Ctrl+C\n")
+
+    app = create_app(
+        supervisor_engine=engines.heal,
+        supervisor_processes=engines.processes,
+        own_processes_on_lifecycle=True,
+    )
+    launch_dashboard(
+        host=host, port=port, open_browser=False, app=app, stop_event=stop_event
+    )
 
 
 @app.command(

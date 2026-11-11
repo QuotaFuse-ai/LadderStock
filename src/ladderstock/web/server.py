@@ -33,6 +33,7 @@ import json
 import math
 import re
 import sqlite3
+import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
@@ -1848,18 +1849,40 @@ def _install_token_guard(app: FastAPI, token: str) -> None:
     )
 
 
-def serve(app: FastAPI, *, host: str, port: int) -> None:
+def serve(
+    app: FastAPI,
+    *,
+    host: str,
+    port: int,
+    stop_event: threading.Event | None = None,
+) -> None:
     """阻塞运行 uvicorn；Ctrl+C 由调用方捕获（uvicorn 自己会先优雅关闭）。
 
     启动前先过绑定策略：默认只允许回环；非回环必须显式开关 + Token，
     并据此给应用挂上鉴权中间件。
+
+    `stop_event` 供跨平台服务的托盘退出使用：事件被置位后向 uvicorn 发
+    `should_exit`，走同一个优雅关闭路径（应用 shutdown 钩子仍会执行）。
     """
     import uvicorn
 
     token = require_binding_policy(host)
     if token:
         _install_token_guard(app, token)
-    uvicorn.run(app, host=host, port=port, log_config=log_config(), access_log=False)
+    if stop_event is None:
+        uvicorn.run(app, host=host, port=port, log_config=log_config(), access_log=False)
+        return
+    config = uvicorn.Config(
+        app, host=host, port=port, log_config=log_config(), access_log=False
+    )
+    server = uvicorn.Server(config)
+
+    def wait_for_stop() -> None:
+        stop_event.wait()
+        server.should_exit = True
+
+    threading.Thread(target=wait_for_stop, name="ldst-service-stop", daemon=True).start()
+    server.run()
 
 
 __all__ = [

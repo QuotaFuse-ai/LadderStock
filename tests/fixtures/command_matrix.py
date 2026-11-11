@@ -197,6 +197,16 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     # QUOT-501 历史日线回补（不计入 31 条基线，见 docs/CLI.md §N）：
     # 矩阵跑在空桩上（peer 全挂），基准取不到 -> 4；不落任何报表，也不写仓库 data/。
     (("backfill",), {4}),
+    # QUOT-527 跨平台服务（不计入 31 条基线，见 docs/CLI.md §P）。只收录
+    # 「不触碰 OS 注册表」的形态：`render` 只写临时数据目录里的文本产物；
+    # `install` / `uninstall` 缺省 dry-run（只打印计划）；`status` 只读查询；
+    # `tray --check` 只探测可选依赖。真正 `--apply` 与 headless 退出契约由
+    # tests/unit/service/ 与 tests/unit/cli/test_service.py 用假执行器覆盖。
+    (("service", "render"), {0}),
+    (("service", "install"), {0}),
+    (("service", "uninstall"), {0}),
+    (("service", "status"), {0}),
+    (("service", "tray", "--check"), {0}),
 )
 
 
@@ -307,6 +317,15 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("backtest", "show"),
     # QUOT-501 历史日线回补（不计入 31 条基线，见 docs/CLI.md §N）
     ("backfill",),
+    # QUOT-527 跨平台服务：`__service` 是 OS 服务/开机自启实际执行的长驻入口
+    # （与 run/watchdog 同口径，无结构化 stdout），五个 `service` 子命令都实现了
+    # `--output`；只读 / 预演形态进 COMMAND_MATRIX。
+    ("__service",),
+    ("service", "render"),
+    ("service", "install"),
+    ("service", "uninstall"),
+    ("service", "status"),
+    ("service", "tray"),
 )
 
 def _with_output_json(entry: Any) -> Any:
@@ -365,6 +384,13 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     # 与每模块 `ownership` / `listening` 已在引擎侧由 tests/unit/cli/test_supervisor.py 断言）。
     ("supervisor", "stop"),
     ("supervisor", "status"),
+    # QUOT-527：render / install / uninstall 的 dry-run、status 与 tray --check 都是
+    # 0 + 结构化载荷（`dry_run` / `artifacts` / `commands` / `installed` / `available`）。
+    ("service", "render"),
+    ("service", "install"),
+    ("service", "uninstall"),
+    ("service", "status"),
+    ("service", "tray", "--check"),
 )
 
 # `--output` 的可选值必须与 docs/CLI.md §F 一字不差

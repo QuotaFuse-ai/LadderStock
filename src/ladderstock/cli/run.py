@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import webbrowser
+from typing import Any
 
 import typer
 
@@ -103,9 +104,18 @@ def _open_when_ready(host: str, port: int, *, timeout: float = 30.0) -> None:
 
 
 def launch(
-    *, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, open_browser: bool = False
+    *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    open_browser: bool = False,
+    app: Any | None = None,
+    stop_event: threading.Event | None = None,
 ) -> None:
-    """阻塞运行看板，直到 Ctrl+C。`open_browser` 仅打包双击入口会置真。"""
+    """阻塞运行看板，直到 Ctrl+C。
+
+    `open_browser` 仅打包双击入口会置真。`app` / `stop_event` 供跨平台服务入口
+    （`ldst __service`）注入已装配的应用与托盘退出信号；缺省行为完全不变。
+    """
     # 绑定策略先于端口检查：策略拒绝是配置问题，不能报成「端口无法监听」，
     # 也不能先打「看板已启动」再失败（QUOT-112）。判据仍只有 core/listener.py 一份。
     from ladderstock.web.server import require_binding_policy
@@ -146,13 +156,14 @@ def launch(
     from ladderstock.core.fsguard import SharedPeerDirectoryError
     from ladderstock.web.server import create_app, serve
 
-    try:
-        app = create_app()
-    except SharedPeerDirectoryError as exc:
-        # 控制面的启动校验（peer 目录不得在共享盘上，QUOT-194 P1-3）是配置问题：
-        # 按配置错误退出，而不是抛一屏 traceback
-        error(str(exc))
-        raise typer.Exit(EXIT_CONFIG) from None
+    if app is None:
+        try:
+            app = create_app()
+        except SharedPeerDirectoryError as exc:
+            # 控制面的启动校验（peer 目录不得在共享盘上，QUOT-194 P1-3）是配置问题：
+            # 按配置错误退出，而不是抛一屏 traceback
+            error(str(exc))
+            raise typer.Exit(EXIT_CONFIG) from None
     _log(f"看板已启动 http://{host}:{port}（只读 API + 静态页面；Ctrl+C 退出）")
     if open_browser:
         threading.Thread(
@@ -163,7 +174,10 @@ def launch(
         ).start()
     previous_break = _install_break_handler()
     try:
-        serve(app, host=host, port=port)
+        if stop_event is None:
+            serve(app, host=host, port=port)
+        else:
+            serve(app, host=host, port=port, stop_event=stop_event)
     except KeyboardInterrupt:  # Ctrl+C / Ctrl+Break
         pass
     except OSError as exc:
