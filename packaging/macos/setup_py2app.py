@@ -43,7 +43,7 @@ def _data_files() -> list[tuple[str, list[str]]]:
 
 
 OPTIONS = {
-    "packages": ["ladderstock"],
+    "packages": ["ladderstock", "anyio"],
     "includes": list(HIDDEN_IMPORTS) + ["platformdirs"],
     "excludes": list(EXCLUDES),
     "argv_emulation": False,
