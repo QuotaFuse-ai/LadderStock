@@ -154,11 +154,12 @@ def launch(
         _log(f"警告：监听 {host} 会暴露到本机以外；默认应为 127.0.0.1（DEC-004）")
 
     from ladderstock.core.fsguard import SharedPeerDirectoryError
+    from ladderstock.web.ensure import OpenEnsure
     from ladderstock.web.server import create_app, serve
 
     if app is None:
         try:
-            app = create_app()
+            app = create_app(open_ensure=OpenEnsure())
         except SharedPeerDirectoryError as exc:
             # 控制面的启动校验（peer 目录不得在共享盘上，QUOT-194 P1-3）是配置问题：
             # 按配置错误退出，而不是抛一屏 traceback

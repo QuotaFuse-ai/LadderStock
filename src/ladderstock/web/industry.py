@@ -200,9 +200,12 @@ class IndustryPlane:
         *,
         data_root: Path | None = None,
         config_root: Path | None = None,
+        ensure: Any | None = None,
     ) -> None:
         self.data_root = Path(data_root) if data_root is not None else None
         self.config_root = Path(config_root) if config_root is not None else None
+        # 打开即补取（QUOT-555 / DEC-080）：缺省 None = 零外呼只读（DEC-074 原口径）。
+        self._ensure = ensure
 
     # ------------------------------------------------------------------ 读取
 
@@ -219,11 +222,15 @@ class IndustryPlane:
 
     def list_view(self) -> dict[str, Any]:
         """`GET /api/industry` 的完整响应（外壳 + 每行 `metrics` / `as_of` + 顶层 `as_of`）。"""
-        return _envelope(self._listing())
+        note = self._ensure_note()
+        payload = self._listing()
+        self._apply_note(payload, note)
+        return _envelope(payload)
 
     def detail_view(self, raw_name: Any) -> dict[str, Any]:
         """缺口 #2/#3/#4/#5/#7：R5 `show` 载荷 + 序列 / 逐股 / 逐日资金 / 关联位。"""
         name = parse_industry_name(raw_name)
+        note = self._ensure_note()
         active = self._catalog()
         payload = self._read(
             lambda: snapshot.industry_snapshot(name, root=self.data_root, catalog=active)
@@ -231,6 +238,7 @@ class IndustryPlane:
         projection = self._read(lambda: CacheProjection(active, self.data_root))
         codes = projection.codes_for(_l1_code(payload))
         payload.update(self._read(lambda: _project(projection, codes)))
+        self._apply_note(payload, note)
         return _envelope(payload)
 
     def signals_view(self, raw_industry: Any, raw_rule: Any) -> dict[str, Any]:
@@ -240,11 +248,30 @@ class IndustryPlane:
         """
         industry = parse_optional_industry(raw_industry)
         rule_id = parse_rule_id(raw_rule)
+        note = self._ensure_note()
         listing = self._listing()
+        self._apply_note(listing, note)
         verdict = self._read(
             lambda: evaluate_signals(listing, industry=industry, rule_id=rule_id)
         )
         return _envelope(verdict, listing)
+
+    def _ensure_note(self) -> str:
+        """打开即补取（QUOT-555）：**先于读取**触发 industry 懒补取，取回一个说明短语。
+
+        industry 探针按归属表「有没有历史」判冷启动（DEC-074：data_as_of 是分类计入日，
+        不按当日判陈旧），故 `day` 取今天即可。补取只走 base_pool 常规口径，绝不触发
+        `ldst sync industry` 的锚点扩池（成本非 0 显式动作）。未接线时返回空串、零外呼。
+        """
+        if self._ensure is None:
+            return ""
+        return self._ensure.ensure("industry", day=date.today()).note()
+
+    @staticmethod
+    def _apply_note(payload: dict[str, Any], note: str) -> None:
+        if note:
+            existing = str(payload.get("source_detail") or "")
+            payload["source_detail"] = f"{existing}；{note}" if existing else note
 
     # -------------------------------------------------------------- 错误映射
 

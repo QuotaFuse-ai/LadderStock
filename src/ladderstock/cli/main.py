@@ -517,6 +517,7 @@ def service_entry(
         build_tray_backend,
         tray_available,
     )
+    from ladderstock.web.ensure import OpenEnsure
     from ladderstock.web.server import create_app
     from ladderstock.web.supervisor_api import build_supervisor_engines
 
@@ -551,6 +552,7 @@ def service_entry(
         supervisor_engine=engines.heal,
         supervisor_processes=engines.processes,
         own_processes_on_lifecycle=True,
+        open_ensure=OpenEnsure(),
     )
     launch_dashboard(
         host=host, port=port, open_browser=False, app=app, stop_event=stop_event
