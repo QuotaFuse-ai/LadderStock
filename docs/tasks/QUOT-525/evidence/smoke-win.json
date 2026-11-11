@@ -1,0 +1,23 @@
+﻿{
+    "ok":  true,
+    "exe":  "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist\\LadderStock\\LadderStock.exe",
+    "port":  5965,
+    "python_on_path":  null,
+    "health":  {
+                   "ok":  true,
+                   "name":  "ladderstock",
+                   "version":  "0.1.0.dev0",
+                   "time":  "2026-11-10T17:01:17+00:00",
+                   "data_dir":  "D:\\Temp\\ldst-pack-smoke-0a6171ca\\data",
+                   "read_only":  true,
+                   "status":  "ok",
+                   "uptime_sec":  2,
+                   "db_ok":  true
+               },
+    "html_bytes":  2211,
+    "dashboard":  true,
+    "error":  null,
+    "stdout":  "D:\\Temp\\ldst-pack-smoke-0a6171ca\\stdout.log",
+    "stderr":  "D:\\Temp\\ldst-pack-smoke-0a6171ca\\stderr.log",
+    "temp":  "D:\\Temp\\ldst-pack-smoke-0a6171ca"
+}

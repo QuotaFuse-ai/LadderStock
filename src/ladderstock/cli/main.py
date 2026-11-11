@@ -464,6 +464,96 @@ def watch_guard(tick: float = 30.0, output: OutputOption = None) -> None:
     sys.exit(watch_guard_main())
 
 
+@app.command(
+    "__desktop",
+    hidden=True,
+    help="打包双击入口：启动看板并在端口就绪后打开默认浏览器（QUOT-525）",
+)
+def desktop_entry(
+    port: Annotated[int, typer.Option(help="看板端口")] = DEFAULT_PORT,
+    host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = "127.0.0.1",
+    output: OutputOption = None,
+) -> None:
+    """PyInstaller / py2app 双击启动：等价 `ldst run` + 打开浏览器。"""
+    del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
+    warn_legacy_port(port)
+    if not _port_free(port):
+        error(f"端口 {port} 已被占用；请用 --port 指定其他端口（不会自动换端口，见 DEC-004）")
+        raise typer.Exit(EXIT_CONFIG)
+    # 冒烟/CI 环境置 LDST_NO_BROWSER=1，避免弹出真实浏览器窗口。
+    open_browser = (os.environ.get("LDST_NO_BROWSER") or "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+    }
+    launch_dashboard(host=host, port=port, open_browser=open_browser)
+
+
+@app.command(
+    "proxypool_forwarder",
+    hidden=True,
+    help="内部入口：按需代理池单映射转发器（打包后由 supervisor 拉起）",
+)
+def proxypool_forwarder(
+    mapping_id: Annotated[str, typer.Option("--id", help="映射 Id")],
+    listen_port: Annotated[int, typer.Option("--listen-port", help="监听端口")],
+    upstream_host: Annotated[str, typer.Option("--upstream-host", help="上游主机")],
+    upstream_port: Annotated[int, typer.Option("--upstream-port", help="上游端口")],
+    listen_host: Annotated[str, typer.Option("--listen-host", help="监听地址")] = "127.0.0.1",
+    output: OutputOption = None,
+) -> None:
+    """冻结态没有可执行的 `.py`，转发器改由自身 exe 的隐藏子命令承载。"""
+    del output  # 长驻转发进程没有结构化输出；保留参数是为了全局 --output 契约
+    from ladderstock.supervisor.proxypool_forwarder import main as forward_main
+
+    raise SystemExit(
+        forward_main(
+            [
+                "--id",
+                mapping_id,
+                "--listen-host",
+                listen_host,
+                "--listen-port",
+                str(listen_port),
+                "--upstream-host",
+                upstream_host,
+                "--upstream-port",
+                str(upstream_port),
+            ]
+        )
+    )
+
+
+@app.command(
+    "__runtime-info",
+    hidden=True,
+    help="打包自检：输出冻结态、随包资源与安装根（不读写配置/数据）",
+)
+def runtime_info(output: OutputOption = None) -> None:
+    """QUOT-525：验收「双击即跑、路径相对」的机读证据。"""
+    from ladderstock.core import runtime
+
+    dist = runtime.frontend_dist_dir()
+    config = runtime.bundle_config_dir()
+    emit(
+        {
+            "ok": True,
+            "frozen": runtime.is_frozen(),
+            "executable": str(runtime.executable()),
+            "bundle_root": str(runtime.bundle_root()),
+            "install_root": str(runtime.install_root()),
+            "app_dir": str(runtime.app_dir()),
+            "frontend_dist": str(dist),
+            "frontend_dist_ready": (dist / "index.html").is_file(),
+            "bundle_config": str(config),
+            "bundle_config_ready": (config / "sources.yaml").is_file(),
+            "web_static": str(runtime.web_static_dir()),
+            "python": sys.version.split()[0],
+        },
+        output,
+    )
+
+
 @app.command(help="环境体检：Python、依赖、端口、目录、配置、数据源")
 def doctor(
     peers: bool = typer.Option(

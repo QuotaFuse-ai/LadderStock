@@ -226,6 +226,13 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     # JSON_PATHS；进程生命周期由 tests/unit/supervisor/test_page_boot.py 与
     # tests/ops/test_lifecycle_page_boot.py 覆盖。
     ("__watch-guard",),
+    # QUOT-525：打包产物自身的隐藏入口。`__desktop` / `proxypool_forwarder` 是长驻
+    # 进程（与 run/watchdog 同口径，无结构化 stdout），`__runtime-info` 由冒烟脚本用
+    # `--output json` 读取机读证据。三者同样受全局 --output 契约管辖，故登记进基线；
+    # 前两条保留 OutputOption 但忽略其值。
+    ("__desktop",),
+    ("proxypool_forwarder",),
+    ("__runtime-info",),
     # QUOT-523 单入口 supervisor：四个子命令都实现了 `--output`，逐条登记。
     # 只读 / 预演形态进 COMMAND_MATRIX；`start` / `restart` 会真起进程，不进矩阵
     # （开环形态由 tests/unit/cli/test_supervisor.py 用假引擎覆盖）。

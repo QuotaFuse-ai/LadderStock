@@ -20,6 +20,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ladderstock.core import runtime
+
 CONFIG_FILES: tuple[str, ...] = (
     "sources.yaml",
     "sync.yaml",
@@ -79,9 +81,12 @@ def config_dir() -> Path:
     env = _env_with_legacy("LDST_CONFIG_DIR")
     if env:
         return Path(env)
-    local = Path.cwd() / "config"
-    if local.is_dir():
-        return local
+    # 冻结态（双击 exe）的 cwd 是 exe 所在目录，绝不能把安装目录里的
+    # 任何 `config/` 当作用户配置；安装态只认 platformdirs（DEC-071 / QUOT-525）。
+    if not runtime.is_frozen():
+        local = Path.cwd() / "config"
+        if local.is_dir():
+            return local
     return user_data_root() / "config"
 
 
@@ -89,19 +94,21 @@ def data_dir() -> Path:
     env = _env_with_legacy("LDST_DATA_DIR")
     if env:
         return Path(env)
-    local = Path.cwd() / "data"
-    if local.is_dir():
-        return local
+    if not runtime.is_frozen():
+        local = Path.cwd() / "data"
+        if local.is_dir():
+            return local
     return user_data_root() / "data"
 
 
 def bundle_config_dir() -> Path:
     """随包配置模板目录。
 
-    安装态（wheel 装进 site-packages）工程根里并没有 `config/`，所以优先用打进
-    包内的 `assets/config/`；源码树里没有包内副本时再退回工程根的 `config/`。
-    两者都没有时返回包内路径，由调用方按「模板缺失」告警处理。
+    源码态优先包内 `assets/config/`（与 wheel 安装态同一路径），没有包内副本时
+    退回工程根 `config/`；冻结态由 `runtime.bundle_root()` 定位解包目录。
     """
+    if runtime.is_frozen():
+        return runtime.bundle_config_dir()
     packaged = Path(__file__).resolve().parents[1] / "assets" / BUNDLE_CONFIG_DIRNAME
     if packaged.is_dir():
         return packaged
@@ -110,9 +117,9 @@ def bundle_config_dir() -> Path:
 
 def repo_root() -> Path:
     """源码根目录（`src/`），边界扫描的范围。"""
-    return Path(__file__).resolve().parents[2]
+    return runtime.source_root()
 
 
 def project_root() -> Path:
-    """工程根目录（含 `config/`、`tests/`、`docs/`）。"""
-    return Path(__file__).resolve().parents[3]
+    """工程根目录（含 `config/`、`tests/`、`docs/`）；冻结态是安装根。"""
+    return runtime.project_root()

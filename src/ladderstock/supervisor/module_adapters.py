@@ -48,6 +48,7 @@ try:
 except ImportError:  # pragma: no cover - 依赖探测
     psutil = None  # type: ignore[assignment]
 
+from ladderstock.core import runtime
 from ladderstock.core.boundary import PEER_DIR_ENV, PEER_SIBLING_DIRS
 from ladderstock.supervisor.adapters import (
     MODULE_ORDER,
@@ -593,6 +594,8 @@ class StartFace:
     inherit_chain: bool = False
     #: 备用识别关键字组（同一模块的第二形态，如 `ldst <子命令>` 与 `-m ... <子命令>`）
     alt_match: tuple[str, ...] = ()
+    #: 额外备用关键字组（打包后 `LadderStock.exe <子命令>` 等第三形态，QUOT-525）
+    alt_matches: tuple[tuple[str, ...], ...] = ()
 
 
 def _norm_tokens(tokens: Sequence[str]) -> tuple[str, ...]:
@@ -631,29 +634,20 @@ def install_root() -> Path:
 
     三态，全部相对，不含任何写死的盘符：
 
-    - 显式覆盖 `LDST_INSTALL_ROOT`（打包后在 `.env` 里一次性写死部署位置用）；
-    - PyInstaller 冻结：`sys.executable` 的父目录（exe 所在目录）；
-    - 源码树：`<repo>/src/ladderstock/supervisor/` 上溯 3 层 = 仓库根，取父目录。
+    - 显式覆盖 `LDST_INSTALL_ROOT`（部署侧一次性指定位置）；
+    - 冻结态：Windows/Linux onedir 取 exe 所在 `LadderStock/` 的父目录，
+      macOS 取 `.app` 所在目录，AppImage 取原始 `.AppImage` 文件所在目录；
+    - 源码树：仓库根的父目录。
 
-    生产部署里 `ops/host/LdstHostConfig.psd1` 的 `InstallRoot` 与之一致
-    （`D:\\QuotaFuseModules\\LadderStock` 的父目录 = `D:\\QuotaFuseModules`）。
+    打包布局与 macOS `.app` / AppImage 的差异由 `core.runtime` 收口（QUOT-525），
+    这里只做一次委托，避免两处各算一套。
     """
-    override = (os.environ.get(INSTALL_ROOT_ENV) or "").strip()
-    if override:
-        return Path(override)
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent.parent
-    return Path(__file__).resolve().parents[3].parent
+    return runtime.install_root()
 
 
 def _install_root_from(values: Mapping[str, str]) -> Path:
     """`install_root()` 的显式环境版本（`preflight(env=...)` 用，不读进程环境）。"""
-    override = (values.get(INSTALL_ROOT_ENV) or "").strip()
-    if override:
-        return Path(override)
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent.parent
-    return Path(__file__).resolve().parents[3].parent
+    return runtime.install_root(values)
 
 
 def default_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path:
@@ -674,8 +668,8 @@ def default_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path:
 
 
 def _ldst_repo_root() -> Path:
-    """本程序源码树根（仓库根）：看门狗被 supervisor 拉起时 `--spawn-cmd` 的定位基准。"""
-    return Path(__file__).resolve().parents[3]
+    """本程序目录：源码态是仓库根，冻结态是安装根（子进程 cwd 基准）。"""
+    return runtime.project_root()
 
 
 CONTROL_ARGS: tuple[str, ...] = ("-m", "ladderstock.cli.main")
@@ -684,17 +678,16 @@ CONTROL_ARGS: tuple[str, ...] = ("-m", "ladderstock.cli.main")
 def launcher_entry(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
     """看板/看门狗等「本程序自有服务」的**完整**启动前缀（bundle 相对）。
 
-    `LDST_LAUNCHER` 显式给出时用它（打包为 exe 后就是 `...\\ldst.exe`）；
-    否则找 `<peer 根>/LadderStock` 下 venv 的 `ldst` 启动器。两者都是 `ldst`
-    入口点，只能接子命令、**不接受** `-m`；退回当前解释器时才需要
-    `-m ladderstock.cli.main`（源码树形态与 `ldst ...` 等价）。
-
-    QUOT-523 实测：两者混用会让被拉起的看门狗以 `No such option: -m` 秒退。
+    优先级：`LDST_LAUNCHER` 显式给出 > 冻结态自身 exe > `<peer 根>/LadderStock`
+    下 venv 的 `ldst` > 当前解释器 + `-m`。打包后 exe 本身就是 CLI，**不能再接
+    `-m`**（会变成未知参数秒退，QUOT-523 实测）；只有源码态才需要 `-m`。
     """
     values = os.environ if env is None else env
     override = (values.get(LAUNCHER_ENV) or "").strip()
     if override:
         return (override,)
+    if runtime.is_frozen():
+        return (str(runtime.executable()),)
     merged = {**os.environ, **values}
     root = (merged.get(DEFAULT_PEER_ROOT_ENV) or "").strip()
     candidate = (Path(root) / "LadderStock") if root else _install_root_from(merged) / "LadderStock"
@@ -1002,6 +995,7 @@ class BaseAdapter:
                 groups = [_norm_tokens(face.match)]
                 if face.alt_match:
                     groups.append(_norm_tokens(face.alt_match))
+                groups.extend(_norm_tokens(group) for group in face.alt_matches if group)
                 return tuple(groups)
         return ()
 
@@ -1290,7 +1284,10 @@ def _command_adapters(
                     # 的 cmdline 里没有 `-m ladderstock.cli.main`；`ldst` 入口点本身
                     # 就是本 CLI，看到它 + 子命令即可判定归属
                     inherit_chain=True,
+                    # 打包后 cmdline 是 `LadderStock.exe watchdog --port ...`，
+                    # 不再出现 `-m ladderstock.cli.main`（QUOT-525）。
                     alt_match=("ldst", "watchdog", "--port"),
+                    alt_matches=(("ladderstock", "watchdog", "--port"),),
                 ),
             ),
             host=host,
@@ -1994,7 +1991,11 @@ class ProxyPoolAdapter:
             argv = self._forwarder_argv(mapping)
             pid = self._host.spawn(
                 argv,
-                cwd=Path(__file__).resolve().parent,
+                cwd=(
+                    runtime.app_dir()
+                    if runtime.is_frozen()
+                    else Path(__file__).resolve().parent
+                ),
                 env=self._environment(),
                 log_path=self._log_dir / f"proxypool-{_safe_log_name(mapping.mapping_id)}.log",
             )
@@ -2215,9 +2216,18 @@ class ProxyPoolAdapter:
         self._cache.clear()
 
     def _forwarder_argv(self, mapping: ProxyPoolMapping) -> tuple[str, ...]:
+        # 冻结态没有可执行的 .py，改用自身 exe 的隐藏子命令；命令名保留
+        # `proxypool_forwarder` 关键字，probe/stop 的识别口径不变（QUOT-525）。
+        entry = (
+            (str(runtime.executable()), "proxypool_forwarder")
+            if runtime.is_frozen()
+            else (
+                sys.executable,
+                str(Path(__file__).with_name("proxypool_forwarder.py")),
+            )
+        )
         return (
-            sys.executable,
-            str(Path(__file__).with_name("proxypool_forwarder.py")),
+            *entry,
             "--id",
             mapping.mapping_id,
             "--listen-host",
@@ -2250,6 +2260,13 @@ def _host_config_path(env: Mapping[str, str]) -> Path:
     override = (env.get(HOST_CONFIG_ENV) or "").strip()
     if override:
         return Path(override)
+    if runtime.is_frozen():
+        # 部署侧可在 exe 同目录带一份 ops/host/ 配置；bundle 里带了也认。
+        for base in (runtime.app_dir(), runtime.bundle_root()):
+            candidate = base / HOST_CONFIG_REL
+            if candidate.is_file():
+                return candidate
+        return runtime.app_dir() / HOST_CONFIG_REL
     return Path(__file__).resolve().parents[3] / HOST_CONFIG_REL
 
 

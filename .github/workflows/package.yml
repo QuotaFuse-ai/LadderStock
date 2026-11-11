@@ -1,0 +1,132 @@
+name: Package
+
+# QUOT-525: 三平台“自带解释器”产物构建 + 干净环境烟测（无系统 Python 依赖）。
+# 常规 CI（ci.yml）不跑打包；只有 packaging / 冻结路径变化、打 tag 或手动触发才跑。
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "src/ladderstock/core/runtime.py"
+      - "src/ladderstock/cli/paths.py"
+      - "src/ladderstock/cli/run.py"
+      - "src/ladderstock/cli/main.py"
+      - ".github/workflows/package.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: windows (PyInstaller onedir + smoke)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: python -m pip install -e ".[all]" "pyinstaller>=6.11,<7"
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build bundle
+        run: python -m PyInstaller --noconfirm --clean --distpath dist --workpath build/pack-win/work packaging/LadderStock.spec
+      - name: Smoke test (no PYTHONPATH/PYTHONHOME, isolated data)
+        shell: pwsh
+        run: ./packaging/smoke_win.ps1 -Exe dist/LadderStock/LadderStock.exe -Port 5965 -KeepTemp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LadderStock-windows
+          path: dist/LadderStock
+
+  macos:
+    name: macos (py2app + smoke)
+    # macos-14 在本组织落到未启用的 runner 配置（cancelled 1s，注解
+    # "configuration 'macos-14-arm64-us-default' is not supported"）；
+    # macos-latest 走 macos-15 池，已由 test/macos13-runner 验证可分到机器。
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: python3 -m pip install -e ".[all]" "py2app>=0.28,<1"
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build app
+        run: |
+          mkdir -p dist build/pack-mac/bdist
+          cd packaging
+          python3 macos/setup_py2app.py py2app \
+            --dist-dir "$GITHUB_WORKSPACE/dist" \
+            --bdist-base "$GITHUB_WORKSPACE/build/pack-mac/bdist"
+      - name: Smoke test (no PYTHONPATH/PYTHONHOME, isolated data)
+        run: bash packaging/smoke_posix.sh dist/LadderStock.app/Contents/MacOS/LadderStock 5966
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LadderStock-macos
+          path: dist/LadderStock.app
+
+  linux:
+    name: linux (AppImage + smoke)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: python -m pip install -e ".[all]" "pyinstaller>=6.11,<7"
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build AppImage
+        env:
+          SKIP_INSTALL: "1"
+          SKIP_FRONTEND: "1"
+          PYTHON: python
+        run: bash packaging/build_linux_appimage.sh
+      - name: Smoke test (no PYTHONPATH/PYTHONHOME, isolated data)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: bash packaging/smoke_posix.sh dist/LadderStock-x86_64.AppImage 5967
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LadderStock-linux
+          path: dist/LadderStock-x86_64.AppImage

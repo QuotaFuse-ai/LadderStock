@@ -44,8 +44,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ladderstock import __version__
-from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir, project_root
-from ladderstock.core import intraday
+from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
+from ladderstock.core import intraday, runtime
 from ladderstock.core.ladder import compute_ladder, dataset_snapshot, pick
 from ladderstock.core.limit_pool import compute_limit_pool
 from ladderstock.core.listener import LOOPBACK_HOSTS, TokenGuardMiddleware
@@ -970,12 +970,12 @@ def _intraday_slot_row(slot: str, day: date, entry: Any, root: Path) -> dict[str
 
 
 def default_dist_dir() -> Path:
-    """前端构建产物目录：`frontend/dist`（Vite 默认 outDir）。"""
-    return project_root() / "frontend" / "dist"
+    """前端构建产物目录：源码态 `frontend/dist`，打包态解包目录内 `frontend/dist`。"""
+    return runtime.frontend_dist_dir()
 
 
 def _static_dir() -> Path:
-    return Path(__file__).resolve().parent / "static"
+    return runtime.web_static_dir()
 
 
 # --------------------------------------------------------------------------- #

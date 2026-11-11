@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=LadderStock
+Name[zh_CN]=天梯股复盘台
+Comment=Local-first A-share review workstation
+Comment[zh_CN]=本机优先的短线复盘工作台
+Exec=LadderStock
+Icon=ladderstock
+Categories=Office;Finance;
+Terminal=true
+StartupNotify=false
+X-AppImage-Version=0.1.0

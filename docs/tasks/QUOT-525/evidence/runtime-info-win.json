@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "frozen": true,
+  "executable": "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist\\LadderStock\\LadderStock.exe",
+  "bundle_root": "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist\\LadderStock\\_internal",
+  "install_root": "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist",
+  "app_dir": "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist\\LadderStock",
+  "frontend_dist": "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist\\LadderStock\\_internal\\frontend\\dist",
+  "frontend_dist_ready": true,
+  "bundle_config": "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist\\LadderStock\\_internal\\ladderstock\\assets\\config",
+  "bundle_config_ready": true,
+  "web_static": "D:\\multica_workspaces\\quotafuse-g-066955b36a89\\quot-525-77846fe9a0e5\\workdir\\LadderStock\\dist\\LadderStock\\_internal\\ladderstock\\web\\static",
+  "python": "3.12.10"
+}
