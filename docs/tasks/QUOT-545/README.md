@@ -48,9 +48,10 @@ DEC-078（本单决策：adopted_peer 停止边界）
 | `tests/integration/test_peer_adopt_only.py`（6 项，已去 xfail） | 全过 |
 | `tests/unit/supervisor/test_adopted_peer_stop.py`（11 项，新增） | 全过 |
 | `tests/integration/test_stop_all_ownership.py`（2 项，新增，真实进程） | 全过（Windows） |
-| supervisor / web / cli 单元回归 | 全过 |
-| `ruff check .` / `mypy` | 干净 |
+| supervisor / web / cli / service 单元 + 集成回归（合并 main 后，1233 项） | 全过 |
+| `ruff check .` / `mypy`（合并后 190 文件） | 干净 |
 | 全量 `pytest --ignore=tests/ops` | 3881 过 / 13 skip / 4 xpass（既有非严格兼容缺口）/ 1 失败（见下） |
+| PR #208 CI（backend pytest/ruff/mypy + frontend tsc/vitest/build） | 双绿 |
 | `tests/ops/*`（真实宿主生命周期） | 本机触发生产端口红线，未执行（沿用 QUOT-526 先例，CI ubuntu 亦 skip） |
 
 全量唯一失败 `tests/test_senate.py::GetContractTest::test_status_lists_sixteen_roles_and_real_providers`
