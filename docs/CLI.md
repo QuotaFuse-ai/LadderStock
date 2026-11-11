@@ -447,6 +447,32 @@ ldst position list --output json                         # realized.total_pnl（
 |---|---|---|---|---|
 | 55 | `ldst ai tools list` | 列出/检索平台当前可用工具：每个条目带来源、用途、参数 schema；`--refresh` 向真实 peer 重新发现并覆盖本命名空间快照（默认读快照，没有才现发现） | `--agent-id`（必填）、`--kb-scope`（必填）、`--query`/`-q`（名字/描述子串）、`--source`（ladderstock / tickhub / tickhub_us / wire / senate）、`--limit`（0 = 全部）、`--refresh`、`--output` | 成功 **0** + `{agent_id, kb_scope, generated_at, count, total, sources[], tools[]}`；命名空间缺失或非法、来源打错 **2**；快照损坏/命名空间不一致 **3**。单个 peer 不可达**不改变退出码**：该来源记 `status=unreachable` + `tool_count=0` + `error`，其余来源照常列出，绝不回填历史名单 |
 
+## P. 跨平台服务/开机自启/托盘（QUOT-527 增量，5）
+
+> 口径来源：issue QUOT-527「跨平台服务抽象：Win 任务/托盘、macOS launchd、
+> Linux systemd user」。设计见 `docs/supervisor/cross-platform-service.md`，
+> 决策见 `docs/decisions/DEC-077-cross-platform-service-autostart.md`。
+> 这 5 条**不属于** 31 条 P0 基线；叶子路径
+> `("service", "render"|"install"|"uninstall"|"status"|"tray")` 与长驻入口
+> `("__service",)` 已登记 `tests/fixtures/command_matrix.py`（当前 `LEAF_PATHS`
+> 共 **70** 个）。三平台各自原生机制：Windows 任务计划程序 XML、macOS launchd
+> LaunchAgent、Linux systemd --user；**不依赖散落计划任务**，卸载只作用于本服务
+> 自己的注册单元。安装/卸载**默认 dry-run**，`--apply` 才写文件并调用原生命令，
+> 且目标平台必须等于当前平台；密钥类环境变量在渲染前就被拒。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 56 | `ldst service render` | 生成三平台原生定义（Task Scheduler XML / launchd plist / systemd unit），只写文本产物，任何平台都能跑 | `--platform windows\|macos\|linux`（可重复，缺省三平台）、`--out`（缺省 `<data>/service/units`）、`--output` | 成功 0 + `{out_dir, artifacts[]}`（含 `sha256` / `encoding` / `bytes`）；平台名非法 **3** |
+| 57 | `ldst service install` | 安装为服务/开机自启：先渲染产物，再执行原生注册命令，成功后写 `<data>/service/install.json` 清单 | `--apply`（确认执行）、`--platform`（必须等于当前平台）、`--output` | dry-run 与成功 0；原生命令失败 **8**（失败关闭，不写清单）；跨平台 apply / spec 非法 **3** |
+| 58 | `ldst service uninstall` | 反注册并删除产物：先只读查状态，明确「没装」直接清文件；查询不可用时仍尝试反注册，**失败保留产物** | `--apply`、`--platform`、`--output` | dry-run 与成功 0；反注册失败 **8**（产物保留，避免留下幽灵注册）；跨平台 apply / spec 非法 **3** |
+| 59 | `ldst service status` | 只读查询当前平台的服务是否注册、是否在跑（`schtasks` / `launchctl print` / `systemctl --user show`） | `--output` | 始终 0 + `{platform, mechanism, installed, running, state, artifact_path, manifest}` |
+| 60 | `ldst service tray` | 托盘（可选 `pystray`）或 headless 退出契约：退出走 `SupervisorEngine.stop_owned()`，**只停本控制面 spawn 的子进程**，adopted peer 原样保留 | `--check`（只探测后端）、`--headless` + `--quit-after <秒>`（CI/无 GUI 验收）、`--panel-url`、`--output` | `--check` 0；退出成功 0 + `{quit, stop, kept_adopted}`；停止失败 **8**；托盘后端不可用 **3** |
+
+长驻入口 `ldst __service`（隐藏）是安装后 OS 实际执行的命令：起看板 + 自愈 +
+自有子进程，不打开浏览器；有 GUI 时同进程挂托盘，托盘「退出（全停）」先
+`stop_owned()` 再优雅关闭 uvicorn。它无结构化 stdout，不进 argv 矩阵，生命周期由
+`tests/unit/cli/test_service.py` 与 `tests/unit/service/test_tray.py` 覆盖。
+
 ## F. 全局约定
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。

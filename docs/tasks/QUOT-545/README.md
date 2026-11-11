@@ -73,8 +73,8 @@ workspace 的 editable 检出（`quot-536…/StockSenate`），其 `_DEFAULT_BAS
 - 选「持久化布尔标记」而非新增 `origin` 枚举或按模块名跳过：QUOT-528 钉死的
   验收要求 `origin=="adopted"` 保持不变，且 own-processes 模式下 peer 模块也可被
   本控制面 spawn（按模块名跳过会误伤崩溃恢复）。详见 DEC-078 的备选方案对比。
-- 与 QUOT-527（PR #207）的 `stop_owned()` 分层共存：`stop_all` 跳 peer / 停遗留 /
-  停 spawned；`stop_owned` 更严格（跳 peer / 跳遗留 / 只停本任 spawned）。两者
-  改动落在不同 hunk，可独立合并。
+- 与 QUOT-527（PR #207，已合并）的 `stop_owned()` 分层共存：`stop_all` 跳 peer /
+  停遗留 / 停 spawned；`stop_owned` 更严格（跳 peer / 跳遗留 / 只停本任 spawned）。
+  本分支已合并 main，两个闸门落在不同 hunk，语义互不冲突。
 - 真实生命周期用例（tests/ops）默认不跑：会起停生产端口，须运维在批准窗口显式
   开启；本单在单元 + 受控集成层证明停止边界与崩溃恢复。

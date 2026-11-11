@@ -216,6 +216,43 @@ class SupervisorEngine:
                 "modules": results,
             }
 
+    def stop_owned(self) -> dict[str, Any]:
+        """退出全停（QUOT-527 托盘/服务口径）：只停本控制面 spawn 的模块。
+
+        与 `stop_all()` 的区别是 origin 过滤：`adopted`（外部既有实例，页面自启
+        只认领记账）与无账本的外部进程一律不碰，原样保留在 `kept_adopted`。
+        托盘退出、服务停止等「应用退出」路径必须走这里；只有用户显式
+        `supervisor stop --force` 才允许停掉账本里的全部模块。
+        """
+        with self._lock:
+            self.reconcile()
+            results: dict[str, Any] = {}
+            kept: set[str] = set()
+            for name in reversed(MODULE_ORDER):
+                record = self._ledger.record(name)
+                if record is None:
+                    results[name] = {"ok": True, "skipped": "no_record"}
+                    continue
+                if record.origin != "spawned":
+                    if record.state in ("starting", "running"):
+                        kept.add(name)
+                    results[name] = {"ok": True, "skipped": record.origin}
+                    continue
+                if record.state == "stopped":
+                    results[name] = {"ok": True, "skipped": "stopped"}
+                    continue
+                try:
+                    self._stop_module(name)
+                except SupervisorError as exc:
+                    results[name] = {"ok": False, "error": str(exc)}
+                else:
+                    results[name] = {"ok": True}
+            return {
+                "ok": all(item["ok"] for item in results.values()),
+                "modules": results,
+                "kept_adopted": [name for name in MODULE_ORDER if name in kept],
+            }
+
     def stop_module(self, name: str) -> dict[str, Any]:
         """单模块停止（对外单模块入口，restart 也走它）。
 

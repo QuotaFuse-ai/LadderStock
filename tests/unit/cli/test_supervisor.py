@@ -41,6 +41,14 @@ class FakeEngine:
         self.calls.append(("stop_all", None))
         return {"ok": True, "modules": {"tickhub": {"ok": True, "error": None}}}
 
+    def stop_owned(self) -> dict[str, Any]:
+        self.calls.append(("stop_owned", None))
+        return {
+            "ok": True,
+            "modules": {"tickhub": {"ok": True}},
+            "kept_adopted": ["watch"],
+        }
+
     def stop_module(self, name: str) -> dict[str, Any]:
         self.calls.append(("stop", name))
         self._check(name)
@@ -56,8 +64,18 @@ class FakeEngine:
             "supervisor_pid": 999,
             "order": list(self._order),
             "modules": {
-                "tickhub": {"ownership": "managed", "listening": True, "pid": 10},
-                "watch": {"ownership": "external", "listening": True, "pid": 20},
+                "tickhub": {
+                    "ownership": "managed",
+                    "listening": True,
+                    "pid": 10,
+                    "origin": "spawned",
+                },
+                "watch": {
+                    "ownership": "external",
+                    "listening": True,
+                    "pid": 20,
+                    "origin": "adopted",
+                },
             },
         }
 
@@ -98,6 +116,35 @@ def test_stop_force_stops_everything(engine: FakeEngine) -> None:
     assert code == EXIT_OK
     assert json.loads(out)["ok"] is True
     assert engine.calls == [("stop_all", None)]
+
+
+def test_stop_owned_only_dry_run_keeps_adopted_peers(engine: FakeEngine) -> None:
+    code, out = _run(["stop", "--owned-only", "--output", "json"])
+
+    assert code == EXIT_OK
+    payload = json.loads(out)
+    assert payload["dry_run"] is True
+    assert payload["owned_only"] is True
+    assert payload["would_stop"] == ["tickhub"]
+    assert payload["kept_adopted"] == ["watch"]
+    assert engine.calls == []
+
+
+def test_stop_owned_only_force_calls_stop_owned(engine: FakeEngine) -> None:
+    code, out = _run(["stop", "--owned-only", "--force", "--output", "json"])
+
+    assert code == EXIT_OK
+    assert json.loads(out)["kept_adopted"] == ["watch"]
+    assert engine.calls == [("stop_owned", None)]
+
+
+def test_stop_owned_only_conflicts_with_only(engine: FakeEngine) -> None:
+    code, _ = _run(
+        ["stop", "--owned-only", "--force", "--only", "tickhub", "--output", "json"]
+    )
+
+    assert code == EXIT_CONFIG
+    assert engine.calls == []
 
 
 def test_stop_reports_partial_failure(engine: FakeEngine) -> None:

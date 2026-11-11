@@ -12,6 +12,7 @@
 | `ldst supervisor start` | 按 `MODULE_ORDER` 全起（`--only 模块` 只起指定模块，单模块失败不挡后续） |
 | `ldst supervisor stop` | **缺省是预演**：打印 `dry_run / would_stop / order`，不动任何进程 |
 | `ldst supervisor stop --force` | 反向全停（`--only` 只停指定模块） |
+| `ldst supervisor stop --owned-only --force` | 应用退出全停：只停本控制面 spawn 的模块，adopted peer 保留（QUOT-527） |
 | `ldst supervisor restart --only 模块` | 单模块重启，其它模块 pid 必须不变 |
 | `ldst supervisor status` | 每模块 `state / ownership / evidence / listening` + 账本 PID |
 | `ops/host/Invoke-SingleEntry.ps1` | 计划任务 / 桌面调用的包装器：`-Action start\|stop\|restart\|status`，`-Modules`、`-Force`、`-DryRun` |
@@ -81,6 +82,11 @@ proxyfleet）+ watch（5952 看门狗，`inherit_chain` 识别 venv `ldst.exe` �
    再停模块组。
 3. **本轮交付不改生产进程、不停用任何计划任务**：5950 / 8000 / 9100 / 9000 现有进程
    与 `LadderStock API` 任务定义原样保留。
+
+> QUOT-527 起，**新的安装/开机自启入口是 `ldst service install`**（Windows 任务
+> 计划程序 / macOS launchd / Linux systemd --user 各自原生单元），本节的旧任务
+> 清单只用于识别与回滚，不再作为新装机的安装路径。机制与安全边界见
+> [cross-platform-service.md](cross-platform-service.md)。
 
 ## 7. 验收证据
 
