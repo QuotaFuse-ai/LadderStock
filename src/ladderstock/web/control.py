@@ -77,8 +77,19 @@ from ladderstock.core.peer_versions import (
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.supervisor import MODULE_ORDER, SupervisorEngine
+from ladderstock.supervisor.ledger import ModuleRecord
+from ladderstock.supervisor.proctree import default_process_ops
 from ladderstock.web import chat as chat_channel
 from ladderstock.web import peer_registry, senate_roles
+from ladderstock.web.port_diagnostics import (
+    ADOPTED_PEER,
+    FOREIGN,
+    FREE,
+    OWN_CHILD,
+    classify_port_owner,
+    mcp_path_for,
+    probe_mcp_alive,
+)
 
 # --------------------------------------------------------------------------- #
 # 常量
@@ -1429,6 +1440,8 @@ class ControlPlane:
         harden_acl: Callable[[Path], None] | None = None,
         config_root: Path | None = None,
         supervisor: SupervisorEngine | None = None,
+        cmdline_probe: Callable[[int], tuple[str, ...] | None] | None = None,
+        mcp_probe: Callable[[str, float], tuple[bool, str]] | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
@@ -1447,6 +1460,10 @@ class ControlPlane:
         self._run = run or run_step
         self._port_probe = port_probe or probe_port
         self._health = health_probe or probe_health
+        # QUOT-547：实时命令行（PID 复用判定）与 MCP 协议存活探测都可注入，
+        # 测试给假件；生产走 proctree 的 CIM/wmic 与回环 MCP GET。
+        self._cmdline_probe = cmdline_probe or default_process_ops().cmdline
+        self._mcp_probe = mcp_probe or probe_mcp_alive
         self._http_post = http_post or _post_json
         self._spawn = spawn or _spawn_process
         self._process_info = process_info or process_image
@@ -1595,7 +1612,9 @@ class ControlPlane:
         ctl = self.peers[key]
         directory = Path(ctl.directory)
         dir_exists = directory.is_dir()
-        registered = key in self._sources_peers()
+        registry = self._sources_peers()
+        registered = key in registry
+        item = registry.get(key) if isinstance(registry.get(key), Mapping) else {}
 
         version: str | None = None
         installed = False
@@ -1624,7 +1643,7 @@ class ControlPlane:
 
         health: dict[str, Any] = {"ok": None, "detail": ""}
         if listening:  # 有监听就探一次：占用者到底是不是本方 peer，靠健康检查说话
-            health = self._health_snapshot(ctl)
+            health = self._health_snapshot(ctl, item=item, mcp_listening=bool(mcp_owners))
 
         status, detail = self._decide_status(
             key=key,
@@ -1726,8 +1745,20 @@ class ControlPlane:
             },
         }
 
-    def _health_snapshot(self, ctl: PeerControl) -> dict[str, Any]:
-        """健康探测优先打 Web 端口，其次 MCP 端口（两者都记进 detail）。"""
+    def _health_snapshot(
+        self,
+        ctl: PeerControl,
+        *,
+        item: Mapping[str, Any] | None = None,
+        mcp_listening: bool = False,
+    ) -> dict[str, Any]:
+        """健康探测优先打 Web 端口，其次 MCP 端口（两者都记进 detail）。
+
+        QUOT-547：MCP peer（注册表带 `mcp_name`）的 MCP 端口往往只暴露 `/mcp`、
+        没有 `/healthz`（如 TickHub-CN 的 8000）。HTTP 健康探针全失败不等于服务
+        死了——MCP 端口在听就再用 MCP 协议判活（无会话的 400 + 会话头 = 存活），
+        绝不把 404 / 无会话当成健康检查失败。
+        """
         attempts: list[tuple[str, str]] = []
         if ctl.web_port:
             attempts.append((f"http://127.0.0.1:{ctl.web_port}{ctl.health_path}", "web"))
@@ -1738,6 +1769,13 @@ class ControlPlane:
         for url, label in attempts:
             ok, detail = self._health(url, HEALTH_TIMEOUT_SEC)
             details.append(f"{label}: {detail}")
+            if ok:
+                return {"ok": True, "detail": "；".join(details)}
+        registry_item = item or {}
+        if mcp_listening and ctl.mcp_port and str(registry_item.get("mcp_name") or ""):
+            url = f"http://127.0.0.1:{ctl.mcp_port}{mcp_path_for(registry_item)}"
+            ok, detail = self._mcp_probe(url, HEALTH_TIMEOUT_SEC)
+            details.append(f"mcp-protocol: {detail}")
             if ok:
                 return {"ok": True, "detail": "；".join(details)}
         return {"ok": False, "detail": "；".join(details)}
@@ -1798,6 +1836,19 @@ class ControlPlane:
             return f".venv 不存在：{venv}"
         return f"import {ctl.import_package} 失败（{venv} 存在但包不可用）"
 
+    def _ledger_records(self) -> dict[str, ModuleRecord]:
+        """supervisor 账本记录（只读）：优先顺序启停引擎，其次自愈引擎，皆无则空。
+
+        生产两者共用同一张 ledger.json（QUOT-547 接线后 `plane.supervisor` 必有）；
+        测试只注入其一时也能读到认领态。读不到一律空表——分类退回「本控制面 PID
+        集合 + foreign」，绝不因账本缺失而误认归属。
+        """
+        for engine in (self.supervisor, getattr(self, "selfheal", None)):
+            ledger = getattr(engine, "ledger", None)
+            if ledger is not None and hasattr(ledger, "records"):
+                return ledger.records()
+        return {}
+
     def _port_conflicts(
         self,
         key: str,
@@ -1806,13 +1857,18 @@ class ControlPlane:
         web_owners: list[PortOwner],
         extra_owners: Mapping[int, list[PortOwner]] | None = None,
     ) -> list[dict[str, Any]]:
-        """两类冲突：历史默认端口被占（只报告）+ 本 peer 端口被非本控制面进程占用。
+        """两类冲突：历史默认端口被占（只报告）+ 本 peer 端口被非本方进程占用。
 
         mcp_port / web_port / extra_ports 可能同端口（QUOT-485 ProxyFleet 的
         8788 既是 mcp 也是 web）：按端口合并探测结果再判，避免同一占用报两次。
+
+        QUOT-547：归属口径与 supervisor 账本统一（`classify_port_owner`）——
+        own_child 不算冲突；adopted_peer 是「外部接管」归属提示（foreign=False，
+        severity=info），不再误判成「端口被其他进程占用」；只有 foreign 才是真冲突。
         """
         conflicts: list[dict[str, Any]] = []
         mine = set(state_pids(self._peer_state(key)))
+        record = self._ledger_records().get(key)
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
             for owner in self._port_probe(port):
                 conflicts.append(
@@ -1833,7 +1889,23 @@ class ControlPlane:
             bound.setdefault(port, []).extend(owners)
         for bound_port in sorted(bound):
             for owner in bound[bound_port]:
-                if owner.pid is not None and owner.pid in mine:
+                classification, reason = classify_port_owner(
+                    pid=owner.pid, mine_pids=mine, record=record
+                )
+                if classification == OWN_CHILD:
+                    continue
+                if classification == ADOPTED_PEER:
+                    conflicts.append(
+                        {
+                            "port": bound_port,
+                            "pid": owner.pid,
+                            "process": owner.process,
+                            "note": reason,
+                            "foreign": False,
+                            "severity": "info",
+                            "class": ADOPTED_PEER,
+                        }
+                    )
                     continue
                 conflicts.append(
                     {
@@ -1843,9 +1915,173 @@ class ControlPlane:
                         "note": "端口已被其他进程占用（不自动换端口，DEC-004）",
                         "foreign": True,
                         "severity": "conflict",
+                        "class": FOREIGN,
                     }
                 )
         return conflicts
+
+    # ---------------------------------------------------------------- 端口诊断 / 安全自愈
+
+    def _diagnose_peer(self, key: str) -> dict[str, Any]:
+        """单 peer 的逐端口诊断：四分类 + PID + cmdline + health + 理由（只读）。
+
+        与快照不同：这里对每个占用者查实时命令行做精确归属判定（含 PID 复用），
+        并把 cmdline 过 `mask_secrets` 后才回传（密钥绝不进响应）。
+        """
+        ctl = self.peers[key]
+        registry = self._sources_peers()
+        raw_item = registry.get(key)
+        item = raw_item if isinstance(raw_item, Mapping) else {}
+        record = self._ledger_records().get(key)
+        mine = set(state_pids(self._peer_state(key)))
+        mcp_owners = self._port_probe(ctl.mcp_port)
+        web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
+        extra_owners = {port: self._port_probe(port) for port in ctl.extra_ports}
+        listening = bool(mcp_owners or web_owners or any(extra_owners.values()))
+        health = (
+            self._health_snapshot(ctl, item=item, mcp_listening=bool(mcp_owners))
+            if listening
+            else {"ok": None, "detail": "端口无监听，未探测"}
+        )
+        faces: list[tuple[str, int | None, list[PortOwner]]] = [("mcp", ctl.mcp_port, mcp_owners)]
+        if ctl.web_port:
+            faces.append(("web", ctl.web_port, web_owners))
+        faces.extend(("extra", port, owners) for port, owners in extra_owners.items())
+        ports: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for role, port, owners in faces:
+            if not port or port in seen:
+                continue
+            seen.add(port)
+            if not owners:
+                ports.append(
+                    {
+                        "port": port,
+                        "role": role,
+                        "class": FREE,
+                        "pid": None,
+                        "process": None,
+                        "cmdline": None,
+                        "listening": False,
+                        "reason": "端口无监听（free）",
+                    }
+                )
+                continue
+            for owner in owners:
+                live_cmdline = self._safe_cmdline(owner.pid)
+                classification, reason = classify_port_owner(
+                    pid=owner.pid,
+                    mine_pids=mine,
+                    record=record,
+                    live_cmdline=live_cmdline,
+                )
+                ports.append(
+                    {
+                        "port": port,
+                        "role": role,
+                        "class": classification,
+                        "pid": owner.pid,
+                        "process": owner.process,
+                        "cmdline": (
+                            [mask_secrets(part) for part in live_cmdline]
+                            if live_cmdline
+                            else None
+                        ),
+                        "listening": True,
+                        "reason": reason,
+                    }
+                )
+        return {"peer": key, "health": health, "ports": ports}
+
+    def _safe_cmdline(self, pid: int | None) -> tuple[str, ...] | None:
+        """实时命令行（查不到 / 查询异常一律 None，按无证据处理，不抛）。"""
+        if pid is None:
+            return None
+        try:
+            return self._cmdline_probe(pid)
+        except Exception:  # noqa: BLE001 - 诊断面绝不能因查询失败而 500
+            return None
+
+    def diagnose_ports(self, key: str | None = None) -> dict[str, Any]:
+        """`GET /api/control/ports`：每个模块端口的占用四分类 + 安全自愈依据。
+
+        `key` 给定只诊断该 peer；否则诊断设置页同款清单（注册表登记优先，缺失回退全表）。
+        """
+        if key is not None:
+            if key not in self.peers:
+                raise KeyError(key)
+            keys = [key]
+        else:
+            registered = set(self._sources_peers())
+            keys = [k for k in self.peers if k in registered] or list(self.peers)
+        return {"ok": True, "peers": [self._diagnose_peer(k) for k in keys]}
+
+    def heal_ports(self, key: str) -> dict[str, Any]:
+        """`POST /api/control/ports/heal`：按占用分类的安全自愈（QUOT-547）。
+
+        动作优先级（绝不终止 adopted_peer / foreign，复用 QUOT-545 adopt-only 边界）：
+        - adopted_peer → 只认领 + 健康复检（`engine.adopt_module`），绝不终止 / 重启；
+        - own_child → 停止并重拉（`engine.restart_module`，引擎对 adopted_peer 仍跳过）；
+        - foreign → 只报告 + 引导，绝不自动杀（DEC-004 不换端口 / DEC-014 不终止）；
+        - free → 无动作。
+        """
+        if key not in self.peers:
+            raise KeyError(key)
+        diag = self._diagnose_peer(key)
+        classes = {entry["class"] for entry in diag["ports"]}
+        record = self._ledger_records().get(key)
+        engine = self.supervisor
+        result: dict[str, Any] = {
+            "ok": True,
+            "peer": key,
+            "ports": diag["ports"],
+            "health": diag["health"],
+        }
+
+        if ADOPTED_PEER in classes or (record is not None and record.adopted_peer):
+            result["action"] = "adopt"
+            if engine is not None:
+                try:
+                    adopted = engine.adopt_module(key)
+                except Exception as exc:  # noqa: BLE001 - 自愈失败如实回，不抛 500
+                    result["ok"] = False
+                    result["detail"] = f"认领失败：{exc}（未终止任何进程）"
+                else:
+                    result["detail"] = (
+                        "已认领外部 peer 并复检健康（绝不终止 / 重启）"
+                        if adopted is not None
+                        else "无可认领实例（端口空闲或持有者不匹配），未做任何终止"
+                    )
+            else:
+                result["detail"] = "外部 peer 只观测；supervisor 未接线，未做任何终止 / 重启"
+        elif OWN_CHILD in classes:
+            result["action"] = "restart"
+            if engine is not None and record is not None:
+                try:
+                    engine.restart_module(key)
+                except Exception as exc:  # noqa: BLE001 - 重拉失败如实回，不抛 500
+                    result["ok"] = False
+                    result["detail"] = f"重拉失败：{exc}"
+                else:
+                    result["detail"] = "已停止并重拉本方子进程（own_child）"
+            else:
+                result["ok"] = False
+                result["detail"] = "own_child 但无 supervisor 启停通道，需人工处理（未终止进程）"
+        elif FOREIGN in classes:
+            result["action"] = "report"
+            result["detail"] = (
+                "端口由外部进程占用：只报告，不自动换端口（DEC-004）、不终止（DEC-014）；"
+                "请人工确认占用者后处理"
+            )
+        else:
+            result["action"] = "none"
+            result["detail"] = "端口空闲（free），无需自愈"
+
+        if result["action"] in ("adopt", "restart"):
+            fresh = self._diagnose_peer(key)
+            result["ports"] = fresh["ports"]
+            result["health"] = fresh["health"]
+        return result
 
     def _product_name(self, key: str) -> str:
         from ladderstock.core.boundary import PEERS
@@ -4210,6 +4446,26 @@ def build_router(plane: ControlPlane) -> APIRouter:
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return {"job_id": job.id, "status": job.status}
+
+    @router.get("/ports")
+    def ports_diagnosis(
+        peer: str | None = Query(None, description="只诊断该 peer；缺省诊断设置页同款清单"),
+    ) -> dict[str, Any]:
+        """每个模块端口的占用四分类（own_child / adopted_peer / foreign / free）。
+
+        逐端口回 PID + cmdline（打码）+ health + 人类可读理由；归属口径与
+        supervisor 账本统一（QUOT-547），adopted_peer 不再误判成 foreign。
+        """
+        try:
+            return plane.diagnose_ports(peer)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"未知 peer：{peer}") from None
+
+    @router.post("/ports/{peer_id}/heal")
+    def ports_heal(peer_id: str) -> dict[str, Any]:
+        """安全自愈（QUOT-547）：只重拉 own_child；adopted_peer 只认领 + 健康复检；
+        foreign 只报告 + 引导，绝不自动杀；free 无动作。"""
+        return plane.heal_ports(_peer_or_404(peer_id))
 
     @router.get("/jobs/{job_id}")
     def job(job_id: str) -> dict[str, Any]:
