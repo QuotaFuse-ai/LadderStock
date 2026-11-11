@@ -100,6 +100,9 @@ docs/tasks/QUOT-531/shots/
 # 验收任务产出例外：peer 认领 identify 签名修复报告随 PR 交付（QUOT-546）
 !docs/tasks/QUOT-546/
 !docs/tasks/QUOT-546/README.md
+# 验收任务产出例外：端口诊断 + 安全自愈交付报告随 PR 交付（QUOT-547）
+!docs/tasks/QUOT-547/
+!docs/tasks/QUOT-547/README.md
 # 验收任务产出例外：三路径 clarity 交付报告随 PR 交付（QUOT-551）；截图仅作评论附件，不入库
 !docs/tasks/QUOT-551/
 !docs/tasks/QUOT-551/README.md

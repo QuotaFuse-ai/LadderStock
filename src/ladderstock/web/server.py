@@ -1698,10 +1698,15 @@ def create_app(
     # 账本；看板启动 / 退出是否连子进程一起起停由 `LDST_SUPERVISOR_OWN_PROCESSES`
     # 决定（默认附加模式：只观测、只响应用户显式操作，绝不因为关看板停生产进程）。
     processes = supervisor_processes
+    # QUOT-547：是否把顺序启停引擎接进控制面（端口诊断 / 安全自愈 + GET /state
+    # 合并归属视图）。生产组装与显式注入 supervisor_processes 时为真；仅注入自愈
+    # 引擎、内部补建的 processes 不算——那保留 482-C 平面视图契约（configured=False）。
+    wire_supervisor = processes is not None
     if supervisor_engine is None and processes is None:
         engines = build_supervisor_engines(root, panel_url=f"http://127.0.0.1:{WEB_PORT}/")
         engine = engines.heal
         processes = engines.processes
+        wire_supervisor = True
     else:
         engine = (
             supervisor_engine
@@ -1715,6 +1720,15 @@ def create_app(
         # 482-A 归属观测端点复用自愈快照做底（QUOT-482-A × 482-C 合并视图）；
         # control_plane 分支注册在 mount_supervisor_router 之前，GET /state 走合并版
         plane.selfheal = engine
+        # 已显式注入的引擎（测试假件）优先，不覆盖。只接声明了 supervisor 的真控制面：
+        # AI 聊天 / 研究等测试假件（_Plane / _NullControlPlane）不定义该属性，保持原样。
+        if (
+            wire_supervisor
+            and hasattr(plane, "supervisor")
+            and plane.supervisor is None
+            and processes is not None
+        ):
+            plane.supervisor = processes
     mount_supervisor_router(
         app,
         engine,

@@ -90,6 +90,14 @@ class SupervisorEngine:
         #: 本任 supervisor 亲自 spawn 过的模块（reconcile 据此区分 spawned/adopted）
         self._spawned_here: set[str] = set()
 
+    @property
+    def ledger(self) -> Ledger:
+        """只读暴露账本（QUOT-547）：控制面诊断 API 据此统一归属口径。
+
+        只给读入口（`record` / `records`），写仍走引擎方法——诊断面绝不改账本。
+        """
+        return self._ledger
+
     # ------------------------------------------------------------------ 对账
 
     def reconcile(self) -> dict[str, str]:
