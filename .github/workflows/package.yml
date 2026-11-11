@@ -57,7 +57,10 @@ jobs:
 
   macos:
     name: macos (py2app + smoke)
-    runs-on: macos-14
+    # macos-14 在本组织落到未启用的 runner 配置（cancelled 1s，注解
+    # "configuration 'macos-14-arm64-us-default' is not supported"）；
+    # macos-latest 走 macos-15 池，已由 test/macos13-runner 验证可分到机器。
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

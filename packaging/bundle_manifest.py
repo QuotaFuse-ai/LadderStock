@@ -20,6 +20,10 @@ RESOURCE_DIRS: tuple[tuple[str, str], ...] = (
 
 #: 动态导入/运行期才用到的包：静态分析抓不到，必须显式声明。
 HIDDEN_IMPORTS: tuple[str, ...] = (
+    # anyio 在首个请求时用 importlib.import_module("anyio._backends._asyncio")
+    # 动态选后端，静态分析抓不到。PyInstaller 有 contrib hook 自动收它，py2app
+    # 没有对应 hook（CI macos smoke 实测 ModuleNotFoundError），必须显式声明。
+    "anyio._backends._asyncio",
     "apscheduler",
     "apscheduler.schedulers.background",
     "apscheduler.schedulers.blocking",
