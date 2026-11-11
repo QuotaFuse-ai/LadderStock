@@ -82,5 +82,8 @@ docs/tasks/QUOT-531/shots/
 # 验收任务产出例外：测试 flake 根治说明随 PR 交付（QUOT-542）
 !docs/tasks/QUOT-542/
 !docs/tasks/QUOT-542/README.md
+# 验收任务产出例外：工具注册表交付与取证随 PR 交付（QUOT-543）
+!docs/tasks/QUOT-543/
+!docs/tasks/QUOT-543/README.md
 *.docx
 ~$*

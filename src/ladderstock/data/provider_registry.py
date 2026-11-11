@@ -260,10 +260,22 @@ class HttpMcpTransport:
         return _unwrap_mcp_result(result)
 
     def probe(self, peer: PeerEndpoint, *, timeout: float) -> dict[str, Any]:
+        names = [
+            str(tool["name"])
+            for tool in self.list_tools(peer, timeout=timeout)
+            if tool.get("name")
+        ]
+        return {"peer": peer.key, "tools": names}
+
+    def list_tools(self, peer: PeerEndpoint, *, timeout: float) -> list[dict[str, Any]]:
+        """真实 `tools/list` 的原始条目（名字 / 描述 / inputSchema）。
+
+        工具注册表（`ai/tool_registry.py`）用它聚合平台可用工具；只列不调，
+        因此与取数链路无关，也不写冷却/健康记录。
+        """
         result = self._request(peer, "tools/list", {}, timeout=timeout)
         tools = result.get("tools") if isinstance(result, dict) else None
-        names = [t.get("name") for t in (tools or []) if isinstance(t, dict)]
-        return {"peer": peer.key, "tools": names}
+        return [tool for tool in (tools or []) if isinstance(tool, dict)]
 
     # ---------------------------------------------------------------- JSON-RPC
 

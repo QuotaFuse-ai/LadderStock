@@ -60,6 +60,10 @@ flowchart TB
   `.venv` 与**其真正加载的那个 dotenv**（TickHub-CN / US / Senate 是 `.env`，Wire 是 `.env.local`，
   由 `PeerControl.env_filename` 声明），不写 PATH、不改系统代理、不杀端口占用者；密钥 GET
   只回打码预览、日志脱敏；任务失败最多重试 1 次即 `failed` 并附最后 20 行输出，不静默降级。
+- **工具注册表**：`ai/tool_registry.py` 把「平台当前真实可用工具」聚合成带元数据的
+  注册表（本地 MCP `TOOL_SPECS` + 各 peer 的 `tools/list`），供智能体层发现/检索。
+  查询与落盘都必须带 `agent_id` / `kb_scope`，快照只落本命名空间；peer 不可达记
+  `unreachable` + 0 条，不补历史名单（DEC-076，CLI `ldst ai tools list`）。
 
 ## 2. 两种持久化，各管一摊
 

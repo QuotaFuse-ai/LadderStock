@@ -17,16 +17,17 @@ from typing import Annotated, Any
 
 import typer
 
-from ladderstock.ai import checkpoint, fallback, memory
+from ladderstock.ai import checkpoint, fallback, memory, tool_registry
 from ladderstock.ai.cli_provider import build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
-from ladderstock.cli.output import OutputOption, emit, error
+from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 from ladderstock.core.boundary import BoundaryViolation
 from ladderstock.errors import (
     EXIT_AI_DEGRADED,
     EXIT_CONFIG,
     EXIT_OK,
     EXIT_USAGE,
+    LadderStockError,
 )
 from ladderstock.review import pipeline
 
@@ -223,6 +224,85 @@ def ai_chain_test(
 
 
 # --------------------------------------------------------------------------- #
+# 平台工具注册表（C1 / QUOT-543）
+# --------------------------------------------------------------------------- #
+
+def ai_tools_list(
+    agent_id: Annotated[
+        str, typer.Option("--agent-id", help="命名空间 agent_id（必填，与 kb_scope 成对）")
+    ],
+    kb_scope: Annotated[
+        str, typer.Option("--kb-scope", help="命名空间 kb_scope（必填，与 agent_id 成对）")
+    ],
+    query: Annotated[
+        str | None, typer.Option("--query", "-q", help="按工具名/描述做大小写不敏感子串检索")
+    ] = None,
+    source: Annotated[
+        str | None,
+        typer.Option(
+            "--source",
+            help="只列某个来源（ladderstock / tickhub / tickhub_us / wire / senate）",
+        ),
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", min=0, help="最多返回多少条，0 = 全部")] = 0,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="忽略本命名空间快照，向真实 peer 重新发现")
+    ] = False,
+    output: OutputOption = None,
+) -> None:
+    """列出/检索平台可用工具（只读；快照只落在声明命名空间）。
+
+    注册表只反映真实发现结果：peer 不可达时该来源计 0 条并标 `unreachable`，
+    不补历史名单、不猜工具名。
+    """
+    try:
+        registry = tool_registry.ToolRegistry()
+        snapshot = registry.query(
+            tool_registry.ToolNamespace(agent_id=agent_id, kb_scope=kb_scope),
+            text=query,
+            source=source,
+            limit=limit,
+            refresh=refresh,
+        )
+    except LadderStockError as exc:
+        error(exc.message)
+        raise typer.Exit(exc.code) from None
+    emit(_tools_document(snapshot, resolve_format(output)), output)
+    raise typer.Exit(EXIT_OK)
+
+
+def _tools_document(snapshot: tool_registry.ToolSnapshot, fmt: str) -> dict[str, Any]:
+    """table 视图只留契约关键字段；json/csv 带上完整参数 schema。"""
+    document = snapshot.document()
+    if fmt != "table":
+        return document
+    rows: list[dict[str, Any]] = []
+    for entry in snapshot.tools:
+        required = entry.parameters.get("required")
+        if entry.read_only is True:
+            kind = "只读"
+        elif entry.read_only is False:
+            kind = "读写"
+        else:
+            kind = "未知"
+        rows.append(
+            {
+                "name": entry.name,
+                "source": entry.source,
+                "kind": kind,
+                "params": (
+                    ",".join(str(item) for item in required)
+                    if isinstance(required, list)
+                    else "-"
+                ),
+                "description": entry.description,
+            }
+        )
+    document["tools"] = rows
+    return document
+
+
+# --------------------------------------------------------------------------- #
 # 注册
 # --------------------------------------------------------------------------- #
 
@@ -271,12 +351,22 @@ def ai_memory_clear(
     raise typer.Exit(EXIT_OK)
 
 
-def register(ai_app: typer.Typer, chain_app: typer.Typer) -> None:
+def register(
+    ai_app: typer.Typer, chain_app: typer.Typer, tools_app: typer.Typer
+) -> None:
     """把 AI 子命令挂到 main.py 已建好的 Typer 组上。"""
     ai_app.command("status", help="模型链与最近调用状态")(ai_status)
     ai_app.command("retry", help="重试指定日期失败段落（成功段落不重跑）")(ai_retry)
     ai_app.command("memory-clear", help="清空助手对话记忆（QUOT-487）")(ai_memory_clear)
     chain_app.command("test", help="多后端兼容矩阵体检")(ai_chain_test)
+    tools_app.command("list", help="平台工具注册表：按命名空间列出/检索可用工具")(ai_tools_list)
 
 
-__all__ = ["ai_chain_test", "ai_memory_clear", "ai_retry", "ai_status", "register"]
+__all__ = [
+    "ai_chain_test",
+    "ai_memory_clear",
+    "ai_retry",
+    "ai_status",
+    "ai_tools_list",
+    "register",
+]
