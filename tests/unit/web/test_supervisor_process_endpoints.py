@@ -68,6 +68,19 @@ class FakeProcesses:
         }
         return {"ok": not self.failing, "modules": modules}
 
+    def stop_owned(self) -> dict[str, Any]:
+        """QUOT-527：应用退出只停自有子进程，adopted 保留。"""
+        self.calls.append(("stop_owned", None))
+        modules = {
+            name: (
+                {"ok": False, "error": "failed"}
+                if name in self.failing
+                else {"ok": True, "error": None}
+            )
+            for name in MODULE_PORTS
+        }
+        return {"ok": not self.failing, "modules": modules, "kept_adopted": []}
+
     def stop_module(self, name: str) -> dict[str, Any]:
         self.calls.append(("stop", name))
         return self._view(name)
@@ -248,7 +261,8 @@ def test_attached_mode_never_starts_or_stops_child_processes() -> None:
     assert processes.calls == []
 
 
-def test_own_mode_starts_on_startup_and_stops_on_shutdown() -> None:
+def test_own_mode_starts_on_startup_and_stops_owned_on_shutdown() -> None:
+    """QUOT-527：退出走 stop_owned（adopted peer 不碰），不是 stop_all。"""
     processes = FakeProcesses()
     client, heal = _client(processes, own=True)
 
@@ -257,7 +271,7 @@ def test_own_mode_starts_on_startup_and_stops_on_shutdown() -> None:
         assert processes.calls == [("start_all", None)]
 
     assert heal.stopped is True
-    assert processes.calls == [("start_all", None), ("stop_all", None)]
+    assert processes.calls == [("start_all", None), ("stop_owned", None)]
 
 
 def test_no_process_engine_means_no_start_stop_routes() -> None:

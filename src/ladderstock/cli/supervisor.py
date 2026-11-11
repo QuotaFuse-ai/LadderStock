@@ -67,6 +67,13 @@ def stop(
         bool, typer.Option("--force", help="确认执行（缺省只打印将停的模块）")
     ] = False,
     only: Annotated[list[str] | None, typer.Option("--only", help="只停这些模块（可重复）")] = None,
+    owned_only: Annotated[
+        bool,
+        typer.Option(
+            "--owned-only",
+            help="只停本控制面 spawn 的模块（托盘/服务退出口径；adopted peer 保留）",
+        ),
+    ] = False,
     data_root: Annotated[str | None, typer.Option("--data-root", help="数据目录")] = None,
     output: OutputOption = None,
 ) -> None:
@@ -76,23 +83,38 @@ def stop(
     engine = _engine(data_root)
     if not force:
         state = engine.state()
+        modules = state.get("modules") or {}
         managed = [
             name
-            for name, item in (state.get("modules") or {}).items()
+            for name, item in modules.items()
             if item.get("ownership") == "managed" and item.get("listening")
         ]
+        if owned_only:
+            managed = [name for name in managed if modules[name].get("origin") == "spawned"]
         emit(
             {
                 "ok": True,
                 "dry_run": True,
+                "owned_only": owned_only,
                 "would_stop": managed,
+                "kept_adopted": [
+                    name
+                    for name, item in modules.items()
+                    if item.get("origin") == "adopted" and item.get("listening")
+                ],
                 "order": list(reversed(state.get("order") or [])),
                 "hint": "确认后加 --force 执行；外部进程不在提示范围内",
             },
             output,
         )
         raise typer.Exit(EXIT_OK)
-    if only:
+    if owned_only and only:
+        error("--owned-only 与 --only 不能同时使用（--owned-only 按账本 origin 过滤）")
+        raise typer.Exit(EXIT_CONFIG)
+    payload: dict[str, Any]
+    if owned_only:
+        payload = engine.stop_owned()
+    elif only:
         results: dict[str, Any] = {}
         for name in only:
             try:
@@ -101,7 +123,7 @@ def stop(
                 results[name] = {"ok": False, "error": str(exc)}
             else:
                 results[name] = {"ok": True, "error": None}
-        payload: dict[str, Any] = {"ok": all(item["ok"] for item in results.values())}
+        payload = {"ok": all(item["ok"] for item in results.values())}
         payload["modules"] = results
     else:
         payload = engine.stop_all()

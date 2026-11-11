@@ -70,6 +70,8 @@ DOCUMENTED_GROUPS = {
     "backfill",
     # QUOT-523 增量：单入口 supervisor，见 docs/CLI.md §L
     "supervisor",
+    # QUOT-527 增量：跨平台服务/开机自启/托盘，见 docs/CLI.md §P
+    "service",
     "mcp",
     "config",
     "schedule",

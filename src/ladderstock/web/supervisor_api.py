@@ -285,8 +285,9 @@ def mount_supervisor(
     """挂路由 + 引擎随应用启停。
 
     `processes` 给出时注册启停路由；`own_processes_on_lifecycle` 为真时启动
-    全起、退出反向全停（单入口模式）；否则退出只停自愈巡检线程，不碰任何
-    子进程（附加模式——绝不因为关看板而停生产进程）。
+    全起、退出只停自有子进程（单入口模式，QUOT-527：adopted peer 保留）；
+    否则退出只停自愈巡检线程，不碰任何子进程（附加模式——绝不因为关看板而
+    停生产进程）。
     """
     app.include_router(build_supervisor_router(heal))
     if processes is not None:
@@ -299,7 +300,8 @@ def mount_supervisor(
 
     async def shutdown() -> None:
         if processes is not None and own_processes_on_lifecycle:
-            await _in_thread(processes.stop_all)
+            # QUOT-527：应用退出 = 只停本控制面 spawn 的子进程；adopted peer 保留
+            await _in_thread(processes.stop_owned)
         await _in_thread(lambda: heal.stop(timeout=2.0))
 
     app.router.on_startup.append(startup)
