@@ -1,19 +1,20 @@
-"""首页指数条 `GET /api/indices` 的契约测试（QUOT-380 / QUOT-471）。
+"""首页指数条 `GET /api/indices` 的契约测试（QUOT-380 / QUOT-471 / QUOT-560）。
 
 钉住的口径来自 `docs/specs/HOME-V2-DATA-SURFACE.md` A-1 与 `core/indices.py` 的实测坑：
 
 | 场景 | 期望 |
 |---|---|
 | 八格 | 200 + 顺序/名称写死（A 股 4 + 美股 2 + 港股 2） |
-| 四格齐 | 顺序/名称写死 + 数值照抄 peer（不换算、不补 0） |
+| 八格齐 | 顺序/名称写死 + 数值照抄 peer（不换算、不补 0），整面 `ok` |
 | peer 少回一行 | 那一格 `available=false` + 原因，其余照出，整面 `partial` |
 | `sh000001` 被解析成个股 | **不认**：按 `(market, code)` 匹配，那一格 `available=false` |
-| A 股 peer 不可用 | 200 + 四格 `available=false`（不是 500、不自采、不猜价），美股照出 |
-| 美股 peer 不可用 | 美股两格 `available=false` + 原因，A 股照出（块间不连坐） |
-| 港股两格 | 恒 `available=false` + 「源未接入」，无合规源（DEC-006 闸门 4） |
+| A 股 peer 不可用 | 200 + 四格 `available=false`（不是 500、不自采、不猜价），美股/港股照出 |
+| 美股 peer 不可用 | 美股 + 港股四格 `available=false` + 原因（同一 peer 工具），A 股照出 |
+| 港股单格失败 | 那一格 `available=false` + 原因，不连坐 A 股 / 美股（块间隔离） |
 
-行数据用 `tests/fixtures/peer_responses/index_quote.json`——2026-11-03 从真实 peer
-`index_quote` 抓的原始返回，不是手写的形状。全程离线：`FakeTransport` 从不去拨。
+A 股行数据用 `tests/fixtures/peer_responses/index_quote.json`——2026-11-03 从真实 peer
+`index_quote` 抓的原始返回；美股 / 港股点位是 2026-11-06 / 2026-11-11 对真实 peer
+`th_us_get_quote` 的实测值。全程离线：`FakeTransport` 从不去拨。
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ EXPECTED_US = [
     ("IXIC", "US", "纳斯达克综合"),
 ]
 
-#: 港股两格：无源，占位恒 `available=false`
+#: 港股两格（QUOT-560）：同一个 peer 工具，入参是规范形 `HSI.HK` / `HSTECH.HK`
 EXPECTED_HK = [
     ("HSI", "HK", "恒生指数"),
     ("HSTECH", "HK", "恒生科技"),
@@ -67,6 +68,19 @@ EXPECTED = EXPECTED_CN + EXPECTED_US + EXPECTED_HK
 
 #: 美股两格的实测点位（2026-11-06 对真实 peer 抓的两条）
 US_PRICES = {"DJI": 51570.0898, "IXIC": 24707.8101}
+
+#: 港股两格的实测四件套（2026-11-11 对真实 peer `th_us_get_quote` 抓的两条，
+#: tencent 源；行情时间是交易所当地时间，不带时区）
+HK_QUOTES: dict[str, dict[str, Any]] = {
+    "HSI.HK": {
+        "name": "恒生指数", "price": 24315.92, "prev_close": 24557.04,
+        "change": -241.12, "change_pct": -0.98, "timestamp": "2026-11-11 18:31:03",
+    },
+    "HSTECH.HK": {
+        "name": "恒生科技指数", "price": 4027.06, "prev_close": 4084.45,
+        "change": -57.39, "change_pct": -1.41, "timestamp": "2026-11-11 16:08:28",
+    },
+}
 
 
 def index_rows() -> list[dict[str, Any]]:
@@ -100,28 +114,47 @@ def _sources_doc() -> dict[str, Any]:
                 "retries": 0,
                 "cooldown_sec": 60,
             },
+            {
+                "id": "tickhub_hk_index_quote",
+                "dataset": "index_quote_hk",
+                "via": "tickhub_us",
+                "tool": "th_us_get_quote",
+                "primary": True,
+                "fallback": [],
+                "timeout_sec": 1,
+                "retries": 0,
+                "cooldown_sec": 60,
+            },
         ]
     )
     return sources
 
 
+def _quote_for(symbol: str) -> dict[str, Any]:
+    """按 symbol 出实测回包：港股带 market=HK / HKD / 名称，美股保持 QUOT-471 形状。"""
+    if symbol in HK_QUOTES:
+        q = HK_QUOTES[symbol]
+        return us_quote_payload(
+            symbol,
+            price=q["price"], prev_close=q["prev_close"],
+            change=q["change"], change_pct=q["change_pct"],
+            source="tencent", market="HK", currency="HKD",
+            name=q["name"], timestamp=q["timestamp"],
+            warnings=["腾讯行情 属 Tier C：商用需事先书面许可，当前为非商用调用。"],
+        )
+    price = US_PRICES.get(symbol, 100.0)
+    return us_quote_payload(symbol, price=price, prev_close=price - 10.0, change=10.0,
+                            change_pct=0.1)
+
+
 def _us_handler(overrides: dict[str, dict[str, Any]] | None = None):
-    """`th_us_get_quote` 桩：按 `symbol` 分派，默认两格都出实测点位。"""
+    """`th_us_get_quote` 桩：按 `symbol` 分派，默认四格都出实测点位。"""
 
     def handler(params: dict[str, Any]) -> dict[str, Any]:
         symbol = str(params.get("symbol") or "")
-        price = US_PRICES.get(symbol, 100.0)
-        return us_quote_payload(symbol, price=price, prev_close=price - 10.0, change=10.0,
-                                change_pct=0.1)
-
-    if overrides:
-        def handler(params: dict[str, Any]) -> dict[str, Any]:  # type: ignore[misc]
-            symbol = str(params.get("symbol") or "")
-            if symbol in overrides:
-                return overrides[symbol]
-            price = US_PRICES.get(symbol, 100.0)
-            return us_quote_payload(symbol, price=price, prev_close=price - 10.0,
-                                    change=10.0, change_pct=0.1)
+        if overrides and symbol in overrides:
+            return overrides[symbol]
+        return _quote_for(symbol)
 
     return handler
 
@@ -181,15 +214,16 @@ def test_indices_return_eight_cells_in_whitelist_order(tmp_path: Path) -> None:
     assert [(c["code"], c["market"], c["name"]) for c in payload["cells"]] == EXPECTED
 
 
-def test_indices_ashare_and_us_cells_are_available_hk_is_not(tmp_path: Path) -> None:
+def test_indices_all_eight_cells_are_available(tmp_path: Path) -> None:
+    """QUOT-560 后八格都有源：全填满时整面 `ok`（此前港股恒缺口，`ok` 不可达）。"""
     client, _ = _client(tmp_path)
-    cells = _cells(client.get("/api/indices").json())
-    for code, _, _ in EXPECTED_CN + EXPECTED_US:
+    body = client.get("/api/indices").json()
+    cells = _cells(body)
+    for code, _, _ in EXPECTED:
         assert cells[code]["available"] is True, code
-    for code, _, _ in EXPECTED_HK:
-        assert cells[code]["available"] is False, code
-        assert cells[code]["price"] is None
-        assert "源未接入" in cells[code]["reason"]
+        assert cells[code]["price"] is not None, code
+    assert body["payload"]["data_source_status"] == "ok"
+    assert body["payload"]["available"] is True
 
 
 def test_indices_project_peer_values_without_conversion(tmp_path: Path) -> None:
@@ -208,7 +242,8 @@ def test_indices_project_peer_values_without_conversion(tmp_path: Path) -> None:
         assert cell["as_of"] == (
             f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[8:10]}:{stamp[10:12]}:{stamp[12:14]}"
         )
-    assert body["payload"]["data_as_of"] == "2026-11-03"
+    # data_as_of 取已填格里最新的行情日期：A 股抓包是 11-03，港股实测是 11-11 → 取 11-11
+    assert body["payload"]["data_as_of"] == "2026-11-11"
 
 
 def test_indices_us_cells_carry_price_and_source(tmp_path: Path) -> None:
@@ -224,33 +259,54 @@ def test_indices_us_cells_carry_price_and_source(tmp_path: Path) -> None:
     assert "compliance_tier=C" in detail
 
 
+def test_indices_hk_cells_carry_full_quote_and_compliance(tmp_path: Path) -> None:
+    """港股两格（QUOT-560 验收）：四件套齐备、照抄 peer，合规分级落进 source_detail。"""
+    client, _ = _client(tmp_path)
+    body = client.get("/api/indices").json()
+    cells = _cells(body)
+    for code, _, _ in EXPECTED_HK:
+        cell = cells[code]
+        q = HK_QUOTES[f"{code}.HK"]
+        assert cell["available"] is True
+        assert cell["price"] == q["price"]
+        assert cell["change"] == q["change"]
+        assert cell["change_pct"] == q["change_pct"]
+        assert cell["prev_close"] == q["prev_close"]
+        # 交易所当地时间 `YYYY-MM-DD HH:MM:SS` → 同一时刻的 ISO 写法，不补时区
+        assert cell["as_of"] == q["timestamp"].replace(" ", "T")
+    assert "compliance_tier=C" in body["source_detail"]
+
+
 def test_indices_footnote_says_snapshot(tmp_path: Path) -> None:
     client, _ = _client(tmp_path)
     payload = client.get("/api/indices").json()["payload"]
     assert payload["footnote"] == "快照，不是逐笔实时"
     assert payload["price_source"] == "index_quote"
-    assert payload["datasets"] == ["index_quote", "index_quote_us"]
+    assert payload["datasets"] == ["index_quote", "index_quote_us", "index_quote_hk"]
 
 
 def test_indices_call_index_quote_and_us_quote_with_expected_params(tmp_path: Path) -> None:
-    """A 股一次批量 `index_quote`；美股逐 symbol 两次 `th_us_get_quote`。
+    """A 股一次批量 `index_quote`；美股 + 港股逐 symbol 共四次 `th_us_get_quote`。
 
-    两次调用各带 `commercial_use=false`（非商用前提）。
+    四次调用各带 `commercial_use=false`（非商用前提）；港股入参是规范形 `.HK` 写法。
     """
     client, transport = _client(tmp_path)
     client.get("/api/indices")
-    assert transport.tools_called == ["index_quote", "th_us_get_quote", "th_us_get_quote"]
+    assert transport.tools_called == [
+        "index_quote", "th_us_get_quote", "th_us_get_quote",
+        "th_us_get_quote", "th_us_get_quote",
+    ]
     assert transport.calls[0].params == {"codes": "sh000001,sh000300,sz399001,sz399006"}
-    us_symbols = [call.params["symbol"] for call in transport.calls[1:]]
-    assert us_symbols == ["DJI", "IXIC"]
+    symbols = [call.params["symbol"] for call in transport.calls[1:]]
+    assert symbols == ["DJI", "IXIC", "HSI.HK", "HSTECH.HK"]
     assert all(call.params["commercial_use"] is False for call in transport.calls[1:])
 
 
-def test_indices_us_request_budget_is_two_per_fetch(tmp_path: Path) -> None:
-    """首页一次拉取对 `tickhub_us` 的请求预算 = 2（美股格数），不按格扇出更多。"""
+def test_indices_us_request_budget_is_four_per_fetch(tmp_path: Path) -> None:
+    """首页一次拉取对 `tickhub_us` 的请求预算 = 4（美股 2 + 港股 2），不按格扇出更多。"""
     client, transport = _client(tmp_path)
     client.get("/api/indices")
-    assert [c.tool for c in transport.calls].count("th_us_get_quote") == 2
+    assert [c.tool for c in transport.calls].count("th_us_get_quote") == 4
 
 
 # --------------------------------------------------------------------------- #
@@ -304,7 +360,7 @@ def test_missing_row_is_unavailable_not_zero(tmp_path: Path) -> None:
 
 
 def test_peer_down_is_200_missing_not_500(tmp_path: Path) -> None:
-    """A 股 peer 不可用：该块四格 `available=false` + 原因，美股照出（不连坐）。"""
+    """A 股 peer 不可用：该块四格 `available=false` + 原因，美股/港股照出（不连坐）。"""
     client, _ = _client(tmp_path, failing=True)
     response = client.get("/api/indices")
     assert response.status_code == 200
@@ -314,13 +370,17 @@ def test_peer_down_is_200_missing_not_500(tmp_path: Path) -> None:
         assert cells[code]["price"] is None
         assert cells[code]["as_of"] is None
         assert "取数失败" in cells[code]["reason"]
-    # 美股块独立：A 股挂了，美股两格照常
-    assert cells["DJI"]["available"] is True
-    assert cells["IXIC"]["available"] is True
+    # 美股 / 港股块独立：A 股挂了，海外四格照常
+    for code, _, _ in EXPECTED_US + EXPECTED_HK:
+        assert cells[code]["available"] is True
 
 
-def test_us_peer_down_only_us_cells_missing(tmp_path: Path) -> None:
-    """美股 peer 不可用：美股两格 `available=false` + 原因，A 股照出（块间不连坐）。"""
+def test_us_peer_down_only_us_and_hk_cells_missing(tmp_path: Path) -> None:
+    """US peer 不可用：美股 + 港股四格 `available=false` + 各自原因，A 股照出。
+
+    两块走同一个 peer 工具，peer 挂了自然一起缺——但原因按数据集分开写，
+    不互相顶替，也不连坐 A 股块。
+    """
     client, _ = _client(tmp_path, us_failing=True)
     response = client.get("/api/indices")
     assert response.status_code == 200
@@ -329,7 +389,39 @@ def test_us_peer_down_only_us_cells_missing(tmp_path: Path) -> None:
         assert cells[code]["available"] is False
         assert cells[code]["price"] is None
         assert "index_quote_us 取数失败" in cells[code]["reason"]
+    for code, _, _ in EXPECTED_HK:
+        assert cells[code]["available"] is False
+        assert cells[code]["price"] is None
+        assert "index_quote_hk 取数失败" in cells[code]["reason"]
     assert cells["sh000001"]["available"] is True
+
+
+def test_hk_single_cell_failure_does_not_touch_other_blocks(tmp_path: Path) -> None:
+    """港股单格失败（QUOT-560 验收）：HSI 报错只影响港股块，A 股 / 美股照常。
+
+    注意治理口径：`tickhub_hk_index_quote` 是格间共享的源，HSI 失败后该源进入
+    冷却，同一轮的 HSTECH 会被冷却跳过（与美股块同一套 `ProviderRegistry` 治理，
+    不是本次新增的行为）——两格都如实 `available=false` + 原因，不补 0、不 500。
+    """
+    client, _ = _client(
+        tmp_path,
+        us_overrides={
+            "HSI.HK": {"error": {"code": "E_NO_DATA", "message": "腾讯无 HSI.HK 行情"}},
+        },
+    )
+    response = client.get("/api/indices")
+    assert response.status_code == 200
+    body = response.json()
+    cells = _cells(body)
+    assert cells["HSI"]["available"] is False
+    assert cells["HSI"]["price"] is None
+    assert "index_quote_hk 取数失败（HSI.HK）" in cells["HSI"]["reason"]
+    assert cells["HSTECH"]["available"] is False
+    assert cells["HSTECH"]["price"] is None
+    # 块间隔离：A 股四格 + 美股两格不受港股单格失败影响
+    for code, _, _ in EXPECTED_CN + EXPECTED_US:
+        assert cells[code]["available"] is True, code
+    assert body["payload"]["data_source_status"] == "partial"
 
 
 # --------------------------------------------------------------------------- #
@@ -357,16 +449,8 @@ def test_indices_reject_any_query_parameters(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("status", ["partial", "missing"])
 def test_status_vocabulary_matches_radar_pages(tmp_path: Path, status: str) -> None:
-    """港股两格结构性无源 → 八格里最多填 6 格，`ok`（全填满）在首页形态下不可达。"""
+    """部分缺格 → `partial`；A 股 + US peer 全挂 → 八格全空 → `missing`。"""
     rows = {"partial": index_rows()[:2], "missing": []}[status]
-    us_failing = status == "missing"  # 全盘无数据：A 股 + 美股都不可用
+    us_failing = status == "missing"  # 全盘无数据：A 股 + 美股 + 港股都不可用
     client, _ = _client(tmp_path, rows=rows, us_failing=us_failing)
     assert client.get("/api/indices").json()["payload"]["data_source_status"] == status
-
-
-def test_status_ok_is_unreachable_while_hk_unsourced(tmp_path: Path) -> None:
-    """A 股 + 美股全绿时整面也只是 `partial`——港股两格恒缺口，这是如实口径。"""
-    client, _ = _client(tmp_path)
-    body = client.get("/api/indices").json()
-    assert body["payload"]["data_source_status"] == "partial"
-    assert body["payload"]["available"] is True
