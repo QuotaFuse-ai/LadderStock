@@ -114,12 +114,13 @@ describe('首页演示源', () => {
     await waitFor(() => expect(dataRowCount()).toBeGreaterThan(0))
   })
 
-  it('四块按 SPEC-HOME-V2 顺序装配，且旧三块不再出现', async () => {
+  it('五块按 SPEC-HOME-V2 v2.0 顺序装配，且旧三块不再出现', async () => {
     renderAt('/?demo=1')
     await screen.findByText('上证指数')
 
-    // A 大盘与全球指数（§2）→ B 今天，想研究什么（§3）→ C 我的自选（§4）→ D 我的持仓（§5）
-    const headings = ['大盘与全球指数', '今天，想研究什么？', '我的自选', '我的持仓'].map((text) =>
+    // QUOT-552 两行工作台：row1 大盘与全球指数 → 待办与异动（合并表）；
+    // row2 我的自选 → 我的持仓 → 今天，想研究什么（研究面板）。DOM 顺序即单栏保底顺序。
+    const headings = ['大盘与全球指数', '待办与异动', '我的自选', '我的持仓', '今天，想研究什么？'].map((text) =>
       document.body.textContent?.indexOf(text) ?? -1,
     )
     headings.forEach((index) => expect(index).toBeGreaterThan(-1))

@@ -40,6 +40,19 @@ export interface HomeResearchChatProps {
   assistant: HomeAssistantBundle
   date: string
   className?: string
+  /**
+   * 嵌入研究面板（QUOT-552）：标题与输入框由面板底部唯一输入框承担，
+   * 本组件只留对话区 + 起步问题 + 停止 / 清空。默认 false = 原独立形态，行为一字不变。
+   */
+  embedded?: boolean
+  /** 嵌入态：起步问题点击 → 填进面板底部输入框（与独立态一样只填不发）。 */
+  onPickSuggestion?: (text: string) => void
+  /** 嵌入态：面板回车路由进来的一轮提问；`seq` 去重，同一 seq 只问一次。 */
+  incoming?: { text: string; seq: number } | null
+  /** 嵌入态：在途状态上报给面板（底部输入框据此提示「回答中」）。 */
+  onPendingChange?: (pending: boolean) => void
+  /** 嵌入态：清空后焦点回面板底部输入框。 */
+  onFocusInput?: () => void
 }
 
 interface ChatTurn {
@@ -95,7 +108,16 @@ function SourceList({ sources }: { sources: HomeContextSource[] }) {
   )
 }
 
-export function HomeResearchChat({ assistant, date, className }: HomeResearchChatProps) {
+export function HomeResearchChat({
+  assistant,
+  date,
+  className,
+  embedded = false,
+  onPickSuggestion,
+  incoming = null,
+  onPendingChange,
+  onFocusInput,
+}: HomeResearchChatProps) {
   const [draft, setDraft] = useState('')
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [pending, setPending] = useState(false)
@@ -106,6 +128,8 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
   const logRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const seqRef = useRef(0)
+  /** 嵌入态：已经消费过的 incoming seq（同一轮提问不重复发） */
+  const lastIncomingSeq = useRef(0)
 
   const serializedContext = useMemo(
     () => serializeHomeAssistantContext(assistant.context),
@@ -176,6 +200,18 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
     if (failedQuestion) void ask(failedQuestion, { echo: false })
   }, [ask, failedQuestion])
 
+  // 嵌入态：面板回车路由进来的提问按 seq 消费一次；ask 自身在 pending 时拒发，不会叠轮
+  useEffect(() => {
+    if (!incoming || incoming.seq === lastIncomingSeq.current) return
+    lastIncomingSeq.current = incoming.seq
+    void ask(incoming.text)
+  }, [incoming, ask])
+
+  // 嵌入态：在途状态上报给面板（底部输入框据此提示「回答中」）
+  useEffect(() => {
+    onPendingChange?.(pending)
+  }, [pending, onPendingChange])
+
   const stop = useCallback(() => {
     abortRef.current?.abort()
   }, [])
@@ -188,8 +224,9 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
     setFailure(null)
     setFailedQuestion(null)
     setPending(false)
-    inputRef.current?.focus()
-  }, [])
+    if (embedded) onFocusInput?.()
+    else inputRef.current?.focus()
+  }, [embedded, onFocusInput])
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     // 输入法候选期间的回车归输入法，不能当成发送
@@ -199,6 +236,10 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
   }
 
   const pickSuggestion = (text: string) => {
+    if (embedded && onPickSuggestion) {
+      onPickSuggestion(text)
+      return
+    }
     setDraft(text)
     inputRef.current?.focus()
   }
@@ -207,37 +248,66 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
 
   return (
     <div className={cn('flex flex-col gap-3', className)}>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-col gap-half">
-          <HomePathLabel step="1" tone="primary">
-            问 AI · 自由提问
-          </HomePathLabel>
-          <div className="flex items-center gap-2">
-            <Sparkles className="size-4 shrink-0 text-accent" aria-hidden="true" />
-            <h2 className="text-subtitle font-semibold text-text">今天，想研究什么？</h2>
+      {embedded ? (
+        /* 嵌入态：标题在面板卡头，这里只留停止 / 清空工具条（有事才出现） */
+        (hasTurns || pending) && (
+          <div className="flex items-center justify-end gap-2">
+            {pending && (
+              <Button
+                variant="secondary"
+                className="h-7 px-2 text-caption"
+                onClick={stop}
+                leadingIcon={<Square className="size-3.5" aria-hidden="true" />}
+              >
+                停止
+              </Button>
+            )}
+            {hasTurns && (
+              <Button
+                variant="ghost"
+                className="h-7 px-2 text-caption"
+                onClick={clear}
+                leadingIcon={<Trash2 className="size-3.5" aria-hidden="true" />}
+              >
+                清空
+              </Button>
+            )}
           </div>
-          <p className="text-caption text-text-secondary">
-            直接说要研究什么。回答只依据首页已取到的数据，并注明用了哪些、什么时候取的。
-          </p>
+        )
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-col gap-half">
+            <HomePathLabel step="1" tone="primary">
+              问 AI · 自由提问
+            </HomePathLabel>
+            <div className="flex items-center gap-2">
+              <Sparkles className="size-4 shrink-0 text-accent" aria-hidden="true" />
+              <h2 className="text-subtitle font-semibold text-text">今天，想研究什么？</h2>
+            </div>
+            <p className="text-caption text-text-secondary">
+              直接说要研究什么。回答只依据首页已取到的数据，并注明用了哪些、什么时候取的。
+            </p>
+          </div>
+          {hasTurns && (
+            <Button
+              variant="ghost"
+              className="h-7 px-2 text-caption"
+              onClick={clear}
+              leadingIcon={<Trash2 className="size-3.5" aria-hidden="true" />}
+            >
+              清空
+            </Button>
+          )}
         </div>
-        {hasTurns && (
-          <Button
-            variant="ghost"
-            className="h-7 px-2 text-caption"
-            onClick={clear}
-            leadingIcon={<Trash2 className="size-3.5" aria-hidden="true" />}
-          >
-            清空
-          </Button>
-        )}
-      </div>
+      )}
 
       <div
         ref={logRef}
         role="log"
         aria-live="polite"
         aria-label="研究对话"
-        className="flex max-h-96 flex-col gap-3 overflow-y-auto"
+        className={cn('flex flex-col gap-3 overflow-y-auto', !embedded && 'max-h-96')}
+        style={embedded ? { maxHeight: '128px' } : undefined}
       >
         {!hasTurns && !pending && !failure && (
           <div className="flex flex-col gap-2">
@@ -310,45 +380,48 @@ export function HomeResearchChat({ assistant, date, className }: HomeResearchCha
         )}
       </div>
 
-      <div className="flex flex-col gap-1">
-        {/* 发送/停止入框右下（QUOT-479）：外层 relative，输入框底部让出按钮高度 */}
-        <div className="relative">
-          <Textarea
-            ref={inputRef}
-            rows={2}
-            maxLength={2000}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={onKeyDown}
-            aria-label="向研究助手提问"
-            placeholder="说说要研究什么…（Shift+Enter 换行）"
-            className="min-w-0 resize-none pb-9 !border-border !bg-surface-2 focus-visible:!border-border"
-          />
-          {pending ? (
-            <Button
-              variant="secondary"
-              className="absolute bottom-2 right-2 h-8 shrink-0"
-              onClick={stop}
-              leadingIcon={<Square className="size-3.5" aria-hidden="true" />}
-            >
-              停止
-            </Button>
-          ) : (
-            <Button
-              variant="secondary"
-              className="absolute bottom-2 right-2 h-8 shrink-0"
-              onClick={() => void ask(draft)}
-              disabled={draft.trim() === ''}
-              leadingIcon={<Send className="size-3.5" aria-hidden="true" />}
-            >
-              发送
-            </Button>
-          )}
+      {/* 嵌入态不再自带输入框：研究面板底部唯一输入框回车路由进来（QUOT-552 目标 2） */}
+      {!embedded && (
+        <div className="flex flex-col gap-1">
+          {/* 发送/停止入框右下（QUOT-479）：外层 relative，输入框底部让出按钮高度 */}
+          <div className="relative">
+            <Textarea
+              ref={inputRef}
+              rows={2}
+              maxLength={2000}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={onKeyDown}
+              aria-label="向研究助手提问"
+              placeholder="说说要研究什么…（Shift+Enter 换行）"
+              className="min-w-0 resize-none pb-9 !border-border !bg-surface-2 focus-visible:!border-border"
+            />
+            {pending ? (
+              <Button
+                variant="secondary"
+                className="absolute bottom-2 right-2 h-8 shrink-0"
+                onClick={stop}
+                leadingIcon={<Square className="size-3.5" aria-hidden="true" />}
+              >
+                停止
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                className="absolute bottom-2 right-2 h-8 shrink-0"
+                onClick={() => void ask(draft)}
+                disabled={draft.trim() === ''}
+                leadingIcon={<Send className="size-3.5" aria-hidden="true" />}
+              >
+                发送
+              </Button>
+            )}
+          </div>
+          <p className="text-11px text-text-muted">
+            Enter 发送 · Shift+Enter 换行 · 回答只是解读，行情数字以页面为准，不构成投资建议
+          </p>
         </div>
-        <p className="text-11px text-text-muted">
-          Enter 发送 · Shift+Enter 换行 · 回答只是解读，行情数字以页面为准，不构成投资建议
-        </p>
-      </div>
+      )}
     </div>
   )
 }

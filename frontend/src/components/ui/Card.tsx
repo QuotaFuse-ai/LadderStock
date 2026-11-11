@@ -50,8 +50,15 @@ export function CardHeader({ title, subtitle, actions, className, id }: CardHead
   )
 }
 
+// cn 不消解 Tailwind 冲突：调用方带内距类时默认 p-4 必须让位，否则 p-0 永远输给后生成的 p-4
+const PADDING_CLASS = /(?:^|\s)(?:p|px|py|pt|pr|pb|pl)-/
+
+function bodyClasses(className?: string): string {
+  return cn(className && PADDING_CLASS.test(className) ? undefined : 'p-4', className)
+}
+
 export function CardBody({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('p-4', className)}>{children}</div>
+  return <div className={bodyClasses(className)}>{children}</div>
 }
 
 export function CardFooter({ children, className }: { children: ReactNode; className?: string }) {
@@ -102,7 +109,7 @@ export function SectionCard({
         className={cn('absolute inset-y-0 left-0 w-status-bar', SECTION_BAR[tone])}
       />
       <CardHeader title={title} subtitle={subtitle} actions={actions} />
-      <div className={cn('p-4', bodyClassName)}>{children}</div>
+      <div className={bodyClasses(bodyClassName)}>{children}</div>
     </Card>
   )
 }

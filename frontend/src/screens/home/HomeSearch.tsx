@@ -1,57 +1,59 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import { History, Search, Sparkles, Wrench } from 'lucide-react'
 
-import { Card, CardBody } from '../../components/ui'
-import { HomeSearchTrigger } from '../../components/search/HomeSearchTrigger'
-import { GUIDE_ROWS, SearchPanel } from '../../components/search/SearchPanel'
-import { HomePathLabel } from './HomePathLabel'
+import { Card, CardHeader, EmptyState, Input, PrivacyBadge, Tabs } from '../../components/ui'
+import { SearchPanel } from '../../components/search/SearchPanel'
+import { cn } from '../../lib/cn'
 import { HomeResearchChat } from './HomeResearchChat'
 import { HomeResearchShortcuts } from './HomeResearchShortcuts'
+import { routeHomeQuery } from './homeQueryRoute'
 import { useHomeSearch } from './useHomeSearch'
 import type { HomeAssistantBundle } from './homeAssistant'
 
 /**
- * 首页 B 块「今天，想研究什么？」（QUOT-472 起为 AI 研究对话入口）。
+ * 首页「研究」面板（QUOT-552：三个搜索面合并成一个）。
  *
- * QUOT-551 起三条研究路径用统一序号标签（`HomePathLabel`）摆明主次：
- * ① 问 AI（自由提问，主体）／② 开现成工具（点一下直达，为辅）／③ 直接搜（不经过 AI，再次）。
- * 起步问题改为问句 pill（暗示「填入输入框」），与工具卡（带箭头直达）不再同款；
- * 只改呈现 / 文案 / 视觉区分，三条路径的行为口径零回退。
+ * 版式：卡头（标题 + 隐私徽标）→ 三页签（快捷入口 / 研究股票 / 搜索历史）→
+ * **底部唯一输入框**。回车自动路由（`homeQueryRoute.ts`，意图判定复用
+ * `lib/searchIntent`，不写第二份）：
+ * - 问句 → 「研究股票」页签的 AI 对话（`incoming` 按 seq 消费一次）；
+ * - 6 位代码 → `actions.onExit(researchHref(code))`：记历史 + 跳 `/research/:code`；
+ * - 名称 / 关键词 → 打开既有聚合搜索面板（词已在控制器里，门限 + 节流原样走）。
  *
- * 上半是对话：起步问题 / 多行输入 / Enter 发送 / 停止 / 清空 / 「本轮来源」，
- * 通道路由与降级复用 QUOT-454 的 `POST /api/research/{scope}/assistant` 与
- * `describeAssistantError`（见 `HomeResearchChat.tsx`）。
+ * 能力零回退：`useHomeSearch` / `SearchPanel` / `lib/searchCore.ts` / `searchIntent.ts` /
+ * `searchRoutes.ts` 入参与返回形状零改动；结果面板仍是那个模态 overlay
+ * （`createPortal` + `useModalChrome`），不内联第二套。底部输入框直接绑
+ * `model.query` / `actions.onQueryChange`——面板关着时控制器的取数 effect 不跑，
+ * 所以在卡里打字不会白发请求；`?search=` 仍是唯一搜索深链入口（消费一次即撤）。
  *
- * 对话下方是「研究工具快捷入口」（QUOT-531）：从 `content/skills/catalog.json`
- * 按组随机抽 4 条可点条目，点一下直达 `/skills/:id` 或已承载页面；与起步问题并存。
- *
- * 下半保留**原有聚合搜索**，一个能力都没少：`useHomeSearch`（状态机）/
- * `SearchPanel`（呈现件）/ `lib/searchCore.ts` `searchIntent.ts` `searchRoutes.ts`
- * 的入参与返回形状零改动，只是入口从「卡片主体」降为「对话下方的直接搜」。
- *
- * 结果面板继续是既有的模态 overlay（`createPortal` + `useModalChrome`）：焦点陷阱 / Esc /
- * 滚动锁 / 关闭后焦点回入口都只有一份实现，不内联第二套。
- *
- * `?search=<关键词>` 仍是唯一的搜索深链入口，承担两件事：
- * 1. 带着词进来就能看到结果（消费一次即从 URL 撤掉，刷新后面板不会自己弹回来）；
- * 2. 视觉巡检拍「展开 / 有结果 / 无结果」三态——`scripts/visual-shot.mjs` 的 `--query search=…`
- *    直接复用，不必为截图改脚本或加调试开关。
+ * 三个页签的内容**常驻挂载**（`hidden` 切换）：对话的 turns / 在途请求不因切页签丢失。
+ * 快捷入口仍是 catalog 按组随机 4 条 + 换一批；搜索历史仍复用 `model.recent`。
  */
 
 /** 面板元素 id：入口的 `aria-controls` 与面板的 `id` 必须是同一个字符串常量。 */
 const PANEL_ID = 'ldst-home-search-panel'
 
-/** 卡内最近搜索最多 4 枚（面板里给全部，卡只留最常点的那几条）。 */
-const RECENT_SLOTS = 4
+type HomeTab = 'shortcuts' | 'chat' | 'history'
+
+const TABS: Array<{ value: HomeTab; label: string; icon: ReactNode }> = [
+  { value: 'shortcuts', label: '快捷入口', icon: <Wrench className="size-3.5" aria-hidden="true" /> },
+  { value: 'chat', label: '研究股票', icon: <Sparkles className="size-3.5" aria-hidden="true" /> },
+  { value: 'history', label: '搜索历史', icon: <History className="size-3.5" aria-hidden="true" /> },
+]
+
+/** 研究卡隐私口径（QUOT-472 上下文白名单的通俗版）：hover 与弹层共用这一份字符串。 */
+const RESEARCH_PRIVACY =
+  '私有数据不出本机：持仓的成本、数量、盈亏一律不进 AI 上下文。对话只携带首页已展示的公开行情（指数 / 自选 / 盯盘 / 验证条件计数），不写 URL、日志或本机存储。回答只是解读，不构成投资建议。'
 
 export interface HomeSearchProps {
   /** 首页四块已取到的数据：对话上下文与「本轮来源」都从这一份派生 */
   assistant: HomeAssistantBundle
   date: string
+  className?: string
 }
 
-export function HomeSearch({ assistant, date }: HomeSearchProps) {
+export function HomeSearch({ assistant, date, className }: HomeSearchProps) {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const initialQuery = params.get('search')
@@ -69,47 +71,99 @@ export function HomeSearch({ assistant, date }: HomeSearchProps) {
     setParams(next, { replace: true })
   }, [hasDeepLink, params, setParams])
 
-  const { open, model, actions, openPanel, openPanelFromPointer } = useHomeSearch({
+  const { model, actions, openPanel } = useHomeSearch({
     initialQuery,
     onNavigate: (href) => navigate(href),
   })
 
+  const [tab, setTab] = useState<HomeTab>('shortcuts')
+  const [chatPending, setChatPending] = useState(false)
+  const [incoming, setIncoming] = useState<{ text: string; seq: number } | null>(null)
+  const incomingSeq = useRef(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const focusInput = () => inputRef.current?.focus()
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    // 输入法候选期间的回车归输入法，不能当成路由
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    const route = routeHomeQuery(model.query)
+    if (route.kind === 'empty') return
+    if (route.kind === 'assistant') {
+      setTab('chat')
+      // 回答中不叠轮：切过去看进度，文本留在输入框，停完再发
+      if (chatPending) return
+      incomingSeq.current += 1
+      setIncoming({ text: route.question, seq: incomingSeq.current })
+      actions.onClear()
+      return
+    }
+    if (route.kind === 'research') {
+      // 与面板内选中代码行走同一条链路：记历史（用户输入的词）→ 关面板 → 跳转
+      actions.onExit(route.href)
+      return
+    }
+    openPanel()
+  }
+
   return (
-    <Card>
-      <CardBody className="flex flex-col gap-4">
-        <HomeResearchChat assistant={assistant} date={date} />
+    <Card className={cn('flex flex-col', className)}>
+      <CardHeader
+        title="今天，想研究什么？"
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <PrivacyBadge detail={<p>{RESEARCH_PRIVACY}</p>} detailText={RESEARCH_PRIVACY} />
+            <span>问句 / 代码 / 名称，一个入口</span>
+          </span>
+        }
+      />
 
-        <HomeResearchShortcuts />
+      <Tabs
+        tabs={TABS.map((item) =>
+          item.value === 'chat' && chatPending
+            ? { ...item, badge: <span className="text-caption text-accent">回答中</span> }
+            : item,
+        )}
+        value={tab}
+        onChange={setTab}
+        ariaLabel="研究面板页签"
+        className="px-2"
+        dense
+      />
 
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <div className="flex items-center gap-2">
-            <Search className="size-3.5 shrink-0 text-text-muted" aria-hidden="true" />
-            <HomePathLabel step="3" tone="tertiary">
-              直接搜 · 不经过 AI
-            </HomePathLabel>
-          </div>
-
-          <HomeSearchTrigger
-            expanded={open}
-            panelId={PANEL_ID}
-            onOpen={openPanel}
-            onPointerOpen={openPanelFromPointer}
+      {/* 固定高度：切页签 / 对话增长都不顶高卡片（一页无滚动的预算件）；行内被拉高时跟着长 */}
+      <div className="grow" style={{ height: 160 }}>
+        <div hidden={tab !== 'shortcuts'} className="h-full overflow-y-auto px-4 py-3">
+          <HomeResearchShortcuts embedded />
+        </div>
+        <div hidden={tab !== 'chat'} className="h-full overflow-y-auto px-4 py-3">
+          <HomeResearchChat
+            embedded
+            assistant={assistant}
+            date={date}
+            incoming={incoming}
+            onPendingChange={setChatPending}
+            onPickSuggestion={(text) => {
+              // 起步问题只填不发（QUOT-551 口径不变），填进面板底部唯一输入框
+              actions.onQueryChange(text)
+              focusInput()
+            }}
+            onFocusInput={focusInput}
           />
-
-          <ul className="flex flex-col gap-1">
-            {GUIDE_ROWS.map((row) => (
-              <li key={row.how} className="text-caption text-text-secondary">
-                <span className="text-text">{row.how}</span> → <span className="ldst-num">{row.to}</span>
-              </li>
-            ))}
-          </ul>
-
-          {/* 没有最近搜索时整行不渲染，不留一条空的胶囊轨道（SPEC-HOME-V2 §3.3） */}
-          {model.recent.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-caption text-text-muted">最近搜索</span>
+        </div>
+        <div hidden={tab !== 'history'} className="h-full overflow-y-auto px-4 py-3">
+          {model.recent.length === 0 ? (
+            <EmptyState
+              compact
+              title="还没有搜索历史"
+              description="搜过的代码 / 名称 / 关键词会记在这里，只存在本机。"
+            />
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-caption text-text-muted">点一条重新搜（最多记 8 条，只存本机）：</p>
               <span className="flex flex-wrap gap-1">
-                {model.recent.slice(0, RECENT_SLOTS).map((item) => (
+                {model.recent.map((item) => (
                   <button
                     key={item}
                     type="button"
@@ -127,7 +181,29 @@ export function HomeSearch({ assistant, date }: HomeSearchProps) {
             </div>
           )}
         </div>
-      </CardBody>
+      </div>
+
+      <div className="flex flex-col gap-1 border-t border-border px-4 py-2">
+        <Input
+          ref={inputRef}
+          type="text"
+          value={model.query}
+          onChange={(event) => actions.onQueryChange(event.target.value)}
+          onKeyDown={onKeyDown}
+          onCompositionStart={() => actions.onComposing(true)}
+          onCompositionEnd={() => actions.onComposing(false)}
+          aria-label="搜索或提问"
+          placeholder="问一句，或输入代码 / 名称 · 回车直达"
+          leadingIcon={<Search className="size-3.5" aria-hidden="true" />}
+          autoComplete="off"
+        />
+        <p className="truncate text-11px text-text-muted">
+          {chatPending
+            ? '回答中…到「研究股票」页签可停止，本轮答完再发'
+            : '问句 → AI · 代码 → 行情 · 名称 / 关键词 → 搜索'}
+        </p>
+      </div>
+
       <SearchPanel panelId={PANEL_ID} model={model} actions={actions} />
     </Card>
   )

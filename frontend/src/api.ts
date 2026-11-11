@@ -82,7 +82,8 @@ export function describeApiError(error: unknown): { title: string; detail: strin
   }
   return {
     title: '取数失败',
-    detail: error instanceof Error ? error.message : String(error),
+    // 强制演示 ?state=error 时没有真实错误对象：String(undefined) 会把 "undefined" 印上屏
+    detail: error == null ? '没有可用的错误详情；点「重试」重新取数。' : error instanceof Error ? error.message : String(error),
     code: null,
   }
 }
