@@ -107,6 +107,11 @@ def _offline_data_layer(repo, tmp_path, monkeypatch):
         "ladderstock.data.provider_registry.build_transport",
         lambda _peers: FakeTransport(),
     )
+    # QUOT-554：wire_news 采集段走 qfw 子进程、不经 build_transport，同样钉成离线。
+    monkeypatch.setattr(
+        "ladderstock.cli.schedule._collect_wire_news",
+        lambda: {"status": "skipped", "detail": "Wire 未安装（离线桩），跳过采集"},
+    )
     engine = _ScriptedSupervisorEngine()
     monkeypatch.setattr(supervisor_cli, "_engine", lambda _root: engine)
 

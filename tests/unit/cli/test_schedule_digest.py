@@ -142,7 +142,7 @@ def test_default_jobs_carry_three_digests() -> None:
 
     assert digs == DIGEST_JOBS
     assert "premarket_reminder" not in {job["id"] for job in schedule_cli.DEFAULT_JOBS}
-    assert len(schedule_cli.DEFAULT_JOBS) == 13
+    assert len(schedule_cli.DEFAULT_JOBS) == 14
 
 
 def test_repo_schedule_declares_three_digests(repo: Path) -> None:
@@ -159,7 +159,8 @@ def test_schema_requires_summary_for_digest() -> None:
     schedule_cli.validate_table(table)  # 默认表本身合法
 
     broken = copy.deepcopy(table)
-    broken["jobs"][0].pop("summary")
+    digest_job = next(job for job in broken["jobs"] if job["kind"] == "digest")
+    digest_job.pop("summary")
     with pytest.raises(LadderStockError) as excinfo:
         schedule_cli.validate_table(broken)
     assert excinfo.value.code == EXIT_CONFIG
@@ -171,7 +172,8 @@ def test_structural_fallback_requires_summary_for_digest() -> None:
     assert schedule_cli._structural_problems(table) == []
 
     broken = copy.deepcopy(table)
-    broken["jobs"][0].pop("summary")
+    digest_job = next(job for job in broken["jobs"] if job["kind"] == "digest")
+    digest_job.pop("summary")
     problems = schedule_cli._structural_problems(broken)
     assert any("summary" in problem for problem in problems)
 

@@ -57,6 +57,12 @@ def _offline_data_layer(repo, tmp_path, monkeypatch):
         "ladderstock.data.provider_registry.build_transport",
         lambda _peers: FakeTransport(),
     )
+    # QUOT-554：wire_news 的采集段走 qfw 子进程、不经 build_transport——同样钉成
+    # 「Wire 未安装」，否则装了 Wire 的机器上矩阵会拨真采集（慢且花 token）。
+    monkeypatch.setattr(
+        "ladderstock.cli.schedule._collect_wire_news",
+        lambda: {"status": "skipped", "detail": "Wire 未安装（离线桩），跳过采集"},
+    )
 
 
 def test_help_lists_every_command_group(repo) -> None:

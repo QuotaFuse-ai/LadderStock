@@ -60,7 +60,7 @@ def test_repo_schedule_declares_fast_jobs(repo: Path) -> None:
 
 
 def test_builtin_defaults_mirror_the_fast_jobs() -> None:
-    assert len(DEFAULT_JOBS) == 13
+    assert len(DEFAULT_JOBS) == 14
     assert fast_jobs(_default_table()) == fast_jobs(load_schedule()[0])
 
 

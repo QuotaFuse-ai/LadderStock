@@ -57,7 +57,7 @@ def test_builtin_defaults_mirror_the_repo_schedule() -> None:
     builtin = snapshot_jobs(_default_table())
 
     assert [job["trigger"] for job in builtin] == SNAPSHOT_TRIGGERS
-    assert len(DEFAULT_JOBS) == 13
+    assert len(DEFAULT_JOBS) == 14
 
 
 def test_schema_accepts_snapshot_kind() -> None:
@@ -157,4 +157,5 @@ def test_schedule_schema_enum_contains_snapshot() -> None:
         "snapshot_fast",
         "sync_batch",
         "digest",
+        "wire_news",
     ]

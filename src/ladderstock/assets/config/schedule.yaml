@@ -6,6 +6,17 @@ scheduler:
   misfire_grace_seconds: 300
 
 jobs:
+  # 07:30 题材资讯每日采集（QUOT-554）：先触发 Wire peer 自己的 `qfw run`（采集+提炼，
+  # QF_WIRE_API_KEY 由 Wire 从它自己的 .env 加载，不经本表/日志），再走既有 theme_news
+  # 同步链路（wire_get_digest 按赛道扇出）落 DuckDB/Parquet 并推进水位——打开即新鲜，
+  # 零手动 sync。每天跑（含周末，资讯不收盘）；部分免费 RSS 源 403/不可用只记 degraded，
+  # 不补造、不拿旧数据顶替。幂等：replace 整日覆盖 + qfw run 同日重跑只覆盖当日；
+  # 失败可手动补跑 `ldst schedule run --once --job wire_news_daily`。
+  - id: wire_news_daily
+    name: 07:30 题材资讯采集
+    kind: wire_news
+    trigger: "07:30"
+    enabled: true
   # 09:05 盘前摘要（QUOT-432 / DEC-058）：按真实行情生成「自选 + 持仓」的现价 / 昨收 /
   # 涨跌，写完 inbox 再投递本机通知。旧 `premarket_reminder`（静态口播文案）退役——
   # 自己的配置里若还留着 `kind: notify` 的它，照常生效（notify 类型没删）。
