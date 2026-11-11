@@ -1,9 +1,9 @@
-"""采集 → 入库的阶段级健康事件 schema（QUOT-562）：B2 与 S3 通道的单一来源。
+"""采集 / 入库 / 辩论的阶段级健康事件 schema（QUOT-562 / QUOT-563）：B2 与 S3 通道的单一来源。
 
 统一 schema（派单契约，认知层 B2 直接 import 复用，绝不各写一套）::
 
     {
-      "module": "collect" | "ingest",      # 阶段归属的管线模块
+      "module": "collect" | "ingest" | "debate",  # 阶段归属的管线模块
       "module_class": "data",              # data=数据管线(蓝)；cog=认知层(紫，B2 用)
       "stage": "collect_script",           # 阶段标识
       "health": "ok" | "warn" | "down",    # ok=正常/成功；warn=降级/陈旧；down=失败/未跑
@@ -12,13 +12,17 @@
       "phase": "1"                         # 串行/并行分组或序号，供前端编排粒子流向
     }
 
-阶段清单（数据管线七阶段，`STAGE_REGISTRY` 是唯一真源）：
+阶段清单（`STAGE_REGISTRY` 是唯一真源）：
 
 - `collect`（采集，4 阶段）：`collect_script`（链路就绪）→ `collect_process`
   （peer 采集进程存活）→ `collect_store`（本机采集库有当日记录）→
   `collect_success`（本次采集成功产出）；
 - `ingest`（入库，3 阶段）：`ingest_watermark`（sync 水位）→ `ingest_persist`
-  （落库持久化）→ `ingest_idempotent`（幂等校验）。
+  （落库持久化）→ `ingest_idempotent`（幂等校验）；
+- `debate`（认知层辩论，3 阶段，QUOT-563，module_class=cog）：`debate_speak`
+  （辩论角色发言）→ `debate_clash`（交锋反驳）→ `debate_converge`（收敛结论）。
+  观测对象是 StockSenate 最近一次辩论的落盘快照（只读——绝不触发辩论、
+  绝不编造进度，缺失/陈旧如实降级）。
 
 口径红线（DEC-006 / 派单 §4）：
 
@@ -40,11 +44,12 @@ from datetime import datetime
 # 模块与分类
 # --------------------------------------------------------------------------- #
 
-#: 阶段归属的管线模块（派单契约：module ∈ collect / ingest）
+#: 阶段归属的管线模块（派单契约：module ∈ collect / ingest / debate）
 MODULE_COLLECT = "collect"
 MODULE_INGEST = "ingest"
+MODULE_DEBATE = "debate"
 
-MODULES: tuple[str, ...] = (MODULE_COLLECT, MODULE_INGEST)
+MODULES: tuple[str, ...] = (MODULE_COLLECT, MODULE_INGEST, MODULE_DEBATE)
 
 #: 模块分类：data = 数据管线（蓝）；cog = 认知层（紫，B2 的范畴）。
 #: 本单（数据管线）恒为 data；B2 复用同一 schema 时填 cog，不改 schema。
@@ -75,15 +80,18 @@ STAGE_COLLECT_SUCCESS = "collect_success"
 STAGE_INGEST_WATERMARK = "ingest_watermark"
 STAGE_INGEST_PERSIST = "ingest_persist"
 STAGE_INGEST_IDEMPOTENT = "ingest_idempotent"
+STAGE_DEBATE_SPEAK = "debate_speak"
+STAGE_DEBATE_CLASH = "debate_clash"
+STAGE_DEBATE_CONVERGE = "debate_converge"
 
 
 @dataclass(frozen=True)
 class StageSpec:
     """一个阶段的静态口径：归属模块 / 分类 / 粒子序号 / 人话说明。
 
-    `phase` 是模块内序号字符串（collect 1..4、ingest 1..3）——前端按它编排
-    粒子流向；同一 `phase` 值的阶段互不依赖（本单七阶段天然串行，phase 仍
-    按序号给，B2 并行分组直接用同一字段）。
+    `phase` 是模块内序号字符串（collect 1..4、ingest 1..3、debate 1..3）——
+    前端按它编排粒子流向；同一 `phase` 值的阶段互不依赖（采集 / 入库阶段天然
+    串行，phase 仍按序号给，认知层并行分组直接用同一字段）。
     """
 
     stage: str
@@ -101,7 +109,7 @@ def _spec(
     )
 
 
-#: 七阶段唯一真源：顺序即 phase 顺序，也是看板链路展示顺序。
+#: 阶段注册表唯一真源：顺序即 phase 顺序，也是看板链路展示顺序。
 STAGE_REGISTRY: dict[str, StageSpec] = {
     item.stage: item
     for item in (
@@ -154,6 +162,27 @@ STAGE_REGISTRY: dict[str, StageSpec] = {
             "3",
             "幂等校验：重跑不会产生重复行",
         ),
+        _spec(
+            STAGE_DEBATE_SPEAK,
+            MODULE_DEBATE,
+            MODULE_CLASS_COG,
+            "1",
+            "辩论角色发言：最近一次辩论里各辩论角色完成发言",
+        ),
+        _spec(
+            STAGE_DEBATE_CLASH,
+            MODULE_DEBATE,
+            MODULE_CLASS_COG,
+            "2",
+            "交锋反驳：辩论角色之间出现真实的反驳往来",
+        ),
+        _spec(
+            STAGE_DEBATE_CONVERGE,
+            MODULE_DEBATE,
+            MODULE_CLASS_COG,
+            "3",
+            "收敛结论：辩论在轮次内收敛出结论",
+        ),
     )
 }
 
@@ -172,6 +201,11 @@ MODULE_STAGES: dict[str, tuple[str, ...]] = {
         STAGE_INGEST_WATERMARK,
         STAGE_INGEST_PERSIST,
         STAGE_INGEST_IDEMPOTENT,
+    ),
+    MODULE_DEBATE: (
+        STAGE_DEBATE_SPEAK,
+        STAGE_DEBATE_CLASH,
+        STAGE_DEBATE_CONVERGE,
     ),
 }
 
@@ -259,6 +293,7 @@ __all__ = [
     "MODULE_CLASS_DATA",
     "MODULE_CLASSES",
     "MODULE_COLLECT",
+    "MODULE_DEBATE",
     "MODULE_INGEST",
     "MODULE_STAGES",
     "MODULES",
@@ -268,6 +303,9 @@ __all__ = [
     "STAGE_COLLECT_SCRIPT",
     "STAGE_COLLECT_STORE",
     "STAGE_COLLECT_SUCCESS",
+    "STAGE_DEBATE_CLASH",
+    "STAGE_DEBATE_CONVERGE",
+    "STAGE_DEBATE_SPEAK",
     "STAGE_INGEST_IDEMPOTENT",
     "STAGE_INGEST_PERSIST",
     "STAGE_INGEST_WATERMARK",
