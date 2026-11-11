@@ -89,6 +89,10 @@ class SupervisorEngine:
         self._lock = threading.RLock()
         #: 本任 supervisor 亲自 spawn 过的模块（reconcile 据此区分 spawned/adopted）
         self._spawned_here: set[str] = set()
+        #: 本任 supervisor 亲自 spawn 过的进程 pid → cmdline 指纹（QUOT-557 / S4）。
+        #: 端口冲突安全处置据此把「残留自有进程」认成 own_child；用前必须再验
+        #: 存活 + 指纹（防 PID 复用把外来进程误认成自有，见 build_port_inspector）。
+        self._spawned_pids: dict[int, str] = {}
 
     @property
     def ledger(self) -> Ledger:
@@ -97,6 +101,16 @@ class SupervisorEngine:
         只给读入口（`record` / `records`），写仍走引擎方法——诊断面绝不改账本。
         """
         return self._ledger
+
+    @property
+    def spawned_pids(self) -> dict[int, str]:
+        """本任 supervisor spawn 过的 pid → cmdline 指纹（只读副本，QUOT-557）。
+
+        含已退出进程的历史 pid：调用方必须自行验存活 + 指纹后才可据此认归属，
+        绝不把死 pid / 指纹不符（PID 复用）当成自有进程。
+        """
+        with self._lock:
+            return dict(self._spawned_pids)
 
     # ------------------------------------------------------------------ 对账
 
@@ -180,6 +194,7 @@ class SupervisorEngine:
         record.adopted_peer = False
         record.cmdline_hash = cmdline_hash(spawned.cmdline)
         self._spawned_here.add(name)
+        self._spawned_pids[int(spawned.pid)] = record.cmdline_hash
         self._ledger.update(record)
 
         if self._await_probe(adapter, self._start_grace):
@@ -378,6 +393,49 @@ class SupervisorEngine:
                 "record": _view(record),
                 "others_unchanged": True,
             }
+
+    # ------------------------------------------------------- 端口冲突安全处置（S4）
+
+    def _is_provably_own_spawn(self, pid: int) -> bool:
+        """占用者是否「可证明自有」（QUOT-557 / S4，失败关闭）。
+
+        三重证据缺一不可：本任 supervisor 亲手 spawn 过该 pid + 此刻仍存活 +
+        实时命令行指纹与 spawn 时一致。任何一条不满足（含 PID 复用）都返回 False——
+        宁可少修，绝不把外来 / 认领进程误认成自有而终止（QUOT-545 / DEC-014 红线）。
+        """
+        expected = self._spawned_pids.get(int(pid))
+        if expected is None:
+            return False
+        if not self._procs.alive(int(pid)):
+            return False
+        cmdline = self._procs.cmdline(int(pid))
+        if not cmdline:
+            return False
+        return cmdline_hash(cmdline) == expected
+
+    def restart_own_occupant(self, name: str, occupant_pid: int) -> dict[str, Any]:
+        """S4 安全处置：端口被「可证明自有」的残留进程占用 → 重绑账本并安全重启。
+
+        只对 own_child 生效：先把账本 pid 重绑到可证明自有的占用者（让停止路径对准
+        它，绝不指向外来进程），再走 `restart_module` 的既有闸门停 + 重拉。证明不了
+        自有（非本任 spawn / 已死 / 指纹不符 = PID 复用）一律抛错不动（失败关闭）。
+        绝不改端口配置（DEC-004）；绝不终止外来 / adopted 进程（DEC-014 / QUOT-545）。
+        """
+        with self._lock:
+            if not self._is_provably_own_spawn(int(occupant_pid)):
+                raise SupervisorError(
+                    f"{name} 端口占用者 pid={occupant_pid} 无法证明是本控制面自有进程"
+                    "（非本任 spawn / 已退出 / 命令行指纹不符），按失败关闭不处置、不终止"
+                )
+            record = self._ledger.record(name) or ModuleRecord(
+                module=name, ports=list(MODULE_PORTS[name])
+            )
+            record.pid = int(occupant_pid)
+            record.origin = "spawned"
+            record.adopted_peer = False
+            record.cmdline_hash = self._spawned_pids[int(occupant_pid)]
+            self._ledger.update(record)
+            return self.restart_module(name)
 
     # ------------------------------------------------------------------ 认领
 

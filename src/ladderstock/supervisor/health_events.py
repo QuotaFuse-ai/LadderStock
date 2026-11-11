@@ -52,6 +52,8 @@ EVENT_TYPES: tuple[str, ...] = (
 )
 
 #: 端口占用分类（与 web/port_diagnostics.py 同一套取值；本层只消费字符串）
+OWNER_OWN_CHILD = "own_child"
+OWNER_ADOPTED_PEER = "adopted_peer"
 OWNER_FOREIGN = "foreign"
 OWNER_FREE = "free"
 
@@ -72,10 +74,39 @@ _REASONS: dict[str, str] = {
     EVENT_RECOVERED: "子模块已恢复运行",
 }
 
+#: 端口冲突按占用者分类的白话原因（QUOT-557 / S4）：前端弹窗据此决定主操作——
+#: own_child 可安全重启恢复；adopted_peer / foreign 绝不终止，只能引导用户确认。
+_PORT_CONFLICT_REASONS: dict[str, str] = {
+    OWNER_OWN_CHILD: "端口被本应用自己拉起的进程占用：可安全重启该进程恢复（不会动任何外部进程）",
+    OWNER_ADOPTED_PEER: "端口被外部启动、已被认领的服务占用：不会终止它，请确认后一键处理",
+    OWNER_FOREIGN: "端口被无关的外部进程占用：不会终止它、也不会自动换端口，请人工确认后处理",
+}
+
+#: 占用者严重度排序（混合占用时取最保守的一个作主原因）：外来 > 认领 > 自有。
+#: 失败关闭口径：只要有一个不能自动处置的占用者，就按「需人工确认」引导。
+_OWNER_SEVERITY: tuple[str, ...] = (OWNER_FOREIGN, OWNER_ADOPTED_PEER, OWNER_OWN_CHILD)
+
+
+def port_conflict_reason(owners: Sequence[str]) -> str:
+    """按占用者分类给端口冲突的白话原因（纯函数）。
+
+    多种占用者并存时取最保守（最不可自动处置）的一类：foreign > adopted_peer >
+    own_child——宁可引导用户确认，也不暗示可以自动终止外部进程。空列表回退通用原因。
+    """
+    for owner in _OWNER_SEVERITY:
+        if owner in owners:
+            return _PORT_CONFLICT_REASONS[owner]
+    return _REASONS[EVENT_PORT_CONFLICT]
+
 
 @dataclass(frozen=True)
 class HealthEvent:
-    """一条 peer 级健康事件：机器键（module/event/health/state）+ 白话原因。"""
+    """一条 peer 级健康事件：机器键（module/event/health/state）+ 白话原因。
+
+    QUOT-557（S4）：`port_conflict` 事件额外带 `conflicts`——逐冲突端口的占用者
+    分类（`{port, owner, pid}`，owner ∈ own_child / adopted_peer / foreign），供
+    前端弹窗区分「自有可安全重启」与「外来 / 认领需用户确认」。其余事件该字段为空。
+    """
 
     seq: int
     ts: str
@@ -88,10 +119,12 @@ class HealthEvent:
     ports: tuple[int, ...]
     origin: str | None
     adopted_peer: bool
+    conflicts: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["ports"] = list(self.ports)
+        payload["conflicts"] = [dict(item) for item in self.conflicts]
         return payload
 
 
@@ -124,6 +157,7 @@ class HealthEventBus:
         ports: Sequence[int] = (),
         origin: str | None = None,
         adopted_peer: bool = False,
+        conflicts: Sequence[Mapping[str, Any]] = (),
     ) -> HealthEvent:
         with self._lock:
             self._seq += 1
@@ -139,6 +173,7 @@ class HealthEventBus:
                 ports=tuple(int(port) for port in ports),
                 origin=origin,
                 adopted_peer=bool(adopted_peer),
+                conflicts=tuple(dict(conflict) for conflict in conflicts),
             )
             self._events.append(item)
             return item
@@ -160,11 +195,17 @@ class HealthEventBus:
 
 @dataclass(frozen=True)
 class PortObservation:
-    """一个端口的观测结果：在听与否 + 占用者归属（QUOT-547 四分类字符串）。"""
+    """一个端口的观测结果：在听与否 + 占用者归属（QUOT-547 四分类字符串）。
+
+    QUOT-557（S4）：`pid` 为占用者进程号（拿不到为 None）。给了 pid 才能精确区分
+    「本模块健康自有进程在听」（非冲突）与「残留自有进程占口」（own_child 冲突）；
+    未给 pid 时沿用 QUOT-556 口径——own_child / adopted_peer 在听即视为健康本尊。
+    """
 
     port: int
     listening: bool
     owner: str
+    pid: int | None = None
 
 
 #: 端口观测器：一次调用看全部托管模块（装配侧实现可做一次连接表扫描摊薄成本）。
@@ -186,11 +227,16 @@ class HealthEventMonitor:
         port_inspector: PortInspector | None = None,
         clock: Callable[[], float] = time.time,
         port_probe_interval: float = DEFAULT_PORT_PROBE_INTERVAL,
+        is_pid_alive: Callable[[int], bool] | None = None,
     ) -> None:
         self._bus = bus
         self._inspector = port_inspector
         self._clock = clock
         self._port_probe_interval = float(port_probe_interval)
+        #: 占用者判活探针（S4）：残留冲突只在占用者此刻仍存活时才成立，防节流复用的
+        #: 旧观测把「已死的本尊」误报成冲突。未注入时 own / adopted 一律按 QUOT-556
+        #: 口径（在听即健康本尊，不报残留冲突）。
+        self._is_pid_alive = is_pid_alive
         self._prev: dict[str, str] = {}
         self._pending_recovery: set[str] = set()
         self._port_obs: Mapping[str, Sequence[PortObservation]] = {}
@@ -232,7 +278,8 @@ class HealthEventMonitor:
     ) -> None:
         alive = bool(is_alive(entry))
         obs = self._port_obs.get(entry.module) if self._inspector is not None else None
-        condition = self._condition(entry, alive, obs)
+        conflicts = self._conflict_observations(entry, obs)
+        condition = self._condition(entry, alive, obs, conflicts)
         state = self._state(entry, alive)
         health = entry.health if entry.health in PUBLIC_HEALTH else HEALTH_OK
         prev = self._prev.get(entry.module, "ok")
@@ -241,24 +288,65 @@ class HealthEventMonitor:
         self._prev[entry.module] = condition
         if condition in _BAD_CONDITIONS:
             self._pending_recovery.add(entry.module)
-            self._publish(entry, condition, health=health, state=state)
+            self._publish(entry, condition, health=health, state=state, conflicts=conflicts)
         elif condition == "ok" and entry.module in self._pending_recovery:
             self._pending_recovery.discard(entry.module)
             self._publish(entry, EVENT_RECOVERED, health=health, state=state)
+
+    def _conflict_observations(
+        self,
+        entry: LedgerEntry,
+        obs: Sequence[PortObservation] | None,
+    ) -> tuple[PortObservation, ...]:
+        """挑出「冲突端口」的观测（QUOT-557 / S4，失败关闭）。
+
+        一个在听端口算冲突，当且仅当占用者**不是本模块的本尊**：
+        - `foreign` 在听 → 一律冲突（外来占用，只报告不处置）；
+        - `own_child` / `adopted_peer` 在听：
+          - 未给占用者 pid（旧观测口径）→ 视为本尊在听，非冲突（兼容 QUOT-556）；
+          - pid 与账本相符 → 本尊（活着即健康、死了即崩溃，交给存活判定），非冲突；
+          - pid 与账本不符（残留 / 他人占口）→ 仅当占用者**此刻仍存活**才算冲突。
+            节流复用的旧观测可能记着已死的本尊 pid，判活探针挡住这种误报；未注入
+            探针时按 QUOT-556 口径不报残留冲突（宁可少报，不可把崩溃误报成冲突）。
+        拿不到证据一律不当作可自动处置的冲突（宁可少修，不可误杀）。
+        """
+        if obs is None:
+            return ()
+        conflicts: list[PortObservation] = []
+        for item in obs:
+            if not item.listening:
+                continue
+            if item.owner == OWNER_FOREIGN:
+                conflicts.append(item)
+                continue
+            if item.owner in (OWNER_OWN_CHILD, OWNER_ADOPTED_PEER):
+                if item.pid is None or item.pid == entry.pid:
+                    continue  # 旧口径 / 本尊在听（含已死本尊的旧观测）
+                if self._is_pid_alive is None or not self._is_pid_alive(item.pid):
+                    continue  # 无探针 / 占用者已死：不是残留冲突
+                conflicts.append(item)
+        return tuple(conflicts)
+
+    def port_conflicts(self, entry: LedgerEntry) -> tuple[PortObservation, ...]:
+        """对外暴露某模块当前的冲突端口观测（供 S4 安全处置层复用同一口径）。
+
+        只读最近一轮端口观测（节流复用），不触发新扫描、绝不终止 / 拉起任何进程。
+        """
+        obs = self._port_obs.get(entry.module) if self._inspector is not None else None
+        return self._conflict_observations(entry, obs)
 
     def _condition(
         self,
         entry: LedgerEntry,
         alive: bool,
         obs: Sequence[PortObservation] | None,
+        conflicts: Sequence[PortObservation] = (),
     ) -> str:
         if entry.stopping_by_user:
             return "stopped"
         if entry.state == "starting":
             return "restarting"  # 引擎拉起中（pid 未换绑）：静默过渡态
-        foreign_listening = obs is not None and any(
-            item.listening and item.owner == OWNER_FOREIGN for item in obs
-        )
+        port_conflict = bool(conflicts)
         if not alive:
             if entry.pid is None and entry.started_at is None and entry.restart_count == 0:
                 return "unknown"  # 从没拉起过，不是崩溃
@@ -268,13 +356,13 @@ class HealthEventMonitor:
                 return "stopped"
             if entry.health == HEALTH_NEEDS_HUMAN:
                 return "needs_human"
-            if foreign_listening:
+            if port_conflict:
                 return "port_conflict"
             # health=restarting 不掩盖 crash：正在自愈的崩溃也是崩溃，弹窗要弹。
             return EVENT_CRASH
         if entry.health == HEALTH_NEEDS_HUMAN:
             return "needs_human"
-        if foreign_listening:
+        if port_conflict:
             return EVENT_PORT_CONFLICT
         if obs is not None and entry.ports and not any(item.listening for item in obs):
             return EVENT_OFFLINE
@@ -293,17 +381,34 @@ class HealthEventMonitor:
             return "restarting"
         return "down"
 
-    def _publish(self, entry: LedgerEntry, event: str, *, health: str, state: str) -> None:
+    def _publish(
+        self,
+        entry: LedgerEntry,
+        event: str,
+        *,
+        health: str,
+        state: str,
+        conflicts: Sequence[PortObservation] = (),
+    ) -> None:
+        reason = _REASONS[event]
+        detail: tuple[dict[str, Any], ...] = ()
+        if event == EVENT_PORT_CONFLICT and conflicts:
+            # S4：冲突事件带占用者分类（own/foreign/adopted）+ 按分类的白话原因。
+            detail = tuple(
+                {"port": item.port, "owner": item.owner, "pid": item.pid} for item in conflicts
+            )
+            reason = port_conflict_reason([item.owner for item in conflicts])
         self._bus.publish(
             module=entry.module,
             event=event,
             health=health,
             state=state,
-            reason=_REASONS[event],
+            reason=reason,
             pid=entry.pid,
             ports=tuple(entry.ports),
             origin=entry.origin,
             adopted_peer=entry.adopted_peer,
+            conflicts=detail,
         )
 
 
@@ -317,11 +422,14 @@ __all__ = [
     "EVENT_PORT_CONFLICT",
     "EVENT_RECOVERED",
     "EVENT_TYPES",
+    "OWNER_ADOPTED_PEER",
     "OWNER_FOREIGN",
     "OWNER_FREE",
+    "OWNER_OWN_CHILD",
     "HealthEvent",
     "HealthEventBus",
     "HealthEventMonitor",
     "PortInspector",
     "PortObservation",
+    "port_conflict_reason",
 ]

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import build_engine
+from fakes import FakeProcess, build_engine
 
 from ladderstock.supervisor import Ledger, SupervisorEngine
 from ladderstock.supervisor.adapters import MODULE_ORDER
@@ -375,3 +375,84 @@ def test_stop_all_waits_for_engine_lock(tmp_path: Path) -> None:
     watcher.join(10)
     assert stop_box["r"]["ok"] is True
     assert list(state_box["r"]["modules"]) == list(MODULE_ORDER)
+
+
+# ------------------------------------------------------- 端口冲突安全处置（S4 / QUOT-557）
+
+
+def test_spawned_pids_tracks_only_own_spawns(tmp_path: Path) -> None:
+    """自有 spawn 账：本任亲手拉起的入口 pid + 指纹在册；外来进程不在册。"""
+    engine, adapters, _procs, _clock = build_engine(tmp_path)
+    engine.start_all()
+    spawned = engine.spawned_pids
+    for name in MODULE_ORDER:
+        entry = adapters[name].entry_pid()
+        assert entry in spawned, name
+        assert spawned[entry] == cmdline_hash(adapters[name].recorded_cmdline())
+    assert 424242 not in spawned
+
+
+def test_restart_own_occupant_recovers_provably_own_residual(tmp_path: Path) -> None:
+    """端口被可证明自有的残留进程占用（账本 pid 已漂移）：重绑 + 安全重启解冲突，
+    旧自有进程退出、端口重新监听、其它模块 PID 一个不变。"""
+    engine, adapters, procs, _clock = build_engine(tmp_path)
+    engine.start_all()
+    occupant = adapters["wire"].entry_pid()
+    assert occupant is not None
+    old_chain = adapters["wire"].chain_pids()
+    # 账本漂移：wire 的 pid 指向一个已死 pid，残留自有进程仍占着端口
+    engine._ledger.update("wire", pid=999999)
+    before_others = {n: adapters[n].entry_pid() for n in MODULE_ORDER if n != "wire"}
+
+    result = engine.restart_own_occupant("wire", occupant)
+
+    assert result["ok"] is True
+    assert result["others_unchanged"] is True
+    for pid in old_chain:
+        assert pid not in procs.processes, "残留自有进程未被安全停掉"
+    new_record = engine._ledger.record("wire")
+    assert new_record is not None and new_record.pid is not None
+    assert new_record.pid != occupant, "own_child 重拉后 PID 必须换新"
+    assert new_record.origin == "spawned" and new_record.adopted_peer is False
+    assert adapters["wire"].probe() is True
+    for name, pid in before_others.items():
+        assert adapters[name].entry_pid() == pid, f"{name} 的 pid 被牵连"
+
+
+def test_restart_own_occupant_refuses_stranger_and_never_kills(tmp_path: Path) -> None:
+    """外来进程占口（非本任 spawn）：失败关闭，绝不终止（DEC-014 / QUOT-545 红线）。"""
+    engine, adapters, procs, _clock = build_engine(tmp_path)
+    engine.start_all()
+    procs.processes[424242] = FakeProcess(
+        pid=424242, cmdline=("C:/other/stranger.exe",), ppid=None, ports=adapters["wire"].ports
+    )
+    with pytest.raises(SupervisorError, match="无法证明"):
+        engine.restart_own_occupant("wire", 424242)
+    assert procs.alive(424242), "外来进程被终止了"
+    assert 424242 not in procs.killed_trees
+    assert adapters["wire"].entry_pid() in procs.processes, "自有 wire 进程被误动"
+
+
+def test_restart_own_occupant_refuses_dead_own_pid(tmp_path: Path) -> None:
+    """自有 spawn 但已退出：证明不了「此刻仍存活」，失败关闭不动。"""
+    engine, adapters, procs, _clock = build_engine(tmp_path)
+    engine.start_all()
+    occupant = adapters["wire"].entry_pid()
+    assert occupant is not None
+    procs.processes.pop(occupant)
+    with pytest.raises(SupervisorError, match="无法证明"):
+        engine.restart_own_occupant("wire", occupant)
+    assert occupant not in procs.killed_trees
+
+
+def test_restart_own_occupant_refuses_pid_reuse_and_never_kills(tmp_path: Path) -> None:
+    """PID 复用（实时命令行指纹与 spawn 时不符）：失败关闭，绝不终止那个活进程。"""
+    engine, adapters, procs, _clock = build_engine(tmp_path)
+    engine.start_all()
+    occupant = adapters["wire"].entry_pid()
+    assert occupant is not None
+    procs.processes[occupant].cmdline = ("C:/Windows/System32/notepad.exe",)
+    with pytest.raises(SupervisorError, match="无法证明"):
+        engine.restart_own_occupant("wire", occupant)
+    assert procs.alive(occupant), "PID 复用进程被误杀"
+    assert occupant not in procs.killed_trees

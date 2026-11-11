@@ -50,6 +50,8 @@ EVENT_KEYS = {
     "ports",
     "origin",
     "adopted_peer",
+    # QUOT-557（S4）契约扩展：port_conflict 事件带占用者分类（其余事件为空列表）。
+    "conflicts",
 }
 
 

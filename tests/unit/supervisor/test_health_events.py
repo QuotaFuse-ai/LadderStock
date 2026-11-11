@@ -25,11 +25,14 @@ from ladderstock.supervisor.health_events import (
     EVENT_OFFLINE,
     EVENT_PORT_CONFLICT,
     EVENT_RECOVERED,
+    OWNER_ADOPTED_PEER,
     OWNER_FOREIGN,
     OWNER_FREE,
+    OWNER_OWN_CHILD,
     HealthEventBus,
     HealthEventMonitor,
     PortObservation,
+    port_conflict_reason,
 )
 from ladderstock.supervisor.ledger import (
     HEALTH_NEEDS_HUMAN,
@@ -62,6 +65,7 @@ class _World:
     def __init__(self, *, with_inspector: bool = True) -> None:
         self.bus = HealthEventBus()
         self.alive: set[int] = {101}
+        self.occupants_alive: set[int] = {101}
         self.ports: dict[str, list[PortObservation]] = {}
         self.inspector_calls = 0
         self.inspector_raises = False
@@ -70,6 +74,7 @@ class _World:
             self.bus,
             port_inspector=self._inspect if with_inspector else None,
             clock=lambda: self.now[0],
+            is_pid_alive=lambda pid: pid in self.occupants_alive,
         )
 
     def _inspect(self, entries: object) -> dict[str, list[PortObservation]]:
@@ -429,3 +434,186 @@ def test_snapshot_exposes_events_latest_and_adopted_peer(tmp_path: Path) -> None
 
     plain = SelfHealEngine(_ledger, restarter)
     assert "events_latest" not in plain.snapshot()
+
+
+# ------------------------------------------------------- S4 端口冲突分类（QUOT-557）
+
+
+def test_port_conflict_reason_picks_most_conservative_owner() -> None:
+    """白话原因按占用者分类；混合占用取最保守（foreign > adopted > own），失败关闭。"""
+    own = port_conflict_reason([OWNER_OWN_CHILD])
+    adopted = port_conflict_reason([OWNER_ADOPTED_PEER])
+    foreign = port_conflict_reason([OWNER_FOREIGN])
+    assert "安全重启" in own
+    assert "不会终止" in adopted
+    assert "不会终止" in foreign and "不会自动换端口" in foreign
+    assert port_conflict_reason([OWNER_OWN_CHILD, OWNER_FOREIGN]) == foreign
+    assert port_conflict_reason([OWNER_OWN_CHILD, OWNER_ADOPTED_PEER]) == adopted
+    assert port_conflict_reason([OWNER_ADOPTED_PEER, OWNER_FOREIGN]) == foreign
+    assert port_conflict_reason([])  # 空列表回退通用原因（非空字符串）
+
+
+def test_foreign_conflict_event_carries_owner_and_pid() -> None:
+    world = _World()
+    entry = _entry()  # 活着，但端口被外来进程占着
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_FOREIGN, pid=555)
+    ]
+    world.observe(entry)
+    events = world.events()
+    assert [e["event"] for e in events] == [EVENT_PORT_CONFLICT]
+    assert events[0]["conflicts"] == [{"port": 8790, "owner": OWNER_FOREIGN, "pid": 555}]
+    assert "不会终止" in events[0]["reason"]
+
+
+def test_own_child_residual_pid_is_conflict_but_healthy_self_is_not() -> None:
+    world = _World()
+    entry = _entry(pid=101, origin="spawned", adopted_peer=False)
+    # 健康本尊在听（pid 相符 + 存活）→ 非冲突
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD, pid=101)
+    ]
+    world.observe(entry)
+    assert world.events() == []
+    # 残留自有进程占口（pid 不符 + 占用者仍存活）→ own_child 冲突，可安全重启
+    world.occupants_alive.add(999)
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD, pid=999)
+    ]
+    world.now[0] += 10.0
+    world.observe(entry)
+    events = world.events()
+    assert [e["event"] for e in events] == [EVENT_PORT_CONFLICT]
+    assert events[0]["conflicts"] == [{"port": 8790, "owner": OWNER_OWN_CHILD, "pid": 999}]
+    assert "安全重启" in events[0]["reason"]
+
+
+def test_dead_occupant_in_stale_observation_is_not_conflict() -> None:
+    """节流复用的旧观测记着已死本尊 pid（pid 不符但占用者已死）→ 不误报冲突，
+    交给存活判定发 crash（S3 崩溃 / 恢复回归护栏）。"""
+    world = _World()
+    entry = _entry(pid=101, origin="spawned", adopted_peer=False)
+    world.occupants_alive.clear()  # 占用者 999 已死
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD, pid=999)
+    ]
+    world.alive.clear()  # 本模块也死了
+    world.observe(entry)
+    assert world.kinds() == [EVENT_CRASH]
+
+
+def test_adopted_peer_residual_pid_is_conflict_report_only() -> None:
+    world = _World()
+    entry = _entry()
+    world.occupants_alive.add(777)
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_ADOPTED_PEER, pid=777)
+    ]
+    world.observe(entry)
+    events = world.events()
+    assert [e["event"] for e in events] == [EVENT_PORT_CONFLICT]
+    assert events[0]["conflicts"][0]["owner"] == OWNER_ADOPTED_PEER
+    assert "不会终止" in events[0]["reason"]
+
+
+def test_pid_none_preserves_legacy_healthy_self_no_conflict() -> None:
+    """旧观测口径（无 pid）：own / adopted 在听即健康本尊，不误报冲突（兼容 QUOT-556）。"""
+    world = _World()
+    entry = _entry()
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD),
+        PortObservation(port=8791, listening=True, owner=OWNER_ADOPTED_PEER),
+    ]
+    world.observe(entry)
+    assert world.events() == []
+
+
+def test_port_conflicts_accessor_matches_event_detail() -> None:
+    world = _World()
+    entry = _entry()
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_FOREIGN, pid=555)
+    ]
+    world.observe(entry)
+    conflicts = world.monitor.port_conflicts(entry)
+    assert [(c.port, c.owner, c.pid) for c in conflicts] == [(8790, OWNER_FOREIGN, 555)]
+
+
+# ------------------------------------------------------- S4 安全处置联动（QUOT-557）
+
+
+class _ConflictRestarter:
+    """S4 端口冲突处置通道假件：记录调用，绝不真起进程。"""
+
+    def __init__(self, outcome: RestartOutcome | None = None) -> None:
+        self.calls: list[tuple[str, int]] = []
+        self.outcome = outcome or RestartOutcome(ok=True, pid=201)
+
+    def __call__(self, module: str, pid: int) -> RestartOutcome:
+        self.calls.append((module, pid))
+        return self.outcome
+
+
+def _heal_conflicts(
+    tmp_path: Path,
+    observations: list[PortObservation],
+    conflict_restarter: _ConflictRestarter,
+) -> tuple[Ledger, SelfHealEngine, HealthEventBus]:
+    ledger = Ledger(tmp_path / "supervisor" / "ledger.json")
+    ledger.ensure("wire", ports=(8790, 8791))
+    ledger.update("wire", pid=101, state="running", origin="spawned", adopted_peer=False)
+    bus = HealthEventBus()
+    restarter = _ScriptedRestarter(spawn_ok=True)
+    restarter.alive.add(101)
+    engine = SelfHealEngine(
+        ledger,
+        restarter,
+        sleeper=lambda _seconds: None,
+        backoff=(0.0, 0.0, 0.0),
+        event_bus=bus,
+        port_inspector=lambda entries: {"wire": observations},
+        port_conflict_restarter=conflict_restarter,
+        is_pid_alive=lambda _pid: True,  # 占用者均存活：本组聚焦处置路由（own vs 外来）
+    )
+    return ledger, engine, bus
+
+
+def test_own_child_conflict_triggers_safe_restart(tmp_path: Path) -> None:
+    """own_child 残留占口 → 发冲突事件 + 调处置通道安全重启（只对自有占用者）。"""
+    restarter = _ConflictRestarter()
+    obs = [PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD, pid=999)]
+    _ledger, engine, bus = _heal_conflicts(tmp_path, obs, restarter)
+
+    engine.tick()
+
+    assert restarter.calls == [("wire", 999)]
+    events = bus.since(0)
+    assert [e.event for e in events] == [EVENT_PORT_CONFLICT]
+    assert events[0].conflicts == ({"port": 8790, "owner": OWNER_OWN_CHILD, "pid": 999},)
+
+
+def test_foreign_conflict_never_calls_restarter(tmp_path: Path) -> None:
+    """外来占口 → 只发冲突事件供弹窗，绝不自动处置（DEC-014 / QUOT-545 红线）。"""
+    restarter = _ConflictRestarter()
+    obs = [PortObservation(port=8790, listening=True, owner=OWNER_FOREIGN, pid=555)]
+    _ledger, engine, bus = _heal_conflicts(tmp_path, obs, restarter)
+
+    engine.tick()
+    engine.tick()
+
+    assert restarter.calls == [], "外来冲突被自动处置了（红线）"
+    events = bus.since(0)
+    assert [e.event for e in events] == [EVENT_PORT_CONFLICT]
+    assert events[0].conflicts[0]["owner"] == OWNER_FOREIGN
+
+
+def test_adopted_peer_conflict_never_calls_restarter(tmp_path: Path) -> None:
+    """adopted 占口 → 只发冲突事件供弹窗，绝不自动处置（QUOT-545 adopt-only 红线）。"""
+    restarter = _ConflictRestarter()
+    obs = [PortObservation(port=8790, listening=True, owner=OWNER_ADOPTED_PEER, pid=777)]
+    _ledger, engine, bus = _heal_conflicts(tmp_path, obs, restarter)
+
+    engine.tick()
+
+    assert restarter.calls == [], "adopted 冲突被自动处置了（红线）"
+    assert [e.event for e in bus.since(0)] == [EVENT_PORT_CONFLICT]
