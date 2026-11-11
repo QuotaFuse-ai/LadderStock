@@ -1449,8 +1449,10 @@ class FinanceCofferAdapter:
 
     # ------------------------------------------------------------------ 识别
 
-    def identify(self) -> Identification:
-        items = tuple(self._evidence(port) for port in self.ports)
+    def identify(self, port: int | None = None) -> Identification | PortEvidence:
+        if port is not None:
+            return self._evidence(port)
+        items = tuple(self._evidence(item) for item in self.ports)
         return Identification(module=self.name, matched=any(i.matched for i in items), ports=items)
 
     def _evidence(self, port: int) -> PortEvidence:
@@ -1700,8 +1702,10 @@ class ProxyFleetAdapter:
 
     # ------------------------------------------------------------------ 识别
 
-    def identify(self) -> Identification:
-        items = tuple(self._evidence(port) for port in self.ports)
+    def identify(self, port: int | None = None) -> Identification | PortEvidence:
+        if port is not None:
+            return self._evidence(port)
+        items = tuple(self._evidence(item) for item in self.ports)
         return Identification(module=self.name, matched=any(i.matched for i in items), ports=items)
 
     def _evidence(self, port: int) -> PortEvidence:

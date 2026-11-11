@@ -28,6 +28,7 @@ from ladderstock.supervisor.module_adapters import (
     BaseAdapter,
     CommandResult,
     FinanceCofferAdapter,
+    Identification,
     PortEvidence,
     PreflightReport,
     ProcessSnapshot,
@@ -519,6 +520,98 @@ def test_proxyfleet_probe_is_false_for_a_foreign_listener(tmp_path: Path) -> Non
     pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
     host.add_process(("D:/other/gateway.exe", "--port", "8788"), ports=(8788,))
     assert pf.probe() is False
+
+
+# --------------------------------------------------------------------------- #
+# identify(port=None) 契约（QUOT-546）：单端口 PortEvidence / 无参聚合 Identification
+# --------------------------------------------------------------------------- #
+
+
+def test_financecoffer_identify_port_returns_single_port_evidence(tmp_path: Path) -> None:
+    """带 port 调用返回单端口 PortEvidence（供 page_boot._identify 认领），不再是聚合。"""
+    host, adapters = _adapters(tmp_path, _fc_host())
+    fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
+    pid = host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
+
+    evidence = fc.identify(8100)
+
+    assert isinstance(evidence, PortEvidence)
+    assert evidence.port == 8100
+    assert evidence.listening is True
+    assert evidence.matched is True
+    assert evidence.pid == pid
+
+
+def test_financecoffer_identify_no_arg_returns_aggregate(tmp_path: Path) -> None:
+    """无参 identify() 仍返回聚合 Identification，.matched / .ports 口径不变。"""
+    host, adapters = _adapters(tmp_path, _fc_host())
+    fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
+    host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
+
+    identification = fc.identify()
+
+    assert isinstance(identification, Identification)
+    assert identification.module == "financecoffer"
+    assert identification.matched is True
+    assert tuple(item.port for item in identification.ports) == MODULE_PORTS["financecoffer"]
+
+
+def test_financecoffer_identify_port_not_listening_fails_closed(tmp_path: Path) -> None:
+    host, adapters = _adapters(tmp_path, _fc_host())
+    fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
+
+    evidence = fc.identify(8100)
+
+    assert isinstance(evidence, PortEvidence)
+    assert evidence.listening is False
+    assert evidence.matched is False
+    assert evidence.pid is None
+
+
+def test_proxyfleet_identify_port_returns_single_port_evidence(tmp_path: Path) -> None:
+    host, adapters = _adapters(tmp_path)
+    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    pid = host.add_process(
+        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        ports=(8788, 8789),
+    )
+
+    evidence = pf.identify(8788)
+
+    assert isinstance(evidence, PortEvidence)
+    assert evidence.port == 8788
+    assert evidence.listening is True
+    assert evidence.matched is True
+    assert evidence.pid == pid
+
+
+def test_proxyfleet_identify_no_arg_returns_aggregate(tmp_path: Path) -> None:
+    host, adapters = _adapters(tmp_path)
+    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    host.add_process(
+        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        ports=(8788, 8789),
+    )
+
+    identification = pf.identify()
+
+    assert isinstance(identification, Identification)
+    assert identification.module == "proxyfleet"
+    assert identification.matched is True
+    assert tuple(item.port for item in identification.ports) == MODULE_PORTS["proxyfleet"]
+
+
+def test_proxyfleet_identify_port_foreign_listener_not_matched(tmp_path: Path) -> None:
+    """端口在听但命令行不命中：matched=False（认领失败关闭，绝不终止）。"""
+    host, adapters = _adapters(tmp_path)
+    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    host.add_process(("D:/other/gateway.exe", "--port", "8788"), ports=(8788,))
+
+    evidence = pf.identify(8788)
+
+    assert isinstance(evidence, PortEvidence)
+    assert evidence.listening is True
+    assert evidence.matched is False
 
 
 # --------------------------------------------------------------------------- #
