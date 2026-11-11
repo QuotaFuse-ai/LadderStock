@@ -1,0 +1,41 @@
+{
+  "steps": [
+    {
+      "step": "A-首拍对齐基线",
+      "dialogCount": 0,
+      "hasCrashTitle": false,
+      "hasConflictLine": false,
+      "bodyText": "\n    跳到主内容天梯股复盘台LadderStock · 本地看板首页市场情绪温度连板梯队题材轮动资讯雷达盯盘盘中信号竞价与盘中复盘每日复盘AI复盘AI周报候选池日志我的股票我的股票事件日历提醒验证验证策略回测涨停样本产业研究产业研究产业信号研究工具工具总览个股深挖接入 AI设置仅监听本机回环 · 草稿只存本机 IndexedDB工作空间 /首页重启平台本地 A 股短线工作台问 AI首页取数失败取数失败stub 未模拟该端点HTTP 404重试\n    本看板需要启用 JavaScript。\n\n  \n\n"
+    },
+    {
+      "step": "B-crash弹窗出现",
+      "dialogCount": 1,
+      "hasCrashTitle": true,
+      "hasConflictLine": false,
+      "bodyText": "\n    跳到主内容天梯股复盘台LadderStock · 本地看板首页市场情绪温度连板梯队题材轮动资讯雷达盯盘盘中信号竞价与盘中复盘每日复盘AI复盘AI周报候选池日志我的股票我的股票事件日历提醒验证验证策略回测涨停样本产业研究产业研究产业信号研究工具工具总览个股深挖接入 AI设置仅监听本机回环 · 草稿只存本机 IndexedDB工作空间 /首页重启平台本地 A 股短线工作台问 AI首页取数失败取数失败stub 未模拟该端点HTTP 404重试\n    本看板需要启用 JavaScript。\n\n  \n\n行情中心已崩溃退出行情中心进程意外退出（退出码 1），已自动尝试拉起未成功。本程序启动进程号 1234端口 8101确认重启只会重新拉起「行情中心」的替代实例，绝不会终止任何外部程序。稍后再说确认重启"
+    },
+    {
+      "step": "B-确认重启后弹窗关闭",
+      "dialogCount": 0,
+      "hasCrashTitle": false,
+      "hasConflictLine": false,
+      "bodyText": "\n    跳到主内容天梯股复盘台LadderStock · 本地看板首页市场情绪温度连板梯队题材轮动资讯雷达盯盘盘中信号竞价与盘中复盘每日复盘AI复盘AI周报候选池日志我的股票我的股票事件日历提醒验证验证策略回测涨停样本产业研究产业研究产业信号研究工具工具总览个股深挖接入 AI设置仅监听本机回环 · 草稿只存本机 IndexedDB工作空间 /首页重启平台本地 A 股短线工作台问 AI首页取数失败取数失败stub 未模拟该端点HTTP 404重试\n    本看板需要启用 JavaScript。\n\n  \n\n"
+    },
+    {
+      "step": "C-端口冲突弹窗出现",
+      "dialogCount": 1,
+      "hasCrashTitle": false,
+      "hasConflictLine": true,
+      "bodyText": "\n    跳到主内容天梯股复盘台LadderStock · 本地看板首页市场情绪温度连板梯队题材轮动资讯雷达盯盘盘中信号竞价与盘中复盘每日复盘AI复盘AI周报候选池日志我的股票我的股票事件日历提醒验证验证策略回测涨停样本产业研究产业研究产业信号研究工具工具总览个股深挖接入 AI设置仅监听本机回环 · 草稿只存本机 IndexedDB工作空间 /首页重启平台本地 A 股短线工作台问 AI首页取数失败取数失败stub 未模拟该端点HTTP 404重试\n    本看板需要启用 JavaScript。\n\n  \n\n行情中心的服务端口被其它程序占用行情中心需要的端口被其它程序先占了，服务没能启动。本程序启动进程号 1234端口 8101端口 8101被无关的外部程序占用（进程号 4242）：不会终止它，也不会自动换端口确认重启只会重新拉起「行情中心」的替代实例，绝不会终止任何外部程序。稍后再说确认重启"
+    },
+    {
+      "step": "C-recovered自动关",
+      "dialogCount": 0,
+      "hasCrashTitle": false,
+      "hasConflictLine": false,
+      "bodyText": "\n    跳到主内容天梯股复盘台LadderStock · 本地看板首页市场情绪温度连板梯队题材轮动资讯雷达盯盘盘中信号竞价与盘中复盘每日复盘AI复盘AI周报候选池日志我的股票我的股票事件日历提醒验证验证策略回测涨停样本产业研究产业研究产业信号研究工具工具总览个股深挖接入 AI设置仅监听本机回环 · 草稿只存本机 IndexedDB工作空间 /首页重启平台本地 A 股短线工作台问 AI首页取数失败取数失败stub 未模拟该端点HTTP 404重试\n    本看板需要启用 JavaScript。\n\n  \n\n"
+    }
+  ],
+  "cliViolations": [],
+  "verdict": "PASS（弹窗全程零 CLI）"
+}

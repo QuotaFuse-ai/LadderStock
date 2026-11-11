@@ -1127,6 +1127,8 @@ export interface SupervisorModule {
   cmdline?: string | null
   /** 仅 proxypool 模块：端口映射清单（QUOT-490 / QUOT-506）；其余模块缺省 */
   mappings?: ProxyMapping[]
+  /** QUOT-556：账本标记为外部认领的 peer（adopt-only，重启必须用户确认） */
+  adopted_peer?: boolean
 }
 
 export interface SupervisorStatePayload {
@@ -1143,6 +1145,63 @@ export interface SupervisorStatePayload {
    *  true = 引擎已注入，归属/自愈数据可用 */
   configured?: boolean
   supervisor_pid?: number | null
+  /** QUOT-556：事件总线最新 seq（前端据此发现新事件再拉 /events）；未接线时缺省 */
+  events_latest?: number
+}
+
+// ------------------------------------------------ peer 级健康事件（QUOT-556 / QUOT-557）
+
+/** 端口占用者分类（S4 / 与 web/port_diagnostics.py 同一套取值）。 */
+export type SupervisorConflictOwner = 'own_child' | 'adopted_peer' | 'foreign' | 'free'
+
+export interface SupervisorPortConflict {
+  port: number
+  owner: SupervisorConflictOwner
+  pid: number | null
+}
+
+export type SupervisorEventType = 'crash' | 'offline' | 'port_conflict' | 'needs_human' | 'recovered'
+
+/**
+ * `GET /api/supervisor/events?since=<seq>` 的一条事件（S5 弹窗订阅源）。
+ * `reason` 是后端写好的白话（不打印 argv / 技术栈），前端可直接展示；
+ * `conflicts` 只在 `port_conflict` 事件上非空（占用者分类，S4）。
+ */
+export interface SupervisorHealthEvent {
+  seq: number
+  ts: string
+  module: string
+  event: SupervisorEventType
+  health: string
+  state: string
+  reason: string
+  pid: number | null
+  ports: number[]
+  origin: SupervisorOrigin
+  adopted_peer: boolean
+  conflicts: SupervisorPortConflict[]
+}
+
+export interface SupervisorEventsPayload {
+  ok: boolean
+  /** false = 事件总线未接线（自愈未启用）：前端不弹窗、不报错，停止轮询 */
+  configured: boolean
+  latest: number
+  events: SupervisorHealthEvent[]
+}
+
+/**
+ * 一键确认重启请求（QUOT-556）：认领态 peer 必须 `confirm: true`——
+ * 确认只授权「拉起替代实例」，绝不授权终止任何外部进程（引擎闸门兜底）。
+ */
+export interface SupervisorRestartRequest {
+  modules: string[]
+  confirm?: boolean
+}
+
+export interface SupervisorRestartPayload {
+  ok: boolean
+  modules: Record<string, { ok: boolean; error: string | null }>
 }
 
 /**
@@ -1471,6 +1530,25 @@ export const api = {
       request<SupervisorStatePayload>('/supervisor/state', {
         signal,
         timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /**
+     * peer 级健康事件轮询（QUOT-556，S5 弹窗订阅源）：`since` = 上次见过的最大
+     * seq，返回其后事件（升序）与当前 `latest`。未接线时 `configured=false`。
+     */
+    events: (since = 0, signal?: AbortSignal) =>
+      request<SupervisorEventsPayload>(`/supervisor/events?since=${Math.max(0, Math.floor(since))}`, {
+        signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /**
+     * 一键确认重启（QUOT-556 / S5 弹窗主操作）：认领态 peer 必须显式 `confirm: true`。
+     * 确认只授权拉起替代实例，绝不授权终止外部进程；逐模块结果在 `modules` 里。
+     */
+    restart: (body: SupervisorRestartRequest) =>
+      request<SupervisorRestartPayload>('/supervisor/restart', {
+        method: 'POST',
+        body,
+        timeoutMs: 30000,
       }),
     /**
      * 人工解除 `needs_human`（482-C 已有写面）：清重拉窗口、健康回 ok。

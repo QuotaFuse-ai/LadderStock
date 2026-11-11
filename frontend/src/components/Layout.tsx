@@ -7,6 +7,7 @@ import MobileNavDrawer from './MobileNavDrawer'
 import PageCommandBar from './PageCommandBar'
 import PersistenceBanner from './PersistenceBanner'
 import TopbarTools from './TopbarTools'
+import PeerHealthAlert from './supervisor/PeerHealthDialog'
 import { AssistantDockDrawer } from './research/sections/AiDock'
 import { cn } from '../lib/cn'
 import { AssistantObjectContext, AssistantShellContext, type AssistantDockState, type AssistantOpenInput } from '../lib/assistant/shell'
@@ -396,6 +397,8 @@ export default function Layout() {
         overview={assistant?.overview ?? null}
         onClose={closeAssistant}
       />
+      {/* QUOT-558：子模块健康事件全局弹窗——任何页面 crash/掉线/端口冲突都主动打扰 */}
+      <PeerHealthAlert />
     </div>
   )
 }
