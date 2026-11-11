@@ -31,6 +31,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ladderstock.supervisor.health_events import (
+    DEFAULT_PORT_PROBE_INTERVAL,
+    HealthEventBus,
+    HealthEventMonitor,
+    PortInspector,
+)
 from ladderstock.supervisor.ledger import (
     HEALTH_NEEDS_HUMAN,
     HEALTH_OK,
@@ -115,6 +121,9 @@ class SelfHealEngine:
         modules: Sequence[str] | None = None,
         cold_start: bool = False,
         module_ports: Mapping[str, Sequence[int]] | None = None,
+        event_bus: HealthEventBus | None = None,
+        port_inspector: PortInspector | None = None,
+        port_probe_interval: float = DEFAULT_PORT_PROBE_INTERVAL,
     ) -> None:
         self.ledger = ledger
         self.restarter = restarter
@@ -138,6 +147,18 @@ class SelfHealEngine:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._tick_lock = threading.RLock()
+        #: peer 级健康事件通道（QUOT-556）：给了 bus 才启用观测，旧装配零影响。
+        self.event_bus = event_bus
+        self._monitor = (
+            HealthEventMonitor(
+                event_bus,
+                port_inspector=port_inspector,
+                clock=clock,
+                port_probe_interval=port_probe_interval,
+            )
+            if event_bus is not None
+            else None
+        )
 
     # ---------------------------------------------------------------- 生命周期
 
@@ -174,7 +195,20 @@ class SelfHealEngine:
     def tick(self) -> None:
         """单轮巡检：逐模块看账本、判死活、按需重拉。异常逐模块吞掉，不拖垮整轮。"""
         with self._tick_lock:
-            for module in self._managed_modules():
+            modules = self._managed_modules()
+            if self._monitor is not None:
+                # 先观测再处置：crash 事件不被本轮重拉的退避等待延迟；
+                # 处置结果（恢复/放弃）下一轮观测如实上报。
+                entries = [
+                    entry
+                    for module in modules
+                    if (entry := self.ledger.get(module)) is not None
+                ]
+                try:
+                    self._monitor.observe(entries, is_alive=self._alive)
+                except Exception:
+                    _log.exception("健康事件观测异常（已吞，不影响自愈主流程）")
+            for module in modules:
                 entry = self.ledger.get(module)
                 if entry is None:
                     continue
@@ -350,7 +384,7 @@ class SelfHealEngine:
                 for module, ports in known.items()
             ]
             modules.sort(key=lambda item: str(item["module"]))
-            return {
+            payload: dict[str, Any] = {
                 "ok": True,
                 "engine": {
                     "running": self.running,
@@ -360,6 +394,10 @@ class SelfHealEngine:
                 },
                 "modules": modules,
             }
+            if self.event_bus is not None:
+                # 前端拿既有 /state 轮询即可发现「有没有新事件」，再按需拉 /events。
+                payload["events_latest"] = self.event_bus.latest_seq
+            return payload
 
     def _module_snapshot(
         self, module: str, ports: tuple[int, ...], entry: LedgerEntry | None, now: float
@@ -375,6 +413,7 @@ class SelfHealEngine:
                 "restart_count": 0,
                 "stopping_by_user": False,
                 "origin": None,
+                "adopted_peer": False,
                 "cmdline_hash": None,
                 "last_exit_reason": None,
                 "self_heal": {"attempts": 0, "max": self.max_restarts, "status": "ok"},
@@ -403,6 +442,7 @@ class SelfHealEngine:
             "restart_count": entry.restart_count,
             "stopping_by_user": entry.stopping_by_user,
             "origin": entry.origin,
+            "adopted_peer": entry.adopted_peer,
             "cmdline_hash": entry.cmdline_hash,
             "last_exit_reason": entry.last_exit_reason,
             "self_heal": {

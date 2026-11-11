@@ -345,8 +345,23 @@ class SupervisorEngine:
         """单模块重启：只动该模块，其它模块的 pid 必须不变（判过证据 3）。
 
         全程持同一把引擎锁：重启期间 start_all/stop_all/state 一律排队。
+        外部 peer 认领（`adopted_peer`）不会被停止（QUOT-545 闸门在
+        `_stop_module`）：进程已死才允许拉起替代实例；进程活着但端口未监听
+        （卡死/掉线）时失败关闭——绝不为了重启而终止外部进程，也不造双实例。
         """
         with self._lock:
+            record = self._ledger.record(name)
+            if (
+                record is not None
+                and record.adopted_peer
+                and self._verify_pid(record) == "alive"
+                and not self._adapter(name).probe()
+            ):
+                raise SupervisorError(
+                    f"{name} 是外部认领的 peer：进程仍在运行（pid={record.pid}）"
+                    "但端口未监听。按 adopt-only 安全边界不终止外部进程，"
+                    "本次未重启；请先人工确认该进程已退出"
+                )
             before = {other: self._ledger.record(other) for other in MODULE_ORDER if other != name}
             self._stop_module(name)
             self._start_module(name)
