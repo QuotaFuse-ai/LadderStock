@@ -91,5 +91,8 @@ docs/tasks/QUOT-531/shots/
 # 验收任务产出例外：工具注册表交付与取证随 PR 交付（QUOT-543）
 !docs/tasks/QUOT-543/
 !docs/tasks/QUOT-543/README.md
+# 验收任务产出例外：adopted peer 停止边界修复报告随 PR 交付（QUOT-545）
+!docs/tasks/QUOT-545/
+!docs/tasks/QUOT-545/README.md
 *.docx
 ~$*

@@ -165,22 +165,35 @@ def build_selfheal_engine(root: str | Path, *, panel_url: str) -> SelfHealEngine
 
 
 def _stop_result(processes: Any, modules: list[str]) -> dict[str, Any]:
-    """按前端契约 `{confirm: true, modules: [...]}` 停模块；空列表 = 反向全停。"""
+    """按前端契约 `{confirm: true, modules: [...]}` 停模块；空列表 = 反向全停。
+
+    外部 peer 认领（`adopted_peer`，QUOT-545）引擎会跳过：如实进 `skipped`
+    （没停，不是失败），`ok` 不受影响。
+    """
     stopped: list[str] = []
     skipped: list[str] = []
     if not modules:
         outcome = processes.stop_all()
         for name, item in (outcome.get("modules") or {}).items():
-            (stopped if item.get("ok") else skipped).append(name)
+            if item.get("ok") and not item.get("skipped"):
+                stopped.append(name)
+            else:
+                skipped.append(name)
         return {"ok": bool(outcome.get("ok")), "stopped": stopped, "skipped": skipped}
+    failed = False
     for name in modules:
         try:
-            processes.stop_module(name)
+            view = processes.stop_module(name)
         except SupervisorError:
             skipped.append(name)
+            failed = True
         else:
-            stopped.append(name)
-    return {"ok": not skipped, "stopped": stopped, "skipped": skipped}
+            record = view.get("record") or {}
+            if record.get("adopted_peer"):
+                skipped.append(name)
+            else:
+                stopped.append(name)
+    return {"ok": not failed, "stopped": stopped, "skipped": skipped}
 
 
 def build_stop_router(processes: Any) -> APIRouter:

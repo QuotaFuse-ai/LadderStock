@@ -7,7 +7,9 @@ financecoffer → proxyfleet），停止严格反向。每条停止路径带超�
 
 归属判定只认**账本 + cmdline 匹配**：账本里 pid 存活且命令行指纹匹配才是
 managed；端口在听但账本无法证明是我们拉的一律 external——**不停外部进程**
-（QUOT-482-A 派单正文；D2 接管策略不在本单）。
+（QUOT-482-A 派单正文；D2 接管策略不在本单）。外部 peer 认领（`adopted_peer`
+标记，QUOT-545）同样绝不终止：stop_all / stop_module / restart 一律跳过，
+只有前任 supervisor 遗留的自有进程（对账续托管、无标记）才可被停止。
 
 并发互斥：`start_all / stop_all / restart_module / state` 全程持同一把
 `RLock`——并发启停直接排队，不交错（设计文档 §并发互斥）。
@@ -167,6 +169,7 @@ class SupervisorEngine:
         record.parent_pid = spawned.parent_pid
         record.started_at = now_iso()
         record.origin = "spawned"
+        record.adopted_peer = False
         record.cmdline_hash = cmdline_hash(spawned.cmdline)
         self._spawned_here.add(name)
         self._ledger.update(record)
@@ -190,24 +193,34 @@ class SupervisorEngine:
     # ------------------------------------------------------------------ 停止
 
     def stop_all(self) -> dict[str, Any]:
-        """按注册表反向全停；单模块失败不挡后面的，最后汇总。"""
+        """按注册表反向全停；单模块失败不挡后面的，最后汇总。
+
+        外部 peer 认领（`adopted_peer`）一律跳过并在汇总里记 `skipped`，
+        进程与账本原样保留（QUOT-545）。
+        """
         with self._lock:
             self.reconcile()
             results: dict[str, Any] = {}
             for name in reversed(MODULE_ORDER):
                 try:
-                    self._stop_module(name)
+                    record = self._stop_module(name)
                 except SupervisorError as exc:
                     results[name] = {"ok": False, "error": str(exc)}
                 else:
-                    results[name] = {"ok": True, "error": None}
+                    item: dict[str, Any] = {"ok": True, "error": None}
+                    if record.adopted_peer:
+                        item["skipped"] = "adopted_peer"
+                    results[name] = item
             return {
                 "ok": all(item["ok"] for item in results.values()),
                 "modules": results,
             }
 
     def stop_module(self, name: str) -> dict[str, Any]:
-        """单模块停止（对外单模块入口，restart 也走它）。"""
+        """单模块停止（对外单模块入口，restart 也走它）。
+
+        外部 peer 认领（`adopted_peer`）跳过不动，记录原样返回（QUOT-545）。
+        """
         with self._lock:
             self._stop_module(name)
             record = self._ledger.record(name)
@@ -219,6 +232,13 @@ class SupervisorEngine:
             module=name, ports=list(MODULE_PORTS[name])
         )
         record.ports = list(MODULE_PORTS[name])
+
+        if record.adopted_peer:
+            # 外部 peer 认领（QUOT-545）：只认领、不终止、不重启，退出后原样保留
+            # （QUOT-519/523/527 红线）。不写停止意图、不改状态——账本对它是
+            # 观测记录，不是处置依据。前任 supervisor 遗留的自有进程不带此标记，
+            # 崩溃恢复语义不变。
+            return record
 
         if record.state == "stopped":
             # 账本已判定停了：要么真停了，要么对账判定端口上的进程不是我们的
@@ -307,6 +327,10 @@ class SupervisorEngine:
         返回被认领的账本记录；没有可认领的实例（端口空闲 / 持有者不是本模块 /
         读不到证据）返回 None，调用方据此决定是否真正拉起。判定口径与 PageBoot
         的 adopt-only 一致：只认「端口在听 + 命令行命中 + 有 pid」，读不到不认。
+
+        按识别证据认领的实例记 `adopted_peer=True`（外部 peer，QUOT-545）：
+        停止路径一律跳过。账本已证明存活的前任自有进程走续健康分支，不打标记，
+        崩溃恢复后仍可被 stop_all 正常停止。
         """
         with self._lock:
             adapter = self._adapter(name)
@@ -334,6 +358,10 @@ class SupervisorEngine:
             record.parent_pid = parent
             record.started_at = record.started_at or now_iso()
             record.origin = "adopted"
+            # 账本证明不了是本控制面拉的（否则走上面的续健康分支）：这是外部
+            # peer 认领，不是前任 supervisor 遗留的自有进程——任何停止路径
+            # 一律跳过（QUOT-545）。
+            record.adopted_peer = True
             record.cmdline_hash = cmdline_hash(evidence.cmdline)
             record.state = "running"
             record.forced_kill = False

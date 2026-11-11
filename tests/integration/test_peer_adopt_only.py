@@ -16,8 +16,10 @@ peer 全部由测试自己拉起（`python -c …`，绑定临时端口 0），�
 不终止、不重启任何生产 peer，也没有平台 skip：CI（Linux）与部署机（Windows）
 跑同一套断言。
 
-已知缺陷：`stop_all()` 对 adopted 记录照样调适配器 `stop()`，会把 peer 一起
-终止（QUOT-545；本文件用 `xfail(strict=True)` 钉住，修复后自动 XPASS）。
+已知缺陷 QUOT-545（stop_all 误杀 adopted peer）已修复：账本以 `adopted_peer`
+标记区分外部 peer 认领与前任 supervisor 遗留自有进程，停止路径对前者一律跳过；
+退出用例的 xfail 已按派单要求删除。前任自有进程仍可被 stop_all 停止的回归见
+`tests/integration/test_stop_all_ownership.py`。
 """
 
 from __future__ import annotations
@@ -448,14 +450,6 @@ def test_exit_stop_children_leaves_adopted_peers_untouched(world: World) -> None
         _assert_peer_untouched(world, name, pid)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "已知缺陷 QUOT-545：SupervisorEngine.stop_all() 不区分 adopted 来源，"
-        "对 adopted peer 照样调用适配器 stop() 并终止进程；"
-        "后端修复后本用例应 XPASS，届时删掉 xfail"
-    ),
-)
 def test_exit_single_entry_stop_all_leaves_adopted_peers_untouched(world: World) -> None:
     for name in PEER_MODULES:
         assert world.engine.adopt_module(name) is not None
