@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -333,7 +334,7 @@ def test_empty_message_rejected_without_touching_store(
     assert not chat_store.db_path(tmp_path).exists()
 
 
-def test_ai_failure_uses_chat_failure_shape_and_writes_no_turn(
+def test_ai_failure_uses_chat_failure_shape_and_writes_failed_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake = _FakeClient(exc=OSError("connection reset"))
@@ -349,5 +350,215 @@ def test_ai_failure_uses_chat_failure_shape_and_writes_no_turn(
     assert body["code"] == "ai_network"
     assert body["failure"]["kind"] == "network"
     assert body["retryable"] is True
-    # 失败不落账：本轮既没建会话也没写轮次，库文件都没被创建
-    assert not chat_store.db_path(tmp_path).exists()
+    # 服务端失败落 `failed` 一行（status 四态之一），块里只有失败说明，便于回看与重试
+    conn = chat_store.connect(tmp_path)
+    assert conn is not None
+    try:
+        turns = chat_store.session_turns(conn, "sess-fail")
+    finally:
+        chat_store.close(conn)
+    assert len(turns) == 1
+    assert turns[0]["status"] == chat_store.FAILED
+    blocks = json.loads(turns[0]["blocks_json"])
+    assert [block["type"] for block in blocks] == [answer_blocks.BLOCK_NOTICE]
+    # 失败说明块走现役 `_failure_blocks()`：kind 固定 `missing_data`（六种既有 kind 之外
+    # 唯一获批的新档），可读文案仍是 `ChatFailure.message`
+    assert blocks[0]["payload"]["kind"] == answer_blocks.NOTICE_MISSING_DATA
+    assert blocks[0]["payload"]["message"] == "AI 请求未送达（网络/代理）：connection reset"
+
+
+# --------------------------------------------------------------------------- #
+# 写入时机（落点 B）+ status 四态：边到达边 upsert、停止/失败可区分、重启不丢
+# --------------------------------------------------------------------------- #
+
+
+def _stored_turns(tmp_path: Path, session_id: str) -> list[dict[str, Any]]:
+    conn = chat_store.connect(tmp_path)
+    assert conn is not None
+    try:
+        return chat_store.session_turns(conn, session_id)
+    finally:
+        chat_store.close(conn)
+
+
+def test_http_response_carries_status_and_read_api_exposes_it(
+    tmp_path: Path, fake_client: _FakeClient
+) -> None:
+    client = _client(tmp_path)
+    response = _post_turn(
+        client, message="带来源的一问", session_id="sess-status", context={"sources": [_source()]}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == chat_store.DONE
+
+    payload = client.get(
+        "/api/conversation/sessions/sess-status/turns", headers=HEADERS
+    ).json()
+    assert payload["turns"][0]["status"] == chat_store.DONE
+    assert payload["turns"][0]["updated_at"]
+
+
+def test_blocks_arrive_incrementally_into_one_row(
+    tmp_path: Path, fake_client: _FakeClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """每拼出一块就写一次：首块插行（streaming），后续块更新同一行，全程只有一行。"""
+    events: list[tuple[str, list[str]]] = []
+    original_begin = chat_store.begin_turn
+    original_update = chat_store.update_turn_blocks
+
+    def spy_begin(conn: Any, **kwargs: Any) -> Any:
+        events.append(("begin", [block["type"] for block in kwargs["blocks"]]))
+        return original_begin(conn, **kwargs)
+
+    def spy_update(conn: Any, **kwargs: Any) -> bool:
+        events.append(("update", [block["type"] for block in kwargs["blocks"]]))
+        return original_update(conn, **kwargs)
+
+    monkeypatch.setattr(chat_store, "begin_turn", spy_begin)
+    monkeypatch.setattr(chat_store, "update_turn_blocks", spy_update)
+
+    client = _client(tmp_path)
+    response = _post_turn(
+        client,
+        message="多块一问",
+        session_id="sess-arrive",
+        context={"sources": [_source()]},
+    )
+
+    assert response.status_code == 200
+    # 首块插行 → 之后每多一块更新同一行；块序由现役 `build_blocks()` 决定
+    canonical = response.json()["blocks"]
+    assert len(canonical) >= 2
+    assert events[0] == ("begin", [canonical[0]["type"]])
+    assert [kinds for op, kinds in events[1:] if op == "update"] == [
+        [block["type"] for block in canonical[:n]] for n in range(2, len(canonical) + 1)
+    ]
+    types = [block["type"] for block in canonical]
+    assert types[0] == answer_blocks.BLOCK_CONCLUSION
+    assert answer_blocks.BLOCK_CITATION in types  # 有来源 → 出 citation，不出「来源缺失」
+    assert "来源" not in {
+        block["payload"].get("section")
+        for block in canonical
+        if block["type"] == answer_blocks.BLOCK_NOTICE
+    }
+    rows = _stored_turns(tmp_path, "sess-arrive")
+    assert len(rows) == 1
+    assert rows[0]["seq"] == 1
+    assert json.loads(rows[0]["blocks_json"]) == canonical
+
+
+def test_aborted_turn_keeps_arrived_blocks_after_client_disconnect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """用户点停止 = 生成中被取消：status=aborted，已到达的块保留，可回看/作上下文。
+
+    走 `run_turn` 本身而不经 HTTP：`asyncio.CancelledError` 在 Starlette 的同步
+    端点里会被转成 500/`No response returned`，那层不是本单要测的语义。
+    """
+
+    class _AbortingClient(_FakeClient):
+        def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
+            raise asyncio.CancelledError("client disconnected")
+
+    fake = _AbortingClient()
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:test-model")
+    )
+    with pytest.raises(asyncio.CancelledError):
+        assistant_module.run_turn(
+            message="用户会停的一问", session_id="sess-aborted", data_root=tmp_path
+        )
+
+    rows = _stored_turns(tmp_path, "sess-aborted")
+    assert len(rows) == 1
+    assert rows[0]["status"] == chat_store.ABORTED
+    # 定格内容可完整读出（即便此刻只有空块，字段也不是 NULL）
+    assert isinstance(json.loads(rows[0]["blocks_json"]), list)
+
+    # 「重启服务」再读：aborted 不因进程退出丢失
+    reopened = _client(tmp_path)
+    payload = reopened.get(
+        "/api/conversation/sessions/sess-aborted/turns", headers=HEADERS
+    ).json()
+    assert payload["turns"][0]["status"] == chat_store.ABORTED
+
+
+def test_aborted_and_failed_are_both_distinguishable_over_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Abort(_FakeClient):
+        def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
+            raise asyncio.CancelledError("client disconnected")
+
+    class _Fail(_FakeClient):
+        def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
+            raise OSError("connection reset")
+
+    client = _client(tmp_path)
+
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (_FakeClient(), "openai:test-model")
+    )
+    ok = _post_turn(client, message="正常一问", session_id="sess-four-ok")
+    assert ok.status_code == 200 and ok.json()["status"] == chat_store.DONE
+
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (_Abort(), "openai:test-model")
+    )
+    with pytest.raises(asyncio.CancelledError):
+        assistant_module.run_turn(
+            message="停止一问", session_id="sess-four-abort", data_root=tmp_path
+        )
+
+    monkeypatch.setattr(
+        assistant_module, "_load_client", lambda *_a, **_k: (_Fail(), "openai:test-model")
+    )
+    failed = _post_turn(client, message="失败一问", session_id="sess-four-fail")
+    assert failed.status_code == 502
+
+    assert _stored_turns(tmp_path, "sess-four-ok")[0]["status"] == chat_store.DONE
+    assert _stored_turns(tmp_path, "sess-four-abort")[0]["status"] == chat_store.ABORTED
+    assert _stored_turns(tmp_path, "sess-four-fail")[0]["status"] == chat_store.FAILED
+
+
+def test_no_new_notice_kinds_from_status(tmp_path: Path, fake_client: _FakeClient) -> None:
+    """status 走独立列：块里的 notice.kind 仍是既有集合，不新增「已停止」之类。"""
+    client = _client(tmp_path)
+    response = _post_turn(client, message="没来源的一问", session_id="sess-kinds")
+    kinds = {
+        block["payload"]["kind"]
+        for block in response.json()["blocks"]
+        if block["type"] == answer_blocks.BLOCK_NOTICE
+    }
+    assert "aborted" not in kinds and "stopped" not in kinds
+    assert kinds <= set(answer_blocks.NOTICE_KINDS) | {answer_blocks.NOTICE_MISSING_DATA}
+
+
+def test_streaming_row_persists_after_hard_stop(tmp_path: Path) -> None:
+    """「第 2 块后杀进程」：进程内已写完 streaming 行，重开 app 仍读得到。"""
+    two_blocks = assistant_module._conversation_blocks(
+        reply="第一句。", sources=[assistant_module.ChatSource(**_source())]
+    )[:2]
+    conn = chat_store.connect(tmp_path)
+    assert conn is not None
+    try:
+        started = chat_store.begin_turn(
+            conn, session_id="sess-hard-stop", question="杀进程前的一问", blocks=two_blocks
+        )
+        chat_store.update_turn_blocks(
+            conn, session_id="sess-hard-stop", seq=started["seq"], blocks=two_blocks
+        )
+    finally:
+        # 不落终态，直接关连接；再换一个 app 实例读
+        chat_store.close(conn)
+
+    reopened = _client(tmp_path)
+    payload = reopened.get(
+        "/api/conversation/sessions/sess-hard-stop/turns", headers=HEADERS
+    ).json()
+    assert len(payload["turns"]) == 1
+    assert payload["turns"][0]["status"] == chat_store.STREAMING
+    assert [block["type"] for block in payload["turns"][0]["blocks"]] == [
+        answer_blocks.BLOCK_CONCLUSION,
+        answer_blocks.BLOCK_NOTICE,
+    ]

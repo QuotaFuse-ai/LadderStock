@@ -283,3 +283,256 @@ def test_refuses_newer_schema(root: Path) -> None:
         raw.close()
     with pytest.raises(LadderStockError):
         chat_store.connect(root)
+
+
+# --------------------------------------------------------------------------- #
+# v2：轮次 status 四态 + 边到达边 upsert
+# --------------------------------------------------------------------------- #
+
+
+def test_append_turn_writes_done_status(root: Path) -> None:
+    conn = chat_store.connect(root)
+    assert conn is not None
+    try:
+        recorded = chat_store.append_turn(
+            conn, session_id="sess-done", question="普通一问", blocks_json="[]"
+        )
+        turns = chat_store.session_turns(conn, "sess-done")
+    finally:
+        chat_store.close(conn)
+    assert recorded["status"] == chat_store.DONE
+    assert [row["status"] for row in turns] == [chat_store.DONE]
+    assert turns[0]["updated_at"] == turns[0]["created_at"]
+
+
+def test_append_turn_rejects_non_terminal_status(root: Path) -> None:
+    conn = chat_store.connect(root)
+    assert conn is not None
+    try:
+        with pytest.raises(ValueError):
+            chat_store.append_turn(
+                conn,
+                session_id="sess-bad",
+                question="问",
+                blocks_json="[]",
+                status=chat_store.STREAMING,
+            )
+    finally:
+        chat_store.close(conn)
+
+
+def test_streaming_turn_upserts_one_row_until_done(root: Path) -> None:
+    """同一轮多次更新只产生一行；status 从 streaming 流转到 done。"""
+    first = _blocks("第一块。")
+    second = first + [
+        {"type": "citation", "id": "citation", "payload": {"items": []}},
+    ]
+    conn = chat_store.connect(root)
+    assert conn is not None
+    try:
+        started = chat_store.begin_turn(
+            conn,
+            session_id="sess-stream",
+            question="流式一问",
+            blocks=first,
+            moment="2026-11-13T01:00:00+00:00",
+        )
+        mid = chat_store.session_turns(conn, "sess-stream")
+        chat_store.update_turn_blocks(
+            conn,
+            session_id="sess-stream",
+            seq=started["seq"],
+            blocks=second,
+            moment="2026-11-13T01:00:05+00:00",
+        )
+        chat_store.update_turn_blocks(
+            conn,
+            session_id="sess-stream",
+            seq=started["seq"],
+            blocks=second,
+            moment="2026-11-13T01:00:06+00:00",
+        )
+        chat_store.finish_turn(
+            conn,
+            session_id="sess-stream",
+            seq=started["seq"],
+            status=chat_store.DONE,
+            blocks=second,
+            moment="2026-11-13T01:00:07+00:00",
+        )
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM chat_turn WHERE session_id = ?", ("sess-stream",)
+        ).fetchone()[0]
+        turns = chat_store.session_turns(conn, "sess-stream")
+    finally:
+        chat_store.close(conn)
+
+    assert len(mid) == 1 and mid[0]["status"] == chat_store.STREAMING
+    assert len(mid[0]["blocks_json"]) > 0
+    assert rows == 1, "一轮只允许一行 chat_turn"
+    assert len(turns) == 1
+    assert turns[0]["status"] == chat_store.DONE
+    assert turns[0]["updated_at"] == "2026-11-13T01:00:07+00:00"
+    assert len(json.loads(turns[0]["blocks_json"])) == 2
+
+
+def test_aborted_keeps_arrived_blocks_and_cannot_be_overwritten(root: Path) -> None:
+    """用户停止：status=aborted，已到达块完整可读；终态不可被后续块改写。"""
+    arrived = _blocks("已到达的结论。")
+    conn = chat_store.connect(root)
+    assert conn is not None
+    try:
+        started = chat_store.begin_turn(
+            conn, session_id="sess-abort", question="用户停了的问", blocks=arrived
+        )
+        finished = chat_store.finish_turn(
+            conn, session_id="sess-abort", seq=started["seq"], status=chat_store.ABORTED
+        )
+        late = chat_store.update_turn_blocks(
+            conn,
+            session_id="sess-abort",
+            seq=started["seq"],
+            blocks=_blocks("晚到的块，不该覆盖"),
+        )
+        again = chat_store.finish_turn(
+            conn, session_id="sess-abort", seq=started["seq"], status=chat_store.DONE
+        )
+        turns = chat_store.session_turns(conn, "sess-abort")
+    finally:
+        chat_store.close(conn)
+
+    assert finished is True
+    assert late is False
+    assert again is False
+    assert [row["status"] for row in turns] == [chat_store.ABORTED]
+    assert json.loads(turns[0]["blocks_json"]) == arrived
+
+
+def test_failed_turn_is_distinguishable_from_aborted(root: Path) -> None:
+    note = [
+        {
+            "type": "notice",
+            "id": "notice",
+            "payload": {"kind": "network", "section": "回答", "message": "网络没通"},
+        }
+    ]
+    conn = chat_store.connect(root)
+    assert conn is not None
+    try:
+        events = []
+        for session_id, status in (
+            ("sess-aborted", chat_store.ABORTED),
+            ("sess-failed", chat_store.FAILED),
+        ):
+            started = chat_store.begin_turn(
+                conn, session_id=session_id, question="同一句话", blocks=note
+            )
+            chat_store.finish_turn(
+                conn,
+                session_id=session_id,
+                seq=started["seq"],
+                status=status,
+                blocks=note if status == chat_store.FAILED else None,
+            )
+            events.append(chat_store.session_turns(conn, session_id)[0]["status"])
+    finally:
+        chat_store.close(conn)
+    assert events == [chat_store.ABORTED, chat_store.FAILED]
+    assert chat_store.TURN_STATUSES == ("streaming", "done", "aborted", "failed")
+
+
+def test_streaming_row_survives_process_exit(root: Path) -> None:
+    """模拟「第 2 块后杀进程」：写好 streaming 行后直接关连接，重开仍读得到已到的块。"""
+    two_blocks = _blocks("第一块。") + [
+        {"type": "citation", "id": "citation", "payload": {"items": [{"name": "来源 A"}]}},
+    ]
+    conn = chat_store.connect(root)
+    assert conn is not None
+    started = chat_store.begin_turn(
+        conn, session_id="sess-kill", question="杀进程前的一问", blocks=two_blocks
+    )
+    chat_store.update_turn_blocks(
+        conn, session_id="sess-kill", seq=started["seq"], blocks=two_blocks
+    )
+    # 不放 finish，直接关连接 = 进程退出
+    chat_store.close(conn)
+
+    reopened = chat_store.connect(root)
+    assert reopened is not None
+    try:
+        turns = chat_store.session_turns(reopened, "sess-kill")
+    finally:
+        chat_store.close(reopened)
+    assert len(turns) == 1
+    assert turns[0]["status"] == chat_store.STREAMING
+    blocks = json.loads(turns[0]["blocks_json"])
+    assert [block["type"] for block in blocks] == ["conclusion", "citation"]
+
+
+def test_turn_seq_is_monotonic_and_unrelated_to_block_count(root: Path) -> None:
+    """轮次序号 1,2,3 与块数无关；块自己的 seq 不进 `chat_turn.seq`。"""
+    conn = chat_store.connect(root)
+    assert conn is not None
+    try:
+        seqs = []
+        for turn in range(1, 4):
+            started = chat_store.begin_turn(
+                conn, session_id="sess-seq", question=f"第{turn}问", blocks=_blocks()
+            )
+            for extra in range(turn):
+                chat_store.update_turn_blocks(
+                    conn,
+                    session_id="sess-seq",
+                    seq=started["seq"],
+                    blocks=_blocks() * (extra + 2),
+                )
+            chat_store.finish_turn(
+                conn, session_id="sess-seq", seq=started["seq"], status=chat_store.DONE
+            )
+            seqs.append(started["seq"])
+        turns = chat_store.session_turns(conn, "sess-seq")
+    finally:
+        chat_store.close(conn)
+    assert seqs == [1, 2, 3]
+    assert [row["seq"] for row in turns] == [1, 2, 3]
+
+
+def test_migrates_v1_database_backfilling_done_status(root: Path) -> None:
+    """v1 老库升级：加列成功、存量行回填 done、旧数据一块不丢。"""
+    root.mkdir(parents=True, exist_ok=True)
+    raw = sqlite3.connect(str(chat_store.db_path(root)), isolation_level=None)
+    try:
+        for statement in (
+            "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            "CREATE TABLE chat_session ("
+            "session_id TEXT PRIMARY KEY, title TEXT NOT NULL, "
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+            "CREATE TABLE chat_turn ("
+            "session_id TEXT NOT NULL REFERENCES chat_session(session_id) "
+            "ON DELETE CASCADE, seq INTEGER NOT NULL, question TEXT NOT NULL, "
+            "blocks_json TEXT NOT NULL, created_at TEXT NOT NULL, "
+            "PRIMARY KEY (session_id, seq))",
+            "CREATE INDEX idx_chat_session_updated ON chat_session(updated_at DESC)",
+            "CREATE INDEX idx_chat_turn_created ON chat_turn(session_id, created_at)",
+            "INSERT INTO schema_meta (key, value) VALUES ('schema_version', '1')",
+            "INSERT INTO chat_session VALUES "
+            "('sess-v1', '老会话', '2026-11-01T00:00:00+00:00', '2026-11-01T00:00:00+00:00')",
+            "INSERT INTO chat_turn VALUES "
+            "('sess-v1', 1, '老问题', '[{\"type\": \"conclusion\"}]', "
+            "'2026-11-01T00:00:00+00:00')",
+            "PRAGMA user_version = 1",
+        ):
+            raw.execute(statement)
+    finally:
+        raw.close()
+
+    conn = chat_store.connect(root)
+    assert conn is not None
+    try:
+        assert chat_store.schema_version(conn) == 2
+        turns = chat_store.session_turns(conn, "sess-v1")
+    finally:
+        chat_store.close(conn)
+    assert turns[0]["status"] == chat_store.DONE
+    assert turns[0]["updated_at"] == "2026-11-01T00:00:00+00:00"
+    assert json.loads(turns[0]["blocks_json"]) == [{"type": "conclusion"}]

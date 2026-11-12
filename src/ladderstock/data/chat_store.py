@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,12 +38,38 @@ from ladderstock.errors import EXIT_CONFIG, LadderStockError
 
 DB_FILENAME = "chat.sqlite"
 
-#: 会话库 schema 版本；与 `config/schema` 的整数版本号同口径
-SCHEMA_VERSION = 1
+#: 会话库 schema 版本；与 `config/schema` 的整数版本号同口径。
+#: v1 = 会话 + 轮次（成功后才写一行）；v2 = 轮次加 `status` / `updated_at`，
+#: 支持「边到达边 upsert」（见 `migrate()` 里 v2 分支的注释）。
+SCHEMA_VERSION = 2
 
 SCHEMA_META_TABLE = "schema_meta"
 
 TABLES: tuple[str, ...] = ("schema_meta", "chat_session", "chat_turn")
+
+# --------------------------------------------------------------------------- #
+# 轮次状态（v2）：四态，同一行的字段流转，不是插新行
+# --------------------------------------------------------------------------- #
+#
+# 为什么单独一列而不是塞进 `notice.kind`：老板只批了 `notice.kind="missing_data"`
+# 一种新 kind，红线又禁止改名复用既有 6 种 kind。「用户点了停止」是用户行为、
+# 内容已定格，不是数据缺失，语义上不属于 `notice`；服务端失败也不属于。
+# 前端按 `status` 显示「已停止 / 失败重试 / 生成中」，**不在 notice 里造状态**。
+#
+# - `STREAMING`：正在生成，`blocks_json` 可能只含已到达的块；首块到达时置这一态。
+# - `DONE`     ：正常完成（`done{completed: true}`），`blocks_json` 是本轮完整块。
+# - `ABORTED`  ：**用户主动停止**，内容定格；保留已到达的块，可作为下一问的上下文。
+# - `FAILED`   ：服务端失败（模型 / 数据错误，`done{completed: false}`），
+#                `blocks_json` 存失败说明块，便于回看与重试。
+STREAMING = "streaming"
+DONE = "done"
+ABORTED = "aborted"
+FAILED = "failed"
+
+TURN_STATUSES: tuple[str, ...] = (STREAMING, DONE, ABORTED, FAILED)
+
+#: 终态集合：离开 `streaming` 之后不再改写 `blocks_json`
+TERMINAL_STATUSES: frozenset[str] = frozenset({DONE, ABORTED, FAILED})
 
 #: 会话标题长度：取首问前 40 个 Unicode 码点，超长硬截断（不加省略号）。
 #: 选硬截断而不是「39 字 + …」：截断规则单点可测（`title == first_q[:40]`），
@@ -119,8 +146,14 @@ def close(conn: sqlite3.Connection | None) -> None:
 def migrate(conn: sqlite3.Connection) -> int:
     """幂等迁移到 `SCHEMA_VERSION`；返回迁移后的版本号。
 
-    这里只有 v1，全是 `CREATE ... IF NOT EXISTS`，所以不需要按版本跳步；
-    以后加 v2 时照 `sqlite_store._apply()` 的写法补 `if from_version < 2:` 分支。
+    逐版本跳步（照 `sqlite_store._apply()` 的写法）：每个 `if from_version < N:`
+    分支只做「v(N-1) → vN」那一段，登录版本号在同一事务里写。
+
+    **v2（QUOT-580 第二轮）**：`chat_turn` 加 `status` 与 `updated_at`，`blocks_json`
+    允许为 `NULL`（流式中尚未有块）。四态语义见模块顶部 `STREAMING / DONE /
+    ABORTED / FAILED` 的注释；旧库里的行都是「成功后写」的成品，一律回填 `done`。
+    migration 只做 `ALTER TABLE ... ADD COLUMN`（SQLite 不能改列约束），
+    所以 `blocks_json` 保持 v1 的 `NOT NULL`，流式首块用 `'[]'` 占位。
     """
     version = schema_version(conn)
     if version > SCHEMA_VERSION:
@@ -129,21 +162,35 @@ def migrate(conn: sqlite3.Connection) -> int:
             "请升级 LadderStock（不会自动降级或改写数据）",
             EXIT_CONFIG,
         )
-    if version < SCHEMA_VERSION:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+    if version >= SCHEMA_VERSION:
+        return version
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if version < 1:
             for statement in _split_statements(_SCHEMA_V1):
                 conn.execute(statement)
-            conn.execute(
-                f"INSERT INTO {SCHEMA_META_TABLE} (key, value) VALUES ('schema_version', ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (str(SCHEMA_VERSION),),
-            )
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
+        if version < 2:
+            for statement in _split_statements(_SCHEMA_V2):
+                conn.execute(statement)
+            # 回填 `done` 且不依赖 ADD COLUMN 的默认值：
+            #   决定论优先——即便某个 SQLite 构建把 DEFAULT 落到实处，这里也统一改写。
+            # v1 只有「成功后写」一种写入路径，存量行全部是成品。
+            # 四态逐条语义（写在 Python 注释里，SQL 注释会被 _split_statements 剥掉）：
+            #   streaming = 正在生成，blocks_json 可能不完整（首块到达时置）
+            #   done      = 正常完成（done{completed:true}）
+            #   aborted   = 用户主动停止，内容定格，可作为下一问上下文
+            #   failed    = 服务端失败（模型/数据错，done{completed:false}）
+            conn.execute("UPDATE chat_turn SET status = ?", (DONE,))
+        conn.execute(
+            f"INSERT INTO {SCHEMA_META_TABLE} (key, value) VALUES ('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(SCHEMA_VERSION),),
+        )
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     return schema_version(conn)
 
 
@@ -166,7 +213,8 @@ CREATE TABLE IF NOT EXISTS chat_session (
     updated_at TEXT NOT NULL
 );
 
--- 轮次：一轮成功的问答一行；`seq` 从 1 递增，`blocks_json` 存阶段 B 的 blocks 数组
+-- 轮次：一轮问答一行；`seq` 是**轮次序号**（1,2,3…），不是 `event: block` 的块序号
+-- v1：`blocks_json` 非空、只有成功后才写（v2 起由 ALTER 加 `status` / `updated_at`）
 CREATE TABLE IF NOT EXISTS chat_turn (
     session_id  TEXT NOT NULL REFERENCES chat_session(session_id) ON DELETE CASCADE,
     seq         INTEGER NOT NULL,
@@ -178,6 +226,13 @@ CREATE TABLE IF NOT EXISTS chat_turn (
 
 CREATE INDEX IF NOT EXISTS idx_chat_session_updated ON chat_session(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_turn_created ON chat_turn(session_id, created_at);
+"""
+
+#: v1 → v2：轮次加状态列与更新时间列。`ADD COLUMN` 不带 NOT NULL 约束的回填语义
+#: 交给 `migrate()` 里的 `UPDATE ... SET status = 'done'`（存量行都是成品）。
+_SCHEMA_V2 = """
+ALTER TABLE chat_turn ADD COLUMN status TEXT NOT NULL DEFAULT 'streaming';
+ALTER TABLE chat_turn ADD COLUMN updated_at TEXT;
 """
 
 
@@ -192,16 +247,135 @@ def append_turn(
     session_id: str,
     question: str,
     blocks_json: str,
+    status: str = DONE,
     max_sessions: int = MAX_SESSIONS,
     moment: str | None = None,
 ) -> dict[str, Any]:
-    """把一轮成功的问答写进库，返回 `{session_id, title, seq, created_at}`。
+    """把一轮问答**一次写完**（终态）并落库，返回 `{session_id, title, seq, created_at, status}`。
+
+    用于「拿到完整结果再写」的调用方；流式路径用
+    `begin_turn` → `update_turn_blocks` → `finish_turn`，同一轮只产生一行。
 
     - 会话不存在则新建，`title` 取本轮问题（即首问）；
-    - `seq` = 现有序号 + 1，从 1 开始；
+    - `seq` = **轮次序号** 现有序号 + 1，从 1 开始（与块的 `seq` 毫无关系）；
     - `created_at` 取 `max(now, 上一轮 created_at)`，保证单调不减（系统时钟回拨也不倒退）；
     - 写完后按 `updated_at` 淘汰最旧会话，**本会话跳过**（当前会话永不淘汰）。
     """
+    if status not in TERMINAL_STATUSES:
+        raise ValueError(f"append_turn 只接受终态，收到 {status!r}")
+    return _insert_turn(
+        conn,
+        session_id=session_id,
+        question=question,
+        blocks_json=blocks_json,
+        status=status,
+        max_sessions=max_sessions,
+        moment=moment,
+    )
+
+
+def begin_turn(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    question: str,
+    blocks: list[dict[str, Any]] | None = None,
+    max_sessions: int = MAX_SESSIONS,
+    moment: str | None = None,
+) -> dict[str, Any]:
+    """首块到达时插入一行 `chat_turn`，`status = streaming`。
+
+    返回同 `append_turn`，外加 `status`。之后同轮用 `update_turn_blocks`
+    改这一行的 `blocks_json`（**不插新行**），`finish_turn` 落终态。
+    """
+    blocks_json = json.dumps(blocks or [], ensure_ascii=False, separators=(",", ":"))
+    return _insert_turn(
+        conn,
+        session_id=session_id,
+        question=question,
+        blocks_json=blocks_json,
+        status=STREAMING,
+        max_sessions=max_sessions,
+        moment=moment,
+    )
+
+
+def update_turn_blocks(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    seq: int,
+    blocks: list[dict[str, Any]],
+    moment: str | None = None,
+) -> bool:
+    """流式增量：把同一轮的 `blocks_json` 换成**已到达的全部块**。
+
+    已落终态的行不再改写（返回 `False`），避免晚到的块覆盖 `aborted` 的定格内容。
+    每次更新刷新 `updated_at`（轮级的「最后一块到达时间」）。
+    """
+    moment = moment or now_iso()
+    payload = json.dumps(blocks, ensure_ascii=False, separators=(",", ":"))
+    cursor = conn.execute(
+        "UPDATE chat_turn SET blocks_json = ?, updated_at = ? "
+        "WHERE session_id = ? AND seq = ? AND status = ?",
+        (payload, moment, session_id, seq, STREAMING),
+    )
+    if cursor.rowcount:
+        conn.execute(
+            "UPDATE chat_session SET updated_at = ? WHERE session_id = ?",
+            (moment, session_id),
+        )
+    return bool(cursor.rowcount)
+
+
+def finish_turn(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    seq: int,
+    status: str,
+    blocks: list[dict[str, Any]] | None = None,
+    moment: str | None = None,
+) -> bool:
+    """落终态：`done` / `aborted` / `failed`，可同时带上最终块。
+
+    `blocks` 为 `None` 时保留已到达的块（`aborted` 就是这种用法：内容定格）；
+    已是终态的行不会被二次改写（返回 `False`），保证终态只写一次。
+    """
+    if status not in TERMINAL_STATUSES:
+        raise ValueError(f"finish_turn 只接受终态，收到 {status!r}")
+    moment = moment or now_iso()
+    if blocks is None:
+        cursor = conn.execute(
+            "UPDATE chat_turn SET status = ?, updated_at = ? "
+            "WHERE session_id = ? AND seq = ? AND status = ?",
+            (status, moment, session_id, seq, STREAMING),
+        )
+    else:
+        payload = json.dumps(blocks, ensure_ascii=False, separators=(",", ":"))
+        cursor = conn.execute(
+            "UPDATE chat_turn SET status = ?, blocks_json = ?, updated_at = ? "
+            "WHERE session_id = ? AND seq = ? AND status = ?",
+            (status, payload, moment, session_id, seq, STREAMING),
+        )
+    if cursor.rowcount:
+        conn.execute(
+            "UPDATE chat_session SET updated_at = ? WHERE session_id = ?",
+            (moment, session_id),
+        )
+    return bool(cursor.rowcount)
+
+
+def _insert_turn(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    question: str,
+    blocks_json: str,
+    status: str,
+    max_sessions: int,
+    moment: str | None,
+) -> dict[str, Any]:
     moment = moment or now_iso()
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -232,9 +406,10 @@ def append_turn(
             (moment, session_id),
         )
         conn.execute(
-            "INSERT INTO chat_turn (session_id, seq, question, blocks_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, seq, question, blocks_json, moment),
+            "INSERT INTO chat_turn "
+            "(session_id, seq, question, blocks_json, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, seq, question, blocks_json, status, moment, moment),
         )
         evicted = _evict(conn, keep=session_id, max_sessions=max_sessions)
         conn.execute("COMMIT")
@@ -245,6 +420,7 @@ def append_turn(
         "session_id": session_id,
         "title": title,
         "seq": seq,
+        "status": status,
         "created_at": moment,
         "evicted": evicted,
     }
@@ -334,10 +510,14 @@ def get_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | N
 
 
 def session_turns(conn: sqlite3.Connection, session_id: str) -> list[dict[str, Any]]:
-    """按 `seq` 升序取一个会话的全部轮次；`blocks_json` 原样返回，由调用方反序列化。"""
+    """按 `seq`（轮次序号）升序取一个会话的全部轮次。
+
+    `blocks_json` 原样返回、由调用方反序列化；`status` 为四态之一，
+    `aborted` / `failed` 的行同样带着已到达的块，供回看与下一问上下文。
+    """
     rows = conn.execute(
-        "SELECT seq, question, blocks_json, created_at FROM chat_turn "
-        "WHERE session_id = ? ORDER BY seq ASC",
+        "SELECT seq, question, blocks_json, status, created_at, updated_at "
+        "FROM chat_turn WHERE session_id = ? ORDER BY seq ASC",
         (session_id,),
     ).fetchall()
     return [
@@ -345,8 +525,10 @@ def session_turns(conn: sqlite3.Connection, session_id: str) -> list[dict[str, A
             "session_id": session_id,
             "seq": int(row["seq"]),
             "question": str(row["question"]),
-            "blocks_json": str(row["blocks_json"]),
+            "blocks_json": str(row["blocks_json"] or "[]"),
+            "status": str(row["status"]),
             "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"] or row["created_at"]),
         }
         for row in rows
     ]
@@ -361,16 +543,24 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
 
 
 __all__ = [
+    "ABORTED",
     "DB_FILENAME",
+    "DONE",
+    "FAILED",
     "MAX_SESSIONS",
     "SCHEMA_META_TABLE",
     "SCHEMA_VERSION",
+    "STREAMING",
     "TABLES",
+    "TERMINAL_STATUSES",
     "TITLE_MAX_CHARS",
+    "TURN_STATUSES",
     "append_turn",
+    "begin_turn",
     "close",
     "connect",
     "db_path",
+    "finish_turn",
     "get_session",
     "list_sessions",
     "migrate",
@@ -379,4 +569,5 @@ __all__ = [
     "schema_version",
     "session_turns",
     "title_from",
+    "update_turn_blocks",
 ]

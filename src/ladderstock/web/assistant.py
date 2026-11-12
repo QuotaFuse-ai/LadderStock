@@ -28,6 +28,7 @@ D1），块由现役的 `reply_to_structured()` → `build_blocks()` 装配（�
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -35,7 +36,7 @@ import secrets
 import socket
 import sqlite3
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -547,6 +548,24 @@ def _conversation_blocks(
     return _blocks_for(reply, sources)[:MAX_ANSWER_BLOCKS]
 
 
+def _arrive_blocks(
+    *,
+    reply: str,
+    sources: Sequence[ChatSource],
+    on_block: Callable[[list[dict[str, Any]]], None],
+) -> list[dict[str, Any]]:
+    """同 `_conversation_blocks` 成功路径，但逐块交付：每多一块就 `on_block(当前全部块)`。
+
+    块的装配仍走现役 `_blocks_for()`（`reply_to_structured()` → `build_blocks()`），
+    不在这里重排；逐块交付只服务「边到达边 upsert」的落库时机（DEC-085）。返回值与
+    `_conversation_blocks()` 完全一致，`on_block` 收到的最后一次快照就是返回值。
+    """
+    full = _conversation_blocks(reply=reply, sources=sources)
+    for count in range(1, len(full) + 1):
+        on_block([dict(block) for block in full[:count]])
+    return full
+
+
 def resolve_session_id(raw: str | None) -> str:
     """`session_id` 缺省时新生成一个；给了就必须是 8–64 位安全字符。"""
     text = (raw or "").strip()
@@ -666,28 +685,114 @@ def _session_history(
         turns.append(ContextHistoryTurn(role="assistant", text=row["answer"]))
     return turns
 
+class _TurnWriter:
+    """一轮问答的落库句柄：同一轮只产生一行 `chat_turn`，`status` 在同一行上流转。
 
-def _persist(
-    data_root: Any, session_id: str, question: str, blocks: list[dict[str, Any]]
-) -> dict[str, Any] | None:
-    """写一行 `chat_turn`；写库失败只记日志，不影响已经完成的回答。"""
-    conn = None
-    try:
-        conn = chat_store.connect(data_root)
-        if conn is None:
+    写入时机（QUOT-580 第二轮拍板「落点 B：边到达边 upsert」）：
+
+    - `start(blocks)`：首块到达时插入行，`status = streaming`；
+    - `arrive(blocks)`：后续每块到达，更新**同一行**的 `blocks_json`；
+    - `finish(status, blocks)`：`done` / `failed` 落终态；`aborted` 不带块——
+      保留已到达内容，用户点停止后定格。
+
+    任何一步写库失败都只记一条日志并把 `seq` 记成 `None`，**不影响答题主流程**；
+    客户端断开（`aborted`）属于正常路径，不是错误。
+
+    命名纪律：这里的 `seq` 是**轮次序号** `turn_seq`；块自身的 `seq` 是 `block_seq`，
+    两者不共名、日志里也不混着打。
+    """
+
+    def __init__(self, data_root: Any, session_id: str, question: str) -> None:
+        self._data_root = data_root
+        self._session_id = session_id
+        self._question = question[:MAX_QUESTION_ASK_CHARS]
+        self._conn: sqlite3.Connection | None = None
+        self._seq: int | None = None
+        self._broken = False
+        if data_root is not None:
+            self._conn = self._open()
+
+    def _open(self) -> sqlite3.Connection | None:
+        try:
+            return chat_store.connect(self._data_root)
+        except (sqlite3.Error, OSError, BoundaryViolation) as exc:
+            logger.warning("chat_store_unavailable detail=%s", exc)
+            self._broken = True
             return None
-        return chat_store.append_turn(
-            conn,
-            session_id=session_id,
-            question=question[:MAX_QUESTION_ASK_CHARS],
-            blocks_json=json.dumps(blocks, ensure_ascii=False, separators=(",", ":")),
+
+    def _guard(self, op: str, fn: Callable[[sqlite3.Connection], Any]) -> Any:
+        conn = self._conn
+        if conn is None or self._broken:
+            return None
+        try:
+            return fn(conn)
+        except sqlite3.Error as exc:
+            logger.warning("chat_store_write_failed op=%s detail=%s", op, exc)
+            self._broken = True
+            return None
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def turn_seq(self) -> int | None:
+        return self._seq
+
+    def start(self, blocks: list[dict[str, Any]]) -> None:
+        if self._seq is not None:
+            return
+        recorded = self._guard(
+            "begin",
+            lambda conn: chat_store.begin_turn(
+                conn,
+                session_id=self._session_id,
+                question=self._question,
+                blocks=blocks,
+            ),
         )
-    except (sqlite3.Error, OSError, BoundaryViolation) as exc:
-        logger.warning("chat_store_unavailable detail=%s", exc)
-        return None
-    finally:
-        if conn is not None:
-            chat_store.close(conn)
+        if recorded is not None:
+            self._seq = int(recorded["seq"])
+
+    def arrive(self, blocks: list[dict[str, Any]]) -> None:
+        if self._seq is None:
+            self.start(blocks)
+            return
+        seq = self._seq
+        self._guard(
+            "update",
+            lambda conn: chat_store.update_turn_blocks(
+                conn, session_id=self._session_id, seq=seq, blocks=blocks
+            ),
+        )
+
+    def finish(self, status: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        # 终态必须有行；`aborted` 可能在首块之前就发生，也要留下一行可回看的记录
+        if self._seq is None and status != chat_store.DONE:
+            self.start(blocks or [])
+        if self._seq is None:
+            return
+        seq = self._seq
+        self._guard(
+            "finish",
+            lambda conn: chat_store.finish_turn(
+                conn,
+                session_id=self._session_id,
+                seq=seq,
+                status=status,
+                blocks=blocks,
+            ),
+        )
+
+    def close(self) -> None:
+        chat_store.close(self._conn)
+        self._conn = None
+
+    def __enter__(self) -> _TurnWriter:
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        self.close()
 
 
 def run_turn(
@@ -701,8 +806,14 @@ def run_turn(
 ) -> dict[str, Any]:
     """会话模式的一轮问答：复用 `ask()` 的通道与记忆，另拼块并落库。
 
-    成功时返回 `ok/session_id/reply/blocks/model/channel/sources/turn_seq/fetched_at`；
+    成功时返回 `ok/session_id/reply/blocks/turn_seq/status/model/channel/sources/fetched_at`；
     `reply` 语义与抽屉完全一致（正文 + 服务端来源说明），块从同一份正文拼出。
+
+    写入时机（落点 B，边到达边 upsert）：块是逐块「到达」的——`conclusion` → `citation`
+    → `notice`。每拼出一块就经 `_TurnWriter` 写同一行 `chat_turn`：首块插
+    `status=streaming` 的行，后续块更新该行的 `blocks_json`，收尾落
+    `done` / `failed` / `aborted`。客户端断开（`GeneratorExit` / `CancelledError`）
+    按 `aborted` 落库、保留已到达的块，后续 QUOT-581 的流式实现可直接复用这条路径。
     """
     text = (message or "").strip()
     if not text:
@@ -735,25 +846,66 @@ def run_turn(
         history=history,
     )
     context_text, _ = _normalize_context(structured)
-    serialized_sources = [item.model_dump(exclude_none=True) for item in sources]
 
+    with _TurnWriter(data_root, session_id, text) as writer:
+        try:
+            return _run_turn_logged(
+                writer,
+                session_id=session_id,
+                text=text,
+                context_text=context_text,
+                context=context,
+                sources=sources,
+                data_root=data_root,
+            )
+        except ChatFailure as exc:
+            # 服务端失败：落 `failed` 一行（块里只有失败说明），前端按 status 显示失败+重试
+            writer.finish(
+                chat_store.FAILED,
+                _conversation_blocks(reply="", sources=sources, failure=exc),
+            )
+            raise
+        except (GeneratorExit, asyncio.CancelledError):
+            # 客户端断开 / 用户点停止：内容定格，已到达的块保留为 aborted
+            writer.finish(chat_store.ABORTED)
+            raise
+
+
+def _run_turn_logged(
+    writer: _TurnWriter,
+    *,
+    session_id: str,
+    text: str,
+    context_text: str,
+    context: ChatRequestContext | None,
+    sources: Sequence[ChatSource],
+    data_root: Any,
+) -> dict[str, Any]:
+    """真正跑一轮；每拼出一块就经 `writer` upsert 一次（同一行）。
+
+    块的装配与串行路径共用 `_conversation_blocks()`（现役 `reply_to_structured()` →
+    `build_blocks()`，再收到 6）；逐块交付只是把同一份结果的**前缀**依次交给
+    `writer.arrive`，落库内容与返回值最终一致。
+    """
     try:
         result = ask(
             question=text,
             context=context_text,
             page_label="对话模式",
             module=RUN_TURN_MODULE,
-            page=(context.page if context is not None and context.page else PAGE_PREFIX.strip("/")),
+            page=(
+                context.page
+                if context is not None and context.page
+                else PAGE_PREFIX.strip("/")
+            ),
             data_root=data_root,
         )
     except AssistantFailure as exc:
         raise _as_chat_failure(exc) from None
 
     reply = result["reply"]
-    blocks = _conversation_blocks(reply=reply, sources=sources)
-    recorded = (
-        _persist(data_root, session_id, text, blocks) if data_root is not None else None
-    )
+    blocks = _arrive_blocks(reply=reply, sources=sources, on_block=writer.arrive)
+    writer.finish(chat_store.DONE, blocks)
     return {
         "ok": True,
         "session_id": session_id,
@@ -761,8 +913,9 @@ def run_turn(
         "blocks": blocks,
         "model": result["model"],
         "channel": result["ai"]["source"],
-        "sources": serialized_sources,
-        "turn_seq": recorded["seq"] if recorded else None,
+        "sources": [item.model_dump(exclude_none=True) for item in sources],
+        "turn_seq": writer.turn_seq,
+        "status": chat_store.DONE,
         "fetched_at": result["fetched_at"],
     }
 
@@ -1126,7 +1279,9 @@ def build_conversation_router(
                     "seq": row["seq"],
                     "question": row["question"],
                     "blocks": _blocks_for_view(row),
+                    "status": row["status"],
                     "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
                 }
                 for row in chat_store.session_turns(conn, session_id)
             ]
@@ -1160,6 +1315,8 @@ def build_conversation_router(
                 data_root=data_root,
             )
         except ChatFailure as exc:
+            # 校验类失败（空消息 / 超长 / session_id 非法）还没起一轮，不落库；
+            # 服务端失败（模型/数据）由 `run_turn` 落 `failed` 行，前端按 status 重试。
             return _record_failure(body.session_id or "", exc)
 
     return router

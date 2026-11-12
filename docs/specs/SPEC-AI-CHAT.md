@@ -1,8 +1,10 @@
 # SPEC-AI-CHAT 对话通道：一轮问答端点
 
-- 版本：v0.3（2026-11-13，QUOT-573 补 §1.1、QUOT-580 补 §4.1 / §5；v0.2 2026-11-08，QUOT-473；v0.1 首版 2026-11-07）
+- 版本：v0.4（2026-11-13，QUOT-580 第二轮：边到达边 upsert + `chat_turn.status` 四态；
+  v0.3 同日，QUOT-573 补 §1.1、QUOT-580 补 §4.1 / §5；v0.2 2026-11-08，QUOT-473；v0.1 首版 2026-11-07）
 - 关联：DEC-067（本规格的决策记录）、DEC-084（会话落库 `chat.sqlite`，取代 DEC-067
-  「不持久化」）、QUOT-454（页级助手）、DEC-021（AI 边界）、DEC-018（受控联网）、
+  「不持久化」）、DEC-085（写入时机与 `status` 四态，在 DEC-084 上加列不推翻）、
+  QUOT-454（页级助手）、DEC-021（AI 边界）、DEC-018（受控联网）、
   `ai/error_taxonomy.py`（`FailureKind` 四类）
 - 实现：`src/ladderstock/web/assistant.py`（现役对话链 `/api/conversation`）、
   `src/ladderstock/data/chat_store.py`（会话落库）、
@@ -172,8 +174,11 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
 - 会话与轮次落库到**独立文件** `<data_root>/chat.sqlite`（DEC-084），不挤 duckdb、
   不动行情库既有 schema；
 - 表：`chat_session(session_id, title, created_at, updated_at)` 与
-  `chat_turn(session_id, seq, question, blocks_json, created_at)`；
-- **只在本轮成功后落账**；失败 / 中止不写历史；会话库不可用时问答照常返回，只是
+  `chat_turn(session_id, seq, question, blocks_json, status, created_at, updated_at)`
+  （`status` / `updated_at` 为 v2 加列，见 DEC-085）；
+- **写入时机 = 边到达边 upsert（落点 B，DEC-085）**：首块到达时插入一行
+  `status=streaming`，后续每块更新**同一行**的 `blocks_json`，收尾落终态；
+  同一轮始终只有一行 `chat_turn`。会话库不可用时问答照常返回，只是
   `turn_seq = null` 且不入列表；
 - 首轮建会话，标题 = 首问压空白后截 40 个 Unicode 码位（不加省略号，空白则
   「未命名对话」），之后可由 `PATCH /sessions/{id}` 重命名；
@@ -182,6 +187,25 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
   当前会话永不淘汰；
 - 拼进 prompt 时取本会话最近 6 轮（`_history`），以「用户：… / 助手：…」形式放进
   `【历史对话】` 段；跨会话内容不进 prompt。
+
+#### 4.1.1 轮次状态 `status`（v2）
+
+`chat_turn.status` 是**独立列**，不借 `notice.kind` 承载（D7 只批了 `missing_data`，
+「用户点停止」不是数据缺失）。四态**逐条语义**：
+
+| 值 | 含义 | `blocks_json` |
+| --- | --- | --- |
+| `streaming` | 正在生成；首块到达时置 | 可能只含已到达的块 |
+| `done` | 正常完成（`done{completed:true}`） | 本轮完整块 |
+| `aborted` | **用户主动停止**，内容定格 | 已到达的块，可回看 / 作下一问上下文 |
+| `failed` | 服务端失败（模型 / 数据错，`done{completed:false}`） | 一条失败说明 `notice` |
+
+终态只写一次：`aborted` / `failed` 之后再到的块不会改写该行（`update_turn_blocks`
+返回 `False`）。进程退出时 `streaming` 行不会丢，重启后照样读得到。
+
+**命名纪律**：`chat_turn.seq` 是**轮次序号**（`turn_seq`，1,2,3…，跨轮递增）；
+流式 `event: block` 的 `seq` 是**块序号**（`block_seq`，1..N，每轮重置）。
+两者不共用一个字段名，日志里也分别写 `turn_seq` / `block_seq`，不混着打。
 
 ### 4.2 旧端点（`chat.py`，保留未挂载）
 
@@ -204,7 +228,7 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
 | `GET` | `/api/conversation/sessions` | 列会话（按 `updated_at` 倒序） |
 | `GET` | `/api/conversation/sessions/{session_id}/turns` | 取一个会话的全部轮次 |
 | `PATCH` | `/api/conversation/sessions/{session_id}` | 重命名会话 |
-| `POST` | `/api/conversation/turns` | 追加一轮问答（成功才落账，`turn_seq` 起 1） |
+| `POST` | `/api/conversation/turns` | 追加一轮问答（边到达边 upsert，`turn_seq` 起 1） |
 
 ### 5.2 列会话 `GET /api/conversation/sessions`
 
@@ -245,7 +269,9 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
       "blocks": [
         {"type": "conclusion", "id": "conclusion", "payload": {"text": "本轮结论", "tone": "neutral"}}
       ],
-      "created_at": "2026-11-13T09:12:04+00:00"
+      "status": "done",
+      "created_at": "2026-11-13T09:12:04+00:00",
+      "updated_at": "2026-11-13T09:12:09+00:00"
     }
   ]
 }
@@ -253,6 +279,10 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
 
 - `turns` 按 `seq` 升序；`blocks` 是写库时落下的 `blocks_json` 反序列化结果
   （形状与 `POST /turns` 成功响应的 `blocks` 一致），前端可直接复用渲染色；
+- `status` 四态见 §4.1.1。前端据此显示：`aborted` →「已停止」+ 可继续问；
+  `failed` → 失败提示 + 重试；`streaming` →「生成中」（多标签页恢复）。**不在
+  `notice` 里造「已停止」，前端也不自己加 kind**；
+- `updated_at` 是最后一次写入时间（流式中随每块刷新）；
 - 会话不存在 → 404 `{"detail": "会话不存在", "code": "not_found"}`。
 
 ### 5.4 重命名 `PATCH /api/conversation/sessions/{id}`
@@ -294,6 +324,7 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
   "channel": "openai",
   "sources": [{"name": "本地行情快照", "fetched_at": "2026-11-13T09:30:00+00:00"}],
   "turn_seq": 4,
+  "status": "done",
   "fetched_at": "2026-11-13T09:31:47+00:00"
 }
 ```
@@ -301,12 +332,15 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
 - `reply` 与 §2.2 同义（模型正文，类型仍是字符串）；`blocks` 由
   `assistant.build_answer_blocks` 从「本轮取数 + AI 回答」装配，**模型不产出块**，
   顺序为 conclusion → citation → notice，最多 **6** 块；
+- `turn_seq` 是**轮次序号**，`status` 是这一轮的终态（本端点同步返回，落库的
+  中间态 `streaming` 见 §4.1.1）；
 - 无任何来源时补 `notice(kind="missing_data", section="来源")`（D7 新增 kind，
   不复用 AI 错误 notice 既有种类）；
-- 叙述文本去数字：块结论过 `strip_numbers`，`reply` 原样返回；
+- 叙述文本去数字：块结论与失败说明都过 `strip_numbers`，`reply` 原样返回；
 - 失败时 `reply` 为 `""`、`blocks` 只有一条 `notice`，形状同 §2.3 的 failure 体；
+  同时落一行 `status=failed` 的 `chat_turn`，前端凭 `status` 显示失败 + 重试；
 - 请求体校验（空 `message` / 超长、`session_id` 非法、`timeout_sec` 非法、
-  `context` 过长或过深）沿用 §6 错误码；失败不建库、不落账。
+  `context` 过长或过深）沿用 §6 错误码；校验失败还没起一轮，不建库、不落账。
 
 ## 6. 通道选择与超时
 
@@ -335,7 +369,9 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
 - CLI 通道：`asyncio.create_subprocess_exec` 启动，取消时 Windows 用
   `taskkill /PID <pid> /T /F`、POSIX 用 `killpg(SIGKILL)`，**整棵进程树一并终止**，
   不留孤儿进程；
-- 中止不写会话历史，响应码 499 `ai_aborted`（客户端已断开，通常看不到）；
+- 中止**落一行 `status=aborted`**（`/api/conversation`，DEC-085）：内容定格，
+  已到达的块保留，可回看、可作下一问上下文；`/api/control/ai/chat` 旧端点仍不写历史；
+- 中止响应码 499 `ai_aborted`（客户端已断开，通常看不到）；
 - HTTP 通道没有子进程，取消任务后底层线程由 httpx 自身超时兜底。
 
 ## 7. 错误码
@@ -381,3 +417,4 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
 | 2026-11-08 | v0.2 | 上游 5xx 细分为 `ai_upstream`（502）；补真实调用、三态降级与 `model` 回显验收 |
 | 2026-11-13 | v0.3 | 新增 §1.1「对首页的适用性」：首页不走本控制面端点，改走 `POST /api/page/assistant`；首页单轮无状态、§4 会话记忆不适用；`pending_research` 首页不返回（DEC-083 / QUOT-573） |
 | 2026-11-13 | v0.3 | QUOT-580：会话落库 `chat.sqlite`（DEC-084，取代 DEC-067「不持久化」）；新增现役端点 `/api/conversation`（列会话 / 取轮次 / 重命名 / 追加一轮）；块由现役 `reply_to_structured()` → `build_blocks()` 装配、会话侧上限 6；`notice.kind=missing_data`；`chat.py` 保留未挂载（§4.1 / §5） |
+| 2026-11-13 | v0.4 | QUOT-580 第二轮：写入时机改为「边到达边 upsert」（落点 B）；`chat_turn` 加 `status`（streaming / done / aborted / failed）与 `updated_at`，迁移 v2 把存量行回填 `done`；「已停止」走 `status` 不走 `notice.kind`；明确 `turn_seq`（轮次）与 `block_seq`（块）命名纪律（DEC-085） |
