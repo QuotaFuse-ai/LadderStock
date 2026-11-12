@@ -318,7 +318,7 @@ export function WatchlistPanel() {
 
   const notices = (
     <>
-      <PrivacyNotice subject="自选" storeCommand="ldst watch" />
+      <PrivacyNotice subject="自选" />
       {message && (
         <Banner
           tone={message.tone}

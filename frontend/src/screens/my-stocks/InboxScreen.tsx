@@ -48,7 +48,7 @@ const CHANNELS = [
     key: 'console',
     label: '终端（console）',
     icon: Terminal,
-    detail: '打印到运行 ldst 的那个终端；不落文件、不发网络请求。',
+    detail: '打印到本机运行程序的终端窗口；不落文件、不发网络请求。',
   },
   {
     key: 'desktop',

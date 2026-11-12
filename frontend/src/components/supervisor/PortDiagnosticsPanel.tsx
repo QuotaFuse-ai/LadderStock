@@ -246,7 +246,7 @@ export function PortDiagnosticsPanel({ controlReady, productOf, push, onHealed }
           <EmptyState
             compact
             title="控制面未接入，无法诊断"
-            description="需本机 API 已启动（ldst run）且控制面启用；接入后这里会逐模块给出端口占用与白话原因。"
+            description="本机服务已连接且控制面启用后，这里会逐模块给出端口占用与白话原因。"
           />
         ) : diagnosis.status === 'loading' ? (
           <SkeletonText lines={4} />

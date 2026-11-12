@@ -85,30 +85,31 @@ function renderBar(path = '/industry') {
  * （CI 慢机复现为 dialog 不出现）。空跑 act 是恢复点击语义，不是放宽断言。
  */
 async function openPanel() {
-  await waitFor(() => expect(screen.getByRole('button', { name: '本页命令' })).toBeTruthy())
+  await waitFor(() => expect(screen.getByRole('button', { name: '本页数据同步' })).toBeTruthy())
   await act(async () => {})
-  fireEvent.click(screen.getByRole('button', { name: '本页命令' }))
+  fireEvent.click(screen.getByRole('button', { name: '本页数据同步' }))
 }
 
-describe('本页命令：同路由两条命令（QUOT-538）', () => {
+describe('本页数据同步：同路由两条命令（QUOT-538）', () => {
   it('两条命令都渲染，note 原样展示', async () => {
     renderBar()
     await openPanel()
 
-    const panel = screen.getByRole('dialog', { name: '本页命令' })
+    const panel = screen.getByRole('dialog', { name: '本页数据同步' })
     expect(panel.textContent).toContain('重算行业快照')
-    expect(panel.textContent).toContain('ldst industry list')
     expect(panel.textContent).toContain('同步补齐行业数据')
-    expect(panel.textContent).toContain('ldst sync industry')
     expect(panel.textContent).toContain(NOTE)
-    expect(screen.getAllByRole('button', { name: '运行' })).toHaveLength(2)
+    // QUOT-559：面板只展示白话名称与进度，argv 技术串一律不出现
+    expect(panel.textContent).not.toContain('ldst industry list')
+    expect(panel.textContent).not.toContain('ldst sync industry')
+    expect(screen.getAllByRole('button', { name: '立即开始' })).toHaveLength(2)
   })
 
   it('只读命令直接运行；联网同步命令先二次确认再提交', async () => {
     renderBar()
     await openPanel()
 
-    const runButtons = screen.getAllByRole('button', { name: '运行' })
+    const runButtons = screen.getAllByRole('button', { name: '立即开始' })
     fireEvent.click(runButtons[1])
 
     expect(screen.getByRole('button', { name: '确认同步' })).toBeTruthy()
@@ -124,6 +125,6 @@ describe('本页命令：同路由两条命令（QUOT-538）', () => {
         expect.objectContaining({ method: 'POST' }),
       ),
     )
-    await waitFor(() => expect(screen.getByRole('button', { name: '执行中' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: '进行中' })).toBeTruthy())
   })
 })

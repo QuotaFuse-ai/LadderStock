@@ -285,7 +285,7 @@ describe('重启流程', () => {
     })
 
     expect(reload).not.toHaveBeenCalled()
-    expect(apiRef.current?.restartError).toContain('秒内未恢复')
+    expect(apiRef.current?.restartError).toContain('还没恢复')
   })
 
   it('请求报错且始终未恢复 → 服务端原因与超时都如实展示', async () => {
@@ -308,7 +308,7 @@ describe('重启流程', () => {
     })
 
     expect(apiRef.current?.restartError).toContain('所有重启方式都失败')
-    expect(apiRef.current?.restartError).toContain('秒内未恢复')
+    expect(apiRef.current?.restartError).toContain('还没恢复')
   })
 })
 

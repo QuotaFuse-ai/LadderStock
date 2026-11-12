@@ -31,12 +31,12 @@ function at(url: string, node: ReactNode) {
 describe('QUOT-320 · ?demo=1 水印根因（§5.6 / R-18）', () => {
   it('只有 ?demo=1、没有 ?state= 时也必须上屏', () => {
     at('/x?demo=1', <DemoStateBadge state={null} />)
-    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
   })
 
   it('?demo=true 同样算演示源；?demo=0 与不带参数不算', () => {
     at('/x?demo=true', <DemoStateBadge state={null} />)
-    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
     cleanup()
     at('/x?demo=0', <DemoStateBadge state={null} />)
     expect(screen.queryByText(/演示数据/)).toBeNull()
@@ -47,19 +47,19 @@ describe('QUOT-320 · ?demo=1 水印根因（§5.6 / R-18）', () => {
 
   it('旧签名不变：<DemoStateBadge state={forced} /> 的强制态文案原样保留', () => {
     at('/x', <DemoStateBadge state="loading" />)
-    expect(screen.getByText('演示态：加载中（?state=loading）')).toBeTruthy()
+    expect(screen.getByText('演示态：加载中')).toBeTruthy()
     expect(screen.queryByText(/演示数据 ·/)).toBeNull()
   })
 
   it('两个开关同时打开时并排两枚，互不替代（§5.6）', () => {
     at('/x?demo=1&state=partial', <DemoStateBadge state="partial" />)
-    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
-    expect(screen.getByText('演示态：部分失败（?state=partial）')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
+    expect(screen.getByText('演示态：部分失败')).toBeTruthy()
   })
 
   it('演示徽标是 warn 底色（§5.6 硬约束）', () => {
     at('/x?demo=1', <DemoStateBadge state={null} />)
-    const badge = screen.getByText('演示数据 · ?demo=1').parentElement
+    const badge = screen.getByText('演示数据').parentElement
     expect(badge?.getAttribute('class')).toContain('bg-warn-soft')
   })
 })

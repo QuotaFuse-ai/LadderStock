@@ -648,7 +648,7 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
       if (signal?.aborted) throw new ApiError('timeout', `请求已取消：${path}`)
       throw new ApiError('timeout', `本地接口 ${path} 超时（${timeoutMs}ms）`)
     }
-    throw new ApiError('not-connected', `本地接口 ${path} 未接入：需先启动 ldst run`)
+    throw new ApiError('not-connected', '本机服务还没有就绪，暂时连不上；点「重试」或用顶栏「重启平台」把它拉起来。')
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', abortFromCaller)

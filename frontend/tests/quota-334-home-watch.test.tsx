@@ -94,7 +94,9 @@ describe('首页演示源', () => {
   it('?demo=1 首屏直接出内容：四块都在，交易日跟随演示基准日', async () => {
     renderAt('/?demo=1')
 
-    expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
+    // QUOT-559：来源细节从徽标文本移到 hover title
+    expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).toContain('网址开关')
     // A 块指数条、C 块自选、D 块持仓都落到首屏（v2 已无 5 卡阵与连板梯队表）
     expect(await screen.findByText('上证指数')).toBeTruthy()
     expect(await screen.findByText('贵州茅台')).toBeTruthy()
@@ -109,7 +111,8 @@ describe('首页演示源', () => {
     setDemoPref(true)
     renderAt('/')
 
-    expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
+    expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).toContain('设置页')
     expect(await screen.findByText('上证指数')).toBeTruthy()
     await waitFor(() => expect(dataRowCount()).toBeGreaterThan(0))
   })
@@ -166,7 +169,9 @@ describe('盯盘演示源', () => {
   it('?demo=1 一屏 ≥12 行，覆盖触发 / 未触发 / 停牌多态', async () => {
     renderAt('/watch?demo=1')
 
-    expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
+    // QUOT-559：来源细节从徽标文本移到 hover title
+    expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).toContain('网址开关')
     await waitFor(() => expect(dataRowCount()).toBeGreaterThanOrEqual(12))
     expect(screen.getByText('比亚迪')).toBeTruthy()
     expect(screen.getByText('隆基绿能')).toBeTruthy()
@@ -267,7 +272,8 @@ describe('盯盘演示源', () => {
     setDemoPref(true)
     renderAt('/watch')
 
-    expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
+    expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).toContain('设置页')
     await waitFor(() => expect(dataRowCount()).toBeGreaterThanOrEqual(12))
     expect(window.localStorage.getItem(DEMO_DATA_STORAGE_KEY)).toBe('1')
   })

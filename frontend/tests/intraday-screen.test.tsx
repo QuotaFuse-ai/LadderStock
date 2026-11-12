@@ -334,7 +334,7 @@ describe('五种界面状态', () => {
 
   it('loading / error / offline 各自可复现（?state=）', async () => {
     const busy = renderAt('/intraday?demo=1&state=loading')
-    expect(await screen.findByText('演示态：加载中（?state=loading）')).toBeTruthy()
+    expect(await screen.findByText('演示态：加载中')).toBeTruthy()
     expect(document.querySelector('[aria-busy="true"]')).toBeTruthy()
     busy.unmount()
 

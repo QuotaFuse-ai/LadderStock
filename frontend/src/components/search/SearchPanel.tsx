@@ -542,8 +542,8 @@ export function SearchPanel({ panelId, model, actions }: SearchPanelProps) {
                 title={model.failureTitle ?? '本机服务未连接'}
                 description={
                   <>
-                    搜索要读当日涨停池、行业字典与资讯流，都来自本机只读 API。服务未连接 →
-                    看顶栏状态灯 / 点「重启平台」；仍不行查看 watchdog 日志，再重试。
+                    搜索要读当日涨停池、行业字典与资讯流，都来自本机服务。看一眼顶栏状态灯，
+                    点「重启平台」通常就能恢复；恢复后再重试。
                   </>
                 }
                 action={

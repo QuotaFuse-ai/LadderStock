@@ -200,7 +200,7 @@ describe('data_source_status 上屏（UI-SPEC §5.2 / §5.3）', () => {
     renderAt('/research/600519?demo=1&state=partial')
     await screen.findByText('部分缺失')
     expect(screen.getByText(/演示态：部分失败/)).toBeTruthy()
-    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
   })
 
   it('research 报告页同样上屏', async () => {

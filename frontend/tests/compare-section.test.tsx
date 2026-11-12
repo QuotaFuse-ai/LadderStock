@@ -174,12 +174,12 @@ describe('未选标的', () => {
 })
 
 describe('三态：接口没接 / 只有一次 / 有两次', () => {
-  it('运行清单读不到 → 错误块点名接口，并给重试', async () => {
+  it('运行清单读不到 → 错误块说服务未连接，并给重试', async () => {
     renderSection({
       loader: () => Promise.reject(new ApiError('not-connected', '本机 API 未连接')),
     })
 
-    expect(await screen.findByText('研究接口未接入')).toBeTruthy()
+    expect(await screen.findByText('本机服务未连接')).toBeTruthy()
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
     // 取不到清单不能被读成「两次没有差异」
     expect(screen.queryByText(/六段合计/)).toBeNull()
@@ -204,7 +204,7 @@ describe('三态：接口没接 / 只有一次 / 有两次', () => {
         runsLoader={loader}
       />,
     )
-    await screen.findByText('研究接口未接入')
+    await screen.findByText('本机服务未连接')
     expect(loader).toHaveBeenCalledTimes(1)
 
     fail = false
@@ -225,12 +225,12 @@ describe('三态：接口没接 / 只有一次 / 有两次', () => {
     expect(screen.queryByText(/两次一致/)).toBeNull()
   })
 
-  it('一次产物都没有 → 引导先跑研究，附可执行的命令', async () => {
+  it('一次产物都没有 → 引导去报告页生成，不再印命令', async () => {
     renderSection({
       loader: (target) => Promise.resolve({ code: target, dates: [], latest: null, count: 0 }),
     })
     expect(await screen.findByText(`${CODE} 还没有研究产物`)).toBeTruthy()
-    expect(screen.getByText(/ldst research/)).toBeTruthy()
+    expect(screen.getByText(/运行本段/)).toBeTruthy()
   })
 
   it('两次都有 → 按四类分开列，缺的一侧显示 —', async () => {

@@ -106,7 +106,7 @@ export function HomePositionsCard({ view, className }: { view: BlockView<Positio
       毛额·未扣费
     </Badge>
   )
-  const privacyBadge = <PrivacyBadge subject="持仓" storeCommand="ldst position" />
+  const privacyBadge = <PrivacyBadge subject="持仓" />
 
   return (
     <SectionCard
@@ -187,7 +187,7 @@ export function HomePositionsCard({ view, className }: { view: BlockView<Positio
             <EmptyState
               compact
               title="持仓接口未接入"
-              description="页面已按 GET /api/positions 契约实现；启动 ldst run 后自动接入。"
+              description="本机服务连接后，持仓数据会自动接上并展示。"
               action={
                 <Button variant="secondary" onClick={view.onRetry} leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}>
                   重新检查

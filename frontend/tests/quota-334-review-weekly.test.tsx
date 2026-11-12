@@ -78,7 +78,7 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
     stubOffline()
     renderBoth('/review?demo=1&date=2026-10-30')
 
-    expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
     expect(screen.getByRole('heading', { level: 1, name: '每日复盘' })).toBeTruthy()
 
     // 三张指标卡与段内指标同口径：同一个读数在两处必须相等（68 / 32.6% 各出现两次）
@@ -112,8 +112,10 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
     setDemoPref(true)
     renderBoth('/weekly')
 
-    expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
-    expect(screen.queryByText('演示数据 · ?demo=1')).toBeNull()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
+    // QUOT-559：URL/开关共用「演示数据」文本，来源细节在 hover title 里区分
+    expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).toContain('设置页')
+    expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).not.toContain('网址开关')
     expect(bodyText()).toContain('2026-W44 · 2026-10-26 ~ 2026-11-01 · 5 个交易日有数据')
 
     // empty 分支同构的指标卡阵 + 每日序列 5 行（行高沿用 h-row）
@@ -130,7 +132,7 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
   it('partial / empty 两个变体：缺数段落逐段标注、计数按 — 显示，不补 0 也不借模型的词', async () => {
     stubOffline()
     renderBoth('/review?demo=1&variant=partial&date=2026-10-30')
-    await screen.findByText('演示数据 · ?demo=1')
+    await screen.findByText('演示数据')
     // 数据面的 partial = 某段数据集没落盘，与段级 AI 成败是两件事（§5.2）
     // 演示源是异步 load：只等徽标会在慢机上抢跑（CI 实测），同下方周度分支
     await waitFor(() => expect(bodyText()).toContain('五段中 1 段数据缺失'))
@@ -146,14 +148,14 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
 
     cleanup()
     renderBoth('/weekly?demo=1&variant=partial')
-    await screen.findByText('演示数据 · ?demo=1')
+    await screen.findByText('演示数据')
     // 演示源是异步 load：必须等变体内容落地，只等徽标会在慢机上抢跑（CI 实测）
     await waitFor(() => expect(bodyText()).toContain('部分缺失'))
     expect(bodyText()).toContain('样本不足')
 
     cleanup()
     renderBoth('/weekly?demo=1&variant=empty')
-    await screen.findByText('演示数据 · ?demo=1')
+    await screen.findByText('演示数据')
     // empty 分支仍是「头部 + 指标卡阵」，卡片值一律 `—` 而不是 0
     await waitFor(() => expect(bodyText()).toContain('还没有可用周报'))
     expect(screen.getByText('温度均值')).toBeTruthy()

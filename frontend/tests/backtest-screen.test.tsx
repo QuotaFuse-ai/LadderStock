@@ -397,13 +397,15 @@ describe('接口缺失 / 空态', () => {
     expect(screen.queryByText('证据区')).toBeNull()
   })
 
-  it('没有运行卡时给出参数区 / CLI 出口，且不再请求单卡', async () => {
+  it('没有运行卡时给出参数区出口（不印 CLI 命令），且不再请求单卡', async () => {
     const fetchMock = stubBacktestFetch({
       runs: () => jsonResponse({ root: '/tmp', count: 0, latest: null, runs: [] }),
     })
     renderAt('/backtest')
     await waitFor(() => expect(screen.getByText('还没有回测运行卡')).toBeTruthy())
-    expect(screen.getAllByText(/ldst backtest run/).length).toBeGreaterThan(0)
+    // QUOT-559：空态引导页内参数区，不再印 ldst backtest run 类命令
+    expect(screen.getAllByText(/提交一次回测/).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/ldst backtest/)).toBeNull()
     const urls = fetchMock.mock.calls.map(([url]) => String(url))
     expect(urls.some((url) => url.startsWith('/api/backtest/runs/'))).toBe(false)
     // 参数区照常可用：策略清单仍来自后端

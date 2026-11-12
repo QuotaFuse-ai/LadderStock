@@ -214,7 +214,7 @@ export function usePlatformHealth(options: Options = {}): PlatformHealthApi {
           return
         }
       }
-      const timeout = `服务在 ${Math.round(restartTimeoutMs / 1000)} 秒内未恢复：请查看看门狗日志或手动运行 ldst run`
+      const timeout = `等了 ${Math.round(restartTimeoutMs / 1000)} 秒服务还没恢复：请稍后再试一次「重启平台」；若反复失败，可能是本机网络或磁盘出了问题`
       setRestartError(requestError ? `${requestError}；${timeout}` : timeout)
     } finally {
       restartingRef.current = false

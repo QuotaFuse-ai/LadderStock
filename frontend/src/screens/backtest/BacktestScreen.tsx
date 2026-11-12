@@ -203,8 +203,7 @@ export default function BacktestScreen() {
             title="还没有回测运行卡"
             description={
               <>
-                本机数据目录还没有落盘产物。在上方参数区提交一次回测，或用 CLI{' '}
-                <code className="ldst-num">ldst backtest run</code> 生成运行卡后点「刷新」。
+                本机数据目录还没有落盘产物。在上方参数区提交一次回测，运行卡生成后点「刷新」。
               </>
             }
             action={

@@ -125,9 +125,9 @@ const THEMES: MarketThemeRow[] = [
   { theme: '稀土', strength: 18.0, limit_up_count: 1, leader: '北方稀土', delta: 0.9 },
 ]
 
-/** 未接 QuotaFuse Wire 时后端给出的原题文案（`server.py:_theme_status`），演示态照抄。 */
+/** 未接 QuotaFuse Wire 时后端给出的原题文案（`server.py:_theme_status`），演示态转述为白话。 */
 const THEME_NOT_CONNECTED = (date: string) =>
-  `theme_news 未接入（QuotaFuse Wire），先配置 qfw：缓存后端 missing，${date} 没有 theme_news 记录（配置后运行 ldst sync --dataset theme_news）`
+  `theme_news 未接入（QuotaFuse Wire），先配置 Wire 凭据：缓存后端 missing，${date} 没有 theme_news 记录（配置后重新同步）`
 
 // ---------------------------------------------------------------- CH-01 情绪温度
 
@@ -270,7 +270,7 @@ function themeEnvelope(variant: MarketDemoVariant, date: string): ThemeEnvelope 
     source: 'ladderstock',
     source_detail: available
       ? `theme_news: duckdb（${THEMES.length * 12} 条 → ${THEMES.length} 个题材，${date}）`
-      : `theme_news 未接入（QuotaFuse Wire），先配置 qfw：缓存后端 missing，${date} 没有 theme_news 记录（配置后运行 ldst sync --dataset theme_news）`,
+      : `theme_news 未接入（QuotaFuse Wire），先配置 Wire 凭据：缓存后端 missing，${date} 没有 theme_news 记录（配置后重新同步）`,
     fetched_at: DEMO_FETCHED_AT,
     freshness: 'cached',
     confidence: available ? 'medium' : 'low',

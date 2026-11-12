@@ -273,9 +273,11 @@ describe('错误文案', () => {
     expect(info.title).toBe('研究引擎不可用')
   })
 
-  it('未连接 → 研究接口未接入', () => {
+  it('未连接 → 本机服务未连接，不冒充「接口未接入」', () => {
     const info = describeResearchError(new ApiError('not-connected', 'down'))
-    expect(info.title).toBe('研究接口未接入')
-    expect(info.detail).toMatch(/ldst run/)
+    expect(info.title).toBe('本机服务未连接')
+    // QUOT-559：用户可见面不再给 ldst run 类命令指引，改白话 + 页内出口
+    expect(info.detail).not.toMatch(/ldst/)
+    expect(info.detail).toContain('重试')
   })
 })

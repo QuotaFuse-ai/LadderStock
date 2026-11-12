@@ -42,7 +42,7 @@ describe('涨停样本五态', () => {
 
     const loading = renderAt('/limit-up?demo=1&state=loading')
     expect(await waitFor(() => document.querySelector('[aria-busy="true"]'))).toBeTruthy()
-    expect(screen.getByText('演示态：加载中（?state=loading）')).toBeTruthy()
+    expect(screen.getByText('演示态：加载中')).toBeTruthy()
     loading.unmount()
 
     const empty = renderAt('/limit-up?demo=1&state=empty')

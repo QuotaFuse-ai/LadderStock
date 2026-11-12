@@ -159,7 +159,7 @@ export function tallySections(sections: ReviewSectionView[]): SectionTally {
  *
  * 不允许把「模型未配」显示成「数据缺失」，也不允许反过来：
  * - `no-artifact`：当天 `review/<date>.json` 根本不存在（`data_source_status=missing` 或正文为 null）
- *   → 引导先跑 `ldst review`，这是**数据**没生成，与 AI 无关；
+ *   → 引导先生成当日复盘，这是**数据**没生成，与 AI 无关；
  * - `model-unconfigured`：产物在、五段程序指标都在，但没有一个段落有模型跑过（`ai.model` 与逐段
  *   `model` 全为 `null`、段级 `degraded`、且没有 `ai_failures` 条目）
  *   → `ai/orchestrator.py:_generate` 的未配置分支就是这个形状，引导「接入 AI」；

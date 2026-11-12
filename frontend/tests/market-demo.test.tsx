@@ -147,7 +147,7 @@ describe('市场屏演示源', () => {
     renderMarket()
 
     expect(await screen.findByRole('heading', { name: '市场', level: 1 })).toBeTruthy()
-    expect(screen.getByText('演示数据 · 设置开关')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
     // 交易日输入在主 body 里，演示 envelope resolve 前屏处于 skeleton 早退分支
     // （MarketScreen 的 showSkeleton）：同步查询会抢跑，必须稳定等待（QUOT-505）
     expect(((await screen.findByLabelText('交易日')) as HTMLInputElement).value).toBe('2026-10-30')
@@ -169,11 +169,14 @@ describe('市场屏演示源', () => {
     expect(screen.getByText('稀土')).toBeTruthy()
   })
 
-  it('?demo=1 入口同样出演示数据，徽标标注来源是 URL', async () => {
+  it('?demo=1 入口同样出演示数据；徽标只说人话，来源细节放 hover title', async () => {
     stubOffline()
     renderMarket('/market?demo=1')
 
-    expect(await screen.findByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
+    // QUOT-559：徽标正文不再印 `?demo=1` 等技术参数串，来源移入 hover title
+    const badge = screen.getByText('演示数据').closest('[title]')
+    expect(badge?.getAttribute('title')).toContain('网址开关打开')
     expect(screen.getByTestId('line-chart').getAttribute('data-points')).toBe('20')
   })
 

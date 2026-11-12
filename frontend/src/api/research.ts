@@ -1209,8 +1209,8 @@ export function describeResearchError(error: unknown): {
   if (error instanceof ApiError) {
     if (error.kind === 'not-connected') {
       return {
-        title: '研究接口未接入',
-        detail: '本机 API 未连接（ldst run 未启动）；研究读取/续跑接口（/api/research/*）由后端提供。',
+        title: '本机服务未连接',
+        detail: '研究数据由本机服务提供，现在还没有就绪；点「重试」或用顶栏「重启平台」把它拉起来。',
         code: null,
       }
     }
@@ -1271,7 +1271,7 @@ export function describeResearchError(error: unknown): {
  *
  * - `unknown-code`：detail 含「未知证券代码」→ 这个代码不可能是 A 股个股；
  * - `no-record`：detail 含「还没有任何研究记录」/「没有研究产物」→ 业务空态，
- *   这只还没跑过研究（先 `ldst research <code>`）；
+ *   这只还没跑过研究（去报告页按段生成）；
  * - `missing`：FastAPI 默认 `{"detail":"Not Found"}` 或无 detail → 路由本身没接，
  *   才是「接口未接入」。
  */

@@ -433,18 +433,18 @@ describe('首页自选紧凑摘要（QUOT-552 目标 5/6）', () => {
     )
     const badge = screen.getByRole('button', { name: '隐私说明：仅本机' })
     expect(badge.getAttribute('title')).toContain('数据只在本机，不上传、不进 AI')
-    expect(badge.getAttribute('title')).toContain('ldst watch')
+    expect(badge.getAttribute('title')).toContain('不写浏览器缓存')
   })
 })
 
 describe('PrivacyBadge 弹层（QUOT-552 目标 6）', () => {
   it('默认渲染 PrivacyNotice 本体：存储口径全文在弹层里，不丢信息', () => {
-    render(<PrivacyBadge subject="持仓" storeCommand="ldst position" />)
+    render(<PrivacyBadge subject="持仓" />)
     fireEvent.click(screen.getByRole('button', { name: '隐私说明：仅本机' }))
     const popover = screen.getByRole('dialog', { name: '隐私说明' })
     expect(popover.textContent).toContain('数据只在本机，不上传、不进 AI')
-    expect(popover.textContent).toContain('ldst position')
-    expect(popover.textContent).toContain('不写 localStorage / IndexedDB')
+    expect(popover.textContent).toContain('只在内存里展示本次请求结果')
+    expect(popover.textContent).toContain('不写浏览器缓存')
   })
 
   it('点外部收起，不锁页面滚动（非模态）', () => {

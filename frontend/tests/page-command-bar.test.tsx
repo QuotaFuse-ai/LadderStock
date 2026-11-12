@@ -45,7 +45,7 @@ function renderBar(path = '/market') {
   )
 }
 
-const trigger = () => screen.getByRole('button', { name: '本页命令' })
+const trigger = () => screen.getByRole('button', { name: '本页数据同步' })
 
 /**
  * 点开「本页命令」面板。
@@ -89,30 +89,32 @@ describe('顶栏本页命令（QUOT-457）', () => {
     await openPanel()
 
     // popover 以 dialog 角色出现，等它真正进入 DOM 再断言；断言内容不放宽
-    const panel = await screen.findByRole('dialog', { name: '本页命令' })
+    const panel = await screen.findByRole('dialog', { name: '本页数据同步' })
     expect(panel.textContent).toContain('拉取行情数据')
-    expect(panel.textContent).toContain('ldst sync --date 2026-11-05')
+    // QUOT-559：白话面板不再打印裸 argv（ldst sync --date …），用户只见人话状态
+    expect(panel.textContent).not.toContain('ldst')
+    expect(panel.textContent).not.toContain('--date')
     expect(panel.textContent).toContain('上次成功')
-    expect(panel.textContent).toContain('已完成，数据已落盘')
+    expect(panel.textContent).toContain('已完成，数据已就绪')
     expect(trigger().getAttribute('aria-expanded')).toBe('true')
   })
 
   it('面板里点「运行」走后端队列，并显示排队状态', async () => {
     renderBar()
     await openPanel()
-    fireEvent.click(await screen.findByRole('button', { name: '运行' }))
+    fireEvent.click(await screen.findByRole('button', { name: '立即开始' }))
 
     await waitFor(() => expect(runCommand).toHaveBeenCalledWith('sync'))
     // 排队态来自 runCommand() 的异步回包，等它落到面板上再断言
-    const panel = await screen.findByRole('dialog', { name: '本页命令' })
+    const panel = await screen.findByRole('dialog', { name: '本页数据同步' })
     await waitFor(() => expect(panel.textContent).toContain('已排队'))
-    await waitFor(() => expect(screen.getByRole('button', { name: '执行中' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('button', { name: '进行中' })).toBeTruthy())
   })
 
   it('Esc 收起面板', async () => {
     renderBar()
     await openPanel()
-    await screen.findByRole('dialog', { name: '本页命令' })
+    await screen.findByRole('dialog', { name: '本页数据同步' })
 
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -121,12 +123,12 @@ describe('顶栏本页命令（QUOT-457）', () => {
   it('本页没有命令或处于演示态时整颗不渲染', async () => {
     renderBar('/positions')
     await waitFor(() => expect(commands).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: '本页命令' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '本页数据同步' })).toBeNull()
 
     cleanup()
     vi.clearAllMocks()
     renderBar('/market?demo=1')
     expect(commands).not.toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: '本页命令' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '本页数据同步' })).toBeNull()
   })
 })

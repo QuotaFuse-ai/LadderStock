@@ -495,7 +495,7 @@ export function demoResearchStatus(variant: DemoVariant = 'full'): ResearchStatu
       pending: [...RESEARCH_STAGES],
       failed: [],
       source_status: 'partial',
-      reason: '尚未运行 ldst research',
+      reason: '还没有运行过深度研究',
       data_source_status: 'missing',
     }
   }

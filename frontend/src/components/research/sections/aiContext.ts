@@ -240,7 +240,7 @@ export function describeAssistantError(error: unknown): AssistantFailureInfo {
       return {
         kind: 'offline',
         title: '本机服务未连接',
-        detail: '研究助手通过本机 API 转发模型请求；启动 ldst run 后重试，页面数据不会因此丢失。',
+        detail: '研究助手通过本机服务转发模型请求；服务恢复后重试，页面数据不会因此丢失。',
         code: null,
         retryable: true,
       }

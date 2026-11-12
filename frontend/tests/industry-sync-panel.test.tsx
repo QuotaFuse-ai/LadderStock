@@ -190,7 +190,7 @@ describe('/industry 同步补齐（QUOT-538）', () => {
     await openAndAcknowledge()
     fireEvent.click(screen.getByRole('button', { name: '开始同步' }))
 
-    await waitFor(() => expect(screen.getByText('超出单次同步上限或参数不合法，未发起请求。')).toBeTruthy(), {
+    await waitFor(() => expect(screen.getByText('超出单次同步上限或参数不合法，这次没有发起请求。')).toBeTruthy(), {
       timeout: 3000,
     })
     expect(screen.getByText(/退出码 2/)).toBeTruthy()
@@ -204,7 +204,7 @@ describe('/industry 同步补齐（QUOT-538）', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始同步' }))
 
     expect(
-      await screen.findByText('已有页面命令在执行，请等它结束后再试（一次只允许一个任务）。'),
+      await screen.findByText('已有页面任务在执行，请等它结束后再试（一次只允许一个任务）。'),
     ).toBeTruthy()
   })
 

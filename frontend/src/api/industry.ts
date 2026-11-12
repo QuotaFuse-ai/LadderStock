@@ -1,7 +1,7 @@
 /**
  * 产业研究（R9）只读数据客户端。
  *
- * 数据源是 R5 `industry_snapshot`（`ldst industry list|show`）与 R9 的规则信号；
+ * 数据源是 R5 `industry_snapshot`（本机产业快照）与 R9 的规则信号；
  * 浏览器读不到本机缓存，所以页面只认三个只读接口（契约见
  * `docs/specs/SPEC-INDUSTRY-PAGES.md` §2）：
  *
@@ -988,8 +988,8 @@ export function describeIndustryError(error: unknown): {
   if (error instanceof ApiError) {
     if (error.kind === 'not-connected') {
       return {
-        title: '产业接口未接入',
-        detail: '本机 API 未连接（ldst run 未启动）；产业读取接口（/api/industry/*、/api/signals）由后端提供。',
+        title: '本机服务未连接',
+        detail: '产业与信号数据由本机服务提供，现在还没有就绪；点「重试」或用顶栏「重启平台」把它拉起来。',
         code: null,
       }
     }

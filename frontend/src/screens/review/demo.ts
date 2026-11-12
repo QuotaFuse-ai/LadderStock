@@ -250,7 +250,7 @@ function reviewEnvelope(variant: ReviewDemoVariant, date: string): LadderEnvelop
                 section: 'leader',
                 kind: 'network',
                 message: '网络请求失败：连接超时（10s）',
-                action: '重试该段，或查看 ldst ai status',
+                action: '重试该段，或在设置页查看 AI 任务状态',
                 retryable: true,
               },
             ]
