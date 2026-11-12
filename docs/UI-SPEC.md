@@ -1,7 +1,7 @@
 # 看板信息架构与视觉规范（21 屏）
 
-- 版本：v1.23
-- 日期：2026-11-11
+- 版本：v1.24
+- 日期：2026-11-12
 - 归属：UI/UX
 - 状态：生效（v1.0 为「待评审」；v1.1 只扩覆盖与校正事实，`done` 仍由人类确认）
 - 适用：本地看板 `frontend/`（React + Vite + Tailwind，端口 5950，仅回环）
@@ -37,6 +37,7 @@
 | v1.21 | 2026-11-10 | 研究方向目录分页与「只看可用」过滤（QUOT-530，决策 DEC-073）：`/skills` 每页 10 条、页码进 `?page=`、切分组 / 开关过滤回第 1 页，底部分页条 sticky；「只看可用」= `ready` / `partial` / `existing_page`（`lib/skills.ts` 的 `USABLE_CATALOG_STATUSES`）。§6.1 登记 **C-23 `Pagination`**（`components/ui/Pagination.tsx`，受控、无请求；当前页以实心底色 + `font-semibold` + `aria-current="page"` 三重表达，不只靠颜色）。目录数据链路、六状态徽标与既有跳转零变更。证据：`frontend/tests/skills-pagination.test.tsx` 11 例 + 1440×900 实机 26/26 断言，见 `docs/tasks/QUOT-530/README.md`。 |
 | v1.22 | 2026-11-11 | 设置页「数据与端口」新增**端口诊断 + 安全自愈面板**（QUOT-548，消费 QUOT-547 `GET /api/control/ports` / `POST /api/control/ports/{peer}/heal`）：逐模块四分类徽标（自有残留 / 已接管 / 外来进程 / 空闲）+ 健康三态 + 白话原因（已接管写「这是你自己启动的 X，已被平台接管…运行正常」，不再出现「被占用」误导）；安全按钮与后端 heal 优先级一一对应——重启类只对 own_child 启用，adopted_peer 只有「复检健康」，foreign 禁用并给可见理由「不会终止外来进程」，free 禁用「端口空闲，无需修复」；技术细节（PID / 命令行 / 判定原文）默认收起；自愈结果用后端回读的最新诊断覆盖展示，前端不重算、不硬编码模块清单。原「一键体检」永久禁用按钮移除，由面板「重新诊断」取代。设置页二级导航补响应式：`desk:` 以下堆叠为单列（`flex-col desk:flex-row` + `w-full desk:w-menu`），与全仓单列约定对齐，390px 视口无横向溢出。§3.18 主区 / 六态行与 §11.18 清单同步。证据：`frontend/tests/quot-548-port-diagnostics.test.tsx` 16 例 + 备用端口 5960 实机 19/19 断言（生产 ledger 副本 + 真实 8000 peer，复检后 PID 不变），见 `docs/tasks/QUOT-548/README.md` 与 `docs/screenshots/quot-548-*.png`。 |
 | v1.23 | 2026-11-11 | CH-02 柱图 x 轴重复类目修复（QUOT-553，呈现 only）：uPlot 自动撒的小数刻度经 round 折叠成重复标签（1板×3 / 2板×5）且多余刻度位无柱。`charts/Chart.tsx` 把 x 刻度钉在数据索引——柱图 `splits` 恒等于类目索引（刻度数=类目数，不抽稀）、x 量程左右各留半个类目位（首尾柱与标签不被裁）、柱身 `align: 0` 居中于刻度；低于 6px 的小值柱在柱顶如实标家数（不改数据、不抬高柱身）。折线同根因收敛：整数索引刻度 + 按画布宽度步长抽稀（标签唯一不重叠）。§3.6 图表口径同步。数据形状 / 后端聚合 / 家数口径零变更。证据：`frontend/tests/quot-553-chart-splits.test.tsx` 8 例 + 5950 实机 before/after 截图（`docs/tasks/QUOT-553/`，截图随评论附件交付）。版本号说明：v1.22 已由 QUOT-548 占用，本版顺延为 v1.23。 |
+| v1.24 | 2026-11-12 | 产物面进页 + 死按钮清零（QUOT-561，决策 DEC-083）：① 交易日志开最小写面 `POST /api/journal/trades` + 只读探测 `GET /api/journal/write-info`，日志页「记一笔」走 `TradeEntryDrawer`，写成功后**静默重取统计**（不整页 reload，否则抽屉随骨架屏卸载、确认条一闪就没）；② 验证页「运行收盘对账」接控制面 `validate`（15:00 前禁用并说明、之后提交、结束后只重读 `GET /api/validation`），并修正空态分支反转（15:00 前主按钮改为「去写明日条件」）；③ 盯盘「通知链路自检」接控制面 `notify`，送达与否只看后端日志事实；④ 研究报告页空态给「开始研究」走既有 `POST /api/research/{code}/run`，详情页给「去报告页开始研究」深链，后端 404 文案去 CLI；⑤ 设置页静态 peer 卡片的安装 / 启动 / 查看日志三颗死按钮删除，改为陈述「静态 peer 无需安装或启停」。零 CLI / 白话文案 / 失败走 S5 口径不变。证据：`frontend/tests/quot-561-wiring.test.tsx` 5 例 + `api-headers.test.ts` 写面头断言 + `research-pages.test.tsx` 首次起跑 3 例 + 后端 `tests/unit/web/test_journal_write_endpoint.py` / `test_research_first_run.py`；5950 实机 before/after 截图随评论附件交付。 |
 
 
 ## 0. 范围与非目标
@@ -82,6 +83,10 @@
   （`POST /api/inbox/{id}/read`、`POST /api/inbox/read-all`）——
   全部回环独占 + `Host` 白名单 + 平面 JSON + `no-store`，`note` 不出。
   交易日志仍一条 HTTP 路由都不开（`/api/journal/stats` 只出聚合数字那条边界不动）。
+  **第三个口子（v1.24，QUOT-561 / DEC-083）**：交易日志按 DEC-083 开最小写面
+  `POST /api/journal/trades`（落库复用 CLI 同一函数 `journal.log.add_trade`、回环 + 写来源证据 +
+  字段白名单硬拒绝、只回这一笔）与只读探测 `GET /api/journal/write-info`；聚合仍只走
+  `GET /api/journal/stats`，MCP 侧依旧无任何 journal 工具。
 - 买卖建议、目标价、收益预测（产品边界：复盘辅助，不输出交易信号）。
 - 新增数据源或"某个 peer 挂了就换一家"的降级（只允许同 peer 备工具 → 缓存回放）。
 - **视口 < 1024px**：v1.0 §2 写的「<1024 侧栏折叠为顶部横向导航」「<720 表格转卡片列表」在 `270caf8` 上没有任何实现（`Layout.tsx:194` 只有 `w-sidebar` / `rail:w-sidebar-rail` 两档，`rail` = `max-width:1279px`）。v1.1 把最低支持视口正式定为 `--ldst-bp-min: 1024px`，窄屏适配移出规范（DEC-040 §3，理由见 §12.4-B）。
@@ -264,6 +269,9 @@ AI 叙述、模型名、段级 `status`、「重新生成 / 重试失败段」�
 - 新增即插入空条件并聚焦「代码 / 标的」；自动存本机（`validation_draft`）。
 - 「标记确认」是一次轻量承诺，确认后仍可修改，但显示确认时间；未确认条件在列表中用左侧黄色竖条标记。
 - 对账按钮在 15:00 前禁用并说明原因；对账结果只读，允许「人工复核」覆盖结论并记录原因（写入本机）。
+  v1.24（QUOT-561 / DEC-083）：15:00 后按钮走控制面 `validate` 提交任务，结束后只重新读取
+  `GET /api/validation`，逐条判定仍由后端给出、前端不重算；15:00 前的空态主按钮是
+  「去写明日条件」，不再摆一颗被闸门挡住的对账按钮。
 
 **状态矩阵**
 

@@ -138,3 +138,76 @@ describe('六阶段研究报告页', () => {
     expect(await screen.findByRole('heading', { name: '5. 风险' })).toBeTruthy()
   })
 })
+
+describe('首次研究（QUOT-561）：没有产物也能从页面起跑', () => {
+  it('空态报告页给「开始研究」；演示样本不触发起跑', async () => {
+    renderRoute('/research/600000/report?demo=1&variant=empty')
+
+    expect(await screen.findByText('六段产物还没有生成')).toBeTruthy()
+    expect(screen.getByText(/点「开始研究」从第一段跑起/)).toBeTruthy()
+    const start = screen.getByRole('button', { name: '开始研究' })
+    expect((start as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('空态详情页给「去报告页开始研究」，指向报告页', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        return new Response(JSON.stringify({ detail: '600000 还没有任何研究记录' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+    try {
+      renderRoute('/research/600000?tab=research')
+      expect(await screen.findByText('这只还没跑过研究')).toBeTruthy()
+      const link = screen.getByRole('link', { name: '去报告页开始研究' })
+      expect(link.getAttribute('href')).toMatch(/^\/research\/600000\/report(?:\?|$)/)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('点「开始研究」提交 POST /api/research/{code}/run，从失败段起跑', async () => {
+    const calls: Array<{ method: string; url: string; body: unknown }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+        const url = String(input)
+        calls.push({ method: init.method ?? 'GET', url, body: init.body ? JSON.parse(String(init.body)) : null })
+        if (url.includes('/api/research/600000/run')) {
+          return new Response(JSON.stringify({ job_id: 'job-1', status: 'queued' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        if (url.includes('/api/research/jobs/job-1')) {
+          return new Response(JSON.stringify({ job_id: 'job-1', status: 'running', step: '公司画像', progress: 0.2 }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        }
+        // 状态接口：没有任何产物 → 空态（真实 404，不回落演示）
+        return new Response(JSON.stringify({ detail: '600000 还没有任何研究记录' }), {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        })
+      }),
+    )
+    try {
+      renderRoute('/research/600000/report')
+      fireEvent.click(await screen.findByRole('button', { name: '开始研究' }))
+
+      await waitFor(() => expect(calls.some((call) => call.url.includes('/api/research/600000/run'))).toBe(true))
+      const posted = calls.find((call) => call.url.includes('/api/research/600000/run'))
+      expect(posted?.method).toBe('POST')
+      expect(posted?.body).toEqual({ date: expect.any(String), only: 'report' })
+      await waitFor(() => expect(calls.some((call) => call.url.includes('/api/research/jobs/job-1'))).toBe(true), {
+        timeout: 5000,
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }, 10000)
+})

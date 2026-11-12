@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowLeft, FileText, RefreshCw, RotateCcw } from 'lucide-react'
+import { ArrowLeft, FileText, Play, RefreshCw, RotateCcw } from 'lucide-react'
 
 import {
   RESEARCH_STAGES,
@@ -282,27 +282,73 @@ export default function ResearchReportScreen() {
   }
 
   if (view.state === 'empty') {
+    // QUOT-561：没有产物时给「开始研究」——本页此前只有 CLI 能起第一次研究，
+    // 这里直接用 POST /api/research/{code}/run（首段开始，与「运行本段」同一条通道）。
+    const startable = !view.endpointMissing && Boolean(view.code)
     return (
       <div className="flex flex-col gap-5">
         {header}
-        <EmptyState
-          icon={<FileText aria-hidden="true" />}
-          title={view.endpointMissing ? '研究读取接口未接入' : '六段产物还没有生成'}
-          description={
-            view.endpointMissing
-              ? '后端尚未提供 /api/research/* 只读接口（HTTP 404）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
-              : `本机还没有 ${view.code ?? '<code>'} 在 ${view.date} 的六段深度产物；生成后点「刷新」重新读取。`
-          }
-          action={
-            <Button
-              variant="secondary"
-              onClick={view.reload}
-              leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-            >
-              刷新
-            </Button>
-          }
-        />
+        {run.error !== null && (
+          <Banner
+            tone="danger"
+            title={`开始研究没成功：${runErrorView(run.error).title}`}
+            action={
+              startable ? (
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => run.run(active)}
+                  disabled={run.running}
+                  leadingIcon={<RotateCcw className="size-3.5" aria-hidden="true" />}
+                >
+                  再试一次
+                </Button>
+              ) : undefined
+            }
+          >
+            {runErrorView(run.error).detail}
+            {runErrorView(run.error).code && (
+              <code className="ldst-num ml-1 text-caption text-text-muted">
+                {runErrorView(run.error).code}
+              </code>
+            )}
+          </Banner>
+        )}
+        {run.running && run.stage ? (
+          <RunProgress title={STAGE_TITLE[run.stage]} progress={run.progress} step={run.step} />
+        ) : (
+          <EmptyState
+            icon={<FileText aria-hidden="true" />}
+            title={view.endpointMissing ? '研究读取接口未接入' : '六段产物还没有生成'}
+            description={
+              view.endpointMissing
+                ? '后端尚未提供 /api/research/* 只读接口（HTTP 404）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
+                : `本机还没有 ${view.code ?? '<code>'} 在 ${view.date} 的六段深度产物。点「开始研究」从第一段跑起；跑完本页自动读回产物，每段可单独续跑。`
+            }
+            action={
+              <div className="flex flex-wrap items-center gap-2">
+                {startable && (
+                  <Button
+                    variant="primary"
+                    onClick={() => run.run(active)}
+                    disabled={run.running}
+                    loading={run.running}
+                    leadingIcon={<Play className="size-3.5" aria-hidden="true" />}
+                  >
+                    开始研究
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  onClick={view.reload}
+                  leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+                >
+                  刷新
+                </Button>
+              </div>
+            }
+          />
+        )}
       </div>
     )
   }

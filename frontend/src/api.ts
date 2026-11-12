@@ -106,7 +106,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const abortFromCaller = () => controller.abort()
   signal?.addEventListener('abort', abortFromCaller)
-  const isControlWrite = (path.startsWith('/control/') || path.startsWith('/supervisor/')) && method !== 'GET'
+  // 日志写面（QUOT-561 / DEC-083）与控制面同款：服务端要同源 `Origin` 或这个显式头
+  const isControlWrite =
+    (path.startsWith('/control/') ||
+      path.startsWith('/supervisor/') ||
+      path.startsWith('/journal/')) &&
+    method !== 'GET'
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       method,
@@ -648,6 +653,45 @@ export interface JournalStatsQuery {
   to?: string
   /** 偏离计划阈值 `0 ≤ x ≤ 1`，默认 0.01 */
   deviation?: number
+}
+
+/** 记一笔的写请求（QUOT-561 / DEC-083）：字段白名单，服务端多一个键就 400。 */
+export interface JournalTradeInput {
+  code: string
+  side: 'buy' | 'sell'
+  price: number
+  qty: number
+  note?: string
+  /** `YYYY-MM-DD`；不传 = 今天 */
+  trade_date?: string
+  plan_price?: number
+}
+
+/** 写响应：扁平，只回这一笔（不含其它成交、不含任何聚合）。 */
+export interface JournalTradeWritten {
+  ok: true
+  local_only: true
+  store: 'local_sqlite'
+  id: number
+  trade_date: string
+  code: string
+  side: 'buy' | 'sell'
+  price: number
+  qty: number
+  plan_price: number | null
+  note: string
+  created_at: string
+}
+
+/** 写面就绪探测的应答（`GET /api/journal/write-info`，只读、不建库）。 */
+export interface JournalWriteInfo {
+  ok: true
+  local_only: true
+  store: 'local_sqlite'
+  writable: boolean
+  write_path: string
+  sides: Array<'buy' | 'sell'>
+  note_max_len: number
 }
 
 // ---------------------------------------------------------------- 控制面契约
@@ -1321,6 +1365,18 @@ export const api = {
     const search = params.toString()
     return request<JournalStatsPayload>(`/journal/stats${search ? `?${search}` : ''}`, { signal })
   },
+  /**
+   * 记一笔（QUOT-561 / DEC-083）：只写本机 SQLite，与本地记录用的是同一个写入函数；
+   * 读接口仍只有上面的聚合统计，逐笔明细不因这次写入而开出去。
+   */
+  journalAddTrade: (body: JournalTradeInput) =>
+    request<JournalTradeWritten>('/journal/trades', { method: 'POST', body, timeoutMs: CONTROL_TIMEOUT_MS }),
+  /**
+   * 日志写面是否就绪（QUOT-561）：只读探测，回不改库的固定形状；旧后端 404 时
+   * 页面按「本机服务版本较旧」如实说明，不给假入口。
+   */
+  journalWriteInfo: (signal?: AbortSignal) =>
+    request<JournalWriteInfo>(`/journal/write-info`, { signal }),
 
   // 控制面
   control: {

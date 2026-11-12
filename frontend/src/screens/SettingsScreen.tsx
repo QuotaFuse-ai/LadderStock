@@ -150,14 +150,6 @@ const ACTION_LABEL: Record<string, string> = {
   stop: '停止',
 }
 
-/** PRD §5 白名单键对应的 Python 模块名，仅用于展示安装命令的最后一步。 */
-const PEER_MODULE: Record<string, string> = {
-  tickhub: 'tickhub',
-  'tickhub-us': 'tickhub_us',
-  wire: 'quotafuse_wire',
-  senate: 'stocksenate',
-  financecoffer: 'financecoffer',
-}
 
 /**
  * 控制面未接入时的静态基线（PRD §2 事实表，写死）。
@@ -237,19 +229,18 @@ function trimSlash(path: string): string {
 }
 
 /**
- * PRD §4「安装的确切动作」——五步，写死，不允许扩展。
- * 前端只**展示**这段命令，实际执行在后端线程池；前端不执行任何命令。
+ * PRD §4「安装的确切动作」——五步的**白话描述**（QUOT-561：界面上不再摆命令行，
+ * 实际执行仍在后端线程池；用户点「确认安装」即可，不需要抄任何命令）。
  */
-function installCommands(peer: PeerSnapshot): string[] {
-  const python = `${trimSlash(peer.directory)}\\.venv\\Scripts\\python`
-  const module = PEER_MODULE[peer.id] ?? peer.id.replace(/-/g, '_')
-  const target = peer.dist.wheel ? `"${peer.dist.wheel}"` : '-e .'
+function installSteps(peer: Pick<PeerSnapshot, 'directory' | 'dist'>): string[] {
   return [
-    `cd ${peer.directory}`,
-    'python -m venv .venv            # 已存在则跳过',
-    `${python} -m pip install -U pip`,
-    `${python} -m pip install ${target}`,
-    `${python} -c "import ${module}; print(${module}.__version__)"`,
+    `进入安装目录：${trimSlash(peer.directory)}`,
+    '准备独立的 Python 运行环境（.venv；已存在则沿用）',
+    '把 pip 升级到最新版',
+    peer.dist.wheel
+      ? '安装这份目录里打包好的安装包'
+      : '从这份目录就地安装（开发模式，改动即时生效）',
+    '自检：确认模块能被导入并打印版本号',
   ]
 }
 
@@ -625,7 +616,7 @@ function ComponentCard({
           )}
           {!component.actions.can_open && (
             <span className="text-caption text-text-muted">
-              未运行；启停用 <span className="ldst-num">python pfctl.py start|stop</span>（计划任务托管，控制面不代管）
+              未运行；它由本机计划任务托管，开关也在计划任务里，本页不代管启停。
             </span>
           )}
         </div>
@@ -660,17 +651,13 @@ function StaticPeerCard({ peer, reason }: { peer: StaticPeer; reason: string }) 
           目录 <span className="ldst-num">{peer.directory}</span>
         </p>
         <p className="text-caption text-text-muted">{reason}</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" disabled disabledReason="控制面未接入">
-            安装
-          </Button>
-          <Button variant="secondary" disabled disabledReason="控制面未接入">
-            启动
-          </Button>
-          <Button variant="ghost" disabled disabledReason="控制面未接入">
-            查看日志
-          </Button>
-        </div>
+        {/* QUOT-561：这里原来有「安装 / 启动 / 查看日志」三颗永远灰色的按钮——控制面没连上时
+            它们什么也做不了，只留下死按钮。现在如实说明：能做的动作在控制面接好后会自动出现，
+            不摆按钮、也不给命令指引。 */}
+        <p className="text-caption text-text-muted">
+          安装、启动、看日志这些动作属于控制面：本机服务连上并开启控制开关后，这张卡片会自动换成可操作的版本；
+          在那之前这里只展示登记信息，不做任何操作。
+        </p>
       </div>
     </li>
   )
@@ -2287,7 +2274,7 @@ export default function SettingsScreen() {
       <ConfirmDialog
         open={installPeer !== null}
         title={installPeer ? `安装 ${installPeer.product}` : '安装'}
-        description="后端将按下面五步执行（不允许扩展）。取消不会创建任务、不会写日志。"
+        description="后端会按下面五步完成安装（不会多做什么）。取消不会创建任务、不会写日志。"
         confirmLabel="确认安装"
         loading={installBusy}
         onCancel={() => {
@@ -2301,11 +2288,13 @@ export default function SettingsScreen() {
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-1 text-caption text-text-secondary">
               <Terminal className="size-3.5" aria-hidden="true" />
-              将执行的命令
+              会自动做的事
             </div>
-            <pre className="ldst-num overflow-auto whitespace-pre-wrap break-all rounded border border-border bg-sunken p-3 text-caption leading-relaxed text-text">
-              {installCommands(installPeer).join('\n')}
-            </pre>
+            <ol className="flex list-decimal flex-col gap-1 rounded border border-border bg-sunken p-3 pl-7 text-caption leading-relaxed text-text">
+              {installSteps(installPeer).map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
             {installError && <Banner tone="danger" title="安装任务创建失败">{installError}</Banner>}
           </div>
         )}

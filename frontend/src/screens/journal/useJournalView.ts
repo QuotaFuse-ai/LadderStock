@@ -88,6 +88,8 @@ export interface JournalView {
   error: unknown
   endpointMissing: boolean
   reload: () => void
+  /** 静默重取：写完之后刷新统计时用，不清屏（否则整页回到骨架，抽屉连同「已记到本机」一起被卸载）。 */
+  refresh: () => Promise<boolean>
 }
 
 export function useJournalView(query: JournalStatsQuery = {}): JournalView {
@@ -181,6 +183,7 @@ export function useJournalView(query: JournalStatsQuery = {}): JournalView {
     error: request.error,
     endpointMissing,
     reload: request.reload,
+    refresh: () => request.refresh(),
   }
 }
 

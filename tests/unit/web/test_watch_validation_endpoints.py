@@ -162,7 +162,9 @@ def test_watch_snapshot_missing_file_is_unavailable(client: TestClient) -> None:
     assert body["confidence"] == "low"
     assert body["payload"] == {"trade_date": None, "rows": [], "data_source_status": "missing"}
     assert "不存在" in body["source_detail"]
-    assert "ldst watch start" in body["source_detail"]
+    # QUOT-561 / DEC-083：白话文案不带命令串（页面用户不该看到 CLI）
+    assert "ldst watch start" not in body["source_detail"]
+    assert "还没有运行过" in body["source_detail"]
 
 
 def test_watch_snapshot_expired_hides_old_values(client: TestClient, tmp_path: Path) -> None:
@@ -312,7 +314,8 @@ def test_validation_missing_file_is_unavailable_without_side_effects(
     assert body["payload"]["conditions"] == []
     assert body["payload"]["trade_date"] == "2026-10-27"
     assert "不存在" in body["source_detail"]
-    assert "ldst review --date 2026-10-27" in body["source_detail"]
+    assert "ldst review --date 2026-10-27" not in body["source_detail"]
+    assert "收盘对账" in body["source_detail"]
     # 只读端点不现场重算：不给文件补上新内容
     assert not (tmp_path / "state" / "validation" / "2026-10-27.json").exists()
 

@@ -124,7 +124,7 @@ ai:
 
 1. **`config/state.yaml` v1 → v2**：分片从单块拆成 `watch_snapshot` / `review_draft` /
    `validation_draft` 三类，并保留 `journal_draft` 作为**预留分片**——它只在配置里声明、没有前端
-   消费者（journal 域只走 `ldst journal` CLI + 本机 SQLite，`web/server.py` 不提供日志只读接口），
+   消费者（journal 域的读聚合只有 `GET /api/journal/stats`；写面按 QUOT-561 / DEC-083 开了回环独占的 `POST /api/journal/trades`，落库与 CLI 同一函数，本分片仍无消费者），
    同时补齐缺项、校验 `watch_snapshot.ttl_sec`；
 2. **`data/journal.sqlite` 结构升级**：交给 `ladderstock.data.sqlite_store.migrate()`；
 3. **旧目录只读迁移**：把旧 `data.js` / `review/` 复制进 `data/legacy/import-<时间戳>/`，

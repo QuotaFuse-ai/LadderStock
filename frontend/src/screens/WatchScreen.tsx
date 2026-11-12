@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { RefreshCw, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Play, RefreshCw, Trash2 } from 'lucide-react'
 
 import { describeApiError, isApiError, type WatchSnapshotRow } from '../api'
 import {
@@ -23,6 +23,7 @@ import {
   type Freshness,
 } from '../../persist/freshness'
 import { useAsync } from '../lib/useAsync'
+import { NOTIFY_COPY, usePageCommandRun } from '../lib/usePageCommandRun'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import { MISSING, formatChangePct, formatInt, formatTime } from '../lib/format'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
@@ -41,6 +42,8 @@ import {
   SignedNumber,
   SourceBadges,
   Switch,
+  Toasts,
+  useToasts,
   type Column,
 } from '../components/ui'
 import { useWatchSource } from './watch/useWatchSource'
@@ -277,6 +280,26 @@ export default function WatchScreen() {
   const columns = useMemo(() => buildColumns(thresholdPct), [thresholdPct])
 
   const [confirmClear, setConfirmClear] = useState(false)
+
+  /**
+   * 通知链路自检（QUOT-561）：原来是一颗永久 disabled 的死按钮。现在提交控制面白名单
+   * 的 `notify` 命令（只投本机渠道）并轮询到结束；投递失败（退出码 4）
+   * 由后端写进任务日志，这里照实转述成「没送到」，不冒充成功。
+   */
+  const toasts = useToasts()
+  const notifyCheck = usePageCommandRun('notify', { copy: NOTIFY_COPY })
+  const toastPushRef = useRef(toasts.push)
+  toastPushRef.current = toasts.push
+  const notifiedJobRef = useRef<string | null>(null)
+  useEffect(() => {
+    const outcome = notifyCheck.outcome
+    if (!outcome || notifiedJobRef.current === outcome.job.id) return
+    notifiedJobRef.current = outcome.job.id
+    toastPushRef.current(outcome.detail, outcome.ok ? 'ok' : 'danger')
+  }, [notifyCheck.outcome])
+  useEffect(() => {
+    if (notifyCheck.submitError) toastPushRef.current(notifyCheck.submitError, 'danger')
+  }, [notifyCheck.submitError])
 
   const sourceStatus = envelope?.source_status ?? null
   const degradedSource = sourceStatus !== null && sourceStatus !== 'ok'
@@ -595,13 +618,18 @@ export default function WatchScreen() {
           </p>
           <Button
             variant="ghost"
-            disabled
-            disabledReason="通知链路自检本轮未接入"
+            onClick={() => void notifyCheck.run()}
+            disabled={demo || notifyCheck.running}
+            disabledReason={demo ? '演示样本不触发真实通知' : undefined}
+            loading={notifyCheck.running}
+            leadingIcon={<Play className="size-3.5" aria-hidden="true" />}
           >
-            通知链路自检
+            发一条测试通知
           </Button>
         </div>
       </Card>
+
+      <Toasts items={toasts.items} onDismiss={toasts.dismiss} />
 
       <ConfirmDialog
         open={confirmClear}

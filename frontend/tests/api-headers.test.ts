@@ -85,3 +85,18 @@ describe('AI 生成 / 重试调用链（QUOT-236）', () => {
     }
   })
 })
+
+describe('交易日志写面（QUOT-561 / DEC-083）', () => {
+  it('记一笔走同源写头；写面探测是只读请求，不带写头', async () => {
+    const calls = captureFetch()
+    await api.journalAddTrade({ code: '600000', side: 'buy', price: 10.5, qty: 100 })
+    await api.journalWriteInfo()
+    expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+      'POST /api/journal/trades',
+      'GET /api/journal/write-info',
+    ])
+    expect(calls[0].headers['X-LDST-Client']).toBe('1')
+    expect(calls[0].headers['content-type']).toBe('application/json')
+    expect(calls[1].headers['X-LDST-Client']).toBeUndefined()
+  })
+})

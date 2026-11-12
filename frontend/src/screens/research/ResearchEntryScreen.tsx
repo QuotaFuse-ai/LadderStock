@@ -86,8 +86,8 @@ export default function ResearchEntryScreen() {
           </form>
 
           <p className="border-t border-border pt-3 text-caption leading-body text-text-muted">
-            还没有研究产物时，进入个股深挖后在报告页按段点「运行本段」生成；
-            页面只读已落盘的产物，不会现场取数或补数据。
+            还没有研究产物时，进入报告页点「开始研究」就会从第一段跑起；之后每段也能单独续跑。
+            页面只展示已落盘的产物，缺失段如实标出，不会补数据。
           </p>
         </CardBody>
       </Card>

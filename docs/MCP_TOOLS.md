@@ -179,7 +179,7 @@
 
 1. **禁止字段名**：`journal`、`trades`、`positions`、`watchlist`、`position`、`holding`、`自选` 不得出现在任何 MCP 工具名、描述或 `input_schema` 中。候选池因此把「地位」分项对外命名为 `standing`（中文标签「地位」只用于人类可读输出，不参与键名）。
 2. **禁止旁路**：MCP 不提供任何「查交易日志 / 持仓 / 自选」的工具；模型若需要纪律统计，只能由人类在 CLI 侧自行查看。
-3. **只读边界**：`/api/*` 全部为 `GET`，无写接口；写路径只有 CLI（`journal add`）。
+3. **只读边界**：`/api/*` 绝大部分为 `GET`；写路径除 CLI 外，QUOT-561 / DEC-083 按需开了最小回环写面（`POST /api/journal/trades`、`POST /api/watchlist*`、`/api/portfolio/ledger*`、`/api/inbox/*/read`），全部回环独占 + 写来源证据 + 字段白名单。MCP 侧的工具集不受影响：**不提供任何 journal 工具**（见第 2 条）。
 4. **本机回环**：web 只监听 `127.0.0.1:5950`（MCP `5951`）；端口被占用时 `ldst run` 直接以退出码 3 失败并提示 `--port`，绝不静默换端口。
 5. **非回环必须鉴权**（R-1）：两条监听面共用 `core/listener.py` 的同一判据——回环放行；非回环必须 `<前缀>_ALLOW_REMOTE=1` + `<前缀>_TOKEN`（≥16 字符，web `LDST_WEB_*`、MCP `LDST_MCP_*`），否则拒绝启动（退出码 3）。开启后 `/api/*` 与 `/mcp` 均要求 `Authorization: Bearer <token>`，`hmac.compare_digest` 比较，失败 401。
 
