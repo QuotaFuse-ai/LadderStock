@@ -1746,6 +1746,12 @@ def create_app(
             and processes is not None
         ):
             plane.supervisor = processes
+    # QUOT-571：首页指数条吃自愈健康事件的「确认宕机」跃迁做短路。总线挂在自愈引擎上，
+    # 只读不写（取数层不反导 supervisor）。`radar` 上面的雷达面此时已就位、同一实例；
+    # 显式注入过 `health_bus` 的平面优先（测试假件），不覆盖。引擎没有 `event_bus`
+    # 时回落 None，短路自然退化为不生效，其余 fail-fast 层照常。
+    if radar._health_bus is None:
+        radar._health_bus = getattr(engine, "event_bus", None)
     mount_supervisor_router(
         app,
         engine,
