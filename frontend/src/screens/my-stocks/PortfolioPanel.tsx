@@ -295,7 +295,7 @@ export function PortfolioPanel() {
         refresh={{ onClick: () => view.refresh({ manual: true }), loading: view.refreshing }}
       />
 
-      <PrivacyNotice subject="持仓" storeCommand="ldst portfolio" />
+      <PrivacyNotice subject="持仓" />
 
       {view.refreshError !== null && (
         <Banner tone="warn" title="刷新失败，页面上还是上一次的数据">

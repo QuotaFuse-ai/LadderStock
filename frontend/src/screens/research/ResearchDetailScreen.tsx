@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Check, Copy, FileText, RefreshCw, RotateCcw } from 'lucide-react'
+import { FileText, RefreshCw, RotateCcw } from 'lucide-react'
 
 import {
   RESEARCH_STAGES,
@@ -581,7 +581,6 @@ export default function ResearchDetailScreen() {
   const location = useLocation()
   const [params, setParams] = useSearchParams()
   const [drawer, setDrawer] = useState<DrawerState>(null)
-  const [copied, setCopied] = useState(false)
 
   // tab 记在地址里（?tab=research），刷新、后退都还在；缺省概览（QUOT-400）
   const tab: DeepDiveTab = params.get('tab') === 'research' ? 'research' : 'overview'
@@ -612,20 +611,6 @@ export default function ResearchDetailScreen() {
     [view.code, view.source],
     { enabled: Boolean(view.code) && tab === 'overview' },
   )
-
-  const researchCommand = view.code ? `ldst research ${view.code} --date ${view.date}` : null
-  const copyCommand = () => {
-    if (!researchCommand) return
-    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
-    if (!clipboard?.writeText) return
-    void clipboard
-      .writeText(researchCommand)
-      .then(() => {
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), 2000)
-      })
-      .catch(() => setCopied(false))
-  }
 
   const artifacts = useMemo(() => {
     const map = new Map<ResearchStageName, StageArtifact>()
@@ -822,7 +807,7 @@ export default function ResearchDetailScreen() {
         ? describeResearchError(view.error)
         : {
             title: '研究取数失败',
-            detail: '（演示态）没有真实错误；?state=error 只用于演练错误态的排版。',
+            detail: '（演示态）没有真实错误；这一层只用于演练错误态的排版。',
             code: null,
           }
     return (
@@ -857,7 +842,7 @@ export default function ResearchDetailScreen() {
   }
 
   if (view.state === 'empty') {
-    // QUOT-400：404 三态在空态里的落点——「没跑过研究」给可复制命令；
+    // QUOT-400：404 三态在空态里的落点——「没跑过研究」指到报告页的页内入口；
     // 只有路由本身没接（FastAPI 默认 404）才说「接口未接入」。
     const noRecord = view.notFoundKind === 'no-record'
     return (
@@ -878,45 +863,19 @@ export default function ResearchDetailScreen() {
             view.endpointMissing
               ? '后端尚未提供 /api/research/* 只读接口（HTTP 404 Not Found）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
               : noRecord
-                ? '概览标签已经可以直接看走势与财报；跑一次研究就能看六段深度内容。'
+                ? '概览标签已经可以直接看走势与财报；去报告页按段点「运行本段」，六段深度内容就会生成。'
                 : `本机还没有 ${view.code ?? '<code>'} 在 ${view.date} 的六段深度产物；概览标签可直接查看走势与财报，点「刷新」重新读取。`
           }
           action={
-            noRecord && researchCommand ? (
-              <Button
-                variant="secondary"
-                onClick={copyCommand}
-                leadingIcon={
-                  copied ? (
-                    <Check className="size-3.5" aria-hidden="true" />
-                  ) : (
-                    <Copy className="size-3.5" aria-hidden="true" />
-                  )
-                }
-              >
-                {copied ? '已复制' : '复制命令'}
-              </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                onClick={view.reload}
-                leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-              >
-                刷新
-              </Button>
-            )
+            <Button
+              variant="secondary"
+              onClick={view.reload}
+              leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+            >
+              刷新
+            </Button>
           }
         />
-        {noRecord && researchCommand && (
-          <code className="ldst-num w-fit rounded-xs bg-surface-3 px-2 py-1 text-caption text-text-secondary">
-            {researchCommand}
-          </code>
-        )}
-        {view.demo && (
-          <p className="text-caption text-text-muted">
-            演示模式：试试 <code className="ldst-num">?demo=1&amp;state=normal</code>。
-          </p>
-        )}
       </div>
     )
   }

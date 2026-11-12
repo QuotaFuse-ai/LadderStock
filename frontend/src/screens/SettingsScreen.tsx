@@ -230,7 +230,7 @@ const STATIC_PEERS: readonly StaticPeer[] = [
   },
 ]
 
-const CONTROL_ABSENT_NOTE = '控制面接口未接入（本轮不实现）：需本机 API 已启动（ldst run），或确认 LDST_CONTROL_ENABLED=1。'
+const CONTROL_ABSENT_NOTE = '控制面接口未接入（本轮不实现）：需本机服务已启动并开启控制开关。'
 
 function trimSlash(path: string): string {
   return path.replace(/[\\/]+$/, '')
@@ -1545,7 +1545,7 @@ function PortsSection({
         ) : stateConfig.status === 'loading' ? (
           <SkeletonText lines={2} />
         ) : (
-          <EmptyState compact title="没有读到配置目录" description="/api/state/config 返回为空；确认本机已跑过一次 ldst run。" />
+          <EmptyState compact title="没有读到配置目录" description="/api/state/config 返回为空；确认本机服务已启动过一次。" />
         )}
       </SectionCard>
     </div>
@@ -1590,7 +1590,7 @@ function AboutSection({
       note: info ? undefined : healthNote,
     },
     { label: '构建时间', value: MISSING, note: '前端未注入构建时间戳（构建时未生成）' },
-    { label: 'ldst 版本', value: MISSING, note: '数据面未暴露 CLI 版本' },
+    { label: 'CLI 版本', value: MISSING, note: '数据面未暴露 CLI 版本' },
     {
       label: '数据目录',
       value: config?.data_dir ?? info?.data_dir ?? MISSING,
@@ -1602,7 +1602,7 @@ function AboutSection({
       value: config?.state_schema_version === null || config?.state_schema_version === undefined
         ? MISSING
         : String(config.state_schema_version),
-      note: config?.state_index_present === false ? '索引未建立（ldst state rebuild）' : undefined,
+      note: config?.state_index_present === false ? '索引未建立' : undefined,
     },
   ]
 
@@ -2027,10 +2027,9 @@ export default function SettingsScreen() {
   } else if (controlOff || (httpStatus === 404 && state !== 'offline')) {
     body = (
       <div className="flex flex-col gap-4">
-        <Banner tone="danger" title="控制面未启用（LDST_CONTROL_ENABLED=0）">
+        <Banner tone="danger" title="控制面未启用">
           <>
-            设置页的安装 / 启动 / 停止全部不可用；数据面（首页、盯盘、复盘、验证）不受影响。以{' '}
-            <span className="ldst-num">LDST_CONTROL_ENABLED=1</span> 重启 <span className="ldst-num">ldst run</span> 后恢复。
+            设置页的安装 / 启动 / 停止全部不可用；数据面（首页、盯盘、复盘、验证）不受影响。在本机服务的配置里打开控制开关并重启服务后恢复。
           </>
         </Banner>
         {section === 'peers' && (

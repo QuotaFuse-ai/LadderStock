@@ -269,7 +269,7 @@ export default function CalendarScreen() {
           <EmptyState
             icon={<CalendarDays aria-hidden="true" />}
             title="本地服务未连接"
-            description="启动 ldst run 后自动接入 /api/events/timeline；未连接时时间轴不显示任何估算日期。"
+            description="本机服务连接后会自动接入；未连接时时间轴不显示任何估算日期。"
             action={<Button variant="secondary" onClick={reload}>重新检查</Button>}
           />
         </Card>
@@ -337,7 +337,7 @@ export default function CalendarScreen() {
           />
         </Card>
         <GapsCard gaps={payload?.gaps ?? []} />
-        {demo && <p className="text-caption text-text-muted">当前是演示数据（?demo=1）。</p>}
+        {demo && <p className="text-caption text-text-muted">当前是演示数据。</p>}
       </div>
     )
   }

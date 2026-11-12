@@ -62,7 +62,7 @@ import { useMarketView } from './market/useMarketView'
  * - CH-02 ← `/api/ladder`（已上线）；
  * - CH-03 ← `/api/market/theme`（已上线；本机未接 QuotaFuse Wire 时为 `available=false` 空态）。
  *
- * 三条硬规则：没有数据就显示「数据未同步」并给下一步（`ldst sync --date …`），
+ * 三条硬规则：没有数据就显示「数据未同步」并给下一步（本页数据同步），
  * **不补 0、不画假线、不出现 NaN / undefined**；404 只代表「该段暂未接入」，不是页面故障。
  *
  * 取数通道由 `market/useMarketView.ts` 决定：演示（`?demo=1` / 设置开关）走 `market/demo.ts`，
@@ -620,8 +620,7 @@ export default function MarketScreen() {
                           </>
                         ) : (
                           <>
-                            <code className="ldst-num">/api/market/history</code> 已接入但本机没有序列数据（先跑{' '}
-                            <code className="ldst-num">ldst sync</code>），本段先展示当日单点；序列可用后自动改画折线。
+                            <code className="ldst-num">/api/market/history</code> 已接入但本机没有序列数据，点右上角「本页数据同步」补取；本段先展示当日单点，序列可用后自动改画折线。
                           </>
                         )}
                       </Banner>
@@ -804,12 +803,7 @@ export default function MarketScreen() {
 
           <SectionCard title="同步与口径" subtitle="缺数据时先同步，再刷新">
             <div className="flex flex-col gap-3 text-caption leading-body text-text-secondary">
-              <p>
-                统一同步入口：
-                <code className="ldst-num ml-1 rounded border border-border bg-surface-2 px-2 py-1">
-                  ldst sync --date {tradeDate}
-                </code>
-              </p>
+              <p>统一同步入口：页面右上角「本页数据同步」，缺哪段补哪段。</p>
               <ul className="flex list-disc flex-col gap-1 pl-4">
                 <li>情绪温度 0–100，50 中性；区间带 40–60 只做视觉参考，不是交易信号。</li>
                 <li>梯队按板数升序，柱高为家数；末位未知板位不计入柱图。</li>

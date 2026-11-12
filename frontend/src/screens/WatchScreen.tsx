@@ -407,7 +407,7 @@ export default function WatchScreen() {
           title="盘中快照不可用"
           detail={
             unavailableDetail ??
-            '当前没有可用快照（可能未运行 ldst watch start 或已超过 TTL）。旧值不展示，避免按过期数据决策。'
+            '当前没有可用快照（本机自选扫描还没有运行，或快照已超过有效期）。旧值不展示，避免按过期数据决策。'
           }
           onRetry={request.reload}
           retryLabel="重新取数"
@@ -589,14 +589,14 @@ export default function WatchScreen() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2">
           <p className="text-caption text-text-muted">
             快照来源：<span className="ldst-num">{envelope?.source_detail ?? storeSourceDetail ?? MISSING}</span>
-            {' '}· 扫描间隔由 ldst watch 守护进程决定 · 最近扫描{' '}
+            {' '}· 扫描间隔由本机扫描守护进程决定 · 最近扫描{' '}
             <span className="ldst-num">{formatTime(storeFetchedAt, now)}</span> · 本机{' '}
             <span className="ldst-num">{localDateIso(now)}</span>
           </p>
           <Button
             variant="ghost"
             disabled
-            disabledReason="通知链路自检由 ldst notify test 提供（本轮不接入）"
+            disabledReason="通知链路自检本轮未接入"
           >
             通知链路自检
           </Button>

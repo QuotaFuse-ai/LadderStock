@@ -14,7 +14,7 @@ import ReviewScreen from '../src/screens/ReviewScreen'
  * - `/review`：三张指标卡 + 五段 `sections[].metrics` +「我的判断」草稿；无叙述、无模型名、无生成入口；
  * - `/review/ai`：五段 `narrative` + 段级 `status` + `ai_failures[]` + `ai.model` + 控制面入口；无指标卡、无草稿。
  *
- * 「没有 AI 正文」有三种成因，必须分开显示（DEC-049 §4）：产物不存在 → 引导 `ldst review`；
+ * 「没有 AI 正文」有三种成因，必须分开显示（DEC-049 §4）：产物不存在 → 引导页内生成；
  * 产物在但模型未接入 → 引导「接入 AI」；段级失败 → 逐段标注 + 按段重试。
  */
 
@@ -225,14 +225,15 @@ describe('复盘两屏边界（DEC-049）', () => {
     expect(textOf('data-screen')).not.toContain('接入 AI')
   })
 
-  it('产物不存在：AI屏只引导 ldst review，不喊「接入 AI」', async () => {
+  it('产物不存在：AI屏只引导页内生成，不喊「接入 AI」', async () => {
     renderPair('/review/ai?demo=1&variant=empty&date=2026-10-30')
     const modelScreen = screen.getByTestId('model-screen')
 
     expect(await within(modelScreen).findByText('这一天还没有复盘产物')).toBeTruthy()
-    expect(within(modelScreen).getAllByText('ldst review --date 2026-10-30').length).toBeGreaterThan(0)
+    expect(within(modelScreen).getAllByText(/本页数据同步/).length).toBeGreaterThan(0)
+    expect(within(modelScreen).queryByText(/ldst review/)).toBeNull()
     expect(within(modelScreen).getByRole('button', { name: '重新检查' })).toBeTruthy()
-    expect(within(modelScreen).getByRole('button', { name: '复制命令' })).toBeTruthy()
+    expect(within(modelScreen).queryByRole('button', { name: '复制命令' })).toBeNull()
     expect(within(modelScreen).queryByRole('button', { name: '接入 AI' })).toBeNull()
     // 数据屏同一份事实：也是「没产物」，也是引导跑命令
     expect(textOf('data-screen')).toContain('2026-10-30 尚未生成复盘')

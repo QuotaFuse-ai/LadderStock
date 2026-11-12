@@ -122,15 +122,16 @@ export const DEMO_STATE_LABEL: Record<Exclude<PageState, 'normal'>, string> = {
 }
 
 /**
- * 演示水印的唯一真源（UI-SPEC §5.6 / 整改项 R-18）。
+ * 演示水印的唯一真源（UI-SPEC §5.6 / 整改项 R-18；QUOT-559 去技术参数串）。
  *
  * 两件事分别标识，互不替代：
- * - 演示源 → 演示徽标（§5.6 硬约束，`tone="warn"`）：URL 开启写「演示数据 · ?demo=1」，
- *   设置页开关开启写「演示数据 · 设置开关」；
- * - `?state=` → 强制态水印 `演示态：…（?state=…）`。
+ * - 演示源 → 演示徽标（§5.6 硬约束，`tone="warn"`）：文案统一「演示数据」，
+ *   不再印 `?demo=1` / 「设置开关」等技术参数串；来源细节放 hover title。
+ * - `?state=` → 强制态水印 `演示态：…`：这是**开发态视觉回归工具**，
+ *   仅 `import.meta.env.DEV` 渲染，生产构建不出现（QUOT-559 隐藏技术开关）。
  *
- * `state` 为 null 且无 `?demo=1` 时才不渲染——旧实现只认 `?state=`，
- * 于是 `?demo=1` 的假数据整屏零标识（R-18 的 P0 根因）。
+ * `state` 为 null 且未开演示时才不渲染——旧实现只认 `?state=`，
+ * 于是演示假数据整屏零标识（R-18 的 P0 根因）。
  * 各屏调用点保持 `<DemoStateBadge state={forced} />` 不改签名：演示开关由组件自读。
  */
 export function DemoStateBadge({ state }: { state: PageState | null }) {
@@ -141,13 +142,23 @@ export function DemoStateBadge({ state }: { state: PageState | null }) {
   return (
     <>
       {demo && (
-        <Badge tone="warn" title="本页数据来自 demo.ts 演示源，不是真实行情">
-          {urlDemo ? '演示数据 · ?demo=1' : '演示数据 · 设置开关'}
+        <Badge
+          tone="warn"
+          title={
+            urlDemo
+              ? '本页数据来自演示样例（网址开关打开时），不是真实行情'
+              : '本页数据来自演示样例（设置页「虚拟数据」开关），不是真实行情'
+          }
+        >
+          演示数据
         </Badge>
       )}
-      {forced && (
-        <span className="inline-flex h-5 items-center rounded-xs border border-border-strong px-2 text-caption text-text-secondary">
-          演示态：{DEMO_STATE_LABEL[forced]}（?state={forced}）
+      {forced && import.meta.env.DEV && (
+        <span
+          className="inline-flex h-5 items-center rounded-xs border border-border-strong px-2 text-caption text-text-secondary"
+          data-testid="forced-state-watermark"
+        >
+          演示态：{DEMO_STATE_LABEL[forced]}
         </span>
       )}
     </>
@@ -172,8 +183,8 @@ export function OfflineBanner({ onRetry }: { onRetry?: () => void }) {
       }
     >
       <p className="max-w-measure">
-        服务未连接 → 看顶栏状态灯 / 点「重启平台」；仍不行查看 watchdog 日志。本机草稿仍可编辑，
-        恢复自 IndexedDB 的内容不会丢。
+        看板的本机服务还没有就绪：看一眼顶栏状态灯，点「重启平台」通常就能恢复；
+        恢复前本机草稿仍可编辑，内容不会丢。
       </p>
     </Banner>
   )

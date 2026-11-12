@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Copy, FileText, RefreshCw, Trash2 } from 'lucide-react'
+import { FileText, RefreshCw, Trash2 } from 'lucide-react'
 
 import { describeApiError, isApiError, type SentimentResult } from '../api'
 import { resolveState, type PageState } from '../lib/pageState'
@@ -165,7 +165,6 @@ export default function ReviewScreen() {
   const [confirmReset, setConfirmReset] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [cached, setCached] = useState<ReviewCache | null>(null)
-  const [copied, setCopied] = useState(false)
 
   // 离线回放：只读取本机 IndexedDB 里的复盘快照（程序指标 + 正文），与 AI 屏共用同一份缓存键
   useEffect(() => {
@@ -257,8 +256,6 @@ export default function ReviewScreen() {
   const promotionRate = sentimentReady ? viewSent?.promotion_rate ?? null : null
   const gapLevels = sentimentReady ? viewSent?.gap_levels ?? null : null
 
-  const reviewCommand = `ldst review --date ${tradeDate}`
-
   const summary = useMemo(() => {
     if (state === 'offline') {
       return replay
@@ -266,35 +263,20 @@ export default function ReviewScreen() {
         : '本地服务未连接 · 没有可回放的缓存'
     }
     if (state === 'error') return '取数失败'
-    if (state === 'empty') return `${tradeDate} 尚未生成复盘 · 运行 ${reviewCommand}`
+    if (state === 'empty') return `${tradeDate} 尚未生成复盘`
     if (state === 'partial') {
       if (failedLabels.length > 0) return `${tradeDate} · 部分数据源不可用`
       return `${tradeDate} · 五段中 ${formatInt(missingNames.length)} 段缺数`
     }
     if (demo) return `${tradeDate} · 演示数据（非真实行情）· 不写本机草稿`
     return `${tradeDate} · 草稿 ${formatInt(total)} 字 · 最后写入 ${formatTime(updatedAt)}`
-  }, [state, tradeDate, total, updatedAt, failedLabels.length, missingNames.length, replay, reviewCommand, demo])
+  }, [state, tradeDate, total, updatedAt, failedLabels.length, missingNames.length, replay, demo])
 
   const handleReset = () => {
     clearDate(tradeDate)
     setConfirmReset(false)
     setRestored(draftSnapshot(tradeDate))
     setNotice(`${tradeDate} 的本机复盘草稿已清空`)
-  }
-
-  const copyCommand = () => {
-    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
-    if (!clipboard?.writeText) {
-      setNotice('当前浏览器不允许自动复制，请手动选中命令复制。')
-      return
-    }
-    void clipboard
-      .writeText(reviewCommand)
-      .then(() => {
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), 2000)
-      })
-      .catch(() => setNotice('复制失败，请手动选中命令复制。'))
   }
 
   const focusSection = (name: string) => {
@@ -345,7 +327,7 @@ export default function ReviewScreen() {
       : {
           title: '复盘取数失败',
           detail: '复盘接口没有返回可用数据。恢复后点「重试取数」；本屏不编造任何数字。',
-          code: 'DEMO · ?state=error',
+          code: null,
         }
     return (
       <div className="flex flex-col gap-5">
@@ -370,8 +352,7 @@ export default function ReviewScreen() {
       )}
       {state === 'offline' && !replay && (
         <Banner tone="warn" title="没有可回放的缓存">
-          本机服务未连接，IndexedDB 里也没有 {tradeDate} 的复盘快照。先在终端确认{' '}
-          <code className="ldst-num">ldst run</code> 是否在运行，恢复后点「刷新」。
+          本机服务未连接，IndexedDB 里也没有 {tradeDate} 的复盘快照。恢复连接后点「刷新」。
         </Banner>
       )}
       {state === 'partial' && failedLabels.length > 0 && (
@@ -395,8 +376,7 @@ export default function ReviewScreen() {
           }
         >
           缺的是本机当天该数据集的产物，不是模型：每个缺失段单独标注原因，段内计数整列按 {MISSING} 显示，
-          其余段落照常渲染。补数后运行 <code className="ldst-num">ldst sync</code> 再运行{' '}
-          <code className="ldst-num">{reviewCommand}</code>，回到本页点「刷新」。
+          其余段落照常渲染。补数后回到本页点「刷新」即可；也可以点右上角「本页数据同步」立即开始。
         </Banner>
       )}
 
@@ -456,36 +436,22 @@ export default function ReviewScreen() {
       {state === 'empty' && (
         <SectionCard
           title="这一天还没有复盘产物"
-          subtitle={`数据面：ldst review 产物（只读）· ${tradeDate}`}
+          subtitle={`数据面：只读本机复盘产物 · ${tradeDate}`}
           bodyClassName="p-0"
           actions={<Badge tone="neutral">待生成</Badge>}
         >
           <EmptyState
             icon={<FileText aria-hidden="true" />}
             title={`${tradeDate} 尚未生成复盘`}
-            description="在终端运行下面这条命令生成五段复盘（情绪 / 资金 / 题材 / 龙虎榜 / 龙头），落盘后回到本页点「重新检查」。五段数据在跑过这条命令后即有；没有配置模型凭据只影响 AI复盘屏，不影响本屏。"
+            description="打开本页会自动补取并生成五段复盘（情绪 / 资金 / 题材 / 龙虎榜 / 龙头）。也可以点右上角「本页数据同步」立即开始；完成后回到本页点「重新检查」。没有配置模型凭据只影响 AI复盘屏，不影响本屏。"
             action={
-              <div className="flex w-full max-w-measure flex-col items-center gap-2">
-                <code className="ldst-num w-full break-all rounded border border-border bg-surface-3 px-3 py-2 text-left text-caption text-text-secondary">
-                  {reviewCommand}
-                </code>
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={copyCommand}
-                    leadingIcon={<Copy className="size-3.5" aria-hidden="true" />}
-                  >
-                    {copied ? '已复制' : '复制命令'}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={reloadAll}
-                    leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-                  >
-                    重新检查
-                  </Button>
-                </div>
-              </div>
+              <Button
+                variant="secondary"
+                onClick={reloadAll}
+                leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+              >
+                重新检查
+              </Button>
             }
           />
         </SectionCard>

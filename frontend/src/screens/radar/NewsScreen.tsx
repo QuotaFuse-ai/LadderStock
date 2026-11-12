@@ -512,7 +512,7 @@ export default function NewsScreen() {
           <EmptyState
             icon={<Newspaper aria-hidden="true" />}
             title="本地服务未连接"
-            description="启动 ldst run 后自动接入 /api/news；未连接时不展示任何资讯。"
+            description="本机服务连接后会自动接入；未连接时不展示任何资讯。"
             action={<Button variant="secondary" onClick={reload}>重新检查</Button>}
           />
         </Card>
@@ -659,10 +659,9 @@ export default function NewsScreen() {
       </div>
 
       <p className="text-caption leading-body text-text-muted">
-        口径：资讯只读自本机缓存（R6 `ldst news`），标题与摘要保持原文；「已抽取事件」为后端规则抽取结果。
+        口径：资讯只读自本机缓存，标题与摘要保持原文；「已抽取事件」为后端规则抽取结果。
         代码 / 行业过滤作用于当前窗口（最多 60 条）
         {payload.items.some((item) => item.industries.length === 0) && '；缺行业标签的条目按标题 / 摘要关键词匹配'}。
-        演示源固定 {DEMO_NEWS_DATE} 的样例，<code className="ldst-num">?variant=partial|empty</code> 切换降级程度。
       </p>
     </div>
   )

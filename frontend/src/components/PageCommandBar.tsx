@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { CircleCheck, CircleX, Loader2, Play, SquareTerminal } from 'lucide-react'
+import { CircleCheck, CircleX, Loader2, Play, RefreshCw } from 'lucide-react'
 
 import { api, type JobView, type PageCommand } from '../api'
 import { cn } from '../lib/cn'
@@ -9,6 +9,7 @@ import {
   describeJobFailure,
   hasPartialSourceFailure,
   isJobActive,
+  sanitizeCliText,
 } from '../lib/controlCommand'
 import { useDemoEnabled } from '../lib/pageState'
 import { Badge, Button } from './ui'
@@ -22,7 +23,7 @@ function timeLabel(iso: string | null): string {
 
 function statusLabel(job: JobView): string {
   if (job.status === 'queued') return '已排队'
-  if (job.status === 'running') return job.step || '执行中'
+  if (job.status === 'running') return job.step || '进行中'
   const when = timeLabel(job.ended_at ?? job.started_at)
   return `${job.status === 'ok' ? '上次成功' : '上次失败'}${when ? ` · ${when}` : ''}`
 }
@@ -30,17 +31,19 @@ function statusLabel(job: JobView): string {
 type JobMap = Record<string, JobView | null>
 
 /**
- * 「运行本页命令」（QUOT-200 建，QUOT-457 收进顶栏，QUOT-538 支持同路由多条）。
+ * 「本页数据同步」（QUOT-200 建，QUOT-457 收进顶栏，QUOT-538 支持同路由条，
+ * QUOT-559 全局去 CLI 后只呈现白话入口）。
  *
- * 按路由列出本页对应的 `ldst` 命令，复用控制面的 Job 队列（`/control/commands`），
- * 与设置页的启停任务同一套线程池与日志口径。
+ * 按路由列出本页对应的同步动作，复用控制面的 Job 队列（`/control/commands`），
+ * 与设置页的启停任务同一套线程池口径。**界面上只出现白话：命令名、进度、结果、
+ * 失败原因；不出现命令行、可执行文件名与原始日志。**
  *
- * 同一条路由可以有多条语义不同的命令（`/industry`：只读「重算行业快照」+ 联网
+ * 同一条路由可以有多条语义不同的动作（`/industry`：只读「重算行业快照」+ 联网
  * 「同步补齐行业数据」）。契约（QUOT-533）要求**全部列出、各自独立展示任务状态**，
- * 不能只取第一条——否则联网入口会被只读命令挡住。
+ * 不能只取第一条——否则联网入口会被只读动作挡住。
  *
- * 带 `note`（成本/范围说明）的命令是显式付费动作，点「运行」先出二次确认，
- * 不默认自动执行。同一时刻只允许一条页面命令在跑，后端 409 兜底，这里只做按钮禁用。
+ * 带 `note`（成本/范围说明）的动作是显式付费动作，点「立即开始」先出二次确认，
+ * 不默认自动执行。同一时刻只允许一个页面任务在跑，后端 409 兜底，这里只做按钮禁用。
  */
 export default function PageCommandBar() {
   const { pathname } = useLocation()
@@ -156,10 +159,10 @@ export default function PageCommandBar() {
         ...prev,
         [command.key]: {
           id: handle.job_id,
-          peer: 'ldst',
+          peer: 'local',
           action: 'command',
           status: 'queued',
-          step: '已排队，等待后端线程池',
+          step: '已排队，马上开始',
           progress: 0,
           started_at: new Date().toISOString(),
           ended_at: null,
@@ -182,8 +185,8 @@ export default function PageCommandBar() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="page-command-panel"
-        aria-label="本页命令"
-        title={`本页 ${routeCommands.length} 条命令`}
+        aria-label="本页数据同步"
+        title={`本页数据同步（${routeCommands.length} 项）`}
         className={cn(
           'relative rounded p-1.5 transition-colors duration-fast hover:bg-surface-3',
           failed ? 'text-danger' : running ? 'text-accent' : 'text-text-muted hover:text-text',
@@ -192,7 +195,7 @@ export default function PageCommandBar() {
         {running ? (
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
         ) : (
-          <SquareTerminal className="size-4" strokeWidth={1.75} aria-hidden="true" />
+          <RefreshCw className="size-4" strokeWidth={1.75} aria-hidden="true" />
         )}
       </button>
 
@@ -200,7 +203,7 @@ export default function PageCommandBar() {
         <div
           id="page-command-panel"
           role="dialog"
-          aria-label="本页命令"
+          aria-label="本页数据同步"
           className="absolute right-0 top-full z-overlay mt-2 max-h-[75vh] w-dialog max-w-popover overflow-auto rounded border border-border bg-surface p-3 shadow-overlay"
         >
           <div className="flex flex-col gap-3">
@@ -250,19 +253,12 @@ function CommandCard({
   onCancel: () => void
 }) {
   const active = isJobActive(job)
-  const argv = `ldst ${command.argv.join(' ')}`
-  const log = job && job.log_tail.length > 0 ? job.log_tail : null
   const failure = job?.status === 'failed' ? describeJobFailure(job) : null
 
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-body font-medium text-text">{command.label}</p>
-          <code className="ldst-num mt-1 block truncate rounded-xs bg-sunken px-2 py-0.5 text-caption text-text-secondary">
-            {argv}
-          </code>
-        </div>
+        <p className="min-w-0 flex-1 truncate text-body font-medium text-text">{command.label}</p>
         {confirming ? null : (
           <Button
             variant="secondary"
@@ -276,10 +272,10 @@ function CommandCard({
             }
             loading={busy}
             disabled={running}
-            disabledReason={running && !active ? '已有页面命令在执行' : undefined}
+            disabledReason={running && !active ? '已有页面任务在执行' : undefined}
             onClick={onAskRun}
           >
-            {active ? '执行中' : '运行'}
+            {active ? '进行中' : '立即开始'}
           </Button>
         )}
       </div>
@@ -310,7 +306,7 @@ function CommandCard({
         <div className="flex flex-wrap items-center gap-2">
           <Badge
             tone={job.status === 'ok' ? 'ok' : job.status === 'failed' ? 'danger' : 'neutral'}
-            title={job.error ?? job.step}
+            title={job.error ? sanitizeCliText(job.error) : job.step}
           >
             {statusLabel(job)}
           </Badge>
@@ -349,21 +345,10 @@ function CommandCard({
         </p>
       )}
 
-      {log && (
-        <details className="group" open={active}>
-          <summary className="cursor-pointer select-none text-caption text-text-muted">
-            {active ? '执行输出' : '上次输出'}（{log.length} 行）
-          </summary>
-          <pre className="mt-1 max-h-48 overflow-auto rounded-xs bg-sunken p-2 text-caption leading-body text-text-secondary">
-            {log.join('\n')}
-          </pre>
-        </details>
-      )}
-
       {job?.status === 'ok' && (
         <p className="flex items-center gap-1 text-caption text-text-muted">
           <CircleCheck className="size-3.5" aria-hidden="true" />
-          {hasPartialSourceFailure(job) ? '已完成，部分数据源失败（详见输出）' : '已完成，数据已落盘'}
+          {hasPartialSourceFailure(job) ? '已完成，部分数据源没有取到，可稍后再同步' : '已完成，数据已就绪'}
         </p>
       )}
     </div>

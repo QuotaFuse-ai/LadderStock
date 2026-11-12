@@ -421,7 +421,7 @@ export interface WatchlistPayload {
   local_only: true
   store: 'local_sqlite'
   available: boolean
-  /** 空态文案由接口给，指回本机 CLI（`ldst watch add`），页面不自编。 */
+  /** 空态文案由接口给，指回本机操作（添加自选），页面不自编。 */
   reason: string | null
   /** 只数：后端没给就是 `null`，不 `?? 0`（R-07 家族）。 */
   watch_count: number | null
@@ -2459,8 +2459,8 @@ export function describeRadarError(error: unknown, subject: string): RadarError 
   if (isApiError(error)) {
     if (error.kind === 'not-connected') {
       return {
-        title: `${subject}接口未接入`,
-        detail: '本机只读 API 未连接（ldst run 未启动，默认 127.0.0.1:5950）；启动后点重试。',
+        title: `${subject}数据还没有就绪`,
+        detail: '本机服务未连接；点「重试」或用顶栏「重启平台」把它拉起来。',
         code: null,
       }
     }

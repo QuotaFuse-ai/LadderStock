@@ -58,13 +58,16 @@ export function isEndpointMissing(error: unknown): boolean {
   return isApiError(error) && error.kind === 'http' && error.status === 404
 }
 
-/** 把任意异常整理成「一句话结论 + 原因」，供 ErrorBlock 使用 */
+/** 把任意异常整理成「一句话结论 + 原因」，供 ErrorBlock 使用。
+ *
+ * 全部白话（QUOT-559 全局去 CLI）：用户可见面不出现命令行、可执行文件名与端口。
+ */
 export function describeApiError(error: unknown): { title: string; detail: string; code: string | null } {
   if (isApiError(error)) {
     if (error.kind === 'not-connected') {
       return {
-        title: '本地服务未连接',
-        detail: '本机只读 API 未连接（ldst run 未启动，默认 127.0.0.1:5950）；启动后点重试。',
+        title: '本机服务未连接',
+        detail: '看板的本机服务还没有就绪。点「重试」重新连接；若反复出现，用顶栏状态灯或「重启平台」把它拉起来，无需任何手动操作。',
         code: null,
       }
     }
@@ -153,10 +156,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       if (signal?.aborted) throw new ApiError('timeout', `请求已取消：${path}`)
       throw new ApiError('timeout', `本地接口 ${path} 超时（${timeoutMs}ms）`)
     }
-    throw new ApiError(
-      'not-connected',
-      `本地接口 ${path} 未接入：需先 ` + '`ldst run`' + ' 启动只读 API',
-    )
+    throw new ApiError('not-connected', '本机服务还没有就绪，暂时连不上；点「重试」或用顶栏「重启平台」把它拉起来。')
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', abortFromCaller)
@@ -868,7 +868,7 @@ export interface AiTestResult {
   error: string | null
 }
 
-/** 看板自己（`ldst review`）的模型配置；密钥只回 `api_key_set`，不回明文。 */
+/** 看板自己（每日复盘）的模型配置；密钥只回 `api_key_set`，不回明文。 */
 export interface SelfAiBackend {
   id: string
   type: string

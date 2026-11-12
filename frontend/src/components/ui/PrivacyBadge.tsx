@@ -19,10 +19,9 @@ import { PrivacyNotice, privacyNoticeText } from './PrivacyNotice'
 export interface PrivacyBadgeProps {
   /** 说明对象（持仓 / 自选）；默认「持仓」，与 PrivacyNotice 同口径。 */
   subject?: string
-  storeCommand?: string
   /** 非存储类口径（研究卡：上下文白名单）覆盖弹层内容；给了就不再渲染 PrivacyNotice。 */
   detail?: ReactNode
-  /** 覆盖 hover 的纯文本口径；默认 privacyNoticeText(subject, storeCommand)。 */
+  /** 覆盖 hover 的纯文本口径；默认 privacyNoticeText(subject)。 */
   detailText?: string
   className?: string
 }
@@ -31,14 +30,14 @@ export interface PrivacyBadgeProps {
 const POPOVER_WIDTH = 320
 const VIEWPORT_GUTTER = 8
 
-export function PrivacyBadge({ subject, storeCommand, detail, detailText, className }: PrivacyBadgeProps) {
+export function PrivacyBadge({ subject, detail, detailText, className }: PrivacyBadgeProps) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const panelId = useId()
 
-  const title = detailText ?? privacyNoticeText(subject, storeCommand)
+  const title = detailText ?? privacyNoticeText(subject)
 
   const openPanel = () => {
     const rect = buttonRef.current?.getBoundingClientRect()
@@ -125,7 +124,7 @@ export function PrivacyBadge({ subject, storeCommand, detail, detailText, classN
                 {detail}
               </div>
             ) : (
-              <PrivacyNotice subject={subject} storeCommand={storeCommand} />
+              <PrivacyNotice subject={subject} />
             )}
           </div>,
           document.body,

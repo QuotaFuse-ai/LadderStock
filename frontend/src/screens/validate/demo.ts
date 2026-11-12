@@ -157,7 +157,7 @@ const FULL: LadderEnvelope<ValidationPayload> = {
 /**
  * partial = **CLI 退出码 8** 那一档：条件在，下一交易日的涨停池还没同步，
  * `reconcile()` 直接给空 `results` + 说明原因（`core/validation.py:reconcile()` 的两条早退分支）。
- * 黄条要读的「缺哪个数据集」就在 `reason` 里（涨停池 / `ldst sync`），界面不替它下结论。
+ * 黄条要读的「缺哪个数据集」就在 `reason` 里（涨停池 / 数据同步），界面不替它下结论。
  */
 const PARTIAL: LadderEnvelope<ValidationPayload> = {
   ...FULL,

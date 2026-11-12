@@ -80,7 +80,7 @@ describe('四页五态', () => {
 
       const loading = renderAt(`${page.path}?demo=1&state=loading`)
       expect(await waitFor(() => document.querySelector('[aria-busy="true"]'))).toBeTruthy()
-      expect(screen.getByText(`演示态：加载中（?state=loading）`)).toBeTruthy()
+      expect(screen.getByText(`演示态：加载中`)).toBeTruthy()
       loading.unmount()
 
       const empty = renderAt(`${page.path}?demo=1&state=empty`)

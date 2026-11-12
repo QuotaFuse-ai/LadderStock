@@ -346,7 +346,7 @@ describe('单源失败降级', () => {
     expect(themes.hits).toEqual([])
   })
 
-  it('本机 API 没起（not-connected）说成「未接入」而不是「失败」', async () => {
+  it('本机 API 没起（not-connected）说「数据还没有就绪」而不是「失败」', async () => {
     const offline: SearchSource = {
       id: 'offline',
       label: '连板天梯',
@@ -356,7 +356,7 @@ describe('单源失败降级', () => {
       },
     }
     const result = await runSearch('600000', { date: DATE, sources: [offline] })
-    expect(group(result, 'stocks').error?.title).toBe('连板天梯接口未接入')
+    expect(group(result, 'stocks').error?.title).toBe('连板天梯数据还没有就绪')
   })
 
   it('每个源单独计时，延迟数字留给 UI 与验收', async () => {

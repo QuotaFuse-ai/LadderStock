@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { Copy, Lock, NotebookPen } from 'lucide-react'
+import { Lock, NotebookPen } from 'lucide-react'
 
 import { describeApiError, type JournalStatsPayload } from '../api'
 import { useForcedState } from '../lib/pageState'
@@ -34,15 +33,12 @@ import { useJournalView, EMPTY_STATS } from './journal/useJournalView'
  * 数据面只有一条：`GET /api/journal/stats`（DEC-015 Tier 1）——本机回环独占、
  * 扁平 JSON、只回聚合数字；`note` / 逐笔明细 / 标的清单永不出站。
  * 逐笔明细端点（DEC-015 Tier 2）决策为「不开」，所以本屏不展示单笔记录，
- * 也不编造示例行；明细只在终端 `ldst journal list` 可见。
+ * 也不编造示例行；明细只保存在本机文件里。
  *
  * 取数与状态推导收在 `journal/useJournalView.ts`（演示源 / IndexedDB 离线回放都在那里），
  * 本文件只管 DOM。演示态的数据是**夹具样本**，与用户自己的成交无关：页头有「演示数据」徽标，
  * 正文再有一条「演示样本」提示条，且演示态不读写本机 IndexedDB、不提供任何导出入口。
  */
-
-const EXAMPLE_COMMAND =
-  'ldst journal add --code 600000 --side buy --price 10.00 --qty 100 --plan-price 10.00'
 
 /** 纪律统计的最小样本：少于 5 个闭环不计算胜率 / 盈亏比（DESIGN-SPEC §4.6）。 */
 const MIN_SAMPLE = 5
@@ -196,9 +192,6 @@ export default function JournalScreen() {
   const { demo, state, stats: viewStats, cached, error, endpointMissing, reload } = view
   const forced = useForcedState()
 
-  const [copied, setCopied] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
-
   /** `error !== null` 只在真实请求失败时为真（`useAsync` 成功 / 加载中都不带 error）。 */
   const requestFailed = error !== null
 
@@ -256,21 +249,6 @@ export default function JournalScreen() {
                   viewStats?.buy_count ?? 0,
                 )} / 卖出 ${formatInt(viewStats?.sell_count ?? 0)} · ${rangeLabel(viewStats)}`
 
-  const copyExample = () => {
-    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
-    if (!clipboard?.writeText) {
-      setNotice('当前浏览器不允许自动复制，请手动选中命令复制。')
-      return
-    }
-    void clipboard
-      .writeText(EXAMPLE_COMMAND)
-      .then(() => {
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), 2000)
-      })
-      .catch(() => setNotice('复制失败，请手动选中命令复制。'))
-  }
-
   const header = (
     <PageHeader
       title="交易日志"
@@ -285,7 +263,7 @@ export default function JournalScreen() {
           <Button
             variant="secondary"
             disabled
-            disabledReason="仅命令行"
+            disabledReason="仅支持本机记录"
             leadingIcon={<NotebookPen className="size-3.5" aria-hidden="true" />}
           >
             记录一笔
@@ -365,12 +343,6 @@ export default function JournalScreen() {
           : '交易日志、持仓、自选只写入本机 SQLite，不上传、不进 AI 上下文、不被 MCP 读取。网页接口只回聚合数字，逐笔理由与备注永不出站。'}
       </Banner>
 
-      {notice && (
-        <p className="text-caption text-text-secondary" role="status">
-          {notice}
-        </p>
-      )}
-
       <div className="grid grid-cols-1 gap-4 rail:grid-cols-2 desk:grid-cols-4">
         <MetricCard
           label="交易笔数"
@@ -446,20 +418,11 @@ export default function JournalScreen() {
           <EmptyState
             icon={<NotebookPen aria-hidden="true" />}
             title="还没有交易记录"
-            description="在终端运行下面这条命令记一笔（代码 / 方向 / 价格 / 数量换成你的），再回来点「刷新」。日志写入只走本机命令行，网页不提供写入口。"
+            description="日志只保存在本机，网页只读、不提供写入入口，也不显示任何示例数据。记录一笔后回来点「刷新」，这里就会出现聚合统计。"
             action={
-              <div className="flex w-full max-w-measure flex-col items-center gap-2">
-                <code className="ldst-num w-full break-all rounded border border-border bg-surface-3 px-3 py-2 text-left text-caption text-text-secondary">
-                  {EXAMPLE_COMMAND}
-                </code>
-                <Button
-                  variant="secondary"
-                  onClick={copyExample}
-                  leadingIcon={<Copy className="size-3.5" aria-hidden="true" />}
-                >
-                  {copied ? '已复制' : '复制命令'}
-                </Button>
-              </div>
+              <Button variant="secondary" onClick={reload}>
+                刷新
+              </Button>
             }
           />
         </SectionCard>
@@ -531,7 +494,7 @@ export default function JournalScreen() {
             compact
             icon={<Lock aria-hidden="true" />}
             title="逐笔明细不通过网页接口"
-            description="逐笔明细端点（DEC-015 Tier 2）经决策为「不开」，因此这里不展示单笔日期 / 标的 / 价格，也不编造示例行。逐笔明细仅在本地 CLI 可见。"
+            description="逐笔明细端点（DEC-015 Tier 2）经决策为「不开」，因此这里不展示单笔日期 / 标的 / 价格，也不编造示例行。逐笔明细只保存在本机文件里。"
           />
         </SectionCard>
       )}
@@ -542,8 +505,8 @@ export default function JournalScreen() {
             · 存储位置：本机 <code>data/journal.sqlite</code>，随数据目录一起备份或删除。
           </li>
           <li>
-            · 读取方式：本机只读接口 <code>GET /api/journal/stats</code>（回环独占、扁平 JSON、只回聚合数字）
-            与 <code>ldst journal list|stats</code> 命令；逐笔明细不经网页接口出站。
+            · 读取方式：本机只读接口 <code>GET /api/journal/stats</code>（回环独占、扁平 JSON、只回聚合数字）；
+            逐笔明细不经网页接口出站。
           </li>
           <li>· 边界：不上传、不进 AI 上下文、不被 MCP 读取；本屏没有同步、分享、云端入口。</li>
           <li>

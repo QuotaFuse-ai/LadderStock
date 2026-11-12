@@ -386,7 +386,7 @@ export default function PoolScreen() {
           <EmptyState
             icon={<ListChecks aria-hidden="true" />}
             title="本地服务未连接"
-            description="启动 ldst run 后自动接入 /api/pool；未连接时不展示任何候选。"
+            description="本机服务连接后会自动接入；未连接时不展示任何候选。"
             action={<Button variant="secondary" onClick={reload}>重新检查</Button>}
           />
         </Card>

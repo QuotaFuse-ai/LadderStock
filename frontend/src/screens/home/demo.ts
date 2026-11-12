@@ -86,7 +86,7 @@ function indicesPayload(variant: HomeDemoVariant): IndicesPayload {
       available: variant !== 'empty' && index !== broken,
       reason:
         variant === 'empty'
-          ? 'index_quote 这批里没有这一天的行（先 ldst sync --dataset index_quote）'
+          ? 'index_quote 这批里没有这一天的行（先同步指数行情）'
           : index === broken
             ? 'index_quote 响应里没有创业板指'
             : null,
@@ -187,8 +187,8 @@ function watchlistPayload(variant: HomeDemoVariant): WatchlistPayload {
       local_only: true,
       store: 'local_sqlite',
       available: false,
-      // 空态文案由接口给、指回本机 CLI，页面不自编（QUOT-380 拍板口径）
-      reason: '本机还没有自选：用 ldst watch add --code 600000 加一条（写入只在本机）',
+      // 空态文案由接口给、指回本机操作，页面不自编（QUOT-380 拍板口径）
+      reason: '本机还没有自选：先在自选页添加一条（写入只在本机）',
       watch_count: 0,
       data_source_status: 'missing',
       price_source: 'spot_quote',
@@ -443,7 +443,7 @@ function validationPayload(date: string, variant: HomeDemoVariant): LadderEnvelo
     },
     {
       available: true,
-      sourceDetail: `local validation cache: validation-${date}.json；尚未对账（ldst validate reconcile）`,
+      sourceDetail: `local validation cache: validation-${date}.json；尚未对账`,
     },
   )
 }

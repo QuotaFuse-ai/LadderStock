@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Bot, Copy, RefreshCw } from 'lucide-react'
+import { Bot, RefreshCw } from 'lucide-react'
 
 import {
   api,
@@ -55,7 +55,7 @@ import {
  * 数据面与草稿在每日复盘 `/review`（DEC-049 §2/§3 裁定的边界，两屏读同一份 `/api/review`）。
  *
  * 三种「没有 AI 正文」必须分开显示，不允许把「模型未配」显示成「数据缺失」（DEC-049 §4）：
- * 1. `no-artifact`：当天复盘产物本身不存在 → 引导先跑 `ldst review`；
+ * 1. `no-artifact`：当天复盘产物本身不存在 → 引导先生成当日复盘；
  * 2. `model-unconfigured`：产物在、程序指标都在，但没有一段跑过模型 → 引导「接入 AI」；
  * 3. `has-narrative` 里的段级失败：逐段标注 + 按段重试。
  *
@@ -202,7 +202,6 @@ export default function AiReviewScreen() {
   )
   const viewTally = useMemo(() => tallySections(viewSections), [viewSections])
   const firstFailedSection = viewSections.find((section) => section.status === 'failed')?.name ?? null
-  const reviewCommand = `ldst review --date ${tradeDate}`
 
   /** AI复盘屏的三-case（`review/parse.ts: classifyAiCase`，判定口径只有一处）。 */
   const aiCase: AiReviewCase = classifyAiCase({
@@ -229,26 +228,14 @@ export default function AiReviewScreen() {
   const summary = useMemo(() => {
     if (state === 'offline') return '本地服务未连接 · AI 段落只读，无法触发生成'
     if (state === 'error') return '复盘正文取数失败'
-    if (state === 'empty') return `${tradeDate} 还没有复盘产物 · 运行 ${reviewCommand}`
+    if (state === 'empty') return `${tradeDate} 还没有复盘产物`
     if (state === 'partial') {
       return `${tradeDate} · 五段中 ${formatInt(viewTally.failed)} 段失败 / ${formatInt(viewTally.degraded)} 段降级`
     }
     if (demo) return `${tradeDate} · 演示数据（非真实行情）· 不触发控制面`
     if (aiCase === 'model-unconfigured') return `${tradeDate} · 产物在，但五段都没跑过模型`
     return `${tradeDate} · 模型 ${viewHeader?.aiModel ?? MISSING} · 生成于 ${formatTime(viewHeader?.generatedAt ?? null)}`
-  }, [state, tradeDate, viewTally.failed, viewTally.degraded, viewHeader, reviewCommand, demo, aiCase])
-
-  const copyCommand = () => {
-    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
-    if (!clipboard?.writeText) {
-      setNotice('当前浏览器不允许自动复制，请手动选中命令复制。')
-      return
-    }
-    void clipboard
-      .writeText(reviewCommand)
-      .then(() => setNotice('命令已复制，在终端执行后回到本页点「重新检查」。'))
-      .catch(() => setNotice('复制失败，请手动选中命令复制。'))
-  }
+  }, [state, tradeDate, viewTally.failed, viewTally.degraded, viewHeader, demo, aiCase])
 
   const focusSection = (name: string) => {
     const reduced =
@@ -308,7 +295,7 @@ export default function AiReviewScreen() {
       : {
           title: 'AI 复盘取数失败',
           detail: '复盘接口没有返回可用数据。恢复后点「重试取数」；本屏不编造任何段落。',
-          code: 'DEMO · ?state=error',
+          code: null,
         }
     return (
       <div className="flex flex-col gap-5">
@@ -398,29 +385,15 @@ export default function AiReviewScreen() {
           <EmptyState
             icon={<Bot aria-hidden="true" />}
             title={`${tradeDate} 还没有复盘产物`}
-            description="AI 段落写在复盘产物里，产物还没有就没有可生成的正文。先在终端运行下面这条命令生成五段复盘，落盘后回到本页点「重新检查」；本屏的「重新生成」只负责让模型写叙述，不代替产物生成。"
+            description="AI 段落写在复盘产物里，产物还没有就没有可生成的正文。打开本页会自动补取并生成；也可以点右上角「本页数据同步」立即开始，完成后回本页点「重新检查」。本屏的「重新生成」只负责让模型写叙述，不代替产物生成。"
             action={
-              <div className="flex w-full max-w-measure flex-col items-center gap-2">
-                <code className="ldst-num w-full break-all rounded border border-border bg-surface-3 px-3 py-2 text-left text-caption text-text-secondary">
-                  {reviewCommand}
-                </code>
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={copyCommand}
-                    leadingIcon={<Copy className="size-3.5" aria-hidden="true" />}
-                  >
-                    复制命令
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={reloadAll}
-                    leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-                  >
-                    重新检查
-                  </Button>
-                </div>
-              </div>
+              <Button
+                variant="secondary"
+                onClick={reloadAll}
+                leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+              >
+                重新检查
+              </Button>
             }
           />
         </SectionCard>
@@ -512,7 +485,7 @@ export default function AiReviewScreen() {
 
                   {state === 'empty' ? (
                     <p className="text-body leading-body text-text-muted">
-                      该段还没有复盘产物（待生成）。运行 <code className="ldst-num">{reviewCommand}</code> 生成五段复盘后，本段才有 AI 正文可写。
+                      该段还没有复盘产物（待生成）。点右上角「本页数据同步」生成五段复盘后，本段才有 AI 正文可写。
                     </p>
                   ) : status === 'running' ? (
                     <SkeletonText lines={3} />
@@ -551,8 +524,7 @@ export default function AiReviewScreen() {
                         retryLabel={aiBusy ? 'AI 重跑中…' : '重跑该段'}
                       />
                       <p className="text-caption text-text-muted">
-                        可重跑：只重跑本段，其余失败段与已完成段落保留；也可运行{' '}
-                        <code className="ldst-num">{reviewCommand}</code> 整份重生成。
+                        可重跑：只重跑本段，其余失败段与已完成段落保留；也可点右上角「本页数据同步」整份重生成。
                       </p>
                     </div>
                   ) : showNoticeOnly ? (
@@ -585,8 +557,8 @@ export default function AiReviewScreen() {
                     </div>
                   ) : (
                     <p className="text-body leading-body text-text-muted">
-                      该段还没有 AI 叙述（待生成）。运行 <code className="ldst-num">{reviewCommand}</code>{' '}
-                      生成五段复盘，或点右上「重新生成」。程序指标与「我的判断」在每日复盘屏，不受本段影响。
+                      该段还没有 AI 叙述（待生成）。点右上角「本页数据同步」生成五段复盘，或用页内「重新生成」。
+                      程序指标与「我的判断」在每日复盘屏，不受本段影响。
                     </p>
                   )}
                 </div>

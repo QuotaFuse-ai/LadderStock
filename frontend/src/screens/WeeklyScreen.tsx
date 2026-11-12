@@ -406,7 +406,7 @@ export default function WeeklyScreen() {
             title={`${week} 还没有可用周报`}
             detail={
               text(report?.reason) ??
-              `本机没有 ${week} 的周报产物。先跑 ldst sync 与每日复盘，再执行 ldst weekly --week ${week} 生成。`
+              `本机没有 ${week} 的周报产物。打开本页会自动补取并生成；也可以点右上角「本页数据同步」立即开始，完成后点「重新检查」。`
             }
             onRetry={reload}
             retryLabel="重新检查"
@@ -569,7 +569,7 @@ export default function WeeklyScreen() {
             <EmptyState
               compact
               title="本周没有可用单日指标"
-              description="事实包里 `sentiment.series` 为空：该周的每日复盘产物缺失，先跑 ldst sync 再重跑 ldst weekly。"
+              description="事实包里 `sentiment.series` 为空：该周的每日复盘产物缺失，先完成当日复盘补取，再重新生成周报。"
             />
           }
         />

@@ -227,7 +227,7 @@ export function EarningsSection({ code, className, loader }: EarningsSectionProp
           compact
           icon={<FileClock aria-hidden="true" />}
           title="演示模式不读取真实财报明细"
-          description="本卡的数据只来自本机缓存（一致预期 / 财务指标 / 业绩预告）。关掉 ?demo=1 或设置页的虚拟数据开关后，会读取真实接口；这里不拿演示数字冒充。"
+          description="本卡的数据只来自本机缓存（一致预期 / 财务指标 / 业绩预告）。关掉设置页的虚拟数据开关后，会读取真实接口；这里不拿演示数字冒充。"
         />
       ) : !code ? (
         <EmptyState

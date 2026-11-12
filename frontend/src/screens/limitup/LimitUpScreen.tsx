@@ -201,8 +201,8 @@ export default function LimitUpScreen() {
             title="当日涨停池未同步"
             description={
               <>
-                数据源暂缺：本机只读 API 未连接（<code className="ldst-num">ldst run</code> 未启动）。连接后可点「重新检查」；
-                当日涨停池需在行情页用「拉取行情数据」同步。
+                当日涨停池还没有同步：本机服务未连接，连接后点「重新检查」；
+                数据需要先在行情页用「拉取行情数据」同步一次。
               </>
             }
             action={

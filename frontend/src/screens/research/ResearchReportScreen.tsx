@@ -257,7 +257,7 @@ export default function ResearchReportScreen() {
         ? describeResearchError(view.error)
         : {
             title: '研究取数失败',
-            detail: '（演示态）没有真实错误；?state=error 只用于演练错误态的排版。',
+            detail: '（演示态）没有真实错误；这一层只用于演练错误态的排版。',
             code: null,
           }
     return (
@@ -410,12 +410,6 @@ export default function ResearchReportScreen() {
                     建议：{document.failure.action}
                   </p>
                 )}
-                <p className="text-caption text-text-muted">
-                  等价命令：
-                  <code className="ldst-num ml-1">
-                    ldst research {view.code} --date {view.date} --only {active}
-                  </code>
-                </p>
                 {document?.failure?.retryable === false && (
                   <p className="text-caption text-warn">
                     后端把这条错误标记为不可重试；先修复数据源或模型配置，再点重试。
@@ -440,12 +434,6 @@ export default function ResearchReportScreen() {
                     </Button>
                   }
                 />
-                <p className="text-caption text-text-muted">
-                  等价命令：
-                  <code className="ldst-num ml-1">
-                    ldst research {view.code} --date {view.date} --only {active}
-                  </code>
-                </p>
               </div>
             ) : artifact && document ? (
               <>

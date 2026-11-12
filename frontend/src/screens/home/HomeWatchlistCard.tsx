@@ -80,7 +80,7 @@ export function HomeWatchlistCard({ view, className }: { view: BlockView<Watchli
   const payload = view.state === 'normal' || view.state === 'partial' ? view.data : null
   const items = (payload?.items ?? []).filter((item) => Boolean(item.code))
   const count = countOrMissing(payload?.watch_count ?? (payload ? items.length : null))
-  const privacyBadge = <PrivacyBadge subject="自选" storeCommand="ldst watch" />
+  const privacyBadge = <PrivacyBadge subject="自选" />
 
   return (
     <SectionCard

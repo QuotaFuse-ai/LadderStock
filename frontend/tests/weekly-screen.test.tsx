@@ -337,7 +337,7 @@ describe('周度复盘 /weekly', () => {
     renderAt(`/weekly?week=2026-W45`)
 
     expect(await screen.findByText('2026-W45 还没有可用周报')).toBeTruthy()
-    expect(screen.getByText(/ldst weekly --week 2026-W45/)).toBeTruthy()
+    expect(screen.getByText(/自动补取并生成/)).toBeTruthy()
   })
 
   it('整周没有可用读数：用事实包里的 reason 说明原因', async () => {

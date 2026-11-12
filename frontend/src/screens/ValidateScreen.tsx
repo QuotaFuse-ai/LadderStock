@@ -239,7 +239,7 @@ export default function ValidateScreen() {
     [draftConditions],
   )
 
-  // 草稿里没有交易日时按「今天」取——和 `ldst validate` 的默认口径一致。
+  // 草稿里没有交易日时按「今天」取——和后端对账的默认口径一致。
   const conditionsDate = tradeDate ?? new Date().toISOString().slice(0, 10)
 
   // 演示源与真实源的唯一分岔（`demo ? 演示 : 真实`，见 `validate/useValidateView.ts`）。
@@ -1039,7 +1039,7 @@ export default function ValidateScreen() {
 
     return (
       <div className="flex flex-col gap-4">
-        {/* §11.3：`ldst validate reconcile` 退出码 8 = `reconcile.status=partial`。
+        {/* §11.3：后端对账退出码 8 = `reconcile.status=partial`。
             黄条只转述后端给的原因与 `source_detail`（缺的是哪个数据集），不下结论式断言。 */}
         {(state === 'partial' || (reconcileView.results.length === 0 && reconcileView.reason !== null)) && (
           <Banner tone="warn" title={reconcileView.results.length === 0 ? '本次没有生成逐条判定' : '部分数据缺失'}>
@@ -1092,7 +1092,7 @@ export default function ValidateScreen() {
               <Button variant="secondary" onClick={reconcile.reload}>
                 重新读取
               </Button>
-              {/* §11.3：15:00 前禁用且原因可见。网页侧永远不触发对账（`ldst validate` 的活，
+              {/* §11.3：15:00 前禁用且原因可见。网页侧永远不触发对账（后端闸门 5），
                   DEC-006 闸门 5），所以 15:00 之后的理由如实写「本屏只读」。 */}
               <Button
                 variant="secondary"
@@ -1100,7 +1100,7 @@ export default function ValidateScreen() {
                 disabledReason={
                   beforeGate
                     ? '15:00 前不可对账：收盘行情还没定版'
-                    : '对账由 ldst validate 写入本机缓存，本屏只读'
+                    : '对账由本机服务写入缓存，本屏只读'
                 }
               >
                 运行收盘对账
@@ -1207,7 +1207,7 @@ export default function ValidateScreen() {
       ) : effectiveSource === 'local' ? (
         <Banner tone="info" title="存在这台机器的浏览器里">
           条件草稿写进这台机器的浏览器（IndexedDB），换台电脑、清掉站点数据就没了；不上传、不进 AI、不被 MCP
-          读取。提交对账由 <code>ldst validate</code> 负责。
+          读取。提交对账由本机服务负责。
         </Banner>
       ) : (
         <Banner tone="info" title="存在本机数据目录的 validation 缓存里">

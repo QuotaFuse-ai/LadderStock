@@ -25,16 +25,16 @@ export function jobStatusText(job: JobView): string {
 export function describeCommandSubmitError(error: unknown): string {
   if (isApiError(error)) {
     if (error.status === 409) {
-      return '已有页面命令在执行，请等它结束后再试（一次只允许一个任务）。'
+      return '已有页面任务在执行，请等它结束后再试（一次只允许一个任务）。'
     }
     if (error.status === 403) {
-      return '控制面拒绝了这次请求：只接受本机回环来源，且 Host 与来源校验必须通过。'
+      return '控制面拒绝了这次请求：只接受本机来源的请求，请直接在页面里操作。'
     }
     if (error.status === 404) {
-      return '控制面未启用（LDST_CONTROL_ENABLED=0）或该命令尚未上线，暂时不能同步。'
+      return '控制面没有开启或该同步动作暂未上线，暂时不能在这里同步。'
     }
     if (error.kind === 'timeout') {
-      return '提交同步请求超时；任务可能已排队，请稍后在「本页命令」确认状态。'
+      return '提交同步请求超时；任务可能已排队，请稍后在「本页数据同步」里确认状态。'
     }
     return error.detail ?? error.message
   }
@@ -48,30 +48,45 @@ export interface JobFailureCopy {
   detail: string | null
 }
 
+/**
+ * 服务端原文先做一次去 CLI 清洗再上屏（QUOT-559）：
+ * job.error / 后端 reason 可能引用命令行（如「配置后重新同步 …」），
+ * 替换成白话指代，保证用户可见面不出现命令与参数。
+ */
+export function sanitizeCliText(text: string): string {
+  return text
+    .replace(/\b(?:ldst|qfw)\b[a-z0-9\s._=:/-]*/gi, '同步任务')
+    .replace(/\s*--[a-z][\w-]*/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([，。；：）])/g, '$1')
+    .trim()
+}
+
 /** 任务失败（job 层）：契约里 CLI 退出码 → 人话。 */
 export function describeJobFailure(job: JobView): JobFailureCopy {
   const raw = job.error?.trim() || null
+  const detail = raw ? sanitizeCliText(raw) : null
   const has = (needle: string) => Boolean(raw?.includes(needle))
 
   if (has('退出码 -9') || has('超过 1800s')) {
-    return { conclusion: '同步超时：超过 1800 秒未结束，任务已被中止。', detail: raw }
+    return { conclusion: '同步超时：超过 1800 秒未结束，任务已被中止。', detail }
   }
   if (has('退出码 10')) {
-    return { conclusion: '本地数据库锁等待超时，这次没有写入；稍后可重试。', detail: raw }
+    return { conclusion: '本地数据库被占用，这次没有写入；稍后可重试。', detail }
   }
   if (has('退出码 4')) {
-    return { conclusion: '全部数据源同步失败，这次没有补到数据。', detail: raw }
+    return { conclusion: '全部数据源同步失败，这次没有补到数据。', detail }
   }
   if (has('退出码 3')) {
-    return { conclusion: '锚点池为空或配置边界不满足，未发起任何请求。', detail: raw }
+    return { conclusion: '数据准备条件不满足，这次没有发起请求；请先检查本页配置。', detail }
   }
   if (has('退出码 2')) {
-    return { conclusion: '超出单次同步上限或参数不合法，未发起请求。', detail: raw }
+    return { conclusion: '超出单次同步上限或参数不合法，这次没有发起请求。', detail }
   }
   if (has('QFSD-7001')) {
-    return { conclusion: '上游限流退避（QFSD-7001），请稍后再试。', detail: raw }
+    return { conclusion: '上游限流退避（QFSD-7001），请稍后再试。', detail }
   }
-  return { conclusion: '同步失败。', detail: raw }
+  return { conclusion: '同步失败。', detail }
 }
 
 /** 退出码 8：job 仍是 ok，但日志里注明部分数据源失败。 */

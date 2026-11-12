@@ -45,8 +45,10 @@ describe('虚拟数据开关', () => {
     )
 
     expect(await screen.findByRole('heading', { name: '涨停样本', level: 1 })).toBeTruthy()
-    expect(screen.getByText('演示数据 · 设置开关')).toBeTruthy()
-    expect(screen.queryByText('演示数据 · ?demo=1')).toBeNull()
+    expect(screen.getByText('演示数据')).toBeTruthy()
+    // QUOT-559：来源细节从徽标文本移到 hover title（徽标只说人话「演示数据」）
+    const badge = screen.getByText('演示数据').closest('[title]')
+    expect(badge?.getAttribute('title')).toContain('设置页「虚拟数据」开关')
     expect(withinTableCodes()).toContain('002594')
   })
 
@@ -59,14 +61,14 @@ describe('虚拟数据开关', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
     const toggle = await screen.findByRole('switch')
     expect(toggle.getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(toggle)
 
     await waitFor(() => {
-      expect(screen.queryByText(/演示数据 ·/)).toBeNull()
+      expect(screen.queryByText('演示数据')).toBeNull()
     })
     expect(toggle.getAttribute('aria-checked')).toBe('false')
     expect(window.localStorage.getItem(DEMO_DATA_STORAGE_KEY)).toBe('0')
@@ -81,7 +83,7 @@ describe('虚拟数据开关', () => {
         <DemoStateBadge state={null} />
       </MemoryRouter>,
     )
-    expect(screen.getByText('演示数据 · 设置开关')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
   })
 })
 

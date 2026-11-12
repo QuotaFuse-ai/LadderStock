@@ -58,7 +58,7 @@ describe('交易日志演示源', () => {
     renderRoute('/journal?demo=1', <JournalScreen />)
 
     expect(await screen.findByRole('heading', { name: '交易日志', level: 1 })).toBeTruthy()
-    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
     expect(screen.getByText('本机私有 · 当前是演示样本')).toBeTruthy()
 
     const table = screen.getByRole('table')
@@ -81,8 +81,7 @@ describe('交易日志演示源', () => {
 
     expect((await screen.findAllByText(/本机服务未连接/)).length).toBeGreaterThan(0)
     expect(urls.some((url) => url.includes('/api/journal/stats'))).toBe(true)
-    expect(screen.queryByText('演示数据 · ?demo=1')).toBeNull()
-    expect(screen.queryByText('演示数据 · 设置开关')).toBeNull()
+    expect(screen.queryByText('演示数据')).toBeNull()
     expect(document.body.textContent).not.toContain('6 / 3 / 1')
     expect(document.body.textContent).not.toContain('演示样本')
     expect(document.body.textContent).not.toContain('2026-10-01 ~ 2026-10-30')
@@ -95,7 +94,9 @@ describe('交易日志演示源', () => {
 
     renderRoute('/journal', <JournalScreen />)
 
-    expect(await screen.findByText('演示数据 · 设置开关')).toBeTruthy()
+    expect(await screen.findByText('演示数据')).toBeTruthy()
+    // QUOT-559：来源细节从徽标文本移到 hover title
+    expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).toContain('设置页')
     const table = await screen.findByRole('table')
     expect(within(table).getAllByRole('row').length - 1).toBeGreaterThanOrEqual(12)
     expect(urls).toHaveLength(0)
@@ -110,7 +111,7 @@ describe('明日验证演示源', () => {
     renderRoute('/validate?demo=1', <ValidateScreen />)
 
     expect(await screen.findByRole('heading', { name: '明日验证', level: 1 })).toBeTruthy()
-    expect(screen.getByText('演示数据 · ?demo=1')).toBeTruthy()
+    expect(screen.getByText('演示数据')).toBeTruthy()
     // 横幅挂在 `state !== 'loading'` 分支上：标题先出、横幅后出，CI 慢机下同步断言会偶发失败
     expect(await screen.findByText('演示样本 · 本页条件不是你写的')).toBeTruthy()
 
@@ -165,7 +166,7 @@ describe('明日验证演示源', () => {
 
     await waitFor(() => expect(urls.some((url) => url.includes('/api/validation'))).toBe(true))
     expect((await screen.findAllByText(/本机服务未连接/)).length).toBeGreaterThan(0)
-    expect(screen.queryByText('演示数据 · ?demo=1')).toBeNull()
+    expect(screen.queryByText('演示数据')).toBeNull()
     expect(document.body.textContent).not.toContain('明日情绪温度不低于')
     expect(document.body.textContent).not.toContain('演示样本')
   })

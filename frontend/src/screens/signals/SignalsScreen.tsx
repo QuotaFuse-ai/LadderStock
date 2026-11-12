@@ -283,7 +283,7 @@ export default function SignalsScreen() {
           <EmptyState
             icon={<Radar aria-hidden="true" />}
             title="本地服务未连接"
-            description="启动 ldst run 后自动接入；未连接时不展示任何信号。"
+            description="本机服务连接后会自动接入；未连接时不展示任何信号。"
             action={<Button variant="secondary" onClick={reload}>重新检查</Button>}
           />
         </Card>

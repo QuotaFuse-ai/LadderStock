@@ -393,7 +393,7 @@ export default function IndustryMatrixScreen() {
           <EmptyState
             icon={<Database aria-hidden="true" />}
             title="本地服务未连接"
-            description="启动 ldst run 后，/api/industry 与本页自动连上；当前不伪造任何行业行。"
+            description="本机服务连接后，行业数据会自动接上；当前不伪造任何行业行。"
             action={<Button variant="secondary" onClick={reload}>重新检查</Button>}
           />
         </Card>
