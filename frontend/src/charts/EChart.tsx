@@ -72,7 +72,13 @@ export function EChart({ option, height = 300, ariaLabel, className }: EChartPro
     observer.observe(host)
     return () => {
       observer.disconnect()
-      chart.dispose()
+      // 容器没有 2D context 时初始化的实例同样在 dispose 期抛错；卸载阶段的异常会冒到
+      // 整棵 React 树（同一次里其它块一起被卸掉），这里按「画不出来」静默收尾
+      try {
+        chart.dispose()
+      } catch (error) {
+        console.error('图表销毁失败', error)
+      }
       instRef.current = null
     }
   }, [])

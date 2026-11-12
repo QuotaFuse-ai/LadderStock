@@ -11,3 +11,12 @@ if (typeof HTMLCanvasElement !== 'undefined') {
   HTMLCanvasElement.prototype.getContext = (() =>
     null) as unknown as HTMLCanvasElement['getContext']
 }
+
+// jsdom 也不带 ResizeObserver：图表容器（EChart / uPlot）在 effect 里必用它
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}
