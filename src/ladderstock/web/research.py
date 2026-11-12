@@ -64,7 +64,7 @@ OVERVIEW_BARS = 120
 
 #: 三种 404 / 一种 503 的固定文案（QUOT-400：前端按 `detail` 里的这些词区分语义，
 #: 改词必须同步 `frontend/src/api/research.ts` 的判据）
-EMPTY_RECORD_DETAIL = "{code} 还没有任何研究记录（先运行 ldst research {code}）"
+EMPTY_RECORD_DETAIL = "{code} 还没有任何研究记录"
 UNKNOWN_CODE_DETAIL = (
     "{code} 是未知证券代码（A 股个股只支持沪市 60/68、深市 00/30、"
     "北交所 43/83/87/92 开头的 6 位代码，可带 .SH/.SZ/.BJ 后缀）"
@@ -233,11 +233,23 @@ def research_days(code: str, root: Path) -> list[str]:
     return sorted(days, reverse=True)
 
 
-def parse_day(raw: Any, *, code: str, root: Path) -> str:
-    """`date` → `YYYY-MM-DD`；缺省取该代码最近一次运行日，一次记录都没有则 404。"""
+def parse_day(
+    raw: Any, *, code: str, root: Path, allow_empty: bool | None = None
+) -> str:
+    """`date` → `YYYY-MM-DD`；缺省取该代码最近一次运行日，一次记录都没有则 404。
+
+    `allow_empty`（只给「开始研究」用）：一次记录都没有时缺省今天，不拿历史
+    日期冒充。缺省 `allow_empty=None` 即「没历史就允许起跑」——网页对全新代码
+    的 GET 也是拿今天去问（见 `_resolve_query_day`），两边读同一天才不会
+    「GET 说没有、页面却起了另一天」。读取接口显式传 `False`，口径不变。
+    """
+    if allow_empty is None:
+        allow_empty = True
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         latest = checkpoint.latest_day(code, root)
         if latest is None:
+            if allow_empty:
+                return date.today().isoformat()
             raise HTTPException(
                 status_code=404,
                 detail=EMPTY_RECORD_DETAIL.format(code=code),
@@ -901,7 +913,7 @@ class ResearchPlane:
         code = parse_code(raw_code)
         require_known_code(code)
         try:
-            day = parse_day(raw_day, code=code, root=self.data_root)
+            day = parse_day(raw_day, code=code, root=self.data_root, allow_empty=False)
             summary = self._require_research(code, day)
         except OSError as exc:
             raise HTTPException(
@@ -941,10 +953,7 @@ class ResearchPlane:
         if not summary["exists"] and not has_artifact:
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    f"{code} 在 {day} 没有研究产物"
-                    f"（先运行 ldst research {code} --date {day}）"
-                ),
+                detail=f"{code} 在 {day} 没有研究产物",
             )
         return summary
 
@@ -1558,17 +1567,25 @@ class ResearchPlane:
     # ---------------------------------------------------------------- 续跑
 
     def start_run(self, raw_code: Any, raw_day: Any, raw_only: Any) -> dict[str, Any]:
-        """起一个单段续跑任务，返回 SPEC §2.2 的两键应答。
+        """起一个单段任务，返回 SPEC §2.2 的两键应答。
 
-        判据顺序：参数非法 → 422；研究不存在 → 404（与读取同一个 `_require_research`）；
-        同标的同日已有任务在跑 → `RuntimeError`（路由转 409）。
-        `status` 在提交线程池**之前**取样，所以应答恒为 `queued`——
-        跑到 `running` 是进度接口（§2.3）的事，不该让起始应答跟着抖动。
+        判据顺序：参数非法 → 422；未知代码 → 404；有历史但该日没有研究 → 404。
+        QUOT-561 加的第四条路：**从没跑过研究**的代码允许冷启动（网页「开始研究」
+        要能零 CLI 起步），缺省 `date` 取今天；这条只放宽「没历史」，不伪造任何
+        产物——跑出来的东西全由 research 子进程真实落盘、失败如实报。
+        同标的同日已有任务在跑 → `RuntimeError`（路由转 409）。`status` 在提交
+        线程池**之前**取样，所以应答恒为 `queued`——跑到 `running` 是进度接口
+        （§2.3）的事，不该让起始应答跟着抖动。
+
+        显式 `date` 必须是真的交易日，交易日历读不动照旧 503，不编交易日。
         """
         code = parse_code(raw_code)
+        require_known_code(code)
         stage = parse_stage(raw_only)
+        has_history = checkpoint.latest_day(code, self.data_root) is not None
         day = parse_day(raw_day, code=code, root=self.data_root)
-        self._require_research(code, day)
+        if has_history:
+            self._require_research(code, day)
         key = (code, day)
         with self._lock:
             active = self._running.get(key)

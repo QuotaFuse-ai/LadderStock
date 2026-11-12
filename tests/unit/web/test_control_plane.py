@@ -2054,6 +2054,34 @@ def test_industry_sync_command_runs_network_sync_not_recompute(
     assert runtime.calls[-1][-2:] == ["sync", "industry"]
 
 
+def test_watch_notify_selftest_reports_delivered_and_undelivered(
+    tmp_path: Path, peer_dirs: dict[str, Path]
+) -> None:
+    """QUOT-561：盯盘「通知链路自检」= `ldst notify test`，送到与没送到都说清楚。"""
+    runtime = FakeRuntime()
+    runtime.responses["notify test"] = StepResult(0, "已发送测试通知\n")
+    plane = _plane(tmp_path, peer_dirs, runtime=runtime)
+
+    delivered = _wait(plane, plane.create_command_job("notify").id)
+
+    assert delivered.status == "ok"
+    assert runtime.calls[-1][-2:] == ["notify", "test"]
+    assert any("通知已送达本机渠道" in line for line in delivered.tail())
+
+    runtime.responses["notify test"] = StepResult(4, "没有可用的通知渠道\n")
+    missing = _wait(plane, plane.create_command_job("notify").id)
+
+    # 退出码 4 = 跑完了但没送到：任务不算失败，但日志必须明说没送到
+    assert missing.status == "ok"
+    assert any("通知没有送达" in line for line in missing.tail())
+
+    runtime.responses["notify test"] = StepResult(1, "boom\n")
+    broken = _wait(plane, plane.create_command_job("notify").id)
+
+    assert broken.status == "failed"
+    assert "通知链路自检失败" in (broken.error or "")
+
+
 def test_page_command_exit_codes_map_to_status(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:

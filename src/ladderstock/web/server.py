@@ -82,6 +82,7 @@ from ladderstock.web.control import (
 from ladderstock.web.inbox import build_router as build_inbox_router
 from ladderstock.web.industry import IndustryPlane
 from ladderstock.web.industry import build_router as build_industry_router
+from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.knowledge import KnowledgePlane
 from ladderstock.web.knowledge import build_router as build_knowledge_router
 from ladderstock.web.radar import RadarPlane
@@ -854,7 +855,10 @@ def _watch_unavailable_detail(read: watch_status.StatusRead) -> str:
     """状态文件不可用时的 `source_detail`：说清是哪一种不可用，不给旧值。"""
     path = read.path
     if read.state == watch_status.STATE_MISSING:
-        return f"盯盘状态文件不存在：{path}（先运行 ldst watch start）"
+        return (
+            f"盯盘状态文件不存在：{path}"
+            "（本机扫描还没有运行过；在盯盘页点「发一条测试通知」可检查通知链路）"
+        )
     if read.state == watch_status.STATE_CORRUPT:
         return f"盯盘状态文件不可读：{path}（{read.error}）"
     return f"盯盘状态文件结构不合法：{path}（{read.error}）"
@@ -1362,7 +1366,7 @@ def create_app(
                 available=False,
                 source_detail=(
                     f"盯盘状态文件缺少可解析的时间戳（last_run_at / started_at）：{path}"
-                    "；无法确认快照时效，请重新执行 ldst watch start"
+                    "；无法确认快照时效，等下一次扫描写入后重试"
                 ),
             )
         if age_seconds > WATCH_SNAPSHOT_TTL_SEC:
@@ -1415,7 +1419,7 @@ def create_app(
                 available=False,
                 source_detail=(
                     f"local validation cache 不存在：{path.name}"
-                    f"（先运行 ldst review --date {target}）"
+                    f"（本交易日还没有收盘对账结果；15:00 后在「收盘对账」里运行）"
                 ),
             )
 
@@ -1426,7 +1430,7 @@ def create_app(
             if reconcile.get("next_session"):
                 detail += f"（下一交易日 {reconcile['next_session']}）"
         else:
-            detail += "；尚未对账（ldst validate reconcile）"
+            detail += "；尚未对账（15:00 后可在「收盘对账」里运行）"
         return _envelope(
             "validation",
             "validation",
@@ -1662,6 +1666,13 @@ def create_app(
     # `/api/inbox`（GET 读 / 两条 POST 标已读）：本机隐私数据，平面 JSON + `no-store`，
     # 闸门复用雷达面的同一份实现（回环 + Host；写面再加同源来源证据），不新增鉴权。
     app.include_router(build_inbox_router(data_root=root))
+
+    # -------------------------------------------- 交易日志写入口（QUOT-561 / DEC-083）
+    #
+    # `/api/journal/trades`（POST）与 `/api/journal/write-info`（GET）是本机写入口：
+    # 落库复用 `journal.log.add_trade()`，闸门复用雷达面的 `privacy_write_guard`，
+    # 请求体白名单硬拒绝。聚合读仍只走 `GET /api/journal/stats`，出口口径不变。
+    app.include_router(build_journal_write_router(data_root=root))
 
     # -------------------------------------------- 标的字典面（QUOT-405）
     #

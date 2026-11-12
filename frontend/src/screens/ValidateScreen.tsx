@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Check, CircleSlash, ClipboardCheck, Lock, Plus, Save, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Check, CircleSlash, ClipboardCheck, Lock, Play, Plus, Save, Trash2, X } from 'lucide-react'
 
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
 import { MISSING, formatInt, formatTime } from '../lib/format'
 import { useAsync } from '../lib/useAsync'
+import { usePageCommandRun } from '../lib/usePageCommandRun'
 import {
   api,
   describeApiError,
@@ -469,6 +470,45 @@ export default function ValidateScreen() {
   }
 
   const beforeGate = new Date().getHours() < 15
+
+  /**
+   * 收盘对账（QUOT-561）：原来是一颗永久 disabled 的死按钮。现在走控制面白名单
+   * `validate`（`GET/POST /api/control/commands`），与本页顶栏同一条队列；
+   * 跑完只重新读取 `GET /api/validation`，判定仍由后端给出，前端不重算。
+   */
+  const dailyReconcile = usePageCommandRun('validate')
+  const reconcileReloadRef = useRef(reconcile.reload)
+  reconcileReloadRef.current = reconcile.reload
+  const toastPushRef = useRef(toasts.push)
+  toastPushRef.current = toasts.push
+  const reconciledJobRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const outcome = dailyReconcile.outcome
+    if (!outcome || reconciledJobRef.current === outcome.job.id) return
+    reconciledJobRef.current = outcome.job.id
+    if (outcome.ok) {
+      reconcileReloadRef.current()
+      toastPushRef.current(`收盘对账已跑完，正在重新读取结论。${outcome.detail}`, 'ok')
+    } else {
+      toastPushRef.current(`收盘对账没跑成：${outcome.detail}`, 'danger')
+    }
+  }, [dailyReconcile.outcome])
+
+  useEffect(() => {
+    if (dailyReconcile.submitError) toastPushRef.current(dailyReconcile.submitError, 'danger')
+  }, [dailyReconcile.submitError])
+
+  const reconcileRunDisabledReason = demo
+    ? '演示样本不触发真实任务'
+    : beforeGate
+      ? '15:00 前不可对账：收盘行情还没定版'
+      : null
+  const runDailyReconcile = () => {
+    // 任务跑完要看到结论：先切到「收盘对账」并打开读取，再提交任务。
+    setViewMode('reconcile')
+    void dailyReconcile.run()
+  }
 
   // ---- 标题 ----
   const subtitle =
@@ -1022,12 +1062,25 @@ export default function ValidateScreen() {
           description={
             beforeGate
               ? '15:00 后可对账；现在可以先写明日条件，收盘任务跑完会自动生成逐条判定。'
-              : '收盘任务跑完后才会有结论；本屏不自行判定，也不补算历史。'
+              : '收盘行情已定版，点「运行收盘对账」按当日已保存条件逐条判定；结论由后端给出，本屏不自行判定，也不补算历史。'
           }
           action={
-            <Button variant="secondary" onClick={() => setViewMode('conditions')}>
-              去写明日条件
-            </Button>
+            beforeGate ? (
+              <Button variant="secondary" onClick={() => setViewMode('conditions')}>
+                去写明日条件
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={runDailyReconcile}
+                disabled={Boolean(reconcileRunDisabledReason) || dailyReconcile.running}
+                disabledReason={reconcileRunDisabledReason ?? undefined}
+                loading={dailyReconcile.running}
+                leadingIcon={<Play className="size-3.5" aria-hidden="true" />}
+              >
+                运行收盘对账
+              </Button>
+            )
           }
         />
       )
@@ -1092,16 +1145,15 @@ export default function ValidateScreen() {
               <Button variant="secondary" onClick={reconcile.reload}>
                 重新读取
               </Button>
-              {/* §11.3：15:00 前禁用且原因可见。网页侧永远不触发对账（后端闸门 5），
-                  DEC-006 闸门 5），所以 15:00 之后的理由如实写「本屏只读」。 */}
+              {/* §11.3：15:00 前禁用且原因可见（收盘行情还没定版）；之后按钮真正可点，
+                  走控制面白名单 `validate`，跑完重新读取结论。演示态不触发真实任务。 */}
               <Button
                 variant="secondary"
-                disabled
-                disabledReason={
-                  beforeGate
-                    ? '15:00 前不可对账：收盘行情还没定版'
-                    : '对账由本机服务写入缓存，本屏只读'
-                }
+                onClick={runDailyReconcile}
+                disabled={Boolean(reconcileRunDisabledReason) || dailyReconcile.running}
+                disabledReason={reconcileRunDisabledReason ?? undefined}
+                loading={dailyReconcile.running}
+                leadingIcon={<Play className="size-3.5" aria-hidden="true" />}
               >
                 运行收盘对账
               </Button>

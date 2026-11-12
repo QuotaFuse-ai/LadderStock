@@ -328,7 +328,8 @@ def test_status_404_when_research_absent(tmp_path: Path) -> None:
 
     assert response.status_code == 404
     detail = response.json()["detail"]
-    assert "600001" in detail and f"ldst research 600001 --date {DAY}" in detail
+    assert "600001" in detail and "没有研究产物" in detail
+    assert "ldst" not in detail, "404 文案不指引命令行（QUOT-561：页面入口取代 CLI）"
     assert not (tmp_path / "research").exists(), "读取接口不允许留下任何副作用"
 
 
@@ -376,15 +377,18 @@ def test_unreadable_state_is_503_engine_unavailable(
     assert "研究引擎不可用" in response.json()["detail"]
 
 
-def test_run_404_when_research_absent(tmp_path: Path) -> None:
+def test_run_404_when_date_has_no_research(tmp_path: Path) -> None:
+    """有历史、但显式日期那天没有研究 → 404（QUOT-561 只放宽「从没跑过」这一种）。"""
+    seed(tmp_path, day="2026-10-28")
     run = FakeRun()
     client = _client(tmp_path, run)
 
     response = _run(client, {"date": DAY, "only": "valuation"})
 
     assert response.status_code == 404
+    assert "没有研究产物" in response.json()["detail"]
     assert run.calls == [], "研究不存在时不能起任务"
-    assert not (tmp_path / "research").exists()
+    assert not (tmp_path / "research" / CODE / DAY).exists()
 
 
 def test_job_progress_404_for_unknown_job(tmp_path: Path) -> None:

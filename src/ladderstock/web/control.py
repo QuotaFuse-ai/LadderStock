@@ -183,6 +183,9 @@ PAGE_COMMANDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     # `industry-sync` 真实联网补齐（成本非 0，范围/上限见 `PAGE_COMMAND_NOTES`）。
     "industry": ("/industry", "重算行业快照", ("industry", "list")),
     "industry-sync": ("/industry", "同步补齐行业数据", ("sync", "industry")),
+    # QUOT-561：盯盘页「通知链路自检」原来是 disabled 的死按钮；CLI 的 `notify test`
+    # 只投递本机渠道（console / desktop），投递失败以退出码 4 结束 → 任务失败走 S5 弹窗。
+    "notify": ("/watch", "通知链路自检", ("notify", "test")),
     # `/positions` 不再挂命令条（QUOT-419 / DEC-055）：持仓页改为自动加载本机持仓，
     # 「查询持仓 ldst position list」不再是页面入口。CLI 本身仍在，只是不在页面上当主角。
     # `/calendar` 同理移除（QUOT-441 / DEC-061）：`ldst events` 是请求时现算的只读取数、
@@ -194,6 +197,12 @@ PAGE_COMMAND_DATE = "{date}"
 PAGE_COMMAND_TIMEOUT_SEC = 1800.0
 #: 允许视为「跑完但部分降级」的退出码：0 成功、8 部分数据源失败、9 AI 降级
 PAGE_COMMAND_OK_CODES = frozenset({0, 8, 9})
+#: 逐命令覆盖「算成功」的退出码（缺省 `PAGE_COMMAND_OK_CODES`）：
+#: 通知自检把渠道不可用（4）当作「跑完了，但没送到」，任务详情写清楚原因，
+#: 不冒充成功（布尔语义见 `_run_page_command`）。
+PAGE_COMMAND_EXTRA_OK_CODES: dict[str, frozenset[int]] = {
+    "notify": frozenset({0, 4}),
+}
 #: 需要向前端明示成本 / 范围的命令（`GET /commands` 逐条带出，不靠前端自己猜）：
 #: 只有真实联网、可能产生上游请求成本的命令才在这里登记。
 PAGE_COMMAND_NOTES: dict[str, str] = {
@@ -2457,11 +2466,18 @@ class ControlPlane:
         result = self._run(args, _ai_working_dir(), PAGE_COMMAND_TIMEOUT_SEC)
         for line in tail_lines(result.output, JOB_TAIL_LINES * 2):
             job.log(f"  {line}")
-        if result.returncode not in PAGE_COMMAND_OK_CODES:
+        ok_codes = PAGE_COMMAND_EXTRA_OK_CODES.get(job.command, PAGE_COMMAND_OK_CODES)
+        if result.returncode not in ok_codes:
             last = tail_lines(result.output, 1)
             hint = f"：{last[0]}" if last else ""
             raise JobFailure(f"{label}失败（退出码 {result.returncode}）{hint}")
-        if result.returncode != 0:
+        if job.command == "notify":
+            job.log(
+                "通知已送达本机渠道"
+                if result.returncode == 0
+                else "通知没有送达：渠道不可用或后端缺失，原因见上方输出"
+            )
+        elif result.returncode != 0:
             job.log(f"退出码 {result.returncode}：部分数据源失败或 AI 降级，结果已落盘")
 
     def _ai_run(self, job: Job) -> None:

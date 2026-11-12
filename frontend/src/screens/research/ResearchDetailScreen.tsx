@@ -863,17 +863,29 @@ export default function ResearchDetailScreen() {
             view.endpointMissing
               ? '后端尚未提供 /api/research/* 只读接口（HTTP 404 Not Found）；接口上线后本页会自动读取落盘产物。当前不会伪造任何数据。'
               : noRecord
-                ? '概览标签已经可以直接看走势与财报；去报告页按段点「运行本段」，六段深度内容就会生成。'
+                ? '概览标签已经可以直接看走势与财报；去报告页点「开始研究」，六段深度内容会从第一段跑起。'
                 : `本机还没有 ${view.code ?? '<code>'} 在 ${view.date} 的六段深度产物；概览标签可直接查看走势与财报，点「刷新」重新读取。`
           }
           action={
-            <Button
-              variant="secondary"
-              onClick={view.reload}
-              leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
-            >
-              刷新
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* QUOT-561：去报告页「开始研究」——没有产物时六段也能从页面跑起来，不用任何命令行 */}
+              {noRecord && view.code && (
+                <LinkButton
+                  to={reportHref(view.code, view)}
+                  variant="primary"
+                  leadingIcon={<FileText className="size-3.5" aria-hidden="true" />}
+                >
+                  去报告页开始研究
+                </LinkButton>
+              )}
+              <Button
+                variant="secondary"
+                onClick={view.reload}
+                leadingIcon={<RefreshCw className="size-3.5" aria-hidden="true" />}
+              >
+                刷新
+              </Button>
+            </div>
           }
         />
       </div>
