@@ -21,6 +21,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from ladderstock.ai.answer_blocks import MAX_BLOCKS, check_ordering
+from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.web import assistant as assistant_module
 from ladderstock.web import chat as chat_module
 from ladderstock.web.server import create_app
@@ -126,15 +128,16 @@ def test_string_context_reply_is_verbatim_and_blocks_appended(
     assert isinstance(body["model"], str) and body["model"]
     assert isinstance(body["ai"], dict) and set(body["ai"]) == {"model", "source"}
     assert isinstance(body["fetched_at"], str) and body["fetched_at"]
-    # 唯一新增：blocks
-    assert set(body) == {"reply", "model", "ai", "fetched_at", "blocks"}
+    # 新增只允许这两键：blocks + ai_structured；既有四键一个不少
+    assert set(body) == {"reply", "model", "ai", "fetched_at", "blocks", "ai_structured"}
     assert isinstance(body["blocks"], list) and body["blocks"]
     assert body["blocks"][0]["type"] == "conclusion"
 
 
 def test_string_context_reply_matches_recorded_snapshot() -> None:
     """贴死的快照文案与阶段 A 的 full_answer 装配入口自洽（防有人偷改文案求绿）。"""
-    ai = assistant_module.reply_to_ai(SNAPSHOT_REPLY)
+    adapted = assistant_module.reply_to_structured(SNAPSHOT_REPLY)
+    ai = adapted["ai_structured"]
     assert ai["narrative"], "快照 reply 必须能切出至少一句"
     assert "".join(ai["narrative"]) == SNAPSHOT_REPLY
 
@@ -281,9 +284,9 @@ def test_ask_still_uses_non_json_mode(tmp_path: Path, monkeypatch: pytest.Monkey
     assert json_mode is False
 
 
-def test_reply_to_ai_splits_sentences_and_leaves_other_fields_empty() -> None:
-    ai = assistant_module.reply_to_ai("第一句。第二句！第三句？")
-    assert ai == {
+def test_reply_to_structured_splits_sentences_and_leaves_other_fields_empty() -> None:
+    adapted = assistant_module.reply_to_structured("第一句。第二句！第三句？")
+    assert adapted["ai_structured"] == {
         "narrative": ["第一句。", "第二句！", "第三句？"],
         "highlights": [],
         "risks": [],
@@ -309,3 +312,232 @@ def test_blocks_payload_is_valid_json_serializable(
 
     # 响应可被严格 JSON 往返（前端契约）
     assert json.loads(json.dumps(response.json(), ensure_ascii=False)) == response.json()
+
+
+# --------------------------------------------------------------------------- #
+# 6. `reply` → 最小结构化 `ai` 适配函数（QUOT-581 stream_turn 直接接）
+# --------------------------------------------------------------------------- #
+
+
+def _long_mixed_reply() -> str:
+    """长回答：3 条风险 + 1 条亮点 + 20 句正文（句子级切分必然超过块上限）。"""
+    return (
+        "现价落在区间内，近几日横盘震荡。"
+        "风险一：跌破前低。"
+        "风险二：量能萎缩。"
+        "风险三：板块走弱。"
+        "亮点是分红率保持稳定。" + "补充说明一句。" * 20
+    )
+
+
+@pytest.mark.parametrize(
+    "reply", [SNAPSHOT_REPLY, SNAPSHOT_SKILLS, SNAPSHOT_PAGE, _long_mixed_reply()]
+)
+def test_adapter_is_deterministic_field_by_field(reply: str) -> None:
+    first = assistant_module.reply_to_structured(reply)
+    second = assistant_module.reply_to_structured(reply)
+
+    assert first == second
+    assert json.dumps(first, ensure_ascii=False) == json.dumps(second, ensure_ascii=False)
+    # 不含时间戳类字段（结构只有四个键）
+    assert set(first["ai_structured"]) == {"narrative", "highlights", "risks", "evidence"}
+
+
+@pytest.mark.parametrize("reply", [SNAPSHOT_REPLY, _long_mixed_reply(), "", "单句没有句号"])
+def test_adapter_output_is_directly_consumable_by_build_blocks(reply: str) -> None:
+    """适配结果原样喂 `build_blocks`：不报错、不超过块上限、编号有序。"""
+    adapted = assistant_module.reply_to_structured(reply)
+    build_input = adapted["build_input"]
+    assert set(build_input) == {"narrative", "highlights", "risks", "evidence"}
+    assert all(isinstance(v, list) for v in build_input.values())
+
+    blocks = _build_blocks({}, build_input, [])
+    assert 0 < len(blocks) <= MAX_BLOCKS
+    check_ordering(blocks)
+    # 字段名不与 581 的 seq / last_seq / completed 冲突
+    assert not ({"seq", "last_seq", "completed"} & set(build_input))
+    assert not ({"seq", "last_seq", "completed"} & set(adapted["ai_structured"]))
+
+
+def test_adapter_underivable_fields_are_empty_not_fabricated() -> None:
+    """「切不干净」两个真实用例：宁留空，不编造。"""
+    # 用例 1：风险写在句中（不以线索词开头）→ 不硬猜成 risks，整句留在 narrative
+    mid_risk = "整体横盘。若跌破前低，风险会明显加大。"
+    # 用例 2：序号分点（①②③）→ 线条索对不上，全部留 narrative
+    enumerated = "①量能温和放大；② 板块联动一般；③ 情绪偏谨慎。"
+
+    out_mid = assistant_module.reply_to_structured(mid_risk)["ai_structured"]
+    out_enum = assistant_module.reply_to_structured(enumerated)["ai_structured"]
+
+    assert out_mid == {
+        "narrative": ["整体横盘。", "若跌破前低，风险会明显加大。"],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
+    assert out_enum == {
+        "narrative": ["①量能温和放大；", "② 板块联动一般；", "③ 情绪偏谨慎。"],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
+    # evidence 恒空：纯文本里无法可靠区分取数记录，出处交给 sources
+    assert out_mid["evidence"] == [] and out_enum["evidence"] == []
+    # 首句固定进 narrative（结论位），不会被分类逻辑搬走
+    risk_headed = "整体横盘。风险方面，若跌破前低会明显加大。成交量没有放大。"
+    out_risk = assistant_module.reply_to_structured(risk_headed)["ai_structured"]
+    assert out_risk["narrative"] == ["整体横盘。", "成交量没有放大。"]
+    assert out_risk["risks"] == ["风险方面，若跌破前低会明显加大。"]
+
+
+def test_adapter_produces_no_numbers() -> None:
+    """适配器不改写正文（数字剥离由 `build_blocks` 统一做），自身不新增任何数值。"""
+    adapted = assistant_module.reply_to_structured(SNAPSHOT_REPLY)
+    joined = "".join(
+        line
+        for field in ("narrative", "highlights", "risks")
+        for line in adapted["ai_structured"][field]
+    )
+    assert joined == SNAPSHOT_REPLY
+    banner = _build_blocks({}, adapted["build_input"], [])[0]
+    assert banner["type"] == "conclusion"
+    assert "9.87" not in banner["payload"]["text"]
+    assert not any(ch.isdigit() for ch in banner["payload"]["text"])
+
+
+def test_adapter_makes_zero_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """适配函数纯本地：不构造客户端、不发起任何模型调用（调用次数为 0）。"""
+    built: list[str] = []
+
+    def _forbidden(module: str = "x") -> Any:
+        built.append(module)
+        raise AssertionError("适配函数不得构造 AI 客户端")
+
+    monkeypatch.setattr(assistant_module, "_load_client", _forbidden)
+
+    adapted = assistant_module.reply_to_structured(_long_mixed_reply())
+
+    assert built == []
+    assert adapted["ai_structured"]["narrative"]
+
+
+def test_adapter_does_not_replace_reply_or_ai_echo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """前后对照：`reply` 与 `ai` 对外的值与改造前逐字一致，新结构只旁挂。"""
+    fake = _FakeClient(SNAPSHOT_PAGE)
+    client = _patch(tmp_path, monkeypatch, fake)
+
+    body = _post(client, "/api/page/assistant", {"question": "今天表现？", "context": "x"}).json()
+
+    assert body["reply"] == SNAPSHOT_PAGE  # 改造前 ask() 的返回就是这个字符串
+    # 改造前 `ai` = `_ai_echo(module, model)`；这里是同一函数在同等入参下的回显
+    assert body["ai"] == assistant_module._ai_echo(
+        assistant_module.DEFAULT_MODULE, "openai:model-a"
+    )
+    assert set(body["ai"]) == {"model", "source"}
+    # 结构化叙述不顶替，只旁挂
+    assert body["ai_structured"]["narrative"][0] in body["reply"]
+    assert "".join(body["ai_structured"]["narrative"]) == SNAPSHOT_PAGE
+
+
+def test_adapter_does_not_raise_on_long_reply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """长回答（句子数远超块上限）走完三路由不 500；块数守上限。"""
+    fake = _FakeClient(_long_mixed_reply())
+    client = _patch(tmp_path, monkeypatch, fake)
+
+    response = _post(client, "/api/page/assistant", {"question": "细说？", "context": "x"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reply"] == _long_mixed_reply()
+    assert len(body["blocks"]) <= MAX_BLOCKS
+    assert body["blocks"][0]["type"] == "conclusion"
+
+
+# --------------------------------------------------------------------------- #
+# 7. `context.history`（18:09 评论落点 A）：可选、只进文本、不进来源
+# --------------------------------------------------------------------------- #
+
+
+def test_history_absent_keeps_user_message_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeClient(SNAPSHOT_PAGE)
+    client = _patch(tmp_path, monkeypatch, fake)
+    base = {"question": "今天表现？", "page_key": "watch"}
+
+    _post(client, "/api/page/assistant", {**base, "context": {"page": "watch", "data": {"a": 1}}})
+    _post(
+        client,
+        "/api/page/assistant",
+        {**base, "context": {"page": "watch", "data": {"a": 1}, "history": []}},
+    )
+
+    assert fake.calls[0] == fake.calls[1]
+
+
+def test_history_lands_in_context_text_but_not_in_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeClient(SNAPSHOT_PAGE)
+    client = _patch(tmp_path, monkeypatch, fake)
+
+    body = _post(
+        client,
+        "/api/page/assistant",
+        {
+            "question": "换个方向接着说？",
+            "page_key": "watch",
+            "context": {
+                "page": "watch",
+                "history": [
+                    {"role": "user", "text": "上一轮问题", "blocks_seq": [0, 1]},
+                    {"role": "assistant", "text": "上一轮半截回答", "blocks_seq": [2, 3]},
+                ],
+            },
+        },
+    ).json()
+
+    _, _, user, _ = fake.calls[0]
+    assert "【上一轮已生成内容】" in user
+    assert "用户：上一轮问题" in user
+    assert "助手：上一轮半截回答" in user
+    # 历史不进 sources：无来源 notice 照旧
+    citations = [b for b in body["blocks"] if b["type"] == "citation"]
+    assert citations == []
+    source_notices = [
+        b for b in body["blocks"] if b["type"] == "notice" and b["payload"].get("section") == "来源"
+    ]
+    assert len(source_notices) == 1
+    assert source_notices[0]["payload"]["message"] == chat_module._source_note(
+        has_data=False, sources=[]
+    )
+    # 历史文字不进 conclusion（结论只取本轮 reply）
+    assert "上一轮" not in body["blocks"][0]["payload"]["text"]
+
+
+def test_history_text_does_not_leak_numbers_into_conclusion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _FakeClient(SNAPSHOT_PAGE)
+    client = _patch(tmp_path, monkeypatch, fake)
+
+    body = _post(
+        client,
+        "/api/page/assistant",
+        {
+            "question": "接着说？",
+            "page_key": "watch",
+            "context": {
+                "page": "watch",
+                "history": [{"role": "assistant", "text": "上一轮提到 9.87 元与 12.5%"}],
+            },
+        },
+    ).json()
+
+    conclusion = body["blocks"][0]["payload"]["text"]
+    assert "9.87" not in conclusion and "12.5" not in conclusion
+    assert not any(ch.isdigit() for ch in conclusion)
