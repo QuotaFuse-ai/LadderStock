@@ -157,7 +157,8 @@ describe('旧深链重定向（QUOT-431）', () => {
  */
 describe('「研究工具」组（QUOT-474 / DEC-067）', () => {
   it('第 9 组 key 是 `research-tools`，不再是 `deep-dive`', () => {
-    expect(NAV_SECTIONS.at(-1)?.key).toBe('research-tools')
+    // QUOT-567 起第 10 组是「知识库」，研究工具仍固定在第 9 位
+    expect(NAV_SECTIONS[8]?.key).toBe('research-tools')
     expect(NAV_SECTIONS.map((section) => section.key)).not.toContain('deep-dive')
   })
 
@@ -194,6 +195,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
       'validate',
       'industry',
       'research-tools',
+      'knowledge',
     ])
   })
 
@@ -256,7 +258,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
 
   it('单页组不挂二级（`pages.length > 1` 才展开）：持仓移出后日志只剩交易日志', () => {
     const single = NAV_SECTIONS.filter((section) => section.pages.length === 1).map((section) => section.key)
-    expect(single).toEqual(['home', 'journal'])
+    expect(single).toEqual(['home', 'journal', 'knowledge'])
   })
 
   it('设置沉底、不参与分组展开，其余页面都在分组里', () => {
@@ -279,6 +281,7 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     // 二级分组默认展开（`ldst.nav.expanded` 的缺省口径），新分组不点展开就可达
     expect(hrefs).toEqual(NAV_SECTIONS.flatMap((section) => section.pages.map((page) => page.to)))
     expect(hrefs).toContain('/research')
+    expect(hrefs).toContain('/knowledge')
   })
 
   it('底部固定项在导航之外，链接指向设置', () => {
@@ -292,5 +295,23 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
       </MemoryRouter>,
     )
     expect(screen.getAllByRole('link', { name: /设置/ })[0].getAttribute('href')).toBe('/settings')
+  })
+})
+
+/**
+ * QUOT-567：「知识库」是新增的第 10 组（不是在研究工具组里加一项）。
+ * 单页组规则同首页 / 日志——侧栏没有代码可带，档案页由落地页提交或深链进入。
+ */
+describe('「知识库」组（QUOT-567）', () => {
+  it('第 10 组 key 是 `knowledge`，单页入口 `/knowledge`', () => {
+    expect(NAV_SECTIONS.at(-1)?.key).toBe('knowledge')
+    const group = NAV_SECTIONS.find((section) => section.key === 'knowledge')
+    expect(group?.label).toBe('知识库')
+    expect(group?.pages.map((page) => [page.to, page.label])).toEqual([['/knowledge', '知识库']])
+  })
+
+  it('落地页与档案页各命中自己的路由，档案深链不被落地页吞掉', () => {
+    expect(matchedRoute('/knowledge')).toBe('/knowledge')
+    expect(matchedRoute('/knowledge/SH/600000')).toBe('/knowledge/:market/:symbol')
   })
 })

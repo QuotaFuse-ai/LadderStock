@@ -69,7 +69,9 @@ export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmente
 export { Tabs, type TabOption, type TabsProps } from './Tabs'
 export {
   DataTable,
+  MarkdownTable,
   type Column,
   type DataTableProps,
   type Expandable,
+  type MarkdownTableProps,
 } from './Table'

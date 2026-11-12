@@ -76,11 +76,13 @@ describe('页面 ↔ skill 绑定覆盖率（QUOT-474 / DEC-067）', () => {
     }
   })
 
-  it('`/skills`、`/settings`、`/` 是显式开放域（pkg = null）', () => {
+  it('`/skills`、`/settings`、`/knowledge`、`/` 是显式开放域（pkg = null）', () => {
     expect(bindingFor('/')?.pkg).toBeNull()
     expect(bindingFor('/skills')?.pkg).toBeNull()
     expect(bindingFor('/skills/2')?.pkg).toBeNull()
     expect(bindingFor('/skills/pkg/a-share-dossier')?.pkg).toBeNull()
+    expect(bindingFor('/knowledge')?.pkg).toBeNull()
+    expect(bindingFor('/knowledge/SH/600000')?.pkg).toBeNull()
     expect(bindingFor('/settings')?.pkg).toBeNull()
   })
 

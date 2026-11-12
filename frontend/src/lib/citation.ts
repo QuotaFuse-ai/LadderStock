@@ -1,7 +1,8 @@
 /**
  * 研究报告 Markdown 的轻量解析（R3 渲染格式见 SPEC-RESEARCH-PROVENANCE §3）。
  *
- * 只认后端会写的几种形态：`#`/`##`/`###` 标题、`-` 列表、`>` 引用、空行分段。
+ * 只认后端会写的几种形态：`#`/`##`/`###` 标题、`-` 列表、`>` 引用、空行分段，
+ * 以及档案正文里出现的 `|` 表格（QUOT-567：档案第 3 段「历史结论」是表格）。
  * 行内只认三类标记：`[n]` 角标、`〔未核实〕`、`**加粗**` / `` `代码` ``。
  *
  * 为什么自己解析而不引 markdown 库：正文由 `citation.annotate()` 程序生成，
@@ -24,6 +25,7 @@ export type MarkdownBlock =
   | { kind: 'list'; items: string[] }
   | { kind: 'quote'; text: string }
   | { kind: 'rule' }
+  | { kind: 'table'; header: string[]; rows: string[][] }
 
 const INLINE_PATTERN = /(\[\d+\]|〔未核实〕|\*\*[^*]+\*\*|`[^`]+`)/g
 
@@ -49,10 +51,24 @@ export function parseInline(text: string): InlineToken[] {
   return tokens
 }
 
+/** `| a | b |` → `['a', 'b']`；首尾竖线可有可无。 */
+function splitRow(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '')
+  return trimmed.split('|').map((cell) => cell.trim())
+}
+
+/** `|---|---:|` 这类分隔行：每格只由 `-` / `:` / 空格组成，且至少一个格里有 `-`。 */
+function isTableDivider(line: string): boolean {
+  if (!line.includes('|')) return false
+  const cells = splitRow(line)
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell))
+}
+
 export function parseMarkdown(markdown: string): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = []
   let paragraph: string[] = []
   let list: string[] = []
+  let table: string[][] = []
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return
@@ -64,9 +80,16 @@ export function parseMarkdown(markdown: string): MarkdownBlock[] {
     blocks.push({ kind: 'list', items: list })
     list = []
   }
+  const flushTable = () => {
+    if (table.length === 0) return
+    const [header, ...rows] = table
+    blocks.push({ kind: 'table', header, rows })
+    table = []
+  }
   const flushAll = () => {
     flushParagraph()
     flushList()
+    flushTable()
   }
 
   for (const rawLine of markdown.split(/\r?\n/)) {
@@ -75,6 +98,14 @@ export function parseMarkdown(markdown: string): MarkdownBlock[] {
       flushAll()
       continue
     }
+    if (line.includes('|')) {
+      // 分隔行只跳过；行数比表头多出的格补空，少出的截掉，不因数据错位整段丢掉
+      if (!isTableDivider(line)) table.push(splitRow(line))
+      flushParagraph()
+      flushList()
+      continue
+    }
+    flushTable()
     const heading = /^(#{1,3})\s+(.*)$/.exec(line)
     if (heading) {
       flushAll()

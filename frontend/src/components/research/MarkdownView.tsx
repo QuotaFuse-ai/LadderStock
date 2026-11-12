@@ -3,6 +3,7 @@ import { Fragment } from 'react'
 import type { CitationIndex } from '../../lib/citation'
 import { parseInline, parseMarkdown, type InlineToken } from '../../lib/citation'
 import { cn } from '../../lib/cn'
+import { MarkdownTable } from '../ui'
 import { NUMBER_CHIP } from './bits'
 
 /**
@@ -148,6 +149,17 @@ export function MarkdownView({ markdown, index, onCitation, className }: Markdow
         }
         if (block.kind === 'rule') {
           return <hr key={key} className="border-t border-border" />
+        }
+        if (block.kind === 'table') {
+          // 档案的「历史结论」是四列宽表：自己横向滚动，不把整页撑出横向滚动条
+          return (
+            <MarkdownTable
+              key={key}
+              header={block.header}
+              rows={block.rows}
+              renderCell={(text) => <Inline text={text} index={index} onCitation={onCitation} />}
+            />
+          )
         }
         return (
           <p key={key} className="max-w-measure break-words text-body leading-body text-text-secondary">
