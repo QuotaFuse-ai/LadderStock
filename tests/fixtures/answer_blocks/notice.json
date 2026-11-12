@@ -1,0 +1,8 @@
+{
+  "type": "notice",
+  "payload": {
+    "kind": "missing_data",
+    "section": "分红",
+    "message": "本页没有取到该标的的分红记录"
+  }
+}

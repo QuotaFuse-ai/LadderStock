@@ -1,0 +1,12 @@
+{
+  "type": "action",
+  "payload": {
+    "items": [
+      {
+        "label": "展开完整面板",
+        "action": "open_screen",
+        "target": "/research?code=600036"
+      }
+    ]
+  }
+}

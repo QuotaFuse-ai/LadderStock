@@ -1,0 +1,14 @@
+{
+  "type": "citation",
+  "payload": {
+    "items": [
+      {
+        "name": "腾讯行情",
+        "fetched_at": "2026-11-11T15:02:01+08:00",
+        "url": "https://example.com/quote/600036",
+        "symbol": "600036",
+        "as_of": "2026-11-11"
+      }
+    ]
+  }
+}

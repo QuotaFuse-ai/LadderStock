@@ -1,0 +1,20 @@
+{
+  "type": "table",
+  "payload": {
+    "columns": [
+      "指标",
+      "2026Q3",
+      "2025Q3"
+    ],
+    "rows": [
+      [
+        "营业收入(亿)",
+        78.2,
+        71.4
+      ]
+    ],
+    "rows_total": 12,
+    "collapsed": true,
+    "caption": "近四季度营收"
+  }
+}
