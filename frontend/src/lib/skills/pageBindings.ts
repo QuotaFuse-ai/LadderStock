@@ -36,6 +36,9 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   { prefix: '/research', pkg: 'a-share-dossier' },
   { prefix: '/news', pkg: 'wire-desk' },
   { prefix: '/skills', pkg: null },
+  // QUOT-567：知识库两页只读展示平台攒的档案，未绑技能包（开放域）；
+  // 无档案空态由页内自行打开助手并预填问题
+  { prefix: '/knowledge', pkg: null },
   { prefix: '/settings', pkg: null },
 ]
 

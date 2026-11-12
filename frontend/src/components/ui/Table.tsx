@@ -408,3 +408,55 @@ export function DataTable<T>({
     </div>
   )
 }
+
+export interface MarkdownTableProps {
+  header: string[]
+  rows: string[][]
+  /** 单元格渲染（档案正文里的 `[n]` 角标、加粗等交给调用方的富文本渲染件） */
+  renderCell: (text: string) => ReactNode
+  className?: string
+}
+
+/**
+ * markdown 表格壳（QUOT-567 知识库档案的「历史结论」段）。
+ *
+ * 与 `DataTable` 共用同一套外壳（`overflow` + `rounded border` + `bg-surface`、
+ * `border-separate` + `border-spacing-0`），但列数、表头都来自文档本身，没有排序 /
+ * 选中 / 四态；单元格内容由调用方渲染，这里只管结构与样式。行短时补空单元格，
+ * 不丢整行。
+ */
+export function MarkdownTable({ header, rows, renderCell, className }: MarkdownTableProps) {
+  return (
+    <div className={cn('max-w-full overflow-x-auto rounded border border-border bg-surface', className)}>
+      <table className="w-full border-separate border-spacing-0 text-caption">
+        <thead className="bg-surface-3 text-text-secondary">
+          <tr>
+            {header.map((cell, cellIndex) => (
+              <th
+                key={cellIndex}
+                scope="col"
+                className="whitespace-nowrap border-b border-border px-2 py-1 text-left font-medium"
+              >
+                {renderCell(cell)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="text-text-secondary">
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {header.map((_, cellIndex) => (
+                <td
+                  key={cellIndex}
+                  className="border-t border-r border-border px-2 py-1 align-top last:border-r-0"
+                >
+                  {renderCell(row[cellIndex] ?? '')}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}

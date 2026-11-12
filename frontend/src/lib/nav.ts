@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Bell,
+  BookOpen,
   Bot,
   Building2,
   CalendarDays,
@@ -31,11 +32,14 @@ import {
 /**
  * 侧栏导航的数据源（DEC-044 / QUOT-304）与顶栏面包屑（DEC-062）。
  *
- * 一级导航 9 组 + 底部固定的「设置」：
- * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 研究工具 ─┬─ 设置（弱化、沉底）。
+ * 一级导航 10 组 + 底部固定的「设置」：
+ * 首页 → 市场 → 盯盘 → 复盘 → 日志 → 我的股票 → 验证 → 产业研究 → 研究工具 → 知识库 ─┬─ 设置（弱化、沉底）。
  *
  * 第 9 组由 QUOT-474 / DEC-067 从「个股深挖」整组改名而来：「研究工具」= 工具总览（`/skills`）
  * + 个股深挖（`/research`，路径不变、深链不 404）。8 个 skill 不各占一条侧栏，收在列表页里。
+ *
+ * 第 10 组「知识库」由 QUOT-567 新增：平台自动攒的个股档案（`/knowledge/:market/:symbol`），
+ * 单页组——落地页收 6 位代码后才跳档案页，侧栏本身没有代码可带。
  *
  * 这里只放纯数据与纯函数，不含 React：`components/Layout.tsx` 负责渲染，
  * `lib/nav.ts` 的 `navTitleFor()` 给顶栏取一级栏目名。放在独立模块而不是
@@ -159,6 +163,14 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/skills', label: '工具总览', icon: Wrench },
       { to: '/research', label: '个股深挖', icon: Microscope },
     ],
+  },
+  // QUOT-567：第 10 组「知识库」——平台平时自动攒下来的个股档案。
+  // 单页组：`/knowledge` 是收代码的落地页，档案页 `/knowledge/:market/:symbol` 由它和深链进入。
+  {
+    key: 'knowledge',
+    label: '知识库',
+    icon: BookOpen,
+    pages: [{ to: '/knowledge', label: '知识库', icon: BookOpen }],
   },
 ]
 

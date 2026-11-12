@@ -52,6 +52,10 @@ export const ROUTE_PATHS = [
   '/skills',
   '/skills/:id',
   '/skills/pkg/:name',
+  // QUOT-567：新增一级「知识库」。`/knowledge` 收代码后跳 `/knowledge/:market/:symbol`，
+  // 档案页直接读后端 `GET /api/knowledge/:market/:symbol`；深链形如 `/knowledge/SH/600000`。
+  '/knowledge',
+  '/knowledge/:market/:symbol',
   '/index.html',
   '*',
 ] as const
