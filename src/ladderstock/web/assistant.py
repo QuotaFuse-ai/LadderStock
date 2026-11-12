@@ -18,18 +18,22 @@ QUOT-487 在同一条调用链上接了跨会话记忆：提问前先召回（`a
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import socket
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ladderstock.ai import fallback, memory, module_memory
+from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
@@ -125,11 +129,41 @@ PAGE_SYSTEM_PROMPT = (
 )
 
 
+class ChatSource(BaseModel):
+    """调用方的一次真实取数记录：来源名 + 取数时间（ISO 8601）+ 可选链接。
+
+    QUOT-579（D3）：从 `web/chat.py` 迁入现役链路——`chat.py` 保留不删、不挂载，
+    这里是现役三路由使用的同一份字段语义。`symbol` / `as_of` 为阶段 B 追加，
+    缺失时如实留空，不补默认值。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    fetched_at: str
+    url: str | None = None
+    symbol: str | None = None
+    as_of: str | None = None
+
+
+class AsyncStructuredContext(BaseModel):
+    """结构化页级上下文：`{page, data, sources}`（对齐 `chat.py:111 ChatRequestContext`）。
+
+    `data` 由调用方裁剪，服务端不主动补数据；`sources` 直接喂给 `build_blocks`。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: str | None = None
+    data: dict[str, Any] | None = None
+    sources: list[ChatSource] = Field(default_factory=list)
+
+
 class AssistantRequest(BaseModel):
-    """页面发来的最小载荷：问题 + 已脱敏的上下文文本。"""
+    """页面发来的最小载荷：问题 + 上下文（旧字符串形态或结构化形态）。"""
 
     question: str = ""
-    context: str = ""
+    context: str | AsyncStructuredContext = ""
     date: str | None = None
     tab: str | None = None
 
@@ -137,10 +171,10 @@ class AssistantRequest(BaseModel):
 # QUOT-476：/skills 页没有 code，抽屉把页面键 / 绑定技能 / 对象拼进 context 文本后
 # 再带上这三个键，方便日志与服务端理解来源；三者均可缺省。
 class SkillAssistantRequest(BaseModel):
-    """技能页抽屉发来的载荷：问题 + 页面键上下文（与 `/research` 同一文本约定）。"""
+    """技能页抽屉发来的载荷：问题 + 页面键上下文（与 `/research` 同一约定）。"""
 
     question: str = ""
-    context: str = ""
+    context: str | AsyncStructuredContext = ""
     page_key: str | None = None
     bound_skill: str | None = None
 
@@ -148,10 +182,10 @@ class SkillAssistantRequest(BaseModel):
 # QUOT-493/QUOT-477：page 通道与 research / skills 同构——上下文统一为前端序列化好的
 # 文本（`AiDock` 的 serializedContext），本端不再做 JSON 解析，避免两侧类型各执一端。
 class PageAssistantRequest(BaseModel):
-    """任意页面抽屉发来的载荷：问题 + 页级上下文文本（与另两条通道同一约定）。"""
+    """任意页面抽屉发来的载荷：问题 + 页级上下文（文本或结构化，同一约定）。"""
 
     question: str = ""
-    context: str = ""
+    context: str | AsyncStructuredContext = ""
     page_key: str | None = None
     bound_skill: str | None = None
 
@@ -174,6 +208,85 @@ def _failure_response(exc: AssistantFailure) -> JSONResponse:
             "detail": exc.detail,
             "code": exc.code,
             "retryable": exc.retryable,
+            "reply": "",
+            "blocks": _failure_blocks(exc),
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 答案块接缝（QUOT-579，阶段 B）
+# --------------------------------------------------------------------------- #
+
+
+#: 现役 `ask()` 不做结构化输出（`json_mode=False`），`reply` 是纯文本；本适配器把 reply
+#: 按句切成 `narrative`，供 `build_blocks` 装配 conclusion。**不让模型产出块**（红线 2）。
+_SENTENCE_RE = re.compile(r"[^。！？；!?;\n]+[。！？；!?;]?")
+
+
+def reply_to_ai(reply: str) -> dict[str, list[str]]:
+    """把纯文本 `reply` 聚合成最小结构化 `ai` payload（不调模型、不改 `json_mode`）。
+
+    只填 `narrative`（按句切分）；`highlights / risks / evidence` 留空——现役链路拿不到
+    这几类的可靠来源，宁可留空也不编造。数值剥离 / 无出处不显示等红线在
+    `build_blocks` 内统一执行。
+    """
+    text = (reply or "").strip()
+    sentences = [part.strip() for part in _SENTENCE_RE.findall(text) if part.strip()]
+    if not sentences and text:
+        sentences = [text]
+    return {"narrative": sentences, "highlights": [], "risks": [], "evidence": []}
+
+
+def _serialize_context(context: AsyncStructuredContext) -> str:
+    """结构化上下文 → 喂给 `ask(context=...)` 的字符串（字段语义对齐 chat.py）。"""
+    parts: list[str] = []
+    if context.page:
+        parts.append(f"页面：{context.page}")
+    if context.data is not None:
+        payload = json.dumps(context.data, ensure_ascii=False, sort_keys=True)
+        parts.append("【页内数据】\n" + payload)
+    if not parts:
+        return ""
+    return "\n".join(parts)
+
+
+def _normalize_context(
+    context: str | AsyncStructuredContext,
+) -> tuple[str, list[ChatSource]]:
+    """双形态上下文 → `(字符串上下文, sources)`。
+
+    - 旧字符串形态：原样返回，`sources=[]`（`build_blocks` 于是出「无来源」notice）；
+    - 结构化形态：`{page, data, sources}` 转字符串上下文 + `sources`。
+    """
+    if isinstance(context, AsyncStructuredContext):
+        return _serialize_context(context), list(context.sources)
+    return context, []
+
+
+def _blocks_for(
+    reply: str,
+    sources: Sequence[ChatSource],
+) -> list[dict[str, Any]]:
+    """成功路径装配 `blocks`。
+
+    `metrics` 一律传 `{}`：现役三路由拿不到任何程序算出的数，`build_blocks` 于是生成
+    `notice(missing_data)`——**不伪造 metrics**（红线 6 / 本单第 5 条）。真实 metrics
+    接入是待办（见回报）。`sources=[]` 时由 `build_blocks` 生成「无来源」notice。
+    """
+    return _build_blocks({}, reply_to_ai(reply), sources)
+
+
+def _failure_blocks(exc: AssistantFailure) -> list[dict[str, Any]]:
+    """失败路径装配 `blocks`：单条 `notice(missing_data)`，文案取既有可读 `detail`。"""
+    return _build_blocks(
+        {},
+        None,
+        [],
+        failure={
+            "kind": "missing_data",
+            "message": exc.detail,
+            "action": "" if exc.retryable else "请按提示修正后重试",
         },
     )
 
@@ -347,8 +460,13 @@ def ask(
     }
 
 
-def _question_payload_error(question: str, context: str) -> JSONResponse | None:
-    """问题 / 上下文长度校验，`/research` 与 `/skills` 两个端点共用。"""
+def _question_payload_error(
+    question: str, context: str | AsyncStructuredContext
+) -> JSONResponse | None:
+    """问题 / 上下文长度校验，`/research` 与 `/skills` 两个端点共用。
+
+    结构化上下文按序列化后的文本长度判定，与旧字符串形态同一把尺子。
+    """
     if not question:
         return JSONResponse(
             status_code=422,
@@ -363,7 +481,8 @@ def _question_payload_error(question: str, context: str) -> JSONResponse | None:
                 "retryable": False,
             },
         )
-    if len(context) > MAX_CONTEXT_CHARS:
+    context_text, _ = _normalize_context(context)
+    if len(context_text) > MAX_CONTEXT_CHARS:
         return JSONResponse(
             status_code=422,
             content={
@@ -385,10 +504,11 @@ def build_router() -> APIRouter:
         error = _question_payload_error(question, body.context)
         if error is not None:
             return error
+        context, sources = _normalize_context(body.context)
         try:
-            return ask(
+            result = ask(
                 question=question,
-                context=body.context,
+                context=context,
                 day=body.date,
                 tab=body.tab,
                 module="senate",
@@ -397,6 +517,7 @@ def build_router() -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
+        return {**result, "blocks": _blocks_for(result["reply"], sources)}
 
     return router
 
@@ -422,10 +543,11 @@ def build_skills_router() -> APIRouter:
         page_label = "研究助手 · 技能页"
         if body.bound_skill:
             page_label += f" · {body.bound_skill}"
+        context, sources = _normalize_context(body.context)
         try:
-            return ask(
+            result = ask(
                 question=question,
-                context=body.context,
+                context=context,
                 tab=body.page_key,
                 page_label=page_label,
                 system_prompt=SKILL_SYSTEM_PROMPT,
@@ -434,6 +556,7 @@ def build_skills_router() -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
+        return {**result, "blocks": _blocks_for(result["reply"], sources)}
 
     return router
 
@@ -453,17 +576,17 @@ def build_page_router() -> APIRouter:
     @router.post("/assistant")
     def page_assistant(body: PageAssistantRequest) -> Any:
         question = body.question.strip()
-        context = body.context
-        error = _question_payload_error(question, context)
+        error = _question_payload_error(question, body.context)
         if error is not None:
             return error
+        context, sources = _normalize_context(body.context)
         page_label = "页面助手"
         if body.page_key:
             page_label += f" · {body.page_key}"
         if body.bound_skill:
             page_label += f" · {body.bound_skill}"
         try:
-            return ask(
+            result = ask(
                 question=question,
                 context=context,
                 tab=body.page_key,
@@ -473,6 +596,7 @@ def build_page_router() -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
+        return {**result, "blocks": _blocks_for(result["reply"], sources)}
 
     return router
 
@@ -491,6 +615,8 @@ __all__ = [
     "SYSTEM_PROMPT",
     "AssistantFailure",
     "AssistantRequest",
+    "AsyncStructuredContext",
+    "ChatSource",
     "PageAssistantRequest",
     "SkillAssistantRequest",
     "ask",
@@ -499,4 +625,5 @@ __all__ = [
     "build_skills_router",
     "memory_scope_for",
     "module_for",
+    "reply_to_ai",
 ]
