@@ -81,11 +81,34 @@ class SourceUnavailable(LadderStockError):
 
     `rate_limited=True` 表示这条链路里至少撞到过一次上游限流：调用方据此把
     「因限流降级」和「源真的坏了」在日志与看板里分开说（QUOT-349）。
+
+    `transport_nested` 记录被包装的传输层异常类型（`httpx.ConnectError` /
+    `ReadTimeout` …），**None 表示这是业务型失败**（上游拒收、isError、无数据、
+    链路全不可用）。`HttpMcpTransport._post` 把 httpx 异常统一包成
+    `SourceUnavailable`，裸 `TimeoutError` / `ConnectionError` 因此到不了调用方——
+    熔断器要判「peer 整块不通」只能看这个标记（QUOT-571）。
     """
 
-    def __init__(self, message: str, *, rate_limited: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        rate_limited: bool = False,
+        transport_nested: type[BaseException] | None = None,
+    ) -> None:
         super().__init__(message, EXIT_SOURCE)
         self.rate_limited = rate_limited
+        self.transport_nested = transport_nested
+
+    @property
+    def peer_unreachable(self) -> bool:
+        """peer 级故障（超时 / 拒连 / 连接中断），不是某一个 symbol 没行情。
+
+        httpx 的 `ConnectError` / `ReadTimeout` 等**不继承** `OSError` / `TimeoutError`，
+        所以这里比对的必须是底层传输错误全表 `_PEER_FAULT_ERRORS`，不能只写内建两兄弟。
+        """
+        nested = self.transport_nested
+        return nested is not None and issubclass(nested, _PEER_FAULT_ERRORS)
 
 
 # 这些异常本身就是「源不可用」的具体形态，向上原样抛出以保留超时/拒连的区分
@@ -95,6 +118,15 @@ _TRANSPORT_ERRORS = (
     OSError,
     httpx.HTTPError,
     SourceUnavailable,
+)
+
+# peer 级故障的底层形态：httpx 的 `ConnectError` / `ReadTimeout` 等**不继承**
+# `OSError` / `TimeoutError`，所以 `peer_unreachable` 判的是这一组传输错误本身。
+_PEER_FAULT_ERRORS = (
+    TimeoutError,
+    ConnectionError,
+    OSError,
+    httpx.HTTPError,
 )
 
 
@@ -399,7 +431,8 @@ class HttpMcpTransport:
         except httpx.HTTPError as exc:
             # 地址可能带查询串凭据（audit R-3）：报错只留 scheme://host/path
             raise SourceUnavailable(
-                f"{peer.product} 不可达（{type(exc).__name__}，{mask_url(peer.url)}）"
+                f"{peer.product} 不可达（{type(exc).__name__}，{mask_url(peer.url)}）",
+                transport_nested=type(exc),
             ) from exc
         if capture is not None:
             capture.session_id = session_id
@@ -1054,6 +1087,7 @@ class ProviderRegistry:
     ) -> FetchOutcome:
         trail: list[str] = []
         failures: list[str] = []
+        last_transport: type[BaseException] | None = None
         backoff = _Backoff(self.rate_limit_retries, self.rate_limit_max_wait_sec)
         for index, spec in enumerate(chain):
             cooled = None if ignore_cooldown else self.health.active_cooldown(spec.id)
@@ -1078,6 +1112,10 @@ class ProviderRegistry:
                 reason = _reason(exc)
                 trail.append(f"{spec.trail_label()}:{reason}")
                 failures.append(f"{spec.trail_label()}={reason}")
+                if isinstance(exc, SourceUnavailable):
+                    last_transport = exc.transport_nested or last_transport
+                elif isinstance(exc, _PEER_FAULT_ERRORS):
+                    last_transport = type(exc)
                 self.health.set_cooldown(
                     spec.id, self._cooldown_sec(spec, exc), reason=reason, tool=spec.tool
                 )
@@ -1139,6 +1177,9 @@ class ProviderRegistry:
             f"{dataset} 的生态链路全部不可用：{reason}"
             + ("，且本地无缓存可回放" if allow_cache else "（已禁用缓存回放）"),
             rate_limited=backoff.hit,
+            # 链路里只要有一路是传输层故障（超时 / 拒连），这份聚合失败就是 peer 级
+            # 故障：把底层类型带出去，熔断器才能判「整块不通」（QUOT-571 缺陷 1）。
+            transport_nested=last_transport,
         )
 
     def _cooldown_sec(self, spec: SourceSpec, exc: BaseException) -> float:
@@ -1396,7 +1437,13 @@ def _reason(exc: BaseException) -> str:
     if isinstance(exc, (ConnectionError, OSError, httpx.TransportError)):
         return "unreachable"
     if isinstance(exc, SourceUnavailable):
-        return "unavailable"
+        # 传输层异常被包成 SourceUnavailable 后仍要能分清超时 / 拒连 / 业务失败
+        nested = exc.transport_nested
+        if nested is None:
+            return "unavailable"
+        if issubclass(nested, (TimeoutError, httpx.TimeoutException)):
+            return "timeout"
+        return "unreachable"
     if isinstance(exc, LadderStockError):
         return "rejected"
     return "error"

@@ -594,11 +594,14 @@ class RadarPlane:
         data_root: Path | None = None,
         registry: ProviderRegistry | None = None,
         ensure: Any | None = None,
+        health_bus: Any | None = None,
     ) -> None:
         self.data_root = Path(data_root) if data_root is not None else None
         self._registry = registry
         # 打开即补取（QUOT-555 / DEC-080）：缺省 None = 纯只读，行为与改造前逐字节一致。
         self._ensure = ensure
+        # 自愈健康事件总线（QUOT-571）：缺省 None = 不短路，其余 fail-fast 层照常。
+        self._health_bus = health_bus
 
     # -------------------------------------------------------------- 资讯流 §3
 
@@ -783,10 +786,15 @@ class RadarPlane:
         `ok / partial / missing`（全挂是 missing，不是 404，也不伪造行）。港股两格自
         QUOT-560 起走 `tickhub_us` 的港股指数别名（`HSI.HK` / `HSTECH.HK`，零 key、
         Tier C 非商用），失败时与美股格同样按格降级，不再有结构性占位。
+        自愈事件总线（`health_bus`）接上时，已确认宕机的 peer 直接短路、零请求
+        （QUOT-571）；总线未装配时短路不生效，并行 / 限时 / 熔断 / 总预算照常。
         """
         registry = self._active_registry()
         active = registry if registry is not None else ProviderRegistry()
-        result = self._read(lambda: indices_module.fetch_indices(active))
+        peer_down = indices_module.peer_down_signals(self._health_bus)
+        result = self._read(
+            lambda: indices_module.fetch_indices(active, peer_down=peer_down)
+        )
         return _envelope(
             domain=INDICES_DOMAIN,
             topic=INDICES_TOPIC,

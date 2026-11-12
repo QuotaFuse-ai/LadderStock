@@ -20,6 +20,7 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 from ladderstock.core.indices import (
@@ -28,6 +29,7 @@ from ladderstock.core.indices import (
     PEER_DOWN_EVENT,
     PeerDownSignal,
     fetch_indices,
+    peer_down_signals,
 )
 from ladderstock.data.provider_registry import SourceUnavailable
 from ladderstock.supervisor.health_events import (
@@ -235,6 +237,61 @@ def test_business_failure_does_not_trip_block_breaker() -> None:
     assert registry.peer_symbol_calls() == list(US_PEER_SYMBOLS)
 
 
+# 真实 `HttpMcpTransport._post` 把 httpx 异常统一包成 `SourceUnavailable`，裸
+# `TimeoutError` / `ConnectionError` 在生产里根本到不了熔断器（QUOT-571 缺陷 1）。
+# 这两条用**生产形态**的异常钉住熔断器，不能只靠上面两条裸异常的桩。
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError, httpx.RemoteProtocolError],
+)
+def test_transport_wrapped_unavailable_trips_block_breaker(nested: type[BaseException]) -> None:
+    """生产形态（`SourceUnavailable(transport_nested=httpx.*)`）也要熔断整块。"""
+    wrapped = SourceUnavailable(
+        "tickhub_us 不可达（ConnectError，http://127.0.0.1:8002）",
+        transport_nested=nested,
+    )
+    assert wrapped.peer_unreachable is True
+    registry = _ScriptedRegistry(raises={("index_quote_us", "DJI"): wrapped})
+    cells = _cells(fetch_indices(registry))
+    assert cells["DJI"]["available"] is False
+    assert cells["IXIC"]["available"] is False
+    assert BLOCK_FAIL_FAST in cells["IXIC"]["reason"]
+    # IXIC 一次请求都没发——同块余下格零请求
+    assert registry.peer_symbol_calls() == ["DJI", "HSI.HK", "HSTECH.HK"]
+    assert cells["HSI"]["available"] is True
+
+
+def test_transport_wrapped_business_unavailable_does_not_trip() -> None:
+    """`transport_nested=None` 的 `SourceUnavailable` 是业务失败：不熔断。"""
+    registry = _ScriptedRegistry(
+        raises={
+            ("index_quote_hk", "HSI.HK"): SourceUnavailable(
+                "index_quote_hk 的生态链路全部不可用：rejected，且本地无缓存可回放"
+            )
+        }
+    )
+    cells = _cells(fetch_indices(registry))
+    assert cells["HSI"]["available"] is False
+    assert cells["HSTECH"]["available"] is True
+    assert registry.peer_symbol_calls() == list(US_PEER_SYMBOLS)
+
+
+def test_real_http_transport_flavor_trips_breaker() -> None:
+    """端到端形态：`SourceUnavailable` 由 `HttpMcpTransport` 从 httpx 异常构造，行为一致。"""
+    registry = _ScriptedRegistry(
+        raises={
+            ("index_quote_us", "DJI"): SourceUnavailable(
+                "超时", transport_nested=httpx.ReadTimeout
+            )
+        }
+    )
+    cells = _cells(fetch_indices(registry))
+    assert BLOCK_FAIL_FAST in cells["IXIC"]["reason"]
+    assert "IXIC" not in registry.peer_symbol_calls()
+
+
 # --------------------------------------------------------------------------- #
 # 并行与总预算
 # --------------------------------------------------------------------------- #
@@ -363,3 +420,30 @@ def test_default_reason_when_signal_carries_no_text() -> None:
     strip = fetch_indices(registry, peer_down={"tickhub_us": _default_signal(bus)})
     assert PEER_DOWN_EVENT in _cells(strip)["DJI"]["reason"]
     assert registry.peer_symbol_calls() == []
+
+
+def test_peer_down_signals_factory_covers_both_peers() -> None:
+    """装配侧用工厂接总线：`tickhub` / `tickhub_us` 各一条，接的是 `bus.since(module=...)`。"""
+    bus = _peer_bus()
+    _publish(bus, EVENT_CRASH, peer="tickhub_us")
+    signals = peer_down_signals(bus)
+    assert set(signals) == {"tickhub", "tickhub_us"}
+    assert signals["tickhub"].check() is None
+    assert signals["tickhub_us"].check() is not None
+    # 工厂对 `None` 总线回空表：未装配时短路不生效、其余层照常
+    assert peer_down_signals(None) == {}
+
+
+def test_seq_tail_reads_past_stale_window() -> None:
+    """该 peer 的坏事件被后 200 条无关事件挤出窗口时，按 seq 对齐尾页仍读到最新一条。"""
+    bus = _peer_bus()
+    _publish(bus, EVENT_CRASH)  # 旧的坏事件，随后被同 peer 大量无关事件挤出 200 条窗口
+    for _ in range(300):
+        _publish(bus, "probe", peer="tickhub_us")
+    signal = PeerDownSignal(
+        peer="tickhub_us",
+        subscribe=functools.partial(bus.since, module="tickhub_us"),
+        reasons={EVENT_CRASH: "进程已退出"},
+    )
+    # 最新 200 条窗口里已经看不到 crash；按 seq 回读该 peer 的尾页要能命中
+    assert signal.check() == "进程已退出"

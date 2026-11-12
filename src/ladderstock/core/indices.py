@@ -42,8 +42,11 @@ peer 挂掉时不自愈（adopt-only 不拉起外部托管进程，DEC-078），
 1. **健康通道短路**：`tickhub_us` 已被自愈标 `needs_human` / 进程已退出（QUOT-556
    事件通道的跃迁）时，美股 / 港股四格一次请求都不发，直接出 missing + 原因。
    只在「确认坏了」时短路，不在「恢复中 / 不确定」时短路（宁可多打一次次正常请求）。
+   装配见 `peer_down_signals(bus)`，由 `web/radar.py` 把自愈引擎的事件总线接进来。
 2. **块级熔断**：同一 peer 的那一块第一次失败就判整块不可用，剩余格不再逐格
-   等超时（4 格串行 × 10s = 40s 就是「banner 挂 8s」的来源）。
+   等超时（4 格串行 × 10s = 40s 就是「banner 挂 8s」的来源）。判据是
+   `_is_peer_failure`：认裸 `TimeoutError` / `ConnectionError`，也认真实传输层
+   包装出来的 `SourceUnavailable(transport_nested=...)`——后者才是生产形态。
 3. **并行取数**：美股 / 港股两块线程池并行；块内逐 symbol 仍串行（peer 闸门
    本来就限制同 peer 并发，块内并行只会排队，不会更快）。
 4. **总预算**：`fetch_indices` 在总预算内返回；预算耗尽的那块按「超时未返回」
@@ -62,6 +65,7 @@ from datetime import date
 from typing import Any, Literal
 
 from ladderstock.core.ladder import as_float
+from ladderstock.data.provider_registry import SourceUnavailable
 
 _log = logging.getLogger(__name__)
 
@@ -109,15 +113,27 @@ PEER_OF_DATASET: dict[str, str] = {
 #: peer「健康复原」的跃迁：短路态只在这些事件之后才可能解除
 _PEER_BACK_EVENTS: frozenset[str] = frozenset({"recovered"})
 
+#: 读健康事件时从最新往前看的条数（与 `HealthEventBus` 默认分页上限一致）
+_PEER_EVENT_PAGE = 200
+
 #: 短路 / 熔断 / 超预算的缺失原因前缀（白话，前端直接展示）
 PEER_DOWN_EVENT = "数据源暂不可用"
 BLOCK_FAIL_FAST = "数据源无响应，本块余下格子不再逐格等待"
 BLOCK_BUDGET = "八格总预算内未取回"
 
 #: 触发「整块不再逐格等」的异常：超时 / 连接失败本身就是 peer 级故障。
-#: 业务型失败（`SourceUnavailable` 且是上游拒收 / 无数据）只算单格失败，不熔断——
-#: 那可能只是这个 symbol 没行情，另一格还取得到。
+#: 真实传输层（`HttpMcpTransport._post`）把所有 httpx 异常包成 `SourceUnavailable`，
+#: 裸 `TimeoutError` / `ConnectionError` 到不了这里——所以还要认它带
+#: `transport_nested`（超时 / 拒连）标记的那种形态。业务型失败（上游拒收 `isError`、
+#: 无数据、链路全不可用）仍只算单格失败，不熔断：那可能只是这个 symbol 没行情。
 _FAST_FAIL_ERRORS = (TimeoutError, ConnectionError)
+
+
+def _is_peer_failure(exc: BaseException) -> bool:
+    """这次失败说明「peer 整块不通」，而不是「这一格恰好没数据」。"""
+    if isinstance(exc, _FAST_FAIL_ERRORS):
+        return True
+    return isinstance(exc, SourceUnavailable) and exc.peer_unreachable
 
 
 @dataclass(frozen=True)
@@ -258,11 +274,18 @@ class PeerDownSignal:
     def check(self) -> str | None:
         """这个 peer 是否在「最后一次坏跃迁之后还没恢复」；是则回白话原因。
 
-        只需要「最近一条坏 / 恢复事件」，所以从最新往回读、读到第一条相关事件就停
-        ——环形缓冲里该 peer 的历史再长，也只读一页，不会被旧事件淹没。
+        只需要「最近一条坏 / 恢复事件」，所以从最新往回读、读到第一条相关事件就停。
+        注意 `subscribe(0)` 拿到的受总线分页上限截断（默认前 200 条）：环形缓冲里
+        该 peer 的旧事件可能把最新的挤到窗口外，读错过期状态——按 seq 对齐取尾部
+        一页，保证读到的是最新那条。
         """
         try:
             items = list(self.subscribe(0) or ())
+            if items:
+                latest = int(getattr(items[-1], "seq", 0) or 0)
+                tail = list(self.subscribe(max(0, latest - _PEER_EVENT_PAGE)) or ())
+                if tail:
+                    items = tail
         except Exception as exc:  # noqa: BLE001 - 健康通道坏了不能拖垮取数
             _log.debug("peer 健康通道读取失败（%s），照常取数：%s", self.peer, exc)
             return None
@@ -281,6 +304,31 @@ def _down_reason(peer_down: Mapping[str, PeerDownSignal] | None, dataset: str) -
     """该块归属 peer 若已被健康通道判坏，回白话原因；没有信号 / 没坏则 None。"""
     signal = (peer_down or {}).get(PEER_OF_DATASET.get(dataset, ""))
     return signal.check() if signal is not None else None
+
+
+#: 健康通道里的跃迁 → 首页白话原因（`crash` / `needs_human` 是仅有的两种「确认坏了」）
+PEER_DOWN_REASONS: Mapping[str, str] = {
+    "crash": "数据源进程已退出，待自愈拉起后恢复",
+    "needs_human": "数据源需人工确认，暂不取数",
+}
+
+
+def peer_down_signals(bus: Any) -> dict[str, PeerDownSignal]:
+    """把 `HealthEventBus` 接成 `fetch_indices(peer_down=...)` 的信号表。
+
+    只对首页数据涉及的 peer（`tickhub` / `tickhub_us`）建信号；总线为 None（未装配
+    自愈引擎 / 未接线）时回空表——短路不生效，其余 fail-fast 层照常（fail-safe）。
+    """
+    if bus is None:
+        return {}
+    return {
+        peer: PeerDownSignal(
+            peer=peer,
+            subscribe=functools.partial(bus.since, module=peer),
+            reasons=PEER_DOWN_REASONS,
+        )
+        for peer in dict.fromkeys(PEER_OF_DATASET.values())
+    }
 
 
 def fetch_indices(
@@ -421,7 +469,7 @@ def _fetch_per_symbol(
             _log.warning("%s", failure)
             fail_reasons.append(failure)
             fail_by_symbol[spec.symbol] = failure
-            if isinstance(exc, _FAST_FAIL_ERRORS):
+            if _is_peer_failure(exc):
                 down = failure
             continue
         rows.extend(_rows(outcome.envelope))
@@ -658,6 +706,7 @@ __all__ = [
     "HK_WHITELIST",
     "INDEX_WHITELIST",
     "iso_timestamp",
+    "peer_down_signals",
     "IndexSpec",
     "IndexStrip",
     "fetch_indices",
