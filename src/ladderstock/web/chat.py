@@ -33,13 +33,13 @@ import threading
 import time
 import urllib.parse
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ladderstock.ai import cli_provider, fallback
@@ -774,6 +774,148 @@ def _classify_exception(exc: BaseException, channel: Channel) -> ChatFailure:
 
 
 # --------------------------------------------------------------------------- #
+# 块（QUOT-581 / 任务书 6.3-6.4）：只由服务端从已有回答拼，模型不产出块
+# --------------------------------------------------------------------------- #
+
+#: 一次回答的块上限（6.4 第 4 条；D2 拍板取 6）
+MAX_ANSWER_BLOCKS = 6
+
+#: `_source_note` 的两句原文：sources 为空时作为 `notice` 的文案（与正文尾部同源）
+_NOTICE_MISSING_DATA = "missing_data"
+
+
+def _notice(*, message: str, section: str = "来源") -> dict[str, Any]:
+    return {
+        "type": "notice",
+        "payload": {"kind": _NOTICE_MISSING_DATA, "section": section, "message": message},
+    }
+
+
+def build_blocks(
+    *,
+    answer: str,
+    sources: Sequence[Mapping[str, Any]],
+    has_data: bool,
+    failure: ChatFailure | None = None,
+) -> list[dict[str, Any]]:
+    """从**已成立的**回答拼块：`conclusion` → `citation` → `notice`。
+
+    本轮只做传输改造（任务书阶段 D），不引入新的计算流水：
+    `metric` / `chart` / `table` 要等 metrics 接入（阶段 B）才有输入，
+    缺的块在 `done.followups` 里如实说明，不编造数值（红线 4 / 6）。
+    """
+    if failure is not None:
+        # 6.4 第 5 条：整轮失败只有一块 notice，reply 为空
+        return [_notice(message=failure.message, section="回答")]
+
+    blocks: list[dict[str, Any]] = [
+        {"type": "conclusion", "payload": {"text": answer}},
+    ]
+    if sources:
+        items = [
+            {
+                "name": str(source.get("name") or ""),
+                "fetched_at": str(source.get("fetched_at") or ""),
+                "url": source.get("url"),
+            }
+            for source in sources
+        ]
+        blocks.append({"type": "citation", "payload": {"items": items}})
+    note = _source_note(has_data=has_data, sources=sources)
+    if note:
+        blocks.append(_notice(message=note))
+    return blocks[:MAX_ANSWER_BLOCKS]
+
+
+def _deferred_blocks() -> list[str]:
+    """本轮没能发出的块，按 6.4 的末尾顺序写进 `done`，前端据此显示「还没到」。"""
+    return ["metric", "chart", "table", "action"]
+
+
+def _strip_source_note(answer: str, sources: Sequence[Mapping[str, Any]], has_data: bool) -> str:
+    """`run_turn` 把来源说明拼在正文尾部；块路径要把它单独出成 `notice`，正文里去掉。"""
+    note = _source_note(has_data=has_data, sources=sources)
+    if not note:
+        return answer
+    suffix = f"\n\n{note}"
+    return answer[: -len(suffix)] if answer.endswith(suffix) else answer
+
+
+def sse_event(event: str, data: Mapping[str, Any]) -> str:
+    """SSE 帧：`event: <name>` + 单行 `data:` JSON + 空行收尾（`curl -N` 可逐帧观察）。"""
+    body = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event}\ndata: {body}\n\n"
+
+
+async def stream_turn(
+    *,
+    message: str,
+    session_id: str,
+    context: ChatRequestContext | None = None,
+    timeout_sec: float | None = None,
+    config_root: Any = None,
+    is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+) -> AsyncIterator[str]:
+    """逐块产出 SSE 文本；与非流式 `run_turn` 走同一条计算链、同一份会话落账。
+
+    顺序固定为 6.4：`conclusion` → `citation` → `notice`，最后 `done`。
+    整轮失败时只发一块 `notice` 再 `done`（`ok=False`），绝不发假回答。
+    """
+    try:
+        turn = await run_turn(
+            message=message,
+            session_id=session_id,
+            context=context,
+            timeout_sec=timeout_sec,
+            config_root=config_root,
+            is_disconnected=is_disconnected,
+        )
+    except ChatAborted:
+        # 客户端已走：不落账、不补发任何帧
+        return
+    except ChatFailure as failure:
+        (block,) = build_blocks(answer="", sources=[], has_data=False, failure=failure)
+        yield sse_event("block", block)
+        yield sse_event(
+            "done",
+            {
+                "ok": False,
+                "session_id": session_id,
+                "reply": "",
+                "code": failure.code,
+                "failure": failure.as_dict(),
+                "retryable": failure.retryable,
+            },
+        )
+        return
+
+    # `reply` 已含 `_source_note` 追加文案；块里不重复拼，改出成独立 `notice`
+    has_data = context is not None and context.data is not None
+    blocks = build_blocks(
+        answer=_strip_source_note(turn["reply"], turn["sources"], has_data),
+        sources=turn["sources"],
+        has_data=has_data,
+    )
+    for block in blocks:
+        yield sse_event("block", block)
+    yield sse_event(
+        "done",
+        {
+            "ok": True,
+            "session_id": turn["session_id"],
+            "reply": turn["reply"],
+            "model": turn["model"],
+            "channel": turn["channel"],
+            "sources": turn["sources"],
+            "pending_research": turn["pending_research"],
+            "elapsed_ms": turn["elapsed_ms"],
+            "fetched_at": turn["fetched_at"],
+            "followups": _deferred_blocks(),
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
 # 一轮问答
 # --------------------------------------------------------------------------- #
 
@@ -924,9 +1066,86 @@ async def handle(
     return _response(payload)
 
 
+async def handle_stream(
+    body: ChatRequest,
+    request: Request | None = None,
+    *,
+    config_root: Any = None,
+) -> StreamingResponse:
+    """流式入口（QUOT-581）：`text/event-stream`，帧见 `stream_turn`。
+
+    与 `handle` 共用同一条 `run_turn` 链与同一份会话记忆；默认路径仍是
+    `handle`（非流式），本函数只由显式开关（`Accept: text/event-stream`）进入。
+    """
+    try:
+        session_id = resolve_session_id(body.session_id)
+    except ChatFailure as exc:
+        return StreamingResponse(
+            _failure_stream(body.session_id or "", exc),
+            status_code=exc.status,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    async def frames() -> AsyncIterator[str]:
+        async for frame in stream_turn(
+            message=body.message,
+            session_id=session_id,
+            context=body.context,
+            timeout_sec=body.timeout_sec,
+            config_root=config_root,
+            is_disconnected=request.is_disconnected if request is not None else None,
+        ):
+            yield frame
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _failure_stream(session_id: str, failure: ChatFailure) -> AsyncIterator[str]:
+    for block in build_blocks(answer="", sources=[], has_data=False, failure=failure):
+        yield sse_event("block", block)
+    yield sse_event(
+        "done",
+        {
+            "ok": False,
+            "session_id": session_id,
+            "reply": "",
+            "code": failure.code,
+            "failure": failure.as_dict(),
+            "retryable": failure.retryable,
+        },
+    )
+
+
+def wants_stream(request: Request) -> bool:
+    """显式开关：**只认** `Accept: text/event-stream`；缺省 / 其它取值一律非流式。"""
+    values = request.headers.get("accept", "")
+    return any(
+        part.split(";", 1)[0].strip().lower() == "text/event-stream"
+        for part in values.split(",")
+    )
+
+
+async def dispatch(
+    body: ChatRequest,
+    request: Request | None = None,
+    *,
+    config_root: Any = None,
+) -> Response:
+    """统一入口：`Accept: text/event-stream` 走 SSE，其余走既有 JSON（零改动）。"""
+    if request is not None and wants_stream(request):
+        return await handle_stream(body, request, config_root=config_root)
+    return await handle(body, request, config_root=config_root)
+
+
 __all__ = [
     "DEFAULT_TIMEOUT_SEC",
     "DISCONNECT_POLL_SEC",
+    "MAX_ANSWER_BLOCKS",
     "MAX_CONTEXT_CHARS",
     "MAX_MESSAGE_CHARS",
     "MAX_SESSIONS",
@@ -942,12 +1161,18 @@ __all__ = [
     "ChatRequestContext",
     "ChatSource",
     "await_turn",
+    "build_blocks",
     "complete",
+    "dispatch",
     "effective_timeout",
     "handle",
+    "handle_stream",
     "load_channel",
     "reset_sessions",
     "resolve_session_id",
     "run_turn",
+    "sse_event",
+    "stream_turn",
     "timeout_limit",
+    "wants_stream",
 ]
