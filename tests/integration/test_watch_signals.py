@@ -60,6 +60,18 @@ def _json(result) -> dict:
     return json.loads(result.stdout)
 
 
+def _assert_knowledge_refresh(jobs: list[dict]) -> None:
+    """计数 bump 要有语义：新任务确实在列表里，而不是只有数字对得上。"""
+    matched = [
+        job
+        for job in jobs
+        if job["id"] == "knowledge_refresh" and job["kind"] == "knowledge_refresh"
+    ]
+    assert len(matched) == 1, [job["id"] for job in jobs]
+    assert matched[0]["trigger"] == "16:30"
+    assert matched[0]["enabled"] is True
+
+
 # --------------------------------------------------------------------------- #
 # watch
 # --------------------------------------------------------------------------- #
@@ -218,7 +230,7 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
 
     assert result.exit_code == 0, result.stderr
     payload = _json(result)
-    assert payload["job_count"] == 14
+    assert payload["job_count"] == 15
     assert payload["timezone"] == "Asia/Shanghai"
     assert [job["trigger"] for job in payload["jobs"]] == [
         "07:30",
@@ -233,6 +245,7 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "15:35",
         "15:40",
         "16:15",
+        "16:30",
         "30s",
         "60s",
     ]
@@ -249,9 +262,11 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "sync_close",
         "digest",
         "digest",
+        "knowledge_refresh",
         "snapshot_fast",
         "sync_batch",
     ]
+    _assert_knowledge_refresh(payload["jobs"])
 
 
 def test_schedule_list_table_output(repo: Path) -> None:
@@ -273,8 +288,9 @@ def test_schedule_list_falls_back_to_builtin_table(
     assert result.exit_code == 0
     payload = _json(result)
     assert payload["config"] == "builtin"
-    assert payload["job_count"] == 14
+    assert payload["job_count"] == 15
     assert payload["warnings"] and "内置默认表" in payload["warnings"][0]
+    _assert_knowledge_refresh(payload["jobs"])
 
 
 def test_schedule_run_once_is_offline_and_degrades_gracefully(

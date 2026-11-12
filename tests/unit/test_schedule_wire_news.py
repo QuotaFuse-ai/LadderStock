@@ -3,7 +3,7 @@
 钉住四件事：
 
 1. 注册面：schema / 结构自检 / 内置默认表 / 仓库 `schedule.yaml` 都认 `wire_news`，
-   且默认表第一条就是 `07:30` 的 `wire_news_daily`（共 14 条）；
+   且默认表第一条就是 `07:30` 的 `wire_news_daily`（共 15 条）；
 2. 采集面：触发的是 Wire peer 自己的 `qfw run`（cwd 钉在 Wire 目录，密钥由 Wire
    自己从 .env 加载，不进 LadderStock 的 argv/日志）；退出码 0/8/其余 → ok/degraded/
    failed，超时与启动失败如实记 failed，Wire 未安装 → skipped；
@@ -159,7 +159,7 @@ def test_schedule_schema_enum_contains_wire_news() -> None:
 
 
 def test_default_table_declares_wire_news_first_at_0730() -> None:
-    assert len(DEFAULT_JOBS) == 14
+    assert len(DEFAULT_JOBS) == 15
     assert DEFAULT_JOBS[0]["id"] == "wire_news_daily"
     jobs = [job for job in _default_table()["jobs"] if job.get("kind") == "wire_news"]
     assert len(jobs) == 1

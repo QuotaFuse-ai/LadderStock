@@ -113,3 +113,13 @@ jobs:
     trigger: "16:15"
     enabled: true
     channel: console
+  # 16:30 自选/持仓档案刷新（QUOT-568）：收盘数据落齐（15:35 同步）之后，对自选 ∪ 持仓
+  # 的每只票跑一次六段研究，产物只经既有 `store.archive_run()` 出口落 `data/knowledge/`
+  # （run 非 failed 才落盘；跑挂的票记原因，不编档案）。产出「有档案票数 / 关注票数」
+  # 覆盖率，低于阈值记一条收件箱问题项并走自愈同款桌面通知；任务可在 `ldst schedule list`
+  # 看到、`enabled: false` 关掉。可加 `daily_limit: N` 限制每轮最多刷几只。
+  - id: knowledge_refresh
+    name: 16:30 自选/持仓档案刷新
+    kind: knowledge_refresh
+    trigger: "16:30"
+    enabled: true

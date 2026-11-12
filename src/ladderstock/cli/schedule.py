@@ -30,6 +30,7 @@ import copy
 import json
 import subprocess
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
@@ -64,6 +65,7 @@ JOB_KINDS: tuple[str, ...] = (
     "sync_batch",
     "digest",
     "wire_news",
+    "knowledge_refresh",
 )
 
 #: 单次 `qfw run`（全赛道采集 + LLM 提炼）的时长上限：正常 1–3 分钟，超上限即终止
@@ -79,6 +81,7 @@ def trigger_interval_seconds(trigger: Any) -> int | None:
         if seconds > 0:
             return seconds
     return None
+
 
 #: 15:35 收盘全量同步的数据集顺序（QUOT-347）。复用 `cli/sync.py` 已有的取数链路，
 #: 一切取数走 TickHub 缓存、不直打上游（DEC-006 边界）；`fund_flow` 是 code 必填的
@@ -212,6 +215,15 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "enabled": True,
         "channel": notifier.CHANNEL_CONSOLE,
     },
+    {
+        # QUOT-568：收盘数据齐了再刷新档案（15:35 同步之后），每只票跑一次研究并
+        # 经既有 `store.archive_run()` 落 `data/knowledge/`。跑挂的票记原因、不编档案。
+        "id": "knowledge_refresh",
+        "name": "16:30 自选/持仓档案刷新",
+        "kind": "knowledge_refresh",
+        "trigger": "16:30",
+        "enabled": True,
+    },
 )
 
 
@@ -272,12 +284,14 @@ def _structural_problems(data: Mapping[str, Any]) -> list[str]:
             problems.append(f"{where}/kind: 只支持 {' / '.join(JOB_KINDS)}")
         if kind == "sync_batch" and not job.get("dataset"):
             problems.append(f"{where}/dataset: sync_batch 必须声明数据集")
+        limit = job.get("daily_limit")
+        if kind == "knowledge_refresh" and limit is not None:
+            if not isinstance(limit, int) or limit <= 0:
+                problems.append(f"{where}/daily_limit: 必须是正整数（每轮最多刷几只）")
         if kind == "digest":
             summary = job.get("summary")
             if summary not in _digest_summaries():
-                problems.append(
-                    f"{where}/summary: digest 必须是 {' / '.join(_digest_summaries())}"
-                )
+                problems.append(f"{where}/summary: digest 必须是 {' / '.join(_digest_summaries())}")
     return problems
 
 
@@ -313,9 +327,7 @@ def validate_table(data: Mapping[str, Any]) -> None:
         if not isinstance(jobs, list) or not jobs:
             problems.append("/jobs: 至少要有一条任务")
     if problems:
-        raise LadderStockError(
-            "schedule.yaml: " + "；".join(problems), EXIT_CONFIG
-        )
+        raise LadderStockError("schedule.yaml: " + "；".join(problems), EXIT_CONFIG)
 
 
 def load_schedule(
@@ -561,6 +573,300 @@ def _collect_wire_news() -> dict[str, Any]:
     return {"status": status, "detail": detail}
 
 
+# ---------------------------------------------------------------- 档案定期刷新
+
+
+#: 覆盖率告警阈值（QUOT-568）：已建档案的票数 / 关注票数（自选 ∪ 持仓）低于它就记
+#: 一条问题项——告警只是"该看一眼"，不据此判定任务失败（失败看的是有没有票跑挂）。
+DEFAULT_KNOWLEDGE_THRESHOLD = 0.8
+
+
+def _held_codes(root: Path | None) -> list[str]:
+    """账本重放后仍持有的代码（数量 > 0）；与时间轴 / 摘要同一口径。"""
+    from ladderstock.core.portfolio import replay as replay_portfolio
+    from ladderstock.journal.portfolio import list_trades
+
+    result = replay_portfolio(list_trades(root=root), "average")
+    return [
+        str(holding.symbol) for holding in result.holdings if holding.shares > 0 and holding.symbol
+    ]
+
+
+def knowledge_universe(root: Path | None = None) -> list[dict[str, Any]]:
+    """关注票集合：自选在前、持仓在后，同一代码只算一次。
+
+    持仓单独列出来是因为它在自选之外——只刷自选会把正在拿的票漏掉；重复的票保留
+    第一次出现的位置（自选顺序即用户加自选的顺序）。
+    """
+    from ladderstock.journal.watchlist import clean_code, list_watch
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in list_watch(root=root):
+        try:
+            code = clean_code(str(row.get("code") or ""))
+        except LadderStockError:
+            continue
+        if code in seen:
+            continue
+        seen.add(code)
+        rows.append({"code": code, "origin": ["自选"]})
+    for code in _held_codes(root):
+        try:
+            clean = clean_code(code)
+        except LadderStockError:
+            continue
+        if clean in seen:
+            for item in rows:
+                if item["code"] == clean:
+                    item["origin"].append("持有")
+            continue
+        seen.add(clean)
+        rows.append({"code": clean, "origin": ["持有"]})
+    return rows
+
+
+def knowledge_coverage(
+    codes: Sequence[str], *, data_root: Path | None = None, day: date | None = None
+) -> dict[str, Any]:
+    """档案覆盖率：`有档案票数 / 关注票数`。
+
+    "有档案"= manifest 有条目，且当日取得到档案内容、状态（`as_of + valid_days`）不是
+    stale。档案有两份来源：归档快照 `latest.md`（`archive_run` 写）与人工主档案
+    `profile.md`（`load_profile` 写），召回读前者、调用方读后者——两边都要看，
+    只查一边会把另一半的票误报成没档案。过期的档案仍在磁盘上，但召回时不该被当成
+    有效结论；没档案和过期都进 `stale[]`（原因不同，处置相同：等下一轮刷新）。
+    """
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.knowledge import model, store
+    from ladderstock.knowledge.recall import recall
+
+    root = Path(data_root) if data_root is not None else data_dir()
+    today = day or model.sh_today()
+    manifest = store.load_manifest(root)
+    covered: list[str] = []
+    stale_codes: list[str] = []
+    status: str | None
+    for code in codes:
+        market = _market_of(code)
+        if store.manifest_entry(manifest, market, code) is None:
+            stale_codes.append(code)
+            continue
+        dossier = store.load_profile(root, market, code)
+        status = None
+        if dossier is not None:
+            status = dossier.computed_status(today)
+        else:
+            # refuted 是显式反证（不召回），与"没档案"同列：都不该算覆盖。
+            hit = recall(root, market, code, today=today)
+            status = hit.status if hit is not None else None
+        if status != model.STATUS_FRESH:
+            stale_codes.append(code)
+            continue
+        covered.append(code)
+    total = len(codes)
+    ratio = round(len(covered) / total, 4) if total else 1.0
+    return {
+        "total": total,
+        "covered": covered,
+        "stale": stale_codes,
+        "ratio": ratio,
+        "threshold": DEFAULT_KNOWLEDGE_THRESHOLD,
+    }
+
+
+def _market_of(code: str) -> str:
+    from ladderstock.knowledge import model
+    from ladderstock.web.symbols import market_of
+
+    return model.normalize_market(market_of(code))
+
+
+def _research_failure_reason(run: Any) -> str | None:
+    """run 没产出可归档报告时，把原因折成一句话；能归档返回 None。"""
+    from ladderstock.knowledge.store import should_archive
+
+    # 未配置 AI 时流水线整段走占位叙述：结构上"成功"（各段 ok、有 report），
+    # 但内容是假的。先于 should_archive 拦下，占位档案绝不落盘。
+    if not bool(getattr(run, "configured", True)):
+        return "AI 未配置：研究各段只产出占位叙述，未落档案"
+    if should_archive(run):
+        return None
+    failed = list(getattr(run, "failed", None) or [])
+    if failed:
+        reasons: list[str] = []
+        for item in getattr(run, "research_failures", None) or []:
+            kind = item.get("kind") or "internal"
+            reasons.append(f"{item.get('stage')}[{kind}]")
+        detail = "、".join(reasons) or "、".join(failed)
+        return f"研究段失败：{detail}"
+    generated = "、".join(getattr(run, "generated", None) or []) or "无"
+    return f"研究未产出报告段（generated={generated}）"
+
+
+def _archive_view(run: Any) -> Any:
+    """归档门槛认 `generated`，复用的段落在 `reused` 里——同日重跑时把两者并起来，
+    否则一份完整（只是全从 checkpoint 复用）的 run 会被 `archive.skipped` 挡掉。"""
+    reused = list(getattr(run, "reused", None) or [])
+    if not reused:
+        return run
+    generated = list(getattr(run, "generated", None) or []) + [
+        name for name in reused if name not in set(getattr(run, "generated", None) or [])
+    ]
+    return replace(run, generated=generated)
+
+
+def _refresh_one(code: str, day: date, data_root: Path) -> dict[str, Any]:
+    """单只票：研究 → 归档（既有出口，语义不变）。
+
+    归档 frontmatter 的 `as_of` 就是 research run 的日期，也就是本次刷新的证据日，
+    不需要二次改写（`archive_run` 不写 `profile.md`，改写 profile 只会制造两份档案）。
+    """
+    from ladderstock.knowledge import store
+    from ladderstock.research.pipeline import ResearchPipeline
+
+    pipeline = ResearchPipeline(code, root=data_root, config_root=config_dir())
+    run = pipeline.run(day.isoformat())
+    view = _archive_view(run)
+    reason = _research_failure_reason(view)
+    if reason is not None:
+        return {"code": code, "status": "failed", "reason": reason}
+    outcome = store.archive_run(
+        data_root,
+        _market_of(code),
+        view,
+        run_id=f"refresh-{day:%Y%m%d}",
+        name=code,
+    )
+    if not outcome.archived:
+        return {"code": code, "status": "failed", "reason": f"{outcome.event}：{outcome.detail}"}
+    status = "degraded" if getattr(run, "degraded", False) else "ok"
+    return {"code": code, "status": status, "reason": None, "archived": outcome.path}
+
+
+def _alert_knowledge_coverage(
+    job: Mapping[str, Any],
+    *,
+    root: Path | None,
+    now: datetime | None,
+    day: date,
+    coverage: Mapping[str, Any],
+    failed: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """覆盖率过低 → 收件箱记一条问题项（能关） + 自愈同款桌面通知（不能关）。
+
+    两条都走既有通道，不新造：收件箱是页面入口（复跑只更新同一条），通知用自愈的
+    `ToastSink`（弹完即走、不驻留）。任一通道失败只让任务记 degraded，不改变刷新结果。
+    """
+    from ladderstock.journal import inbox as inbox_store
+    from ladderstock.supervisor.notify import ToastSink
+
+    rows = sorted((dict(item) for item in failed), key=lambda item: str(item.get("code")))
+    lines = [
+        f"档案覆盖率 {len(coverage['covered'])}/{coverage['total']}"
+        f"（{coverage['ratio']:.0%}，阈值 {coverage['threshold']:.0%}）",
+    ]
+    if coverage["stale"]:
+        lines.append("无有效档案（未建或已过期）：" + "、".join(coverage["stale"]))
+    if rows:
+        reasons = "；".join(f"{r['code']} {r['reason'][:80]}" for r in rows[:10])
+        lines.append("本轮失败原因：" + reasons)
+    title = f"LadderStock 档案覆盖不足：{len(coverage['covered'])}/{coverage['total']}"
+    item = inbox_store.add_item(
+        str(job.get("id") or ""),
+        str(job.get("name") or ""),
+        title,
+        lines,
+        None,
+        f"{job.get('id')}:{day.isoformat()}",
+        "knowledge",
+        root=root,
+        now=now,
+    )
+    ToastSink(panel_url="http://127.0.0.1:5950/").failure(
+        module="knowledge_refresh", ports=(), attempt=0, max_attempts=0, reason="；".join(lines)
+    )
+    return {"inbox_id": item["id"], "title": title}
+
+
+def _run_knowledge_refresh(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """自选 + 持仓优先的档案定期刷新（QUOT-568）。
+
+    每天一次（含周末：研究跑的是最近一个已收盘交易日的数据，周末补跑不产生新结论，
+    真正的工作日数据到齐后由当天的定时轮自然覆盖）。逐只跑六段研究，产物只经既有
+    `store.archive_run()` 出口落盘——"run 非 failed 才落盘"的语义不变，跑挂的票
+    把原因写进结果的 `failed[]`，不伪造档案。
+
+    `daily_limit` 是每轮最多刷几只（默认全量）：单轮时间预算不够时调小它，
+    超出的票下一轮自然轮到，不静默跳过。
+    """
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.core import intraday
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date()
+    base: dict[str, Any] = {"date": day.isoformat()}
+
+    universe = knowledge_universe(root=root)
+    if not universe:
+        return {**base, "status": "skipped", "detail": "自选与持仓都为空，没有需要刷新的票"}
+
+    limit = job.get("daily_limit")
+    targets = universe if not isinstance(limit, int) or limit <= 0 else universe[:limit]
+    data_root = Path(root) if root is not None else data_dir()
+
+    refreshed: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for item in targets:
+        try:
+            row = _refresh_one(item["code"], day, data_root)
+        except Exception as exc:  # noqa: BLE001 - 单票异常不影响其余票
+            row = {"code": item["code"], "status": "failed", "reason": f"异常：{_one_line(exc)}"}
+        (refreshed if row["status"] != "failed" else failed).append(row)
+
+    coverage = knowledge_coverage([item["code"] for item in universe], data_root=data_root, day=day)
+    alert = None
+    if coverage["ratio"] < coverage["threshold"]:
+        try:
+            alert = _alert_knowledge_coverage(
+                job, root=root, now=now, day=day, coverage=coverage, failed=failed
+            )
+        except Exception as exc:  # noqa: BLE001 - 提醒失败不掩盖刷新结果
+            alert = {"error": _one_line(exc)}
+
+    if not refreshed:
+        status = "failed"
+    elif failed:
+        status = "degraded"
+    else:
+        status = "ok"
+    parts = [f"关注 {len(universe)} 只，本轮刷 {len(refreshed)} 只"]
+    if failed:
+        parts.append("失败 " + "；".join(f"{r['code']} {r['reason'][:60]}" for r in failed[:5]))
+    parts.append(
+        f"档案覆盖 {len(coverage['covered'])}/{coverage['total']}（{coverage['ratio']:.0%}）"
+    )
+    if alert and "title" in alert:
+        parts.append("覆盖率低于阈值，已记问题项并弹通知")
+    elif alert:
+        parts.append(f"覆盖率告警投递失败：{alert['error']}")
+    return {
+        **base,
+        "status": status,
+        "detail": "；".join(parts),
+        "refreshed": refreshed,
+        "failed": failed,
+        "coverage": coverage,
+        "alert": alert,
+    }
+
+
 #: theme_news 同步行状态 → 任务状态。与 sync_batch 的差别：采集已经跑过，同步再
 #: skipped（peer 不可达 / 赛道池为空）就是失败而不是安静跳过；empty（Wire 当日无
 #: 内容）记 degraded——水位保持、不拿旧数据顶替。
@@ -797,29 +1103,23 @@ def run_job(
         elif kind == "sync_close":
             result.update(_run_sync_close(now=now, timezone=timezone, root=root))
         elif kind == "wire_news":
-            result.update(
-                _run_wire_news(now=now, timezone=timezone, root=root, registry=registry)
-            )
+            result.update(_run_wire_news(now=now, timezone=timezone, root=root, registry=registry))
         elif kind == "snapshot_fast":
             from ladderstock.core import intraday
 
             result.update(
-                intraday.run_fast(
-                    now=now, timezone=timezone, root=root, registry=registry
-                )
+                intraday.run_fast(now=now, timezone=timezone, root=root, registry=registry)
             )
         elif kind == "sync_batch":
             result.update(
-                _run_sync_batch(
-                    job, now=now, timezone=timezone, root=root, registry=registry
-                )
+                _run_sync_batch(job, now=now, timezone=timezone, root=root, registry=registry)
             )
         elif kind == "digest":
             result.update(
-                _run_digest(
-                    job, now=now, timezone=timezone, root=root, registry=registry
-                )
+                _run_digest(job, now=now, timezone=timezone, root=root, registry=registry)
             )
+        elif kind == "knowledge_refresh":
+            result.update(_run_knowledge_refresh(job, now=now, timezone=timezone, root=root))
         else:
             result.update(status="failed", detail=f"未知任务类型 {kind!r}")
     except Exception as exc:  # noqa: BLE001 - 单条任务失败不拖垮整轮
@@ -858,9 +1158,7 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
 
     scheduler_conf = table.get("scheduler") or {}
     timezone = str(scheduler_conf.get("timezone") or DEFAULT_TIMEZONE)
-    grace = int(
-        scheduler_conf.get("misfire_grace_seconds", DEFAULT_MISFIRE_GRACE_SECONDS)
-    )
+    grace = int(scheduler_conf.get("misfire_grace_seconds", DEFAULT_MISFIRE_GRACE_SECONDS))
     scheduler = BlockingScheduler(
         timezone=timezone,
         job_defaults={"misfire_grace_time": grace, "coalesce": True},
@@ -936,12 +1234,8 @@ def schedule_list(output: OutputOption = None) -> None:
 
 
 def schedule_run(
-    once: Annotated[
-        bool, typer.Option("--once", help="只跑一轮启用的任务后退出")
-    ] = False,
-    job: Annotated[
-        str | None, typer.Option("--job", help="只跑指定任务 id")
-    ] = None,
+    once: Annotated[bool, typer.Option("--once", help="只跑一轮启用的任务后退出")] = False,
+    job: Annotated[str | None, typer.Option("--job", help="只跑指定任务 id")] = None,
     output: OutputOption = None,
 ) -> None:
     """跑一轮启用的任务（`--once`），或按任务表长驻调度。"""
@@ -950,9 +1244,7 @@ def schedule_run(
     except LadderStockError as exc:
         _fail(exc.message, exc.code)
 
-    jobs: Sequence[Mapping[str, Any]] = [
-        row for row in table["jobs"] if isinstance(row, Mapping)
-    ]
+    jobs: Sequence[Mapping[str, Any]] = [row for row in table["jobs"] if isinstance(row, Mapping)]
     if job is not None:
         matched = [row for row in jobs if row.get("id") == job]
         if not matched:
@@ -999,9 +1291,7 @@ def register(schedule_app: typer.Typer) -> None:
     schedule_app.command("list", help="查看调度表（时间 / 任务 / 类型 / 渠道 / 启用）")(
         schedule_list
     )
-    schedule_app.command("run", help="跑一轮启用的任务（--once）或长驻调度")(
-        schedule_run
-    )
+    schedule_app.command("run", help="跑一轮启用的任务（--once）或长驻调度")(schedule_run)
 
 
 __all__ = [
