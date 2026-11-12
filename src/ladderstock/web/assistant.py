@@ -344,8 +344,8 @@ def ask(
     `kb_scope` 两维同时到位；配置读不出命名空间时跳过记忆，回答照常。
 
     QUOT-566：`data_root` 指档案数据目录（`<data_root>/knowledge/`）；不传时按
-    `cli.paths.data_dir()` 解析（与知识库 REST 出口同一口径）。档案段固定排在
-    记忆段之前（`render_memory_block` 的分段顺序）。
+    `cli.paths.data_dir()` 解析（与知识库 REST 出口同一口径）。记忆段固定排在
+    档案段之前（`render_memory_block` 的分段顺序）。
     """
     client, model = _load_client(module)
     echo = _ai_echo(module, model)

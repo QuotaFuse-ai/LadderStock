@@ -17,7 +17,7 @@ _MEMORY_CONFLICT_RULE               ← 冲突时以档案/页级上下文为准
 
 | 文件 | 内容 |
 |---|---|
-| `src/ladderstock/web/assistant.py` | `resolve_target()` 解析 `market:symbol`；`_recall_knowledge()` 调 `recall_wrapped()` 并吞掉所有异常（`knowledge_unavailable` DEBUG 日志）；`ask()` 新增 `data_root` 并先于记忆渲染档案段；三个 router 工厂透传 `data_root` |
+| `src/ladderstock/web/assistant.py` | `resolve_target()` 解析 `market:symbol`；`_recall_knowledge()` 调 `recall_wrapped()` 并吞掉所有异常（`knowledge_unavailable` DEBUG 日志）；`ask()` 新增 `data_root`，经 `render_memory_block` 把档案段排在记忆段之后；三个 router 工厂透传 `data_root` |
 | `src/ladderstock/ai/memory.py` | `render_memory_block(hits, knowledge=...)`：档案正文原样放在独立段，**不二次包边界、不按 800 字截断**（限额归 `recall.py` 的 12000 字章节截断）；空态文案改为「该标的没有可用档案」 |
 | `src/ladderstock/web/server.py` | `build_assistant_router(root)` / `build_skills_router(root)` / `build_page_router(root)`，与 REST 档案面读同一份 `data_root` |
 | `src/ladderstock/knowledge/store.py` | **缺陷修复**：`render_run_archive()` 的 frontmatter 补齐 `market` / `status` / `valid_days`。原归档落的 `latest.md` 缺 `market`，`dossier_from_text()` 整份拒绝 → 归档产物永远召不回来（接线时实测发现） |
