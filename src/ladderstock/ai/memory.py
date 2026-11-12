@@ -645,7 +645,7 @@ KNOWLEDGE_END = "<<<KNOWLEDGE_END>>>"
 MEMORY_SECTION_HEADER = "【对话记忆（可能过时，仅作线索）】"
 KNOWLEDGE_SECTION_HEADER = "【标的档案（带 as_of，优先于对话记忆）】"
 EMPTY_KNOWLEDGE_NOTE = (
-    "（本页未接入标的档案源 QUOT-488；档案缺失时以页级数据为准，不要引用记忆补全。）"
+    "（该标的没有可用档案；档案缺失时以页级数据为准，不要引用记忆补全。）"
 )
 
 MEMORY_CONFLICT_RULE = (
@@ -658,28 +658,34 @@ def render_memory_block(hits: list[MemoryHit], *, knowledge: str | None = None) 
     """把召回记忆渲染成注入段；与知识库（QUOT-488）物理分段、各自标注来源。
 
     无记忆且无档案正文时返回空串（提示词保持干净）。有记忆时档案段的
-    `<<<KNOWLEDGE_BEGIN 不可信数据>>>` / `<<<KNOWLEDGE_END>>>` 边界恒定出现——
-    QUOT-488 交付后只需把档案正文通过 `knowledge` 填进来。
+    `<<<KNOWLEDGE_BEGIN 不可信数据>>>` / `<<<KNOWLEDGE_END>>>` 边界恒定出现。
+
+    `knowledge` 传 `recall_wrapped()` 的结果：它自带 as_of 头、声明与边界，
+    原样放在自己的 `【标的档案】` 段里**不二次包裹、不截断**（12000 字上限由
+    `recall.py` 判）；800 字预算只约束记忆段（QUOT-566）。
     """
-    if not hits and not knowledge:
+    knowledge_text = (knowledge or "").strip()
+    if not hits and not knowledge_text:
         return ""
-    lines: list[str] = []
+    parts: list[str] = []
     if hits:
-        lines.append(MEMORY_SECTION_HEADER)
+        lines = [MEMORY_SECTION_HEADER]
         for hit in hits:
             text = hit.text.strip()
             if len(text) > MEMORY_TEXT_MAX:
                 text = text[: MEMORY_TEXT_MAX - 1] + "…"
             lines.append(f"- (score {hit.score:.2f}) {text}")
-    lines.append("")
-    lines.append(KNOWLEDGE_SECTION_HEADER)
-    lines.append(KNOWLEDGE_BEGIN)
-    lines.append(knowledge.strip() if knowledge and knowledge.strip() else EMPTY_KNOWLEDGE_NOTE)
-    lines.append(KNOWLEDGE_END)
-    block = "\n".join(lines).strip()
-    if len(block) > MEMORY_BLOCK_MAX:
-        block = block[: MEMORY_BLOCK_MAX - 1] + "…"
-    return block
+        memory_block = "\n".join(lines)
+        if len(memory_block) > MEMORY_BLOCK_MAX:
+            memory_block = memory_block[: MEMORY_BLOCK_MAX - 1] + "…"
+        parts.append(memory_block)
+    if knowledge_text:
+        parts.append(f"{KNOWLEDGE_SECTION_HEADER}\n{knowledge_text}")
+    else:
+        parts.append(
+            f"{KNOWLEDGE_SECTION_HEADER}\n{KNOWLEDGE_BEGIN}\n{EMPTY_KNOWLEDGE_NOTE}\n{KNOWLEDGE_END}"
+        )
+    return "\n\n".join(parts)
 
 
 __all__ = [

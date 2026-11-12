@@ -1617,20 +1617,20 @@ def create_app(
     # `POST /api/research/{code}/assistant`：把页面已展示数据的只读摘要 + 问题交给
     # 既有 AI 通道（订阅版 CLI / HTTP 模型），只回文本、不回写页面数据。闸门与研究面
     # 共用（回环 + Host + 写方法来源证据），不受 `LDST_CONTROL_ENABLED` 影响。
-    app.include_router(build_assistant_router())
+    app.include_router(build_assistant_router(root))
 
     # ---------------------------------------------- 技能页对话通道（QUOT-476）
     #
     # `POST /api/skills/assistant`：/skills 页没有 code，复用同一个 ask() 但换成
     # 不含个股深挖预设的 system prompt；闸门与上面同一条。
-    app.include_router(build_skills_router())
+    app.include_router(build_skills_router(root))
 
     # ------------------------------------------- 页面级助手（QUOT-493）
     #
     # `POST /api/page/assistant`：watch / industry / calendar 等任意页面抽屉的一问一答。
     # 复用一个 ask()、同一条闸门与同一套降级口径；页面上下文由前端传任意 JSON，本端
     # 序列化后进同一条用户消息，system prompt 不含个股深挖预设。
-    app.include_router(build_page_router())
+    app.include_router(build_page_router(root))
 
     # -------------------------------------------------- 产业面（QUOT-276 / SPEC-INDUSTRY-PAGES §2）
     #

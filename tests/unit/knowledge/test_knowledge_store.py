@@ -83,6 +83,28 @@ def test_archive_run_writes_latest_and_run(tmp_path: Path) -> None:
     assert manifest["companies"]["SH:600000"]["as_of"] == "2026-11-08"
 
 
+def test_archived_latest_is_recallable(tmp_path: Path) -> None:
+    """归档落盘的 latest.md 必须能被召回读回（frontmatter 缺 market 会整份被拒）。"""
+    from ladderstock.knowledge.recall import recall, recall_wrapped
+
+    @dataclass
+    class DataRun(FakeRun):
+        stages: list = field(
+            default_factory=lambda: [
+                {"name": "report", "status": "ok", "facts": {"结论": "三季度营收同比转正"}}
+            ]
+        )
+
+    assert archive_run(tmp_path, "SZ", DataRun(code="000001"), run_id="r-2").archived is True
+    result = recall(tmp_path, "SZ", "000001")
+    assert result is not None
+    assert result.as_of == "2026-11-08"
+    assert result.status == "fresh"
+    assert "三季度营收同比转正" in result.text
+    wrapped = recall_wrapped(tmp_path, "SZ", "000001")
+    assert wrapped is not None and "[标的档案 SZ:000001 · as_of=2026-11-08" in wrapped
+
+
 def test_failed_run_archives_nothing(tmp_path: Path) -> None:
     outcome = archive_run(tmp_path, "SH", FakeRun(failed=["report"]), run_id="r-bad")
     assert outcome.archived is False

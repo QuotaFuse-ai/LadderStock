@@ -14,11 +14,17 @@ QUOT-487 在同一条调用链上接了跨会话记忆：提问前先召回（`a
 结果作为独立分段注入系统提示；回复后按策略异步写入。记忆不可达时静默降级为
 无记忆模式——回答照常出，只在日志留一条 `memory_unavailable`。命名空间跟随
 模块（QUOT-498）：`agent_id` + `kb_scope` 两维同时到位，缺命名空间就不检索。
+
+QUOT-566 在同一段系统提示里再接一路知识库检索：从问题 / 标的代码解析出
+`market:symbol`，经 `knowledge/recall.py` 的 `recall_wrapped()` 取带 as_of 头与
+不可信数据边界的档案正文，与记忆段并列成**独立分段**。无代码 / 无档案 / 读坏了
+都静默跳过档案段（日志 `knowledge_unavailable`），绝不影响本来能答的问题。
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import socket
 import uuid
 from datetime import UTC, datetime
@@ -33,7 +39,9 @@ from ladderstock.ai import fallback, memory, module_memory
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
+from ladderstock.cli.paths import data_dir
 from ladderstock.core.boundary import BoundaryViolation
+from ladderstock.knowledge.recall import recall_wrapped
 from ladderstock.web.research import _guard
 
 logger = logging.getLogger("ladderstock.web.assistant")
@@ -228,6 +236,69 @@ def _is_timeout(exc: BaseException) -> bool:
     return "timeout" in type(exc).__name__.lower() or "timed out" in str(exc).lower()
 
 
+# 问题里的标的写法：`600000` / `600000.SH` / `sh600000`（大小写宽容）。两侧都不许紧贴
+# 字母数字，也不许前接小数点/顿号——「10.600000 元」「8,350000」这类数字不该被当成代码。
+_SYMBOL_IN_TEXT = re.compile(
+    r"(?<![0-9A-Za-z.,、])(?:(SH|SZ|BJ)\.?([0-9]{6})|([0-9]{6})(?:\.(SH|SZ|BJ))?)"
+    r"(?![0-9A-Za-z])",
+    re.IGNORECASE,
+)
+
+
+def _market_for_prefix(symbol: str) -> str:
+    """无显式市场时按 6 位代码首位推断交易所（与交易所号段一致）。"""
+    if symbol[0] == "6":
+        return "SH"
+    if symbol[0] in "03":
+        return "SZ"
+    return "BJ"
+
+
+def resolve_target(question: str, symbol: str | None = None) -> tuple[str, str] | None:
+    """解析 `(market, symbol)`：调用方给的 `symbol` 优先，否则从问题里取第一个代码。
+
+    `symbol` 可带 `.SH` / `SH` 前缀；解析不出返回 None（不猜）。
+    """
+    candidates = [symbol] if symbol else []
+    candidates.extend(match.group(0) for match in _SYMBOL_IN_TEXT.finditer(question or ""))
+    for raw in candidates:
+        text = str(raw or "").strip().upper()
+        if not text:
+            continue
+        market: str | None = None
+        if text[:2] in ("SH", "SZ", "BJ") and len(text) == 8:
+            market, text = text[:2], text[2:]
+        elif text.endswith((".SH", ".SZ", ".BJ")):
+            market, text = text[-2:], text[:-3]
+        if len(text) != 6 or not text.isdigit():
+            continue
+        return (market or _market_for_prefix(text)), text
+    return None
+
+
+def _recall_knowledge(
+    question: str,
+    *,
+    symbol: str | None,
+    data_root: Any,
+) -> str | None:
+    """召回标的档案（带 as_of 头 + 边界）；解析不出标的 / 无档案 / 读失败都返回 None。"""
+    target = resolve_target(question, symbol)
+    if target is None:
+        return None
+    market, code = target
+    try:
+        return recall_wrapped(data_root, market, code)
+    except Exception as exc:  # noqa: BLE001 - 知识库故障绝不拖垮问答（姊妹分支 memory_unavailable）
+        logger.debug(
+            "knowledge_unavailable stage=recall market=%s symbol=%s detail=%s",
+            market,
+            code,
+            exc,
+        )
+        return None
+
+
 def _recall_memories(
     question: str,
     *,
@@ -260,6 +331,7 @@ def ask(
     memory_settings: memory.MemorySettings | None = None,
     memory_client: memory.MemoryClient | None = None,
     sync_memory: bool = False,
+    data_root: Any = None,
 ) -> dict[str, Any]:
     """跑一轮问答。成功返回 `{reply, model, ai, fetched_at}`；失败抛 `AssistantFailure`。
 
@@ -270,6 +342,10 @@ def ask(
 
     QUOT-498：记忆检索/写入走模块命名空间（`memory_scope_for`），`agent_id` 与
     `kb_scope` 两维同时到位；配置读不出命名空间时跳过记忆，回答照常。
+
+    QUOT-566：`data_root` 指档案数据目录（`<data_root>/knowledge/`）；不传时按
+    `cli.paths.data_dir()` 解析（与知识库 REST 出口同一口径）。档案段固定排在
+    记忆段之前（`render_memory_block` 的分段顺序）。
     """
     client, model = _load_client(module)
     echo = _ai_echo(module, model)
@@ -286,7 +362,12 @@ def ask(
         if scope is not None
         else []
     )
-    block = memory.render_memory_block(hits)
+    knowledge_block = _recall_knowledge(
+        question,
+        symbol=symbol,
+        data_root=data_root if data_root is not None else data_dir(),
+    )
+    block = memory.render_memory_block(hits, knowledge=knowledge_block)
     if block and scope_info is not None:
         block = f"{scope_info['label']}\n{block}"
     if block:
@@ -375,8 +456,11 @@ def _question_payload_error(question: str, context: str) -> JSONResponse | None:
     return None
 
 
-def build_router() -> APIRouter:
-    """`POST /api/research/{code}/assistant`：页级研究助手一问一答。"""
+def build_router(data_root: Any = None) -> APIRouter:
+    """`POST /api/research/{code}/assistant`：页级研究助手一问一答。
+
+    `data_root` 是标的档案的数据目录（QUOT-566），不传时 `ask()` 按 `data_dir()` 解析。
+    """
     router = APIRouter(prefix=ASSISTANT_PREFIX, dependencies=[Depends(_guard)])
 
     @router.post("/{code}/assistant")
@@ -394,6 +478,7 @@ def build_router() -> APIRouter:
                 module="senate",
                 symbol=code,
                 page="research",
+                data_root=data_root,
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
@@ -404,7 +489,7 @@ def build_router() -> APIRouter:
 SKILLS_PREFIX = "/api/skills"
 
 
-def build_skills_router() -> APIRouter:
+def build_skills_router(data_root: Any = None) -> APIRouter:
     """`POST /api/skills/assistant`（QUOT-476）：/skills 页抽屉的一问一答。
 
     与 `/api/research/{code}/assistant` 同一套客户端与降级口径，差别只有两点：
@@ -431,6 +516,7 @@ def build_skills_router() -> APIRouter:
                 system_prompt=SKILL_SYSTEM_PROMPT,
                 module=module_for(body.page_key),
                 page="skills",
+                data_root=data_root,
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
@@ -441,7 +527,7 @@ def build_skills_router() -> APIRouter:
 PAGE_PREFIX = "/api/page"
 
 
-def build_page_router() -> APIRouter:
+def build_page_router(data_root: Any = None) -> APIRouter:
     """`POST /api/page/assistant`（QUOT-493/QUOT-477）：任意页面抽屉的一问一答。
 
     与 `/api/research/{code}/assistant`、`/api/skills/assistant` 同一套客户端、闸门与
@@ -470,6 +556,7 @@ def build_page_router() -> APIRouter:
                 page_label=page_label,
                 system_prompt=PAGE_SYSTEM_PROMPT,
                 module=module_for(body.page_key),
+                data_root=data_root,
             )
         except AssistantFailure as exc:
             return _failure_response(exc)

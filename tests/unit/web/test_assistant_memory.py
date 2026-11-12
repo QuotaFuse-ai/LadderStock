@@ -208,7 +208,7 @@ def test_memory_hit_injected_as_separated_block(
     # 段首标注记忆归属的模块命名空间（QUOT-498 收口）
     scope = assistant_module.memory_scope_for(assistant_module.DEFAULT_MODULE)
     assert scope is not None and scope["label"] in system
-    # 与档案段物理分段，边界标记恒定出现（QUOT-488 交付后只填正文）
+    # 有记忆时档案段照旧成段；测试数据盘无档案 → 空态说明（QUOT-566 接了检索）
     assert KNOWLEDGE_HEADER in system
     assert KNOWLEDGE_BEGIN in system
     assert memory.KNOWLEDGE_END in system
