@@ -142,7 +142,7 @@ def test_default_jobs_carry_three_digests() -> None:
 
     assert digs == DIGEST_JOBS
     assert "premarket_reminder" not in {job["id"] for job in schedule_cli.DEFAULT_JOBS}
-    assert len(schedule_cli.DEFAULT_JOBS) == 14
+    assert len(schedule_cli.DEFAULT_JOBS) == 15
 
 
 def test_repo_schedule_declares_three_digests(repo: Path) -> None:
