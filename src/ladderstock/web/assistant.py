@@ -23,19 +23,23 @@ QUOT-566 在同一段系统提示里再接一路知识库检索：从问题 / �
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import socket
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ladderstock.ai import fallback, memory, module_memory
+from ladderstock.ai.answer_blocks import AnswerBlockError, normalize_ai
+from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
@@ -133,11 +137,57 @@ PAGE_SYSTEM_PROMPT = (
 )
 
 
+class ChatSource(BaseModel):
+    """调用方的一次真实取数记录：来源名 + 取数时间（ISO 8601）+ 可选链接。
+
+    QUOT-579（D3）：从 `web/chat.py` 迁入现役链路——`chat.py` 保留不删、不挂载，
+    这里是现役三路由使用的同一份字段语义。`symbol` / `as_of` 为阶段 B 追加，
+    缺失时如实留空，不补默认值。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    fetched_at: str
+    url: str | None = None
+    symbol: str | None = None
+    as_of: str | None = None
+
+
+class ContextHistoryTurn(BaseModel):
+    """结构化上下文里的一轮历史（QUOT-579 / 581「停止后转上下文」落点 A）。
+
+    只是**文本**：`blocks_seq` 记该轮已渲染块的序号，供前端回显，不参与取值；
+    历史文本不进 metrics、不当来源（红线 4 / 6）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: str
+    text: str = ""
+    blocks_seq: list[int] = Field(default_factory=list)
+
+
+class AsyncStructuredContext(BaseModel):
+    """结构化页级上下文：`{page, data, sources, history}`（对齐 `chat.py:111 ChatRequestContext`）。
+
+    `data` 由调用方裁剪，服务端不主动补数据；`sources` 直接喂给 `build_blocks`；
+    `history` 可选，缺省时行为与只有 `{page, data, sources}` 时完全一致。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: str | None = None
+    data: dict[str, Any] | None = None
+    sources: list[ChatSource] = Field(default_factory=list)
+    history: list[ContextHistoryTurn] = Field(default_factory=list)
+
+
 class AssistantRequest(BaseModel):
-    """页面发来的最小载荷：问题 + 已脱敏的上下文文本。"""
+    """页面发来的最小载荷：问题 + 上下文（旧字符串形态或结构化形态）。"""
 
     question: str = ""
-    context: str = ""
+    context: str | AsyncStructuredContext = ""
     date: str | None = None
     tab: str | None = None
 
@@ -145,10 +195,10 @@ class AssistantRequest(BaseModel):
 # QUOT-476：/skills 页没有 code，抽屉把页面键 / 绑定技能 / 对象拼进 context 文本后
 # 再带上这三个键，方便日志与服务端理解来源；三者均可缺省。
 class SkillAssistantRequest(BaseModel):
-    """技能页抽屉发来的载荷：问题 + 页面键上下文（与 `/research` 同一文本约定）。"""
+    """技能页抽屉发来的载荷：问题 + 页面键上下文（与 `/research` 同一约定）。"""
 
     question: str = ""
-    context: str = ""
+    context: str | AsyncStructuredContext = ""
     page_key: str | None = None
     bound_skill: str | None = None
 
@@ -156,10 +206,10 @@ class SkillAssistantRequest(BaseModel):
 # QUOT-493/QUOT-477：page 通道与 research / skills 同构——上下文统一为前端序列化好的
 # 文本（`AiDock` 的 serializedContext），本端不再做 JSON 解析，避免两侧类型各执一端。
 class PageAssistantRequest(BaseModel):
-    """任意页面抽屉发来的载荷：问题 + 页级上下文文本（与另两条通道同一约定）。"""
+    """任意页面抽屉发来的载荷：问题 + 页级上下文（文本或结构化，同一约定）。"""
 
     question: str = ""
-    context: str = ""
+    context: str | AsyncStructuredContext = ""
     page_key: str | None = None
     bound_skill: str | None = None
 
@@ -182,6 +232,197 @@ def _failure_response(exc: AssistantFailure) -> JSONResponse:
             "detail": exc.detail,
             "code": exc.code,
             "retryable": exc.retryable,
+            "reply": "",
+            "blocks": _failure_blocks(exc),
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 答案块接缝（QUOT-579，阶段 B）
+# --------------------------------------------------------------------------- #
+
+
+#: 现役 `ask()` 不做结构化输出（`json_mode=False`），`reply` 是纯文本；本适配器把 reply
+#: 按句切成 `narrative`，供 `build_blocks` 装配 conclusion。**不让模型产出块**（红线 2）。
+_SENTENCE_RE = re.compile(r"[^。！？；!?;\n]+[。！？；!?;]?")
+
+#: 归类线索：只做**确定性**判定——句子以线索词**开头**才归类，不猜语义、不补内容。
+#: 正文中间顺带提到「风险」不算风险句，宁可留在 narrative 也不误收（切不干净就留空）。
+_RISK_HINTS: tuple[str, ...] = (
+    "风险",
+    "注意",
+    "警惕",
+    "慎防",
+    "不确定性",
+    "下行风险",
+    "回撤风险",
+)
+_HIGHLIGHT_HINTS: tuple[str, ...] = (
+    "亮点",
+    "值得关注",
+    "值得注意",
+    "重点关注",
+)
+
+
+def _classify_sentence(sentence: str) -> str:
+    """单句归类：`risk` / `highlight` / `narrative`。
+
+    确定性规则（无模型、无随机）：去掉前导标点后以线索词开头才归类。
+    """
+    head = sentence.lstrip("，,、：: 　")
+    for hint in _RISK_HINTS:
+        if head.startswith(hint):
+            return "risk"
+    for hint in _HIGHLIGHT_HINTS:
+        if head.startswith(hint):
+            return "highlight"
+    return "narrative"
+
+
+def reply_to_structured(reply: str) -> dict[str, Any]:
+    """把纯文本 `reply` 聚合成最小结构化 `ai` payload（不调模型、不改 `json_mode`）。
+
+    **确定性推导**（本单追加交付）：同一输入永远得到同一输出，不含随机、时间戳或模型调用。
+
+    - 按句切分（`。！？；`/换行/英文句读），保住原文顺序；
+    - **首句固定进 `narrative`**（`build_blocks` 第 1 步只取 `narrative[0]` 作结论）；
+    - 其余句子以风险 / 亮点线索开头的分别归入 `risks` / `highlights`，其余进 `narrative`；
+    - `evidence` **恒为空数组**——纯文本里无法可靠地区分「取数记录」与正文，宁可留空，
+      由 `sources` 承担出处（红线 6：来源只从 `context.sources` / 抓取结果来）。
+
+    硬约束：不产生任何数字（数值只来自 `metrics`，红线 4 / 6）；切不干净就留空，
+    **不编造**。数值剥离等后续红线由 `build_blocks` 统一执行。
+
+    返回 `{"ai_structured": 四键数组, "build_input": normalize_ai(四键数组)}`：
+    前者旁挂进响应（`ai_structured`），后者原样可喂 `build_blocks(metrics, ..., sources)`。
+    """
+    text = (reply or "").strip()
+    sentences = [part.strip() for part in _SENTENCE_RE.findall(text) if part.strip()]
+    if not sentences and text:
+        sentences = [text]
+    narrative: list[str] = []
+    highlights: list[str] = []
+    risks: list[str] = []
+    for index, sentence in enumerate(sentences):
+        bucket = "narrative" if index == 0 else _classify_sentence(sentence)
+        if bucket == "risk":
+            risks.append(sentence)
+        elif bucket == "highlight":
+            highlights.append(sentence)
+        else:
+            narrative.append(sentence)
+    structured: dict[str, Any] = {
+        "narrative": narrative,
+        "highlights": highlights,
+        "risks": risks,
+        "evidence": [],
+    }
+    # 直通 `build_blocks` 的形状：句子级切分几乎过不了它的块数上限，此前直接把
+    # `reply_to_structured(reply)` 交给 `build_blocks` 会在长回答上抛
+    # `AnswerBlockError`（块数超限）；`normalize_ai` 归一会把 `narrative[1:]` 与
+    # `highlights` 合并成一条「补充说明」、`risks` 取前两条，用它的归一结果喂
+    # `build_blocks` 才稳。归一失败（理论不可达）退回原数组，不吞错。
+    try:
+        build_input = normalize_ai(structured)
+    except AnswerBlockError:  # pragma: no cover - 入参全为 str 列表，走不到
+        build_input = structured
+    return {"ai_structured": structured, "build_input": build_input}
+
+
+def _render_history(history: Sequence[ContextHistoryTurn]) -> str:
+    """历史轮次 → 纯文本段落（用户/助手交替配对）；空文本轮次跳过。"""
+    lines: list[str] = []
+    pending_user: str | None = None
+    for turn in history:
+        text = (turn.text or "").strip()
+        if turn.role == "user":
+            pending_user = text
+            continue
+        if turn.role != "assistant":
+            continue
+        if pending_user is not None:
+            lines.append(f"用户：{pending_user}\n助手：{text}")
+            pending_user = None
+        elif text:
+            lines.append(f"助手：{text}")
+    if pending_user:
+        lines.append(f"用户：{pending_user}")
+    return "\n\n".join(lines)
+
+
+def _serialize_context(context: AsyncStructuredContext) -> str:
+    """结构化上下文 → 喂给 `ask(context=...)` 的字符串（字段语义对齐 chat.py）。"""
+    parts: list[str] = []
+    if context.page:
+        parts.append(f"页面：{context.page}")
+    if context.data is not None:
+        payload = json.dumps(context.data, ensure_ascii=False, sort_keys=True)
+        parts.append("【页内数据】\n" + payload)
+    history = _render_history(context.history)
+    if history:
+        parts.append("【上一轮已生成内容】\n" + history)
+    if not parts:
+        return ""
+    return "\n".join(parts)
+
+
+def _normalize_context(
+    context: str | AsyncStructuredContext,
+) -> tuple[str, list[ChatSource]]:
+    """双形态上下文 → `(字符串上下文, sources)`。
+
+    - 旧字符串形态：原样返回，`sources=[]`（`build_blocks` 于是出「无来源」notice）；
+    - 结构化形态：`{page, data, sources, history}` 转字符串上下文 + `sources`。
+      `history` 只进文本，**不进 sources**（红线 6）。
+    """
+    if isinstance(context, AsyncStructuredContext):
+        return _serialize_context(context), list(context.sources)
+    return context, []
+
+
+def _blocks_for(
+    reply: str,
+    sources: Sequence[ChatSource],
+) -> list[dict[str, Any]]:
+    """成功路径装配 `blocks`。
+
+    `metrics` 一律传 `{}`：现役三路由拿不到任何程序算出的数，`build_blocks` 于是生成
+    `notice(missing_data)`——**不伪造 metrics**（红线 6 / 本单第 5 条）。真实 metrics
+    接入是待办（见回报）。`sources=[]` 时由 `build_blocks` 生成「无来源」notice。
+    """
+    return _build_blocks({}, reply_to_structured(reply)["build_input"], sources)
+
+
+def _success_response(
+    result: Mapping[str, Any],
+    sources: Sequence[ChatSource],
+) -> dict[str, Any]:
+    """成功响应：既有四键原样透传，**只追加** `blocks` 与 `ai_structured`。
+
+    `ai` 仍是原来的 `{model, source}` 回显（旧调用方可能在用，不得顶替）；结构化叙述
+    旁挂在 `ai_structured`（`narrative / highlights / risks / evidence`），供 QUOT-581
+    直接喂 `build_blocks`。字段名不与 581 的 `seq / last_seq / completed` 冲突。
+    """
+    adapted = reply_to_structured(result["reply"])
+    return {
+        **result,
+        "blocks": _build_blocks({}, adapted["build_input"], sources),
+        "ai_structured": adapted["ai_structured"],
+    }
+
+
+def _failure_blocks(exc: AssistantFailure) -> list[dict[str, Any]]:
+    """失败路径装配 `blocks`：单条 `notice(missing_data)`，文案取既有可读 `detail`。"""
+    return _build_blocks(
+        {},
+        None,
+        [],
+        failure={
+            "kind": "missing_data",
+            "message": exc.detail,
+            "action": "" if exc.retryable else "请按提示修正后重试",
         },
     )
 
@@ -428,8 +669,13 @@ def ask(
     }
 
 
-def _question_payload_error(question: str, context: str) -> JSONResponse | None:
-    """问题 / 上下文长度校验，`/research` 与 `/skills` 两个端点共用。"""
+def _question_payload_error(
+    question: str, context: str | AsyncStructuredContext
+) -> JSONResponse | None:
+    """问题 / 上下文长度校验，`/research` 与 `/skills` 两个端点共用。
+
+    结构化上下文按序列化后的文本长度判定，与旧字符串形态同一把尺子。
+    """
     if not question:
         return JSONResponse(
             status_code=422,
@@ -444,7 +690,8 @@ def _question_payload_error(question: str, context: str) -> JSONResponse | None:
                 "retryable": False,
             },
         )
-    if len(context) > MAX_CONTEXT_CHARS:
+    context_text, _ = _normalize_context(context)
+    if len(context_text) > MAX_CONTEXT_CHARS:
         return JSONResponse(
             status_code=422,
             content={
@@ -469,10 +716,11 @@ def build_router(data_root: Any = None) -> APIRouter:
         error = _question_payload_error(question, body.context)
         if error is not None:
             return error
+        context, sources = _normalize_context(body.context)
         try:
-            return ask(
+            result = ask(
                 question=question,
-                context=body.context,
+                context=context,
                 day=body.date,
                 tab=body.tab,
                 module="senate",
@@ -482,6 +730,7 @@ def build_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
+        return _success_response(result, sources)
 
     return router
 
@@ -507,10 +756,11 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
         page_label = "研究助手 · 技能页"
         if body.bound_skill:
             page_label += f" · {body.bound_skill}"
+        context, sources = _normalize_context(body.context)
         try:
-            return ask(
+            result = ask(
                 question=question,
-                context=body.context,
+                context=context,
                 tab=body.page_key,
                 page_label=page_label,
                 system_prompt=SKILL_SYSTEM_PROMPT,
@@ -520,6 +770,7 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
+        return _success_response(result, sources)
 
     return router
 
@@ -539,17 +790,17 @@ def build_page_router(data_root: Any = None) -> APIRouter:
     @router.post("/assistant")
     def page_assistant(body: PageAssistantRequest) -> Any:
         question = body.question.strip()
-        context = body.context
-        error = _question_payload_error(question, context)
+        error = _question_payload_error(question, body.context)
         if error is not None:
             return error
+        context, sources = _normalize_context(body.context)
         page_label = "页面助手"
         if body.page_key:
             page_label += f" · {body.page_key}"
         if body.bound_skill:
             page_label += f" · {body.bound_skill}"
         try:
-            return ask(
+            result = ask(
                 question=question,
                 context=context,
                 tab=body.page_key,
@@ -560,6 +811,7 @@ def build_page_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
+        return _success_response(result, sources)
 
     return router
 
@@ -578,6 +830,9 @@ __all__ = [
     "SYSTEM_PROMPT",
     "AssistantFailure",
     "AssistantRequest",
+    "AsyncStructuredContext",
+    "ChatSource",
+    "ContextHistoryTurn",
     "PageAssistantRequest",
     "SkillAssistantRequest",
     "ask",
@@ -586,4 +841,5 @@ __all__ = [
     "build_skills_router",
     "memory_scope_for",
     "module_for",
+    "reply_to_structured",
 ]
