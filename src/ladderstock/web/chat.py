@@ -42,7 +42,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from ladderstock.ai import cli_provider, fallback
+from ladderstock.ai import answer_blocks, cli_provider, fallback
 from ladderstock.ai.cli_provider import build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error, sanitize
 from ladderstock.ai.providers import UnconfiguredError
@@ -243,6 +243,18 @@ def _remember(session_id: str, question: str, answer: str) -> None:
         session.turns = session.turns[-MAX_SESSION_TURNS:]
         session.touched = now
         _SESSIONS.move_to_end(session_id)
+
+
+def _forget(session_id: str) -> None:
+    """撤掉本轮刚记下的问答（流式路径块装配失败时用）。"""
+    with _SESSIONS_LOCK:
+        session = _SESSIONS.get(session_id)
+        if session is None or not session.turns:
+            return
+        session.turns.pop()
+        session.touched = time.monotonic()
+        if not session.turns:
+            _SESSIONS.pop(session_id, None)
 
 
 def resolve_session_id(raw: str | None) -> str:
@@ -774,77 +786,114 @@ def _classify_exception(exc: BaseException, channel: Channel) -> ChatFailure:
 
 
 # --------------------------------------------------------------------------- #
-# 块（QUOT-581 / 任务书 6.3-6.4）：只由服务端从已有回答拼，模型不产出块
+# 流式传输层（QUOT-581 / 任务书 6.3-6.4 / 9.1）
+#
+# 块协议以阶段 A 的 `ladderstock.ai.answer_blocks` 为唯一实现（PI 2026-11-12 拍板 A）：
+# 块只由 `build_blocks(metrics, ai, sources, failure)` 装配，上限 `MAX_BLOCKS`（D2 = 6）。
+#
+# 6.4 第 5 条「整轮失败 = 只有一条 notice、reply 为空」**只约束非流式路径**（`handle`
+# → `_failure_body`，逐字未改）。流式路径走「失败半流」：已发块保留、不追加 notice、
+# `done` 带 `completed: false` + `reason`（PI 2026-11-12 拍板）。
+#
+# 生成与连接解耦（断开不停、跑完落库）不在本 PR 做，钩子见 `start_detached_generation`。
 # --------------------------------------------------------------------------- #
 
-#: 一次回答的块上限（6.4 第 4 条；D2 拍板取 6）
-MAX_ANSWER_BLOCKS = 6
+#: 阶段 A 的块上限（D2 = 6）；`answer_blocks.MAX_BLOCKS` 是唯一来源
+MAX_ANSWER_BLOCKS = answer_blocks.MAX_BLOCKS
 
-#: `_source_note` 的两句原文：sources 为空时作为 `notice` 的文案（与正文尾部同源）
-_NOTICE_MISSING_DATA = "missing_data"
-
-
-def _notice(*, message: str, section: str = "来源") -> dict[str, Any]:
-    return {
-        "type": "notice",
-        "payload": {"kind": _NOTICE_MISSING_DATA, "section": section, "message": message},
-    }
+#: `done.followups` 的顺序：本轮应发而未发的块按此顺序列出
+_FOLLOWUP_ORDER: tuple[str, ...] = (
+    answer_blocks.BLOCK_METRIC,
+    answer_blocks.BLOCK_CHART,
+    answer_blocks.BLOCK_TABLE,
+    answer_blocks.BLOCK_ACTION,
+)
 
 
-def build_blocks(
+def answer_block_payloads(
     *,
-    answer: str,
-    sources: Sequence[Mapping[str, Any]],
-    has_data: bool,
+    ai: Mapping[str, Any] | None,
+    sources: Sequence[Mapping[str, Any]] = (),
+    metrics: Mapping[str, Any] | None = None,
     failure: ChatFailure | None = None,
+    page_data: bool = True,
 ) -> list[dict[str, Any]]:
-    """从**已成立的**回答拼块：`conclusion` → `citation` → `notice`。
+    """调阶段 A 的 `build_blocks()`；`ChatFailure.kind` 就是 `NOTICE_KINDS` 的取值。
 
-    本轮只做传输改造（任务书阶段 D），不引入新的计算流水：
-    `metric` / `chart` / `table` 要等 metrics 接入（阶段 B）才有输入，
-    缺的块在 `done.followups` 里如实说明，不编造数值（红线 4 / 6）。
+    不在这里临时拼结构化 `ai`：它的形状由上游适配给出（QUOT-579，把 reply 聚成
+    `narrative / highlights / risks / evidence`）。装配失败按 `format` 失败上抛，
+    由流式路径收成 half-stream，不猜假结构顶上（红线 3）。
+
+    `page_data` 透传给 `build_blocks`：来源为空时的说明措辞与非流式 `_source_note`
+    同一套（带了页内数据 ≠ 完全没有数据），流式这里再多出一句就成了重复。
     """
-    if failure is not None:
-        # 6.4 第 5 条：整轮失败只有一块 notice，reply 为空
-        return [_notice(message=failure.message, section="回答")]
-
-    blocks: list[dict[str, Any]] = [
-        {"type": "conclusion", "payload": {"text": answer}},
-    ]
-    if sources:
-        items = [
-            {
-                "name": str(source.get("name") or ""),
-                "fetched_at": str(source.get("fetched_at") or ""),
-                "url": source.get("url"),
-            }
-            for source in sources
-        ]
-        blocks.append({"type": "citation", "payload": {"items": items}})
-    note = _source_note(has_data=has_data, sources=sources)
-    if note:
-        blocks.append(_notice(message=note))
-    return blocks[:MAX_ANSWER_BLOCKS]
+    try:
+        return answer_blocks.build_blocks(
+            dict(metrics or {}),
+            ai,
+            list(sources),
+            failure=failure,
+            page_data=page_data,
+        )
+    except answer_blocks.AnswerBlockError as exc:
+        raise ChatFailure(
+            502,
+            code="ai_format",
+            reason="format",
+            kind="format",
+            message=f"答案块装配失败：{sanitize(str(exc), max_len=200)}",
+            retryable=False,
+        ) from None
 
 
-def _deferred_blocks() -> list[str]:
-    """本轮没能发出的块，按 6.4 的末尾顺序写进 `done`，前端据此显示「还没到」。"""
-    return ["metric", "chart", "table", "action"]
+def _followups(blocks: Sequence[Mapping[str, Any]]) -> list[str]:
+    """本轮没发的块按固定顺序如实列出，不编造。"""
+    emitted = {str(block.get("type")) for block in blocks}
+    return [kind for kind in _FOLLOWUP_ORDER if kind not in emitted]
 
 
-def _strip_source_note(answer: str, sources: Sequence[Mapping[str, Any]], has_data: bool) -> str:
-    """`run_turn` 把来源说明拼在正文尾部；块路径要把它单独出成 `notice`，正文里去掉。"""
-    note = _source_note(has_data=has_data, sources=sources)
+def _without_source_note(turn: Mapping[str, Any], blocks: Sequence[Mapping[str, Any]]) -> str:
+    """`run_turn` 把来源说明拼在 reply 尾部（非流式契约）；流式已把它出成 notice 块。
+
+    只在同一句确实作为块发出时才从 reply 尾部摘掉，其余情况原样返回——不猜。
+    会话里落账的那份仍是完整文本，与非流式一致。
+    """
+    reply = str(turn["reply"])
+    note = _source_note(has_data=bool(turn["has_page_data"]), sources=turn["sources"])
     if not note:
-        return answer
+        return reply
+    emitted = any(
+        block.get("type") == answer_blocks.BLOCK_NOTICE
+        and block["payload"].get("message") == note
+        for block in blocks
+    )
     suffix = f"\n\n{note}"
-    return answer[: -len(suffix)] if answer.endswith(suffix) else answer
+    if emitted and reply.endswith(suffix):
+        return reply[: -len(suffix)]
+    return reply
 
 
 def sse_event(event: str, data: Mapping[str, Any]) -> str:
     """SSE 帧：`event: <name>` + 单行 `data:` JSON + 空行收尾（`curl -N` 可逐帧观察）。"""
     body = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     return f"event: {event}\ndata: {body}\n\n"
+
+
+def _block_event(seq: int, block: Mapping[str, Any]) -> str:
+    """`seq` 放在**事件层**（与 `type` / `payload` 平级），不进 payload（任务书 6.3）。"""
+    return sse_event(
+        "block", {"seq": seq, "type": block["type"], "payload": block["payload"]}
+    )
+
+
+async def start_detached_generation(*args: Any, **kwargs: Any) -> None:
+    """「生成与连接解耦」钩子：断开不停、跑完落库。
+
+    PI 2026-11-12：本 PR 只留接口，空实现。落地归 QUOT-583（先修 `await_turn`
+    的断开信号——实测 7 次探针只有 1 次命中 `is_disconnected`）。
+    """
+    # TODO(QUOT-583): 连接断开后让生成继续跑完并落库；重连按 last_seq 续推。
+    return None
 
 
 async def stream_turn(
@@ -855,12 +904,22 @@ async def stream_turn(
     timeout_sec: float | None = None,
     config_root: Any = None,
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+    ai: Mapping[str, Any] | None = None,
+    metrics: Mapping[str, Any] | None = None,
 ) -> AsyncIterator[str]:
     """逐块产出 SSE 文本；与非流式 `run_turn` 走同一条计算链、同一份会话落账。
 
-    顺序固定为 6.4：`conclusion` → `citation` → `notice`，最后 `done`。
-    整轮失败时只发一块 `notice` 再 `done`（`ok=False`），绝不发假回答。
+    块由 `answer_block_payloads()`（阶段 A `build_blocks`）装配：首块必为
+    `conclusion`，有 `citation` 时末块必是它，总数 ≤ `MAX_ANSWER_BLOCKS`。
+    `seq` 从 1 递增、不跳号；`done` 带 `last_seq` / `completed`。
+
+    `ai` / `metrics` 是上游已算好的结构化输入（QUOT-579）；缺省按空处理，由
+    `build_blocks` 如实出 notice，不拿字符串回显临时拼结构（红线 3）。
+
+    失败半流（PI 2026-11-12）：已发块保留、不追加 notice，`done` 带
+    `completed: false` + `reason`；6.4 第 5 条只约束非流式路径。
     """
+    seq = 0
     try:
         turn = await run_turn(
             message=message,
@@ -871,46 +930,94 @@ async def stream_turn(
             is_disconnected=is_disconnected,
         )
     except ChatAborted:
-        # 客户端已走：不落账、不补发任何帧
+        # 连接没了：不补发任何帧（`run_turn` 在 Abort 前不落账）
         return
     except ChatFailure as failure:
-        (block,) = build_blocks(answer="", sources=[], has_data=False, failure=failure)
-        yield sse_event("block", block)
+        blocks = answer_block_payloads(ai=None, sources=[], failure=failure)
+        for block in blocks:
+            seq += 1
+            yield _block_event(seq, block)
         yield sse_event(
             "done",
             {
                 "ok": False,
+                "completed": True,
                 "session_id": session_id,
                 "reply": "",
                 "code": failure.code,
+                "reason": failure.reason,
                 "failure": failure.as_dict(),
                 "retryable": failure.retryable,
+                "last_seq": seq,
+                "followups": [],
             },
         )
         return
 
-    # `reply` 已含 `_source_note` 追加文案；块里不重复拼，改出成独立 `notice`
-    has_data = context is not None and context.data is not None
-    blocks = build_blocks(
-        answer=_strip_source_note(turn["reply"], turn["sources"], has_data),
-        sources=turn["sources"],
-        has_data=has_data,
-    )
+    # 本轮已落账：块若装配失败，只能如实回报，不能收回已记下的问答
+    try:
+        blocks = answer_block_payloads(
+            ai=ai,
+            sources=turn["sources"],
+            metrics=metrics,
+            page_data=turn["has_page_data"],
+        )
+    except ChatFailure as failure:
+        _forget(turn["session_id"])
+        yield sse_event(
+            "done",
+            {
+                "ok": False,
+                "completed": False,
+                "session_id": turn["session_id"],
+                "reply": "",
+                "model": turn["model"],
+                "channel": turn["channel"],
+                "code": failure.code,
+                "reason": failure.reason,
+                "failure": failure.as_dict(),
+                "retryable": failure.retryable,
+                "last_seq": 0,
+                "followups": list(_FOLLOWUP_ORDER),
+            },
+        )
+        return
+
     for block in blocks:
-        yield sse_event("block", block)
+        if is_disconnected is not None and await is_disconnected():
+            # 连接没了：已发块保留，不追加 notice，done 标未完成
+            yield sse_event(
+                "done",
+                {
+                    "ok": False,
+                    "completed": False,
+                    "session_id": turn["session_id"],
+                    "reply": "",
+                    "reason": "cancelled",
+                    "last_seq": seq,
+                    "followups": _followups(blocks[:seq]),
+                },
+            )
+            return
+        seq += 1
+        yield _block_event(seq, block)
+
     yield sse_event(
         "done",
         {
             "ok": True,
+            "completed": True,
             "session_id": turn["session_id"],
-            "reply": turn["reply"],
+            # 来源说明已作为 notice 块逐块发出；`reply` 里再带一遍就是同一句说两次
+            "reply": _without_source_note(turn, blocks),
             "model": turn["model"],
             "channel": turn["channel"],
             "sources": turn["sources"],
             "pending_research": turn["pending_research"],
             "elapsed_ms": turn["elapsed_ms"],
             "fetched_at": turn["fetched_at"],
-            "followups": _deferred_blocks(),
+            "last_seq": seq,
+            "followups": _followups(blocks),
         },
     )
 
@@ -1002,6 +1109,7 @@ async def run_turn(
         "model": channel.label,
         "channel": channel.kind,
         "sources": sources,
+        "has_page_data": has_data,
         "pending_research": _pending_research(text),
         "elapsed_ms": int((time.monotonic() - started) * 1000),
         "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -1106,17 +1214,23 @@ async def handle_stream(
 
 
 async def _failure_stream(session_id: str, failure: ChatFailure) -> AsyncIterator[str]:
-    for block in build_blocks(answer="", sources=[], has_data=False, failure=failure):
-        yield sse_event("block", block)
+    seq = 0
+    for block in answer_block_payloads(ai=None, sources=[], failure=failure):
+        seq += 1
+        yield _block_event(seq, block)
     yield sse_event(
         "done",
         {
             "ok": False,
+            "completed": True,
             "session_id": session_id,
             "reply": "",
             "code": failure.code,
+            "reason": failure.reason,
             "failure": failure.as_dict(),
             "retryable": failure.retryable,
+            "last_seq": seq,
+            "followups": [],
         },
     )
 
@@ -1160,8 +1274,8 @@ __all__ = [
     "ChatRequest",
     "ChatRequestContext",
     "ChatSource",
+    "answer_block_payloads",
     "await_turn",
-    "build_blocks",
     "complete",
     "dispatch",
     "effective_timeout",
@@ -1172,6 +1286,7 @@ __all__ = [
     "resolve_session_id",
     "run_turn",
     "sse_event",
+    "start_detached_generation",
     "stream_turn",
     "timeout_limit",
     "wants_stream",

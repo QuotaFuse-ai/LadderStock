@@ -91,7 +91,7 @@ def test_rule3_notice_never_first() -> None:
 
 def test_rule4_total_within_limit() -> None:
     assert len(_full_blocks()) <= answer_blocks.MAX_BLOCKS
-    assert answer_blocks.MAX_BLOCKS == 8
+    assert answer_blocks.MAX_BLOCKS == 6
 
 
 def test_rule5_failure_is_single_notice_and_no_conclusion() -> None:
@@ -117,7 +117,7 @@ def test_ordering_rejects_blocks_over_limit() -> None:
     notice = {"type": "notice", "payload": {"kind": "degraded", "message": "说明"}}
     blocks = [conclusion] + [notice] * (answer_blocks.MAX_BLOCKS - 1)
 
-    answer_blocks.check_ordering(blocks)  # 正好 8 块：通过
+    answer_blocks.check_ordering(blocks)  # 正好等于上限：通过
 
     with pytest.raises(AnswerBlockError):
         answer_blocks.check_ordering(blocks + [notice])
@@ -179,19 +179,33 @@ def test_strip_numbers_removes_digits_but_keeps_words() -> None:
 
 
 def test_empty_sources_emit_notice_matching_source_note() -> None:
-    blocks = build_blocks(_fixed_metrics(), _fixed_ai(), [])
+    blocks = build_blocks(_fixed_metrics(), _fixed_ai(), [], page_data=False)
 
     assert all(block["type"] != "citation" for block in blocks)
     messages = [block["payload"]["message"] for block in blocks if block["type"] == "notice"]
     assert answer_blocks.SOURCE_NOTE_WITHOUT_DATA in messages
-    # 与 web/chat.py:434 `_source_note` 逐字一致
+    # 与 web/chat.py `_source_note` 逐字一致（同一句、只出一次）
     from ladderstock.web.chat import _source_note
 
     assert _source_note(has_data=False, sources=[]) == answer_blocks.SOURCE_NOTE_WITHOUT_DATA
 
 
+def test_empty_sources_with_page_data_use_no_record_note() -> None:
+    blocks = build_blocks(_fixed_metrics(), _fixed_ai(), [], page_data=True)
+
+    messages = [block["payload"]["message"] for block in blocks if block["type"] == "notice"]
+    assert answer_blocks.SOURCE_NOTE_NO_RECORD in messages
+    assert answer_blocks.SOURCE_NOTE_WITHOUT_DATA not in messages
+
+    from ladderstock.web.chat import _source_note
+
+    assert _source_note(has_data=True, sources=[]) == answer_blocks.SOURCE_NOTE_NO_RECORD
+
+
 def test_sources_missing_fetched_at_fall_back_to_notice() -> None:
-    blocks = build_blocks(_fixed_metrics(), _fixed_ai(), [{"name": "腾讯行情", "fetched_at": ""}])
+    blocks = build_blocks(
+        _fixed_metrics(), _fixed_ai(), [{"name": "腾讯行情", "fetched_at": ""}], page_data=False
+    )
 
     assert all(block["type"] != "citation" for block in blocks)
     assert any(
