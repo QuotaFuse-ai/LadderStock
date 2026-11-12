@@ -31,6 +31,12 @@ import { isKnownTarget } from './targets'
  *
  * 兜底都在这里：形状不合法 → 占位说明；`action.target` 不在路由表 → 说明而不是死按钮；
  * 整列没有可渲染块 → 明确说「没有可展示的块」，不伪造结论。
+ *
+ * 【整块进、整块出】块只在解析那一刻成形，块内文本是服务端定稿、**不是流式增量**：
+ * 块内不做打字机 / 逐字渐显（既有语义错位，也等于把逐字重排搬回组件内部）——
+ * 文本一次性完整呈现，动效只留 `duration-fast` 120ms 的 hover / 展开档。
+ * 块是不可变对象：`parseBlocks` 每次返回新对象、组件不就地改载荷；阶段 F 的 `ChatPane`
+ * 靠这个前提做增量 append（新块直接追加到 `blocks` 尾部，旧块引用不变即可免重绘）。
  */
 
 export interface BlockRendererProps {

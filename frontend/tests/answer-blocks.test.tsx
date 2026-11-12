@@ -426,3 +426,68 @@ describe('BlockRenderer · 兜底', () => {
     expect(within(chart).getByRole('img', { name: /3 个点/ })).toBeTruthy()
   })
 })
+
+/**
+ * 整块进、整块出（阶段 F 的 `ChatPane` 靠这个前提做增量 append）。
+ *
+ * 块内文本是服务端定稿，不是流式增量：不许打字机 / 逐字渐显，否则等于把逐字更新
+ * 搬回组件内部；展开 / 折叠也只准用 `duration-fast` 120ms 这一档。
+ */
+describe('BlockRenderer · 整块进整块出', () => {
+  it('渲染完成的瞬间文本一次性完整呈现，之后不再变', () => {
+    vi.useFakeTimers()
+    try {
+      renderBlocks(<BlockRenderer blocks={ALL_BLOCKS} />)
+      const texts = () =>
+        Array.from(document.querySelectorAll('[data-answer-block]')).map((node) =>
+          (node.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        )
+      const first = texts()
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(texts()).toEqual(first)
+
+      for (const node of document.querySelectorAll('[data-answer-block]')) {
+        // 打字机 / 渐显的两种典型实现：逐字拆成行内单字元素，或靠内联 opacity 逐步显影
+        for (const el of Array.from(node.querySelectorAll<HTMLElement>('*'))) {
+          expect(el.style.opacity).not.toMatch(/^(0|0\.\d+)$/)
+          const svgOwned = el instanceof SVGElement
+          const className = svgOwned ? el.getAttribute('class') ?? '' : el.className
+          expect(className).not.toMatch(/typewriter|blink-|caret-blink/)
+        }
+      }
+      expect(document.querySelector('[data-answer-block="conclusion"]')?.textContent).toContain(
+        CONCLUSION_BLOCK.payload.text,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('块内过渡只走 duration-fast，不出现更长的动画档位', () => {
+    renderBlocks(<BlockRenderer blocks={ALL_BLOCKS} />)
+    const animated = Array.from(document.querySelectorAll<HTMLElement>('[data-answer-block] *')).filter((el) =>
+      /\btransition-|animate-/.test(el.className),
+    )
+    // 全部块都在渲染时，至少来源行 / 折叠按钮这类交互元素会带过渡
+    expect(animated.length).toBeGreaterThan(0)
+    for (const el of animated) {
+      expect(el.className).not.toMatch(/\bduration-(?!fast\b)/)
+      expect(el.className).not.toMatch(/\banimate-/)
+    }
+    expect(blockOf('table')).toBeTruthy()
+  })
+
+  it('同一个 blocks 引用重渲染不重新解析，块对象稳定', () => {
+    const { rerender } = renderBlocks(<BlockRenderer blocks={FULL_ANSWER_BLOCKS} />)
+    const before = Array.from(document.querySelectorAll('[data-answer-block]')).map((n) => n.textContent)
+    rerender(
+      <MemoryRouter>
+        <BlockRenderer blocks={FULL_ANSWER_BLOCKS} />
+      </MemoryRouter>,
+    )
+    const after = Array.from(document.querySelectorAll('[data-answer-block]')).map((n) => n.textContent)
+    expect(after).toEqual(before)
+  })
+})
