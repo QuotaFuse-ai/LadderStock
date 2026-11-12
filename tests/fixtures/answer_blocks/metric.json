@@ -1,0 +1,20 @@
+{
+  "type": "metric",
+  "payload": {
+    "items": [
+      {
+        "label": "收盘价",
+        "value": 38.62,
+        "unit": "元",
+        "as_of": "2026-11-11"
+      },
+      {
+        "label": "二十日涨跌",
+        "value": -4.3,
+        "unit": "%",
+        "direction": "down",
+        "as_of": "2026-11-11"
+      }
+    ]
+  }
+}
