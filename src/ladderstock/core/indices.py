@@ -35,13 +35,29 @@ A 股那批实测出来的坑（2026-11-03 对真实 peer `index_quote` 复测�
 数字照 peer 原样投影，不做二次换算、不补 0（DEC-028）；取不到就是
 `available=false` + 原因——不自采（DEC-006 闸门 4）、不换供应商、不猜价。
 非交易时段 peer 回上一交易日收盘，`as_of` 如实带出，配 `FOOTNOTE` 说明是快照。
+
+**fail-fast（QUOT-571）**：首页是「打开即看」，取数必须在前端门限内返回——哪怕降级。
+peer 挂掉时不自愈（adopt-only 不拉起外部托管进程，DEC-078），所以取数层要自己快：
+
+1. **健康通道短路**：`tickhub_us` 已被自愈标 `needs_human` / 进程已退出（QUOT-556
+   事件通道的跃迁）时，美股 / 港股四格一次请求都不发，直接出 missing + 原因。
+   只在「确认坏了」时短路，不在「恢复中 / 不确定」时短路（宁可多打一次次正常请求）。
+2. **块级熔断**：同一 peer 的那一块第一次失败就判整块不可用，剩余格不再逐格
+   等超时（4 格串行 × 10s = 40s 就是「banner 挂 8s」的来源）。
+3. **并行取数**：美股 / 港股两块线程池并行；块内逐 symbol 仍串行（peer 闸门
+   本来就限制同 peer 并发，块内并行只会排队，不会更快）。
+4. **总预算**：`fetch_indices` 在总预算内返回；预算耗尽的那块按「超时未返回」
+   出 missing，不再等。已经拿到的真数据照常上屏。
 """
 
 from __future__ import annotations
 
+import functools
 import logging
-from collections.abc import Mapping
-from dataclasses import dataclass
+import threading
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal
 
@@ -70,6 +86,38 @@ FETCH_HK_FAILED = "index_quote_hk 取数失败"
 NO_ROWS = "index_quote 没有返回任何匹配的行"
 
 Status = Literal["ok", "partial", "missing"]
+
+#: 单格请求预算（秒）：3 秒没回就当这一格/这一块挂了。真实的 4 格实测是亚秒级，
+#: 3 秒足够容纳冷握手；比 `sources.yaml` 的 10s + 2 次重试小一个量级，是为了
+#: 「一个 down peer 不拖垮整屏」，不是给上游加压。
+DEFAULT_CELL_TIMEOUT_SEC = 3.0
+
+#: 八格总预算（秒）：预算内返回，超预算的块出 missing。前端门限 8s，这里留一半余量。
+DEFAULT_TOTAL_BUDGET_SEC = 4.5
+
+#: 健康通道里「确认坏了」的跃迁（`supervisor/health_events.py` 的事件名，QUOT-556）。
+#: 只认这两种：恢复中 / 进程在但是探针没回来都不算坏，照常发请求。
+PEER_DOWN_EVENTS: frozenset[str] = frozenset({"crash", "needs_human"})
+
+#: 数据集 → 归属 peer（`core/boundary.py` 的 `DATASET_CATALOG`；短路的信号按块归属查）
+PEER_OF_DATASET: dict[str, str] = {
+    DATASET: "tickhub",
+    DATASET_US: "tickhub_us",
+    DATASET_HK: "tickhub_us",
+}
+
+#: peer「健康复原」的跃迁：短路态只在这些事件之后才可能解除
+_PEER_BACK_EVENTS: frozenset[str] = frozenset({"recovered"})
+
+#: 短路 / 熔断 / 超预算的缺失原因前缀（白话，前端直接展示）
+PEER_DOWN_EVENT = "数据源暂不可用"
+BLOCK_FAIL_FAST = "数据源无响应，本块余下格子不再逐格等待"
+BLOCK_BUDGET = "八格总预算内未取回"
+
+#: 触发「整块不再逐格等」的异常：超时 / 连接失败本身就是 peer 级故障。
+#: 业务型失败（`SourceUnavailable` 且是上游拒收 / 无数据）只算单格失败，不熔断——
+#: 那可能只是这个 symbol 没行情，另一格还取得到。
+_FAST_FAIL_ERRORS = (TimeoutError, ConnectionError)
 
 
 @dataclass(frozen=True)
@@ -125,34 +173,178 @@ class IndexStrip:
     source_detail: str
 
 
-def fetch_indices(registry: Any) -> IndexStrip:
-    """一次请求取回八格。
+@dataclass(frozen=True)
+class _Block:
+    """一块取数的结果；`detail` 是该块的合规详述（美股 / 港股读 peer 信封）。"""
+
+    rows: list[dict[str, Any]]
+    reason: str | None
+    detail: str = ""
+    cell_fails: dict[str, str] = field(default_factory=dict)
+
+
+def _run_block(job: Callable[[], _Block]) -> _Block:
+    """跑一块；块内异常全部落到 missing + 原因，首页不能因为一个上游就 500。"""
+    try:
+        return job()
+    except Exception as exc:  # noqa: BLE001 - 兜底：任何块内缺陷都只缺那一块
+        _log.warning("指数块取数异常：%s", exc)
+        return _Block(rows=[], reason=f"{FETCH_FAILED}：{exc}")
+
+
+def _blocked(reason: str, fail_prefix: str, specs: tuple[IndexSpec, ...]) -> _Block:
+    """健康通道判 peer 已坏：不发请求，整块出 missing + 原因。"""
+    return _Block(
+        rows=[],
+        reason=f"{fail_prefix}：{reason}",
+        cell_fails={spec.symbol: f"{fail_prefix}：{reason}" for spec in specs},
+    )
+
+
+def _run_parallel(
+    jobs: Mapping[str, Callable[[], _Block]], *, deadline: float
+) -> tuple[_Block, ...]:
+    """并行跑美股 / 港股两块，**总预算内返回**；超预算的块出 missing，不阻塞返回。
+
+    超时的线程不取消（同步 transport 没法安全杀），但它的结果丢弃——它只是在
+    后台把这次 peer 调用跑完；页面不等它。
+    """
+    results: dict[str, _Block] = {}
+    guard = threading.Lock()
+
+    def worker(key: str, job: Callable[[], _Block]) -> None:
+        try:
+            block = _run_block(job)
+        except BaseException as exc:  # noqa: BLE001 - 块内致命错误也只缺这一块
+            block = _Block(rows=[], reason=f"{FETCH_FAILED}：{exc}")
+        with guard:
+            results.setdefault(key, block)
+
+    threads = [
+        threading.Thread(target=worker, args=(key, job), name=f"indices-{key}", daemon=True)
+        for key, job in jobs.items()
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    with guard:
+        snapshot = dict(results)
+    out: list[_Block] = []
+    for key in jobs:
+        block = snapshot.get(key)
+        out.append(
+            block
+            if block is not None
+            else _Block(rows=[], reason=f"{BLOCK_BUDGET}（{key}，本块照缺不补）")
+        )
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class PeerDownSignal:
+    """peer 已被健康通道判「确认坏了」，可供取数层短路。
+
+    `subscribe` 由装配侧接 `HealthEventBus.since`（QUOT-556）——取数层只读事件，
+    不依赖 supervisor 模块（那是上层，core 不反向导入）。签名固定成
+    `subscribe(seq) -> 该 peer 的事件列表（按 seq 升序）`：事件类型过滤留在
+    `check()` 里，装配侧只需 `functools.partial(bus.since, module=peer)`。
+    """
+
+    peer: str
+    subscribe: Callable[[int], Any]
+    reasons: Mapping[str, str]
+
+    def check(self) -> str | None:
+        """这个 peer 是否在「最后一次坏跃迁之后还没恢复」；是则回白话原因。
+
+        只需要「最近一条坏 / 恢复事件」，所以从最新往回读、读到第一条相关事件就停
+        ——环形缓冲里该 peer 的历史再长，也只读一页，不会被旧事件淹没。
+        """
+        try:
+            items = list(self.subscribe(0) or ())
+        except Exception as exc:  # noqa: BLE001 - 健康通道坏了不能拖垮取数
+            _log.debug("peer 健康通道读取失败（%s），照常取数：%s", self.peer, exc)
+            return None
+        for item in reversed(items):
+            if getattr(item, "module", "") != self.peer:
+                continue
+            name = getattr(item, "event", "")
+            if name in PEER_DOWN_EVENTS:
+                return self.reasons.get(name, PEER_DOWN_EVENT)
+            if name in _PEER_BACK_EVENTS:
+                return None
+        return None
+
+
+def _down_reason(peer_down: Mapping[str, PeerDownSignal] | None, dataset: str) -> str | None:
+    """该块归属 peer 若已被健康通道判坏，回白话原因；没有信号 / 没坏则 None。"""
+    signal = (peer_down or {}).get(PEER_OF_DATASET.get(dataset, ""))
+    return signal.check() if signal is not None else None
+
+
+def fetch_indices(
+    registry: Any,
+    *,
+    cell_timeout: float | None = None,
+    total_budget: float | None = None,
+    peer_down: Mapping[str, PeerDownSignal] | None = None,
+) -> IndexStrip:
+    """一次请求取回八格，且在总预算内返回（QUOT-571 fail-fast）。
 
     取数按块分头走、互不连坐：A 股一次的批量 `index_quote` 失败不影响美股 / 港股，
     美股或港股某一 symbol 失败也只影响那一格。某一块整体不可用 → 那一块的格子出原因，
     其余照常显示。
+
+    - 三块全部线程池并行（A 股一次批量、美股 / 港股各逐 symbol）；块内串行——
+      peer 闸门本就限制同 peer 并发，块内并行只会排队，不会更快；
+    - `peer_down` 里登记了且健康通道判坏的块，一次请求都不发（两块都走 `tickhub_us`
+      时共用同一份判断，同一轮最多读一次）；
+    - `cell_timeout` 是单格预算，`total_budget` 是八格总预算；超预算的块出 missing。
     """
-    cells: list[dict[str, Any]] = []
+    timeout = DEFAULT_CELL_TIMEOUT_SEC if cell_timeout is None else max(0.1, cell_timeout)
+    budget = DEFAULT_TOTAL_BUDGET_SEC if total_budget is None else max(0.1, total_budget)
+    deadline = time.monotonic() + budget
 
-    # --- A 股 4 格：一次批量请求 ---
-    cn_rows, cn_reason = _fetch_cn(registry)
-    cells.extend(_cells_for(CN_WHITELIST, _index_by_market_code(cn_rows), reason=cn_reason))
+    down: dict[str, str | None] = {}
 
-    # --- 美股 2 格：逐 symbol，一次首页拉取 = 2 个上游请求 ---
-    us_rows, us_reason, us_detail, us_fails = _fetch_per_symbol(
-        registry, DATASET_US, US_WHITELIST, FETCH_US_FAILED
+    def down_for(dataset: str) -> str | None:
+        peer = PEER_OF_DATASET[dataset]
+        if peer not in down:
+            down[peer] = _down_reason(peer_down, dataset)
+        return down[peer]
+
+    jobs: dict[str, Callable[[], _Block]] = {}
+    for dataset, specs, fail_prefix in (
+        (DATASET, CN_WHITELIST, FETCH_FAILED),
+        (DATASET_US, US_WHITELIST, FETCH_US_FAILED),
+        (DATASET_HK, HK_WHITELIST, FETCH_HK_FAILED),
+    ):
+        reason = down_for(dataset)
+        if reason:
+            jobs[dataset] = functools.partial(_blocked, reason, fail_prefix, specs)
+        elif dataset == DATASET:
+            jobs[dataset] = functools.partial(_fetch_cn, registry, timeout=timeout)
+        else:
+            jobs[dataset] = functools.partial(
+                _fetch_per_symbol, registry, dataset, specs, fail_prefix, timeout=timeout
+            )
+    cn, us, hk = _run_parallel(jobs, deadline=deadline)
+
+    cn_reason = cn.reason
+    cells = _cells_for(CN_WHITELIST, _index_by_market_code(cn.rows), reason=cn_reason)
+    cells.extend(
+        _cells_for(
+            US_WHITELIST, _index_by_symbol(us.rows), reason=us.reason, cell_reasons=us.cell_fails
+        )
     )
     cells.extend(
-        _cells_for(US_WHITELIST, _index_by_symbol(us_rows), reason=us_reason, cell_reasons=us_fails)
+        _cells_for(
+            HK_WHITELIST, _index_by_symbol(hk.rows), reason=hk.reason, cell_reasons=hk.cell_fails
+        )
     )
-
-    # --- 港股 2 格：同一个 peer 工具，逐 symbol（QUOT-560），再 2 个上游请求 ---
-    hk_rows, hk_reason, hk_detail, hk_fails = _fetch_per_symbol(
-        registry, DATASET_HK, HK_WHITELIST, FETCH_HK_FAILED
-    )
-    cells.extend(
-        _cells_for(HK_WHITELIST, _index_by_symbol(hk_rows), reason=hk_reason, cell_reasons=hk_fails)
-    )
+    us_reason, us_detail = us.reason, us.detail
+    hk_reason, hk_detail = hk.reason, hk.detail
 
     filled = [cell for cell in cells if cell["available"]]
     day = max(
@@ -175,18 +367,18 @@ def fetch_indices(registry: Any) -> IndexStrip:
     )
 
 
-def _fetch_cn(registry: Any) -> tuple[list[dict[str, Any]], str | None]:
+def _fetch_cn(registry: Any, *, timeout: float) -> _Block:
     """A 股一批：`index_quote` 一次拿四行。失败 → 空行 + 原因（不抛）。"""
     params = {"codes": ",".join(spec.code for spec in CN_WHITELIST)}
     try:
-        outcome = registry.fetch_live(DATASET, params=params)
+        outcome = registry.fetch_live(DATASET, params=params, timeout=timeout)
     except Exception as exc:  # noqa: BLE001 - 首页不能因为一个上游就 500
         failure = f"{FETCH_FAILED}：{getattr(exc, 'message', None) or exc}"
         _log.warning("index_quote 取数失败：%s", failure)
-        return [], failure
+        return _Block(rows=[], reason=failure)
     rows = _rows(outcome.envelope)
     reason: str | None = None if rows else f"{NO_ROWS}（index_quote 返回 0 行）"
-    return rows, reason
+    return _Block(rows=rows, reason=reason)
 
 
 def _fetch_per_symbol(
@@ -194,29 +386,43 @@ def _fetch_per_symbol(
     dataset: str,
     specs: tuple[IndexSpec, ...],
     fail_prefix: str,
-) -> tuple[list[dict[str, Any]], str | None, str, dict[str, str]]:
+    *,
+    timeout: float,
+) -> _Block:
     """美股 / 港股共用：逐 `symbol` 调 `th_us_get_quote`（peer `tickhub_us`，一 symbol 一次）。
 
-    任何一格失败都只影响那一格：单格失败的原因按 symbol 记进第四个返回值，
+    任何一格失败都只影响那一格：单格失败的原因按 symbol 记进 `cell_fails`，
     由 `_cells_for` 落到那一格上（不冒充「上游静默丢行」）；整块全失败时另回一个
-    整体原因。返回的行用 `symbol` 建键；第三个返回值是该块的合规详述（从信封
-    `payload` 读 `compliance_tier` / `warnings`——`ProviderRegistry` 会在成功路径
-    用轨迹覆盖信封 `source_detail`，所以合规字段从载荷读，不靠它）。
+    整体原因。`detail` 是该块的合规详述（从信封 `payload` 读 `compliance_tier` /
+    `warnings`——`ProviderRegistry` 会在成功路径用轨迹覆盖信封 `source_detail`，
+    所以合规字段从载荷读，不靠它）。
+
+    块级熔断（QUOT-571）：一格撞上超时 / 连接失败，说明 peer 整块不通——剩下的格
+    不再逐格等满上游超时，直接按「无响应」出 missing（`_FAST_FAIL_ERRORS`）。
+    业务型失败（上游拒收 / 无数据）不熔断，下一格照常发。
     """
     rows: list[dict[str, Any]] = []
     fail_reasons: list[str] = []
     fail_by_symbol: dict[str, str] = {}
     tiers: set[str] = set()
     warnings: list[str] = []
+    down: str | None = None
     for spec in specs:
+        if down is not None:
+            miss = f"{fail_prefix}（{spec.symbol}）：{BLOCK_FAIL_FAST}"
+            fail_reasons.append(miss)
+            fail_by_symbol[spec.symbol] = miss
+            continue
         params = {"symbol": spec.symbol, "commercial_use": False}
         try:
-            outcome = registry.fetch_live(dataset, params=params)
+            outcome = registry.fetch_live(dataset, params=params, timeout=timeout)
         except Exception as exc:  # noqa: BLE001 - 一格失败不连坐另一格
             failure = f"{fail_prefix}（{spec.symbol}）：{getattr(exc, 'message', None) or exc}"
             _log.warning("%s", failure)
             fail_reasons.append(failure)
             fail_by_symbol[spec.symbol] = failure
+            if isinstance(exc, _FAST_FAIL_ERRORS):
+                down = failure
             continue
         rows.extend(_rows(outcome.envelope))
         tier, warns = _peer_compliance(outcome.envelope)
@@ -224,7 +430,14 @@ def _fetch_per_symbol(
             tiers.add(tier)
         warnings.extend(w for w in warns if w not in warnings)
     reason: str | None = _block_overall_reason(dataset, rows, fail_reasons)
-    return rows, reason, _peer_detail(tiers, warnings), fail_by_symbol
+    if reason is not None and down is not None:
+        reason = f"{reason}；{BLOCK_FAIL_FAST}"
+    return _Block(
+        rows=rows,
+        reason=reason,
+        detail=_peer_detail(tiers, warnings),
+        cell_fails=fail_by_symbol,
+    )
 
 
 def _peer_compliance(envelope: Any) -> tuple[str, list[str]]:
