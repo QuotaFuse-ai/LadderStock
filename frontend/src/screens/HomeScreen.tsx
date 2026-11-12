@@ -230,7 +230,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 desk:h-full desk:min-h-0">
       {header}
 
       {offline && <OfflineBanner onRetry={reloadAll} />}
@@ -266,7 +266,7 @@ export default function HomeScreen() {
 
       {/* 两行工作台（§1.1）：8+4 / 4+4+4；卡片是直接的网格子项，行内等高由 stretch 保证。
           行距 12px（gap-3）：1280×800 一屏预算的一部分，不是装饰性留白 */}
-      <div className="grid gap-3 desk:grid-cols-12">
+      <div className="grid gap-3 desk:min-h-0 desk:flex-1 desk:grid-cols-12 desk:grid-rows-2 desk:auto-rows-fr">
         <HomeIndexStrip
           view={indexView}
           session={session}
