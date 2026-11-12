@@ -4376,8 +4376,11 @@ def build_router(plane: ControlPlane) -> APIRouter:
 
         与 `generate` / `retry` 的 job 型契约互不影响；失败按 `code` 区分
         无通道（503）/ 超时（504）/ 断网（502）/ 额度（429）等，绝不返回假回答。
+
+        QUOT-581：显式带 `Accept: text/event-stream` 时改走 SSE（`event: block` /
+        `event: done`）；其余请求仍走上面的 JSON 契约，一字未变。
         """
-        return await chat_channel.handle(
+        return await chat_channel.dispatch(
             body, request, config_root=plane.config_root
         )
 
