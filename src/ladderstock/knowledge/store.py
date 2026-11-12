@@ -29,7 +29,9 @@ from typing import Any
 from ladderstock.ai.checkpoint import atomic_write
 from ladderstock.knowledge.gate import GateViolation, gate_payload
 from ladderstock.knowledge.model import (
+    DEFAULT_VALID_DAYS,
     SCHEMA_VERSION,
+    STATUS_FRESH,
     Dossier,
     KnowledgeError,
     dossier_from_text,
@@ -221,14 +223,24 @@ def should_archive(run_result: Any) -> bool:
     return "report" in generated
 
 
-def render_run_archive(run_result: Any, stages_payload: dict[str, Any] | None = None) -> str:
-    """run 归档正文：只含阶段 JSON 的结构化字段（叙述并入，不发明新数字）。"""
+def render_run_archive(
+    run_result: Any, stages_payload: dict[str, Any] | None = None, *, market: str = "SH"
+) -> str:
+    """run 归档正文：只含阶段 JSON 的结构化字段（叙述并入，不发明新数字）。
+
+    frontmatter 必须补齐 `market` / `status` / `valid_days`：召回走
+    `dossier_from_text()`，缺 `market` 会被整份拒绝（QUOT-566 接线时发现，
+    否则归档落盘的 latest.md 永远召不回来）。
+    """
     code = getattr(run_result, "code", "")
     day = getattr(run_result, "date", "")
     lines = [
         "---",
         f'symbol: "{code}"',
+        f"market: {market}",
         f"as_of: {day}",
+        f"status: {STATUS_FRESH}",
+        f"valid_days: {DEFAULT_VALID_DAYS}",
         f"run_archived_at: {_utc_now()}",
         "---",
         "",
@@ -268,7 +280,7 @@ def archive_run(
     market_norm = normalize_market(market)
     if not should_archive(run_result):
         return ArchiveOutcome(False, "archive.skipped", "run 失败或无 report 产物，不归档")
-    text = render_run_archive(run_result)
+    text = render_run_archive(run_result, market=market_norm)
     try:
         gate_payload(None, text)
     except GateViolation as exc:

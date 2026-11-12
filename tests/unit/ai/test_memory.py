@@ -436,12 +436,24 @@ def test_render_block_empty_when_no_hits_and_no_knowledge() -> None:
     assert memory.render_memory_block([], knowledge=None) == ""
 
 
-def test_render_block_keeps_knowledge_inside_boundary() -> None:
+def test_render_block_places_wrapped_knowledge_verbatim() -> None:
+    """QUOT-566：`knowledge` 是 `recall_wrapped()` 的成品（自带头/声明/边界），原样放置。"""
     hit = memory.MemoryHit(text="旧说法", score=0.6, metadata={})
-    block = memory.render_memory_block([hit], knowledge="档案正文 as_of 2026-11-07")
-    after_begin = block.split(memory.KNOWLEDGE_BEGIN)[1]
-    body = after_begin.split(memory.KNOWLEDGE_END)[0]
-    assert "档案正文" in body
+    wrapped = (
+        "[标的档案 SH:600000 · as_of=2026-11-07 · status=fresh]\n"
+        f"{memory.KNOWLEDGE_BEGIN}\n档案正文\n{memory.KNOWLEDGE_END}"
+    )
+    block = memory.render_memory_block([hit], knowledge=wrapped)
+    assert wrapped in block
+    assert block.count(memory.KNOWLEDGE_BEGIN) == 1
+    assert block.index("【对话记忆") < block.index("【标的档案")
+
+
+def test_render_block_long_knowledge_not_clipped_by_memory_budget() -> None:
+    body = "甲" * 3000
+    wrapped = f"{memory.KNOWLEDGE_BEGIN}\n{body}\n{memory.KNOWLEDGE_END}"
+    block = memory.render_memory_block([], knowledge=wrapped)
+    assert block.count("甲") == 3000
 
 
 # --------------------------------------------------------------------------- #
