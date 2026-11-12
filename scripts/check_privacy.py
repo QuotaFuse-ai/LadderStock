@@ -208,6 +208,16 @@ JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
             '"Cache-Control": "no-store"',
         ),
     },
+    # 第六条授权例外（QUOT-561 / DEC-083）：交易日志本机写面。读 / 写面复用
+    # `privacy_read_guard` / `privacy_write_guard`（回环 + Host，写面再加来源证据），
+    # 扁平只回这一笔 + `no-store`，不进信封 / MCP / AI。
+    "src/ladderstock/web/journal_write.py": {
+        "ladderstock.journal": (
+            "privacy_read_guard(",
+            "privacy_write_guard(",
+            '"Cache-Control": "no-store"',
+        ),
+    },
 }
 
 

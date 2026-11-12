@@ -102,6 +102,13 @@ WEB_PRIVILEGED_IMPORTS: dict[str, tuple[str, ...]] = {
         "privacy_write_guard(",
         '"Cache-Control": "no-store"',
     ),
+    # QUOT-561 / DEC-083：交易日志本机写面，复用 radar 隐私闸门
+    # （回环 + Host + 写来源证据）、no-store、扁平只回这一笔
+    "web/journal_write.py": (
+        "privacy_read_guard(",
+        "privacy_write_guard(",
+        '"Cache-Control": "no-store"',
+    ),
 }
 
 

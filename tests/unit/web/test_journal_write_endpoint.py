@@ -1,4 +1,6 @@
-"""QUOT-561 / DEC-083：交易日志写入口契约（`POST /api/journal/trades` + `GET /api/journal/write-info`）。
+"""QUOT-561 / DEC-083：交易日志写入口契约。
+
+（`POST /api/journal/trades` + `GET /api/journal/write-info`）
 
 写面是本机隐私数据，验收钉四组：
 

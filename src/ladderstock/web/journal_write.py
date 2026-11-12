@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -152,7 +152,9 @@ def build_router(data_root: Path | None) -> APIRouter:
         )
 
     @router.post("/trades", dependencies=[Depends(_journal_write_guard)])
-    def journal_add_trade(body: Any = Body(...)) -> JSONResponse:
+    def journal_add_trade(
+        body: Annotated[Any, Body(description="一笔成交；字段白名单，多一个就 400")],
+    ) -> JSONResponse:
         """追加一笔成交（与本机 CLI 同一个写入函数）；校验失败 400，不静默成功。"""
         fields = trade_write_fields(body)
         try:

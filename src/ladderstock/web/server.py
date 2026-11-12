@@ -80,9 +80,9 @@ from ladderstock.web.control import (
     is_loopback_host,
 )
 from ladderstock.web.inbox import build_router as build_inbox_router
-from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.industry import IndustryPlane
 from ladderstock.web.industry import build_router as build_industry_router
+from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.knowledge import KnowledgePlane
 from ladderstock.web.knowledge import build_router as build_knowledge_router
 from ladderstock.web.radar import RadarPlane
@@ -855,7 +855,10 @@ def _watch_unavailable_detail(read: watch_status.StatusRead) -> str:
     """状态文件不可用时的 `source_detail`：说清是哪一种不可用，不给旧值。"""
     path = read.path
     if read.state == watch_status.STATE_MISSING:
-        return f"盯盘状态文件不存在：{path}（本机扫描还没有运行过；在盯盘页点「发一条测试通知」可检查通知链路）"
+        return (
+            f"盯盘状态文件不存在：{path}"
+            "（本机扫描还没有运行过；在盯盘页点「发一条测试通知」可检查通知链路）"
+        )
     if read.state == watch_status.STATE_CORRUPT:
         return f"盯盘状态文件不可读：{path}（{read.error}）"
     return f"盯盘状态文件结构不合法：{path}（{read.error}）"
