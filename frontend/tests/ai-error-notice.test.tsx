@@ -103,6 +103,42 @@ describe('AiErrorNotice · 兜底与降级', () => {
     expect(onRetry).not.toHaveBeenCalled()
   })
 
+  it('missing_data：warn 语气、不当警报，段名与缺口说明都在，重试与 AI 状态都可点', () => {
+    const onRetry = vi.fn()
+    const onOpenStatus = vi.fn()
+    render(
+      <AiErrorNotice
+        kind="missing_data"
+        section="资金"
+        message="这一块没有取到数据：龙虎榜接口超时"
+        onRetry={onRetry}
+        onOpenStatus={onOpenStatus}
+      />,
+    )
+
+    // 整轮仍然成功：不是 alert
+    const status = screen.getByRole('status')
+    expect(status.className).toContain('warn-soft')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('这一块没有取到数据')).toBeTruthy()
+    expect(screen.getByText('资金')).toBeTruthy()
+    // 标题前缀被去掉，原因只留一次
+    expect(screen.getByText('龙虎榜接口超时')).toBeTruthy()
+    expect(screen.getByText(/未用推算值填补/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试该段' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看 AI 状态' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    expect(onOpenStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('missing_data 作为整轮唯一结果时不给「重试该段」', () => {
+    render(<AiErrorNotice kind="missing_data" wholeRoundFailure onRetry={vi.fn()} onOpenStatus={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: '重试该段' })).toBeNull()
+    expect(screen.getByRole('button', { name: '查看 AI 状态' })).toBeTruthy()
+  })
+
   it('degraded：warn 胶囊、无操作时不渲染按钮', () => {
     render(<AiErrorNotice kind="degraded" keptPrevious />)
 

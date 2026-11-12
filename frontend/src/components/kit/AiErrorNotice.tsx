@@ -5,6 +5,7 @@ import {
   ChevronUp,
   FileWarning,
   Gauge,
+  PackageOpen,
   Scissors,
   WifiOff,
   XCircle,
@@ -15,14 +16,15 @@ import { cn } from '../../lib/cn'
 import { Badge, Button } from '../ui'
 
 /**
- * AI 失败面板（UI-SPEC §5.4 / §6）：四类失败 + `internal` 兜底 + 段内 `degraded`。
+ * AI 失败面板（UI-SPEC §5.4 / §6）：四类失败 + `internal` 兜底 + 段内 `degraded`
+ * + 答案块「本页没取到这块数据」的 `missing_data`。
  *
  * 组件只接收数据与回调，不发请求、不读 store；颜色全部来自 token。
  * `truncated` 不出「重试」按钮：原样重试必然再截断，先调参数再重跑（与后端
  * `error_taxonomy._RETRYABLE` 一致）。
  */
 
-export type AiNoticeKind = AiFailureKind | 'degraded'
+export type AiNoticeKind = AiFailureKind | 'degraded' | 'missing_data'
 
 type ActionKey = 'retry' | 'switchModel' | 'status' | 'export'
 
@@ -82,6 +84,16 @@ const META: Record<AiNoticeKind, KindMeta> = {
     hint: '已用备用路径 / 本地回放完成该段；叙述可能比正常路径简略，程序指标不受影响。',
     icon: AlertTriangle,
   },
+  // QUOT-578 / D7：表达「本页这块数据没取到」。不是失败——整轮仍然成功，
+  // 所以不自动重试它、也不把它当警报（`role="status"`），文案必须说清缺的是哪一块。
+  missing_data: {
+    title: '这一块没有取到数据',
+    tone: 'warn',
+    retryable: false,
+    actions: ['retry', 'status'],
+    hint: '这块数据没有取到，未用推算值填补；其余部分不受影响。',
+    icon: PackageOpen,
+  },
 }
 
 export interface AiErrorNoticeProps {
@@ -102,8 +114,17 @@ export interface AiErrorNoticeProps {
   onSwitchModel?: () => void
   onOpenStatus?: () => void
   onExport?: () => void
+  /** 这一块就是整轮结果（§6.4 整轮失败）：缺数据时不摆「重试该块」 */
+  wholeRoundFailure?: boolean
   className?: string
   id?: string
+}
+
+const VALID_KINDS = new Set<string>(Object.keys(META))
+
+/** 服务端给了前端不认识的 kind 时退到 `internal`：警告条不能因为一个未知枚举就白屏 */
+function metaOf(kind: AiNoticeKind): KindMeta {
+  return VALID_KINDS.has(kind) ? META[kind] : META.internal
 }
 
 const TONE_BOX: Record<KindMeta['tone'], string> = {
@@ -126,7 +147,7 @@ const ACTION_LABEL: Record<ActionKey, string> = {
 /** `message` 已带「类别：原因」前缀时只留原因，避免与标题重复。 */
 function detailOf(kind: AiNoticeKind, message?: string, detail?: string): string {
   const raw = (detail ?? message ?? '').trim()
-  const prefix = `${META[kind].title}：`
+  const prefix = `${metaOf(kind).title}：`
   return raw.startsWith(prefix) ? raw.slice(prefix.length).trim() : raw
 }
 
@@ -142,17 +163,19 @@ export function AiErrorNotice({
   onSwitchModel,
   onOpenStatus,
   onExport,
+  wholeRoundFailure = false,
   className,
   id,
 }: AiErrorNoticeProps) {
   const [expanded, setExpanded] = useState(false)
-  const meta = META[kind]
+  const meta = metaOf(kind)
   const Icon = meta.icon
   const body = detailOf(kind, message, detail)
 
   const handlers: Record<ActionKey, (() => void) | undefined> = {
-    // 截断 / 未归类 / 降级不接受「原样重试」，即使调用方传了 onRetry 也不渲染
-    retry: meta.retryable ? onRetry : undefined,
+    // 截断 / 未归类 / 降级不接受「原样重试」，即使调用方传了 onRetry 也不渲染；
+    // 缺数据在不属于整轮失败时才给重试——整轮失败（blocks 只有这一块）重试它没有意义
+    retry: !(kind === 'missing_data' && wholeRoundFailure) ? onRetry : undefined,
     switchModel: onSwitchModel,
     status: onOpenStatus,
     export: onExport,
