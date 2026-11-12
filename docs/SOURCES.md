@@ -50,6 +50,8 @@ WSL 转发服务的固定端口，8787 已被 TickHub-CN 管理端占用，两�
 | `sentiment` | tickhub | `market_sentiment` | — | replace | `trade_date` |
 | `spot_quote` | tickhub | `tencent_quote_batch` | — | replace | `timestamp`（**非**交易日水位） |
 | `index_quote` | tickhub | `index_quote` | — | replace | `timestamp`（**非**交易日水位） |
+| `index_quote_us` | tickhub_us | `th_us_get_quote` | — | replace | `timestamp`（**非**交易日水位） |
+| `index_quote_hk` | tickhub_us | `th_us_get_quote` | — | replace | `timestamp`（**非**交易日水位） |
 | `dragon_tiger` | tickhub | `dragon_tiger` | `dragon_tiger_backup` | replace | `trade_date` |
 | `dragon_tiger_seats` | tickhub | `dragon_tiger_seats` | — | replace | `trade_date` |
 | `industry_board` | tickhub | `industry_boards` | — | replace | `trade_date` |
@@ -87,6 +89,20 @@ WSL 转发服务的固定端口，8787 已被 TickHub-CN 管理端占用，两�
 **`index_list` 不能当指数注册表用**：实测回的是按 `change_pct` 降序的 100 条榜，
 不含首页要的四个指数，还混老三板个股（`400224 苏阳光5`）。所以四格白名单由本仓写死
 （`sh000001` / `sh000300` / `sz399001` / `sz399006`），不向 peer 动态要清单。
+
+**`index_quote_us` / `index_quote_hk`（首页指数条海外四格，QUOT-471 / QUOT-560 / DEC-081）
+与 `index_quote` 同构**：同样只在 `sources.yaml` 登记、不进 `sync.yaml`，走
+`ProviderRegistry.fetch_live()`。与 CN 批量不同，`th_us_get_quote` 是**单 symbol 契约**，
+美股（`DJI` / `IXIC`）与港股（规范形 `HSI.HK` / `HSTECH.HK`）都逐 symbol 取，
+每首页取数 = 1 次 CN 批量 + 4 次 peer 单取。口径纪律：
+
+1. **零 key、Tier C 非商用**：peer 内部走 tencent / sina 免费公开源（港股链
+   tencent→sina，eastmoney 对港股指数显式拒答），每次调用显式 `commercial_use=False`；
+   `compliance_tier` 与上游 `warnings` 原样落信封并带进 `source_detail`；
+2. **备源登记为空是刻意的**：兜底已在 peer 工具内部（同口径链），app 侧再挂同 peer
+   同工具的备源不构成独立口径；
+3. **单格失败只降级本格**：逐格捕获、按 symbol 标原因，不编数、不补 0；注册表层的
+   同源 cooldown 是既有治理语义（与美股块共享），不因本族数据集特改。
 
 **R5 产业研究的四路输入**：`sw_industry_map` / `finance_indicators` /
 `valuation_history` 是**逐股**取数（代码池见 §2.3），成分表采用**懒缓存**——

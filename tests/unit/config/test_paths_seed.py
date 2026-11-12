@@ -4,7 +4,8 @@
 - `LDST_*` 显式覆盖永远优先，旧前缀只兜底；
 - 干净目录首跑从随包模板补齐**完整**配置（含 `schema/`），已存在的文件绝不覆盖；
 - seed 后的 `sources.yaml` 里必须有 QUOT-471 的美股指数源 `tickhub_us_index_quote`
-  （此前缺它就是首页美股两格「漂移」的根因）；
+  （此前缺它就是首页美股两格「漂移」的根因）与 QUOT-560 的港股指数源
+  `tickhub_hk_index_quote`（同一类漂移，港股两格同理由）；
 - 配置模板里不落明文密钥（只写环境变量名）。
 """
 
@@ -29,6 +30,7 @@ from ladderstock.config.seed import seed_config, seed_if_needed
 REPO_CONFIG = Path(__file__).resolve().parents[3] / "config"
 
 US_INDEX_SOURCE_ID = "tickhub_us_index_quote"
+HK_INDEX_SOURCE_ID = "tickhub_hk_index_quote"
 
 
 @pytest.fixture()
@@ -157,6 +159,22 @@ def test_seed_clean_dir_sources_contains_us_index(clean_home: Path) -> None:
     entry = next(s for s in src["sources"] if s.get("id") == US_INDEX_SOURCE_ID)
     assert entry["dataset"] == "index_quote_us"
     assert entry["via"] == "tickhub_us"
+
+
+def test_seed_clean_dir_sources_contains_hk_index(clean_home: Path) -> None:
+    """QUOT-560：港股指数源与美股源同一模板落盘，缺它就是港股两格漂移的根因。"""
+    _needs_repo_config()
+    target = clean_home / "config"
+    seed_config(config_root=target, bundle_root=REPO_CONFIG)
+
+    src = yaml.safe_load((target / "sources.yaml").read_text(encoding="utf-8"))
+    ids = {s.get("id") for s in src["sources"]}
+    assert HK_INDEX_SOURCE_ID in ids
+    entry = next(s for s in src["sources"] if s.get("id") == HK_INDEX_SOURCE_ID)
+    assert entry["dataset"] == "index_quote_hk"
+    assert entry["via"] == "tickhub_us"
+    assert entry["tool"] == "th_us_get_quote"
+    assert entry["fallback"] == []
 
 
 def test_seed_never_overwrites_existing(clean_home: Path) -> None:

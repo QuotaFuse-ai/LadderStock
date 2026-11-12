@@ -1,4 +1,4 @@
-"""阶段级健康观测（QUOT-562）：采集 → 入库七阶段的 StageSample 发射。
+"""阶段级健康观测（QUOT-562 / 563）：采集 → 入库 → 辩论阶段的 StageSample 发射。
 
 schema 单一来源在 `core/stage_events.py`（B2 直接 import）；本模块只负责
 **观测与发射**：
@@ -7,7 +7,7 @@ schema 单一来源在 `core/stage_events.py`（B2 直接 import）；本模块�
   装配侧组装，见 `web/supervisor_api.py`），本模块零 I/O——不联网、不读库、
   绝不触发任何采集动作（DEC-006：只读暴露阶段状态）；
 - **只发跃迁，不刷屏**：同一阶段的 (health, reason) 不变就不再发；首次观测
-  发全量七条（前端拿到完整链路才能渲染粒子流向），之后每次变化各发一条；
+  发注册表全量（前端拿到完整链路才能渲染粒子流向），之后每次变化各发一条；
 - 探针缺失 / 抛异常按 `down` + 兜底白话如实上报（不编数、不伪造 ok）；
 - 探测按 `probe_interval` 节流（DuckDB 只读探测有成本，存活巡检每 tick 的
   节奏不适合这里），节流窗口内 `observe()` 直接复用上一轮结果。
@@ -46,7 +46,7 @@ REASON_NOT_OBSERVED = "还没有观测到这一阶段的状态（等待第一轮
 
 
 class StageHealthMonitor:
-    """把七阶段探针翻译成 stage 事件（只发跃迁）。全部依赖注入，测试零 I/O。
+    """把注册表探针翻译成 stage 事件（只发跃迁）。全部依赖注入，测试零 I/O。
 
     `probes` 缺哪个阶段，那个阶段就如实报 `down`（REASON_PROBE_MISSING）——
     不允许「没接入就装作正常」。
@@ -114,7 +114,7 @@ class StageHealthMonitor:
     # ------------------------------------------------------------------ 快照
 
     def snapshot(self) -> list[dict[str, Any]]:
-        """当前七阶段快照（`/state` 的 `stages`）：整链路输出，未观测的补占位。
+        """当前整链路快照（`/state` 的 `stages`）：全部注册阶段输出，未观测的补占位。
 
         占位样本按 schema 的 down=「未跑」口径给 REASON_NOT_OBSERVED；
         `as_of` 用占位生成时刻，绝不复用旧样本冒充新鲜观测。

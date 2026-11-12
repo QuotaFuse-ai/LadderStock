@@ -1,4 +1,4 @@
-"""TickHub-US 真实返回 → `LadderEnvelope` 的契约（QUOT-471）。
+"""TickHub-US 真实返回 → `LadderEnvelope` 的契约（QUOT-471 / QUOT-560）。
 
 锁三件事，对应 `data/adapters/tickhub_us.py` 的三段说明：
 
@@ -72,3 +72,48 @@ def test_us_adapter_rejects_error_body() -> None:
 def test_us_dataset_is_owned_by_tickhub_us() -> None:
     assert owner_of(DATASET).peer == "tickhub_us"
     assert owner_of(DATASET).tool == "th_us_get_quote"
+
+
+# --------------------------------------------------------------------------- #
+# 港股指数（QUOT-560）：同一个适配器，market / 币种 / 名称按回包落地
+# --------------------------------------------------------------------------- #
+
+DATASET_HK = "index_quote_hk"
+
+
+def _hk_body(symbol: str = "HSI.HK") -> dict:
+    return us_quote_payload(
+        symbol,
+        price=24315.92, prev_close=24557.04, change=-241.12, change_pct=-0.98,
+        source="tencent", market="HK", currency="HKD",
+        name="恒生指数", timestamp="2026-11-11 18:31:03",
+        warnings=["腾讯行情 属 Tier C：商用需事先书面许可，当前为非商用调用。"],
+    )
+
+
+def test_hk_dataset_is_owned_by_tickhub_us() -> None:
+    assert owner_of(DATASET_HK).peer == "tickhub_us"
+    assert owner_of(DATASET_HK).tool == "th_us_get_quote"
+
+
+def test_hk_quote_lands_market_currency_and_name() -> None:
+    envelope = from_us_tool_response(DATASET_HK, _hk_body())
+    row = envelope.payload["records"][0]
+    assert row["symbol"] == "HSI.HK"
+    assert row["market"] == "HK"  # 来自回包 payload.market，不是缺省的 US
+    assert row["currency"] == "HKD"
+    assert row["name"] == "恒生指数"
+    assert row["price"] == 24315.92
+    assert row["prev_close"] == 24557.04
+    assert row["change"] == -241.12
+    assert row["change_pct"] == -0.98
+    assert row["timestamp"] == "2026-11-11 18:31:03"
+
+
+def test_hk_quote_lands_compliance_tier_and_warnings() -> None:
+    envelope = from_us_tool_response(DATASET_HK, _hk_body("HSTECH.HK"))
+    assert envelope.payload["compliance_tier"] == "C"
+    assert envelope.payload["warnings"], "合规警告句不能吞"
+    assert "compliance_tier=C" in envelope.source_detail
+    assert "th_us_get_quote@tencent" in envelope.source_detail
+    assert envelope.confidence == "low"  # Tier C → low，与美股同一映射

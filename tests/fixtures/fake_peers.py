@@ -439,6 +439,10 @@ def us_quote_payload(
     fetched_at: str = "2026-11-06T22:10:00+08:00",
     cache_hit: bool = False,
     warnings: list[str] | None = None,
+    market: str | None = None,
+    currency: str = "USD",
+    name: str | None = None,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """TickHub-US `th_us_get_quote(symbol)` 的**真实**返回形状（QUOT-471 实测）。
 
@@ -446,23 +450,32 @@ def us_quote_payload(
     （`symbol` / `payload` / `source` / `compliance_tier` / `warnings` / `cache_hit`），
     没有「记录数组」。`compliance_tier=C` + 警告句是 `sina` 的实测口径——合规字段
     必须原样落进信封 `source_detail`（`data/adapters/tickhub_us.py`），不吞不降级。
+
+    港股指数（QUOT-560）同形：`market="HK"` / `currency="HKD"` / `name` /
+    `timestamp`（`YYYY-MM-DD HH:MM:SS`，交易所当地时间）按实测传入；
+    美股回包不带 `market` 键（适配器缺省按 US），所以 `market=None` 时不落该键。
     """
     if warnings is None:
         warnings = [f"新浪财经 属 Tier {compliance_tier}：商用需事先书面许可，当前为非商用调用。"]
+    payload: dict[str, Any] = {
+        "symbol": symbol,
+        "price": price,
+        "prev_close": prev_close,
+        "change": change,
+        "change_pct": change_pct,
+        "currency": currency,
+        "as_of": fetched_at[:10],
+        "timestamp": timestamp or fetched_at,
+    }
+    if market is not None:
+        payload["market"] = market
+    if name is not None:
+        payload["name"] = name
     return {
         "schema_version": "1",
-        "domain": "quote",
+        "domain": "quote_hk" if market == "HK" else "quote",
         "symbol": symbol,
-        "payload": {
-            "symbol": symbol,
-            "price": price,
-            "prev_close": prev_close,
-            "change": change,
-            "change_pct": change_pct,
-            "currency": "USD",
-            "as_of": fetched_at[:10],
-            "timestamp": fetched_at,
-        },
+        "payload": payload,
         "source": source,
         "compliance_tier": compliance_tier,
         "freshness": "realtime",

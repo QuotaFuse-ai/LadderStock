@@ -354,7 +354,7 @@ export interface IndicesPayload extends EnvelopeFields {
   data_source_status: RadarStatus
 }
 
-/** 市场后缀：白名单为 A 股 4 + 美股 2 + 港股 2；港股无合规源，格子在但显示「源未接入」。 */
+/** 市场后缀：白名单为 A 股 4 + 美股 2 + 港股 2；港股自 QUOT-560 起有源，缺数时按格降级。 */
 export const INDEX_MARKET_LABEL: Record<string, string> = {
   SH: 'A 股',
   SZ: 'A 股',
@@ -373,6 +373,7 @@ export function indexMarketLabel(market: string | null): string | null {
 export const QUOTE_SOURCE_LABEL: Record<string, string> = {
   index_quote: '指数快照',
   index_quote_us: '美股指数快照',
+  index_quote_hk: '港股指数快照',
   spot_quote: '实时行情快照',
   daily_k: '本机日线缓存',
 }

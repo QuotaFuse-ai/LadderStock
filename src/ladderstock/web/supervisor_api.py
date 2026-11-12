@@ -10,7 +10,8 @@
 - `GET /api/supervisor/events?since=<seq>`（QUOT-556）：peer 级健康事件通道
   （crash / offline / port_conflict / needs_human / recovered），前端弹窗
   定时轮询订阅；只读，回环 + Host 闸门。QUOT-562 起同一通道还承载采集→
-  入库七阶段 `stage` 事件（`/state` 带整链路 `stages` 快照）。
+  入库七阶段 `stage` 事件（`/state` 带整链路 `stages` 快照）；QUOT-563 起
+  再纳入辩论三阶段（module=debate，`core/stage_events.py` 同一注册表）。
 - `POST /api/supervisor/state/{module}/reset`：人工解除 `needs_human`（辅助
   清窗口；前端「一键重启」走真 `/restart`，不是 reset）。
 - `POST /api/supervisor/start|restart|stop`（QUOT-523 单入口）：按注册表顺序
@@ -58,6 +59,7 @@ from ladderstock.data import duckdb_store
 from ladderstock.data.watermark import WatermarkError, WatermarkStore
 from ladderstock.errors import EXIT_DB_BUSY, LadderStockError
 from ladderstock.supervisor.adapters import MODULE_ORDER
+from ladderstock.supervisor.debate_probes import build_debate_probes
 from ladderstock.supervisor.engine import SupervisorEngine, SupervisorError
 from ladderstock.supervisor.health_events import (
     OWNER_FREE,
@@ -519,6 +521,8 @@ def build_supervisor_engines(
     QUOT-562：同一条巡检还驱动采集→入库七阶段观测（`StageHealthMonitor` +
     `build_stage_probes` 只读探针），`/state` 带 `stages` 快照、`/events`
     承载 `stage` 事件，schema 单一来源见 `core/stage_events`。
+    QUOT-563：同一 monitor 再挂辩论三阶段探针（`build_debate_probes`，只读
+    StockSenate 报告），十阶段共用一份注册表与事件通道。
     """
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
@@ -544,7 +548,11 @@ def build_supervisor_engines(
         is_pid_alive=pid_alive,
         stage_monitor=StageHealthMonitor(
             bus,
-            probes=build_stage_probes(root, ledger=ledger, is_pid_alive=pid_alive),
+            probes={
+                **build_stage_probes(root, ledger=ledger, is_pid_alive=pid_alive),
+                # QUOT-563：辩论三阶段（module=debate, cog）走同一 monitor、同一 schema。
+                **build_debate_probes(env=env),
+            },
         ),
     )
     return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
