@@ -193,6 +193,28 @@ def strip_numbers(text: str) -> str:
     return cleaned.strip(" ，,、;；:：")
 
 
+def source_note(*, has_data: bool, sources: Sequence[Any]) -> str:
+    """没有来源时补在正文尾部的服务端说明；有来源 / 无事可说时返回空串。
+
+    原文与 `web/chat.py` 的 `_source_note` 逐字一致（两侧共用本函数，QUOT-580
+    D3 迁移时收口到纯函数层，避免一份文案两处漂移）。
+    """
+    if sources:
+        return ""
+    if has_data:
+        return SOURCE_NOTE_NO_RECORD
+    return SOURCE_NOTE_WITHOUT_DATA
+
+
+def strip_source_note(answer: str, *, has_data: bool, sources: Sequence[Any]) -> str:
+    """去掉 `source_note` 拼在正文尾部的说明——块路径把它单独出成 `notice`。"""
+    note = source_note(has_data=has_data, sources=sources)
+    if not note:
+        return answer
+    suffix = f"\n\n{note}"
+    return answer[: -len(suffix)] if answer.endswith(suffix) else answer
+
+
 def first_sentence(text: str) -> str:
     """取第一句（保留句末标点）。"""
     parts = [part for part in _SENTENCE_END.split(str(text or "").strip()) if part.strip()]
@@ -1010,7 +1032,9 @@ __all__ = [
     "contains_number",
     "first_sentence",
     "normalize_ai",
+    "source_note",
     "strip_numbers",
+    "strip_source_note",
     "validate_action",
     "validate_blocks",
     "validate_chart",

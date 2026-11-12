@@ -1,9 +1,12 @@
 # SPEC-AI-CHAT 对话通道：一轮问答端点
 
-- 版本：v0.3（2026-11-13，QUOT-573 补 §1.1；v0.2 2026-11-08，QUOT-473；v0.1 首版 2026-11-07）
-- 关联：DEC-067（本规格的决策记录）、QUOT-454（页级助手）、DEC-021（AI 边界）、
-  DEC-018（受控联网）、`ai/error_taxonomy.py`（`FailureKind` 四类）
-- 实现：`src/ladderstock/web/chat.py`、`src/ladderstock/web/control.py`
+- 版本：v0.3（2026-11-13，QUOT-573 补 §1.1、QUOT-580 补 §4.1 / §5；v0.2 2026-11-08，QUOT-473；v0.1 首版 2026-11-07）
+- 关联：DEC-067（本规格的决策记录）、DEC-084（会话落库 `chat.sqlite`，取代 DEC-067
+  「不持久化」）、QUOT-454（页级助手）、DEC-021（AI 边界）、DEC-018（受控联网）、
+  `ai/error_taxonomy.py`（`FailureKind` 四类）
+- 实现：`src/ladderstock/web/assistant.py`（现役对话链 `/api/conversation`）、
+  `src/ladderstock/data/chat_store.py`（会话落库）、
+  `src/ladderstock/web/chat.py`（旧端点，保留未挂载）、`src/ladderstock/web/control.py`
   （`POST /api/control/ai/chat`）、`src/ladderstock/ai/cli_provider.py`
   （`CliProvider.acomplete` / `_run_async`）
 
@@ -164,15 +167,150 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
 
 ## 4. 会话记忆
 
-- 进程内 `OrderedDict`，TTL 30 分钟、最多 64 个会话、每个会话保留最近 6 轮
-  （12 条消息）；
-- **只在本轮成功后落账**；失败 / 中止不写历史；
-- 历史以「用户：… / 助手：…」形式放进 prompt 的 `【历史对话】` 段；
-- 进程重启即清空（本版不做持久化，见 DEC-067）。
+### 4.1 现役链路（`/api/conversation`，QUOT-580 起）
 
-## 5. 通道选择与超时
+- 会话与轮次落库到**独立文件** `<data_root>/chat.sqlite`（DEC-084），不挤 duckdb、
+  不动行情库既有 schema；
+- 表：`chat_session(session_id, title, created_at, updated_at)` 与
+  `chat_turn(session_id, seq, question, blocks_json, created_at)`；
+- **只在本轮成功后落账**；失败 / 中止不写历史；会话库不可用时问答照常返回，只是
+  `turn_seq = null` 且不入列表；
+- 首轮建会话，标题 = 首问压空白后截 40 个 Unicode 码位（不加省略号，空白则
+  「未命名对话」），之后可由 `PATCH /sessions/{id}` 重命名；
+- `seq` 从 1 递增（主键 `(session_id, seq)`），`created_at` 单调不减；
+- 会话上限常量 `MAX_SESSIONS = 50`：按 `updated_at` 淘汰最旧的**非当前**会话，
+  当前会话永不淘汰；
+- 拼进 prompt 时取本会话最近 6 轮（`_history`），以「用户：… / 助手：…」形式放进
+  `【历史对话】` 段；跨会话内容不进 prompt。
 
-### 5.1 通道
+### 4.2 旧端点（`chat.py`，保留未挂载）
+
+进程内 `OrderedDict`，TTL 30 分钟、最多 64 个会话、每个会话保留最近 6 轮（12 条
+消息）——仅为对照保留，新前端不消费该端点。
+
+**历史以「用户：… / 助手：…」形式放进 prompt 的 `【历史对话】` 段**；旧版
+DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路持久化）。
+
+## 5. 现役端点多路复用 `/api/conversation`（QUOT-580）
+
+与 §2 的 `POST /api/control/ai/chat` 并行存在：同一轮问答能力，但挂在产品面
+`/api/conversation` 上，并多了会话列表 / 轮次读取 / 重命名三个只读与轻写接口。
+守卫沿用 `research._guard` 既有闸门，不另开旁路。
+
+### 5.1 接口一览
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `GET` | `/api/conversation/sessions` | 列会话（按 `updated_at` 倒序） |
+| `GET` | `/api/conversation/sessions/{session_id}/turns` | 取一个会话的全部轮次 |
+| `PATCH` | `/api/conversation/sessions/{session_id}` | 重命名会话 |
+| `POST` | `/api/conversation/turns` | 追加一轮问答（成功才落账，`turn_seq` 起 1） |
+
+### 5.2 列会话 `GET /api/conversation/sessions`
+
+```json
+{
+  "ok": true,
+  "sessions": [
+    {
+      "session_id": "q7Qk3Zx9-2bA",
+      "title": "600000 最近怎么样？",
+      "created_at": "2026-11-13T09:12:04+00:00",
+      "updated_at": "2026-11-13T09:31:47+00:00",
+      "turns": 3
+    }
+  ]
+}
+```
+
+- 库文件不存在（从未对话过）时返回 `{"ok": true, "sessions": []}`，不建库；
+- `turns` 是该会话 `chat_turn` 的行数。
+
+### 5.3 取一轮 / 一个会话的轮次 `GET /api/conversation/sessions/{id}/turns`
+
+```json
+{
+  "ok": true,
+  "session": {
+    "session_id": "q7Qk3Zx9-2bA",
+    "title": "600000 最近怎么样？",
+    "created_at": "2026-11-13T09:12:04+00:00",
+    "updated_at": "2026-11-13T09:31:47+00:00",
+    "turns": 3
+  },
+  "turns": [
+    {
+      "seq": 1,
+      "question": "600000 最近怎么样？",
+      "blocks": [
+        {"type": "conclusion", "id": "conclusion", "payload": {"text": "本轮结论", "tone": "neutral"}}
+      ],
+      "created_at": "2026-11-13T09:12:04+00:00"
+    }
+  ]
+}
+```
+
+- `turns` 按 `seq` 升序；`blocks` 是写库时落下的 `blocks_json` 反序列化结果
+  （形状与 `POST /turns` 成功响应的 `blocks` 一致），前端可直接复用渲染色；
+- 会话不存在 → 404 `{"detail": "会话不存在", "code": "not_found"}`。
+
+### 5.4 重命名 `PATCH /api/conversation/sessions/{id}`
+
+```json
+{"title": "浦发银行周线梳理"}
+```
+
+成功回 `{"ok": true, "session": {…同上…}}`；`title` 同样压空白截 40 码位；
+会话不存在 → 404 `not_found`。
+
+### 5.5 追加一轮 `POST /api/conversation/turns`
+
+```json
+{
+  "message": "那周线级别呢？",
+  "session_id": "q7Qk3Zx9-2bA",
+  "context": {
+    "page": "research/600000",
+    "data": {"quotes": {"close": 10.1}},
+    "sources": [{"name": "本地行情快照", "fetched_at": "2026-11-13T09:30:00+00:00"}]
+  }
+}
+```
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "session_id": "q7Qk3Zx9-2bA",
+  "reply": "……",
+  "blocks": [
+    {"type": "conclusion", "id": "conclusion", "payload": {"text": "……", "tone": "neutral"}},
+    {"type": "citation", "id": "citation-1", "payload": {"name": "本地行情快照", "fetched_at": "2026-11-13T09:30:00+00:00"}},
+    {"type": "notice", "id": "notice-1", "payload": {"kind": "missing_data", "section": "来源", "message": "……"}}
+  ],
+  "model": "openai:user-model",
+  "channel": "openai",
+  "sources": [{"name": "本地行情快照", "fetched_at": "2026-11-13T09:30:00+00:00"}],
+  "turn_seq": 4,
+  "fetched_at": "2026-11-13T09:31:47+00:00"
+}
+```
+
+- `reply` 与 §2.2 同义（模型正文，类型仍是字符串）；`blocks` 由
+  `assistant.build_answer_blocks` 从「本轮取数 + AI 回答」装配，**模型不产出块**，
+  顺序为 conclusion → citation → notice，最多 **6** 块；
+- 无任何来源时补 `notice(kind="missing_data", section="来源")`（D7 新增 kind，
+  不复用 AI 错误 notice 既有种类）；
+- 叙述文本去数字：块结论过 `strip_numbers`，`reply` 原样返回；
+- 失败时 `reply` 为 `""`、`blocks` 只有一条 `notice`，形状同 §2.3 的 failure 体；
+- 请求体校验（空 `message` / 超长、`session_id` 非法、`timeout_sec` 非法、
+  `context` 过长或过深）沿用 §6 错误码；失败不建库、不落账。
+
+## 6. 通道选择与超时
+
+### 6.1 通道
 
 `ai/fallback.load_config()` 按 `config/ai.yaml` + `ai.env` 解析默认模型：
 
@@ -182,7 +320,7 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
 - 调用本身仍走既有实现：CLI → `CliProvider.acomplete`，HTTP →
   `build_chat_client(config).complete`。
 
-### 5.2 超时
+### 6.2 超时
 
 - 默认 60s，`LDST_AI_CHAT_TIMEOUT` 可覆盖（夹在 5–300s）；
 - 请求里的 `timeout_sec` 只能向下压；
@@ -191,7 +329,7 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
 - 上游返回 5xx 时单独归为 `ai_upstream`（502，`kind=network`，可重试）：
   请求已经送达、是上游自己报错，不能和「本地请求没送出去」混在一起说。
 
-### 5.3 中止（前端 abort）
+### 6.3 中止（前端 abort）
 
 - 端点每 0.2s 轮询 `Request.is_disconnected()`；发现断连即取消本轮；
 - CLI 通道：`asyncio.create_subprocess_exec` 启动，取消时 Windows 用
@@ -200,7 +338,7 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
 - 中止不写会话历史，响应码 499 `ai_aborted`（客户端已断开，通常看不到）；
 - HTTP 通道没有子进程，取消任务后底层线程由 httpx 自身超时兜底。
 
-## 6. 错误码
+## 7. 错误码
 
 | HTTP | code | reason | 前端可见文案（`detail` / `failure.message`） | retryable |
 | --- | --- | --- | --- | --- |
@@ -227,7 +365,7 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
 `ai_upstream`（502）→「上游模型报错」（与 `ai_network` 同为 `kind=network`、
 可重试，但文案明确是上游 5xx，不是本地没送达）；其余按 `retryable` 提供重试按钮。
 
-## 7. 安全与隐私
+## 8. 安全与隐私
 
 - prompt 内容与密钥不进响应、不进日志；失败文案经 `sanitize()` 截断；
 - `context` 只接受调用方裁剪后的只读字段，服务端不补数据、不抓持仓、不抓论点正文；
@@ -235,10 +373,11 @@ X-LDST-Client: 1            # 或带同源 Origin（控制面写方法要求）
 - 控制面既有闸门（回环来源、Host 白名单、写方法来源证据、`Sec-Fetch-Site`）
   全部照旧生效，本端点不另开旁路。
 
-## 8. 变更记录
+## 9. 变更记录
 
 | 日期 | 版本 | 变更 |
 | --- | --- | --- |
 | 2026-11-07 | v0.1 | 首版：端点、来源口径、会话记忆、三态降级、中止与错误码 |
 | 2026-11-08 | v0.2 | 上游 5xx 细分为 `ai_upstream`（502）；补真实调用、三态降级与 `model` 回显验收 |
 | 2026-11-13 | v0.3 | 新增 §1.1「对首页的适用性」：首页不走本控制面端点，改走 `POST /api/page/assistant`；首页单轮无状态、§4 会话记忆不适用；`pending_research` 首页不返回（DEC-083 / QUOT-573） |
+| 2026-11-13 | v0.3 | QUOT-580：会话落库 `chat.sqlite`（DEC-084，取代 DEC-067「不持久化」）；新增现役端点 `/api/conversation`（列会话 / 取轮次 / 重命名 / 追加一轮）；块由现役 `reply_to_structured()` → `build_blocks()` 装配、会话侧上限 6；`notice.kind=missing_data`；`chat.py` 保留未挂载（§4.1 / §5） |

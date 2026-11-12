@@ -19,6 +19,11 @@ QUOT-566 在同一段系统提示里再接一路知识库检索：从问题 / �
 `market:symbol`，经 `knowledge/recall.py` 的 `recall_wrapped()` 取带 as_of 头与
 不可信数据边界的档案正文，与记忆段并列成**独立分段**。无代码 / 无档案 / 读坏了
 都静默跳过档案段（日志 `knowledge_unavailable`），绝不影响本来能答的问题。
+
+QUOT-580（D3 拍板「能力迁进现役，暂不删 chat.py」）在现役链路旁边追加会话模式：
+`run_turn()` 每轮把已到达的块 upsert 进 `data/chat_store.py`（独立 `chat.sqlite`，
+D1），块由现役的 `reply_to_structured()` → `build_blocks()` 装配（不另起一套），
+`/api/conversation` 只读 / 改名 / 续问；`chat.py` 本体保留不删、不挂载。
 """
 
 from __future__ import annotations
@@ -26,7 +31,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 import socket
+import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -37,7 +44,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from ladderstock.ai import fallback, memory, module_memory
+from ladderstock.ai import answer_blocks, fallback, memory, module_memory
 from ladderstock.ai.answer_blocks import AnswerBlockError, normalize_ai
 from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
@@ -45,6 +52,7 @@ from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
 from ladderstock.cli.paths import data_dir
 from ladderstock.core.boundary import BoundaryViolation
+from ladderstock.data import chat_store
 from ladderstock.knowledge.recall import recall_wrapped
 from ladderstock.web.research import _guard
 
@@ -427,6 +435,338 @@ def _failure_blocks(exc: AssistantFailure) -> list[dict[str, Any]]:
     )
 
 
+# --------------------------------------------------------------------------- #
+# QUOT-580 / D3：chat.py → 现役链路的会话类型（chat.py 保留对照，不挂载）
+# --------------------------------------------------------------------------- #
+
+#: 单条问题的上限；与 `chat.py:MAX_MESSAGE_CHARS` 同值，落库时也按此截断
+MAX_QUESTION_ASK_CHARS = 4000
+#: 会话 ID 口径与 `chat.py` 一致：8–64 位安全字符
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+
+
+class ChatRequestContext(BaseModel):
+    """页面已展示的只读上下文：字段由调用方裁剪，服务端不主动补数据。
+
+    与 `AsyncStructuredContext` 同一份 `sources` 类型（`ChatSource`，QUOT-579 迁入），
+    只少了 `history`：会话模式的历史由服务端从 `chat.sqlite` 读，不信任调用方塞。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: str | None = None
+    data: dict[str, Any] | None = None
+    sources: list[ChatSource] = Field(default_factory=list)
+
+
+class ChatRequest(BaseModel):
+    """会话模式的载荷：沿用 `chat.py` 的字段与 `extra="forbid"` 口径。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str
+    session_id: str | None = None
+    context: ChatRequestContext | None = None
+    timeout_sec: float | None = None
+
+
+class ChatFailure(Exception):
+    """一次问答的可读失败：`code` / `reason` / `kind` 供前端区分与配色。
+
+    字段与 `chat.py:ChatFailure` 逐一对应；本模块的 `ask()` 仍抛语义更窄的
+    `AssistantFailure`，两者在 `run_turn()` 的边界上互相翻译。
+    """
+
+    def __init__(
+        self,
+        status: int,
+        *,
+        code: str,
+        reason: str,
+        kind: str,
+        message: str,
+        action: str = "",
+        retryable: bool = True,
+        detail: str = "",
+        channel_state: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.reason = reason
+        self.kind = kind
+        self.message = message
+        self.action = action
+        self.retryable = retryable
+        self.detail = detail
+        self.channel_state = channel_state
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "reason": self.reason,
+            "message": self.message,
+            "action": self.action,
+            "retryable": self.retryable,
+            "detail": self.detail or self.message,
+            "channel_state": self.channel_state,
+        }
+
+
+def _source_note(*, has_data: bool, sources: Any) -> str:
+    """没有来源时补在正文尾部的服务端说明（文案在 `ai/answer_blocks.source_note`）。"""
+    return answer_blocks.source_note(has_data=has_data, sources=sources)
+
+
+# --------------------------------------------------------------------------- #
+# 会话模式的回答块：装配仍走现役 `reply_to_structured()` → `build_blocks()`（QUOT-579），
+# 本模块只做两件现役链路没有的事——会话侧上限 6（D2）、把块按序号逐块交出去（落库）
+# --------------------------------------------------------------------------- #
+
+MAX_ANSWER_BLOCKS = 6
+
+
+def _conversation_blocks(
+    *, reply: str, sources: Sequence[ChatSource], failure: ChatFailure | None = None
+) -> list[dict[str, Any]]:
+    """一轮的块：失败只有一条 `notice`；成功复用现役装配链，再收到 D2 上限 6。
+
+    `metrics` 一律 `{}`（与 `_blocks_for` 同口径：会话模式同样拿不到程序算出的数，
+    由 `build_blocks` 出 `notice(missing_data)`，不伪造）。块的顺序、文案、数字剥离
+    全部由 `ai/answer_blocks.py` 负责，这里不另拼。
+    """
+    if failure is not None:
+        return _failure_blocks(
+            AssistantFailure(
+                failure.status,
+                failure.code,
+                failure.message,
+                retryable=failure.retryable,
+            )
+        )[:MAX_ANSWER_BLOCKS]
+    return _blocks_for(reply, sources)[:MAX_ANSWER_BLOCKS]
+
+
+def resolve_session_id(raw: str | None) -> str:
+    """`session_id` 缺省时新生成一个；给了就必须是 8–64 位安全字符。"""
+    text = (raw or "").strip()
+    if not text:
+        return secrets.token_urlsafe(12)
+    if not SESSION_ID_RE.match(text):
+        raise ChatFailure(
+            400,
+            code="invalid_session",
+            reason="invalid_request",
+            kind="internal",
+            message="session_id 需要 8–64 位字母 / 数字 / 下划线 / 连字符",
+            retryable=False,
+        )
+    return text
+
+
+_ASSISTANT_FAILURE_CODES: dict[str, tuple[str, str, str, bool]] = {
+    # code → (reason, failure.kind, 可读动作, 是否可重试)
+    "ai_not_configured": (
+        "no_channel",
+        "internal",
+        "到「设置 → 接入 AI」配置后再试",
+        False,
+    ),
+    "ai_cli_unavailable": ("no_channel", "internal", "检查本机 CLI 是否可用后重试", False),
+    "ai_timeout": ("timeout", "network", "稍后重试；或调小上下文后重试", True),
+    "ai_quota": ("quota", "quota", "等待额度恢复后重试", True),
+    "ai_network": ("network", "network", "检查网络或代理后重试", True),
+    "ai_upstream": ("upstream", "network", "稍后重试；持续失败请检查 AI 通道配置", True),
+    "ai_empty": ("empty", "internal", "重试一次；仍为空时检查本机 CLI 是否正常", True),
+}
+
+
+def _as_chat_failure(exc: AssistantFailure) -> ChatFailure:
+    reason, kind, action, retryable = _ASSISTANT_FAILURE_CODES.get(
+        exc.code, ("internal", "internal", "稍后重试", exc.retryable)
+    )
+    return ChatFailure(
+        exc.status,
+        code=exc.code,
+        reason=reason,
+        kind=kind,
+        message=exc.detail,
+        action=action,
+        retryable=retryable,
+        detail=exc.detail,
+    )
+
+
+def _record_failure(session_id: str, err: ChatFailure) -> JSONResponse:
+    return JSONResponse(
+        status_code=err.status,
+        content={
+            "ok": False,
+            "session_id": session_id,
+            "reply": "",
+            "sources": [],
+            "pending_research": [],
+            "code": err.code,
+            "detail": err.detail or err.message,
+            "retryable": err.retryable,
+            "failure": err.as_dict(),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 一轮问答（会话模式：答案 + 块 + 落库）
+# --------------------------------------------------------------------------- #
+
+RUN_TURN_MODULE = DEFAULT_MODULE
+
+
+def _history(conn: sqlite3.Connection, session_id: str, *, limit: int = 6) -> list[dict[str, Any]]:
+    """最近几轮：只拿 `question` 与首块 `conclusion.text`，不把整串 blocks 塞进 prompt。"""
+    rows = chat_store.session_turns(conn, session_id)[-limit:]
+    history: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            blocks = json.loads(row["blocks_json"])
+        except ValueError:
+            continue
+        conclusion = next(
+            (
+                block.get("payload", {}).get("text", "")
+                for block in blocks
+                if isinstance(block, dict) and block.get("type") == answer_blocks.BLOCK_CONCLUSION
+            ),
+            "",
+        )
+        history.append({"question": row["question"], "answer": conclusion})
+    return history
+
+
+def _session_history(
+    data_root: Any, session_id: str, *, limit: int = 6
+) -> list[ContextHistoryTurn]:
+    """本会话最近几轮 → 现役 `ContextHistoryTurn`（用户/助手交替，只写文本）。"""
+    if data_root is None:
+        return []
+    try:
+        conn = chat_store.connect(data_root, create=False)
+    except (sqlite3.Error, OSError, BoundaryViolation) as exc:
+        logger.warning("chat_store_unavailable detail=%s", exc)
+        return []
+    if conn is None:
+        return []
+    try:
+        rows = _history(conn, session_id, limit=limit)
+    finally:
+        chat_store.close(conn)
+    turns: list[ContextHistoryTurn] = []
+    for row in rows:
+        turns.append(ContextHistoryTurn(role="user", text=row["question"]))
+        turns.append(ContextHistoryTurn(role="assistant", text=row["answer"]))
+    return turns
+
+
+def _persist(
+    data_root: Any, session_id: str, question: str, blocks: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """写一行 `chat_turn`；写库失败只记日志，不影响已经完成的回答。"""
+    conn = None
+    try:
+        conn = chat_store.connect(data_root)
+        if conn is None:
+            return None
+        return chat_store.append_turn(
+            conn,
+            session_id=session_id,
+            question=question[:MAX_QUESTION_ASK_CHARS],
+            blocks_json=json.dumps(blocks, ensure_ascii=False, separators=(",", ":")),
+        )
+    except (sqlite3.Error, OSError, BoundaryViolation) as exc:
+        logger.warning("chat_store_unavailable detail=%s", exc)
+        return None
+    finally:
+        if conn is not None:
+            chat_store.close(conn)
+
+
+def run_turn(
+    *,
+    message: str,
+    session_id: str,
+    context: ChatRequestContext | None = None,
+    timeout_sec: float | None = None,
+    config_root: Any = None,
+    data_root: Any = None,
+) -> dict[str, Any]:
+    """会话模式的一轮问答：复用 `ask()` 的通道与记忆，另拼块并落库。
+
+    成功时返回 `ok/session_id/reply/blocks/model/channel/sources/turn_seq/fetched_at`；
+    `reply` 语义与抽屉完全一致（正文 + 服务端来源说明），块从同一份正文拼出。
+    """
+    text = (message or "").strip()
+    if not text:
+        raise ChatFailure(
+            400,
+            code="empty_message",
+            reason="invalid_request",
+            kind="internal",
+            message="message 不能为空",
+            retryable=False,
+        )
+    if len(text) > MAX_QUESTION_ASK_CHARS:
+        raise ChatFailure(
+            400,
+            code="message_too_long",
+            reason="invalid_request",
+            kind="internal",
+            message=f"message 过长（上限 {MAX_QUESTION_ASK_CHARS} 字）",
+            retryable=False,
+        )
+
+    sources = list(context.sources) if context is not None else []
+    # 历史由服务端从 `chat.sqlite` 读，走现役 `AsyncStructuredContext.history` 同一段渲染，
+    # 不信任调用方在 `context` 里自带的历史。
+    history = _session_history(data_root, session_id)
+    structured = AsyncStructuredContext(
+        page=context.page if context is not None else None,
+        data=context.data if context is not None else None,
+        sources=sources,
+        history=history,
+    )
+    context_text, _ = _normalize_context(structured)
+    serialized_sources = [item.model_dump(exclude_none=True) for item in sources]
+
+    try:
+        result = ask(
+            question=text,
+            context=context_text,
+            page_label="对话模式",
+            module=RUN_TURN_MODULE,
+            page=(context.page if context is not None and context.page else PAGE_PREFIX.strip("/")),
+            data_root=data_root,
+        )
+    except AssistantFailure as exc:
+        raise _as_chat_failure(exc) from None
+
+    reply = result["reply"]
+    blocks = _conversation_blocks(reply=reply, sources=sources)
+    recorded = (
+        _persist(data_root, session_id, text, blocks) if data_root is not None else None
+    )
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "reply": reply,
+        "blocks": blocks,
+        "model": result["model"],
+        "channel": result["ai"]["source"],
+        "sources": serialized_sources,
+        "turn_seq": recorded["seq"] if recorded else None,
+        "fetched_at": result["fetched_at"],
+    }
+
+
 def _load_client(module: str = DEFAULT_MODULE) -> tuple[Any, str]:
     """读配置并构造既有通道的客户端；模型按 `module` 三级解析（QUOT-498）。"""
     try:
@@ -735,6 +1075,104 @@ def build_router(data_root: Any = None) -> APIRouter:
     return router
 
 
+CONVERSATION_PREFIX = "/api/conversation"
+
+
+def _blocks_for_view(row: dict[str, Any]) -> list[Any]:
+    try:
+        return json.loads(row["blocks_json"])
+    except ValueError:
+        return []
+
+
+def build_conversation_router(
+    *, data_root: Any = None, config_root: Any = None
+) -> APIRouter:
+    """`/api/conversation/*`（QUOT-580）：会话模式的一轮问答 + 会话列表读取。
+
+    阶段 F 的 `SessionList` 只消费这里：`GET /api/conversation/sessions` 列会话，
+    `GET /api/conversation/sessions/{id}/turns` 取一个会话的全部轮次。
+    读写都在 `chat.sqlite`（本机独立库，D1），不碰 `market.duckdb` / `journal.sqlite`。
+    """
+    router = APIRouter(prefix=CONVERSATION_PREFIX, dependencies=[Depends(_guard)])
+
+    def _open_read() -> sqlite3.Connection | None:
+        return chat_store.connect(data_root, create=False)
+
+    def _not_found() -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": "会话不存在", "code": "not_found"})
+
+    @router.get("/sessions")
+    def list_sessions() -> Any:
+        conn = _open_read()
+        if conn is None:
+            return {"sessions": []}
+        try:
+            return {"sessions": chat_store.list_sessions(conn)}
+        finally:
+            chat_store.close(conn)
+
+    @router.get("/sessions/{session_id}/turns")
+    def list_turns(session_id: str) -> Any:
+        conn = _open_read()
+        if conn is None:
+            return _not_found()
+        try:
+            session = chat_store.get_session(conn, session_id)
+            if session is None:
+                return _not_found()
+            turns = [
+                {
+                    "seq": row["seq"],
+                    "question": row["question"],
+                    "blocks": _blocks_for_view(row),
+                    "created_at": row["created_at"],
+                }
+                for row in chat_store.session_turns(conn, session_id)
+            ]
+            return {"session": session, "turns": turns}
+        finally:
+            chat_store.close(conn)
+
+    @router.patch("/sessions/{session_id}")
+    def rename_session(session_id: str, body: RenameRequest) -> Any:
+        conn = chat_store.connect(data_root)
+        if conn is None:
+            return _not_found()
+        try:
+            title = chat_store.rename_session(conn, session_id, body.title)
+        finally:
+            chat_store.close(conn)
+        if title is None:
+            return _not_found()
+        return {"session_id": session_id, "title": title}
+
+    @router.post("/turns")
+    def post_turn(body: ChatRequest) -> Any:
+        try:
+            session_id = resolve_session_id(body.session_id)
+            return run_turn(
+                message=body.message,
+                session_id=session_id,
+                context=body.context,
+                timeout_sec=body.timeout_sec,
+                config_root=config_root,
+                data_root=data_root,
+            )
+        except ChatFailure as exc:
+            return _record_failure(body.session_id or "", exc)
+
+    return router
+
+
+class RenameRequest(BaseModel):
+    """重命名载荷：标题按首问同一口径截到 40 码点。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+
+
 SKILLS_PREFIX = "/api/skills"
 
 
@@ -819,27 +1257,39 @@ def build_page_router(data_root: Any = None) -> APIRouter:
 __all__ = [
     "ASSISTANT_PREFIX",
     "ASSISTANT_TIMEOUT_SEC",
+    "CONVERSATION_PREFIX",
     "DEFAULT_MODULE",
+    "MAX_ANSWER_BLOCKS",
     "MAX_CONTEXT_CHARS",
+    "MAX_QUESTION_ASK_CHARS",
     "MAX_QUESTION_CHARS",
     "PAGE_KEY_MODULES",
     "PAGE_PREFIX",
     "PAGE_SYSTEM_PROMPT",
+    "RUN_TURN_MODULE",
+    "SESSION_ID_RE",
     "SKILLS_PREFIX",
     "SKILL_SYSTEM_PROMPT",
     "SYSTEM_PROMPT",
     "AssistantFailure",
     "AssistantRequest",
     "AsyncStructuredContext",
+    "ChatFailure",
+    "ChatRequest",
+    "ChatRequestContext",
     "ChatSource",
     "ContextHistoryTurn",
     "PageAssistantRequest",
+    "RenameRequest",
     "SkillAssistantRequest",
     "ask",
+    "build_conversation_router",
     "build_page_router",
     "build_router",
     "build_skills_router",
     "memory_scope_for",
     "module_for",
     "reply_to_structured",
+    "resolve_session_id",
+    "run_turn",
 ]
