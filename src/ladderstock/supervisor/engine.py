@@ -24,7 +24,6 @@ from typing import Any
 
 from ladderstock.supervisor.adapters import (
     MODULE_ORDER,
-    MODULE_PORTS,
     ModuleAdapter,
     module_registry,
 )
@@ -37,6 +36,7 @@ from ladderstock.supervisor.ledger import (
     ModuleRecord,
     now_iso,
 )
+from ladderstock.supervisor.modules import MODULE_PORTS
 from ladderstock.supervisor.proctree import ProcessOps, cmdline_hash
 
 #: 拉起后等端口监听的窗口（QUOT-482 派单正文：每条路径必须带超时）
