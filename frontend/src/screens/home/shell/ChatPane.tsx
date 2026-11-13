@@ -107,7 +107,6 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   const [renamingBusy, setRenamingBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
   const [recoveryAttempts, setRecoveryAttempts] = useState(0)
-  const [reconnectBlocked, setReconnectBlocked] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
@@ -146,7 +145,6 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
     setRenaming(false)
     setRenameError(null)
     setRecoveryAttempts(0)
-    setReconnectBlocked(false)
     if (recoveryTimerRef.current !== null) {
       window.clearTimeout(recoveryTimerRef.current)
       recoveryTimerRef.current = null
@@ -199,12 +197,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
     return () => window.clearTimeout(timer)
   }, [paneFailed, recoveryAttempts, reloadPane])
 
-  useEffect(() => {
-    if (pane.status === 'ready') setReconnectBlocked(false)
-  }, [pane.status])
-
   const retryNow = useCallback(() => {
-    setReconnectBlocked(false)
     setRecoveryAttempts(0)
     reloadPane()
   }, [reloadPane])
@@ -389,7 +382,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
 
   const busy = pending !== null
   const titleText = sessionTitle || (hasConversation ? '未命名对话' : '新对话')
-  const recoverable = reconnectBlocked || (paneFailed && recoveryAttempts >= RECOVERY_MAX_ATTEMPTS)
+  const recoverable = paneFailed && recoveryAttempts >= RECOVERY_MAX_ATTEMPTS
 
   return (
     <section aria-label="首页对话" className="flex min-h-0 flex-1 flex-col gap-2">
