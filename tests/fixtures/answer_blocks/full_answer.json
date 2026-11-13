@@ -179,14 +179,6 @@
       }
     },
     {
-      "type": "notice",
-      "payload": {
-        "kind": "degraded",
-        "section": "补充说明",
-        "message": "板块分化明显。\n关注量能变化"
-      }
-    },
-    {
       "type": "citation",
       "payload": {
         "items": [
