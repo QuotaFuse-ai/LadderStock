@@ -273,32 +273,39 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
         />
       )}
 
-      {/* 两行工作台（§1.1）：8+4 / 4+4+4；卡片是直接的网格子项，行内等高由 stretch 保证。
-          行距 12px（gap-3）：1280×800 一屏预算的一部分，不是装饰性留白 */}
-      <div className="grid gap-3 desk:min-h-0 desk:flex-1 desk:grid-cols-12 desk:grid-rows-2 desk:auto-rows-fr">
-        <HomeIndexStrip
-          view={indexView}
-          session={session}
-          pollSeconds={INDICES_POLL_SECONDS}
-          pollTicks={indicesTicks}
-          pollFailures={indicesFailures}
-          className="desk:col-span-8"
-        />
-        <HomeTodoMoversCard
-          todos={todos}
-          movers={movers}
-          validation={validationView}
-          watch={watchView}
-          className="desk:col-span-4"
-        />
-        <HomeWatchlistCard view={watchlistView} className="desk:col-span-4" />
-        <HomePositionsCard view={positionsView} className="desk:col-span-4" />
+      {/* 版式按老板草图（QUOT-586）：外层两栏（左区弹性 + 右列「研究」定宽通高）；
+          左区纵向三段——待办置顶通栏 → 大盘吃满余高 → 自选/持仓平分一行。
+          desk:h-full / min-h-0 链不退化（一屏无整页滚动，QUOT-570 门槛） */}
+      <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1 desk:flex-row">
+        {/* 左区：上中下三段 */}
+        <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1">
+          <HomeTodoMoversCard
+            todos={todos}
+            movers={movers}
+            validation={validationView}
+            watch={watchView}
+            className="shrink-0"
+          />
+          <HomeIndexStrip
+            view={indexView}
+            session={session}
+            pollSeconds={INDICES_POLL_SECONDS}
+            pollTicks={indicesTicks}
+            pollFailures={indicesFailures}
+            className="desk:min-h-0 desk:flex-1"
+          />
+          <div className="grid gap-3 grid-cols-2">
+            <HomeWatchlistCard view={watchlistView} />
+            <HomePositionsCard view={positionsView} />
+          </div>
+        </div>
+        {/* 右列：研究面板独占、跨全高 */}
         <HomeSearch
           assistant={assistant}
           date={tradeDate}
           incomingQuestion={initialQuestion}
           onQuestionConsumed={onQuestionConsumed}
-          className="desk:col-span-4"
+          className="shrink-0 desk:w-96 desk:min-h-0"
         />
       </div>
     </div>
