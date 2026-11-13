@@ -145,11 +145,7 @@ export const FULL_ANSWER_BLOCKS = [
   },
   {
     type: 'notice',
-    payload: { kind: 'degraded', section: '风险提示', message: '跌破三十八元支撑' },
-  },
-  {
-    type: 'notice',
-    payload: { kind: 'degraded', section: '补充说明', message: '板块分化明显。\n关注量能变化' },
+    payload: { kind: 'degraded', section: '风险提示与补充说明', message: '跌破三十八元支撑。\n关注量能变化' },
   },
   {
     type: 'citation',

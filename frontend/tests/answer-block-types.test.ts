@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  BACKEND_MAX_BLOCKS,
   MAX_BLOCKS,
   MAX_CHART_POINTS,
   MAX_METRIC_ITEMS,
@@ -165,7 +166,7 @@ describe('parseBlocks · 整轮', () => {
     expect(parseBlocks([])).toEqual([])
   })
 
-  it('保持服务端顺序，只截到 8 块', () => {
+  it('保持服务端顺序，只截到 MAX_BLOCKS 块', () => {
     const many = Array.from({ length: MAX_BLOCKS + 3 }, (_, index) => ({
       type: 'notice',
       payload: { kind: 'degraded', message: `第 ${index} 条` },
@@ -175,6 +176,11 @@ describe('parseBlocks · 整轮', () => {
     expect(parsed[0]).toMatchObject({ payload: { message: '第 0 条' } })
   })
 
+  it('MAX_BLOCKS 与后端常量一致（QUOT-581 提交 34f708e3 拍板 6），防止两套数漂移', () => {
+    expect(MAX_BLOCKS).toBe(6)
+    expect(MAX_BLOCKS).toBe(BACKEND_MAX_BLOCKS)
+  })
+
   it('full_answer 整串：结论在前、来源在后，全部能解析', () => {
     const parsed = parseBlocks(FULL_ANSWER_BLOCKS)
     expect(parsed.map((block) => block.type)).toEqual([
@@ -182,7 +188,6 @@ describe('parseBlocks · 整轮', () => {
       'metric',
       'chart',
       'table',
-      'notice',
       'notice',
       'citation',
     ])

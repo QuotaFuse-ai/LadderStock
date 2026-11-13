@@ -128,8 +128,10 @@ export const MAX_METRIC_ITEMS = 4
 export const TABLE_COLLAPSE_ROWS = 5
 /** 二次传播要求支撑 100 行表格 */
 export const MAX_TABLE_ROWS = 100
-/** §6.4 一次回答最多 8 块 */
-export const MAX_BLOCKS = 8
+/** §6.4 一次回答最多 6 块；与后端 `src/ladderstock/ai/answer_blocks.py` 的 MAX_BLOCKS（PI 拍板 6）保持一致，不许两套数 */
+export const MAX_BLOCKS = 6
+/** 后端 QUOT-581 提交 34f708e3 拍板的同一上限；测试用它断言前端没有漂移 */
+export const BACKEND_MAX_BLOCKS = 6
 
 const CONCLUSION_TONES: readonly ConclusionTone[] = ['neutral', 'positive', 'negative', 'warning']
 const METRIC_DIRECTIONS: readonly MetricDirection[] = ['up', 'down', 'flat']

@@ -74,6 +74,7 @@ describe('BlockRenderer · 七块全渲染', () => {
       node.getAttribute('data-answer-block'),
     )
     // conclusion 与 chart 内部各自还有一层；table / citation 是 BlockShell 的 section
+    // MAX_BLOCKS=6（QUOT-581 提交 34f708e3 后端拍板）：七块 fixture 截到前 6 块，citation 落在截断线外
     expect(types).toEqual([
       'conclusion',
       'metric',
@@ -81,7 +82,6 @@ describe('BlockRenderer · 七块全渲染', () => {
       'table',
       'notice',
       'action',
-      'citation',
     ])
 
     expect(screen.getByText(CONCLUSION_BLOCK.payload.text)).toBeTruthy()
@@ -91,16 +91,15 @@ describe('BlockRenderer · 七块全渲染', () => {
     expect(screen.getByRole('table')).toBeTruthy()
     expect(screen.getByText('这一块没有取到数据')).toBeTruthy()
     expect(screen.getByRole('button', { name: '展开完整面板' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: /腾讯行情/ })).toBeTruthy()
   })
 
-  it('full_answer 整串（含两个 degraded 提示、三指标、无 symbol 来源）也能渲染', () => {
+  it('full_answer 整串（含 degraded 提示、三指标、无 symbol 来源）也能渲染', () => {
     renderBlocks(<BlockRenderer blocks={FULL_ANSWER_BLOCKS} />)
 
     const metric = blockOf('metric')
     expect(within(metric).getAllByRole('listitem')).toHaveLength(3)
     expect(within(metric).getAllByText('上涨')).toHaveLength(3)
-    expect(screen.getAllByText('AI 叙述降级')).toHaveLength(2)
+    expect(screen.getAllByText('AI 叙述降级')).toHaveLength(1)
     expect(screen.getByRole('link', { name: /腾讯行情/ }).textContent).toContain('—')
   })
 

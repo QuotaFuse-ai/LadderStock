@@ -20,6 +20,7 @@ export { NoticeBlock, NOTICE_KINDS, asNoticeKind, type NoticeBlockProps } from '
 export { ActionBlock } from './ActionBlock'
 export { isKnownTarget } from './targets'
 export {
+  BACKEND_MAX_BLOCKS,
   BLOCK_TYPES,
   MAX_BLOCKS,
   MAX_CHART_POINTS,
