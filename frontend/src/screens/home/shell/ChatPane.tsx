@@ -16,6 +16,8 @@ import { useIsMobile } from '../../../lib/mediaQuery'
 import { useAsync } from '../../../lib/useAsync'
 import { BlockRenderer } from '../../../components/answer-blocks'
 import { Badge, Button, ErrorBlock, IconButton, Textarea } from '../../../components/ui'
+import { WaitStatus } from './WaitStatus'
+import type { StatusFrame, TurnStatusFeed } from './turnStatus'
 
 /**
  * 首页对话主区（QUOT-582 / F3–F6）。
@@ -53,6 +55,32 @@ export const SUGGESTIONS = [
   '帮我核对一个观点，该先查哪些数据？',
 ] as const
 
+/**
+ * 等待态状态帧源（QUOT-585）。
+ *
+ * QUOT-581 的 `event: status` SSE 帧还没落地（并行中）：现行 `/api/conversation` 是同步
+ * 端点，请求期间拿不到任何过程帧。这里实现一个**可替换**的 `TurnStatusFeed`：
+ * mock 阶段每 2s 发一帧推进 L1 阶段（心跳规则：不改文案只刷新计时基准），
+ * 581 落地后把这里的订阅换到 SSE 即可，`WaitStatus` 与测试都不用动。
+ */
+export function createMockStatusFeed(): TurnStatusFeed & { frames: StatusFrame[]; emit: (frame: StatusFrame) => void } {
+  const listeners = new Set<(frame: StatusFrame) => void>()
+  const frames: StatusFrame[] = []
+  return {
+    frames,
+    emit(frame) {
+      frames.push(frame)
+      listeners.forEach((listener) => listener(frame))
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+}
+
 const WELCOME =
   '问一句就行：股票名或代码、板块、或者一个你想核实的观点。助手会先给结论，再列出用到的数据和可以点开的页面。'
 
@@ -72,6 +100,10 @@ export function statusLabel(status: TurnStatus): string {
 interface PendingTurn {
   localId: string
   status: 'streaming' | 'aborted'
+  /** 等待态起点（发送时刻，performance.now 口径） */
+  startedAt: number
+  /** 本轮的状态帧源（QUOT-581 未落地前由 mock 驱动，可整体替换为 SSE 订阅） */
+  feed: TurnStatusFeed
 }
 
 interface ChatPaneProps {
@@ -244,7 +276,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         ...prev,
         { seq: 0, question, blocks: null, status: 'streaming', created_at: '', updated_at: '', localId },
       ])
-      setPending({ localId, status: 'streaming' })
+      setPending({ localId, status: 'streaming', startedAt: performance.now(), feed: createMockStatusFeed() })
       setDraft('')
       setFailure(null)
       setFailedQuestion(null)
@@ -500,9 +532,11 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
               ))}
               {pending && (
                 <li key={pending.localId} className="flex flex-col gap-1">
-                  <p className="text-caption text-text-muted" aria-busy="true">
-                    生成中…
-                  </p>
+                  <WaitStatus
+                    feed={pending.feed}
+                    startedAt={pending.startedAt}
+                    compact={false}
+                  />
                 </li>
               )}
             </ol>
