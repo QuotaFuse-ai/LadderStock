@@ -41,6 +41,8 @@ export default function HomeShell() {
   const [sessionsDirty, setSessionsDirty] = useState(0)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // 空态两段式（QUOT-587）：冷启动只有居中输入框；首问发出（或选中一条会话）后列表才出现
+  const [chatStarted, setChatStarted] = useState(false)
   // 研究台要接着用的那一问：切过去时填进研究面板输入框，`HomeSearch` 取走即回写 `null`（F4）
   const [deskQuestion, setDeskQuestion] = useState<string | null>(null)
 
@@ -53,12 +55,15 @@ export default function HomeShell() {
   const refreshSessions = useCallback(() => setSessionsDirty((count) => count + 1), [])
   const selectSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId)
+    setChatStarted(true)
     setDrawerOpen(false)
   }, [])
   const newSession = useCallback(() => {
     setActiveSessionId(null)
+    setChatStarted(false)
     setDrawerOpen(false)
   }, [])
+  const startChat = useCallback(() => setChatStarted(true), [])
 
   const openResearch = useCallback(
     (code: string) => {
@@ -118,15 +123,18 @@ export default function HomeShell() {
           mode === 'chat' ? 'flex' : 'hidden',
         )}
       >
-        <SessionList
-          {...listProps}
-          className="hidden lg:flex lg:w-sidebar lg:shrink-0 lg:border-r lg:border-border lg:pr-2"
-        />
+        {chatStarted && (
+          <SessionList
+            {...listProps}
+            className="hidden lg:flex lg:w-sidebar lg:shrink-0 lg:border-r lg:border-border lg:pr-2"
+          />
+        )}
         <ChatPane
           activeSessionId={activeSessionId}
           onOpenResearch={openResearch}
           onAskDesk={askDesk}
           onRoundComplete={refreshSessions}
+          onFirstRoundStarted={startChat}
         />
       </div>
 

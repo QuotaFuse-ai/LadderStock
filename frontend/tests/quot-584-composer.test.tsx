@@ -90,7 +90,9 @@ describe('一体式 composer（QUOT-584）', () => {
     await vi.waitFor(() => {
       expect(posted.some((call) => call.url === '/api/conversation/turns')).toBe(true)
     })
-    expect(input.value).toBe('')
+    // QUOT-587：发送后从冷启动空态切到消息层，composer 重挂载——重新查询后断言输入被清空
+    const clearedInput = screen.getByLabelText('向对话提问') as HTMLTextAreaElement
+    expect(clearedInput.value).toBe('')
   })
 
   it('busy 时停止控件在同一位置（composer 容器内）', () => {
@@ -100,7 +102,9 @@ describe('一体式 composer（QUOT-584）', () => {
     fireEvent.submit(composer)
 
     const stop = screen.getByRole('button', { name: '停止' })
-    expect(composer.contains(stop)).toBe(true)
+    // QUOT-587：首问让空态切到消息层，composer 重挂载——用当前实例重新查询
+    const activeComposer = screen.getByTestId('composer')
+    expect(activeComposer.contains(stop)).toBe(true)
     expect(screen.queryByRole('button', { name: '发送' })).toBeNull()
   })
 })
