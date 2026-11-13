@@ -13,6 +13,7 @@ import { cn } from '../lib/cn'
 import { AssistantObjectContext, AssistantShellContext, type AssistantDockState, type AssistantOpenInput } from '../lib/assistant/shell'
 import { useIsMobile } from '../lib/mediaQuery'
 import { PageToolsSlotContext } from '../lib/pageToolsSlot'
+import { HomeModeSlotContext } from '../lib/homeModeSlot'
 import { buildDockView, routeObject, type AssistantObject } from '../lib/skills/dock'
 import {
   BRAND_ICON,
@@ -121,6 +122,9 @@ export default function Layout() {
   const [pageObject, setPageObject] = useState<AssistantObject | null>(null)
   // 顶栏右侧给页面主操作（刷新）留的落点，见 `lib/pageToolsSlot.tsx`
   const [toolsSlot, setToolsSlot] = useState<HTMLDivElement | null>(null)
+  // 顶栏中间给首页双模式切换留的落点（QUOT-582）：只有 `/` 的 `HomeShell` 会往里送，
+  // 其余屏读到 null，这个节点本身是空 div，不占宽度、不撑高
+  const [modeSlot, setModeSlot] = useState<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLButtonElement>(null)
 
   const openAi = useCallback(() => setAiOpen(true), [])
@@ -361,6 +365,9 @@ export default function Layout() {
             <strong className="truncate font-semibold">{navTitleFor(location.pathname)}</strong>
           </div>
 
+          {/* 首页「对话 / 研究台」切换落点（QUOT-582）：无页挂载时是空节点 */}
+          <div ref={setModeSlot} className="flex min-w-0 items-center" />
+
           <div className="flex min-w-0 items-center gap-2">
             {/* 页面主操作落点：`PageHeader` 把「刷新」portal 到这里，页面本身不再出标题条 */}
             <div ref={setToolsSlot} className="flex items-center gap-2" />
@@ -374,12 +381,14 @@ export default function Layout() {
           <PersistenceBanner />
           <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
             <PageToolsSlotContext.Provider value={toolsSlot}>
-              {/* QUOT-475：页内「研究助手」通过 shell 打开同一份抽屉；页面可把当前标的上报给顶栏 */}
-              <AssistantShellContext.Provider value={assistantShell}>
-                <AssistantObjectContext.Provider value={setPageObject}>
-                  <Outlet />
-                </AssistantObjectContext.Provider>
-              </AssistantShellContext.Provider>
+              <HomeModeSlotContext.Provider value={modeSlot}>
+                {/* QUOT-475：页内「研究助手」通过 shell 打开同一份抽屉；页面可把当前标的上报给顶栏 */}
+                <AssistantShellContext.Provider value={assistantShell}>
+                  <AssistantObjectContext.Provider value={setPageObject}>
+                    <Outlet />
+                  </AssistantObjectContext.Provider>
+                </AssistantShellContext.Provider>
+              </HomeModeSlotContext.Provider>
             </PageToolsSlotContext.Provider>
           </main>
         </div>

@@ -50,10 +50,16 @@ export interface HomeSearchProps {
   /** 首页四块已取到的数据：对话上下文与「本轮来源」都从这一份派生 */
   assistant: HomeAssistantBundle
   date: string
+  /**
+   * 从对话区「问研究台」带过来的一问（QUOT-582 / F4）：非 `null` 即切到「研究股票」页签、
+   * 填进底部唯一输入框并聚焦；只填不发，与起步问题同一口径。读一次即回调 `onQuestionConsumed`。
+   */
+  incomingQuestion?: string | null
+  onQuestionConsumed?: () => void
   className?: string
 }
 
-export function HomeSearch({ assistant, date, className }: HomeSearchProps) {
+export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestionConsumed, className }: HomeSearchProps) {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const initialQuery = params.get('search')
@@ -83,6 +89,17 @@ export function HomeSearch({ assistant, date, className }: HomeSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const focusInput = () => inputRef.current?.focus()
+
+  // 对话区「问研究台」带来的一问：切页签 + 填词 + 聚焦，不自动发（同起步问题的口径）
+  const lastIncomingQuestion = useRef<string | null>(null)
+  useEffect(() => {
+    if (!incomingQuestion || incomingQuestion === lastIncomingQuestion.current) return
+    lastIncomingQuestion.current = incomingQuestion
+    setTab('chat')
+    actions.onQueryChange(incomingQuestion)
+    focusInput()
+    onQuestionConsumed?.()
+  }, [incomingQuestion, actions, onQuestionConsumed])
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     // 输入法候选期间的回车归输入法，不能当成路由

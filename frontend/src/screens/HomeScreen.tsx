@@ -44,7 +44,16 @@ import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/
 /** 溯源徽标只需要 envelope 的公共字段（§5.5 单一实现）；平面响应（自选）四键恒为 null。 */
 type EnvelopeMeta = SourceBadgeMeta
 
-export default function HomeScreen() {
+export interface HomeScreenProps {
+  /**
+   * 从对话区带过来的一问（QUOT-582 / F4）：研究台把这句填进研究面板的输入框。
+   * 独立访问 `/` 时不传，行为与之前完全一致。
+   */
+  initialQuestion?: string | null
+  onQuestionConsumed?: () => void
+}
+
+export default function HomeScreen({ initialQuestion = null, onQuestionConsumed }: HomeScreenProps = {}) {
   const forced = useForcedState()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -284,7 +293,13 @@ export default function HomeScreen() {
         />
         <HomeWatchlistCard view={watchlistView} className="desk:col-span-4" />
         <HomePositionsCard view={positionsView} className="desk:col-span-4" />
-        <HomeSearch assistant={assistant} date={tradeDate} className="desk:col-span-4" />
+        <HomeSearch
+          assistant={assistant}
+          date={tradeDate}
+          incomingQuestion={initialQuestion}
+          onQuestionConsumed={onQuestionConsumed}
+          className="desk:col-span-4"
+        />
       </div>
     </div>
   )

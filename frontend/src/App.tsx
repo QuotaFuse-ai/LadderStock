@@ -4,7 +4,7 @@ import type { ReactElement } from 'react'
 import Layout from './components/Layout'
 import AiReviewScreen from './screens/AiReviewScreen'
 import BacktestScreen from './screens/backtest/BacktestScreen'
-import HomeScreen from './screens/HomeScreen'
+import HomeShell from './screens/home/shell/HomeShell'
 import IndustryDetailScreen from './screens/industry/IndustryDetailScreen'
 import IndustryMatrixScreen from './screens/industry/IndustryMatrixScreen'
 import IntradayScreen from './screens/intraday/IntradayScreen'
@@ -70,7 +70,7 @@ function NotFound() {
  * （QUOT-344 / DEC-046 的「不能留两条路径指向同一未拆分屏」）。
  */
 export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
-  '/': <HomeScreen />,
+  '/': <HomeShell />,
   '/market': <MarketScreen />,
   '/watch': <WatchScreen />,
   // 盯盘第二页：竞价与盘中 6 时点快照（QUOT-302 / DEC-035 §5），`?date=` + `?slot=` 深链
