@@ -987,7 +987,15 @@ def _new_finalized_blocks(
     snapshot = answer_block_payloads(
         ai=ai, sources=sources, metrics=metrics, page_data=has_page_data
     )
-    stable = snapshot[:-1] if snapshot else snapshot
+    # hold-back：尾块（citation / 来源 notice）依赖最终 sources；「补充说明」
+    # notice 由 narrative[1:] 合成、随定稿句子增多而增长——两者都不在流中发，
+    # 收尾统一发，保证已发块不可变（前缀稳定性）。
+    hold = 1
+    if len(snapshot) >= 2 and str(
+        snapshot[-2].get("payload", {}).get("section")
+    ) == "补充说明":
+        hold = 2
+    stable = snapshot[:-hold] if snapshot else snapshot
     for index, block in enumerate(stable[: len(sent)]):
         if json.dumps(block, ensure_ascii=False, sort_keys=True) != json.dumps(
             sent[index], ensure_ascii=False, sort_keys=True
@@ -1158,53 +1166,69 @@ async def stream_turn(
         incremental = channel.kind != "cli" and ai is None
         reply_parts: list[str] = []
         tail = ""
+        finalized_text = ""  # 累计定稿全文：快照必须对全文装配，对尾巴装配必发散
         if incremental:
             # 真流式消费循环：0.5s 醒一次；≥2s 无帧补 heartbeat；
             # 句界定稿前缀 → 快照 diff → 新块逐个发出（已发块不可变）。
             aiter = complete_iter(channel, system, user, timeout=timeout).__aiter__()
-            while True:
-                try:
-                    chunk = await asyncio.wait_for(
-                        aiter.__anext__(), timeout=STREAM_HEARTBEAT_POLL_SEC
+            task: asyncio.Future[str] | None = None
+            try:
+                while True:
+                    if task is None or task.done():
+                        task = asyncio.ensure_future(aiter.__anext__())
+                    # 不能用 wait_for 包 __anext__：超时会 Cancel 掉上游生成器
+                    # 正在跑的那一步（15s 慢模型直接断流）；用 wait 只「看」不取消。
+                    finished, _ = await asyncio.wait(
+                        {task}, timeout=STREAM_HEARTBEAT_POLL_SEC
                     )
-                except StopAsyncIteration:
-                    break
-                except TimeoutError:
-                    if _monotonic_ms() - last_frame_ms >= STREAM_HEARTBEAT_GAP_SEC * 1000:
-                        yield _heartbeat(_monotonic_ms() - last_frame_ms, seq)
+                    if not finished:
+                        if (
+                            _monotonic_ms() - last_frame_ms
+                            >= STREAM_HEARTBEAT_GAP_SEC * 1000
+                        ):
+                            yield _heartbeat(_monotonic_ms() - last_frame_ms, seq)
+                            last_frame_ms = _monotonic_ms()
+                        continue
+                    try:
+                        chunk = next(iter(finished)).result()
+                    except StopAsyncIteration:
+                        break
+                    if is_disconnected is not None and await is_disconnected():
+                        stream_mode = "stream"
+                        yield _done_frame(
+                            {
+                                "ok": False,
+                                "completed": False,
+                                "reply": "",
+                                "reason": "cancelled",
+                                "last_seq": seq,
+                                "followups": _followups(sent_blocks),
+                            }
+                        )
+                        return
+                    reply_parts.append(chunk)
+                    tail += chunk
+                    finalized = _finalized_prefix(tail)
+                    if finalized:
+                        finalized_text += finalized
+                        for block in _new_finalized_blocks(
+                            finalized_text, sources, has_data, metrics, sent_blocks
+                        ):
+                            seq += 1
+                            sent_blocks.append(block)
+                            yield _block_event(seq, block)
                         last_frame_ms = _monotonic_ms()
-                    continue
-                if is_disconnected is not None and await is_disconnected():
-                    stream_mode = "stream"
-                    yield _done_frame(
-                        {
-                            "ok": False,
-                            "completed": False,
-                            "reply": "",
-                            "reason": "cancelled",
-                            "last_seq": seq,
-                            "followups": _followups(sent_blocks),
-                        }
-                    )
-                    return
-                reply_parts.append(chunk)
-                tail += chunk
-                finalized = _finalized_prefix(tail)
-                if finalized:
-                    for block in _new_finalized_blocks(
-                        finalized, sources, has_data, metrics, sent_blocks
-                    ):
-                        seq += 1
-                        sent_blocks.append(block)
-                        yield _block_event(seq, block)
-                    last_frame_ms = _monotonic_ms()
-                    tail = tail[len(finalized):]
+                        tail = tail[len(finalized):]
+            finally:
+                if task is not None and not task.done():
+                    task.cancel()
             # 结尾残句（无句末标点）：补一个换行让它定稿进最后一块
             if tail.strip():
                 finalized = _finalized_prefix(tail + "\n")
                 if finalized:
+                    finalized_text += finalized
                     for block in _new_finalized_blocks(
-                        finalized, sources, has_data, metrics, sent_blocks
+                        finalized_text, sources, has_data, metrics, sent_blocks
                     ):
                         seq += 1
                         sent_blocks.append(block)

@@ -113,41 +113,39 @@ def _sse_deltas(lines: AsyncIterator[str]) -> AsyncIterator[str]:
     """OpenAI / Anthropic 通用 SSE 增量解析：从 data: 行里抠正文增量。"""
 
     async def _gen() -> AsyncIterator[str]:
-        buffer = ""
-        async for raw in lines:
-            buffer += raw
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
-                line = line.strip()
-                if not line.startswith("data:"):
-                    continue
-                data = line[len("data:"):].strip()
-                if not data or data == "[DONE]":
-                    continue
-                try:
-                    event = json.loads(data)
-                except ValueError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                if event.get("type") == "error":
-                    message = event.get("error")
-                    detail = (
-                        message.get("message") if isinstance(message, Mapping) else str(message)
-                    )
-                    raise ProviderError(f"上游流式错误：{detail}", status_code=529)
-                delta = event.get("delta") if isinstance(event, dict) else None
-                chunk: Any = None
-                if isinstance(delta, Mapping):  # anthropic content_block_delta
-                    chunk = delta.get("text")
-                else:
-                    choices = event.get("choices")
-                    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-                        piece = choices[0].get("delta")
-                        if isinstance(piece, Mapping):
-                            chunk = piece.get("content")
-                if isinstance(chunk, str) and chunk:
-                    yield chunk
+        # 入参是 `aiter_lines()`：它已经按行切好并剥掉了行尾 \n，
+        # 这里绝不能再做 buffer 拼接（行内永远没有 \n，逐行处理即可）。
+        async for line in lines:
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                event = json.loads(data)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "error":
+                message = event.get("error")
+                detail = (
+                    message.get("message") if isinstance(message, Mapping) else str(message)
+                )
+                raise ProviderError(f"上游流式错误：{detail}", status_code=529)
+            delta = event.get("delta") if isinstance(event, dict) else None
+            chunk: Any = None
+            if isinstance(delta, Mapping):  # anthropic content_block_delta
+                chunk = delta.get("text")
+            else:
+                choices = event.get("choices")
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    piece = choices[0].get("delta")
+                    if isinstance(piece, Mapping):
+                        chunk = piece.get("content")
+            if isinstance(chunk, str) and chunk:
+                yield chunk
 
     return _gen()
 
