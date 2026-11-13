@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { useNavigate } from 'react-router-dom'
 import { Check, Copy, MessageSquarePlus, Pencil, Send, Square, X } from 'lucide-react'
 
+import { cn } from '../../../lib/cn'
 import {
   ConversationError,
   httpConversation,
@@ -543,7 +544,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       <form
         aria-label="对话输入区"
         data-testid="composer"
-        className="flex shrink-0 flex-col gap-1 rounded border border-border-strong bg-surface px-2 pb-1.5 pt-1 focus-within:border-accent transition-colors duration-fast ease-ldst"
+        className="flex shrink-0 flex-col gap-1 rounded border border-border-strong bg-surface px-2 pb-1.5 pt-1 transition-colors duration-fast ease-ldst"
         onSubmit={(event) => {
           event.preventDefault()
           void ask(draft)
@@ -573,6 +574,11 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
               label="发送"
               type="submit"
               disabled={!draft.trim()}
+              className={cn(
+                'rounded-full',
+                draft.trim() &&
+                  'border-transparent bg-accent-solid text-accent-contrast hover:bg-accent-solid-hover',
+              )}
               icon={<Send className="size-4" aria-hidden="true" />}
             />
           )}

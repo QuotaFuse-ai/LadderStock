@@ -121,9 +121,9 @@ describe('首页演示源', () => {
     renderAt('/?demo=1')
     await screen.findByText('上证指数')
 
-    // QUOT-552 两行工作台：row1 大盘与全球指数 → 待办与异动（合并表）；
-    // row2 我的自选 → 我的持仓 → 今天，想研究什么（研究面板）。DOM 顺序即单栏保底顺序。
-    const headings = ['大盘与全球指数', '待办与异动', '我的自选', '我的持仓', '今天，想研究什么？'].map((text) =>
+    // QUOT-586 版式重建（老板草图）：待办与异动置顶通栏 → 大盘与全球指数 →
+    // 我的自选 → 我的持仓 → 今天，想研究什么（研究面板右列）。DOM 顺序即单栏保底顺序。
+    const headings = ['待办与异动', '大盘与全球指数', '我的自选', '我的持仓', '今天，想研究什么？'].map((text) =>
       document.body.textContent?.indexOf(text) ?? -1,
     )
     headings.forEach((index) => expect(index).toBeGreaterThan(-1))

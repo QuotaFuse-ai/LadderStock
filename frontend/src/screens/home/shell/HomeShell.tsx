@@ -5,6 +5,7 @@ import { PanelRight } from 'lucide-react'
 
 import { httpConversation, type SessionSummary } from '../../../api/conversation'
 import { Drawer, IconButton, Segmented, type SegmentedOption } from '../../../components/ui'
+import { cn } from '../../../lib/cn'
 import { useHomeMode, type HomeMode } from '../../../lib/homeMode'
 import { HomeModeSlotContext } from '../../../lib/homeModeSlot'
 import { useIsMobile } from '../../../lib/mediaQuery'
@@ -110,7 +111,13 @@ export default function HomeShell() {
       {desktopSegment && slot && createPortal(switcher, slot)}
 
       {/* 两种模式常驻挂载、只切 `hidden`：对话里的在途请求与滚动位置不因切模式丢失 */}
-      <div hidden={mode !== 'chat'} className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+      <div
+        hidden={mode !== 'chat'}
+        className={cn(
+          'min-h-0 flex-1 flex-col gap-3 lg:flex-row',
+          mode === 'chat' ? 'flex' : 'hidden',
+        )}
+      >
         <SessionList
           {...listProps}
           className="hidden lg:flex lg:w-sidebar lg:shrink-0 lg:border-r lg:border-border lg:pr-2"
