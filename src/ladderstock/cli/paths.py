@@ -1,9 +1,12 @@
 """路径解析：配置目录、数据目录、仓库根。
 
-优先级（DEC-001 / DEC-071）：
+优先级（DEC-001 / DEC-071 / QUOT-592）：
 - `LDST_CONFIG_DIR` / `LDST_DATA_DIR` 显式指定（最高，开发/排障用）
-- 当前工作目录下的 `config/`、`data/`（源码开发态）
-- 用户数据目录（安装态）：`platformdirs` 解析的
+- 便携模式：冻结态（exe/AppImage/.app）或工程根有 `.portable` 标记时，
+  `config_dir()` = `install_root()/config`、`data_dir()` = `install_root()/data`
+  ——一个自包含 LadderStock 安装根，data/config 全在根内
+- 当前工作目录下的 `config/`、`data/`（非便携源码开发态）
+- 用户数据目录（非便携安装态兜底）：`platformdirs` 解析的
   `user_data_dir("LadderStock", "QuotaFuse")`，含 `config/`、`data/` 两个子目录
 
 安装态**不写死任何绝对路径**，也不假设 `~/.ladderstock`：Windows 落到
@@ -81,8 +84,10 @@ def config_dir() -> Path:
     env = _env_with_legacy("LDST_CONFIG_DIR")
     if env:
         return Path(env)
-    # 冻结态（双击 exe）的 cwd 是 exe 所在目录，绝不能把安装目录里的
-    # 任何 `config/` 当作用户配置；安装态只认 platformdirs（DEC-071 / QUOT-525）。
+    # 便携模式（QUOT-592）：config/data 落安装根内，一个 LadderStock 文件夹自包含。
+    if runtime.is_portable():
+        return runtime.install_root() / "config"
+    # 非便携源码态：当前工作目录下的 `config/`（开发态惯例）。
     if not runtime.is_frozen():
         local = Path.cwd() / "config"
         if local.is_dir():
@@ -94,6 +99,8 @@ def data_dir() -> Path:
     env = _env_with_legacy("LDST_DATA_DIR")
     if env:
         return Path(env)
+    if runtime.is_portable():
+        return runtime.install_root() / "data"
     if not runtime.is_frozen():
         local = Path.cwd() / "data"
         if local.is_dir():

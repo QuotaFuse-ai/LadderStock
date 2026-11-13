@@ -13,6 +13,7 @@
 | 平台 | 可执行文件 | install_root |
 |---|---|---|
 | Windows | `<InstallRoot>\\LadderStock\\LadderStock.exe` | `<InstallRoot>` |
+| Windows（新 onedir） | `<InstallRoot>\\bin\\LadderStock\\LadderStock.exe` | `<InstallRoot>` |
 | Windows（单文件） | `<InstallRoot>\\LadderStock.exe` | `<InstallRoot>` |
 | macOS | `<InstallRoot>/LadderStock.app/Contents/MacOS/LadderStock` | `<InstallRoot>` |
 | Linux AppImage | `<InstallRoot>/LadderStock-x86_64.AppImage` | `<InstallRoot>` |
@@ -35,6 +36,12 @@ APP_DIRNAME = "LadderStock"
 
 #: AppImage 运行时注入的原始文件路径（不是挂载点）
 APPIMAGE_ENV = "APPIMAGE"
+
+#: 便携模式标记：安装根内存在此文件时，config/data 落安装根内（QUOT-592）
+PORTABLE_MARKER = ".portable"
+
+#: onedir 新布局的代码目录名：exe 在 `<InstallRoot>/bin/LadderStock/` 下
+BIN_DIRNAME = "bin"
 
 
 def is_frozen() -> bool:
@@ -82,8 +89,30 @@ def install_root(env: Mapping[str, str] | None = None) -> Path:
     if _is_macos_app_binary(exe):
         return exe.parent.parent.parent.parent  # .app 所在目录
     if exe.parent.name.lower() == APP_DIRNAME.lower():
+        # 旧 onedir：`<InstallRoot>/LadderStock/LadderStock.exe`
+        root = exe.parent.parent
+        if root.name.lower() == BIN_DIRNAME.lower():
+            # 新 onedir：`<InstallRoot>/bin/LadderStock/LadderStock.exe`
+            return root.parent
+        return root
+    if exe.parent.name.lower() == BIN_DIRNAME.lower():
         return exe.parent.parent
     return exe.parent
+
+
+def is_portable(env: Mapping[str, str] | None = None) -> bool:
+    """便携模式判定（QUOT-592）：冻结态恒便携；源码态看工程根有无 `.portable` 标记。
+
+    便携模式下 config/data 落安装根内（`install_root()/config|data`），
+    platformdirs 只作非便携兜底；`LDST_CONFIG_DIR` / `LDST_DATA_DIR` 显式
+    覆盖仍最高优先（在 `paths.py` 里判定，不在这里）。
+    """
+    if is_frozen():
+        return True
+    values = os.environ if env is None else env
+    override = (values.get(INSTALL_ROOT_ENV) or "").strip()
+    root = Path(override) if override else Path(__file__).resolve().parents[3]
+    return (root / PORTABLE_MARKER).is_file()
 
 
 def app_dir() -> Path:
