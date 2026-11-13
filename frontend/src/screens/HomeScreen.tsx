@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useContext, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 
 import { describeApiError, isApiError } from '../api'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { useHomeMode } from '../lib/homeMode'
 import {
   MISSING,
   localDateIso,
@@ -21,7 +22,7 @@ import { HomeIndexStrip } from './home/HomeIndexStrip'
 import { HomePositionsCard } from './home/HomePositionsCard'
 import { HomeSearch } from './home/HomeSearch'
 import { type HomeTodo } from './home/HomeTodoMoversCard'
-import { HomeTodoMoversBar } from './home/HomeTodoMoversBar'
+import { HomeTodoMoversBar, HomeTodoMoversShellMountedContext, type HomeTodoMoversData } from './home/HomeTodoMoversBar'
 import { HomeWatchlistCard } from './home/HomeWatchlistCard'
 import { buildHomeAssistant } from './home/homeAssistant'
 import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/useHomeSource'
@@ -52,9 +53,14 @@ export interface HomeScreenProps {
    */
   initialQuestion?: string | null
   onQuestionConsumed?: () => void
+  /**
+   * QUOT-588：把待办异动数据上行发布给 shell 层的全局入口（context 只向下流动）。
+   * 未传（独立渲染 / 单测）时入口由本屏就地兜底渲染。
+   */
+  onTodoMoversData?: (data: HomeTodoMoversData) => void
 }
 
-export default function HomeScreen({ initialQuestion = null, onQuestionConsumed }: HomeScreenProps = {}) {
+export default function HomeScreen({ initialQuestion = null, onQuestionConsumed, onTodoMoversData }: HomeScreenProps = {}) {
   const forced = useForcedState()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -63,6 +69,10 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
   // 自相矛盾的标题会写在首屏上。`?date=` 优先。
   const tradeDate = params.get('date') || (demoEnabled ? DEMO_TRADE_DATE : localDateIso())
   const { views, requests, reloadAll, session, indicesTicks, indicesFailures } = useHomeBlocks(tradeDate)
+  // QUOT-588：外壳已挂全局待办异动入口时不再在内容区挂兜底（全局只一颗）
+  const shellMountedTodoBar = useContext(HomeTodoMoversShellMountedContext)
+  // QUOT-588：刷新只属研究台。chat 模式下不门户刷新，避免「两个图标」泄漏回顶栏
+  const [mode] = useHomeMode()
 
   const indexView = views.indices
   const watchlistView = views.watchlist
@@ -108,6 +118,15 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
   const state = resolveState(forced, derived)
   const usable = state === 'normal' || state === 'partial'
   const busy = requests.some((request) => request.status === 'loading')
+  const headerRefresh =
+    mode === 'desk'
+      ? {
+          onClick: reloadAll,
+          label: '刷新全部',
+          loading: busy && state !== 'loading',
+          disabled: state === 'loading',
+        }
+      : undefined
   const offline = state === 'offline'
 
   const movers = useMemo(
@@ -209,12 +228,7 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
       title="首页"
       subtitle={summary}
       badge={<DemoStateBadge state={forced} />}
-      refresh={{
-        onClick: reloadAll,
-        label: '刷新全部',
-        loading: busy && state !== 'loading',
-        disabled: state === 'loading',
-      }}
+      refresh={headerRefresh}
     />
   )
 
@@ -244,8 +258,12 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
       {header}
 
       {offline && <OfflineBanner onRetry={reloadAll} />}
-      {/* 待办与异动：顶栏横栏入口（无外壳 / 单测时退回内容区原卡） */}
-      <HomeTodoMoversBar todos={todos} movers={movers} validation={validationView} watch={watchView} />
+      {/* 待办与异动入口（QUOT-588）：由 HomeShell 在 shell 层显式全局挂载，
+          数据经 `onTodoMoversData` 上行；无外壳（单测 / 独立渲染）时这里挂兜底，全局只一颗 */}
+      <PublishTodoMovers todos={todos} movers={movers} validation={validationView} watch={watchView} onPublish={onTodoMoversData} />
+      {!shellMountedTodoBar && (
+        <HomeTodoMoversBar todos={todos} movers={movers} validation={validationView} watch={watchView} />
+      )}
       {state === 'partial' && failedLabels.length > 0 && (
         <ErrorBlock
           variant="banner"
@@ -307,4 +325,14 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
       </div>
     </div>
   )
+}
+
+/** QUOT-588：待办异动数据上行发布（副作用组件，props 变化即发布，shell 层据此供全局入口）。 */
+function PublishTodoMovers(props: HomeTodoMoversData & { onPublish?: (data: HomeTodoMoversData) => void }) {
+  const { onPublish, ...data } = props
+  useEffect(() => {
+    onPublish?.(data)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onPublish, data.todos, data.movers, data.validation, data.watch])
+  return null
 }

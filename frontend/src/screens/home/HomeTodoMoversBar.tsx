@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ClipboardList } from 'lucide-react'
 
@@ -16,12 +16,39 @@ import type { BlockView } from './useHomeSource'
  * 卡片本体从内容区左区撤出（老板返工：不占内容区一块），顶栏只留一颗紧凑入口：
  * `待办 N · 异动 N`，点击在按钮下方展开完整表——表就是既有的 `HomeTodoMoversCard`
  * （COLUMNS / DataTable / 口径都不动，QUOT-552 / QUOT-521 的用例继续成立）。
+ *
+ * QUOT-588：入口由 `HomeShell` 在 shell 层**显式全局**挂载（chat / desk 两模式共用同一颗，
+ * 数据经 `HomeTodoMoversContext` 来自 `HomeScreen` 的同一份 `useHomeBlocks`，不二次取数）。
  * 顶栏槽位缺失（组件单测 / 独立渲染）时退回内容区就地渲染，屏幕不区分环境。
  */
 
 const POPOVER_WIDTH = 460
 const POPOVER_MAX_HEIGHT = 360
 const VIEWPORT_GUTTER = 8
+
+/**
+ * 待办异动数据契约（QUOT-588）：`HomeScreen` 把算好的 todos / movers / 两块视图
+ * 经这里下发给 shell 层的显式全局入口。外壳层提供 value、`HomeScreen` 内部消费，
+ * 保证「待办异动全局只渲染一次」且**不二次取数 / 不重复轮询**。
+ */
+export interface HomeTodoMoversData {
+  todos: HomeTodo[]
+  movers: WatchSnapshotRow[]
+  validation: BlockView<LadderEnvelope<ValidationPayload>>
+  watch: BlockView<LadderEnvelope<WatchSnapshotPayload>>
+}
+
+/**
+ * Provider 在 `HomeShell`（shell 层），`HomeTodoMoversGlobalBar` 直接读它；
+ * 数据由 `HomeScreen` 经回调上行发布（context 只向下流动）。
+ */
+export const HomeTodoMoversContext = createContext<HomeTodoMoversData | null>(null)
+
+/** shell 层已挂全局入口时置 true：`HomeScreen` 据此不再在内容区挂兜底（全局只一颗）。 */
+export const HomeTodoMoversShellMountedContext = createContext(false)
+
+/** `HomeScreen` → `HomeShell` 的数据上行通道（context 不能向上流动，只能回调）。 */
+export type PublishTodoMoversData = (data: HomeTodoMoversData) => void
 
 export interface HomeTodoMoversBarProps {
   todos: HomeTodo[]
@@ -32,6 +59,27 @@ export interface HomeTodoMoversBarProps {
 }
 
 export function HomeTodoMoversBar({ todos, movers, validation, watch, className }: HomeTodoMoversBarProps) {
+  return (
+    <HomeTodoMoversContext.Provider value={{ todos, movers, validation, watch }}>
+      <HomeTodoMoversEntry className={className} />
+    </HomeTodoMoversContext.Provider>
+  )
+}
+
+/** shell 层全局入口（QUOT-588）：无 props，数据经 `HomeTodoMoversContext` 来自 `HomeScreen`。 */
+export function HomeTodoMoversGlobalBar() {
+  return <HomeTodoMoversEntry />
+}
+
+/**
+ * 顶栏入口本体（QUOT-588）：由 `HomeShell` 在 shell 层挂载为显式全局入口——
+ * 两种模式下都渲染（不再依赖 hidden-desk 的 portal 泄漏），且全局只这一颗。
+ * `HomeScreen` 在外壳存在时不再挂它，避免了二次渲染。
+ */
+function HomeTodoMoversEntry({ className }: { className?: string }) {
+  const data = useContext(HomeTodoMoversContext)
+  if (!data) return null
+  const { todos, movers, validation, watch } = data
   const toolsSlot = useContext(PageToolsSlotContext)
   const [open, setOpen] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -73,7 +121,7 @@ export function HomeTodoMoversBar({ todos, movers, validation, watch, className 
     }
   }, [open])
 
-  // 顶栏挂着时弹层锚定按钮；无槽位（单测）时入口就地渲染、无弹层
+  // 顶栏挂着时弹层锚定按钮；无槽位（单测 / 独立渲染）时入口就地渲染、无弹层
   if (!toolsSlot) {
     return (
       <HomeTodoMoversCard

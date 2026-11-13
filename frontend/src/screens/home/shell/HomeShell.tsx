@@ -12,6 +12,12 @@ import { useIsMobile } from '../../../lib/mediaQuery'
 import { researchHref } from '../../../lib/searchRoutes'
 import { useAsync } from '../../../lib/useAsync'
 import HomeScreen from '../../HomeScreen'
+import {
+  HomeTodoMoversContext,
+  HomeTodoMoversGlobalBar,
+  HomeTodoMoversShellMountedContext,
+  type HomeTodoMoversData,
+} from '../HomeTodoMoversBar'
 import { ChatPane } from './ChatPane'
 import { SessionList } from './SessionList'
 
@@ -45,6 +51,8 @@ export default function HomeShell() {
   const [chatStarted, setChatStarted] = useState(false)
   // 研究台要接着用的那一问：切过去时填进研究面板输入框，`HomeSearch` 取走即回写 `null`（F4）
   const [deskQuestion, setDeskQuestion] = useState<string | null>(null)
+  // QUOT-588：待办异动数据由 `HomeScreen` 回调上行（context 只向下流动），供给全局入口
+  const [todoMoversData, setTodoMoversData] = useState<HomeTodoMoversData | null>(null)
 
   const sessions = useAsync<SessionSummary[]>(
     () => httpConversation.listSessions(),
@@ -64,6 +72,11 @@ export default function HomeShell() {
     setDrawerOpen(false)
   }, [])
   const startChat = useCallback(() => setChatStarted(true), [])
+  // QUOT-588：首问落地，服务端建了新会话——activeSessionId 落到新 id，第二问续同一会话
+  const onSessionCreated = useCallback((sessionId: string) => {
+    setActiveSessionId(sessionId)
+    setChatStarted(true)
+  }, [])
 
   const openResearch = useCallback(
     (code: string) => {
@@ -99,58 +112,75 @@ export default function HomeShell() {
   }
 
   return (
-    <div className="flex min-h-0 flex-col gap-3 desk:h-full">
-      {!desktopSegment && (
-        <div className="flex items-center justify-between gap-2">
-          {switcher}
-          {isMobile && (
-            <IconButton
-              label="打开对话列表"
-              icon={<PanelRight className="size-4" aria-hidden="true" />}
-              onClick={() => setDrawerOpen(true)}
+    <HomeTodoMoversShellMountedContext.Provider value>
+      <HomeTodoMoversContext.Provider value={todoMoversData}>
+      <div className="flex min-h-0 flex-col gap-3 desk:h-full">
+        {!desktopSegment && (
+          <div className="flex items-center justify-between gap-2">
+            {switcher}
+            {isMobile && (
+              <IconButton
+                label="打开对话列表"
+                icon={<PanelRight className="size-4" aria-hidden="true" />}
+                onClick={() => setDrawerOpen(true)}
+              />
+            )}
+          </div>
+        )}
+
+        {desktopSegment && slot && createPortal(switcher, slot)}
+
+        {/* 待办异动入口（QUOT-588）：shell 层显式全局挂载——chat / desk 两模式都显示，
+            且独立于下面两个 hidden 容器（不再依赖 portal 无视 hidden 的泄漏行为）。
+            数据由内部 `HomeScreen` 的同一份 `useHomeBlocks` 经 `HomeTodoMoversContext` 供给，
+            这里不二次取数 / 不重复轮询；无顶栏槽（单测）时退回内容区原卡。 */}
+        <div hidden={mode !== 'chat' && mode !== 'desk'} className="shrink-0">
+          <HomeTodoMoversGlobalBar />
+        </div>
+
+        {/* 两种模式常驻挂载、只切 `hidden`：对话里的在途请求与滚动位置不因切模式丢失 */}
+        <div
+          hidden={mode !== 'chat'}
+          className={cn(
+            'min-h-0 flex-1 flex-col gap-3 lg:flex-row',
+            mode === 'chat' ? 'flex' : 'hidden',
+          )}
+        >
+          {chatStarted && (
+            <SessionList
+              {...listProps}
+              className="hidden lg:flex lg:w-sidebar lg:shrink-0 lg:border-r lg:border-border lg:pr-2"
             />
           )}
-        </div>
-      )}
-
-      {desktopSegment && slot && createPortal(switcher, slot)}
-
-      {/* 两种模式常驻挂载、只切 `hidden`：对话里的在途请求与滚动位置不因切模式丢失 */}
-      <div
-        hidden={mode !== 'chat'}
-        className={cn(
-          'min-h-0 flex-1 flex-col gap-3 lg:flex-row',
-          mode === 'chat' ? 'flex' : 'hidden',
-        )}
-      >
-        {chatStarted && (
-          <SessionList
-            {...listProps}
-            className="hidden lg:flex lg:w-sidebar lg:shrink-0 lg:border-r lg:border-border lg:pr-2"
+          <ChatPane
+            activeSessionId={activeSessionId}
+            onOpenResearch={openResearch}
+            onAskDesk={askDesk}
+            onRoundComplete={refreshSessions}
+            onFirstRoundStarted={startChat}
+            onSessionCreated={onSessionCreated}
           />
-        )}
-        <ChatPane
-          activeSessionId={activeSessionId}
-          onOpenResearch={openResearch}
-          onAskDesk={askDesk}
-          onRoundComplete={refreshSessions}
-          onFirstRoundStarted={startChat}
-        />
-      </div>
+        </div>
 
-      <div hidden={mode !== 'desk'} className="min-h-0 flex-1">
-        <HomeScreen initialQuestion={deskQuestion} onQuestionConsumed={consumeDeskQuestion} />
-      </div>
+        <div hidden={mode !== 'desk'} className="min-h-0 flex-1">
+          <HomeScreen
+            initialQuestion={deskQuestion}
+            onQuestionConsumed={consumeDeskQuestion}
+            onTodoMoversData={setTodoMoversData}
+          />
+        </div>
 
-      <Drawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        title="对话"
-        subtitle="选一条继续，或开新对话"
-        fullScreenNarrow
-      >
-        <SessionList {...listProps} />
-      </Drawer>
-    </div>
+        <Drawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          title="对话"
+          subtitle="选一条继续，或开新对话"
+          fullScreenNarrow
+        >
+          <SessionList {...listProps} />
+        </Drawer>
+      </div>
+      </HomeTodoMoversContext.Provider>
+    </HomeTodoMoversShellMountedContext.Provider>
   )
 }

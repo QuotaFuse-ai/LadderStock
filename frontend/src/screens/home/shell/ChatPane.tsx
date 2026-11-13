@@ -87,6 +87,11 @@ interface ChatPaneProps {
    * 空态层与消息层在同一页内互斥切换，不跳路由。
    */
   onFirstRoundStarted?: () => void
+  /**
+   * 首问落地（QUOT-588）：服务端返回新 `session_id` 时回调，外壳 `setActiveSessionId`。
+   * 不回传会导致 `activeSessionId` 恒 null：失败时闪回空白、第二问另起新会话（多轮断裂）。
+   */
+  onSessionCreated?: (sessionId: string) => void
 }
 
 interface PaneData {
@@ -96,7 +101,7 @@ interface PaneData {
 
 const EMPTY_PANE: PaneData = { session: null, turns: [] }
 
-export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundComplete, onFirstRoundStarted }: ChatPaneProps) {
+export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundComplete, onFirstRoundStarted, onSessionCreated }: ChatPaneProps) {
   const navigate = useNavigate()
   const isMobile = useIsMobile()
 
@@ -137,13 +142,12 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
 
   const reloadPane = pane.reload
 
-  // 换会话：旧请求作废，本地追加与失败态一起清掉（同一会话的读取结果由 useAsync 保留）
+  // 换会话：旧请求作废，失败态一起清掉（同一会话的读取结果由 useAsync 保留）
   useEffect(() => {
     requestSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
     setPending(null)
-    setAppendTurns([])
     setFailure(null)
     setFailedQuestion(null)
     setStoppedQuestion(null)
@@ -154,6 +158,11 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       window.clearTimeout(recoveryTimerRef.current)
       recoveryTimerRef.current = null
     }
+    // QUOT-588 首问交接不闪空：activeSessionId 落到首问新建的会话时，本地那条已落地
+    // 的答案保留到服务端读回（`turns` 按 seq 去重，读回即无缝替换）；其他换会话照旧清掉
+    if (activeSessionId === localSession?.id) return
+    setAppendTurns([])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId])
 
   // 「新对话」：首问还没发出去前先算作一条排队中的会话（不发请求、不建空会话）；
@@ -311,6 +320,8 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
     if (reply.session_id !== activeSessionId) {
       // 首问：会话 id 是新的，标题由服务端按首问截 40 码位生成，读回前先留空
       setLocalSession({ id: reply.session_id, title: '' })
+      // QUOT-588：把新 id 交回外壳——activeSessionId 落到新会话，第二问续同一会话
+      onSessionCreated?.(reply.session_id)
     }
     // 会话列表按服务端 `turns` / `title` 显示：这一轮落地后重取一次
     onRoundComplete()
@@ -394,7 +405,10 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   // 空态两段式（QUOT-587）：冷启动（未选中任何会话、也没有进行中的内容）整区就是
   // 「空白背景 + 居中输入框」；首问发出后消息层接管、输入框落到底部。
   // 选中了会话（含 0 轮的空会话）仍走常规消息层，标题行 / 重命名入口保留。
-  const emptyStage = activeSessionId === null && !hasConversation && !recoverable
+  // QUOT-588：失败 / 停止态也停在消息层——否则首问失败瞬间（appendTurns 被滤掉、
+  // activeSessionId 还是 null）emptyStage 翻 true，失败 + 重试被藏进空白欢迎层。
+  const emptyStage =
+    activeSessionId === null && !hasConversation && !recoverable && !failure && !failedQuestion && !stoppedQuestion
 
   const composer = (
     <form
