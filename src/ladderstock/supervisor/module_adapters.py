@@ -52,13 +52,13 @@ from ladderstock.core import runtime
 from ladderstock.core.boundary import PEER_DIR_ENV, PEER_SIBLING_DIRS
 from ladderstock.supervisor.adapters import (
     MODULE_ORDER,
-    MODULE_PORTS,
     ON_DEMAND_MODULES,
     ModuleAdapter,
     SpawnedProcess,
     module_registry,
 )
 from ladderstock.supervisor.engine import SupervisorError
+from ladderstock.supervisor.modules import MODULE_PORTS
 from ladderstock.supervisor.proctree import QUERY_TIMEOUT_SEC, split_windows_commandline
 
 #: 端口探测（socket connect）的短超时：只用于轮询，不能拖慢 state()

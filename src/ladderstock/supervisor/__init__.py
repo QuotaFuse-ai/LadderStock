@@ -21,7 +21,6 @@
 
 from ladderstock.supervisor.adapters import (
     MODULE_ORDER,
-    MODULE_PORTS,
     ModuleAdapter,
     SpawnedProcess,
     module_registry,
@@ -35,6 +34,13 @@ from ladderstock.supervisor.ledger import (
     Ledger,
     LedgerEntry,
     ModuleRecord,
+)
+from ladderstock.supervisor.modules import (
+    MODULE_PORTS,
+    current_env,
+    module_ports,
+    reset_env,
+    select_env,
 )
 from ladderstock.supervisor.proctree import (
     ProcessOps,
@@ -58,6 +64,10 @@ __all__ = [
     "SelfHealEngine",
     "SpawnedProcess",
     "SupervisorEngine",
+    "current_env",
+    "module_ports",
+    "reset_env",
+    "select_env",
     "default_process_ops",
     "module_registry",
     "split_windows_commandline",
