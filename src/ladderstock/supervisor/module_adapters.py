@@ -38,7 +38,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -1309,8 +1309,79 @@ def _command_adapters(
     }
 
 
+def rebase_adapter_ports(
+    adapter: BaseAdapter, ports: tuple[int, ...]
+) -> BaseAdapter:
+    """按避让后的实际端口重建命令行型适配器（QUOT-594 端口自动避让）。
+
+    `_command_adapters()` 构造时端口硬编码在 `StartFace.argv`（`--port NNNN`）
+    与 `face.port` 里；避让只换基准表中同位置端口的字面值，argv 其余部分、
+    匹配关键字里的端口号、env / 日志配置原样保留。face 顺序即端口表顺序
+    （构造处保证），逐位替换。匹配关键字（match/alt_match 等）里内嵌的
+    端口号是**基准端口**——避让后监听者 cmdline 用新端口，关键字仍能命中
+    exe / 子命令片段（判定不依赖端口字面值），不影响认领与对账。
+    """
+    if len(ports) != len(adapter.faces):
+        raise SupervisorError(
+            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数"
+            f"（{len(adapter.faces)}）不符"
+        )
+    faces = []
+    for face, port in zip(adapter.faces, ports, strict=True):
+        old = str(face.port)
+        new = str(port)
+        argv = tuple(new if token == old else token for token in face.argv)
+        faces.append(
+            replace(
+                face,
+                argv=argv,
+                port=port,
+                match=tuple(_rebase_match(m, old, new) for m in face.match),
+                alt_match=tuple(_rebase_match(m, old, new) for m in face.alt_match),
+                alt_matches=tuple(
+                    tuple(_rebase_match(m, old, new) for m in group)
+                    for group in face.alt_matches
+                ),
+            )
+        )
+    return BaseAdapter(
+        adapter.name,
+        tuple(ports),
+        faces,
+        host=adapter._host,
+        env_files=adapter._env_files,
+        env_overrides=dict(adapter._env_overrides),
+        log_dir=adapter._log_dir,
+        evidence_cache_sec=adapter._cache_sec,
+        graceful_wait_sec=adapter._graceful_wait,
+        readback_wait_sec=adapter._readback_wait,
+        clock=adapter._clock,
+        sleep=adapter._sleep,
+    )
+
+
+def _rebase_match(token: str, old: str, new: str) -> str:
+    """匹配关键字里的端口号同步替换（仅当片段整体是基准端口字面值）。"""
+    return new if token == old.lower() else token
+
+
 def _panel_spawn_command(env: Mapping[str, str]) -> str:
-    """看门狗用的看板拉起命令（JSON 字符串数组；`ldst watchdog --spawn-cmd` 解析）。"""
+    """看门狗用的看板拉起命令（JSON 字符串数组；`ldst watchdog --spawn-cmd` 解析）。
+
+    QUOT-594：看板端口避让后写 config/ports.yaml，看门狗重启看板时复用
+    同一实际端口；读不到记录回默认 5950。显式端口覆盖（LDST_PANEL_PORT）
+    最高优先，不被避让记录覆盖。
+    """
+    panel_port = (env.get("LDST_PANEL_PORT") or "").strip()
+    if not panel_port.isdigit():
+        try:
+            from ladderstock.cli.paths import config_dir
+            from ladderstock.supervisor.port_allocator import load_board_override
+
+            remembered = load_board_override(config_dir())
+        except Exception:  # noqa: BLE001 - 读配置失败回默认端口
+            remembered = None
+        panel_port = str(remembered) if remembered else str(PANEL_PORT)
     return json.dumps(
         [
             str(part)
@@ -1318,7 +1389,7 @@ def _panel_spawn_command(env: Mapping[str, str]) -> str:
                 *launcher_entry(env),
                 "run",
                 "--port",
-                str(PANEL_PORT),
+                panel_port,
             )
         ],
         ensure_ascii=False,
