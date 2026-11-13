@@ -548,7 +548,9 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       </div>
 
       <form
-        className="flex shrink-0 items-end gap-2 border-t border-border pt-2"
+        aria-label="对话输入区"
+        data-testid="composer"
+        className="flex shrink-0 flex-col gap-1 rounded border border-border-strong bg-surface px-2 pb-1.5 pt-1 focus-within:border-accent transition-colors duration-fast ease-ldst"
         onSubmit={(event) => {
           event.preventDefault()
           void ask(draft)
@@ -563,28 +565,25 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
           maxLength={2000}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
-          className="min-w-0 flex-1"
+          className="min-w-0 resize-none border-0 bg-transparent px-1 focus-visible:border-transparent"
         />
-        {busy ? (
-          <Button
-            size="lg"
-            variant="secondary"
-            onClick={stop}
-            leadingIcon={<Square className="size-3.5" aria-hidden="true" />}
-          >
-            停止
-          </Button>
-        ) : (
-          <Button
-            type="submit"
-            size="lg"
-            variant="primary"
-            disabled={!draft.trim()}
-            leadingIcon={<Send className="size-4" aria-hidden="true" />}
-          >
-            发送
-          </Button>
-        )}
+        <div className="flex justify-end">
+          {busy ? (
+            <IconButton
+              label="停止"
+              variant="secondary"
+              onClick={stop}
+              icon={<Square className="size-3.5" aria-hidden="true" />}
+            />
+          ) : (
+            <IconButton
+              label="发送"
+              type="submit"
+              disabled={!draft.trim()}
+              icon={<Send className="size-4" aria-hidden="true" />}
+            />
+          )}
+        </div>
       </form>
 
       <div className="flex shrink-0 items-center justify-between gap-2 text-11px text-text-muted">
