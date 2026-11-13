@@ -156,11 +156,11 @@ def test_frozen_config_dir_never_uses_cwd(
     for prefix in paths.LEGACY_ENV_PREFIXES:
         monkeypatch.delenv(f"{prefix}CONFIG_DIR", raising=False)
         monkeypatch.delenv(f"{prefix}DATA_DIR", raising=False)
-    user_root = tmp_path / "userdata"
-    monkeypatch.setattr(paths, "user_data_root", lambda: user_root)
 
-    assert paths.config_dir() == user_root / "config"
-    assert paths.data_dir() == user_root / "data"
+    # QUOT-592：冻结态即便携态，config/data 落安装根内（绝不落 cwd 之外的目录）
+    install = runtime.install_root()
+    assert paths.config_dir() == install / "config"
+    assert paths.data_dir() == install / "data"
     assert paths.bundle_config_dir() == runtime.bundle_config_dir()
 
 
