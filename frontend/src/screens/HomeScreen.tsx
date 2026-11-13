@@ -58,9 +58,14 @@ export interface HomeScreenProps {
    * 未传（独立渲染 / 单测）时入口由本屏就地兜底渲染。
    */
   onTodoMoversData?: (data: HomeTodoMoversData) => void
+  /**
+   * 顶栏「问 AI」聚焦请求（QUOT-590）：计数变化即切「研究股票」页签并聚焦
+   * 底部唯一输入框，只聚焦不预填、不发送。
+   */
+  focusRequest?: number
 }
 
-export default function HomeScreen({ initialQuestion = null, onQuestionConsumed, onTodoMoversData }: HomeScreenProps = {}) {
+export default function HomeScreen({ initialQuestion = null, onQuestionConsumed, onTodoMoversData, focusRequest = 0 }: HomeScreenProps = {}) {
   const forced = useForcedState()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -320,6 +325,7 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
           date={tradeDate}
           incomingQuestion={initialQuestion}
           onQuestionConsumed={onQuestionConsumed}
+          focusRequest={focusRequest}
           className="shrink-0 desk:w-96 desk:min-h-0"
         />
       </div>

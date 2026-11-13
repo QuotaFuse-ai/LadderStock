@@ -56,10 +56,15 @@ export interface HomeSearchProps {
    */
   incomingQuestion?: string | null
   onQuestionConsumed?: () => void
+  /**
+   * 顶栏「问 AI」聚焦请求（QUOT-590）：计数变化即切「研究股票」页签并聚焦
+   * 底部唯一输入框，只聚焦——不预填文字、不自动发送。
+   */
+  focusRequest?: number
   className?: string
 }
 
-export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestionConsumed, className }: HomeSearchProps) {
+export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestionConsumed, focusRequest = 0, className }: HomeSearchProps) {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const initialQuery = params.get('search')
@@ -89,6 +94,17 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const focusInput = () => inputRef.current?.focus()
+
+  // 顶栏「问 AI」（QUOT-590）：只聚焦不预填——切「研究股票」页签 + 聚焦底部唯一输入框。
+  // 聚焦要等 setTab 的重渲染落地（`hidden` 撤掉后才 focusable），所以推迟一拍。
+  const lastFocusRequest = useRef(0)
+  useEffect(() => {
+    if (focusRequest <= lastFocusRequest.current) return
+    lastFocusRequest.current = focusRequest
+    setTab('chat')
+    const timer = window.setTimeout(focusInput, 0)
+    return () => window.clearTimeout(timer)
+  }, [focusRequest])
 
   // 对话区「问研究台」带来的一问：切页签 + 填词 + 聚焦，不自动发（同起步问题的口径）
   const lastIncomingQuestion = useRef<string | null>(null)

@@ -51,7 +51,11 @@ function topbar(): HTMLElement {
 }
 
 function askAiInTopbar(): HTMLElement {
-  return within(topbar()).getByRole('button', { name: '问 AI' })
+  // 首页上按钮是聚焦语义（QUOT-590），非 home 仍是「问 AI」
+  return (
+    within(topbar()).queryByRole('button', { name: '聚焦研究 / 对话输入' }) ??
+    within(topbar()).getByRole('button', { name: '问 AI' })
+  )
 }
 
 /** 打开抽屉后输入框里应当已经是一整段可发送的开场 */
@@ -113,12 +117,18 @@ describe('顶栏「问 AI」入口', () => {
     expect(screen.getByRole('button', { name: '复制开场' })).toBeTruthy()
   })
 
-  it('首页不绑定包：只写页面名，输入框为空', () => {
+  it('首页不再开抽屉：问 AI 改聚焦既有输入框（QUOT-590，home 已有两颗 ask 面）', () => {
     renderLayout('/')
-    fireEvent.click(askAiInTopbar())
+    const button = askAiInTopbar()
+    // 文案是聚焦语义，不再是「打开抽屉」
+    expect(button.getAttribute('aria-label')).toBe('聚焦研究 / 对话输入')
+    expect(button.getAttribute('aria-haspopup')).toBeNull()
 
-    expect(screen.getByRole('heading', { name: '研究助手 · 首页' })).toBeTruthy()
-    expect(draftValue()).toBe('')
+    fireEvent.click(button)
+
+    // 不产生抽屉：home 的研究聊天只在 desk 页签一颗
+    expect(screen.queryByRole('heading', { name: '研究助手 · 首页' })).toBeNull()
+    expect(document.body.style.overflow).toBe('')
   })
 
   it('Escape 关闭抽屉', () => {

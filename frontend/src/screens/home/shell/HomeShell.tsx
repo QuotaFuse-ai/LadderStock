@@ -1,4 +1,4 @@
-import { useCallback, useContext, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { PanelRight } from 'lucide-react'
@@ -8,6 +8,7 @@ import { Drawer, IconButton, Segmented, type SegmentedOption } from '../../../co
 import { cn } from '../../../lib/cn'
 import { useHomeMode, type HomeMode } from '../../../lib/homeMode'
 import { HomeModeSlotContext } from '../../../lib/homeModeSlot'
+import { HomeAskFocusContext } from '../../../lib/homeAskFocus'
 import { useIsMobile } from '../../../lib/mediaQuery'
 import { researchHref } from '../../../lib/searchRoutes'
 import { useAsync } from '../../../lib/useAsync'
@@ -53,6 +54,20 @@ export default function HomeShell() {
   const [deskQuestion, setDeskQuestion] = useState<string | null>(null)
   // QUOT-588：待办异动数据由 `HomeScreen` 回调上行（context 只向下流动），供给全局入口
   const [todoMoversData, setTodoMoversData] = useState<HomeTodoMoversData | null>(null)
+  // 「问 AI」聚焦请求（QUOT-590）：顶栏在 home 不开抽屉，只广播聚焦既有输入框。
+  // 两个计数分别驱动 desk（切研究页签 + 聚焦）与 chat（聚焦 composer），只聚焦不自动发送。
+  const askFocus = useContext(HomeAskFocusContext)
+  const [deskFocusRequest, setDeskFocusRequest] = useState(0)
+  const [chatFocusRequest, setChatFocusRequest] = useState(0)
+  const consumedAskFocus = useRef(0)
+
+  useEffect(() => {
+    const seq = askFocus?.seq ?? 0
+    if (seq <= consumedAskFocus.current) return
+    consumedAskFocus.current = seq
+    if (mode === 'desk') setDeskFocusRequest((request) => request + 1)
+    else setChatFocusRequest((request) => request + 1)
+  }, [askFocus, mode])
 
   const sessions = useAsync<SessionSummary[]>(
     () => httpConversation.listSessions(),
@@ -159,6 +174,7 @@ export default function HomeShell() {
             onRoundComplete={refreshSessions}
             onFirstRoundStarted={startChat}
             onSessionCreated={onSessionCreated}
+            focusRequest={chatFocusRequest}
           />
         </div>
 
@@ -167,6 +183,7 @@ export default function HomeShell() {
             initialQuestion={deskQuestion}
             onQuestionConsumed={consumeDeskQuestion}
             onTodoMoversData={setTodoMoversData}
+            focusRequest={deskFocusRequest}
           />
         </div>
 
