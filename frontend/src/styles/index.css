@@ -38,6 +38,12 @@
     color: var(--ldst-text);
   }
 
+  /* 兜底：任何带 display 工具类（flex/grid 等）的元素上，`hidden` 属性都会被作者样式覆盖。
+     无 !important 会导致同一类坑反复出现（QUOT-586）。 */
+  [hidden] {
+    display: none !important;
+  }
+
   /* 原生 `type="search"` 在 Chromium / WebKit 下自带一枚清除 ✕，与 `SearchPanel` 里自定义的
      `IconButton` 重复（规格 §5.5）。Tailwind 的 `appearance-none` 管不到这个伪元素，只能显式写。 */
   input[type='search']::-webkit-search-cancel-button,
