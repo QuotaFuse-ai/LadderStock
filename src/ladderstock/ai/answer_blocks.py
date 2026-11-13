@@ -863,7 +863,9 @@ def build_blocks(
             {
                 "kind": NOTICE_MISSING_DATA,
                 "section": "来源",
-                "message": source_note(has_data=page_data, sources=source_list),
+                # notice 只在构不成 citation 时出现，措辞只取决于 page_data；
+                # 传空 sources 取 source_note 的 has_data 分支，与 chat.py 同源
+                "message": source_note(has_data=page_data, sources=[]),
             },
         )
     )
