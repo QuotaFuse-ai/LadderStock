@@ -787,11 +787,14 @@ COMPONENT_DIR_ENV: dict[str, str] = {}
 COMPONENT_SIBLING_DIRS: dict[str, str] = {}
 
 
-def _install_root() -> Path:
-    """peer / 组件目录的父目录（源码态 = 仓库父目录，冻结态见 `core.runtime`）。"""
+def _peer_base() -> Path:
+    """peer 同级目录探测的基准根（QUOT-569）：`LDST_PEER_ROOT` > `install_root()` >
+    已知部署根探测。源码态 install_root 指到仓库父目录，而真实部署可能落在
+    别的根（如 D:\\QuotaFuseModules）——探测细节收口在 `core.runtime.peer_root`。
+    """
     from ladderstock.core import runtime
 
-    return runtime.install_root()
+    return runtime.peer_root()
 
 
 def resolve_components(env: Mapping[str, str] | None = None) -> dict[str, ComponentControl]:
@@ -801,7 +804,7 @@ def resolve_components(env: Mapping[str, str] | None = None) -> dict[str, Compon
     for key, ctl in COMPONENTS.items():
         directory = (values.get(COMPONENT_DIR_ENV[key]) or "").strip()
         if not directory:
-            sibling = _install_root() / COMPONENT_SIBLING_DIRS[key]
+            sibling = _peer_base() / COMPONENT_SIBLING_DIRS[key]
             directory = str(sibling) if sibling.is_dir() else ctl.directory
         resolved[key] = ctl if directory == ctl.directory else replace(ctl, directory=directory)
     return resolved
@@ -817,7 +820,7 @@ def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, Peer
     for key, ctl in PEER_CONTROL.items():
         directory = (values.get(PEER_DIR_ENV[key]) or "").strip()
         if not directory:
-            sibling = _install_root() / PEER_SIBLING_DIRS[key]
+            sibling = _peer_base() / PEER_SIBLING_DIRS[key]
             directory = str(sibling) if sibling.is_dir() else ctl.directory
         resolved[key] = ctl if directory == ctl.directory else replace(ctl, directory=directory)
     return resolved

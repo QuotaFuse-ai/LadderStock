@@ -30,6 +30,16 @@ from pathlib import Path
 #: 安装根显式覆盖（与 `module_adapters.INSTALL_ROOT_ENV` 同一口径）
 INSTALL_ROOT_ENV = "LDST_INSTALL_ROOT"
 
+#: peer 根显式覆盖（与 `module_adapters.DEFAULT_PEER_ROOT_ENV` 同一口径）：
+#: 只影响 peer / 组件的同级目录探测，不改变 bundle/install 根本身。
+PEER_ROOT_ENV = "LDST_PEER_ROOT"
+
+#: 已知的部署根（按优先级探测）。源码态 install_root 解析到「仓库的父目录」
+# （如 D:\workplace），而真实部署可能落在别的根（如 D:\QuotaFuseModules）——
+#: 这里只探测「根/<同级名>」目录是否真实存在，绝不写死成解析结果。
+KNOWN_DEPLOY_ROOTS_ENV = "LDST_KNOWN_DEPLOY_ROOTS"
+KNOWN_DEPLOY_ROOTS: tuple[str, ...] = (r"D:\QuotaFuseModules",)
+
 #: 打包目录名：Windows/Linux 的 onedir 产物目录、macOS 的 `.app` 主干名
 APP_DIRNAME = "LadderStock"
 
@@ -94,6 +104,56 @@ def app_dir() -> Path:
     if _is_macos_app_binary(exe):
         return exe.parent.parent.parent
     return exe.parent
+
+
+def peer_root(env: Mapping[str, str] | None = None) -> Path:
+    """peer 同级目录探测的基准根。
+
+    优先级：`LDST_PEER_ROOT` 显式覆盖 > 源码态/冻结态的 `install_root()` > 已知
+    部署根探测（`LDST_KNOWN_DEPLOY_ROOTS` 补充清单 + 内置 `KNOWN_DEPLOY_ROOTS`）。
+
+    源码态 install_root = 仓库的父目录（如 D:\\workplace）；当真实部署落在别的
+    根（如 D:\\QuotaFuseModules）时，控制面会把「目录在位的 peer」误判成未配置
+    （QUOT-569）。这里按顺序探测已知根下是否真的存在部署痕迹（LadderStock 或
+    任一已知 peer 同级目录），命中才回退——绝不盲目把不存在的路径当根。
+    """
+    values = os.environ if env is None else env
+    override = (values.get(PEER_ROOT_ENV) or "").strip()
+    if override:
+        return Path(override)
+    base = install_root(values)
+    sibling_names = {
+        APP_DIRNAME.lower(),
+        *(name.lower() for name in DEPLOY_SIBLING_DIRS),
+    }
+    roots: list[Path] = []
+    extra = (values.get(KNOWN_DEPLOY_ROOTS_ENV) or "").strip()
+    for raw in ([extra] if extra else []) + list(KNOWN_DEPLOY_ROOTS):
+        for part in raw.split(";"):
+            part = part.strip()
+            if part:
+                roots.append(Path(part))
+    for root in roots:
+        try:
+            if any(child.name.lower() in sibling_names for child in root.iterdir()):
+                return root
+        except OSError:
+            continue
+    return base
+
+
+#: 已知 peer 同级目录名（部署根探测的「痕迹」清单；与 boundary.PEER_SIBLING_DIRS
+#: 对齐，但本模块不 import boundary，避免循环依赖）。
+DEPLOY_SIBLING_DIRS: tuple[str, ...] = (
+    "TickHub-CN",
+    "TickHub-US",
+    "Wire",
+    "StockSenate",
+    "FinanceCoffer",
+    "Mem0",
+    "ProxyFleet",
+    "Qdrant",
+)
 
 
 def project_root() -> Path:

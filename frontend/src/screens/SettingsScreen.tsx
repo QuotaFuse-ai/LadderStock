@@ -119,6 +119,7 @@ function isSection(value: string | null): value is Section {
 
 const PEER_STATUS_LABEL: Record<PeerStatus, string> = {
   unconfigured: '未配置',
+  drifted: '目录漂移',
   not_installed: '未安装',
   installed: '已安装',
   starting: '启动中',
@@ -129,6 +130,7 @@ const PEER_STATUS_LABEL: Record<PeerStatus, string> = {
 
 const PEER_DOT: Record<PeerStatus, DotTone> = {
   unconfigured: 'flat',
+  drifted: 'warn',
   not_installed: 'flat',
   installed: 'warn',
   starting: 'accent',

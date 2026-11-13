@@ -1,0 +1,96 @@
+# LadderStock 助手专用 mem0 —— 与 Multica 的 mem0-dev 物理隔离
+#
+# 隔离口径（对照 mem0-dev 逐项独立）：
+#   compose project : qf-mem0            （mem0-dev 是 mem0-dev）
+#   容器名          : qf-mem0-*          （mem0-dev 是 mem0-dev-*）
+#   postgres 实例   : 独立容器 + 独立数据卷 qf_mem0_postgres，端口 8532（mem0-dev 是 8432）
+#   向量集合        : ladderstock_memories（mem0-dev 是 memories，且库都不同）
+#   API / Dashboard : 9100 / 3200（mem0-dev 是 9000 / 3100）
+#   镜像            : qf-mem0/mem0:latest、qf-mem0/mem0-dashboard:latest
+#                     （mem0-dashboard 从 mem0-dev 构建产物另打 tag；
+#                      mem0 镜像在 dev 产物之上叠加 D:\mem0\server 新版源码
+#                      与 sentence-transformers，见 .build/server/Dockerfile.patch，
+#                      重构建：wsl -d <发行版> -- docker build -f D:\QuotaFuseModules\Mem0\.build\server\Dockerfile.patch
+#                               -t qf-mem0/mem0:latest D:\QuotaFuseModules\Mem0\.build\server）
+#                      mem0-dev 删自己的 tag 不会连带影响本实例）
+#
+# 启停：docker compose -f D:\QuotaFuseModules\Mem0\docker-compose.yml up -d / stop
+# 禁止：把本文件里的服务加进 mem0-dev 的 compose；复用 mem0-dev 的 postgres 或集合。
+
+name: qf-mem0
+
+services:
+  mem0:
+    image: qf-mem0/mem0:latest
+    container_name: qf-mem0-mem0
+    restart: unless-stopped
+    ports:
+      - "9100:8000"
+    env_file:
+      - .env
+    environment:
+      # 云骏 key 只从 Windows 机器级环境变量 LDST_LLM_API_KEY 透传进来（WSLENV），
+      # 不写进 .env、不进仓库；缺失时 compose 直接报错，不静默用空 key。
+      - OPENAI_API_KEY=${LDST_LLM_API_KEY:?LDST_LLM_API_KEY missing - set it in the Windows machine environment}
+      - DASHBOARD_URL=http://localhost:3200
+      - APP_DB_NAME=mem0_app
+    volumes:
+      - ./history:/app/history
+      - qf_mem0_hf_cache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
+    networks:
+      - qf_mem0_network
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: qf-mem0-postgres
+    restart: unless-stopped
+    shm_size: "128mb"
+    networks:
+      - qf_mem0_network
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -d postgres -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - qf_mem0_postgres:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    ports:
+      - "8532:5432"
+
+  mem0-dashboard:
+    image: qf-mem0/mem0-dashboard:latest
+    container_name: qf-mem0-dashboard
+    restart: unless-stopped
+    ports:
+      - "3200:3000"
+    networks:
+      - qf_mem0_network
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:9100
+      - API_INTERNAL_URL=http://mem0:8000
+      - NEXT_PUBLIC_INSTANCE_NAME=Mem0
+    depends_on:
+      mem0:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  qf_mem0_postgres:
+  qf_mem0_hf_cache:
+
+networks:
+  qf_mem0_network:
+    driver: bridge

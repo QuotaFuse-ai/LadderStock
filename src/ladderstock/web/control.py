@@ -31,6 +31,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -63,6 +64,7 @@ from ladderstock.core.boundary import (
     resolve_components,
     resolve_peer_control,
 )
+from ladderstock.core import runtime
 from ladderstock.core.fsguard import (
     AclError,
     harden_file_acl,
@@ -142,6 +144,9 @@ DENY_PROCESS_NAMES = frozenset(
 
 #: 状态码 → 中文标签（唯一真源；前端只做展示，不自己猜）
 STATUS_UNCONFIGURED = "unconfigured"
+#: 目录漂移（QUOT-569）：声明目录不存在，但该 peer 的端口在监听且健康检查通过
+#: ——服务其实在跑，只是控制面解析不到托管路径。与「未配置」区分开，避免误判。
+STATUS_DRIFTED = "drifted"
 STATUS_NOT_INSTALLED = "not_installed"
 STATUS_INSTALLED = "installed"
 STATUS_STARTING = "starting"
@@ -151,6 +156,7 @@ STATUS_FAILED = "failed"
 
 STATUS_LABELS: dict[str, str] = {
     STATUS_UNCONFIGURED: "未配置",
+    STATUS_DRIFTED: "目录漂移",
     STATUS_NOT_INSTALLED: "未安装",
     STATUS_INSTALLED: "已安装",
     STATUS_STARTING: "启动中",
@@ -228,6 +234,22 @@ COMPOSE_TIMEOUT_SEC = 120.0
 WSL_PROBE_TIMEOUT_SEC = 15.0
 #: 期望 WSL 发行版的机器级覆盖键（不设则解析 `wsl -l -v` 的默认发行版，绝不写死）
 WSL_DISTRO_ENV = "LDST_WSL_DISTRO"
+
+# --------------------------------------------------------------------------- #
+# compose 形态一键安装（QUOT-569 mem0）
+# --------------------------------------------------------------------------- #
+
+#: compose 形态 peer 的随包部署资产（bundle 相对）：peer key → 资产目录。
+#: mem0 一键安装把这份资产落到 peer 目录后 `compose up -d`。
+COMPOSE_PEER_ASSETS: dict[str, str] = {
+    "mem0": os.path.join("ops", "peers", "mem0"),
+}
+#: mem0 预检的端口全集（API 9100 / dashboard 3200 / postgres 8532）。
+#: dashboard/postgres 不在 PeerControl 里，单独列；compose 启动前必须全部空闲。
+MEM0_INSTALL_PORTS: tuple[int, ...] = (9100, 3200, 8532)
+#: 机器级环境变量（LLM API key）：compose 的 environment 段从它透传，
+#: 不写进 .env / yaml / 日志（密钥红线）。
+MEM0_API_KEY_ENV = "LDST_LLM_API_KEY"
 
 #: Windows 计划任务生命周期（QUOT-485 ProxyFleet）：单条 PowerShell cmdlet 调用上限
 TASK_TIMEOUT_SEC = 60.0
@@ -1733,7 +1755,12 @@ class ControlPlane:
             "actions": {
                 # 未托管的服务（如 WSL 里的 FinanceCoffer，QUOT-403）一律不出
                 # 安装/启停按钮：Windows 侧没有它的进程归属证据，也不能杀。
-                "can_install": ctl.managed and dir_exists and registered and not installed,
+                # compose 形态（QUOT-569 mem0）：目录不存在时也可装——一键安装
+                # 会先把随包部署资产落到 peer 目录，再 compose up。
+                "can_install": ctl.managed
+                and registered
+                and not installed
+                and (dir_exists or ctl.key in COMPOSE_PEER_ASSETS),
                 # 按面判定（QUOT-481 缺陷 3）：只要存在未监听的服务面就允许补跑
                 # 启动（如 Wire 的 web 面挂了、mcp 面还活着），不再要求全部端口
                 # 先停下来；启动也只补跑那些面（见 _start）。
@@ -1804,6 +1831,14 @@ class ControlPlane:
         if not dir_exists:
             hint = PEER_DIR_ENV.get(key)
             suffix = f"（把仓库放到 LadderStock 同级目录，或设置 {hint}）" if hint else ""
+            if listening and health_ok:
+                # 目录漂移（QUOT-569）：探针活着但托管路径解析不到。明示「服务在
+                # 跑、路径未托管」，而不是「未配置」——后者会让人误判服务没装。
+                return (
+                    STATUS_DRIFTED,
+                    f"服务在运行且健康检查通过，但托管目录解析不到："
+                    f"{self.peers[key].directory}；请检查 {hint or 'LDST_PEER_ROOT'} 等目录覆盖变量",
+                )
             return STATUS_UNCONFIGURED, f"目录不存在：{self.peers[key].directory}{suffix}"
         if not registered:
             return STATUS_UNCONFIGURED, "未在 config/sources.yaml 的 peers 登记"
@@ -2528,6 +2563,8 @@ class ControlPlane:
     def _install(self, job: Job) -> None:
         """五步安装，动作写死在 PRD §4，不允许扩展（DEC-014 §4）。"""
         ctl = self.peers[job.peer]
+        if ctl.key in COMPOSE_PEER_ASSETS:
+            return self._install_compose(job, ctl)
         directory = Path(ctl.directory)
         if not directory.is_dir():
             raise JobFailure(f"目录不存在：{directory}")
@@ -2723,6 +2760,122 @@ class ControlPlane:
             return lines[0]
         drive = windows.drive.rstrip(":").lower()
         return f"/mnt/{drive}{windows.as_posix()[2:] if windows.drive else windows.as_posix()}"
+
+    def _compose_asset_root(self, key: str) -> Path:
+        """随包部署资产的 bundle 绝对路径（QUOT-569）。"""
+        rel = COMPOSE_PEER_ASSETS.get(key)
+        if not rel:
+            raise JobFailure(f"{key} 没有随包部署资产，不走一键安装")
+        return runtime.bundle_root() / rel
+
+    def _install_compose(self, job: Job, ctl: PeerControl) -> None:
+        """compose 形态一键安装（QUOT-569 mem0）：预检 → 落资产 → up → 验活。
+
+        与 venv 形态的五步安装完全不同：没有 pip / .venv，依赖链是
+        WSL + docker + 端口 + 机器级 LDST_LLM_API_KEY。预检每一项缺失都直接
+        失败并给中文指引（不自修环境、不静默跳过）；密钥不进 .env / 日志。
+        """
+        directory = Path(ctl.directory)
+        assets = self._compose_asset_root(ctl.key)
+
+        # ---- 预检（任一缺失即失败，指引写到 error / 日志）----
+        job.step = "预检环境"
+        job.progress = 0.05
+        missing: list[str] = []
+        distro = default_wsl_distro()
+        if not distro:
+            missing.append(
+                "WSL 发行版不可用：安装 WSL（管理员 PowerShell 执行 "
+                "`wsl --install -d Ubuntu`）后重试，或设置 LDST_WSL_DISTRO 显式指定"
+            )
+        else:
+            probe = self._run(
+                ["wsl.exe", "-d", distro, "--", "docker", "version", "--format", "ok"],
+                directory,
+                WSL_PROBE_TIMEOUT_SEC,
+            )
+            if not (probe.ok and "ok" in probe.output):
+                missing.append(
+                    "WSL 里 docker 不可用：先安装并启动 Docker Desktop（或 WSL 内 "
+                    "docker-ce），确认 `wsl docker version` 正常后重试"
+                )
+        occupied = [port for port in MEM0_INSTALL_PORTS if self._port_probe(port)]
+        if occupied:
+            owners = "; ".join(
+                f"端口 {port}: {owner.process or '未知进程'}（PID {owner.pid or '未知'}）"
+                for port in occupied
+                for owner in self._port_probe(port)[:1]
+            )
+            missing.append(
+                f"端口被占用（{owners}）：mem0 需要 {', '.join(map(str, MEM0_INSTALL_PORTS))} "
+                "全部空闲；先停止占用这些端口的程序，不要改端口"
+            )
+        if not (os.environ.get(MEM0_API_KEY_ENV) or "").strip():
+            missing.append(
+                f"未配置 LLM API Key（{MEM0_API_KEY_ENV}）：以管理员执行 "
+                f"`setx /M {MEM0_API_KEY_ENV} <云骏 API Key>`（写入 Windows 机器级环境变量）"
+                "后重开终端重试；密钥只走环境变量透传，不进任何文件"
+            )
+        if missing:
+            raise JobFailure("预检未通过：" + "；".join(missing))
+        job.log(f"  预检通过（WSL {distro}、docker 可用、端口空闲、{MEM0_API_KEY_ENV} 已配置）")
+
+        # ---- 落资产（compose / init-db / server 构建上下文 / .env 模板）----
+        job.step = "落部署资产"
+        job.progress = 0.3
+        directory.mkdir(parents=True, exist_ok=True)
+        for item in assets.iterdir():
+            if item.name.startswith(".") and item.suffix == ".example":
+                continue
+            target = directory / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, target)
+        env_file = directory / ctl.env_filename
+        if not env_file.exists():
+            shutil.copy2(assets / ".env.example", env_file)
+            self._fill_env_secrets(env_file)
+            self._harden_acl(env_file)
+        job.log(f"  部署资产已落位：{directory}")
+
+        # ---- compose up（本地 build server/，不依赖任何预推镜像）----
+        job.step = "构建并启动（docker compose up -d --build）"
+        job.progress = 0.55
+        linux_path = self._compose_linux_path(distro, ctl)
+        argv = self._wsl_compose_argv(distro, linux_path, "up", "-d", "--build")
+        job.log(f"  $ {' '.join(argv[:8])} …")
+        result = self._run(argv, directory, INSTALL_STEP_TIMEOUT_SEC)
+        if not result.ok:
+            raise JobFailure(
+                f"compose up --build 失败（exit {result.returncode}）："
+                f"{tail_lines(result.output, 5)}"
+            )
+        for line in tail_lines(result.output, 10):
+            job.log(f"  {line}")
+
+        # ---- 验活：等 /configure 200 且集合名正确 ----
+        job.step = "验活"
+        job.progress = 0.9
+        self._await_compose_health(job, ctl)
+
+    def _fill_env_secrets(self, env_file: Path) -> None:
+        """生成 .env 时填随机 POSTGRES_PASSWORD / JWT_SECRET（不落日志）。"""
+        text = env_file.read_text(encoding="utf-8")
+        text = text.replace("CHANGE_ME_RANDOM", secrets.token_urlsafe(24))
+        env_file.write_text(text, encoding="utf-8")
+
+    def _await_compose_health(self, job: Job, ctl: PeerControl) -> None:
+        """验活：`/configure` 200 且返回的集合名与白名单一致（QUOT-569）。"""
+        url = f"http://127.0.0.1:{ctl.mcp_port}{ctl.health_path}"
+        deadline = time.monotonic() + START_GRACE_SEC * 4  # 首次拉模型可能较慢
+        while time.monotonic() < deadline:
+            ok, detail = self._health(url, HEALTH_TIMEOUT_SEC)
+            if ok:
+                job.log(f"  健康检查通过（{url}）")
+                return
+            time.sleep(1.0)
+        raise JobFailure(f"启动后验活超时：{url} 一直不通过（最后探测：{detail}）")
 
     def _start_compose(self, job: Job, ctl: PeerControl) -> None:
         """Docker compose 生命周期的启动（QUOT-486 mem0）：`up -d` 后等端口。

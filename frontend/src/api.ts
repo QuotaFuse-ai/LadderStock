@@ -701,6 +701,7 @@ export interface JournalWriteInfo {
 
 export type PeerStatus =
   | 'unconfigured'
+  | 'drifted'
   | 'not_installed'
   | 'installed'
   | 'starting'
