@@ -609,7 +609,10 @@ def test_stream_logs_no_memory_on_abort(monkeypatch: pytest.MonkeyPatch) -> None
             )
         ]
 
-    assert asyncio.run(collect()) == []
+    # QUOT-581 动作流水账之后：中止发生在 model 动作，received/history 等
+    # status 帧已合法发出。中止的真实契约是——没有块、没有 done、不落账。
+    frames = _parse_sse("".join(asyncio.run(collect())))
+    assert [event for event, _ in frames if event != "status"] == []
     assert chat_channel._history("session-abort-1") == []
 
 

@@ -45,7 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ladderstock.ai import answer_blocks, cli_provider, fallback
 from ladderstock.ai.cli_provider import build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error, sanitize
-from ladderstock.ai.providers import UnconfiguredError
+from ladderstock.ai.providers import UnconfiguredError, provider_for
 from ladderstock.core.boundary import BoundaryViolation
 
 #: 单轮上限：默认 60s；`LDST_AI_CHAT_TIMEOUT` 可覆盖，但本身也被硬上限夹住
@@ -70,6 +70,9 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 #: 断连轮询间隔：前端 abort 到这个间隔内被服务端发现
 DISCONNECT_POLL_SEC = 0.2
+#: 流式心跳：消费循环每 0.5s 醒一次；距上一帧 ≥2s（E5）就补一帧 heartbeat
+STREAM_HEARTBEAT_POLL_SEC = 0.5
+STREAM_HEARTBEAT_GAP_SEC = 2.0
 #: 取数时间允许的未来偏差（时钟漂移），超出即判「编造」
 _CLOCK_SKEW = timedelta(minutes=5)
 
@@ -579,6 +582,23 @@ async def complete(channel: Channel, system: str, user: str, *, timeout: float) 
     )
 
 
+async def complete_iter(
+    channel: Channel, system: str, user: str, *, timeout: float
+) -> AsyncIterator[str]:
+    """真流式增量（QUOT-581）：HTTP 通道逐段 yield 正文增量，任何失败从迭代器抛出。
+
+    CLI 通道物理上是一次性子进程（`acomplete`），没有真增量可给——直接抛
+    `NotImplementedError`，由调用方回落到一次性 `complete` 的降级路径
+    （`stream_mode: "degraded"` 如实标注），不假装逐字流。
+    """
+    if channel.kind == "cli":
+        raise NotImplementedError
+    target = channel.config.resolve(channel.config.default_model)
+    provider = provider_for(target.backend.kind)
+    async for chunk in provider.aiter_text(target, system, user, timeout=timeout):
+        yield chunk
+
+
 async def _cancel(task: asyncio.Future[str]) -> None:
     if task.done():
         with contextlib.suppress(BaseException):
@@ -896,6 +916,86 @@ async def start_detached_generation(*args: Any, **kwargs: Any) -> None:
     return None
 
 
+#: 定稿前缀切分：与 assistant.py `_SENTENCE_RE` 同一套句界（快照装配同源）
+_FINALIZED_SENTENCE_RE = re.compile(r"[^。！？；!?;\n]+[。！？；!?;]?[ \t]*")
+
+
+def _stream_status(
+    action: str,
+    item: str,
+    state: str,
+    *,
+    item_id: str | None = None,
+    elapsed_ms: int | None = None,
+    actions: list[dict[str, Any]] | None = None,
+) -> str:
+    """`event: status` 动作流水账帧（PI 2026-11-13 拍板）：动作级 running/done 对。"""
+    data: dict[str, Any] = {"action": action, "item": item, "state": state}
+    if item_id is not None:
+        data["item_id"] = item_id
+    if elapsed_ms is not None:
+        data["elapsed_ms"] = elapsed_ms
+    if actions is not None:
+        data["actions"] = actions
+    return sse_event("status", data)
+
+
+def _heartbeat(seq_frame_ms: int, last_seq: int) -> str:
+    return sse_event(
+        "heartbeat",
+        {
+            "gap_ms": seq_frame_ms,
+            "last_seq": last_seq,
+            "note": "模型仍在生成，连接保持",
+        },
+    )
+
+
+def _monotonic_ms() -> int:
+    return int(time.monotonic() * 1000)
+
+
+def _finalized_prefix(text: str) -> str:
+    """已定稿文本前缀：只保留句末标点收尾的完整句（与 reply_to_structured 同界）。"""
+    parts = _FINALIZED_SENTENCE_RE.findall(text)
+    ends = ("。", "！", "？", "；", "!", "?", ";", "\n")
+    return "".join(part for part in parts if part and part.endswith(ends)).rstrip()
+
+
+
+class AnswerBlockDivergence(Exception):
+    """定稿前缀的快照与已发块不一致：前缀稳定性假设被打破（内部错误）。"""
+
+
+def _new_finalized_blocks(
+    finalized: str,
+    sources: list[dict[str, Any]],
+    has_page_data: bool,
+    metrics: Mapping[str, Any] | None,
+    sent: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """对定稿前缀做快照装配，diff 出**新增**的稳定块（同步版，消费循环用）。
+
+    `build_blocks` 是唯一装配入口；流式序列必须是非流式序列的字节前缀
+    （B2 断言），所以已发块如果在新快照里变了形——说明前缀假设被打破——
+    `AnswerBlockDivergence` 上抛，收成 `model_error` 半流，绝不回改已发块。
+    尾块（citation / 来源 notice）依赖最终 sources：hold-back 到收尾统一发。
+    """
+    from ladderstock.web.assistant import reply_to_structured
+
+    ai = reply_to_structured(finalized)["build_input"]
+    snapshot = answer_block_payloads(
+        ai=ai, sources=sources, metrics=metrics, page_data=has_page_data
+    )
+    stable = snapshot[:-1] if snapshot else snapshot
+    for index, block in enumerate(stable[: len(sent)]):
+        if json.dumps(block, ensure_ascii=False, sort_keys=True) != json.dumps(
+            sent[index], ensure_ascii=False, sort_keys=True
+        ):
+            raise AnswerBlockDivergence(index)
+    return stable[len(sent):]
+
+
 async def stream_turn(
     *,
     message: str,
@@ -907,125 +1007,404 @@ async def stream_turn(
     ai: Mapping[str, Any] | None = None,
     metrics: Mapping[str, Any] | None = None,
 ) -> AsyncIterator[str]:
-    """逐块产出 SSE 文本；与非流式 `run_turn` 走同一条计算链、同一份会话落账。
+    """逐帧产出 SSE 文本；与非流式 `run_turn` 同一条计算链、同一份会话落账。
 
     块由 `answer_block_payloads()`（阶段 A `build_blocks`）装配：首块必为
-    `conclusion`，有 `citation` 时末块必是它，总数 ≤ `MAX_ANSWER_BLOCKS`。
-    `seq` 从 1 递增、不跳号；`done` 带 `last_seq` / `completed`。
+    `conclusion`，总数 ≤ `MAX_ANSWER_BLOCKS`；`seq` 从 1 递增不跳号，`done`
+    带 `last_seq` / `completed` / `elapsed_ms` / 累计 `actions` 摘要。
 
-    `ai` / `metrics` 是上游已算好的结构化输入（QUOT-579）；缺省按空处理，由
-    `build_blocks` 如实出 notice，不拿字符串回显临时拼结构（红线 3）。
+    真流式（PI 2026-11-13 拍板）：
+
+    - status 是**动作流水账**：context / history / model / assemble / persist，
+      每条动作 running→done 一对，done 帧带真实 `elapsed_ms`（计时器包在
+      真实调用点两侧）；model 动作带真实模型名。
+    - HTTP 通道走 `complete_iter`（stream:true）逐段取增量：按句界定稿前缀、
+      快照 diff 出新增块逐个 `event: block` 发出，流式序列是非流式序列的
+      **字节前缀**（B2 断言）；已发块若在新快照中变形 → `AnswerBlockDivergence`
+      → `model_error` 半流，绝不回改已发块。来源尾块（citation / 来源 notice）
+      依赖最终 sources，收尾统一发。
+    - 任何 ≥2s 无帧补 `event: heartbeat`（消费循环内 0.5s 醒一次，无线程）。
+    - CLI 通道物理上是一次性子进程：走 `complete` 降级，一次性装配后逐块发出，
+      首块与 done 标 `stream_mode: "degraded"`。
+    - 中途模型失败：已发块保留、不追加 notice，
+      `done{completed:false, reason:"model_error"}`（reason 词表新增值，
+      NOTICE_KINDS 不变）。
 
     失败半流（PI 2026-11-12）：已发块保留、不追加 notice，`done` 带
     `completed: false` + `reason`；6.4 第 5 条只约束非流式路径。
     """
     seq = 0
-    try:
-        turn = await run_turn(
-            message=message,
-            session_id=session_id,
-            context=context,
-            timeout_sec=timeout_sec,
-            config_root=config_root,
-            is_disconnected=is_disconnected,
-        )
-    except ChatAborted:
-        # 连接没了：不补发任何帧（`run_turn` 在 Abort 前不落账）
-        return
-    except ChatFailure as failure:
-        blocks = answer_block_payloads(ai=None, sources=[], failure=failure)
-        for block in blocks:
-            seq += 1
-            yield _block_event(seq, block)
-        yield sse_event(
-            "done",
-            {
-                "ok": False,
-                "completed": True,
-                "session_id": session_id,
-                "reply": "",
-                "code": failure.code,
-                "reason": failure.reason,
-                "failure": failure.as_dict(),
-                "retryable": failure.retryable,
-                "last_seq": seq,
-                "followups": [],
-            },
-        )
-        return
+    stream_mode: str | None = None
+    sent_blocks: list[dict[str, Any]] = []
+    actions: list[dict[str, Any]] = []
+    model_label = ""
 
-    # 本轮已落账：块若装配失败，只能如实回报，不能收回已记下的问答
-    if ai is None:
-        # 流式路由未传 ai 时，从本轮真实回答派生结论输入，与
-        # assistant.py 非流式同源；函数内 import 避免与 chat 顶层循环。
+    def _done_frame(payload: dict[str, Any]) -> str:
+        data: dict[str, Any] = {
+            "session_id": session_id,
+            "actions": list(actions),
+            **payload,
+        }
+        if stream_mode is not None:
+            data["stream_mode"] = stream_mode
+        return sse_event("done", data)
+
+    def _half_stream_done(
+        reason: str, failure: ChatFailure | None = None
+    ) -> list[str]:
+        data: dict[str, Any] = {
+            "ok": False,
+            "completed": False,
+            "reply": "",
+            "reason": reason,
+            "last_seq": seq,
+            "followups": _followups(sent_blocks),
+        }
+        if failure is not None:
+            data["code"] = failure.code
+            data["failure"] = failure.as_dict()
+            data["retryable"] = failure.retryable
+        return [_done_frame(data)]
+
+    try:
+        started = _monotonic_ms()
+        yield _stream_status("received", "已收到请求，正在准备", "running", item_id="turn")
+        text = (message or "").strip()
+        if not text:
+            raise ChatFailure(
+                400,
+                code="empty_message",
+                reason="invalid_request",
+                kind="internal",
+                message="message 不能为空",
+                retryable=False,
+            )
+        if len(text) > MAX_MESSAGE_CHARS:
+            raise ChatFailure(
+                400,
+                code="message_too_long",
+                reason="invalid_request",
+                kind="internal",
+                message=f"message 过长（上限 {MAX_MESSAGE_CHARS} 字）",
+                retryable=False,
+            )
+
+        # ---- context（真实调用点：_record_sources / _context_block）---------
+        context_started = _monotonic_ms()
+        yield _stream_status("context", "读取页内上下文与来源", "running", item_id="context")
+        sources = _record_sources(context)
+        context_json, has_data = _context_block(context)
+        timeout = effective_timeout(timeout_sec)
+        actions.append(
+            {
+                "action": "context",
+                "state": "done",
+                "item_id": "context",
+                "elapsed_ms": _monotonic_ms() - context_started,
+            }
+        )
+        yield _stream_status(
+            "context",
+            "页内上下文与来源就绪",
+            "done",
+            item_id="context",
+            elapsed_ms=actions[-1]["elapsed_ms"],
+        )
+        yield _stream_status(
+            "received",
+            "请求准备完成",
+            "done",
+            item_id="turn",
+            elapsed_ms=_monotonic_ms() - started,
+        )
+
+        # ---- history（真实调用点：_history）---------------------------------
+        history_started = _monotonic_ms()
+        yield _stream_status("history", "读取会话历史", "running", item_id="session_history")
+        history = _history(session_id)
+        actions.append(
+            {
+                "action": "history",
+                "state": "done",
+                "item_id": "session_history",
+                "elapsed_ms": _monotonic_ms() - history_started,
+            }
+        )
+        yield _stream_status(
+            "history",
+            "会话历史就绪",
+            "done",
+            item_id="session_history",
+            elapsed_ms=actions[-1]["elapsed_ms"],
+        )
+
+        # ---- model（真实调用点：complete_iter / complete）-------------------
+        yield _stream_status("model", "正在选择通道", "running", item_id="model_call")
+        channel = await asyncio.to_thread(load_channel, config_root)
+        model_label = channel.label
+        system, user = _build_messages(
+            message=text,
+            context=context,
+            context_json=context_json,
+            sources=sources,
+            history=history,
+        )
+        yield _stream_status(
+            "model", f"正在调用 {model_label}", "running", item_id="model_call"
+        )
+        model_started = _monotonic_ms()
+        last_frame_ms = _monotonic_ms()
+
+        incremental = channel.kind != "cli" and ai is None
+        reply_parts: list[str] = []
+        tail = ""
+        if incremental:
+            # 真流式消费循环：0.5s 醒一次；≥2s 无帧补 heartbeat；
+            # 句界定稿前缀 → 快照 diff → 新块逐个发出（已发块不可变）。
+            aiter = complete_iter(channel, system, user, timeout=timeout).__aiter__()
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        aiter.__anext__(), timeout=STREAM_HEARTBEAT_POLL_SEC
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    if _monotonic_ms() - last_frame_ms >= STREAM_HEARTBEAT_GAP_SEC * 1000:
+                        yield _heartbeat(_monotonic_ms() - last_frame_ms, seq)
+                        last_frame_ms = _monotonic_ms()
+                    continue
+                if is_disconnected is not None and await is_disconnected():
+                    stream_mode = "stream"
+                    yield _done_frame(
+                        {
+                            "ok": False,
+                            "completed": False,
+                            "reply": "",
+                            "reason": "cancelled",
+                            "last_seq": seq,
+                            "followups": _followups(sent_blocks),
+                        }
+                    )
+                    return
+                reply_parts.append(chunk)
+                tail += chunk
+                finalized = _finalized_prefix(tail)
+                if finalized:
+                    for block in _new_finalized_blocks(
+                        finalized, sources, has_data, metrics, sent_blocks
+                    ):
+                        seq += 1
+                        sent_blocks.append(block)
+                        yield _block_event(seq, block)
+                    last_frame_ms = _monotonic_ms()
+                    tail = tail[len(finalized):]
+            # 结尾残句（无句末标点）：补一个换行让它定稿进最后一块
+            if tail.strip():
+                finalized = _finalized_prefix(tail + "\n")
+                if finalized:
+                    for block in _new_finalized_blocks(
+                        finalized, sources, has_data, metrics, sent_blocks
+                    ):
+                        seq += 1
+                        sent_blocks.append(block)
+                        yield _block_event(seq, block)
+            reply_text = "".join(reply_parts).strip()
+            if not reply_text:
+                raise ChatFailure(
+                    502,
+                    code="ai_empty",
+                    reason="empty",
+                    kind="internal",
+                    message="AI 返回了空回答（模型未产出内容），请重试。",
+                    action="重试一次；仍为空时检查通道配置",
+                    retryable=True,
+                )
+            actions.append(
+                {
+                    "action": "model",
+                    "state": "done",
+                    "item_id": "model_call",
+                    "elapsed_ms": _monotonic_ms() - model_started,
+                }
+            )
+            yield _stream_status(
+                "model",
+                f"{model_label} 返回完成",
+                "done",
+                item_id="model_call",
+                elapsed_ms=actions[-1]["elapsed_ms"],
+            )
+            stream_mode = "stream"
+        else:
+            # 降级路径：CLI 一次性子进程 / 上游已传结构化 ai——正文一次性取回
+            try:
+                reply_text = await complete(channel, system, user, timeout=timeout)
+            except ChatAborted:
+                raise
+            except ChatFailure:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001 - 与 run_turn 同口径分类
+                raise _classify_exception(exc, channel) from None
+            if not (reply_text or "").strip():
+                raise ChatFailure(
+                    502,
+                    code="ai_empty",
+                    reason="empty",
+                    kind="internal",
+                    message="AI 返回了空回答（模型未产出内容），请重试。",
+                    action="重试一次；仍为空时检查本机 CLI 是否正常",
+                    retryable=True,
+                )
+            reply_text = reply_text.strip()
+            actions.append(
+                {
+                    "action": "model",
+                    "state": "done",
+                    "item_id": "model_call",
+                    "elapsed_ms": _monotonic_ms() - model_started,
+                }
+            )
+            yield _stream_status(
+                "model",
+                f"{model_label} 返回完成",
+                "done",
+                item_id="model_call",
+                elapsed_ms=actions[-1]["elapsed_ms"],
+            )
+            stream_mode = "degraded"
+
+        # 非流式契约的来源说明拼在 reply 尾部（会话落账完整），流式单独出块
+        note = _source_note(has_data=has_data, sources=sources)
+        answer = reply_text if not note else f"{reply_text}\n\n{note}"
+
+        # ---- persist（真实调用点：_remember）--------------------------------
+        persist_started = _monotonic_ms()
+        yield _stream_status("persist", "保存本轮问答", "running", item_id="persist")
+        _remember(session_id, text, answer)
+        actions.append(
+            {
+                "action": "persist",
+                "state": "done",
+                "item_id": "persist",
+                "elapsed_ms": _monotonic_ms() - persist_started,
+            }
+        )
+        yield _stream_status(
+            "persist",
+            "本轮问答已保存",
+            "done",
+            item_id="persist",
+            elapsed_ms=actions[-1]["elapsed_ms"],
+        )
+
+        # ---- assemble（真实调用点：reply_to_structured → build_blocks）-------
+        assemble_started = _monotonic_ms()
+        yield _stream_status("assemble", "装配回答块", "running", item_id="assemble")
         from ladderstock.web.assistant import reply_to_structured
 
-        ai = reply_to_structured(turn["reply"])["build_input"]
-    try:
-        blocks = answer_block_payloads(
-            ai=ai,
-            sources=turn["sources"],
-            metrics=metrics,
-            page_data=turn["has_page_data"],
-        )
-    except ChatFailure as failure:
-        _forget(turn["session_id"])
-        yield sse_event(
-            "done",
+        final_ai = ai if ai is not None else reply_to_structured(answer)["build_input"]
+        try:
+            blocks = answer_block_payloads(
+                ai=final_ai,
+                sources=sources,
+                metrics=metrics,
+                page_data=has_data,
+            )
+        except ChatFailure as failure:
+            # 块没装配出来，这一问不算数：撤掉刚落的账
+            _forget(session_id)
+            yield _half_stream_done(failure.reason, failure)[0]
+            return
+        for block in blocks[len(sent_blocks):]:
+            if is_disconnected is not None and await is_disconnected():
+                yield _done_frame(
+                    {
+                        "ok": False,
+                        "completed": False,
+                        "reply": "",
+                        "reason": "cancelled",
+                        "last_seq": seq,
+                        "followups": _followups(sent_blocks),
+                    }
+                )
+                return
+            seq += 1
+            sent_blocks.append(block)
+            yield _block_event(seq, block)
+        actions.append(
             {
-                "ok": False,
-                "completed": False,
-                "session_id": turn["session_id"],
-                "reply": "",
-                "model": turn["model"],
-                "channel": turn["channel"],
-                "code": failure.code,
-                "reason": failure.reason,
-                "failure": failure.as_dict(),
-                "retryable": failure.retryable,
-                "last_seq": 0,
-                "followups": list(_FOLLOWUP_ORDER),
+                "action": "assemble",
+                "state": "done",
+                "item_id": "assemble",
+                "elapsed_ms": _monotonic_ms() - assemble_started,
+            }
+        )
+        yield _stream_status(
+            "assemble",
+            "回答块装配完成",
+            "done",
+            item_id="assemble",
+            elapsed_ms=actions[-1]["elapsed_ms"],
+        )
+
+        yield _done_frame(
+            {
+                "ok": True,
+                "completed": True,
+                "reply": _without_source_note(
+                    {"reply": answer, "has_page_data": has_data, "sources": sources},
+                    blocks,
+                ),
+                "model": model_label,
+                "channel": channel.kind,
+                "sources": sources,
+                "pending_research": _pending_research(text),
+                "elapsed_ms": _monotonic_ms() - started,
+                "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "last_seq": seq,
+                "followups": _followups(blocks),
             },
         )
-        return
 
-    for block in blocks:
-        if is_disconnected is not None and await is_disconnected():
-            # 连接没了：已发块保留，不追加 notice，done 标未完成
-            yield sse_event(
-                "done",
+    except ChatAborted:
+        # 连接没了：不补发任何帧（落账发生在 Abort 之前才会留下）
+        return
+    except ChatFailure as failure:
+        if seq == 0 and not sent_blocks:
+            # 首块前失败：失败 notice 仍走块协议（与非流式 6.4 第 5 条同源）
+            for block in answer_block_payloads(ai=None, sources=[], failure=failure):
+                seq += 1
+                yield _block_event(seq, block)
+            yield _done_frame(
                 {
                     "ok": False,
-                    "completed": False,
-                    "session_id": turn["session_id"],
+                    "completed": True,
                     "reply": "",
-                    "reason": "cancelled",
+                    "code": failure.code,
+                    "reason": failure.reason,
+                    "failure": failure.as_dict(),
+                    "retryable": failure.retryable,
                     "last_seq": seq,
-                    "followups": _followups(blocks[:seq]),
+                    "followups": [],
                 },
             )
             return
-        seq += 1
-        yield _block_event(seq, block)
-
-    yield sse_event(
-        "done",
-        {
-            "ok": True,
-            "completed": True,
-            "session_id": turn["session_id"],
-            # 来源说明已作为 notice 块逐块发出；`reply` 里再带一遍就是同一句说两次
-            "reply": _without_source_note(turn, blocks),
-            "model": turn["model"],
-            "channel": turn["channel"],
-            "sources": turn["sources"],
-            "pending_research": turn["pending_research"],
-            "elapsed_ms": turn["elapsed_ms"],
-            "fetched_at": turn["fetched_at"],
-            "last_seq": seq,
-            "followups": _followups(blocks),
-        },
-    )
+        # 已发块后失败（模型中途挂 / 装配失败）：半流——已发块保留、不追加 notice
+        reason = failure.reason
+        if failure.code in ("ai_timeout", "ai_upstream", "ai_network", "ai_quota"):
+            reason = "model_error"
+        yield _half_stream_done(reason, failure)[0]
+        return
+    except AnswerBlockDivergence:
+        # 定稿前缀快照与已发块不一致：前缀稳定性假设被打破（内部错误）
+        yield _half_stream_done("model_error", None)[0]
+        return
+    except BaseException:  # noqa: BLE001 - 不可分类异常同收半流，不吞
+        yield _half_stream_done("model_error", None)[0]
+        return
 
 
 # --------------------------------------------------------------------------- #
