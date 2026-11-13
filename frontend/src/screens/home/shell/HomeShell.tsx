@@ -5,7 +5,6 @@ import { PanelRight } from 'lucide-react'
 
 import { httpConversation, type SessionSummary } from '../../../api/conversation'
 import { Drawer, IconButton, Segmented, type SegmentedOption } from '../../../components/ui'
-import { queueHomeQuestion } from '../../../lib/homeHandoff'
 import { useHomeMode, type HomeMode } from '../../../lib/homeMode'
 import { HomeModeSlotContext } from '../../../lib/homeModeSlot'
 import { useIsMobile } from '../../../lib/mediaQuery'
@@ -68,10 +67,9 @@ export default function HomeShell() {
     [navigate, setMode],
   )
 
-  // 对话里的这一问带到研究台：排进交接（刷新后不重放），并让研究面板取走
+  // 对话里的这一问带到研究台：让研究面板取走（切页签 + 预填 + 聚焦，不自动发）
   const askDesk = useCallback(
     (question: string) => {
-      queueHomeQuestion(question)
       setDeskQuestion(question)
       setMode('desk')
     },

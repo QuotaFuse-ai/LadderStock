@@ -93,7 +93,12 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
   // 对话区「问研究台」带来的一问：切页签 + 填词 + 聚焦，不自动发（同起步问题的口径）
   const lastIncomingQuestion = useRef<string | null>(null)
   useEffect(() => {
-    if (!incomingQuestion || incomingQuestion === lastIncomingQuestion.current) return
+    if (!incomingQuestion) {
+      // 消费后外壳会把 prop 清回 null：守卫跟着清零，同一条问下次仍能重新预填
+      lastIncomingQuestion.current = null
+      return
+    }
+    if (incomingQuestion === lastIncomingQuestion.current) return
     lastIncomingQuestion.current = incomingQuestion
     setTab('chat')
     actions.onQueryChange(incomingQuestion)
