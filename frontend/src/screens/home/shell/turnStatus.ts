@@ -1,26 +1,33 @@
 /**
- * 对话等待态（QUOT-585）：L1 阶段指示 + L2 已用时跳动。
+ * 对话等待态数据层（QUOT-585 规格修正）：动作流水账。
  *
- * 帧源形状按 QUOT-581 的 `event: status` JSON 写死（并行落地，前端不等待）：
- *   { "stage": "received" | "reading_data" | "computing" | "generating",
- *     "label": string, "seq": number, "elapsed_ms": number, "heartbeat"?: boolean }
+ * 帧源形状按 QUOT-581 修正后的 `event: status` 契约写死（并行落地，前端不等待）：
+ *   { "stage": "context" | ...,
+ *     "action": "history" | "context" | "model" | "assemble" | "persist",
+ *     "item": "正在读取行情与资金数据",
+ *     "state": "running" | "done" | "failed",
+ *     "item_id": "c1", "seq": 0, "elapsed_ms": 340,
+ *     "heartbeat"?: boolean, "detail"?: string }
  *
- * 接口设计为**可注入**：`TurnStatusFeed` 是一个「注册监听 → 返回注销」的最小面，
- * 真后端落地前由 mock 帧源（测试里发假帧）驱动；没有 status 帧时本地计时器兜底，
- * 每 100ms 刷新「已用时」，任何 2 秒窗口内画面都有可见变化（E5 红线）。
+ * 核心规则：**同 `item_id` 的 done/failed 帧原地把那一行从 running 更新过去**，
+ * 不新增行；崩序（seq 回退）整帧丢弃。接口设计为**可注入**（`TurnStatusFeed`），
+ * 真后端落地前由 mock 帧源驱动；零帧时「已用时」由本地 100ms 计时器兜底（E5 红线）。
  */
 
-/** 阶段序号：received=1 / reading_data=2 / computing=3 / generating=4 */
-export const STATUS_STAGES = ['received', 'reading_data', 'computing', 'generating'] as const
-export type StatusStage = (typeof STATUS_STAGES)[number]
+export type ActionState = 'running' | 'done' | 'failed'
 
-/** 后端 status 帧原样形状（QUOT-581 契约） */
+/** 后端 status 帧原样形状（QUOT-581 修正契约） */
 export interface StatusFrame {
-  stage: StatusStage | string
-  label: string
+  stage?: string
+  action: string
+  item: string
+  state: ActionState | string
+  item_id: string
   seq: number
   elapsed_ms: number
   heartbeat?: boolean
+  /** failed 帧的原因 */
+  detail?: string | null
 }
 
 export interface TurnStatusFeed {
@@ -31,65 +38,44 @@ export interface TurnStatusFeed {
 /** 本地兜底计时步长：100ms —— 数字持续跳动，reduced-motion 下也"在动" */
 export const TICK_INTERVAL_MS = 100
 
-export function stageNumber(stage: string | undefined): number {
-  const index = STATUS_STAGES.indexOf((stage ?? '') as StatusStage)
-  return index >= 0 ? index + 1 : 1
+/** 流水账的一行：同 item_id 只有一行，running → done/failed 原地更新 */
+export interface ActionItem {
+  itemId: string
+  action: string
+  item: string
+  state: ActionState
+  /** done / failed 帧带耗时；running 行为 null */
+  elapsedMs: number | null
+  detail: string | null
 }
 
-/** 展示态：阶段文案 / 阶段序号 / 基准耗时（由帧给，本地在其上累加） */
-export interface StatusDisplay {
-  label: string
-  stageNo: number
-  stageTotal: number
-  /** 最近一帧的 seq（用于乱序丢弃；无帧时为 -1） */
+export interface FeedState {
+  items: ActionItem[]
+  /** 已见最大 seq（乱序丢弃基准；无帧时 -1） */
   seq: number
-  baseElapsedMs: number
-  /** 基准时刻（performance.now 口径），本地计时器用 now - baseAt 推已用时 */
-  baseAt: number
 }
 
-const DEFAULT_LABELS: Record<string, string> = {
-  received: '已收到，正在处理',
-  reading_data: '正在取数',
-  computing: '正在计算',
-  generating: '正在生成',
+export const EMPTY_FEED: FeedState = { items: [], seq: -1 }
+
+function asState(value: string): ActionState {
+  return value === 'done' || value === 'failed' ? value : 'running'
 }
 
-export function toDisplay(frame: StatusFrame, now: number): StatusDisplay {
-  return {
-    label: frame.label || DEFAULT_LABELS[frame.stage] || '已收到，正在处理',
-    stageNo: stageNumber(frame.stage),
-    stageTotal: STATUS_STAGES.length,
-    seq: frame.seq,
-    baseElapsedMs: Math.max(0, frame.elapsed_ms),
-    baseAt: now,
+/** 崩序帧丢弃；同 item_id 原地更新，新 id 追加到底部 */
+export function applyFrame(prev: FeedState, frame: StatusFrame): FeedState {
+  if (frame.seq < prev.seq) return prev
+  const next: ActionItem = {
+    itemId: frame.item_id,
+    action: frame.action,
+    item: frame.item,
+    state: asState(frame.state),
+    elapsedMs: frame.state === 'running' ? null : Math.max(0, frame.elapsed_ms),
+    detail: frame.detail ?? null,
   }
-}
-
-/** 无帧兜底：已用时从发送时刻起算 */
-export function fallbackDisplay(startedAt: number): StatusDisplay {
-  return {
-    label: '已收到，正在处理',
-    stageNo: 1,
-    stageTotal: STATUS_STAGES.length,
-    seq: -1,
-    baseElapsedMs: 0,
-    baseAt: startedAt,
-  }
-}
-
-/**
- * 帧归并：heartbeat 帧不改文案与阶段，只刷新已用时基准；普通帧整体覆盖。
- * 崩序（seq 小于已见最大值）丢弃，防乱序把阶段打回去。
- */
-export function mergeFrame(
-  prev: StatusDisplay | null,
-  frame: StatusFrame,
-  now: number,
-): StatusDisplay {
-  if (prev && frame.seq < prev.seq) return prev
-  if (frame.heartbeat && prev) {
-    return { ...prev, baseElapsedMs: Math.max(0, frame.elapsed_ms), baseAt: now }
-  }
-  return toDisplay(frame, now)
+  const index = prev.items.findIndex((item) => item.itemId === frame.item_id)
+  const items =
+    index >= 0
+      ? prev.items.map((item, i) => (i === index ? next : item))
+      : [...prev.items, next]
+  return { items, seq: frame.seq }
 }
