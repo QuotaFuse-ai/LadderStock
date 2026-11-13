@@ -20,7 +20,8 @@ import { DEMO_TRADE_DATE } from './home/demo'
 import { HomeIndexStrip } from './home/HomeIndexStrip'
 import { HomePositionsCard } from './home/HomePositionsCard'
 import { HomeSearch } from './home/HomeSearch'
-import { HomeTodoMoversCard, type HomeTodo } from './home/HomeTodoMoversCard'
+import { type HomeTodo } from './home/HomeTodoMoversCard'
+import { HomeTodoMoversBar } from './home/HomeTodoMoversBar'
 import { HomeWatchlistCard } from './home/HomeWatchlistCard'
 import { buildHomeAssistant } from './home/homeAssistant'
 import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/useHomeSource'
@@ -243,6 +244,8 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
       {header}
 
       {offline && <OfflineBanner onRetry={reloadAll} />}
+      {/* 待办与异动：顶栏横栏入口（无外壳 / 单测时退回内容区原卡） */}
+      <HomeTodoMoversBar todos={todos} movers={movers} validation={validationView} watch={watchView} />
       {state === 'partial' && failedLabels.length > 0 && (
         <ErrorBlock
           variant="banner"
@@ -273,19 +276,13 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
         />
       )}
 
-      {/* 版式按老板草图（QUOT-586）：外层两栏（左区弹性 + 右列「研究」定宽通高）；
-          左区纵向三段——待办置顶通栏 → 大盘吃满余高 → 自选/持仓平分一行。
+      {/* 版式按老板草图（QUOT-586 / QUOT-587 返工）：外层两栏（左区弹性 + 右列「研究」定宽通高）；
+          左区纵向两段——大盘吃满余高 → 自选/持仓平分一行；
+          待办与异动经顶栏槽（`HomeTodoMoversBar`）进 `header.workspace-topbar`，不再占内容区。
           desk:h-full / min-h-0 链不退化（一屏无整页滚动，QUOT-570 门槛） */}
       <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1 desk:flex-row">
-        {/* 左区：上中下三段 */}
+        {/* 左区：上下两段 */}
         <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1">
-          <HomeTodoMoversCard
-            todos={todos}
-            movers={movers}
-            validation={validationView}
-            watch={watchView}
-            className="shrink-0"
-          />
           <HomeIndexStrip
             view={indexView}
             session={session}
