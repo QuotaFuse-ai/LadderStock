@@ -85,7 +85,7 @@ from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.knowledge import KnowledgePlane
 from ladderstock.web.knowledge import build_router as build_knowledge_router
-from ladderstock.web.platform_proxy import build_platform_router
+from ladderstock.web.platform import build_platform_router
 from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
@@ -1713,12 +1713,12 @@ def create_app(
     knowledge = knowledge_plane if knowledge_plane is not None else KnowledgePlane(data_root=root)
     app.include_router(build_knowledge_router(knowledge))
 
-    # ------------------------------------- 平台健康/重启同源转发（QUOT-589）
+    # ------------------------------------- 平台健康/重启同源面（QUOT-589 重修）
     #
-    # 前端 `platformBaseUrl()` 恒同源打 `/platform/*`（不再按 DEV 猜 prod 看门狗
-    # 5952）；这里服务端转发到**本实例自己的**看门狗，端口由 `LDST_WATCHDOG_PORT`
-    # 注入（缺省 5952 = prod 语义不变）。注册在 SPA 兜底之前。
-    app.include_router(build_platform_router())
+    # 用户裁决：全机只留 5950 / 5951 两个端口，独立看门狗不再监听 5952/5953。
+    # `/platform/*` 改由主服务自己提供（`web/platform.py`），前端
+    # `platformBaseUrl()` 恒同源。注册在 SPA 兜底之前。
+    app.include_router(build_platform_router(WEB_PORT))
 
     # ------------------------------------------ 状态索引面（QUOT-288 / UI-SPEC §12.2 第 2 条）
     #

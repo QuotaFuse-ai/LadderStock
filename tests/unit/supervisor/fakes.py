@@ -181,6 +181,10 @@ class FakeAdapter:
             return False
         if self._external_ports:
             return True
+        if not self.ports:
+            # 无端口模块（QUOT-589 看门狗）：进程链里还有活进程即健康，
+            # 不按端口回读（kill_tree 后链上 pid 全死 → quiet）
+            return any(pid in self._procs.processes for pid in self._chain)
         for port in self.ports:
             for pid in self._chain:
                 proc = self._procs.processes.get(pid)

@@ -93,8 +93,6 @@ DEFAULT_PEER_ROOT_ENV = "LDST_PEER_ROOT"
 INSTALL_ROOT_ENV = "LDST_INSTALL_ROOT"
 #: 自有服务（看板 / 看门狗）的启动器覆盖；空 = 按安装根找 venv
 LAUNCHER_ENV = "LDST_LAUNCHER"
-#: watch 模块（5952 看门狗）默认端口，与 ops/start_watchdog.cmd 同口径
-WATCH_PORT = 5952
 #: 看板端口（DEC-004 固定 5950）：看门狗重启看板时用它，且看板「不是」被托管模块
 PANEL_PORT = 5950
 #: 日志目录默认收在既有宿主日志目录下（与 ops/host 的约定一致）
@@ -797,8 +795,8 @@ def preflight(
                     module=name,
                     ok=usable,
                     detail=(
-                        f"启动器 {entry}（{source}）"
-                        f"· 看门狗端口 {WATCH_PORT} / 看板端口 {PANEL_PORT}"
+                        # QUOT-589 重修：看门狗无端口化，只核启动器
+                        f"启动器 {entry}（{source}）· 无端口自愈监控器"
                         + ("" if usable else "：启动器不存在")
                     ),
                     paths=(entry,),
@@ -1093,7 +1091,7 @@ def _command_adapters(
     evidence_cache_sec: float,
     clock: Callable[[], float],
     sleep: Callable[[float], None],
-) -> dict[str, BaseAdapter]:
+) -> dict[str, ModuleAdapter]:
     tickhub = default_peer_dir("tickhub", env)
     tickhub_us = default_peer_dir("tickhub_us", env)
     wire = default_peer_dir("wire", env)
@@ -1258,51 +1256,22 @@ def _command_adapters(
             clock=clock,
             sleep=sleep,
         ),
-        # 看门狗（5952）过去由 `LadderStock Watchdog` 计划任务独立拉起，是「散落
-        # 计划任务」里最难拆的一条：它守护看板 5950 本身，关掉看板它还要活着才能
-        # 重启看板。收进 supervisor 后它只是同一条进程树里的普通子进程——看板退出
-        # 即随全停一起停，不再跨入口存活。识别关键字 = 本仓库 CLI 的 watchdog 子命令，
-        # 不靠端口猜（5952 被别的进程占着时 probe 失败关闭，不会误认）。
-        "watch": BaseAdapter(
-            "watch",
-            MODULE_PORTS["watch"],
-            (
-                StartFace(
-                    face="watchdog",
-                    argv=(
-                        *launcher_entry(env),
-                        "watchdog",
-                        "--port",
-                        str(WATCH_PORT),
-                        # 看板由同一条 supervisor 托管时，重启看板不再走 schtasks：
-                        # 直接以同一启动器拉起看板 `run`（5950 不变）。命令由
-                        # `_panel_spawn_command()` 算好，argv 形式避免 shell 引号问题。
-                        "--spawn-cmd",
-                        _panel_spawn_command(env),
-                    ),
-                    cwd=_ldst_repo_root(),
-                    port=WATCH_PORT,
-                    match=("ladderstock.cli.main", "watchdog", "--port"),
-                    log_name="watchdog.log",
-                    # venv 的 `ldst.exe` 是 setuptools 启动器，监听者（它的子进程）
-                    # 的 cmdline 里没有 `-m ladderstock.cli.main`；`ldst` 入口点本身
-                    # 就是本 CLI，看到它 + 子命令即可判定归属
-                    inherit_chain=True,
-                    # 打包后 cmdline 是 `LadderStock.exe watchdog --port ...`，
-                    # 不再出现 `-m ladderstock.cli.main`（QUOT-525）。
-                    alt_match=("ldst", "watchdog", "--port"),
-                    alt_matches=(("ladderstock", "watchdog", "--port"),),
-                ),
+        # 看门狗（QUOT-589 重修）：无端口自愈监控器，不再监听 5952——probe/stop
+        # 全按 cmdline 扫描（WatchdogAdapter）。被 supervisor 拉起后它只认
+        # `--spawn-cmd` 直接拉起看板，不经 schtasks 复活（supervised 环境变量）。
+        "watch": WatchdogAdapter(
+            argv=(
+                *launcher_entry(env),
+                "watchdog",
+                "--spawn-cmd",
+                _panel_spawn_command(env),
             ),
+            cwd=_ldst_repo_root(),
             host=host,
             log_dir=log_dir,
             env_overrides={
-                # 被 supervisor 拉起后，看门狗的「重启看板」不再是 schtasks：看板
-                # 和它同一棵树，只允许按 spawn-cmd 直接拉起——supervised 模式下
-                # schtasks / --restart-script 两条兜底都被忽略（QUOT-523）。
                 "LDST_WATCHDOG_SUPERVISED": "1",
             },
-            evidence_cache_sec=evidence_cache_sec,
             clock=clock,
             sleep=sleep,
         ),
@@ -2347,6 +2316,124 @@ def _host_config_path(env: Mapping[str, str]) -> Path:
                 return candidate
         return runtime.app_dir() / HOST_CONFIG_REL
     return Path(__file__).resolve().parents[3] / HOST_CONFIG_REL
+
+
+class WatchdogAdapter:
+    """无端口看门狗适配器（QUOT-589 重修）：probe/start/stop 全按 cmdline 扫描。
+
+    用户裁决全机只留 5950/5951 两个端口后，看门狗不再监听 5952——BaseAdapter
+    的「端口在听 + cmdline 命中」证据链对它不成立。这里改用 `find_processes`
+    按识别关键字整机扫描（与 ProxyPoolAdapter 转发器同一手法）：
+
+    - probe：扫描命中本 CLI 的 watchdog 子命令 → True；失败关闭。
+    - stop/kill：拉起过的根 + 扫描命中的现行持有者，整树终止。
+    - 识别关键字与原 StartFace 相同的三形态（venv/打包），只去掉 `--port`。
+    """
+
+    MARKER = "watchdog"
+
+    def __init__(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        host: HostPivot | None = None,
+        log_dir: Path | None = None,
+        env_overrides: Mapping[str, str] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.name = "watch"
+        self.ports: tuple[int, ...] = ()
+        self._argv = argv
+        self._cwd = cwd
+        self._host = host or default_host_pivot()
+        self._log_dir = log_dir or _local_appdata_log_dir()
+        self._env_overrides = dict(env_overrides or {})
+        self._clock = clock
+        self._sleep = sleep
+        self._roots: list[int] = []
+
+    # ------------------------------------------------------------------ 协议
+
+    def start(self) -> SpawnedProcess:
+        pid = self._host.spawn(
+            self._argv,
+            cwd=self._cwd,
+            env=self._environment(),
+            log_path=self._log_dir / "watchdog.log",
+        )
+        self._roots.append(pid)
+        return SpawnedProcess(pid=pid, parent_pid=os.getpid(), cmdline=self._argv)
+
+    def stop(self, pid: int | None = None, timeout: float | None = None) -> None:
+        del pid, timeout
+        targets = self._stop_targets()
+        for root in self._roots:
+            self._host.terminate_tree(root, force=False)
+        if not self._wait_gone(targets, GRACEFUL_STOP_WAIT_SEC):
+            for target in targets:
+                self._host.terminate_tree(target, force=True)
+            self._wait_gone(targets, STOP_READBACK_WAIT_SEC)
+        self._roots.clear()
+
+    def kill(self) -> None:
+        for target in self._stop_targets():
+            self._host.terminate_tree(target, force=True)
+        self._roots.clear()
+
+    def probe(self) -> bool:
+        return bool(self._find())
+
+    def identify(self, port: int | None = None) -> Identification:
+        del port  # 无端口模块；识别只按 cmdline
+        found = self._find()
+        return Identification(module=self.name, matched=bool(found), ports=())
+
+    # ------------------------------------------------------------------ 识别
+
+    def _matches(self, snap: ProcessSnapshot) -> bool:
+        joined = snap.joined
+        return (
+            ("ladderstock.cli.main" in joined and self.MARKER in joined)
+            or ("ldst" in joined and self.MARKER in joined)
+            or ("ladderstock" in joined and self.MARKER in joined)
+        )
+
+    def _find(self) -> tuple[ProcessSnapshot, ...]:
+        try:
+            found = self._host.find_processes(self.MARKER)
+        except (OSError, subprocess.SubprocessError):
+            return ()
+        return tuple(snap for snap in found if self._matches(snap))
+
+    def _stop_targets(self) -> list[int]:
+        targets: list[int] = []
+        seen: set[int] = set()
+        for root in self._roots:
+            if root not in seen:
+                seen.add(root)
+                targets.append(root)
+        for snap in self._find():
+            if snap.pid not in seen:
+                seen.add(snap.pid)
+                targets.append(snap.pid)
+        return targets
+
+    def _wait_gone(self, targets: list[int], timeout: float) -> bool:
+        deadline = self._clock() + timeout
+        while True:
+            alive = [pid for pid in targets if self._host.snapshot(pid) is not None]
+            if not alive:
+                return True
+            if self._clock() >= deadline:
+                return False
+            self._sleep(0.1)
+
+    def _environment(self) -> dict[str, str]:
+        values = dict(os.environ)
+        values.update(self._env_overrides)
+        return values
 
 
 def build_default_adapters(

@@ -875,12 +875,13 @@ def _build_watch(host: FakeHost, tmp_path: Path, env: dict[str, str]) -> BaseAda
     return cast(BaseAdapter, built["watch"])
 
 
-def test_watch_is_a_supervised_module_on_5952(tmp_path: Path) -> None:
+def test_watch_is_a_portless_supervised_module(tmp_path: Path) -> None:
     assert "watch" in MODULE_ORDER
     assert MODULE_ORDER[-1] == "watch"
-    assert MODULE_PORTS["watch"] == (5952,)
+    # QUOT-589 重修：看门狗不再监听 5952/5953，全机只留 5950/5951
+    assert MODULE_PORTS["watch"] == ()
     _host, adapters = _adapters(tmp_path)
-    assert adapters["watch"].ports == (5952,)
+    assert adapters["watch"].ports == ()
 
 
 def test_watch_start_spawns_the_watchdog_that_spawns_the_panel(tmp_path: Path) -> None:
@@ -893,7 +894,9 @@ def test_watch_start_spawns_the_watchdog_that_spawns_the_panel(tmp_path: Path) -
     assert len(host.spawns) == 1
     argv, cwd, child_env = host.spawns[0]
     # `ldst` 是入口点、不吃 `-m`：启动器后必须直接跟子命令（QUOT-523 实测回归）
-    assert argv[:5] == (launcher[0], "watchdog", "--port", "5952", "--spawn-cmd")
+    assert argv[:2] == (launcher[0], "watchdog")
+    assert "--port" not in argv  # 无端口：不监听任何端口（QUOT-589 重修）
+    assert "--spawn-cmd" in argv
     assert cwd == _ROOT
     assert spawned.cmdline == argv
     # 看板重启走同启动器的 `run --port 5950`，不再经 schtasks
@@ -902,44 +905,31 @@ def test_watch_start_spawns_the_watchdog_that_spawns_the_panel(tmp_path: Path) -
     assert child_env["LDST_WATCHDOG_SUPERVISED"] == "1"
 
 
-def test_watch_probe_fails_closed_for_a_foreign_5952_listener(tmp_path: Path) -> None:
+def test_watch_probe_fails_closed_for_a_foreign_watchdog(tmp_path: Path) -> None:
     host, adapters = _adapters(tmp_path)
-    host.add_process(("other-watchdog.exe", "--port", "5952"), ports=(5952,))
+    host.add_process(("other-watchdog.exe", "--port", "5951"))
     watch = cast(BaseAdapter, adapters["watch"])
     assert watch.probe() is False
-    with pytest.raises(SupervisorError, match="5952"):
-        watch.start()
 
 
 def test_watch_probe_requires_every_match_token(tmp_path: Path) -> None:
     host, adapters = _adapters(tmp_path)
     watch = cast(BaseAdapter, adapters["watch"])
     # 别的 CLI 的 watchdog 子命令不算本模块
-    host.add_process(
-        ("python.exe", "-m", "someother.cli.main", "watchdog", "--port", "5952"),
-        ports=(5952,),
-    )
+    host.add_process(("python.exe", "-m", "someother.cli.main", "watchdog"))
     assert watch.probe() is False
-    host.port_owner.clear()
     host.procs.clear()
-    # ldst.exe 形态：监听者的 cmdline 没有 `-m ladderstock.cli.main`，走备用令牌组
+    # ldst.exe 形态：cmdline 没有 `-m ladderstock.cli.main`，走备用令牌组
     host.add_process(
         (
             r"D:\LadderStock\.venv\Scripts\python.exe",
             r"D:\LadderStock\.venv\Scripts\ldst.exe",
             "watchdog",
-            "--port",
-            "5952",
-        ),
-        ports=(5952,),
+        )
     )
     assert watch.probe() is True
-    host.port_owner.clear()
     host.procs.clear()
-    host.add_process(
-        ("python.exe", "-m", "ladderstock.cli.main", "watchdog", "--port", "5952"),
-        ports=(5952,),
-    )
+    host.add_process(("python.exe", "-m", "ladderstock.cli.main", "watchdog"))
     assert watch.probe() is True
 
 
@@ -997,13 +987,13 @@ def test_preflight_financecoffer_needs_the_wsl_compose_dir(tmp_path: Path) -> No
     assert _item(preflight(env), "financecoffer").ok is True
 
 
-def test_preflight_watch_needs_a_launcher_and_reports_both_ports(tmp_path: Path) -> None:
+def test_preflight_watch_needs_a_launcher_and_reports_portless(tmp_path: Path) -> None:
     env = dict(_make_peer_dirs(tmp_path))
     env["LDST_LAUNCHER"] = _watch_launcher(tmp_path)[0]
 
     watch = _item(preflight(env), "watch")
     assert watch.ok is True
-    assert "5952" in watch.detail and "5950" in watch.detail
+    assert "5952" not in watch.detail  # 无端口：preflight 不再报任何端口
     assert "LDST_LAUNCHER" in watch.detail
 
     env["LDST_LAUNCHER"] = str(tmp_path / "missing" / "ldst.exe")

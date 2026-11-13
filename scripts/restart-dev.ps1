@@ -1,15 +1,21 @@
-# QUOT-589：dev 实例（5951）重启助手——只拉起 5951，绝不碰 5950。
-# 与 restart-api.ps1 同契约：杀 PID 由看门狗自己做（只杀此刻占用 --api 端口的
-# 监听者），本脚本只负责在端口让出后把 dev 实例拉回来。
-$ErrorActionPreference = 'SilentlyContinue'
-
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$Port     = 5951
-
-Set-Location -LiteralPath $RepoRoot
-$ldst = Get-Command ldst -ErrorAction SilentlyContinue
-if ($ldst) {
-    Start-Process -FilePath $ldst.Source -ArgumentList 'run', '--port', "$Port" -WindowStyle Hidden
-} else {
-    Start-Process -FilePath 'python' -ArgumentList '-m', 'ladderstock', 'run', '--port', "$Port" -WindowStyle Hidden
+# 5951 开发/测试服一键重启（端口 scoped，只结束 5951 上的 listening 进程链）。
+# 绝不触碰 5950(正式)/8000(peer)/9100/9000(mem0)；不按映像名批量杀。
+# 镜像 restart-api.ps1 结构，但端口=5951、launcher=start_board_dev.cmd、匹配 start_board_dev。
+$ErrorActionPreference = 'Continue'
+$ApiPort = 5951
+$Launcher = 'D:\workplace\LadderStock\file\ops\start_board_dev.cmd'
+$own = (Get-NetTCPConnection -State Listen -LocalPort $ApiPort -ErrorAction SilentlyContinue).OwningProcess
+if ($own) {
+    $p = $own
+    for ($i = 0; $i -lt 4; $i++) {
+        $o = Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue
+        if (-not $o) { break }
+        if ($o.CommandLine -and $o.CommandLine -match 'ladderstock|start_board_dev|cmd\.exe /c') {
+            try { Stop-Process -Id $p -Force -ErrorAction Stop; Write-Output "restart-dev: stopped pid $p" } catch {}
+            $p = $o.ParentProcessId
+        } else { break }
+    }
+    Start-Sleep -Seconds 2
 }
+Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"$Launcher`" $ApiPort" -WindowStyle Hidden
+Write-Output "restart-dev: launched via start_board_dev.cmd on port $ApiPort"

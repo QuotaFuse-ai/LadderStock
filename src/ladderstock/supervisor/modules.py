@@ -5,8 +5,9 @@
 正式/测试两套 supervisor 可并行运行，端口互不干扰。
 
 `watch`（看门狗）不在用户批准的两张表里，但引擎与 MODULE_ORDER 依赖它：
-正式沿用 5952；测试环境用 15952 避免与正式 watchdog 抢端口（看板红线
-只限 5950/5951，15952 不是看板端口）。`proxypool` 是按需模块：监听端口由
+QUOT-589 重修起无端口化——空元组，probe 靠 cmdline 扫描（WatchdogAdapter），
+不占任何 HTTP 端口（用户裁决全机只留 5950/5951）。`proxypool` 是按需模块：
+监听端口由
 宿主配置 `Mappings` 决定，不在静态白名单里，登记为空元组（动态端口），
 实际端口以 `ProxyPoolAdapter.ports` 为准，registry 对按需模块不做端口等值校验。
 
@@ -30,12 +31,14 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "senate": (8765, 8786),
         "financecoffer": (8100,),
         "proxyfleet": (8788, 8789),
-        # QUOT-523：看门狗（board watchdog，5952）并入单入口 supervisor 托管。
-        "watch": (5952,),
+        # QUOT-589 重修：看门狗无端口化（用户裁决全机只留 5950/5951），
+        # 不再监听 5952——空元组 = 无端口模块，probe 靠 cmdline 扫描
+        # （WatchdogAdapter）。
+        "watch": (),
         # 空元组 = 动态端口：按配置 Mappings 拉起，不在静态白名单内。
         "proxypool": (),
     },
-    # QUOT-593：测试环境 = 正式 + 10000（用户批准）；watch 用 15952 避让正式实例。
+    # QUOT-593：测试环境 = 正式 + 10000（用户批准）。
     "test": {
         "tickhub": (18000, 18787),
         "tickhub_us": (18002,),
@@ -43,10 +46,10 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "senate": (18765, 18786),
         "financecoffer": (18100,),
         "proxyfleet": (18788, 18789),
-        "watch": (15952,),
+        # QUOT-589 重修：同样无端口化，不占 15952。
+        "watch": (),
         "proxypool": (),
     },
-}
 
 _VALID_ENVS = ("prod", "test")
 
