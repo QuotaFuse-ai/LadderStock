@@ -68,14 +68,13 @@ def supervised(env: Mapping[str, str] | None = None) -> bool:
 PROBE_TIMEOUT_SEC = 2.0
 RESTART_THROTTLE_SEC = 30.0
 
-#: 看板（5950）、看门狗自身（5952）、vite dev（5173）。看门狗自己的 origin 必须在列：
-#: 离线壳页就跑在 5952 上，禁止它点重启等于验收 5 走不通。
+#: 看板（5950）、vite dev（5173）。看门狗**自己的** origin 不进静态白名单：
+#: 它跟实例端口走（`origin_allowed` 的 `port` 参数），QUOT-589 之后 dev 看门狗
+#: （5953）不得把 prod 看门狗的 5952 也当成自己的回环 origin 放行。
 ALLOWED_ORIGINS = frozenset(
     {
         "http://127.0.0.1:5950",
         "http://localhost:5950",
-        "http://127.0.0.1:5952",
-        "http://localhost:5952",
         "http://127.0.0.1:5173",
         "http://localhost:5173",
     }

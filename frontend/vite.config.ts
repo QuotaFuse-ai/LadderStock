@@ -196,10 +196,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:5950',
         changeOrigin: false,
       },
-      // 平台健康 / 重启由独立看门狗提供（QUOT-443 / DEC-063）：dev 下同源代理，
-      // 生产（5950 托管页面）由 usePlatformHealth 直连 5952，靠看门狗的白名单 CORS。
+      // 平台健康 / 重启由独立看门狗提供（QUOT-443 / DEC-063）。QUOT-589：不再硬编码
+      // prod 看门狗 5952——本实例看门狗端口由 `LDST_WATCHDOG_PORT` 注入（缺省 5953，
+      // dev 实例专用，与 prod 5950 的 5952 隔离）；生产态由 serving backend 同源转发。
       '/platform': {
-        target: 'http://127.0.0.1:5952',
+        target: `http://127.0.0.1:${process.env.LDST_WATCHDOG_PORT || 5953}`,
         changeOrigin: false,
       },
     },

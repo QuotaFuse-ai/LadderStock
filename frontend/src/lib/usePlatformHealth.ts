@@ -38,11 +38,14 @@ export const PLATFORM_RESTART_TIMEOUT_MS = 90_000
 export const FAILURES_BEFORE_RED = 2
 
 /**
- * prod（页面由 5950 托管）→ 直连 5952；dev → 同源走 vite 代理 `/platform`。
- * 两者都不改 origin：`localStorage` / 书签继续绑在 5950（DEC-063 否决前端迁移）。
+ * 恒同源（QUOT-589）：健康探测与重启一律走本 origin 的 `/platform/*`，
+ * 由 serving backend 转发到**本实例自己的**看门狗（端口由实例环境注入）。
+ * 旧实现按 `import.meta.env.DEV` 猜端口，built dist 落在 5951 之类的非 5950
+ * 端口时会跨源直打 prod 看门狗 5952——被 CORS 挡住误报「服务离线」，
+ * 「重启平台」还会错杀正式服 5950。前端不再猜端口。
  */
 export function platformBaseUrl(): string {
-  return import.meta.env.DEV ? '' : 'http://127.0.0.1:5952'
+  return ''
 }
 
 export interface ProbeResult {

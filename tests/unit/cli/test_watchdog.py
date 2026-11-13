@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -506,3 +507,77 @@ def test_offline_shell_page_is_served(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert "LadderStock" in response.text
     assert response.headers["cache-control"] == "no-store"
+
+
+# --------------------------------------------------------------------------- #
+# 实例化看门狗（QUOT-589）：dev 实例（5951）有自己的 scoped 看门狗（5953）
+# --------------------------------------------------------------------------- #
+
+
+def test_dev_watchdog_config_is_scoped_to_5951(tmp_path: Path) -> None:
+    config = WatchdogConfig(
+        data_root=tmp_path,
+        port=5953,
+        api_base="http://127.0.0.1:5951",
+        restart_script="",
+    )
+    assert config.api_port == 5951
+    assert config.port == 5953
+
+
+def test_dev_watchdog_origin_uses_its_own_port() -> None:
+    """Origin 白名单跟端口走：5953 看门狗只认 5950/5173/5953，prod 5952 不放行。"""
+    # 5951 页面（经 backend 同源转发）打到看门狗时 Origin 已被代理冒充成 5953
+    assert origin_allowed("http://127.0.0.1:5953", port=5953)
+    assert origin_allowed("http://localhost:5953", port=5953)
+    # prod 看门狗端口 5952 不在 dev 看门狗的白名单里
+    assert not origin_allowed("http://127.0.0.1:5952", port=5953)
+
+
+def test_dev_watchdog_restart_only_touches_its_api_port(tmp_path: Path) -> None:
+    """B 项验收：dev 看门狗（--api 5951）重启只找 / 只杀 5951 的监听者。
+
+    `restart_service` 的端口归属判定只吃 `config.api_port`——注入 5951 后，
+    prod 端口 5952 的监听者（PID 7768）永远不会进入它的查询与 kill 面。
+    """
+    from ladderstock.cli.watchdog import restart_service
+
+    script = tmp_path / "restart-dev.ps1"
+    script.write_text("", encoding="utf-8")
+    config = WatchdogConfig(
+        data_root=tmp_path,
+        port=5953,
+        api_base="http://127.0.0.1:5951",
+        # dev 实例不回退 prod 计划任务：start-dev-watchdog.ps1 显式传空
+        restart_task="",
+        restart_script=str(script),
+    )
+    probed_ports: list[int] = []
+
+    def lookup(port: int) -> int | None:
+        probed_ports.append(port)
+        return 4242 if port == 5951 else None
+
+    class _Result:
+        returncode = 0
+
+    def fake_run(argv: list[str], **kw: Any) -> _Result:
+        # 只允许走 --restart-script（scripts/restart-dev.ps1 的契约），
+        # 绝不回退 prod 计划任务
+        assert argv[0] == "powershell"
+        assert argv[-1].endswith("restart-dev.ps1")
+        return _Result()
+
+    result = restart_service(
+        config,
+        run=fake_run,
+        lookup_pid=lookup,
+        name_of=lambda _: "python.exe",
+        terminate=lambda pid: pid == 4242,
+        wait=lambda _: None,
+    )
+
+    code, payload = result
+    # 只查 5951（归属 + 让端口等待重查），5952 从未出现
+    assert set(probed_ports) == {5951}
+    assert payload["killed_pid"] == 4242
