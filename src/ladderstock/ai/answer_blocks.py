@@ -863,9 +863,7 @@ def build_blocks(
             {
                 "kind": NOTICE_MISSING_DATA,
                 "section": "来源",
-                "message": (
-                    SOURCE_NOTE_NO_RECORD if page_data else SOURCE_NOTE_WITHOUT_DATA
-                ),
+                "message": source_note(has_data=page_data, sources=source_list),
             },
         )
     )

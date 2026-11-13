@@ -355,7 +355,7 @@ def test_block_count_with_many_sources_over_http(
 # 一致性：流式块 vs 非流式返回
 # --------------------------------------------------------------------------- #
 
-def test_stream_done_matches_non_streaming_payload(
+def test_stream_blocks_match_non_streaming_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub(monkeypatch, "今天量能比昨日放大。")
@@ -376,9 +376,21 @@ def test_stream_done_matches_non_streaming_payload(
     )
 
     done = _done(frames)
-    citation = _blocks(frames)[-1]["payload"]["items"]
+    stream_blocks = _blocks(frames)
+    citation = stream_blocks[-1]["payload"]["items"]
 
-    # 结论块不再取 `reply`（A：正文只由结构化 ai 给），但 `done.reply` 与非流式同源
+    # 流式 conclusion 必须等于非流式装配的首块（同一份 reply_to_structured 派生）
+    from ladderstock.web.assistant import _blocks_for
+
+    non_stream_first = _blocks_for(one_shot["reply"], one_shot["sources"])[0]
+    assert stream_blocks[0]["type"] == "conclusion"
+    assert stream_blocks[0]["payload"]["text"] == non_stream_first["payload"]["text"]
+    # 流式 conclusion 绝不能是占位句
+    assert stream_blocks[0]["payload"]["text"] not in (
+        "本轮没有生成结论。",
+        "本轮没有可展示的结论。",
+    )
+    # `done.reply` 与非流式同源
     assert done["reply"] == one_shot["reply"]
     assert done["ok"] == one_shot["ok"] is True
     assert done["model"] == one_shot["model"]

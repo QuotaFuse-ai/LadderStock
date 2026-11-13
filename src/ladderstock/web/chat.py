@@ -955,6 +955,12 @@ async def stream_turn(
         return
 
     # 本轮已落账：块若装配失败，只能如实回报，不能收回已记下的问答
+    if ai is None:
+        # 流式路由未传 ai 时，从本轮真实回答派生结论输入，与
+        # assistant.py 非流式同源；函数内 import 避免与 chat 顶层循环。
+        from ladderstock.web.assistant import reply_to_structured
+
+        ai = reply_to_structured(turn["reply"])["build_input"]
     try:
         blocks = answer_block_payloads(
             ai=ai,
