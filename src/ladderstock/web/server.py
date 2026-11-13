@@ -64,7 +64,7 @@ from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
 from ladderstock.supervisor.selfheal import SelfHealEngine
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
-from ladderstock.web.assistant import build_page_router
+from ladderstock.web.assistant import build_conversation_router, build_page_router
 from ladderstock.web.assistant import build_router as build_assistant_router
 from ladderstock.web.assistant import build_skills_router as build_skills_router
 from ladderstock.web.backtest import build_router as build_backtest_router
@@ -1635,6 +1635,12 @@ def create_app(
     # 复用一个 ask()、同一条闸门与同一套降级口径；页面上下文由前端传任意 JSON，本端
     # 序列化后进同一条用户消息，system prompt 不含个股深挖预设。
     app.include_router(build_page_router(root))
+
+    # ------------------------------------------- 对话模式会话（QUOT-580）
+    #
+    # `/api/conversation/*`：一轮问答 + 会话列表 / 轮次读取（阶段 F 的 SessionList 输入）。
+    # 会话落本机独立的 `chat.sqlite`（D1），不碰 market.duckdb / journal.sqlite。
+    app.include_router(build_conversation_router(data_root=root))
 
     # -------------------------------------------------- 产业面（QUOT-276 / SPEC-INDUSTRY-PAGES §2）
     #
