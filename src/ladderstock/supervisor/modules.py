@@ -50,6 +50,7 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "watch": (),
         "proxypool": (),
     },
+}
 
 _VALID_ENVS = ("prod", "test")
 

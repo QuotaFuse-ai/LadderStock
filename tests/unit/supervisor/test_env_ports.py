@@ -31,7 +31,8 @@ _PROD_EXPECTED = {
     "senate": (8765, 8786),
     "financecoffer": (8100,),
     "proxyfleet": (8788, 8789),
-    "watch": (5952,),
+    # QUOT-589 重修：看门狗无端口化（全机只留 5950/5951），不占 5952。
+    "watch": (),
     "proxypool": (),
 }
 _TEST_EXPECTED = {
@@ -41,7 +42,8 @@ _TEST_EXPECTED = {
     "senate": (18765, 18786),
     "financecoffer": (18100,),
     "proxyfleet": (18788, 18789),
-    "watch": (15952,),
+    # 同上：测试环境亦无端口，不占 15952。
+    "watch": (),
     "proxypool": (),
 }
 
