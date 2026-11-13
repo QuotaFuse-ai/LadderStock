@@ -56,10 +56,13 @@ RESTART_SCRIPT_ENV = "LDST_RESTART_SCRIPT"
 
 
 def default_restart_script(api_port: int) -> str:
-    """按实例端口取部署侧重启脚本；不存在返回空串（重启时如实回 409）。"""
+    """按实例端口取部署侧重启脚本路径（5950 → restart-api.ps1，其余 → restart-dev.ps1）。
+
+    只做端口→脚本命名映射，不做存在性检查：文件缺失由重启时的
+    `_script_issue` 如实回 409，映射本身在任何机器上都成立。
+    """
     name = "restart-api.ps1" if api_port == 5950 else "restart-dev.ps1"
-    candidate = Path.home() / "AppData" / "Local" / "LadderStock" / name
-    return str(candidate) if candidate.is_file() else ""
+    return str(Path.home() / "AppData" / "Local" / "LadderStock" / name)
 
 
 def resolve_restart_script(
