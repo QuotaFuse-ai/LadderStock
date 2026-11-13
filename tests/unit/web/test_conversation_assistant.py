@@ -94,14 +94,13 @@ def test_blocks_are_conclusion_first_and_capped() -> None:
     answer_blocks.validate_blocks(blocks)
 
 
-def test_blocks_capped_even_when_engine_allows_eight() -> None:
+def test_blocks_capped_at_six() -> None:
     # 现役引擎在无 metrics 时：结论 + 指标 missing + 2 条风险 + 补充 + 来源 = 6；
     # 引擎上限是 8，会话侧再收到 6——这条护栏在引擎放宽后仍要成立。
     reply = "结论在第一句。风险需要注意回撤。补一句别的。"
     blocks = _blocks(reply)
-    assert answer_blocks.MAX_BLOCKS == 8
+    assert answer_blocks.MAX_BLOCKS == assistant_module.MAX_ANSWER_BLOCKS == 6
     assert len(blocks) <= assistant_module.MAX_ANSWER_BLOCKS
-    assert assistant_module.MAX_ANSWER_BLOCKS == 6
     assert len(blocks) == len(assistant_module._blocks_for(reply, [])[:6])
     answer_blocks.validate_blocks(blocks)
 
@@ -114,14 +113,14 @@ def test_conversation_cap_truncates_engine_output_beyond_six(
             answer_blocks.BLOCK_CONCLUSION, {"text": "结论。", "tone": "neutral"}
         )
     ]
-    while len(canonical) < answer_blocks.MAX_BLOCKS:
+    while len(canonical) < answer_blocks.MAX_BLOCKS + 2:
         canonical.append(
             answer_blocks.build_block(
                 answer_blocks.BLOCK_NOTICE,
                 {"kind": "degraded", "section": "补充说明", "message": "补充。"},
             )
         )
-    assert len(canonical) == 8
+    assert len(canonical) == answer_blocks.MAX_BLOCKS + 2 == 8
     monkeypatch.setattr(assistant_module, "_blocks_for", lambda *_a, **_k: canonical)
     blocks = _blocks("结论。")
     assert len(blocks) == assistant_module.MAX_ANSWER_BLOCKS == 6

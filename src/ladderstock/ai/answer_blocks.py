@@ -831,7 +831,10 @@ def build_blocks(
     ai: Any,
     sources: Sequence[Any] | None,
     failure: Any = None,
-    page_data: bool = True,
+    # 默认 False = 与现役非流式路径（assistant.py 三路由，只传 3 个位置参）的
+    # 「无来源 → WITHOUT_DATA」契约一致；有页内数据的调用方（chat.py 流式）
+    # 必须显式传 page_data=True，才会出 NO_RECORD。
+    page_data: bool = False,
 ) -> list[dict[str, Any]]:
     """§7 装配：AI 只决定「说什么话」，程序决定「给什么数」和「怎么摆」。
 
@@ -842,6 +845,8 @@ def build_blocks(
       可选 `symbol / as_of`）。
     - `failure`：`ChatFailure` 或同形 dict；非空即「整轮失败」，只回一条 notice。
     - `page_data`：本轮是否带了页内数据；只影响「来源为空」那条例外说明的措辞，
+      默认 False（与现役非流式 assistant.py 的 3 参调用契约一致），有页内数据的
+      调用方（chat.py 流式）显式传 True。措辞与 `source_note(has_data=...)` 共源，
       与 `web/chat.py` `_source_note(has_data=...)` 一一对应（同一句只出一次）。
 
     纯函数：不读写文件、不发请求、不碰全局状态。
@@ -937,9 +942,11 @@ def build_blocks(
         )
 
     # 7. 来源：空则不生成 citation，改成服务端文案 notice
-    blocks.append(citation if citation is not None else source_notice)
+    tail = citation if citation is not None else source_notice
+    assert tail is not None
+    blocks.append(tail)
 
-    blocks = _enforce_limit(blocks, protected=(citation or source_notice,))
+    blocks = _enforce_limit(blocks, protected=(tail,))
     check_ordering(blocks)
     return blocks
 
