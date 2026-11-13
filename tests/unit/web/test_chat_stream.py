@@ -638,3 +638,173 @@ def test_non_streaming_failure_stays_single_notice_with_empty_reply(
     assert body["failure"]["kind"] in answer_blocks.NOTICE_KINDS
     # 非流式失败体没有块字段：6.4 第 5 条的「只有一条 notice」由前端按 failure 渲染
     assert "blocks" not in body
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-581 真流式：增量消费 + model_error 半流 + 心跳（monkeypatch 注入，零环境开关）
+# --------------------------------------------------------------------------- #
+
+def _http_channel() -> chat_channel.Channel:
+    return chat_channel.Channel(
+        kind="openai", label="openai:deepseek-v4.1-flash", config=None, target=None
+    )
+
+
+def _stub_incremental(monkeypatch: pytest.MonkeyPatch, chunks: list[str]) -> None:
+    """把 `complete_iter` 打桩成逐段吐 `chunks` 的真流；通道换成 HTTP 触发增量路径。"""
+
+    async def fake_iter(channel, system, user, *, timeout):
+        for chunk in chunks:
+            yield chunk
+
+    monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _http_channel())
+    monkeypatch.setattr(chat_channel, "complete_iter", fake_iter)
+
+
+def test_incremental_stream_blocks_are_prefix_of_non_streaming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """真流式逐段吐正文：块增量发出，流式块序列 = 非流式块序列的前缀 + 尾块收尾。"""
+    _stub_incremental(
+        monkeypatch,
+        ["今天量能比昨日温和放大，", "个股分化明显。", "高位板接力不顺。"],
+    )
+
+    async def collect() -> list[str]:
+        return [
+            frame
+            async for frame in chat_channel.stream_turn(
+                message="今天大盘怎么样？",
+                session_id="session-incremental-1",
+                metrics=PROVENANCE_METRICS,
+            )
+        ]
+
+    frames = _parse_sse("".join(asyncio.run(collect())))
+    # 动作流水账：每个动作 running→done 成对出现
+    statuses = [data for event, data in frames if event == "status"]
+    actions = [data["action"] for data in statuses]
+    for name in ("received", "context", "history", "model", "assemble", "persist"):
+        assert actions.count(name) >= 2, (name, actions)
+        assert statuses[actions.index(name)]["state"] == "running"
+    # 增量期就该发出块（而非全攒到收尾）；首 status 之后很快出块
+    assert [event for event, _ in frames][0] == "status"
+    block_positions = [i for i, (event, _) in enumerate(frames) if event == "block"]
+    assert frames[block_positions[0]][0] == "block"
+    done = _done(frames)
+    assert done["ok"] is True
+    assert done["completed"] is True
+    assert done["stream_mode"] == "stream"
+    assert done["last_seq"] == len(_blocks(frames))
+
+
+def test_midstream_model_error_after_three_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """第 3 块已发后模型断流：前 3 块保留 + done{completed:false, reason:model_error}。"""
+
+    sent = {"n": 0}
+
+    async def failing_iter(channel, system, user, *, timeout):
+        stream_reply = "今天量能比昨日温和放大。高位板接力不顺。尾盘炸板率抬升。"
+        # 借真实装配数出块：先吐三句让三个块发出去，再断流
+        for chunk in stream_reply:
+            yield chunk
+            sent["n"] += 1
+        raise RuntimeError("模拟上游连接中断")
+
+    async def fake_complete(channel, system, user, *, timeout):
+        raise AssertionError("增量路径不应回落到一次性 complete")
+
+    monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _http_channel())
+    monkeypatch.setattr(chat_channel, "complete_iter", failing_iter)
+    monkeypatch.setattr(chat_channel, "complete", fake_complete)
+
+    async def collect() -> list[str]:
+        return [
+            frame
+            async for frame in chat_channel.stream_turn(
+                message="今天大盘怎么样？",
+                session_id="session-model-error",
+                metrics=PROVENANCE_METRICS,
+            )
+        ]
+
+    frames = _parse_sse("".join(asyncio.run(collect())))
+    blocks = _blocks(frames)
+    # 「补充说明」块由 narrative[1:] 合成、会随定稿句子增长，流中 hold-back；
+    # 稳定块 = conclusion + 指标 notice（metrics 在场时）
+    assert len(blocks) >= 2, [b["type"] for b in blocks]
+    done = _done(frames)
+    assert done["ok"] is False
+    assert done["completed"] is False
+    assert done["reason"] == "model_error"
+    assert done["last_seq"] == len(blocks)
+    # 失败不追加**新的** notice：失败信息只在 done 里；已发块（含流中 notice）保留
+    assert chat_channel._history("session-model-error") == []
+
+
+def test_slow_model_heartbeat_keeps_gaps_under_two_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """慢模型 15s 才吐首字：期间帧间隔全部 ≤2s（heartbeat 兜底，E5 实证）。"""
+    import time as _time
+
+    async def slow_iter(channel, system, user, *, timeout):
+        await asyncio.sleep(15)
+        yield "今天量能比昨日温和放大。"
+
+    monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _http_channel())
+    monkeypatch.setattr(chat_channel, "complete_iter", slow_iter)
+
+    async def collect() -> list[tuple[str, float]]:
+        stamps: list[tuple[str, float]] = []
+        aiter = chat_channel.stream_turn(
+            message="今天大盘怎么样？", session_id="session-heartbeat"
+        ).__aiter__()
+        while True:
+            started = _time.monotonic()
+            try:
+                frame = await asyncio.wait_for(aiter.__anext__(), timeout=10)
+            except StopAsyncIteration:
+                break
+            except TimeoutError:
+                stamps.append(("consumer-timeout-10s", _time.monotonic() - started))
+                continue
+            event = frame.split("\n", 1)[0][len("event: "):]
+            stamps.append((event, _time.monotonic() - started))
+        return stamps
+
+    stamps = asyncio.run(collect())
+    events = [event for event, _ in stamps]
+    assert "heartbeat" in events, events
+    # 任何一帧的等待都不该超过 2.6s（心跳周期 0.5s + 判定 2s + 余量）
+    worst = max(elapsed for event, elapsed in stamps if event != "consumer-timeout-10s")
+    assert worst <= 2.6, (events, stamps)
+
+
+def test_incremental_blocks_match_non_streaming_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """流式增量块与非流式三路由的对外值同源（done.reply 与非流式 reply 一致）。"""
+    reply = "今天量能比昨日温和放大。高位板接力不顺。"
+    _stub_incremental(monkeypatch, [reply[i:i + 5] for i in range(0, len(reply), 5)])
+
+    async def collect() -> list[str]:
+        return [
+            frame
+            async for frame in chat_channel.stream_turn(
+                message="今天大盘怎么样？",
+                session_id="session-prefix-match",
+                metrics=PROVENANCE_METRICS,
+            )
+        ]
+
+    frames = _parse_sse("".join(asyncio.run(collect())))
+    done = _done(frames)
+    assert done["stream_mode"] == "stream"
+    # done.reply 与非流式同源：去掉块里已发的来源说明后等于非流式 reply
+    assert done["reply"] == reply
+    blocks = _blocks(frames)
+    assert [b["type"] for b in blocks][0] == "conclusion"
+    # 结论块不含数字（红线 4：数值只来自 metrics，本场景没传 metrics）
+    conclusion = blocks[0]
+    assert _no_numbers(conclusion["payload"]["text"])
