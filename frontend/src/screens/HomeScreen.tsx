@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo } from 'react'
+import { useContext, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 
@@ -85,15 +85,28 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
   const watchView = views.watch
   const validationView = views.validation
 
-  const watchRows = (watchView.state === 'normal' || watchView.state === 'partial' ? watchView.data?.payload.rows : null) ?? []
-  const conditions =
-    (validationView.state === 'normal' || validationView.state === 'partial'
-      ? validationView.data?.payload.conditions
-      : null) ?? []
-  const reconcile =
-    (validationView.state === 'normal' || validationView.state === 'partial'
-      ? validationView.data?.payload.reconcile
-      : null) ?? null
+  // 这三个派生值曾是裸表达式，每次渲染都产出新引用；`todos` / `movers` 的 memo 因此
+  // 每次重算 → `PublishTodoMovers` 的 effect 每次都发 → shell setState → 再渲染，
+  // 构成 update depth 无限循环（QUOT-590 CI 挂死根因之二）。memo 住引用。
+  const watchRows = useMemo(
+    () =>
+      (watchView.state === 'normal' || watchView.state === 'partial' ? watchView.data?.payload.rows : null) ?? [],
+    [watchView],
+  )
+  const conditions = useMemo(
+    () =>
+      (validationView.state === 'normal' || validationView.state === 'partial'
+        ? validationView.data?.payload.conditions
+        : null) ?? [],
+    [validationView],
+  )
+  const reconcile = useMemo(
+    () =>
+      (validationView.state === 'normal' || validationView.state === 'partial'
+        ? validationView.data?.payload.reconcile
+        : null) ?? null,
+    [validationView],
+  )
 
   const reviewSections = useReviewDraft((state) => selectSlot(state, tradeDate).sections)
   const reviewChars = useMemo(
@@ -170,7 +183,10 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
         : [],
     )
   }, [indexView.data, watchlistView.data, positionsView.data, watchView.data, validationView.data])
-  const degraded = envelopes.filter((envelope) => envelope.source_status !== null && envelope.source_status !== 'ok')
+  const degraded = useMemo(
+    () => envelopes.filter((envelope) => envelope.source_status !== null && envelope.source_status !== 'ok'),
+    [envelopes],
+  )
 
   // 页头副标题只报「屏级态」：加载 / 断连 / 取数失败 / 空态——这些是整页唯一的可见信号。
   // 数据完整度与取数时刻不在这里播报（参考页口径是「标题 + 面包屑」）：降级走待办条目 + 块级
@@ -217,6 +233,37 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
     }
     return list.slice(0, 3)
   }, [usable, conditions.length, reconcile, reviewChars, degraded])
+
+  // 发布快照：`views.validation` / `views.watch` 是 `useHomeSource` 里每次渲染重建的对象
+  //（`blockView` 返回 `{ ...base, ... }` 字面量），直接把对象塞进 `PublishTodoMovers`
+  // 的 effect 依赖会让它每次渲染都重新发布，经 `HomeShell.setTodoMoversData` 回写 state
+  // 形成发布死循环（QUOT-590 CI 挂死根因之一）。这里按字段重建一份身份稳定的 BlockView。
+  const publishValidation = useMemo(
+    () => ({
+      state: validationView.state,
+      data: validationView.data,
+      error: validationView.error,
+      offline: validationView.offline,
+      endpointMissing: validationView.endpointMissing,
+      onRetry: validationView.onRetry,
+      onRefresh: validationView.onRefresh,
+      refreshing: validationView.refreshing,
+    }),
+    [validationView.state, validationView.data, validationView.error, validationView.offline, validationView.endpointMissing, validationView.onRetry, validationView.onRefresh, validationView.refreshing],
+  )
+  const publishWatch = useMemo(
+    () => ({
+      state: watchView.state,
+      data: watchView.data,
+      error: watchView.error,
+      offline: watchView.offline,
+      endpointMissing: watchView.endpointMissing,
+      onRetry: watchView.onRetry,
+      onRefresh: watchView.onRefresh,
+      refreshing: watchView.refreshing,
+    }),
+    [watchView.state, watchView.data, watchView.error, watchView.offline, watchView.endpointMissing, watchView.onRetry, watchView.onRefresh, watchView.refreshing],
+  )
 
   const failedLabels = useMemo(() => {
     const labels: string[] = []
@@ -265,7 +312,7 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
       {offline && <OfflineBanner onRetry={reloadAll} />}
       {/* 待办与异动入口（QUOT-588）：由 HomeShell 在 shell 层显式全局挂载，
           数据经 `onTodoMoversData` 上行；无外壳（单测 / 独立渲染）时这里挂兜底，全局只一颗 */}
-      <PublishTodoMovers todos={todos} movers={movers} validation={validationView} watch={watchView} onPublish={onTodoMoversData} />
+      <PublishTodoMovers todos={todos} movers={movers} validation={publishValidation} watch={publishWatch} onPublish={onTodoMoversData} />
       {!shellMountedTodoBar && (
         <HomeTodoMoversBar todos={todos} movers={movers} validation={validationView} watch={watchView} />
       )}
@@ -336,7 +383,33 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
 /** QUOT-588：待办异动数据上行发布（副作用组件，props 变化即发布，shell 层据此供全局入口）。 */
 function PublishTodoMovers(props: HomeTodoMoversData & { onPublish?: (data: HomeTodoMoversData) => void }) {
   const { onPublish, ...data } = props
+  // 上游 BlockView 每次渲染都重建（onRetry/onRefresh 等闭包身份不稳定），仅靠 effect 依赖
+  // 比较无法收敛：发布 → setTodoMoversData → 重渲染 → 再发布，形成死循环（QUOT-590 CI 挂死）。
+  // 这里对发布内容做逐字段浅比较，内容未变则跳过发布；回调闭包（onRetry/onRefresh）语义不变，
+  // 不参与比较，否则永不收敛。
+  const lastPublished = useRef<HomeTodoMoversData | null>(null)
   useEffect(() => {
+    const prev = lastPublished.current
+    if (
+      prev &&
+      prev.todos === data.todos &&
+      prev.movers === data.movers &&
+      prev.validation.state === data.validation.state &&
+      prev.validation.data === data.validation.data &&
+      prev.validation.error === data.validation.error &&
+      prev.validation.offline === data.validation.offline &&
+      prev.validation.endpointMissing === data.validation.endpointMissing &&
+      prev.validation.refreshing === data.validation.refreshing &&
+      prev.watch.state === data.watch.state &&
+      prev.watch.data === data.watch.data &&
+      prev.watch.error === data.watch.error &&
+      prev.watch.offline === data.watch.offline &&
+      prev.watch.endpointMissing === data.watch.endpointMissing &&
+      prev.watch.refreshing === data.watch.refreshing
+    ) {
+      return
+    }
+    lastPublished.current = data
     onPublish?.(data)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onPublish, data.todos, data.movers, data.validation, data.watch])
