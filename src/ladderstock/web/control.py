@@ -52,7 +52,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ladderstock.ai import ai_yaml_edit, checkpoint, cli_provider, fallback
+from ladderstock.ai import ai_yaml_edit, checkpoint, cli_provider, discovery, fallback
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.cli.paths import config_dir, project_root
 from ladderstock.core.boundary import (
@@ -3541,6 +3541,63 @@ class ControlPlane:
             "channel": status,
         }
 
+    # ------------------------------------------------------------ 零配置发现链（QUOT-601）
+
+    def self_ai_discover(self) -> dict[str, Any]:
+        """`GET /self-ai/discover`：跑完整条发现链；返回里没有明文 key。"""
+        env_file = fallback.read_env_file(self._self_ai_env_path())
+        document = discovery.discover(env_file)
+        try:
+            status = fallback.status_document(fallback.load_config(self.config_root))
+            document["configured"] = bool(status["configured"])
+        except Exception:
+            document["configured"] = False
+        return document
+
+    def self_ai_discover_apply(self, source: str) -> dict[str, Any]:
+        """`POST /self-ai/discover/apply`：把探测命中并选定的来源落地为 ai.env。"""
+        env_file = fallback.read_env_file(self._self_ai_env_path())
+        candidates = self._discovery_candidates(env_file)
+        hit = next((item for item in candidates if item.source == source), None)
+        if hit is None or not hit.ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"来源 {source!r} 当前不可用或不在探测结果里；请先 GET /self-ai/discover",
+            )
+        return discovery.apply_candidate(hit, self.config_root)
+
+    def self_ai_discover_repair(self) -> dict[str, Any]:
+        """`POST /self-ai/discover/repair`：8317 网关掉了，重新探测一次。
+
+        网关进程由 Windows 计划任务自启（workbuddy 侧负责看护），这里不代管
+        进程——只重探 + 给白话结论，UI 据此提示用户启动 workbuddy。
+        """
+        started = time.monotonic()
+        candidate = discovery.candidate_workbuddy_gateway()
+        return {
+            "ok": candidate.ok,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "model": candidate.model,
+            "detail": candidate.detail or "本地 AI 服务已恢复",
+        }
+
+    def _discovery_candidates(self, env_file: Any) -> list[discovery.Candidate]:
+        include = discovery.reuse_cli_logins_enabled(env_file)
+        candidates: list[discovery.Candidate] = [
+            discovery.candidate_workbuddy_gateway()
+        ]
+        first_ok = candidates[0].ok
+        if not first_ok:
+            env = discovery.candidate_env(env_file)
+            if env is not None:
+                candidates.append(env)
+            if include:
+                for build in (discovery.candidate_codex, discovery.candidate_claude):
+                    found = build(env_file)
+                    if found is not None:
+                        candidates.append(found)
+        return candidates
+
     def self_ai_update(
         self, values: Mapping[str, str], clear: Iterable[str]
     ) -> dict[str, Any]:
@@ -4012,6 +4069,12 @@ class CliTestRequest(BaseModel):
     cli: str
 
 
+class DiscoverApplyRequest(BaseModel):
+    """发现链落地：`source` 取探测结果里的来源标识。"""
+
+    source: str
+
+
 class AiModulesUpdateRequest(BaseModel):
     """`PUT /control/ai/modules`（QUOT-498）：只动 `ai.yaml` 的 `modules:` 段。
 
@@ -4360,6 +4423,21 @@ def build_router(plane: ControlPlane) -> APIRouter:
             model=body.model,
             api_key=body.api_key,
         )
+
+    @router.get("/self-ai/discover")
+    def self_ai_discover() -> dict[str, Any]:
+        """零配置发现链探测（QUOT-601）：P1 网关 → P2 环境变量 → P3 登录态。"""
+        return plane.self_ai_discover()
+
+    @router.post("/self-ai/discover/apply")
+    def self_ai_discover_apply(body: DiscoverApplyRequest) -> dict[str, Any]:
+        """把探测命中的来源落地为 `config/ai.env`。"""
+        return plane.self_ai_discover_apply(body.source)
+
+    @router.post("/self-ai/discover/repair")
+    def self_ai_discover_repair() -> dict[str, Any]:
+        """8317 网关不可用时的白话修复探测：重探 + 结论，不透传裸 4xx。"""
+        return plane.self_ai_discover_repair()
 
     @router.get("/self-ai/cli")
     def self_ai_cli_channels() -> dict[str, Any]:
