@@ -36,7 +36,9 @@ def _clean_env(monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def _mock_http(monkeypatch, *, models_ok=True, chat_ok=True, model_ids=("deepseek-v4.1-flash",)) -> None:
+def _mock_http(
+    monkeypatch, *, models_ok=True, chat_ok=True, model_ids=("deepseek-v4.1-flash",)
+) -> None:
     """打桩 `_probe_models` / `_probe_openai_chat`：不真的发 HTTP。"""
 
     def probe_models(base_url: str):

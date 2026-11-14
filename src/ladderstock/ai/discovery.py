@@ -206,11 +206,18 @@ def candidate_env(env_file: Any = None) -> Candidate | None:
     只读取不落盘：key 原样留在内存里，由「应用」动作写入 ai.env（本来就要
     写的那个文件，不属于扩散）。base_url 缺省视为未配置。
     """
-    key = next((_env_value(name, env_file) for name in OPENAI_KEY_ENVS if _env_value(name, env_file)), "")
-    base = next((_env_value(name, env_file) for name in OPENAI_BASE_ENVS if _env_value(name, env_file)), "")
+    key = next(
+        (_env_value(name, env_file) for name in OPENAI_KEY_ENVS if _env_value(name, env_file)),
+        "",
+    )
+    base = next(
+        (_env_value(name, env_file) for name in OPENAI_BASE_ENVS if _env_value(name, env_file)),
+        "",
+    )
     model = _env_value("OPENAI_MODEL", env_file) or _env_value("LDST_LLM_MODEL", env_file)
     if not key or not base:
         return None
+    from_process = _env_value(OPENAI_KEY_ENVS[0], env_file) == key
     return Candidate(
         priority=2,
         source="env",
@@ -220,7 +227,7 @@ def candidate_env(env_file: Any = None) -> Candidate | None:
         base_url=base,
         model=model,
         key=key,
-        detail="复用现有环境变量，只读取不落盘" if _env_value(OPENAI_KEY_ENVS[0], env_file) == key else "",
+        detail="复用现有环境变量，只读取不落盘" if from_process else "",
     )
 
 

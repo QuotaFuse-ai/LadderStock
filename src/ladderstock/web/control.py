@@ -3548,7 +3548,8 @@ class ControlPlane:
         env_file = fallback.read_env_file(self._self_ai_env_path())
         document = discovery.discover(env_file)
         try:
-            document["configured"] = bool(fallback.status_document(fallback.load_config(self.config_root))["configured"])
+            status = fallback.status_document(fallback.load_config(self.config_root))
+            document["configured"] = bool(status["configured"])
         except Exception:
             document["configured"] = False
         return document
