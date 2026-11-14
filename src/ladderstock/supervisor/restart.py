@@ -71,8 +71,7 @@ class CommandTableRestarter:
 
     def __init__(self, commands: Mapping[str, Sequence[str]] | None = None) -> None:
         self._commands: dict[str, list[str]] = {
-            str(module): [str(part) for part in argv]
-            for module, argv in (commands or {}).items()
+            str(module): [str(part) for part in argv] for module, argv in (commands or {}).items()
         }
 
     @classmethod
@@ -112,6 +111,82 @@ class CommandTableRestarter:
         except OSError as exc:
             return RestartOutcome(ok=False, detail=f"重拉启动失败：{exc}")
         return RestartOutcome(ok=True, pid=process.pid)
+
+
+class PageBootRestarter:
+    """页面自有子进程的重拉通道（QUOT-607）。
+
+    `watch_guard` / `scheduler` 由 PageBoot（页面自启，QUOT-522）拉起并记账，
+    从来不是 `MODULE_ORDER` 适配器模块——此前自愈巡检探到它们死后把名字递给
+    `SupervisorEngine._adapter()`，换来一句「未知模块」，三次退避烧完即
+    needs_human，永远拉不回来。本通道把这两个名字路由回 `PageBoot.ensure_module`
+    （幂等：按命令行指纹找活进程，活着就不重复拉起），其余名字如实拒绝。
+    """
+
+    def __init__(self, boot: Any) -> None:
+        self._boot = boot
+
+    @property
+    def known_modules(self) -> tuple[str, ...]:
+        from ladderstock.supervisor.page_boot import SELF_MODULES
+
+        return SELF_MODULES
+
+    def is_alive(self, entry: LedgerEntry) -> bool:
+        """判活走 PageBoot 自己的宿主接触面：与拉起/识别同一套证据，不另立口径。"""
+        host = getattr(self._boot, "host", None)
+        snapshot = getattr(host, "snapshot", None)
+        if entry.pid is None or snapshot is None:
+            return pid_alive(entry.pid)
+        try:
+            return snapshot(int(entry.pid)) is not None
+        except Exception:  # noqa: BLE001 - 判活异常按不存活处理（与引擎口径一致）
+            return False
+
+    def restart(self, module: str) -> Any:
+        from ladderstock.supervisor.selfheal import RestartOutcome
+
+        if module not in self.known_modules:
+            return RestartOutcome(ok=False, detail=f"非页面自有子进程，无重拉通道：{module}")
+        try:
+            report = self._boot.ensure_module(module)
+        except Exception as exc:  # noqa: BLE001 - 重拉通道异常统一转成失败结论
+            return RestartOutcome(ok=False, detail=f"页面自启重拉异常：{exc}")
+        state = getattr(report, "state", "")
+        if state == "failed":
+            return RestartOutcome(ok=False, pid=None, detail=report.detail or "页面自启重拉失败")
+        if state == "skipped":
+            return RestartOutcome(ok=False, pid=None, detail=report.detail or "重拉被跳过")
+        pid = getattr(report, "pid", None)
+        if state == "already_running":
+            return RestartOutcome(ok=True, pid=pid, detail="已在运行（不重复拉起）", adopted=True)
+        return RestartOutcome(ok=True, pid=pid, detail=report.detail or "页面自启已重新拉起")
+
+
+class CompositeRestarter:
+    """按名字路由到多个重拉通道：先命中 `known_modules` 者负责，未命中顺延。"""
+
+    def __init__(self, channels: Sequence[Any]) -> None:
+        self._channels = tuple(channels)
+
+    @property
+    def known_modules(self) -> tuple[str, ...]:
+        known: list[str] = []
+        for channel in self._channels:
+            known.extend(channel.known_modules)
+        return tuple(known)
+
+    def is_alive(self, entry: LedgerEntry) -> bool:
+        for channel in self._channels:
+            if entry.module in channel.known_modules:
+                return channel.is_alive(entry)
+        return self._channels[-1].is_alive(entry)
+
+    def restart(self, module: str) -> Any:
+        for channel in self._channels:
+            if module in channel.known_modules:
+                return channel.restart(module)
+        return self._channels[-1].restart(module)
 
 
 class AdapterRestarter:
@@ -165,6 +240,8 @@ class AdapterRestarter:
 __all__ = [
     "AdapterRestarter",
     "CommandTableRestarter",
+    "CompositeRestarter",
+    "PageBootRestarter",
     "pid_alive",
     "posix_pid_alive",
     "windows_pid_alive",

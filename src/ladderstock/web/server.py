@@ -62,6 +62,11 @@ from ladderstock.core.validation import session_days as cached_session_days
 from ladderstock.data import archive
 from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
 from ladderstock.supervisor.modules import current_env, panel_port
+from ladderstock.supervisor.restart import (
+    AdapterRestarter,
+    CompositeRestarter,
+    PageBootRestarter,
+)
 from ladderstock.supervisor.selfheal import SelfHealEngine
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
@@ -122,6 +127,7 @@ def panel_port_for_current_env() -> int:
         return panel_port(current_env())
     except ValueError:
         return WEB_PORT
+
 
 #: 盯盘快照的可信窗口（`UI-SPEC.md §10` / `state.yaml:watch_snapshot.ttl_sec`）：
 #: 超过这个秒数的状态文件一律视为过期，旧值不返回。
@@ -1671,9 +1677,7 @@ def create_app(
     # 与控制面 / 产业面同样**不受 `LDST_CONTROL_ENABLED` 影响**）；`/api/positions` 是隐私
     # 数据，回环独占 + 平面 JSON（`radar._positions_guard`，同 DEC-015 的日志面）。
     radar = (
-        radar_plane
-        if radar_plane is not None
-        else RadarPlane(data_root=root, ensure=open_ensure)
+        radar_plane if radar_plane is not None else RadarPlane(data_root=root, ensure=open_ensure)
     )
     app.include_router(build_radar_router(radar))
 
@@ -1759,9 +1763,7 @@ def create_app(
     wire_supervisor = processes is not None
     if supervisor_engine is None and processes is None:
         panel_port = panel_port_for_current_env()
-        engines = build_supervisor_engines(
-            root, panel_url=f"http://127.0.0.1:{panel_port}/"
-        )
+        engines = build_supervisor_engines(root, panel_url=f"http://127.0.0.1:{panel_port}/")
         engine = engines.heal
         processes = engines.processes
         wire_supervisor = True
@@ -1817,6 +1819,18 @@ def create_app(
             ledger=engine.ledger if isinstance(engine, SelfHealEngine) else None,
         )
     mount_page_boot(app, boot)
+
+    # QUOT-607：watch_guard / scheduler 由 PageBoot 拉起记账，但它们不是
+    # MODULE_ORDER 适配器模块——自愈把死掉的自有子进程交给默认 AdapterRestarter
+    # 时只会得到「未知模块」。生产重拉通道前加一条 PageBoot 路由：这两个名字
+    # 走 PageBoot 的幂等 ensure（按命令行指纹找活进程，不重复拉起），其余模块
+    # 原样走适配器。只包生产通道；测试注入的假 restarter 不动。
+    if (
+        isinstance(engine, SelfHealEngine)
+        and isinstance(engine.restarter, AdapterRestarter)
+        and hasattr(boot, "ensure_module")
+    ):
+        engine.restarter = CompositeRestarter([PageBootRestarter(boot), engine.restarter])
 
     # ------------------------------------------------------------ 静态看板
 
@@ -1952,9 +1966,7 @@ def serve(
     if stop_event is None:
         uvicorn.run(app, host=host, port=port, log_config=log_config(), access_log=False)
         return
-    config = uvicorn.Config(
-        app, host=host, port=port, log_config=log_config(), access_log=False
-    )
+    config = uvicorn.Config(app, host=host, port=port, log_config=log_config(), access_log=False)
     server = uvicorn.Server(config)
 
     def wait_for_stop() -> None:

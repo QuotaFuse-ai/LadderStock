@@ -369,6 +369,21 @@ class PageBoot:
             self._last = report
             return report
 
+    def ensure_module(self, module: str) -> ChildReport:
+        """重拉通道入口（QUOT-607）：单模块幂等 ensure，自愈在自有子进程死后调用。
+
+        只认 `SELF_MODULES` 两个名字，其余如实返回 skipped（自愈按失败记账，
+        绝不会出现「未知模块」——这两个名字本来就该由页面自启负责）。
+        """
+        with self._lock:
+            if module == WATCH_GUARD_MODULE:
+                _, child = self._ensure_watch_guard(None)
+            elif module == SCHEDULER_MODULE:
+                _, child = self._ensure_scheduler(None)
+            else:
+                child = ChildReport(module, STATE_SKIPPED, detail=f"非页面自有子进程：{module}")
+            return child
+
     def last_report(self) -> dict[str, Any] | None:
         with self._lock:
             return self._last
@@ -520,21 +535,32 @@ class PageBoot:
 
     def _record_self(self, module: str, pid: int, cmdline: Sequence[str], note: str) -> None:
         stamp = now_iso()
-        self.ledger.update(
-            ModuleRecord(
-                module=module,
-                ports=[],
-                pid=int(pid),
-                parent_pid=os.getpid(),
-                started_at=stamp,
-                origin="spawned",
-                cmdline_hash=cmdline_hash(cmdline),
-                state="running",
-                health=HEALTH_OK,
-                last_exit_reason=note,
-                updated_at=stamp,
-            )
+        existing = self.ledger.record(module)
+        record = ModuleRecord(
+            module=module,
+            ports=list(existing.ports) if existing else [],
+            pid=int(pid),
+            parent_pid=os.getpid(),
+            started_at=stamp,
+            origin="spawned",
+            cmdline_hash=cmdline_hash(cmdline),
+            state="running",
+            health=HEALTH_OK,
+            updated_at=stamp,
         )
+        if existing is not None:
+            # 就地改字段，不整条替换：重拉计数 / 退避窗口 / 停止意图是自愈的
+            # 记账，每次页面自启重拉都换新记录会把它们清零（QUOT-607 回归发现）。
+            for name in (
+                "restart_count",
+                "restart_window",
+                "stopping_by_user",
+                "forced_kill",
+                "adopted_peer",
+            ):
+                setattr(record, name, getattr(existing, name))
+        record.last_exit_reason = note
+        self.ledger.update(record)
 
     # ------------------------------------------------------- peer adopt-only
 
