@@ -106,6 +106,45 @@ DEFAULT_PROXYFLEET_TASK = "ProxyFleet"
 #: TickHub-CN 的运行时 env 文件（非密钥 + 代理密钥都在里面，按旧入口原样加载）
 TICKHUB_ENV_FILES_ENV = "LDST_TICKHUB_ENV_FILES"
 
+#: per-run 子进程日志的保留数量（QUOT-608）：每个 `<module>-run-<序号>.log`
+#: 只保留最近这么多份，旧的在下次 spawn 时顺手清理。
+RUN_LOG_KEEP = 10
+
+
+def _run_log_path(log_path: Path) -> Path:
+    """把主日志路径映射成 per-run 路径：`scheduler.log` → `scheduler-run-<n>.log`。
+
+    序号取现有 per-run 文件的最大值 +1，保证同一次运行的输出集中在一个文件
+    里且不覆盖仍在写的旧文件。
+    """
+    stem, suffix = log_path.stem, log_path.suffix
+    highest = 0
+    for existing in log_path.parent.glob(f"{stem}-run-*{suffix}"):
+        match = re.fullmatch(rf"{re.escape(stem)}-run-(\d+){re.escape(suffix)}", existing.name)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return log_path.with_name(f"{stem}-run-{highest + 1}{suffix}")
+
+
+def _prune_run_logs(run_log: Path) -> None:
+    """按 `RUN_LOG_KEEP` 清理过期的 per-run 日志（本轮刚写的除外）。"""
+    stem, suffix = run_log.stem, run_log.suffix
+    base = re.sub(r"-run-\d+$", "", stem)
+    pattern = re.compile(rf"{re.escape(base)}-run-(\d+){re.escape(suffix)}$")
+    runs: list[tuple[int, Path]] = []
+    for existing in run_log.parent.glob(f"{base}-run-*{suffix}"):
+        match = pattern.fullmatch(existing.name)
+        if match:
+            runs.append((int(match.group(1)), existing))
+    if len(runs) <= RUN_LOG_KEEP:
+        return
+    runs.sort()
+    for _, stale in runs[:-RUN_LOG_KEEP]:
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            pass
+
 
 def panel_port_for_env(env: Mapping[str, str]) -> int:
     """看门狗探活目标端口：显式 LDST_PANEL_PORT > 避让记忆 > 环境默认。
@@ -368,7 +407,11 @@ class WindowsHostPivot:
         log_path: Path,
     ) -> int:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(log_path, "a", encoding="utf-8", errors="replace")  # noqa: SIM115
+        # QUOT-608：子进程会终身继承日志句柄（Windows open() 不含 FILE_SHARE_DELETE），
+        # 若直接写主日志，append_capped 的 os.replace 会稳定抛 WinError 5。
+        # 改写 per-run 文件：主日志只由 append_capped 独占持有，轮转不再受阻。
+        run_log = _run_log_path(log_path)
+        handle = open(run_log, "a", encoding="utf-8", errors="replace")  # noqa: SIM115
         flags = 0
         kwargs: dict[str, Any] = {}
         if os.name == "nt":
@@ -391,6 +434,7 @@ class WindowsHostPivot:
             )
         finally:
             handle.close()
+        _prune_run_logs(run_log)
         return proc.pid
 
     def run(  # pragma: no cover - 子进程执行
