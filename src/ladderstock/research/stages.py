@@ -155,6 +155,7 @@ def build_messages(
     *,
     provenance: Mapping[str, Any] | None = None,
     tool_names: Sequence[str] | None = None,
+    registry: Any = None,
 ) -> tuple[str, str]:
     """拼 system / user；快照只读，AI 只能追加叙述。
 
@@ -162,9 +163,11 @@ def build_messages(
     system 与 R2 之前逐字相同，纯文本路径不受影响。
     R3：指标进上下文时**同时**带出处（`provenance` 块），模型才有得可引；
     没有出处的数字它照样只能照抄，渲染阶段会被标成〔未核实〕。
+    C2（QUOT-598）：`registry` 非空时注册表工具的名字与说明从执行器取；不传时
+    instruction 与 R2 逐字一致。
     """
     title = checkpoint.STAGE_TITLES.get(stage, stage)
-    instruction = tools.tool_instruction(tool_names or ())
+    instruction = tools.tool_instruction(tool_names or (), registry=registry)
     system = f"{prompt_text(stage)}\n\n通用硬约束：\n{_constraints(title)}{JSON_RULES}{instruction}"
     user = (
         f"证券代码：{code}\n"

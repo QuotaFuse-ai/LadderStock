@@ -32,7 +32,7 @@ import socket
 import threading
 import time
 import urllib.parse
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -1004,6 +1004,17 @@ def _new_finalized_blocks(
     return stable[len(sent):]
 
 
+def _collect_tool_record(pending: deque[dict[str, Any]]) -> Callable[[dict[str, Any]], None]:
+    """工具环回调：只收进队列（同步、不能 yield），帧由 `stream_turn` 抽干发出。"""
+
+    def collect(record: dict[str, Any]) -> None:
+        item = dict(record)
+        item.setdefault("started_ms", _monotonic_ms())
+        pending.append(item)
+
+    return collect
+
+
 async def stream_turn(
     *,
     message: str,
@@ -1014,6 +1025,8 @@ async def stream_turn(
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
     ai: Mapping[str, Any] | None = None,
     metrics: Mapping[str, Any] | None = None,
+    registry: Any = None,
+    event_bus: Any = None,
 ) -> AsyncIterator[str]:
     """逐帧产出 SSE 文本；与非流式 `run_turn` 同一条计算链、同一份会话落账。
 
@@ -1040,12 +1053,89 @@ async def stream_turn(
 
     失败半流（PI 2026-11-12）：已发块保留、不追加 notice，`done` 带
     `completed: false` + `reason`；6.4 第 5 条只约束非流式路径。
+
+    C2 工具环（QUOT-598）：`registry`（`ai.registry_tools.RegistryTools`）非空时
+    一次问答就有真实工具调用要报账——`"tool"` 动作 running→done 成对进流水账，
+    每次调用另发一条 cog `StageSample` 到 `event_bus`。事件只来自真实调用：被拒
+    也是 done 且带真实 `rejected`，没有真实调用就一帧不发；两者默认 None 时
+    输出与接 C2 之前逐字节一致。
     """
     seq = 0
     stream_mode: str | None = None
     sent_blocks: list[dict[str, Any]] = []
     actions: list[dict[str, Any]] = []
     model_label = ""
+
+    # C2 工具环：回调只能收到调用记录（同步、不能 yield），帧由生成器在下一步
+    # 统一抽干发出；没有接注册表时 is None，整段不碰。
+    tool_pending: deque[dict[str, Any]] | None = None
+    installed_on_call: Callable[[dict[str, Any]], None] | None = None
+
+    def _tool_frame(record: Mapping[str, Any]) -> Any:
+        """一次真实工具调用 → 一条 cog 事件 + running/done 两帧（拒因如实）。
+
+        `started_ms` 由收记录的钩子打在**调用出现**的时刻，done 帧的
+        `elapsed_ms` 是它到出帧的真实间隔；不为没有发生的调用伪造耗时，
+        也不替拒绝编造成功。
+        """
+        from ladderstock.ai import registry_tools
+
+        tool = str(record.get("tool") or "")
+        stage = str(record.get("stage") or "")
+        rejected = bool(record.get("rejected"))
+        try:
+            # 与管线同一个出口发总线：一次真实调用一条 cog 事件，拒因如实
+            registry_tools.publish_sample(
+                event_bus,
+                registry_tools.sample_for(
+                    stage=stage,
+                    tool=tool,
+                    rejected=rejected,
+                    reason=record.get("reason"),
+                    detail=str(record.get("detail") or ""),
+                ),
+            )
+        except Exception:  # noqa: BLE001 - 事件面挂了不影响本轮回答
+            pass
+        item_id = f"tool:{stage}/{tool}"
+        item = (
+            f"{tool} 调用被拒（{record.get('reason') or '拒绝'}）"
+            if rejected
+            else f"{tool} 调用完成"
+        )
+        started_at = record.get("started_ms")
+        elapsed = (
+            max(0, _monotonic_ms() - int(started_at))
+            if isinstance(started_at, int)
+            else 0
+        )
+        yield _stream_status("tool", item, "running", item_id=item_id, actions=actions)
+        actions.append(
+            {
+                "action": "tool",
+                "state": "done",
+                "item": item,
+                "item_id": item_id,
+                "tool": tool,
+                "stage": stage,
+                "rejected": rejected,
+                "reason": record.get("reason"),
+                "elapsed_ms": elapsed,
+            }
+        )
+        data: dict[str, Any] = {
+            "action": "tool",
+            "item": item,
+            "state": "done",
+            "item_id": item_id,
+            "tool": tool,
+            "stage": stage,
+            "rejected": rejected,
+            "reason": record.get("reason"),
+            "elapsed_ms": elapsed,
+            "actions": list(actions),
+        }
+        yield sse_event("status", data)
 
     def _done_frame(payload: dict[str, Any]) -> str:
         data: dict[str, Any] = {
@@ -1103,6 +1193,12 @@ async def stream_turn(
         sources = _record_sources(context)
         context_json, has_data = _context_block(context)
         timeout = effective_timeout(timeout_sec)
+        # 模型调用之前就挂上：工具环里的真实调用要能走到 SSE 流水账；只在收尾
+        # 抽干一次，没有真实调用就一帧不发
+        if registry is not None and hasattr(registry, "on_call"):
+            tool_pending = deque()
+            installed_on_call = registry.on_call
+            registry.on_call = _collect_tool_record(tool_pending)
         actions.append(
             {
                 "action": "context",
@@ -1300,6 +1396,11 @@ async def stream_turn(
             )
             stream_mode = "degraded"
 
+        # 没有真实调用时队列为空，一帧不发；已抽干的记录不再重放
+        while tool_pending:
+            for frame in _tool_frame(tool_pending.popleft()):
+                yield frame
+
         # 非流式契约的来源说明拼在 reply 尾部（会话落账完整），流式单独出块
         note = _source_note(has_data=has_data, sources=sources)
         answer = reply_text if not note else f"{reply_text}\n\n{note}"
@@ -1429,6 +1530,12 @@ async def stream_turn(
     except BaseException:  # noqa: BLE001 - 不可分类异常同收半流，不吞
         yield _half_stream_done("model_error", None)[0]
         return
+    finally:
+        if installed_on_call is not None:
+            try:
+                registry.on_call = installed_on_call
+            except Exception:  # noqa: BLE001 - 还原失败不覆盖本轮结果
+                pass
 
 
 # --------------------------------------------------------------------------- #
@@ -1588,11 +1695,15 @@ async def handle_stream(
     request: Request | None = None,
     *,
     config_root: Any = None,
+    registry: Any = None,
+    event_bus: Any = None,
 ) -> StreamingResponse:
     """流式入口（QUOT-581）：`text/event-stream`，帧见 `stream_turn`。
 
     与 `handle` 共用同一条 `run_turn` 链与同一份会话记忆；默认路径仍是
     `handle`（非流式），本函数只由显式开关（`Accept: text/event-stream`）进入。
+    C2（QUOT-598）：`registry` / `event_bus` 只是转交给 `stream_turn`，缺省
+    None 时帧序列与接入前逐字节一致。
     """
     try:
         session_id = resolve_session_id(body.session_id)
@@ -1612,6 +1723,8 @@ async def handle_stream(
             timeout_sec=body.timeout_sec,
             config_root=config_root,
             is_disconnected=request.is_disconnected if request is not None else None,
+            registry=registry,
+            event_bus=event_bus,
         ):
             yield frame
 
@@ -1658,10 +1771,18 @@ async def dispatch(
     request: Request | None = None,
     *,
     config_root: Any = None,
+    registry: Any = None,
+    event_bus: Any = None,
 ) -> Response:
-    """统一入口：`Accept: text/event-stream` 走 SSE，其余走既有 JSON（零改动）。"""
+    """统一入口：`Accept: text/event-stream` 走 SSE，其余走既有 JSON（零改动）。
+
+    C2（QUOT-598）只接流式一支：`registry` 是本次问答可用对话的工具环执行器，
+    `event_bus` 是 cog 阶段事件的总线；两者都不进非流式契约。
+    """
     if request is not None and wants_stream(request):
-        return await handle_stream(body, request, config_root=config_root)
+        return await handle_stream(
+            body, request, config_root=config_root, registry=registry, event_bus=event_bus
+        )
     return await handle(body, request, config_root=config_root)
 
 

@@ -4395,9 +4395,20 @@ def build_router(plane: ControlPlane) -> APIRouter:
 
         QUOT-581：显式带 `Accept: text/event-stream` 时改走 SSE（`event: block` /
         `event: done`）；其余请求仍走上面的 JSON 契约，一字未变。
+
+        QUOT-598：C2 工具环只在板面流式问答里接通——开关打开且走 SSE 时，带上是
+        本次问答的只读注册表执行器与自愈引擎的总线；开关关掉 / 非流式时两者都是
+        None，行为与接入前逐字节一致。
         """
+        registry = (
+            _chat_registry_tools(plane) if chat_channel.wants_stream(request) else None
+        )
         return await chat_channel.dispatch(
-            body, request, config_root=plane.config_root
+            body,
+            request,
+            config_root=plane.config_root,
+            registry=registry,
+            event_bus=_chat_event_bus(plane),
         )
 
     @router.post("/ai/generate")
@@ -4494,6 +4505,68 @@ def build_router(plane: ControlPlane) -> APIRouter:
         return found.view()
 
     return router
+
+
+def _chat_event_bus(plane: Any) -> Any:
+    """板面问答的 cog 事件出口：自愈引擎的总线（`server.py` 同一接线口径）。
+
+    测试假件没有 `selfheal` / `event_bus` 时返回 None，`chat.py` 静默跳过发布。
+    """
+    return getattr(getattr(plane, "selfheal", None), "event_bus", None)
+
+
+def _chat_registry_tools(plane: Any) -> Any:
+    """本面板面问答可自主调用的注册表工具（QUOT-598）；开关关掉 / 注册表不可用即 None。
+
+    只读板面的数据根装配：本仓工具走进程内 `mcp.server.dispatch`，peer 工具走
+    `provider_registry` 的真实传输层；任何装配失败都退回 None（不挡问答）。
+    """
+    from ladderstock.ai import registry_tools, tool_registry
+    from ladderstock.data import provider_registry
+
+    if not registry_tools.enabled():
+        return None
+    data_root = getattr(plane, "data_root", None)
+    if data_root is None:
+        return None
+    try:
+        namespace = registry_tools.namespace_from_env()
+        registry = tool_registry.ToolRegistry(root=data_root)
+        snapshot = registry_tools.load_snapshot(registry, namespace)
+        if snapshot is None:
+            return None
+        return registry_tools.build_for_stage(
+            snapshot,
+            namespace=namespace,
+            stage="chat",
+            base_day=date.today().isoformat(),
+            transport=provider_registry.build_transport(registry.peers),
+            peers=registry.peers,
+            data_root=data_root,
+            on_call=_chat_registry_call(_chat_event_bus(plane)),
+        )
+    except Exception:  # noqa: BLE001 - 注册表不可用只是「本轮没有注册表工具」
+        return None
+
+
+def _chat_registry_call(bus: Any) -> Callable[[dict[str, Any]], None]:
+    """工具环回调：一次真实调用 → 一条 cog `StageSample`（拒绝如实发拒绝态）。
+
+    `chat.py` 挂上自己的收集器时会临时替换本回调，还原后仍按这里发总线事件。
+    """
+    from ladderstock.ai import registry_tools
+
+    def publish(call: dict[str, Any]) -> None:
+        sample = registry_tools.sample_for(
+            stage=str(call.get("stage") or "chat"),
+            tool=str(call.get("tool") or ""),
+            rejected=bool(call.get("rejected")),
+            reason=call.get("reason"),
+            detail=str(call.get("detail") or ""),
+        )
+        registry_tools.publish_sample(bus, sample)
+
+    return publish
 
 
 def build_supervisor_router(plane: ControlPlane) -> APIRouter:
