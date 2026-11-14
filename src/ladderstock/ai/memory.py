@@ -269,6 +269,42 @@ def _embedder_config(model: str) -> Any:
     return BaseEmbedderConfig(model=model, embedding_dims=EMBEDDING_DIMS)
 
 
+def _verify_model_integrity(models_dir: Path) -> None:
+    """比对 SHA256SUMS 清单；损坏/被改的文件 → MemoryUnavailable，绝不带病加载。
+
+    清单由开发机下载模型时生成（随包），覆盖两个模型目录的全部文件。
+    清单缺失视为通过（旧包兼容），但包内标准布局必须带清单。
+    """
+    manifest = models_dir / "SHA256SUMS"
+    if not manifest.is_file():
+        logger.warning("model_integrity_manifest_missing path=%s", manifest)
+        return
+    import hashlib
+
+    bad: list[str] = []
+    for line in manifest.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        digest, _, rel = line.partition(" ")
+        rel = rel.strip().lstrip("*").replace("/", os.sep)
+        path = models_dir / rel
+        if not path.is_file():
+            bad.append(f"{rel}（文件缺失）")
+            continue
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        if h.hexdigest() != digest.lower():
+            bad.append(f"{rel}（哈希不一致）")
+    if bad:
+        raise MemoryUnavailable(
+            "模型文件完整性校验失败：" + "；".join(bad)
+            + f"。安装包 {models_dir} 内文件损坏或被改动，请重新安装（SHA256SUMS 为随包清单）。"
+        )
+
+
 def _load_embedding_engine(models_dir: Path) -> tuple[str, Any]:
     """按三分支加载 embedder，返回 `(branch, embedder)`。都不行 → MemoryUnavailable。
 
@@ -284,6 +320,7 @@ def _load_embedding_engine(models_dir: Path) -> tuple[str, Any]:
     # fastembed / hf_hub 的离线开关在这里就要就位：本函数可能被直接调用，
     # 不等 _build_memory 里的 setdefault（FASTEMBED_CACHE_PATH 决定缓存根）
     _prepare_offline_env(models_dir)
+    _verify_model_integrity(models_dir)
 
     try:
         import sentence_transformers  # noqa: F401

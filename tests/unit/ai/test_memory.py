@@ -530,3 +530,44 @@ def test_shared_client_does_not_load_engine() -> None:
     client = memory.shared_client(settings)
     assert isinstance(client, memory.MemoryClient)
     assert client._engine is None
+
+
+# --------------------------------------------------------------------------- #
+# 模型本地固化：SHA256 清单校验
+# --------------------------------------------------------------------------- #
+
+
+def test_verify_model_integrity_passes_with_matching_manifest(tmp_path: Path) -> None:
+    import hashlib
+
+    model_dir = tmp_path / "bge-small-zh-v1.5-baai"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_bytes(b"weights")
+    digest = hashlib.sha256(b"weights").hexdigest()
+    (tmp_path / "SHA256SUMS").write_text(
+        f"{digest} *bge-small-zh-v1.5-baai/model.safetensors\n", encoding="utf-8"
+    )
+    memory._verify_model_integrity(tmp_path)
+
+
+def test_verify_model_integrity_missing_file_fails(tmp_path: Path) -> None:
+    (tmp_path / "SHA256SUMS").write_text(
+        "0" * 64 + " *bge-small-zh-v1.5-baai/model.safetensors\n", encoding="utf-8"
+    )
+    with pytest.raises(memory.MemoryUnavailable, match="文件缺失"):
+        memory._verify_model_integrity(tmp_path)
+
+
+def test_verify_model_integrity_hash_mismatch_fails(tmp_path: Path) -> None:
+    model_dir = tmp_path / "bge-small-zh-v1.5-baai"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_bytes(b"tampered")
+    (tmp_path / "SHA256SUMS").write_text(
+        "0" * 64 + " *bge-small-zh-v1.5-baai/model.safetensors\n", encoding="utf-8"
+    )
+    with pytest.raises(memory.MemoryUnavailable, match="哈希不一致"):
+        memory._verify_model_integrity(tmp_path)
+
+
+def test_verify_model_integrity_missing_manifest_is_noop(tmp_path: Path) -> None:
+    memory._verify_model_integrity(tmp_path)
