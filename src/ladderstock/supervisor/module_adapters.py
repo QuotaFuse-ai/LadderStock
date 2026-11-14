@@ -2499,6 +2499,18 @@ def build_default_adapters(
             sleep=sleep,
         )
     )
+    # QUOT-589：`_command_adapters` 的 StartFace.argv 里端口号是 prod 基准字面值，
+    # 而 `adapter.ports` 按当前环境实时解析（QUOT-593 test=18000 系）。非 prod
+    # 环境下 faces 与端口表不一致，识别/启动会拿 prod 端口字面值——按环境表
+    # 逐位重建命令行面（与 QUOT-594 避让重建同一实现）。
+    from ladderstock.supervisor.modules import current_env
+
+    if current_env() != "prod":
+        for name, adapter in adapters.items():
+            if isinstance(adapter, BaseAdapter) and tuple(adapter.ports) != tuple(
+                face.port for face in adapter.faces
+            ):
+                adapters[name] = rebase_adapter_ports(adapter, tuple(adapter.ports))
     adapters["financecoffer"] = FinanceCofferAdapter(
         peer_dir=default_peer_dir("financecoffer", values),
         host=pivot,

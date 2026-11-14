@@ -7,8 +7,13 @@
 平台门：仅 Windows 执行（CI 是 ubuntu，整模块 skip，沿用
 tests/unit/web/test_control_acl.py 的 WINDOWS_ONLY 先例）。这是模块级平台门，
 不是用例内兜底：Windows 上本文件没有任何 skip 分支，起不来 / 停不净一律 fail。
-部署前提（Windows 上缺任一即真失败）：六个 peer 部署就位、WSL 默认发行版可用、
-ProxyFleet 计划任务存在、当前进程有管理员权限（schtasks /change 需要）。
+部署前提（Windows 上缺任一即真失败）：六个 peer 部署就位、当前进程有管理员
+权限（host pivot 的进程操作需要）。QUOT-589 端口隔离修正：financecoffer /
+proxyfleet 的生产形态句柄（WSL compose / schtasks 计划任务）端口写死生产值
+（8100 / 8788-8789），测试环境拉不回 18000 系，且测试绝不允许 enable/run 生产
+计划任务——这两个模块按 QUOT-550 的 fake_module_server 模式换成 fake 适配器
+（同端口表、同识别协议）；watch 启动器固定源码态 CLI（安装根 ldst.exe 是主仓
+旧码，缺 watchdog 子命令）。
 
 派单红线：
 - 等待一律「轮询 + 超时（≤60s）」，无固定硬等；
@@ -27,6 +32,7 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -34,16 +40,16 @@ from pathlib import Path
 
 import pytest
 
-from ladderstock.supervisor.adapters import MODULE_ORDER, MODULE_PORTS
+from ladderstock.supervisor.adapters import MODULE_ORDER
 from ladderstock.supervisor.module_adapters import (
     BaseAdapter,
-    FinanceCofferAdapter,
     PortEvidence,
-    ProxyFleetAdapter,
+    StartFace,
     WatchdogAdapter,
     WindowsHostPivot,
     build_default_adapters,
 )
+from ladderstock.supervisor.modules import module_ports, reset_env, select_env
 
 IS_WINDOWS = os.name == "nt"
 WINDOWS_ONLY = pytest.mark.skipif(
@@ -57,7 +63,13 @@ POLL_TIMEOUT_SEC = 60.0
 POLL_INTERVAL_SEC = 0.5
 TCP_CONNECT_TIMEOUT_SEC = 1.0
 
-LifecycleAdapter = BaseAdapter | FinanceCofferAdapter | ProxyFleetAdapter
+LifecycleAdapter = BaseAdapter
+
+#: 形态专属模块（生产句柄写死生产端口，测试环境不可拉起）→ fake 模块替身，
+#: 见文件头「QUOT-589 端口隔离修正」。
+FAKE_MODULES = ("financecoffer", "proxyfleet")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FAKE_SERVER = Path(__file__).with_name("fake_module_server.py")
 
 
 @dataclass(frozen=True)
@@ -82,27 +94,53 @@ class Started:
 
     module: str
     ports: tuple[int, ...]
-    #: True = 形态专属停止走适配器（financecoffer 容器 / proxyfleet 计划任务）
-    via_adapter: bool
     pids: list[int] = field(default_factory=list)
 
 
 @pytest.fixture(scope="module")
 def world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[World]:
+    # QUOT-589 端口隔离红线：生命周期验收只跑测试环境（18000 系端口表），
+    # 绝不拉起/触碰生产 8000/8787/8002/8790/8791/8765/5950。
+    select_env("test")
     host = WindowsHostPivot()
     log_dir = tmp_path_factory.mktemp("quot-514-logs")
     built = build_default_adapters(host=host, log_dir=log_dir)
     adapters: dict[str, LifecycleAdapter] = {}
-    plans: list[PortPlan] = []
     for name in MODULE_ORDER:
         adapter = built[name]
         if isinstance(adapter, WatchdogAdapter):
             # QUOT-589 重修：watch 无端口，不走端口生命周期（无 identify 端口证据）
             assert adapter.ports == ()
             continue
-        assert isinstance(adapter, (BaseAdapter, FinanceCofferAdapter, ProxyFleetAdapter))
-        adapters[name] = adapter
+        if name in FAKE_MODULES:
+            # 生产形态句柄（WSL compose / schtasks）写死生产端口，测试环境绝不
+            # 触碰——换成同端口表、同识别协议的 fake 模块适配器。
+            ports = tuple(module_ports()[name])
+            faces = tuple(
+                StartFace(
+                    face="server",
+                    argv=(sys.executable, str(FAKE_SERVER), "--module", name, "--port", str(port)),
+                    cwd=REPO_ROOT,
+                    port=port,
+                    match=("fake_module_server", "--module", name),
+                    log_name=f"fake-{name}-{port}.log",
+                )
+                for port in ports
+            )
+            adapters[name] = BaseAdapter(
+                name, ports, faces, host=host, log_dir=log_dir, evidence_cache_sec=0.0
+            )
+        else:
+            adapters[name] = adapter
+    plans: list[PortPlan] = []
+    for name in MODULE_ORDER:
+        if name not in adapters:
+            continue
+        adapter = adapters[name]
         for ev in adapter.identify().ports:
+            assert ev.port >= 18000 and ev.port < 19000, (
+                f"端口隔离红线：{name} 解析到非测试端口 {ev.port}（须 18000 系）"
+            )
             if ev.listening and not ev.matched:
                 pytest.fail(
                     f"期望端口 {ev.port} 在听 / 实际：归属 PID={ev.pid}（不属于本模块）"
@@ -112,9 +150,11 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[World]:
             plans.append(PortPlan(module=name, port=ev.port, adopt_pid=adopt_pid))
             action = f"adopted pid={adopt_pid}" if adopt_pid is not None else "cold will-start"
             print(f"[setup] {name} port={ev.port} {action}")
-    expected = {port for name in MODULE_ORDER for port in MODULE_PORTS[name]}
+    expected = {port for name in MODULE_ORDER for port in module_ports()[name]}
     assert {plan.port for plan in plans} == expected, "识别端口与注册表白名单不一致"
+    assert all(plan.port >= 18000 and plan.port < 19000 for plan in plans)
     yield World(host=host, adapters=adapters, plans=tuple(plans), log_dir=log_dir)
+    reset_env()
 
 
 def _evidence(world: World, plan: PortPlan) -> PortEvidence:
@@ -156,42 +196,31 @@ def _start_missing(world: World) -> list[Started]:
         if not mine:
             continue
         adapter = world.adapters[name]
-        ports = tuple(plan.port for plan in mine)
-        if isinstance(adapter, BaseAdapter):
-            faces = [
-                next(item for item in adapter.faces if item.port == plan.port) for plan in mine
-            ]
-            for face in faces:
-                exe = Path(face.argv[0])
-                if not exe.is_file():
-                    pytest.fail(f"{name} 的入口不存在：{exe}")
-            for face in faces:
-                pid = world.host.spawn(
-                    face.argv,
-                    cwd=face.cwd,
-                    # 复用适配器的环境装配（tickhub env 文件等），不在测试里另复制一份
-                    env=adapter._environment(),
-                    log_path=world.log_dir / face.log_name,
-                )
-                started.append(
-                    Started(module=name, ports=(face.port,), via_adapter=False, pids=[pid])
-                )
-        else:
-            item = Started(module=name, ports=ports, via_adapter=True)
-            started.append(item)
-            spawned = adapter.start()
-            if isinstance(adapter, FinanceCofferAdapter):
-                item.pids.append(spawned.pid)
+        faces = [
+            next(item for item in adapter.faces if item.port == plan.port) for plan in mine
+        ]
+        for face in faces:
+            exe = Path(face.argv[0])
+            if not exe.is_file():
+                pytest.fail(f"{name} 的入口不存在：{exe}")
+        for face in faces:
+            pid = world.host.spawn(
+                face.argv,
+                cwd=face.cwd,
+                # 复用适配器的环境装配（tickhub env 文件等），不在测试里另复制一份
+                env=adapter._environment(),
+                log_path=world.log_dir / face.log_name,
+            )
+            started.append(
+                Started(module=name, ports=(face.port,), pids=[pid])
+            )
     return started
 
 
 def _teardown(world: World, started: list[Started]) -> None:
     for item in reversed(started):
-        if item.via_adapter:
-            world.adapters[item.module].stop()
-        else:
-            for pid in item.pids:
-                world.host.terminate_tree(pid, force=True)
+        for pid in item.pids:
+            world.host.terminate_tree(pid, force=True)
     pending = [port for item in started for port in item.ports]
     deadline = time.monotonic() + POLL_TIMEOUT_SEC
     while pending:
