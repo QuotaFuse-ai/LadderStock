@@ -260,6 +260,9 @@ def _prepare_offline_env(models_dir: Path) -> None:
     # mem0 的 FastEmbedEmbedding 不透传 cache_dir / specific_model_path，
     # 只能靠 fastembed 认的缓存根（model_management.py 认它 → local_files_only=True）
     os.environ.setdefault("FASTEMBED_CACHE_PATH", str(models_dir))
+    # baai_local 分支的 HuggingFaceEmbedding（sentence-transformers）同样只认
+    # 环境变量：本地模型目录当 home，杜绝任何落到 ~/.cache 的下载路径
+    os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(models_dir))
     os.environ.setdefault("MEM0_TELEMETRY", "False")
 
 
