@@ -114,6 +114,9 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
 
     expect(await screen.findByText('演示数据')).toBeTruthy()
     // QUOT-559：URL/开关共用「演示数据」文本，来源细节在 hover title 里区分
+    // QUOT-595：周标签以异步落地的载荷为准；只等徽标时默认周（如 W46）可能还在展示，
+    // 必须等演示周 2026-W44 出现后再断言后续事实（CI 负载下抢跑实测）。
+    await waitFor(() => expect(bodyText()).toContain('2026-W44 · 2026-10-26 ~ 2026-11-01 · 5 个交易日有数据'))
     expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).toContain('设置页')
     expect(screen.getByText('演示数据').closest('[title]')?.getAttribute('title')).not.toContain('网址开关')
     expect(bodyText()).toContain('2026-W44 · 2026-10-26 ~ 2026-11-01 · 5 个交易日有数据')
@@ -125,7 +128,7 @@ describe('每日复盘（数据面）/ 周度复盘演示源', () => {
     expect(table?.querySelectorAll('tbody tr').length).toBe(5)
     expect(table?.textContent).toContain('10-30')
     expect(bodyText()).toContain('科大讯飞')
-    // 末日与复盘页同一份事实
+    // 末日与复盘页同一份事实；周序已由上文的 W44 waitFor 锚定，避免默认周（如 W46）抢跑
     expect(bodyText()).toContain('68')
   })
 

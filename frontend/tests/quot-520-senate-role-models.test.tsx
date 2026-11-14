@@ -157,6 +157,19 @@ function testCalls(fetchMock: ReturnType<typeof mockFetch>) {
     .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>)
 }
 
+/**
+ * QUOT-595：草稿重置 effect（useEffect([payload])）在 CI 负载下可能延迟到首次
+ * fireEvent.change 之后才 flush，把 provider 改回初值。DOM 里唯一能观察该 effect
+ * 落地的信号是 api_key_env 输入框：payload 的 global.api_key_env 在 effect 里写入
+ * keyEnv state，flush 前恒为空串。交互前必须等它，保证草稿已初始化。
+ */
+async function waitDraftsReady(roleTestId: string, expectedKeyEnv: string): Promise<HTMLElement> {
+  const market = await screen.findByTestId(roleTestId)
+  const keyInput = within(market).getByLabelText('api_key_env（变量名）') as HTMLInputElement
+  await waitFor(() => expect(keyInput.value).toBe(expectedKeyEnv))
+  return market
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -222,7 +235,7 @@ describe('SenateRoleModels', () => {
     })
     render(<SenateRoleModels controlReady />)
 
-    const market = await screen.findByTestId('senate-role-market')
+    const market = await waitDraftsReady('senate-role-market', 'MINIMAX_API_KEY')
     fireEvent.change(within(market).getByLabelText('Provider'), { target: { value: 'openai' } })
     fireEvent.change(within(market).getByLabelText('Model'), { target: { value: 'gpt-5-mini' } })
     fireEvent.click(screen.getByTestId('senate-save'))
@@ -247,7 +260,7 @@ describe('SenateRoleModels', () => {
     })
     render(<SenateRoleModels controlReady />)
 
-    const market = await screen.findByTestId('senate-role-market')
+    const market = await waitDraftsReady('senate-role-market', 'MINIMAX_API_KEY')
     const model = within(market).getByLabelText('Model') as HTMLInputElement
     fireEvent.change(model, { target: { value: 'MiniMax-Text-01' } })
     fireEvent.click(screen.getByTestId('senate-save'))
@@ -297,7 +310,7 @@ describe('SenateRoleModels', () => {
     })
     render(<SenateRoleModels controlReady />)
 
-    const market = await screen.findByTestId('senate-role-market')
+    const market = await waitDraftsReady('senate-role-market', 'MINIMAX_API_KEY')
     const offline = screen.getByTestId('senate-role-news')
 
     fireEvent.click(within(market).getByTestId('senate-test-market'))
