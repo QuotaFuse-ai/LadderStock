@@ -51,6 +51,15 @@ POLL_INTERVAL_SEC = 0.25
 #: 单模块归属判定结果：managed = 账本证明是本 supervisor 拉的；external = 不是
 Ownership = str
 
+#: 端口避让器（QUOT-594）：给「模块名 / 基准端口 / 账本记录」，回实际可用端口。
+#: own/adopted 占用回原端口（正常 adopt / 续跑）；foreign 占用回避让端口；
+#: 上限内无空闲抛 AllocationFailed（引擎翻成 needs_human 语义的 SupervisorError）。
+PortAvoider = Callable[[str, tuple[int, ...], "ModuleRecord"], tuple[int, ...]]
+
+#: 端口重建器（QUOT-594）：按实际端口重建适配器（argv 里的 --port 字面值）。
+#: 不支持避让的适配器（WSL compose / schtasks 等无端口参数形态）返回 None。
+AdapterRebaser = Callable[["ModuleAdapter", tuple[int, ...]], "ModuleAdapter | None"]
+
 EVIDENCE_LEDGER = "ledger"
 EVIDENCE_CMDLINE_MISMATCH = "cmdline_mismatch"
 EVIDENCE_PORT_UNKNOWN = "port_taken_by_unknown"
@@ -76,6 +85,8 @@ class SupervisorEngine:
         poll_interval_sec: float = POLL_INTERVAL_SEC,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        port_avoider: PortAvoider | None = None,
+        adapter_rebaser: AdapterRebaser | None = None,
     ) -> None:
         self._adapters = module_registry(adapters)
         self._ledger = ledger
@@ -93,6 +104,11 @@ class SupervisorEngine:
         #: 端口冲突安全处置据此把「残留自有进程」认成 own_child；用前必须再验
         #: 存活 + 指纹（防 PID 复用把外来进程误认成自有，见 build_port_inspector）。
         self._spawned_pids: dict[int, str] = {}
+        #: 端口避让（QUOT-594）：未注入 = 维持 DEC-004 原语义（冲突即拒绝拉起）。
+        self._port_avoider = port_avoider
+        self._adapter_rebaser = adapter_rebaser
+        #: 本任 supervisor 检测到的避让记录：模块名 → 基准端口表（state 可见）。
+        self._avoided_from: dict[str, tuple[int, ...]] = {}
 
     @property
     def ledger(self) -> Ledger:
@@ -175,10 +191,11 @@ class SupervisorEngine:
                 record.health = HEALTH_OK
                 self._ledger.update(record)
                 return record
-            raise SupervisorError(
-                f"{name} 的端口 {record.ports} 已被其它进程占用"
-                f"（账本 PID {record.pid} 不是监听者），按 DEC-004 不自动换端口"
-            )
+            # 基准端口被 foreign 占用：优先避让（QUOT-594），未配避让器时
+            # 维持 DEC-004 原语义。own/adopted 占用避让器内部回原端口并按
+            # 对账口径处置，绝不到达这里。
+            adapter = self._avoid_or_refuse(adapter, record)
+            record.ports = list(adapter.ports)
 
         record.state = "starting"
         record.forced_kill = False
@@ -285,6 +302,48 @@ class SupervisorEngine:
             self._stop_module(name)
             record = self._ledger.record(name)
             return {"module": name, "ok": True, "record": _view(record)}
+
+    def _avoid_or_refuse(self, adapter: ModuleAdapter, record: ModuleRecord) -> ModuleAdapter:
+        """基准端口被占时的避让决策（QUOT-594）。
+
+        配了避让器：foreign 占用 → 避让到空闲端口并重建适配器（argv 换端口
+        字面值）；own/adopted 占用 → 避让器回原端口，此时保持 DEC-004 拒绝
+        拉起（本方进程由 adopt / S4 处置通道负责，start 不强拉双实例）。
+        未配避让器 / 重建不支持（WSL compose 等无端口参数形态）→ 维持原语义。
+        AllocationFailed（上限内无空闲）翻成 SupervisorError 交人工（needs_human）。
+        """
+        name = adapter.name
+        base = tuple(adapter.ports)
+        if self._port_avoider is None:
+            raise SupervisorError(
+                f"{name} 的端口 {record.ports} 已被其它进程占用"
+                f"（账本 PID {record.pid} 不是监听者），按 DEC-004 不自动换端口"
+            )
+        from ladderstock.supervisor.port_allocator import AllocationFailed
+
+        try:
+            actual = self._port_avoider(name, base, record)
+        except AllocationFailed as exc:
+            raise SupervisorError(f"{name} 端口避让失败：{exc}") from None
+        if tuple(actual) == base:
+            # 本方（own_child / adopted_peer）占用：不避让，维持原拒绝语义
+            raise SupervisorError(
+                f"{name} 的端口 {record.ports} 已被本方相关进程占用"
+                f"（账本 PID {record.pid} 不是监听者），请先处理该进程再启动"
+            )
+        if self._adapter_rebaser is None:
+            raise SupervisorError(
+                f"{name} 避让到端口 {actual} 但当前适配器不支持端口重建，"
+                "按 DEC-004 不自动换端口"
+            )
+        rebased = self._adapter_rebaser(adapter, tuple(actual))
+        if rebased is None:
+            raise SupervisorError(
+                f"{name} 避让到端口 {actual} 但当前适配器形态不支持端口重建，"
+                "按 DEC-004 不自动换端口"
+            )
+        self._avoided_from[name] = base
+        return rebased
 
     def _stop_module(self, name: str) -> ModuleRecord:
         adapter = self._adapter(name)
@@ -536,6 +595,9 @@ class SupervisorEngine:
                         "listening": listening,
                     }
                 )
+                if name in self._avoided_from:
+                    # QUOT-594：避让过的模块带基准端口，前端据此显示「已自动避让」
+                    view["avoided_from"] = list(self._avoided_from[name])
                 modules[name] = view
             return {
                 "supervisor_pid": self._procs.self_pid(),

@@ -1173,6 +1173,8 @@ export interface SupervisorModule {
   mappings?: ProxyMapping[]
   /** QUOT-556：账本标记为外部认领的 peer（adopt-only，重启必须用户确认） */
   adopted_peer?: boolean
+  /** QUOT-594：本模块端口发生避让时带基准端口（avoided_from）；未避让缺省 */
+  avoided_from?: number[]
 }
 
 export interface SupervisorStatePayload {

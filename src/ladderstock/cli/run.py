@@ -103,6 +103,33 @@ def _open_when_ready(host: str, port: int, *, timeout: float = 30.0) -> None:
         time.sleep(0.2)
 
 
+def _avoid_board_port(base: int, host: str) -> int | None:
+    """看板端口避让（QUOT-594）：base+1..+100 找空闲；失败返回 None。
+
+    成功即写 config/ports.yaml（下次启动复用；看门狗重启看板也读它）。
+    用户显式 `--port` 的调用方不经过这里（显式指定 = 用户意图，不覆盖）。
+    """
+    from ladderstock.cli.paths import config_dir
+    from ladderstock.supervisor.port_allocator import (
+        MAX_SHIFT,
+        load_port_overrides,
+        save_port_overrides,
+    )
+
+    for candidate in range(base + 1, base + MAX_SHIFT + 1):
+        if port_free(candidate, host):
+            try:
+                save_port_overrides(
+                    config_dir(),
+                    candidate,
+                    load_port_overrides(config_dir()),
+                )
+            except Exception:  # noqa: BLE001 - 持久化失败不挡启动
+                pass
+            return candidate
+    return None
+
+
 def launch(
     *,
     host: str = DEFAULT_HOST,
@@ -126,9 +153,35 @@ def launch(
         error(str(exc))
         raise typer.Exit(EXIT_CONFIG) from None
 
+    # QUOT-594：用户未显式指定端口（默认口径）时先复用上次避让结果；
+    # 显式 --port 是用户意图，绝不覆盖（连上次避让的记录也不动）。
+    if port == DEFAULT_PORT:
+        try:
+            from ladderstock.cli.paths import config_dir
+            from ladderstock.supervisor.port_allocator import load_board_override
+
+            remembered = load_board_override(config_dir())
+        except Exception:  # noqa: BLE001 - 读配置失败按无记录处理
+            remembered = None
+        if remembered is not None and remembered != DEFAULT_PORT:
+            port = remembered
+
     if not port_free(port, host if host in LOOPBACK_HOSTS else DEFAULT_HOST):
-        error(f"端口 {port} 已被占用；请用 --port 指定其他端口（不会自动换端口，见 DEC-004）")
-        raise typer.Exit(EXIT_CONFIG)
+        # QUOT-594：foreign 占用先避让（+1..+100），避让不了再报错退出。
+        # 注意 port_free 的「占用」含本方进程——看板是单实例服务，本方在听
+        # （已有实例运行）不避让，维持原报错退出语义（避免双看板）。
+        avoided: int | None = _avoid_board_port(
+            port, host if host in LOOPBACK_HOSTS else DEFAULT_HOST
+        )
+        if avoided is None:
+            error(
+                f"端口 {DEFAULT_PORT} 已被占用且无法避让；请用 --port 指定其他端口"
+                "（不会自动换端口，见 DEC-004）"
+            )
+            raise typer.Exit(EXIT_CONFIG)
+        port = avoided
+        if port != DEFAULT_PORT:
+            _log(f"默认端口 {DEFAULT_PORT} 被其它程序占用，已自动避让到 {port}")
 
     # DEC-071：干净用户目录首跑从随包模板补齐完整配置（含 schema），已存在不覆盖。
     # 先 seed 再迁移——迁移要读 state.yaml，seed 之前它还不存在。

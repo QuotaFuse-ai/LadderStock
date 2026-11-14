@@ -33,6 +33,7 @@ import {
   type PortOwner,
   type StateConfigPayload,
   type SupervisorModule,
+  type SupervisorStatePayload,
 } from '../api'
 import { useAsync, type AsyncResult } from '../lib/useAsync'
 import { setDemoPref, useDemoEnabled, useForcedState, resolveState, type PageState } from '../lib/pageState'
@@ -75,6 +76,7 @@ import {
   needsConfirm,
   selfHealView,
   ownershipView,
+  avoidanceNote,
   type SelfHealView,
   type StopCandidate,
 } from '../lib/supervisorView'
@@ -1465,6 +1467,7 @@ function PortsSection({
   productOf,
   push,
   onHealed,
+  supervisorState,
 }: {
   board: AsyncResult<BoardPayload>
   portRows: PortRow[]
@@ -1473,12 +1476,29 @@ function PortsSection({
   productOf: (peerId: string) => string
   push: (message: string, tone?: ToastItem['tone']) => void
   onHealed: () => void
+  supervisorState?: SupervisorStatePayload | null
 }) {
   const density = useDensity()
   // 同一屏的数字口径：端口区也按注册表实际出卡数走，不写死模块个数
   const moduleCount = board.data ? board.data.peers.length + (board.data.components?.length ?? 0) : null
+  // QUOT-594：实际端口只读展示 + 避让说明（信息态，不告警）
+  const avoidanceNotes = (supervisorState?.modules ?? [])
+    .map((module) => ({ module, note: avoidanceNote(module) }))
+    .filter((item): item is { module: SupervisorModule; note: string } => item.note !== null)
   return (
     <div className="flex flex-col gap-4">
+      {avoidanceNotes.length > 0 && (
+        <SectionCard title="实际端口" subtitle="端口被其它程序占用时应用会自动换一个，无需手动处理">
+          <ul className="flex flex-col gap-1">
+            {avoidanceNotes.map(({ module, note }) => (
+              <li key={module.module} className="text-caption text-text-secondary" data-testid={`avoided-${module.module}`}>
+                <Info className="mr-1 inline size-3.5 align-[-2px]" aria-hidden="true" />
+                {productOf(module.module) || module.module}：{note}
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      )}
       <PortDiagnosticsPanel
         controlReady={controlReady}
         productOf={productOf}
@@ -2006,6 +2026,7 @@ export default function SettingsScreen() {
             productOf={productOf}
             push={push}
             onHealed={() => void board.refresh()}
+            supervisorState={supervisor.data}
           />
         )}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
@@ -2036,6 +2057,7 @@ export default function SettingsScreen() {
             productOf={productOf}
             push={push}
             onHealed={() => void board.refresh()}
+            supervisorState={supervisor.data}
           />
         )}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
@@ -2254,6 +2276,7 @@ export default function SettingsScreen() {
               void board.refresh()
               void supervisor.refresh()
             }}
+            supervisorState={supervisor.data}
           />
         )}
 

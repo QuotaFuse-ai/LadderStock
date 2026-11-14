@@ -46,6 +46,17 @@ export function moduleKey(id: string): string {
   return id.replace(/-/g, '_')
 }
 
+/**
+ * QUOT-594：端口避让的白话文案（纯翻译，不做判定）。
+ * 有 `avoided_from` 说明后端已自动换过端口——信息态，不再告警。
+ */
+export function avoidanceNote(module: SupervisorModule | null | undefined): string | null {
+  if (!module?.avoided_from?.length) return null
+  const from = module.avoided_from.join(' / ')
+  const to = module.ports.join(' / ')
+  return `默认端口 ${from} 被其它程序占用，已自动换到 ${to}，功能不受影响`
+}
+
 export function findModule(
   state: SupervisorStatePayload | null | undefined,
   peerId: string,
