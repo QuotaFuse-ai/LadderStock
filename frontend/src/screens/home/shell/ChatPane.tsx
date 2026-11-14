@@ -92,6 +92,11 @@ interface ChatPaneProps {
    * 不回传会导致 `activeSessionId` 恒 null：失败时闪回空白、第二问另起新会话（多轮断裂）。
    */
   onSessionCreated?: (sessionId: string) => void
+  /**
+   * 顶栏「问 AI」聚焦请求（QUOT-590）：计数变化即聚焦 composer，只聚焦不自动发送。
+   * chat 模式可见时触发；隐藏态的请求由外壳在聚焦时分流（不会发到这里）。
+   */
+  focusRequest?: number
 }
 
 interface PaneData {
@@ -101,7 +106,7 @@ interface PaneData {
 
 const EMPTY_PANE: PaneData = { session: null, turns: [] }
 
-export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundComplete, onFirstRoundStarted, onSessionCreated }: ChatPaneProps) {
+export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundComplete, onFirstRoundStarted, onSessionCreated, focusRequest = 0 }: ChatPaneProps) {
   const navigate = useNavigate()
   const isMobile = useIsMobile()
 
@@ -172,6 +177,11 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   }, [activeSessionId])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // 顶栏「问 AI」（QUOT-590）：计数变化即聚焦 composer，只聚焦不自动发送
+  useEffect(() => {
+    if (focusRequest > 0) inputRef.current?.focus()
+  }, [focusRequest])
 
   useEffect(
     () => () => {

@@ -78,8 +78,8 @@ export function HomeTodoMoversGlobalBar() {
  */
 function HomeTodoMoversEntry({ className }: { className?: string }) {
   const data = useContext(HomeTodoMoversContext)
-  if (!data) return null
-  const { todos, movers, validation, watch } = data
+  // Rules of Hooks：`data` 缺失也要走完全部 hooks（QUOT-590 复现的 Hooks 顺序抖动），
+  // 这里只做早退标记，hook 全部无条件调用，返回前再判空。
   const toolsSlot = useContext(PageToolsSlotContext)
   const [open, setOpen] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -121,7 +121,15 @@ function HomeTodoMoversEntry({ className }: { className?: string }) {
     }
   }, [open])
 
-  // 顶栏挂着时弹层锚定按钮；无槽位（单测 / 独立渲染）时入口就地渲染、无弹层
+  const { todos, movers, validation, watch } = data ?? {
+    todos: [],
+    movers: [],
+    validation: { state: 'loading', data: null, error: null, offline: false, endpointMissing: false, onRetry: () => {}, onRefresh: () => {}, refreshing: false } as BlockView<LadderEnvelope<ValidationPayload>>,
+    watch: { state: 'loading', data: null, error: null, offline: false, endpointMissing: false, onRetry: () => {}, onRefresh: () => {}, refreshing: false } as BlockView<LadderEnvelope<WatchSnapshotPayload>>,
+  }
+
+  // 顶栏挂着时弹层锚定按钮；无槽位（单测 / 独立渲染）时入口就地渲染、无弹层。
+  // hooks 已全部无条件执行完，这里只是选渲染形态，不违反 Rules of Hooks。
   if (!toolsSlot) {
     return (
       <HomeTodoMoversCard
