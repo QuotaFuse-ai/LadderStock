@@ -4,11 +4,12 @@ QUOT-611 起改为 **进程内 mem0 SDK**（不再依赖 Docker / 127.0.0.1:9100
 
 - 向量库：qdrant-client 本地模式（`path=` 落盘，portalocker 独占锁 → 全应用唯一
   Memory 单例，懒加载 + 锁双检）。
-- Embedder：BAAI/bge-small-zh-v1.5（512 维），模型预置在安装包 `file/models/`，
-  全程离线（`HF_HUB_OFFLINE=1` + `FASTEMBED_CACHE_PATH`），绝不运行时触网。
-  加载三分支：torch + sentence_transformers 可 import 且 BAAI 原版目录在位 →
-  BAAI 原版；否则 ONNX（fastembed，HF 缓存布局）；都不行 → `MemoryUnavailable`
-  明确报错，绝不静默降级。实际分支写进 `engine_health()`（/api/health）。
+- Embedder：BAAI/bge-small-zh-v1.5（512 维），唯一运行时为 BAAI 原版 safetensors
+  （sentence-transformers/torch），模型预置在安装包 `file/models/`，全程离线
+  （`HF_HUB_OFFLINE=1` 等），绝不运行时触网。fastembed/ONNX 副本仅作为分发资产
+  保留在包内，不是运行时路径（两栈向量不在同一空间，不并列回落）。
+  加载失败（torch 缺失 / 模型目录缺失 / 校验不过）→ `MemoryUnavailable`
+  明确报错，绝不静默降级。embedder 详情写进 `engine_health()`（/api/health）。
 - LLM：本地网关（openai 兼容，`LDST_LLM_*` / `config/ai.env`），`infer=True`
   保持既有行为：写入的是消息，记忆是 mem0 抽取产物。
 - 落盘路径按实例维度隔离（沿用现有 LDST_ENV，不新写隔离规则）：
@@ -104,13 +105,12 @@ COLLECTION_NAME = "ladderstock_memories"
 
 #: bge-small-zh-v1.5 = 512 维
 EMBEDDING_DIMS = 512
+#: BAAI 原版模型在 HF 上的标识（仅用于文档/日志展示，运行时按本地目录加载）
 EMBEDDER_MODEL = "BAAI/bge-small-zh-v1.5"
 
 MODELS_DIRNAME = "models"
 #: BAAI 原版（safetensors，走 sentence_transformers）目录名
 BAAI_MODEL_DIRNAME = "bge-small-zh-v1.5-baai"
-#: fastembed ONNX 的 HF 缓存目录名（Qdrant/bge-small-zh-v1.5 镜像布局）
-ONNX_HF_CACHE_DIRNAME = "models--Qdrant--bge-small-zh-v1.5"
 
 
 def _install_models_dir() -> Path:
@@ -309,17 +309,13 @@ def _verify_model_integrity(models_dir: Path) -> None:
 
 
 def _load_embedding_engine(models_dir: Path) -> tuple[str, Any]:
-    """按三分支加载 embedder，返回 `(branch, embedder)`。都不行 → MemoryUnavailable。
+    """唯一运行时（决策 A 定稿）：BAAI 原版 safetensors，sentence-transformers/torch。
 
-    - baai_local：torch + sentence_transformers 可 import 且
-      `models_dir/bge-small-zh-v1.5-baai/`（BAAI 原版 safetensors）在位；
-    - onnx_fastembed：fastembed ONNX（HF 缓存布局
-      `models_dir/models--Qdrant--bge-small-zh-v1.5/`）；
-    - 都不行：明确报错（缺哪个分支、看了哪些路径），绝不静默降级。
+    没有「回落 ONNX」这条并列路径——fastembed（ONNX）与 SentenceTransformer
+    （safetensors）的向量不在同一空间，混用会让检索错乱。包内仍保留 ONNX 副本
+    仅作分发资产，不是必达路径。加载失败 → MemoryUnavailable，绝不静默降级。
     """
     baai_dir = models_dir / BAAI_MODEL_DIRNAME
-    onnx_cache = models_dir / ONNX_HF_CACHE_DIRNAME
-    tried: list[str] = []
     # fastembed / hf_hub 的离线开关在这里就要就位：本函数可能被直接调用，
     # 不等 _build_memory 里的 setdefault（FASTEMBED_CACHE_PATH 决定缓存根）
     _prepare_offline_env(models_dir)
@@ -328,30 +324,19 @@ def _load_embedding_engine(models_dir: Path) -> tuple[str, Any]:
     try:
         import sentence_transformers  # noqa: F401
         import torch  # noqa: F401
-
-        torch_ok = True
     except ImportError:
-        torch_ok = False
-    if torch_ok and baai_dir.is_dir():
-        from mem0.embeddings.huggingface import HuggingFaceEmbedding
+        raise MemoryUnavailable(
+            "嵌入模型不可用：torch / sentence-transformers 未随包安装"
+            "（决策 A 唯一运行时，无 ONNX 回落）。请完整安装应用。"
+        ) from None
+    if not baai_dir.is_dir():
+        raise MemoryUnavailable(
+            f"嵌入模型不可用：本地模型目录 {baai_dir} 不存在。"
+            f"请确认安装包 {models_dir} 内预置了模型（LDST_MEMORY_MODELS_DIR 可覆盖）。"
+        )
+    from mem0.embeddings.huggingface import HuggingFaceEmbedding
 
-        return "baai_local", HuggingFaceEmbedding(_embedder_config(model=str(baai_dir)))
-    if torch_ok:
-        tried.append(f"baai_local: {baai_dir} 不存在")
-    else:
-        tried.append("baai_local: torch/sentence_transformers 不可用（未随包安装）")
-
-    if onnx_cache.is_dir():
-        from mem0.embeddings.fastembed import FastEmbedEmbedding
-
-        return "onnx_fastembed", FastEmbedEmbedding(_embedder_config(model=EMBEDDER_MODEL))
-    tried.append(f"onnx_fastembed: {onnx_cache} 不存在")
-
-    raise MemoryUnavailable(
-        "记忆引擎初始化失败：没有可用的本地嵌入模型（"
-        + "；".join(tried)
-        + f"）。请确认安装包 {models_dir} 内预置了模型（LDST_MEMORY_MODELS_DIR 可覆盖）。"
-    )
+    return "baai_local", HuggingFaceEmbedding(_embedder_config(model=str(baai_dir)))
 
 
 def _build_llm(llm: Any) -> Any:
@@ -462,6 +447,11 @@ def _build_memory(models_dir: Path, state_dir: Path) -> Any:
     memory.custom_instructions = config.custom_instructions
     # 非标准属性：实际加载分支，写进 engine_health() 与启动日志
     memory.engine_branch = branch
+    memory.embedder_info = {
+        "engine": "sentence-transformers",
+        "model": str(models_dir / BAAI_MODEL_DIRNAME),
+        "dim": EMBEDDING_DIMS,
+    }
     logger.info("memory_engine_ready branch=%s qdrant=%s", branch, qdrant_path)
     return memory
 
@@ -500,6 +490,9 @@ def engine_health() -> dict[str, Any]:
         return {
             "engine": "in-process",
             "branch": getattr(_engine, "engine_branch", "unknown"),
+            "embedder": getattr(
+                _engine, "embedder_info", {"engine": "sentence-transformers"}
+            ),
             "ok": True,
         }
     if _engine_error is not None:
