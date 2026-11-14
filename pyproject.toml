@@ -52,7 +52,9 @@ target-version = "py311"
 # 内部过程材料按 DEC-0026 只留本地、不进版本管理；留在工作副本里也不参与静态检查，
 # 否则 `ruff check .` 会被复核脚本的行长等噪声卡住（QUOT-206）。
 # ProxyFleet 是独立子模块（有自己的仓库与 lint 配置），不参与本仓静态检查。
-extend-exclude = ["docs/tasks", "qa_evidence", "tmp*", "ProxyFleet"]
+# ops/peers/*/server 是上游 mem0 服务端源码快照（随包分发的部署资产，不是本仓代码），
+# 按上游原样保留，不改写其风格。
+extend-exclude = ["docs/tasks", "qa_evidence", "tmp*", "ProxyFleet", "ops/peers/*/server"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

@@ -56,6 +56,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ladderstock.ai import ai_yaml_edit, checkpoint, cli_provider, fallback
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.cli.paths import config_dir, project_root
+from ladderstock.core import runtime
 from ladderstock.core.boundary import (
     PEER_DIR_ENV,
     BoundaryViolation,
@@ -64,7 +65,6 @@ from ladderstock.core.boundary import (
     resolve_components,
     resolve_peer_control,
 )
-from ladderstock.core import runtime
 from ladderstock.core.fsguard import (
     AclError,
     harden_file_acl,
@@ -1834,10 +1834,11 @@ class ControlPlane:
             if listening and health_ok:
                 # 目录漂移（QUOT-569）：探针活着但托管路径解析不到。明示「服务在
                 # 跑、路径未托管」，而不是「未配置」——后者会让人误判服务没装。
+                override_hint = hint or "LDST_PEER_ROOT"
                 return (
                     STATUS_DRIFTED,
                     f"服务在运行且健康检查通过，但托管目录解析不到："
-                    f"{self.peers[key].directory}；请检查 {hint or 'LDST_PEER_ROOT'} 等目录覆盖变量",
+                    f"{self.peers[key].directory}；请检查 {override_hint} 等目录覆盖变量",
                 )
             return STATUS_UNCONFIGURED, f"目录不存在：{self.peers[key].directory}{suffix}"
         if not registered:
