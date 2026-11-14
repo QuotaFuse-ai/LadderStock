@@ -236,31 +236,27 @@ def test_knowledge_and_memory_both_segmented(
     seed(tmp_path)
     fake = _FakeClient()
 
-    class _FakeMem0:
-        def __call__(self, request: httpx.Request) -> httpx.Response:
-            if request.url.path.rstrip("/") == "/search":
-                return httpx.Response(
-                    200,
-                    json={"results": [{"memory": "用户偏好看周线", "score": 0.72}]},
-                )
-            return httpx.Response(200, json={"ok": True})
+    class _FakeEngine:
+        def search(
+            self, query: str, *, top_k: int = 5, filters: dict | None = None
+        ) -> dict[str, Any]:
+            return {"results": [{"memory": "用户偏好看周线", "score": 0.72}]}
 
     settings = memory.MemorySettings(
-        base_url="http://127.0.0.1:9100",
         user_id="u-quot566",
         top_k=5,
         score_threshold=0.5,
         timeout_sec=2.0,
         enabled=True,
+        models_dir=Path("models"),
+        state_dir=Path("data/mem0"),
     )
     system = _ask(
         monkeypatch,
         fake,
         data_root=tmp_path,
         memory_settings=settings,
-        memory_client=memory.MemoryClient(
-            settings.base_url, settings.timeout_sec, transport=httpx.MockTransport(_FakeMem0())
-        ),
+        memory_client=memory.MemoryClient(settings, engine=_FakeEngine()),
     )
 
     assert memory.MEMORY_SECTION_HEADER in system

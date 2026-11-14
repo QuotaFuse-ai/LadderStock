@@ -1,13 +1,14 @@
 """QUOT-487：`ai/memory.py` 的单元测试——写入门槛、红线、召回、注入分段。
 
-不联网：mem0 客户端用 `httpx.MockTransport` 假服务；策略函数纯本地。
+不联网：QUOT-611 起引擎是进程内 mem0 SDK，测试用假引擎（engine= 注入），
+绝不触发真实模型加载；策略函数纯本地。
 """
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
+from typing import Any
 
-import httpx
 import pytest
 
 from ladderstock.ai import memory
@@ -17,19 +18,62 @@ from ladderstock.core.boundary import BoundaryViolation
 
 def _settings(**overrides: object) -> memory.MemorySettings:
     values: dict[str, object] = {
-        "base_url": "http://mem0.test",
         "user_id": "u-local",
         "top_k": 5,
         "score_threshold": 0.55,
         "timeout_sec": 5.0,
         "enabled": True,
+        "models_dir": Path("models"),
+        "state_dir": Path("data/mem0"),
     }
     values.update(overrides)
     return memory.MemorySettings(**values)  # type: ignore[arg-type]
 
 
-def _client(handler) -> memory.MemoryClient:  # type: ignore[no-untyped-def]
-    return memory.MemoryClient("http://mem0.test", transport=httpx.MockTransport(handler))
+class FakeEngine:
+    """假 mem0 引擎：记录 add / search / clear 调用，按脚本返回结果。"""
+
+    def __init__(
+        self,
+        *,
+        search_results: list[dict] | None = None,
+        all_results: list[dict] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.search_results = search_results or []
+        self.all_results = all_results or []
+        self.error = error
+        self.add_calls: list[dict] = []
+        self.search_calls: list[dict] = []
+        self.delete_calls: list[dict] = []
+
+    def add(self, messages: Any, **kwargs: Any) -> dict:
+        self.add_calls.append({"messages": messages, **kwargs})
+        if self.error is not None:
+            raise self.error
+        return {"results": []}
+
+    def search(self, query: str, **kwargs: Any) -> dict:
+        self.search_calls.append({"query": query, **kwargs})
+        if self.error is not None:
+            raise self.error
+        return {"results": self.search_results}
+
+    def get_all(self, **kwargs: Any) -> dict:
+        self.delete_calls.append({"op": "get_all", **kwargs})
+        if self.error is not None:
+            raise self.error
+        return {"results": self.all_results}
+
+    def delete_all(self, **kwargs: Any) -> dict:
+        self.delete_calls.append({"op": "delete_all", **kwargs})
+        if self.error is not None:
+            raise self.error
+        return {"message": "All relevant memories deleted"}
+
+
+def _client(engine: FakeEngine, **overrides: object) -> memory.MemoryClient:
+    return memory.MemoryClient(_settings(**overrides), engine=engine)  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------------------- #
@@ -103,103 +147,74 @@ def test_preference_without_numbers_passes() -> None:
 
 def test_store_never_writes_secrets_even_when_explicit() -> None:
     """显式「记住」也不能越过密钥红线：红线优先于必写。"""
-    calls: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append({"path": request.url.path, "body": request.read().decode()})
-        return httpx.Response(200, json={"results": []})
-
-    settings = _settings()
+    engine = FakeEngine()
     memory.store(
         "记住我的 key 是 sk-abcdef1234567890",
         symbol="600000",
         page="research",
         run_id="r1",
-        settings=settings,
-        client=_client(handler),
+        settings=_settings(),
+        client=_client(engine),
     )
-    assert calls == []
+    assert engine.add_calls == []
 
 
 def test_store_drops_chitchat_without_any_call() -> None:
-    calls: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        return httpx.Response(200, json={"results": []})
-
+    engine = FakeEngine()
     memory.store(
         "今天天气不错",
         symbol=None,
         page="skills",
         run_id="r2",
         settings=_settings(),
-        client=_client(handler),
+        client=_client(engine),
     )
-    assert calls == []
+    assert engine.add_calls == []
 
 
 def test_store_writes_preference_with_namespace_and_metadata() -> None:
-    bodies: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        import json as json_module
-
-        bodies.append(json_module.loads(request.read().decode()))
-        return httpx.Response(200, json={"results": []})
-
+    engine = FakeEngine()
     memory.store(
         "我只看周线级别",
         symbol="600000",
         page="research",
         run_id="run-1",
         settings=_settings(),
-        client=_client(handler),
+        client=_client(engine),
     )
-    assert len(bodies) == 1
-    body = bodies[0]
-    assert body["user_id"] == "u-local"
-    assert body["agent_id"] == memory.AGENT_ID
-    assert body["run_id"] == "run-1"
-    assert body["metadata"] == {"page": "research", "symbol": "600000", "source": "assistant"}
-    # 只把用户消息交给 mem0 抽取事实，不落逐轮对话原文
-    assert body["messages"] == [{"role": "user", "content": "我只看周线级别"}]
+    assert len(engine.add_calls) == 1
+    call = engine.add_calls[0]
+    assert call["user_id"] == "u-local"
+    assert call["agent_id"] == memory.AGENT_ID
+    assert call["run_id"] == "run-1"
+    assert call["metadata"] == {"page": "research", "symbol": "600000", "source": "assistant"}
+    # infer=True 保持既有行为：只把用户消息交给 mem0 抽取事实，不落逐轮对话原文
+    assert call["messages"] == [{"role": "user", "content": "我只看周线级别"}]
+    assert call["infer"] is True
 
 
 def test_store_with_module_scope_writes_both_dimensions() -> None:
     """QUOT-498 收口：给模块命名空间时，写入载荷 agent_id + metadata.kb_scope 两维齐。"""
-    bodies: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        import json as json_module
-
-        bodies.append(json_module.loads(request.read().decode()))
-        return httpx.Response(200, json={"results": []})
-
+    engine = FakeEngine()
     memory.store(
         "我只看周线级别",
         symbol="600000",
         page="research",
         run_id="run-1",
         settings=_settings(),
-        client=_client(handler),
+        client=_client(engine),
         scope=MemoryScope("ladderstock-senate", "all"),
     )
-    assert len(bodies) == 1
-    body = bodies[0]
-    assert body["agent_id"] == "ladderstock-senate"
-    assert body["metadata"]["kb_scope"] == "all"
-    assert body["metadata"]["page"] == "research"
+    assert len(engine.add_calls) == 1
+    call = engine.add_calls[0]
+    assert call["agent_id"] == "ladderstock-senate"
+    assert call["metadata"]["kb_scope"] == "all"
+    assert call["metadata"]["page"] == "research"
 
 
 def test_store_rejects_one_dimensional_scope() -> None:
     """缺一维就是跨模块写入：checked_scope 直接拒绝，不发请求。"""
-    calls: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        return httpx.Response(200, json={"results": []})
-
+    engine = FakeEngine()
     with pytest.raises(BoundaryViolation, match="必须同时给出"):
         memory.store(
             "我只看周线级别",
@@ -207,10 +222,24 @@ def test_store_rejects_one_dimensional_scope() -> None:
             page="research",
             run_id="run-1",
             settings=_settings(),
-            client=_client(handler),
+            client=_client(engine),
             scope=MemoryScope("ladderstock-senate", ""),
         )
-    assert calls == []
+    assert engine.add_calls == []
+
+
+def test_store_failure_enters_cooldown() -> None:
+    memory.reset_runtime_state()
+    engine = FakeEngine(error=RuntimeError("llm gateway down"))
+    memory.store(
+        "我只看周线级别",
+        symbol=None,
+        page="research",
+        run_id="r3",
+        settings=_settings(),
+        client=_client(engine),
+    )
+    assert memory._cooldown_active(_settings())
 
 
 # --------------------------------------------------------------------------- #
@@ -226,25 +255,17 @@ def _search_payload(scores_texts: list[tuple[float, str]], symbol: str = "") -> 
 
 
 def test_recall_filters_low_scores_and_boosts_symbol() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "results": _search_payload(
-                    [
-                        (0.60, "用户偏好周线级别"),
-                        (0.30, "低分记忆不应出现"),
-                    ],
-                    symbol="600000",
-                )
-            },
+    engine = FakeEngine(
+        search_results=_search_payload(
+            [(0.60, "用户偏好周线级别"), (0.30, "低分记忆不应出现")],
+            symbol="600000",
         )
-
+    )
     hits = memory.recall(
         "我的偏好是什么",
         symbol="600000",
         settings=_settings(),
-        client=_client(handler),
+        client=_client(engine),
     )
     texts = [hit.text for hit in hits]
     assert texts == ["用户偏好周线级别"]
@@ -253,166 +274,148 @@ def test_recall_filters_low_scores_and_boosts_symbol() -> None:
 
 
 def test_recall_with_module_scope_sends_and_filters_both_dimensions() -> None:
-    """检索载荷两维同时发出；服务端没过滤时本地兜底挡跨 kb_scope 记忆。"""
-    captured: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        import json as json_module
-
-        captured.append(json_module.loads(request.read().decode()))
-        return httpx.Response(
-            200,
-            json={
-                "results": [
-                    {
-                        "memory": "本空间记忆",
-                        "score": 0.8,
-                        "metadata": {"user_id": "u-local", "kb_scope": "all"},
-                    },
-                    {
-                        "memory": "别的模块记忆",
-                        "score": 0.9,
-                        "metadata": {"user_id": "u-local", "kb_scope": "wire"},
-                    },
-                ]
+    """检索载荷两维同时发出；引擎侧没过滤时本地兜底挡跨 kb_scope 记忆。"""
+    engine = FakeEngine(
+        search_results=[
+            {
+                "memory": "本空间记忆",
+                "score": 0.8,
+                "metadata": {"user_id": "u-local", "kb_scope": "all"},
             },
-        )
-
+            {
+                "memory": "别的模块记忆",
+                "score": 0.9,
+                "metadata": {"user_id": "u-local", "kb_scope": "wire"},
+            },
+        ]
+    )
     hits = memory.recall(
         "偏好",
         symbol=None,
         settings=_settings(),
-        client=_client(handler),
+        client=_client(engine),
         scope=MemoryScope("ladderstock-senate", "all"),
     )
-    assert captured[0]["agent_id"] == "ladderstock-senate"
-    assert captured[0]["kb_scope"] == "all"
+    assert len(engine.search_calls) == 1
+    call = engine.search_calls[0]
+    assert call["filters"]["agent_id"] == "ladderstock-senate"
+    assert call["filters"]["kb_scope"] == "all"
     assert [hit.text for hit in hits] == ["本空间记忆"]
 
 
 def test_recall_sorts_and_caps_top_k() -> None:
     rows = _search_payload([(0.70, "甲"), (0.80, "乙"), (0.90, "丙")])
     rows[2]["metadata"]["symbol"] = "600000"
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"results": rows})
+    engine = FakeEngine(search_results=rows)
 
     hits = memory.recall(
         "偏好",
         symbol="600000",
         settings=_settings(top_k=2),
-        client=_client(handler),
+        client=_client(engine),
     )
     # symbol 命中的 0.90 加成后仍第一，top_k=2 截断
     assert [hit.text for hit in hits] == ["丙", "乙"]
 
 
 def test_recall_rejects_cross_namespace_memories() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "results": [
-                    {"memory": "别人的记忆", "score": 0.9, "metadata": {"user_id": "u-other"}}
-                ]
-            },
-        )
-
-    hits = memory.recall("问题", symbol=None, settings=_settings(), client=_client(handler))
+    engine = FakeEngine(
+        search_results=[
+            {"memory": "别人的记忆", "score": 0.9, "metadata": {"user_id": "u-other"}}
+        ]
+    )
+    hits = memory.recall("问题", symbol=None, settings=_settings(), client=_client(engine))
     assert hits == []
 
 
-def test_recall_sends_deployed_contract_payload() -> None:
-    """锁死真机契约（QUOT-486 实例实测）：`/search` + `top_k` 键 + 命名空间参数。
-
-    MockTransport 单测曾漏掉这条：路径写成 `/v1/memories/search/`、键写成 `limit`，
-    单测全绿但真机 404/400——真实取证时才暴露，故此处显式断言。
-    """
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, json={"results": []})
-
+def test_recall_sends_engine_contract_payload() -> None:
+    """锁死引擎契约：query + top_k（2 倍预取）+ 命名空间参数，infer 永远 True。"""
+    engine = FakeEngine()
     memory.reset_runtime_state()
-    memory.recall("问题", symbol=None, settings=_settings(top_k=3), client=_client(handler))
+    memory.recall(
+        "问题", symbol=None, settings=_settings(top_k=3), client=_client(engine)
+    )
 
-    assert len(seen) == 1
-    assert seen[0].method == "POST"
-    assert seen[0].url.path == "/search"
-    assert json.loads(seen[0].content) == {
-        "query": "问题",
-        "user_id": "u-local",
-        "agent_id": memory.AGENT_ID,
-        "top_k": 6,
-    }
+    assert len(engine.search_calls) == 1
+    call = engine.search_calls[0]
+    assert call["query"] == "问题"
+    assert call["filters"]["user_id"] == "u-local"
+    assert call["filters"]["agent_id"] == memory.AGENT_ID
+    assert call["top_k"] == 6
 
 
 def test_recall_failure_raises_memory_unavailable() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused")
-
+    engine = FakeEngine(error=RuntimeError("engine boom"))
     with pytest.raises(memory.MemoryUnavailable):
-        memory.recall("问题", symbol=None, settings=_settings(), client=_client(handler))
-    # 失败进入冷却窗口
-    assert memory._cooldown_active("http://mem0.test")
+        memory.recall("问题", symbol=None, settings=_settings(), client=_client(engine))
 
 
 def test_recall_skips_during_cooldown() -> None:
     memory.reset_runtime_state()
-    memory._note_failure("http://mem0.test")
-    calls: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
-        return httpx.Response(200, json={"results": []})
-
-    hits = memory.recall("问题", symbol=None, settings=_settings(), client=_client(handler))
+    settings = _settings()
+    memory._note_failure(settings)
+    engine = FakeEngine()
+    hits = memory.recall("问题", symbol=None, settings=settings, client=_client(engine))
     assert hits == []
-    assert calls == []
+    assert engine.search_calls == []
 
 
 # --------------------------------------------------------------------------- #
-# 客户端：非 2xx / 非 JSON → MemoryUnavailable
+# 客户端：SDK 异常 → MemoryUnavailable；clear 计数
 # --------------------------------------------------------------------------- #
 
 
-def test_client_maps_http_error_to_unavailable() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(502, json={"detail": "bad gateway"})
-
-    client = _client(handler)
+def test_client_maps_engine_error_to_unavailable() -> None:
+    engine = FakeEngine(error=RuntimeError("boom"))
     with pytest.raises(memory.MemoryUnavailable):
-        client.search({"query": "q"})
+        engine_search = memory.MemoryClient(_settings(), engine=engine)
+        engine_search.search({"query": "q", "user_id": "u-local", "agent_id": memory.AGENT_ID})
 
 
-def test_client_maps_non_json_to_unavailable() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, text="<html>not json</html>")
-
-    client = _client(handler)
-    with pytest.raises(memory.MemoryUnavailable):
-        client.search({"query": "q"})
-
-
-def test_clear_uses_delete_with_namespace_params() -> None:
-    """真机契约：DELETE /memories?user_id&agent_id，响应只回 message 时条数记 -1。"""
-    seen: list[tuple[str, str]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append((request.method, request.url.path))
-        return httpx.Response(200, json={"message": "All relevant memories deleted"})
-
-    removed = _client(handler).clear(user_id="u-local", agent_id=memory.AGENT_ID)
-    assert removed == -1
-    assert seen == [("DELETE", "/memories")]
+def test_clear_counts_then_deletes() -> None:
+    engine = FakeEngine(all_results=[{"memory": "a"}, {"memory": "b"}, {"memory": "c"}])
+    removed = _client(engine).clear(user_id="u-local", agent_id=memory.AGENT_ID)
+    assert removed == 3
+    ops = [call["op"] for call in engine.delete_calls]
+    assert ops == ["get_all", "delete_all"]
+    assert engine.delete_calls[0]["filters"] == {
+        "user_id": "u-local",
+        "agent_id": memory.AGENT_ID,
+    }
+    assert engine.delete_calls[1]["user_id"] == "u-local"
+    assert engine.delete_calls[1]["agent_id"] == memory.AGENT_ID
 
 
-def test_clear_counts_deleted_ids_when_present() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"deleted_ids": ["m1", "m2", "m3"]})
+def test_clear_returns_minus_one_when_count_unknown() -> None:
+    engine = FakeEngine(all_results=[])
+    assert _client(engine).clear(user_id="u-local", agent_id=memory.AGENT_ID) == -1
 
-    assert _client(handler).clear(user_id="u-local", agent_id=memory.AGENT_ID) == 3
+
+# --------------------------------------------------------------------------- #
+# 引擎单例与健康
+# --------------------------------------------------------------------------- #
+
+
+def test_engine_health_not_loaded_by_default() -> None:
+    memory.reset_runtime_state()
+    health = memory.engine_health()
+    assert health["engine"] == "in-process"
+    assert health["branch"] == "not_loaded"
+
+
+def test_client_constructor_does_not_load_engine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """构造客户端绝不触发引擎加载（懒加载，冷启动不卡 UI）。"""
+    memory.reset_runtime_state()
+
+    def _boom(**kwargs: Any) -> None:
+        raise AssertionError("engine must not be built on client construction")
+
+    monkeypatch.setattr(memory, "_build_memory", _boom)
+    client = memory.MemoryClient(_settings(models_dir=tmp_path, state_dir=tmp_path))
+    assert memory._engine is None
+    assert client._engine is None
 
 
 # --------------------------------------------------------------------------- #
@@ -462,33 +465,43 @@ def test_render_block_long_knowledge_not_clipped_by_memory_budget() -> None:
 
 
 def test_load_settings_reads_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv(memory.ENV_BASE_URL, "http://127.0.0.1:9100/")
     monkeypatch.setenv(memory.ENV_USER_ID, "zhang-local")
     monkeypatch.setenv(memory.ENV_TOP_K, "3")
     monkeypatch.setenv(memory.ENV_SCORE_THRESHOLD, "0.6")
     monkeypatch.setenv(memory.ENV_TIMEOUT_SEC, "4")
+    monkeypatch.setenv(memory.ENV_MODELS_DIR, str(tmp_path / "models"))
+    monkeypatch.setenv(memory.ENV_STATE_DIR, str(tmp_path / "mem0"))
+    monkeypatch.delenv(memory.LEGACY_ENV_BASE_URL, raising=False)
     settings = memory.load_settings()
-    assert settings.base_url == "http://127.0.0.1:9100"
     assert settings.user_id == "zhang-local"
     assert settings.top_k == 3
     assert settings.score_threshold == 0.6
     assert settings.timeout_sec == 4.0
     assert settings.enabled is True
+    assert settings.models_dir == tmp_path / "models"
+    assert settings.state_dir == tmp_path / "mem0"
 
 
 def test_load_settings_empty_base_url_disables(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(memory.ENV_BASE_URL, "")
+    """兼容哨兵：LDST_MEMORY_BASE_URL='' 仍然关闭整个通道（测试隔离沿用）。"""
+    monkeypatch.setenv(memory.LEGACY_ENV_BASE_URL, "")
     settings = memory.load_settings()
     assert settings.enabled is False
+
+
+def test_load_settings_legacy_nonempty_base_url_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """旧的非空 9100 地址值被忽略：进程内引擎不再有「远端实例」概念。"""
+    monkeypatch.setenv(memory.LEGACY_ENV_BASE_URL, "http://127.0.0.1:9100")
+    settings = memory.load_settings()
+    assert settings.enabled is True
 
 
 def test_load_settings_invalid_values_fall_back(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(memory.ENV_TOP_K, "abc")
     monkeypatch.setenv(memory.ENV_SCORE_THRESHOLD, "not-a-number")
     monkeypatch.delenv(memory.ENV_USER_ID, raising=False)
-    monkeypatch.setenv(memory.ENV_BASE_URL, "http://127.0.0.1:9100")
     settings = memory.load_settings()
     assert settings.top_k == memory.DEFAULT_TOP_K
     assert settings.score_threshold == memory.DEFAULT_SCORE_THRESHOLD
@@ -496,5 +509,24 @@ def test_load_settings_invalid_values_fall_back(monkeypatch: pytest.MonkeyPatch)
     assert settings.user_id != "default"
 
 
-def test_shared_client_none_when_disabled() -> None:
-    assert memory.shared_client(_settings(enabled=False)) is None
+def test_env_state_dir_isolated_per_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """双实例隔离沿用 LDST_ENV：prod / dev 落盘目录不同，不新写规则。"""
+    monkeypatch.delenv(memory.ENV_STATE_DIR, raising=False)
+    monkeypatch.setattr("ladderstock.supervisor.modules.current_env", lambda: "prod")
+    settings = memory.load_settings()
+    prod_qdrant = settings.qdrant_path()
+    monkeypatch.setattr("ladderstock.supervisor.modules.current_env", lambda: "dev")
+    dev_qdrant = settings.qdrant_path()
+    assert prod_qdrant != dev_qdrant
+    assert prod_qdrant.parent.name == "prod"
+    assert dev_qdrant.parent.name == "dev"
+    assert settings.history_db_path().parent == settings.env_state_dir()
+
+
+def test_shared_client_does_not_load_engine() -> None:
+    """shared_client 恒返回客户端（懒加载引擎），关闭状态下调用方 recall 返回 []。"""
+    memory.reset_runtime_state()
+    settings = _settings(enabled=False)
+    client = memory.shared_client(settings)
+    assert isinstance(client, memory.MemoryClient)
+    assert client._engine is None

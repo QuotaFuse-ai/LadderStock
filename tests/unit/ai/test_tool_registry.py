@@ -53,11 +53,11 @@ SOURCES: dict[str, Any] = {
             "default_url": "http://127.0.0.1:8791/mcp",
             "timeout_sec": 10,
         },
-        # 没有 MCP 面的 peer 不得出现在发现列表里（mem0 只有 REST）
-        "mem0": {
-            "product": "Mem0",
+        # 没有 MCP 面的 peer 不得出现在发现列表里（qdrant 只有 REST）
+        "qdrant": {
+            "product": "Qdrant",
             "mcp_name": None,
-            "default_url": "http://127.0.0.1:9100",
+            "default_url": "http://127.0.0.1:6333",
         },
     }
 }
@@ -166,8 +166,8 @@ def test_local_mcp_tools_are_included_with_their_schema(tmp_path: Path) -> None:
 def test_non_mcp_peers_are_not_probed(tmp_path: Path) -> None:
     registry, fake, _ = make_registry(tmp_path)
     registry.discover(ToolNamespace(AGENT, SCOPE))
-    assert "mem0" not in fake.calls
-    assert "mem0" not in {peer.key for peer in registry.mcp_peers()}
+    assert "qdrant" not in fake.calls
+    assert "qdrant" not in {peer.key for peer in registry.mcp_peers()}
 
 
 def test_unreachable_peer_contributes_nothing(tmp_path: Path) -> None:

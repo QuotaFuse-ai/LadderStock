@@ -25,6 +25,11 @@ dependencies = [
   "platformdirs>=4,<5",
   # QUOT-523：跨平台进程识别（Windows/Linux/macOS 一套实现）；缺失时回退 Windows CIM
   "psutil>=5.9,<8",
+  # QUOT-611：进程内 mem0 记忆引擎（不再依赖 Docker mem0 实例）
+  "mem0ai>=2.2,<3",
+  "qdrant-client>=1.12,<2",
+  "fastembed>=0.3,<1",
+  "onnxruntime>=1.18,<2",
 ]
 
 [project.optional-dependencies]

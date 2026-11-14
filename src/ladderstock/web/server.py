@@ -45,6 +45,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ladderstock import __version__
+from ladderstock.ai import memory as _memory
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
 from ladderstock.core import intraday, runtime
 from ladderstock.core.ladder import compute_ladder, dataset_snapshot, pick
@@ -1079,6 +1080,8 @@ def create_app(
             "status": "ok" if db_ok else "degraded",
             "uptime_sec": max(0, int(time.monotonic() - started_at)),
             "db_ok": db_ok,
+            # QUOT-611：记忆引擎状态与实际加载分支（不触发加载）
+            "memory": _memory.engine_health(),
         }
 
     @app.get("/api/review")
