@@ -976,6 +976,40 @@ export interface CliTestResult extends AiTestResult {
   channel?: CliChannel
 }
 
+// ---------------------------------------------------------------- 零配置发现链（QUOT-601）
+
+/** 探测链发现结果：`current_source` 是设置页「当前通道来源」的取值。 */
+export interface DiscoveryCandidate {
+  priority: number
+  source: 'workbuddy_gateway' | 'env' | 'codex' | 'claude' | 'manual' | 'none' | string
+  label: string
+  ok: boolean
+  latency_ms: number | null
+  base_url: string
+  model: string
+  /** 明文 key 绝不回传，只有布尔 */
+  key_set: boolean
+  detail: string
+}
+
+export interface DiscoveryPayload {
+  ok: boolean
+  configured: boolean
+  include_cli_logins: boolean
+  reuse_cli_logins_env: string
+  current_source: string
+  source_labels: Record<string, string>
+  candidates: DiscoveryCandidate[]
+  detail: string
+}
+
+export interface DiscoveryRepairResult {
+  ok: boolean
+  latency_ms: number
+  model: string | null
+  detail: string
+}
+
 // ---------------------------------------------------------------- AI 按模块配置（QUOT-498 / QUOT-504）
 
 /** 生效来源三档；词表以后端 `sources` 为准，这里只列已知值。 */
@@ -1462,6 +1496,25 @@ export const api = {
       request<CliChannelsPayload>('/control/self-ai/cli', {
         signal,
         timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    /** 零配置发现链探测（QUOT-601）：P1 网关 → P2 环境变量 → P3 登录态。 */
+    selfAiDiscover: (signal?: AbortSignal) =>
+      request<DiscoveryPayload>('/control/self-ai/discover', {
+        signal,
+        timeoutMs: 30000,
+      }),
+    /** 把探测命中的来源落地为 config/ai.env。 */
+    applyDiscovery: (source: string) =>
+      request<{ applied: boolean; env_file?: string; source?: string; reason?: string }>(
+        '/control/self-ai/discover/apply',
+        { method: 'POST', body: { source }, timeoutMs: 30000 },
+      ),
+    /** 网关不可用时的白话修复探测：重探 + 结论，不透传裸 4xx。 */
+    repairDiscovery: () =>
+      request<DiscoveryRepairResult>('/control/self-ai/discover/repair', {
+        method: 'POST',
+        body: {},
+        timeoutMs: 30000,
       }),
     /** 真跑一次本机 CLI 的探针；失败也是 200，按 `ok` 分色。 */
     testSelfAiCli: (cli: string) =>

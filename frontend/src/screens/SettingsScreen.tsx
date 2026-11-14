@@ -64,6 +64,7 @@ import {
   type ToastItem,
 } from '../components/ui'
 import AiConnectDialog from '../components/AiConnectDialog'
+import DiscoveryPanel from '../components/DiscoveryPanel'
 import { SenateRoleModels } from '../components/SenateRoleModels'
 import { StopListDialog } from '../components/supervisor/StopListDialog'
 import { ProxyPoolCard } from '../components/supervisor/ProxyPoolCard'
@@ -1321,6 +1322,7 @@ function AiSection({
 
   return (
     <div className="flex flex-col gap-4">
+      <DiscoveryPanel onApplied={() => selfAi.reload()} />
       <SectionCard
         title="看板自己的 AI"
         subtitle="复盘生成读取 config/ai.env；一次配置，生成复盘立即生效"
