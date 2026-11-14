@@ -41,6 +41,7 @@ from ladderstock.supervisor.module_adapters import (
     load_env_file,
     load_proxypool_config,
     preflight,
+    resolve_panel_port,
 )
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -923,6 +924,109 @@ def test_watch_is_test_env_scoped_to_5951(tmp_path: Path) -> None:
     assert json.loads(argv[-1]) == [launcher[0], "run", "--port", "5951"]
     assert argv[argv.index("--api") + 1] == "http://127.0.0.1:5951"
     assert "5950" not in argv
+
+
+def _write_ports_yaml(config: Path, board: int) -> None:
+    import yaml
+
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "ports.yaml").write_text(
+        yaml.safe_dump({"env": "test", "board": board}), encoding="utf-8"
+    )
+
+
+def test_resolve_panel_port_test_env_defaults_to_5951(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """整合面①：test 环境无避让记录 → 默认 5951，绝不回落 5950。"""
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(tmp_path / "config"))
+    env: dict[str, str] = {"LDST_ENV": "test"}
+    assert resolve_panel_port(env) == 5951
+
+
+def test_resolve_panel_port_prefers_board_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """整合面②：有避让记录时 spawn-cmd 与 --api 同用记录端口。"""
+    config = tmp_path / "install" / "config"
+    _write_ports_yaml(config, 5971)
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(config))
+    env: dict[str, str] = {"LDST_ENV": "test", "LDST_LAUNCHER": "ldst.exe"}
+
+    assert resolve_panel_port(env) == 5971
+    cmd = json.loads(_panel_spawn_command_for_test(env))
+    assert cmd == ["ldst.exe", "run", "--port", "5971"]
+    argv = _watch_argv_for_test(env, tmp_path)
+    assert argv[argv.index("--api") + 1] == "http://127.0.0.1:5971"
+
+
+def test_resolve_panel_port_explicit_override_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """整合面③：LDST_PANEL_PORT 优先于避让记录。"""
+    config = tmp_path / "install" / "config"
+    _write_ports_yaml(config, 5971)
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(config))
+    env: dict[str, str] = {
+        "LDST_ENV": "test",
+        "LDST_PANEL_PORT": "5981",
+        "LDST_LAUNCHER": "ldst.exe",
+    }
+
+    assert resolve_panel_port(env) == 5981
+    assert json.loads(_panel_spawn_command_for_test(env))[-1] == "5981"
+    argv = _watch_argv_for_test(env, tmp_path)
+    assert argv[argv.index("--api") + 1] == "http://127.0.0.1:5981"
+
+
+def test_resolve_panel_port_test_env_never_touches_5950(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """整合面④（红线）：test 环境任何组合下端口都不出现 5950。"""
+    # 组合 A：无记录
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(tmp_path / "cfg-a"))
+    env_a: dict[str, str] = {"LDST_ENV": "test"}
+    # 组合 B：有避让记录
+    config_b = tmp_path / "cfg-b"
+    _write_ports_yaml(config_b, 5971)
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(config_b))
+    env_b: dict[str, str] = {"LDST_ENV": "test", "LDST_LAUNCHER": "ldst.exe"}
+    # 组合 C：显式覆盖
+    env_c: dict[str, str] = {"LDST_ENV": "test", "LDST_PANEL_PORT": "5981"}
+
+    for env in (env_a, env_b, env_c):
+        port = resolve_panel_port(env)
+        assert port != 5950
+        spawn_cmd = json.loads(_panel_spawn_command_for_test(env))
+        assert spawn_cmd[-1] != "5950"
+        argv = _watch_argv_for_test(env, tmp_path)
+        assert "5950" not in argv
+        assert "5950" not in argv[argv.index("--api") + 1]
+
+
+def _panel_spawn_command_for_test(env: dict[str, str]) -> str:
+    from ladderstock.supervisor.module_adapters import _panel_spawn_command
+
+    return _panel_spawn_command(env)
+
+
+def _watch_argv_for_test(env: dict[str, str], tmp_path: Path) -> tuple[str, ...]:
+    host = FakeHost()
+    launcher = tmp_path / "bin" / "ldst.exe"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_bytes(b"")
+    full_env = dict(env)
+    full_env["LDST_LAUNCHER"] = str(launcher)
+    watch = cast(
+        BaseAdapter,
+        build_default_adapters(
+            host=host,
+            env=full_env,
+            log_dir=tmp_path / "logs",
+            evidence_cache_sec=0.0,
+        )["watch"],
+    )
+    return cast(Any, watch)._argv
 
 
 def test_watch_probe_fails_closed_for_a_foreign_watchdog(tmp_path: Path) -> None:

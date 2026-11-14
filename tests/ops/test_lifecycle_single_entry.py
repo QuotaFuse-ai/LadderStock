@@ -341,7 +341,9 @@ def _spawned_pids(entry: Entry) -> set[int]:
 def _one_cycle(entry: Entry, cycle: int) -> None:
     # 探针是失败关闭的：拉起前必须确认账本没有把冷启动模块误记成 running
     for module in MODULE_ORDER:
-        if module in entry.skipped or entry.plans_of(module)[0].adopt_pid is not None:
+        plans = entry.plans_of(module)
+        # QUOT-589 重修：watch 无端口（MODULE_PORTS[watch]==()），无端口计划可依
+        if module in entry.skipped or not plans or plans[0].adopt_pid is not None:
             continue
         record = entry.ledger.record(module)
         if record is not None and record.state == "running":

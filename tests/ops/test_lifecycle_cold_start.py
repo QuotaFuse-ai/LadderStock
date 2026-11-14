@@ -40,6 +40,7 @@ from ladderstock.supervisor.module_adapters import (
     FinanceCofferAdapter,
     PortEvidence,
     ProxyFleetAdapter,
+    WatchdogAdapter,
     WindowsHostPivot,
     build_default_adapters,
 )
@@ -95,6 +96,10 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[World]:
     plans: list[PortPlan] = []
     for name in MODULE_ORDER:
         adapter = built[name]
+        if isinstance(adapter, WatchdogAdapter):
+            # QUOT-589 重修：watch 无端口，不走端口生命周期（无 identify 端口证据）
+            assert adapter.ports == ()
+            continue
         assert isinstance(adapter, (BaseAdapter, FinanceCofferAdapter, ProxyFleetAdapter))
         adapters[name] = adapter
         for ev in adapter.identify().ports:

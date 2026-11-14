@@ -1354,13 +1354,23 @@ def _panel_spawn_command(env: Mapping[str, str]) -> str:
     安装根 scoped，test 安装根读自己的记录）> `panel_port(env)` 环境默认
     （prod=5950 / test=5951）。test 环境任何路径都不得回落到正式 5950。
     """
-    return str(resolve_panel_port(env))
+    return json.dumps(
+        [
+            str(part)
+            for part in (
+                *launcher_entry(env),
+                "run",
+                "--port",
+                str(resolve_panel_port(env)),
+            )
+        ],
+        ensure_ascii=False,
+    )
 
 
 def resolve_panel_port(env: Mapping[str, str]) -> int:
     """看板实际端口单一真源：spawn-cmd `--port`、watchdog `--api`、自愈
     engine 的 panel_url 三处共用，保证避让后三方同一端口。"""
-    from ladderstock.supervisor.modules import panel_port
 
     override = (env.get("LDST_PANEL_PORT") or "").strip()
     if override.isdigit():
@@ -1375,10 +1385,6 @@ def resolve_panel_port(env: Mapping[str, str]) -> int:
     if remembered:
         return int(remembered)
     return panel_port(_env_name(env))
-            )
-        ],
-        ensure_ascii=False,
-    )
 
 
 def _env_name(env: Mapping[str, str]) -> str | None:
