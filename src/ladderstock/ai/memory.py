@@ -636,9 +636,19 @@ def _note_disabled_once() -> None:
         )
 
 
+_client: MemoryClient | None = None
+_client_lock = threading.Lock()
+
+
 def shared_client(settings: MemorySettings) -> MemoryClient:
-    """按 settings 取共享客户端（引擎在首次调用时懒加载，构造不触模型）。"""
-    return MemoryClient(settings)
+    """按 settings 取共享客户端单例（引擎在首次调用时懒加载，构造不触模型）。"""
+    global _client
+    if _client is not None and _client.settings == settings:
+        return _client
+    with _client_lock:
+        if _client is None or _client.settings != settings:
+            _client = MemoryClient(settings)
+    return _client
 
 
 # --------------------------------------------------------------------------- #
