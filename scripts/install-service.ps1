@@ -32,8 +32,7 @@
 param(
     [string]$ApiTaskName = 'LadderStock API',
     [string]$WatchdogTaskName = 'LadderStock Watchdog',
-    [int]$ApiPort = 5950,
-    [int]$WatchdogPort = 5952
+    [int]$ApiPort = 5950
 )
 
 $ErrorActionPreference = 'Stop'
@@ -171,7 +170,8 @@ function Test-Admin {
 }
 
 $apiArguments = "-X utf8 -m ladderstock.cli.main run --port $ApiPort"
-$watchdogArguments = "-X utf8 -m ladderstock.cli.main watchdog --port $WatchdogPort" +
+# QUOT-589 重修：看门狗无端口化（自愈监控器，不监听任何端口），不再传 --port。
+$watchdogArguments = "-X utf8 -m ladderstock.cli.main watchdog" +
     " --restart-task `"$ApiTaskName`" --restart-script `"$RestartScript`""
 
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
@@ -212,5 +212,5 @@ foreach ($task in $tasks) {
 }
 
 Write-Step "health: http://127.0.0.1:$ApiPort/api/health"
-Write-Step "watchdog: http://127.0.0.1:$WatchdogPort/platform/health"
+Write-Step 'watchdog: portless self-heal monitor (QUOT-589) — no HTTP endpoint'
 Write-Step 'Start now: schtasks /run /tn "LadderStock API"; schtasks /run /tn "LadderStock Watchdog"'

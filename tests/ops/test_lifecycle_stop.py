@@ -8,8 +8,7 @@ QUOT-492 拆出的第 2 段，依赖 QUOT-514 把「10 个端口怎么起、怎�
 
 平台门：仅 Windows 执行（CI 是 ubuntu，整模块 skip，沿用 514 / test_control_acl.py
 的 WINDOWS_ONLY 先例）。这是模块级平台门，不是用例内兜底：Windows 上本文件没有
-任何 skip 分支，停不净一律 fail。部署前提与 514 相同（六 peer 就位、WSL 可用、
-ProxyFleet 计划任务存在、管理员权限）。
+任何 skip 分支，停不净一律 fail。部署前提与 514 相同（六 peer 就位、管理员权限）。
 
 派单红线：
 - 等待一律「轮询 + 超时（≤60s）」，无固定硬等；
@@ -17,13 +16,14 @@ ProxyFleet 计划任务存在、管理员权限）。
 - 本单只做停服断言；冷启（514）与端口冲突（516）不在范围；
 - 不改业务源码。
 
-既有进程保护（与 514 一致）：setup 时已命中关键字的在听端口记为 adopted（如生产
-tickhub 8000），全程不终止；停服只停本测试拉起的面，结束后 adopted 端口必须原样
+既有进程保护（与 514 一致）：setup 时已命中关键字的在听端口记为 adopted（QUOT-589
+起本套件固定 select_env("test")，端口表即测试环境 18000 系；若仍出现非测试端口
+在听命中，setup 直接 fail 拒绝继续），全程不终止；停服只停本测试拉起的面，
+结束后 adopted 端口必须原样
 保留（PID 都不许变）。因此「10 端口全释放」的口径是：本测试拉起的端口全部释放，
-adopted 生产端口原样保留——与 514 的无残留断言同一责任模型。形态专属模块
-（financecoffer/proxyfleet）的停止与残留回读由适配器 stop() 负责（proxyfleet 停不净
-直接 raise）；financecoffer 的 Windows 侧端口归属是 WSL relay 系统进程，不在本测试
-拉起的子进程树里，故零残留 PID 集只收录直接 spawn 面的进程及其监听归属。
+adopted 生产端口原样保留——与 514 的无残留断言同一责任模型。QUOT-589 端口隔离
+修正：financecoffer/proxyfleet 换 fake 模块适配器，全部拉起面都是直接 spawn 的
+子进程，零残留 PID 集收录所有拉起面。
 """
 
 from __future__ import annotations
@@ -49,13 +49,10 @@ pytestmark = WINDOWS_ONLY
 
 
 def _stop_started(world: World, started: list[Started]) -> None:
-    """被测动作：按 514 的责任模型停止本次拉起（形态专属走适配器，其余整树杀）。"""
+    """被测动作：按 514 的责任模型停止本次拉起（全部直接 spawn，整树杀）。"""
     for item in reversed(started):
-        if item.via_adapter:
-            world.adapters[item.module].stop()
-        else:
-            for pid in item.pids:
-                world.host.terminate_tree(pid, force=True)
+        for pid in item.pids:
+            world.host.terminate_tree(pid, force=True)
 
 
 def _port_plan(world: World, port: int) -> PortPlan:
@@ -97,11 +94,8 @@ def _finalize(world: World, started: list[Started], owned_pids: set[int]) -> Non
     """finally 安全网：尽力清掉仍活着的拉起进程（幂等），失败路径也不留残留。"""
     for item in reversed(started):
         try:
-            if item.via_adapter:
-                world.adapters[item.module].stop()
-            else:
-                for pid in item.pids:
-                    world.host.terminate_tree(pid, force=True)
+            for pid in item.pids:
+                world.host.terminate_tree(pid, force=True)
         except Exception:
             pass
     for pid in owned_pids:
@@ -121,16 +115,14 @@ def test_stop_lifecycle(world: World, cycle: int) -> None:
         started = _start_missing(world)
         for item in started:
             owned_pids.update(item.pids)
-        direct_ports = {port for item in started if not item.via_adapter for port in item.ports}
         started_ports: list[int] = []
         for plan in world.plans:
             ev = _await_listening(world, plan)
             if plan.adopt_pid is None:
                 started_ports.append(plan.port)
-                # 形态专属模块的停止语义由适配器负责（proxyfleet stop 内置残留回读、
-                # financecoffer 的 Windows 侧归属是 WSL relay 系统进程，非本测试子进程），
-                # 只有直接 spawn 的面才把监听归属 PID 纳入零残留集合。
-                if ev.pid is not None and plan.port in direct_ports:
+                # 全部拉起面都是直接 spawn 的子进程（QUOT-589 隔离修正后不再有
+                # 形态专属适配器面），监听归属 PID 全部纳入零残留集合。
+                if ev.pid is not None:
                     owned_pids.add(ev.pid)
         print(f"[cycle {cycle}] precondition: 10 ports listening, owned_pids={sorted(owned_pids)}")
         _stop_started(world, started)

@@ -36,13 +36,18 @@ export interface PlatformHealth {
 export const PLATFORM_POLL_MS = 2000
 export const PLATFORM_RESTART_TIMEOUT_MS = 90_000
 export const FAILURES_BEFORE_RED = 2
+/** 自愈恢复兜底（QUOT-589 重修）：POST 不可达时看门狗自愈，放宽轮询上限。 */
+export const SELF_HEAL_RECOVERY_TIMEOUT_MS = 600_000
 
 /**
- * prod（页面由 5950 托管）→ 直连 5952；dev → 同源走 vite 代理 `/platform`。
- * 两者都不改 origin：`localStorage` / 书签继续绑在 5950（DEC-063 否决前端迁移）。
+ * 恒同源（QUOT-589 重修）：健康探测与重启一律走本 origin 的 `/platform/*`，
+ * 由主服务自己提供（无独立看门狗端口，全机只留 5950/5951）。
+ * 旧实现按 `import.meta.env.DEV` 猜端口，built dist 落在 5951 之类的非 5950
+ * 端口时会跨源直打 prod 看门狗 5952——被 CORS 挡住误报「服务离线」，
+ * 「重启平台」还会错杀正式服 5950。前端不再猜端口。
  */
 export function platformBaseUrl(): string {
-  return import.meta.env.DEV ? '' : 'http://127.0.0.1:5952'
+  return ''
 }
 
 export interface ProbeResult {
@@ -184,9 +189,11 @@ export function usePlatformHealth(options: Options = {}): PlatformHealthApi {
     restartingRef.current = true
     setRestarting(true)
     setRestartError(null)
-    // 重启请求报错不等于服务没起来（脚本可能已拉起、只是没在超时内确认），
-    // 所以先记下错误，仍然按真实健康轮询到截止；恢复了就刷新页面。
+    // QUOT-589 重修：POST 打不通（fetch 抛错，连接层失败）说明主服务已死，
+    // 无端口看门狗正在自愈——不是错误，不停轮询直到恢复（有界兜底见下）；
+    // HTTP 明确回错（409/503 等）才是「重启没发出去」，按原有超时兜底提示。
     let requestError: string | null = null
+    let unreachable = false
     try {
       const response = await fetchImpl(`${baseUrl}/platform/restart`, {
         method: 'POST',
@@ -200,12 +207,15 @@ export function usePlatformHealth(options: Options = {}): PlatformHealthApi {
         requestError =
           body?.reason ?? body?.detail ?? `重启请求失败（HTTP ${response.status}）`
       }
-    } catch (error) {
-      requestError = error instanceof Error ? error.message : String(error)
+    } catch {
+      unreachable = true
     }
 
+    // 自愈模式下轮询没有固定截止：自愈间隔 + 重启 + 探活可能超过 90s。
+    // 但无限轮询会卡住 UI 状态，用放宽的兜底（10 分钟）防死循环。
+    const deadline =
+      Date.now() + (unreachable ? SELF_HEAL_RECOVERY_TIMEOUT_MS : restartTimeoutMs)
     try {
-      const deadline = Date.now() + restartTimeoutMs
       while (Date.now() < deadline) {
         await sleep(restartPollMs)
         const probe = await probeOnce()
@@ -214,7 +224,9 @@ export function usePlatformHealth(options: Options = {}): PlatformHealthApi {
           return
         }
       }
-      const timeout = `等了 ${Math.round(restartTimeoutMs / 1000)} 秒服务还没恢复：请稍后再试一次「重启平台」；若反复失败，可能是本机网络或磁盘出了问题`
+      const windowMs =
+        unreachable ? SELF_HEAL_RECOVERY_TIMEOUT_MS : restartTimeoutMs
+      const timeout = `等了 ${Math.round(windowMs / 1000)} 秒服务还没恢复：请稍后再试一次「重启平台」；若反复失败，可能是本机网络或磁盘出了问题`
       setRestartError(requestError ? `${requestError}；${timeout}` : timeout)
     } finally {
       restartingRef.current = false

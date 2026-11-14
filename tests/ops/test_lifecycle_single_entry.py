@@ -20,8 +20,11 @@
   「单入口能全起、全停、常驻」，**不验**生产进程能被它停掉——停掉生产要等
   用户批准的切换窗口；
 - 外部占口（在听但不命中）→ setup 直接失败，不碰它；
-- 冷端口（本机没跑该模块）真起真停：financecoffer / proxyfleet 走形态专属启停
-  （WSL + ProxyFleet 配置，缺一即真失败，沿用 514 口径：Windows 上没有 skip 分支）。
+冷端口（本机没跑该模块）真起真停：QUOT-589 端口隔离修正——financecoffer /
+proxyfleet 的生产形态句柄（WSL compose / schtasks）端口写死生产值，测试环境
+不可拉起且绝不允许 enable/run 生产计划任务，这两模块按 QUOT-550 的
+fake_module_server 模式换成 fake 适配器（同端口表、同识别协议）；watch 启动器
+固定源码态 CLI（安装根 ldst.exe 是主仓旧码，缺 watchdog 子命令）。
 
 平台门：仅 Windows（CI 是 ubuntu，整模块 skip，沿用 514 先例）。
 放行口：`LDST_SINGLE_ENTRY_ALLOW_EXTERNAL=1` 时外部占口降级为只观察（开发机常见
@@ -36,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -44,20 +48,25 @@ from pathlib import Path
 
 import pytest
 
-from ladderstock.supervisor.adapters import MODULE_ORDER, MODULE_PORTS, ModuleAdapter
+from ladderstock.supervisor.adapters import MODULE_ORDER, ModuleAdapter
 from ladderstock.supervisor.engine import SupervisorEngine
 from ladderstock.supervisor.ledger import Ledger, ModuleRecord
 from ladderstock.supervisor.module_adapters import (
+    BaseAdapter,
     HostPivot,
     PortEvidence,
+    StartFace,
     build_default_adapters,
     default_host_pivot,
 )
+from ladderstock.supervisor.modules import module_ports, reset_env, select_env
 from ladderstock.supervisor.selfheal import SelfHealEngine
 from ladderstock.web.supervisor_api import SupervisorEngines, build_supervisor_engines
 from ops.test_lifecycle_cold_start import (
+    FAKE_SERVER,
     POLL_INTERVAL_SEC,
     POLL_TIMEOUT_SEC,
+    REPO_ROOT,
     WINDOWS_ONLY,
     _tcp_ok,
 )
@@ -167,16 +176,79 @@ class Entry:
         return "\n".join(lines)
 
 
+#: 形态专属模块（生产句柄写死生产端口，测试环境不可拉起）→ fake 模块替身
+FAKE_MODULES = ("financecoffer", "proxyfleet")
+
+
+def _source_launcher(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """源码态 CLI 启动器：watch 的 watchdog 子命令只在当前工作树代码里存在。"""
+    del env
+    return (sys.executable, "-m", "ladderstock.cli.main")
+
+
+def _patched_build(**kwargs: object) -> dict[str, ModuleAdapter]:
+    from ladderstock.supervisor.module_adapters import build_default_adapters as real_build
+
+    built = real_build(**kwargs)  # type: ignore[arg-type]
+    log_dir = kwargs.get("log_dir")
+    for name in FAKE_MODULES:
+        built[name] = _fake_adapter(name, log_dir if isinstance(log_dir, Path) else Path("logs"))
+    return built
+
+
+def _fake_adapter(name: str, log_dir: Path) -> BaseAdapter:
+    ports = tuple(module_ports()[name])
+    faces = tuple(
+        StartFace(
+            face="server",
+            argv=(sys.executable, str(FAKE_SERVER), "--module", name, "--port", str(port)),
+            cwd=REPO_ROOT,
+            port=port,
+            match=("fake_module_server", "--module", name),
+            log_name=f"fake-{name}-{port}.log",
+        )
+        for port in ports
+    )
+    return BaseAdapter(name, ports, faces, log_dir=log_dir, evidence_cache_sec=0.0)
+
+
 @pytest.fixture(scope="module")
-def entry(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Entry]:
+def monkeypatch_module() -> Iterator[pytest.MonkeyPatch]:
+    mp = pytest.MonkeyPatch()
+    yield mp
+    mp.undo()
+
+
+@pytest.fixture(scope="module")
+def entry(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch_module: pytest.MonkeyPatch
+) -> Iterator[Entry]:
+    # QUOT-589 端口隔离红线：单入口验收只跑测试环境（18000 系端口表），
+    # 绝不拉起/触碰生产 8000/8787/8002/8790/8791/8765/5950。
+    select_env("test")
+    # 形态专属模块（WSL compose / schtasks）写死生产端口，测试环境绝不触碰：
+    # 全部装配路径（engine / 自愈 / 单入口 web 装配）统一换成 fake 模块适配器。
+    monkeypatch_module.setattr(
+        "ladderstock.web.supervisor_api.build_default_adapters", _patched_build
+    )
+    monkeypatch_module.setattr(
+        "ops.test_lifecycle_single_entry.build_default_adapters", _patched_build
+    )
+    # watch 启动器固定源码态 CLI：安装根 ldst.exe 是主仓旧码，缺 watchdog 子命令。
+    monkeypatch_module.setattr(
+        "ladderstock.supervisor.module_adapters.launcher_entry", _source_launcher
+    )
     root = tmp_path_factory.mktemp("quot-523-single-entry")
     repo_root = Path(__file__).resolve().parents[2]
-    with _existing_peer_dirs(repo_root):
-        yield from _build_entry(root)
+    try:
+        with _existing_peer_dirs(repo_root):
+            yield from _build_entry(root)
+    finally:
+        reset_env()
 
 
 def _build_entry(root: Path) -> Iterator[Entry]:
-    engines = build_supervisor_engines(root, panel_url="http://127.0.0.1:5950/")
+    engines = build_supervisor_engines(root, panel_url="http://127.0.0.1:15951/")
     adapters = build_default_adapters(log_dir=root / "logs", evidence_cache_sec=EVIDENCE_CACHE_SEC)
     host = default_host_pivot()
     plans: list[EntryPlan] = []
@@ -184,6 +256,9 @@ def _build_entry(root: Path) -> Iterator[Entry]:
     for name in MODULE_ORDER:
         ident = adapters[name].identify()
         for ev in ident.ports:
+            assert ev.port >= 18000 and ev.port < 19000, (
+                f"端口隔离红线：{name} 解析到非测试端口 {ev.port}（须 18000 系）"
+            )
             if ev.listening and not ev.matched and not ALLOW_EXTERNAL:
                 pytest.fail(
                     f"期望端口 {ev.port} 在听 / 实际：归属 PID={ev.pid}（不属于本模块）"
@@ -214,8 +289,9 @@ def _build_entry(root: Path) -> Iterator[Entry]:
             else "all-cold（已全起时会真起真停）"
         )
         print(f"[setup] {name}: {notes[name]}")
-    expected = {port for module in MODULE_ORDER for port in MODULE_PORTS[module]}
+    expected = {port for module in MODULE_ORDER for port in module_ports()[module]}
     assert {plan.port for plan in plans} == expected, "识别端口与注册表白名单不一致"
+    assert all(p.port >= 18000 and p.port < 19000 for p in plans)
     single = Entry(
         root=root,
         engines=engines,
@@ -240,7 +316,9 @@ def _build_entry(root: Path) -> Iterator[Entry]:
 
 def _record_adoption(ledger: Ledger, module: str, ev: PortEvidence) -> None:
     """adopted 面按账本 + 真实 cmdline 指纹记账（引擎归属判定的两个证据）。"""
-    record = ledger.record(module) or ModuleRecord(module=module, ports=list(MODULE_PORTS[module]))
+    record = ledger.record(module) or ModuleRecord(
+        module=module, ports=list(module_ports()[module])
+    )
     record.pid = ev.pid
     record.cmdline_hash = _cmdline_hash_of(ev)
     record.state = "running"
@@ -341,7 +419,9 @@ def _spawned_pids(entry: Entry) -> set[int]:
 def _one_cycle(entry: Entry, cycle: int) -> None:
     # 探针是失败关闭的：拉起前必须确认账本没有把冷启动模块误记成 running
     for module in MODULE_ORDER:
-        if module in entry.skipped or entry.plans_of(module)[0].adopt_pid is not None:
+        plans = entry.plans_of(module)
+        # QUOT-589 重修：watch 无端口（MODULE_PORTS[watch]==()），无端口计划可依
+        if module in entry.skipped or not plans or plans[0].adopt_pid is not None:
             continue
         record = entry.ledger.record(module)
         if record is not None and record.state == "running":

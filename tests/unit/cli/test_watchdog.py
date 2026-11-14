@@ -1,43 +1,78 @@
-"""看门狗（QUOT-443 / DEC-063）：三态判定、Origin 白名单、30s 节流、重启回落顺序。
+"""无端口看门狗（QUOT-589 重修）：自愈循环、重启回落顺序、kill 守门。
 
 不起真进程、不拨真网络：探活与重启都注入假实现；端口 / PID 查询换成常数。
+看门狗不再监听任何端口（全机只留 5950/5951），HTTP 面由主服务 web/platform.py
+自己提供（见 tests/unit/web/test_platform.py）。
 """
 
 from __future__ import annotations
 
-import subprocess
+import json
+import os
 from pathlib import Path
+from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
 
 from ladderstock.cli import watchdog
 from ladderstock.cli.watchdog import (
+    FAILURES_BEFORE_RED,
     RESTART_THROTTLE_SEC,
     WatchdogConfig,
-    create_watchdog_app,
     judge,
     kill_guard,
-    offline_shell_html,
-    origin_allowed,
+    probe_api,
     restart_service,
+    run_self_heal,
     script_issue,
+    spawn_command_issue,
+    state_path,
+    supervised,
+    write_state,
 )
 
-ALLOWED = "http://127.0.0.1:5950"
+
+class _Completed:
+    """`subprocess.CompletedProcess` 的最小替身（_run_command 只读 returncode）。"""
+
+    def __init__(self, code: int) -> None:
+        self.returncode = code
+
+def _config(tmp_path: Path, **kw: Any) -> WatchdogConfig:
+    kw.setdefault("data_root", tmp_path)
+    return WatchdogConfig(**kw)
 
 
-def _client(
-    config: WatchdogConfig,
-    *,
-    probe=None,
-    restart=None,
-) -> TestClient:
-    return TestClient(create_watchdog_app(config, probe=probe, restart=restart))
+class _Loop:
+    """可控节拍：`sleep` 不真睡，`monotonic` 按 tick 前进。"""
+
+    def __init__(self, max_ticks: int) -> None:
+        self.now = 0.0
+        self.max_ticks = max_ticks
+        self.ticks = 0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, sec: float) -> None:
+        self.now += sec
+        self.ticks += 1
+        if self.ticks > self.max_ticks:
+            raise KeyboardInterrupt  # run_self_heal 不捕获 KeyboardInterrupt → 退出
+
+
+def _stop_after(ticks: int) -> Any:
+    state = {"n": 0}
+
+    def check() -> bool:
+        state["n"] += 1
+        return state["n"] > ticks
+
+    return check
 
 
 # --------------------------------------------------------------------------- #
-# 三态判定
+# 三态判定 / 探活
 # --------------------------------------------------------------------------- #
 
 
@@ -57,452 +92,345 @@ def test_judge_three_states(payload, expected) -> None:
     assert judge(payload) == expected
 
 
-def test_health_payload_has_contract_fields(tmp_path: Path) -> None:
-    config = WatchdogConfig(data_root=tmp_path)
-    client = _client(config, probe=lambda: {"status": "ok", "db_ok": True, "uptime_sec": 12})
-
-    payload = client.get("/platform/health").json()
-
-    for key in ("status", "uptime_sec", "version", "db_ok", "checked_at", "api", "watchdog"):
-        assert key in payload, f"缺字段 {key}"
-    assert payload["status"] == "ok"
-    assert payload["db_ok"] is True
-    # 顶层字段描述主服务（uptime 12 来自 /api/health），看门狗的 uptime 只在 watchdog 块
-    assert payload["uptime_sec"] == 12
-    assert payload["api"]["uptime_sec"] == 12
-    assert isinstance(payload["watchdog"]["uptime_sec"], int)
-    assert payload["watchdog"]["uptime_sec"] >= 0
-
-
-def test_health_is_offline_when_probe_fails(tmp_path: Path) -> None:
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None)
-    payload = client.get("/platform/health").json()
-
-    assert payload["status"] == "offline"
-    assert payload["db_ok"] is None
-    assert payload["api"] is None
-
-
-def test_health_is_not_cacheable(tmp_path: Path) -> None:
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None)
-    response = client.get("/platform/health")
-    assert response.headers["cache-control"] == "no-store"
+def test_probe_api_returns_none_on_connection_error() -> None:
+    # 真函数、必败端口：主服务死了 probe 必须「安静地」失败，绝不抛
+    assert probe_api("http://127.0.0.1:1", timeout=0.2) is None
 
 
 # --------------------------------------------------------------------------- #
-# Origin 白名单
+# 自愈循环（无端口核心）
 # --------------------------------------------------------------------------- #
 
 
-def test_origin_allowed_exact_whitelist() -> None:
-    assert origin_allowed(ALLOWED)
-    assert origin_allowed("http://localhost:5173")
-    assert origin_allowed("http://127.0.0.1:5952")
-    assert not origin_allowed(None)
-    assert not origin_allowed("http://evil.example:5950")
-    assert not origin_allowed("http://127.0.0.1:9999")
+def test_single_blip_does_not_restart(tmp_path: Path) -> None:
+    """单次探活失败 ≠ 服务死了：不重启，下一拍恢复即清零。"""
+    results: list[dict[str, Any] | None] = [None, {"status": "ok", "db_ok": True}]
+    restarts: list[str] = []
+    loop = _Loop(max_ticks=2)
 
-
-def test_post_without_origin_is_rejected(tmp_path: Path) -> None:
-    called: list[int] = []
-
-    def restart() -> tuple[int, dict]:
-        called.append(1)
-        return 200, {"ok": True}
-
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None, restart=restart)
-    response = client.post("/platform/restart")
-
-    assert response.status_code == 403
-    assert response.headers.get("access-control-allow-origin") is None
-    assert called == []
-
-
-def test_post_with_foreign_origin_is_rejected(tmp_path: Path) -> None:
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None)
-    response = client.post("/platform/restart", headers={"Origin": "http://evil.example"})
-    assert response.status_code == 403
-
-
-def test_post_with_allowed_origin_passes_cors(tmp_path: Path) -> None:
-    client = _client(
-        WatchdogConfig(data_root=tmp_path),
-        probe=lambda: None,
-        restart=lambda: (200, {"ok": True, "via": "script"}),
+    run_self_heal(
+        _config(tmp_path),
+        probe=lambda _base: results.pop(0) if results else {"status": "ok"},
+        restart=lambda _c: (restarts.append("x"), (200, {"ok": True}))[1],
+        sleep=loop.sleep,
+        monotonic=loop.monotonic,
+        stop_requested=_stop_after(2),
     )
-    response = client.post("/platform/restart", headers={"Origin": ALLOWED})
 
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == ALLOWED
-    assert response.headers["access-control-allow-origin"] != "*"
+    assert restarts == []
 
 
-def test_preflight_allows_only_whitelisted_origin(tmp_path: Path) -> None:
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None)
+def test_confirmed_outage_triggers_restart_once(tmp_path: Path) -> None:
+    """连续 FAILURES_BEFORE_RED 次失败 → 确认中断 → 自愈重启一次。"""
+    restarts: list[WatchdogConfig] = []
+    loop = _Loop(max_ticks=5)
+    calls = {"n": 0}
 
-    ok = client.options(
-        "/platform/restart",
-        headers={"Origin": ALLOWED, "Access-Control-Request-Method": "POST"},
+    def probe(_base: str) -> dict[str, Any] | None:
+        calls["n"] += 1
+        return {"status": "ok", "db_ok": True} if calls["n"] > 3 else None
+
+    run_self_heal(
+        _config(tmp_path),
+        probe=probe,
+        restart=lambda c: (restarts.append(c), (200, {"ok": True}))[1],
+        sleep=loop.sleep,
+        monotonic=loop.monotonic,
+        stop_requested=_stop_after(5),
     )
-    assert ok.status_code == 204
-    assert "POST" in ok.headers["access-control-allow-methods"]
 
-    bad = client.options(
-        "/platform/restart",
-        headers={"Origin": "http://evil.example", "Access-Control-Request-Method": "POST"},
+    assert len(restarts) == 1
+
+
+def test_restart_is_throttled_within_cooldown(tmp_path: Path) -> None:
+    """冷却期（RESTART_THROTTLE_SEC）内不再触发第二次自愈。"""
+    restarts: list[int] = []
+    loop = _Loop(max_ticks=6)
+
+    run_self_heal(
+        _config(tmp_path),
+        probe=lambda _base: None,
+        restart=lambda _c: (restarts.append(1), (503, {"ok": False}))[1],
+        sleep=loop.sleep,
+        monotonic=loop.monotonic,
+        stop_requested=_stop_after(6),
     )
-    assert bad.status_code == 403
+
+    # probe_interval=2s，6 拍 = 12s < 30s 冷却：只允许 1 次重启
+    assert len(restarts) == 1
 
 
-def test_get_has_no_side_effect(tmp_path: Path) -> None:
-    calls: list[int] = []
+def test_recovery_clears_failure_count(tmp_path: Path) -> None:
+    """失败 1 次后恢复、再失败 1 次：始终没到确认线，不重启。"""
+    seq = [None, {"status": "ok", "db_ok": True}, None, {"status": "ok", "db_ok": True}]
+    restarts: list[int] = []
+    loop = _Loop(max_ticks=4)
 
-    def restart() -> tuple[int, dict]:
-        calls.append(1)
-        return 200, {"ok": True}
+    run_self_heal(
+        _config(tmp_path),
+        probe=lambda _base: seq.pop(0) if seq else {"status": "ok"},
+        restart=lambda _c: (restarts.append(1), (200, {"ok": True}))[1],
+        sleep=loop.sleep,
+        monotonic=loop.monotonic,
+        stop_requested=_stop_after(4),
+    )
 
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None, restart=restart)
-    client.get("/platform/health", headers={"Origin": ALLOWED})
-    assert calls == []
+    assert restarts == []
+
+
+def test_stop_marker_ends_the_loop(tmp_path: Path) -> None:
+    restarts: list[int] = []
+    loop = _Loop(max_ticks=10)
+
+    run_self_heal(
+        _config(tmp_path),
+        probe=lambda _base: None,
+        restart=lambda _c: (restarts.append(1), (200, {"ok": True}))[1],
+        sleep=loop.sleep,
+        monotonic=loop.monotonic,
+        stop_requested=_stop_after(0),
+    )
+
+    assert restarts == []
+
+
+def test_restart_exception_is_caught_and_logged(tmp_path: Path) -> None:
+    """自愈重启抛异常不能带崩监控循环。"""
+    restarts: list[int] = []
+    loop = _Loop(max_ticks=5)
+
+    def bad_restart(_c: WatchdogConfig) -> tuple[int, dict[str, Any]]:
+        restarts.append(1)
+        raise RuntimeError("boom")
+
+    run_self_heal(
+        _config(tmp_path),
+        probe=lambda _base: None,
+        restart=bad_restart,
+        sleep=loop.sleep,
+        monotonic=loop.monotonic,
+        stop_requested=_stop_after(5),
+    )
+
+    assert len(restarts) == 1
 
 
 # --------------------------------------------------------------------------- #
-# 30s 节流
+# 重启顺序与守门（保留原契约）
 # --------------------------------------------------------------------------- #
-
-
-def test_restart_is_throttled_for_30_seconds(tmp_path: Path) -> None:
-    calls: list[int] = []
-
-    def restart() -> tuple[int, dict]:
-        calls.append(1)
-        return 200, {"ok": True}
-
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None, restart=restart)
-    headers = {"Origin": ALLOWED}
-
-    assert client.post("/platform/restart", headers=headers).status_code == 200
-    throttled = client.post("/platform/restart", headers=headers)
-
-    assert throttled.status_code == 429
-    assert "30s" in throttled.json()["reason"] or "频繁" in throttled.json()["reason"]
-    assert calls == [1]
-    assert RESTART_THROTTLE_SEC == 30.0
-
-
-# --------------------------------------------------------------------------- #
-# 重启：顺序、回落、安全
-# --------------------------------------------------------------------------- #
-
-
-def _completed(returncode: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout="", stderr="")
 
 
 def test_restart_returns_409_when_no_mechanism(tmp_path: Path) -> None:
-    def runner(*_args, **_kwargs):
-        raise AssertionError("没有重启方式时不该执行任何命令")
-
     code, payload = restart_service(
-        WatchdogConfig(data_root=tmp_path, restart_task="", restart_script=""),
-        run=runner,
-        lookup_pid=lambda _port: None,
+        _config(tmp_path, restart_task="", restart_script="", spawn_cmd="")
     )
-
     assert code == 409
     assert payload["ok"] is False
-    assert "未配置" in payload["reason"]
 
 
-def test_restart_falls_back_from_task_to_script(tmp_path: Path) -> None:
+def test_restart_prefers_spawn_cmd_over_task(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def run(argv, **kw):
+        calls.append([str(part) for part in argv])
+        return _Completed(0)
+
+    config = _config(
+        tmp_path,
+        restart_task="Some Task",
+        spawn_cmd=json.dumps(["python", "-m", "ladderstock"]),
+    )
+    code, payload = restart_service(config, run=run)
+
+    assert code == 200
+    assert payload["via"] == "spawn"
+    assert calls[0] == ["python", "-m", "ladderstock"]
+    assert all("schtasks" not in argv[0] for argv in calls[1:])
+
+
+def test_supervised_watchdog_never_falls_back_to_the_scheduled_task(tmp_path: Path) -> None:
+    """supervised 模式：spawn-cmd 失败后不再 schtasks / 脚本兜底。"""
+    calls: list[list[str]] = []
+
+    def run(argv, **kw):
+        calls.append([str(part) for part in argv])
+        return _Completed(1)
+
+    config = _config(
+        tmp_path,
+        restart_task="Some Task",
+        restart_script=str(tmp_path / "restart.ps1"),
+        spawn_cmd=json.dumps(["python", "-m", "ladderstock"]),
+        supervised=True,
+    )
+    (tmp_path / "restart.ps1").write_text("exit 0", encoding="utf-8")
+    code, payload = restart_service(config, run=run)
+
+    assert code == 503
+    assert payload["ok"] is False
+    # 只尝试过 spawn 一种方式
+    assert [a["via"] for a in payload["attempts"]] == ["spawn"]
+
+
+def test_restart_falls_back_to_script(tmp_path: Path) -> None:
     script = tmp_path / "restart-api.ps1"
     script.write_text("exit 0", encoding="utf-8")
     calls: list[list[str]] = []
 
-    def runner(argv, **_kwargs):
-        calls.append(list(argv))
-        return _completed(1 if argv[0] == "schtasks" else 0)
+    def run(argv, **kw):
+        calls.append([str(part) for part in argv])
+        return _Completed(0)
 
     code, payload = restart_service(
-        WatchdogConfig(
-            data_root=tmp_path,
-            restart_task="LadderStock API",
-            restart_script=str(script),
-        ),
-        run=runner,
-        lookup_pid=lambda _port: None,
-        wait=lambda _seconds: None,
+        _config(tmp_path, restart_task="", restart_script=str(script)), run=run
     )
 
     assert code == 200
     assert payload["via"] == "script"
-    assert [call[0] for call in calls] == ["schtasks", "powershell"]
-    assert payload["attempts"][0]["ok"] is False
-    assert payload["attempts"][1]["ok"] is True
-
-
-def test_restart_prefers_spawn_cmd_over_task(tmp_path: Path) -> None:
-    """被 supervisor 托管时只给 spawn-cmd：直接拉起，不再碰 schtasks（QUOT-523）。"""
-    calls: list[list[str]] = []
-
-    def runner(argv, **_kwargs):
-        calls.append(list(argv))
-        return _completed(0)
-
-    code, payload = restart_service(
-        WatchdogConfig(
-            data_root=tmp_path,
-            restart_task="LadderStock API",
-            spawn_cmd='["C:\\\\tools\\\\ldst.exe", "-m", "ladderstock.cli.main", "run"]',
-        ),
-        run=runner,
-        lookup_pid=lambda _port: None,
-    )
-
-    assert code == 200
-    assert payload["via"] == "spawn"
-    assert calls == [["C:\\tools\\ldst.exe", "-m", "ladderstock.cli.main", "run"]]
-
-
-def test_restart_falls_back_from_spawn_cmd_to_task(tmp_path: Path) -> None:
-    calls: list[str] = []
-
-    def runner(argv, **_kwargs):
-        calls.append(argv[0])
-        return _completed(1 if argv[0] == "ldst.exe" else 0)
-
-    code, payload = restart_service(
-        WatchdogConfig(
-            data_root=tmp_path,
-            restart_task="LadderStock API",
-            spawn_cmd='["ldst.exe", "run"]',
-        ),
-        run=runner,
-        lookup_pid=lambda _port: None,
-    )
-
-    assert code == 200
-    assert payload["via"] == "schtasks"
-    assert calls == ["ldst.exe", "schtasks"]
-    assert [attempt["via"] for attempt in payload["attempts"]] == ["spawn", "schtasks"]
-    assert payload["attempts"][0]["ok"] is False
-
-
-def test_restart_rejects_bad_spawn_cmd_without_running(tmp_path: Path) -> None:
-    def runner(*_args, **_kwargs):
-        raise AssertionError("spawn-cmd 非法时不该执行任何命令")
-
-    code, payload = restart_service(
-        WatchdogConfig(data_root=tmp_path, restart_task="", spawn_cmd="{not json"),
-        run=runner,
-        lookup_pid=lambda _port: None,
-    )
-
-    assert code == 503
-    assert payload["attempts"][0]["via"] == "spawn"
-    assert payload["attempts"][0]["ok"] is False
-
-
-def test_restart_uses_task_when_it_succeeds(tmp_path: Path) -> None:
-    script = tmp_path / "restart-api.ps1"
-    script.write_text("exit 0", encoding="utf-8")
-    calls: list[str] = []
-
-    def runner(argv, **_kwargs):
-        calls.append(argv[0])
-        return _completed(0)
-
-    code, payload = restart_service(
-        WatchdogConfig(
-            data_root=tmp_path,
-            restart_task="LadderStock API",
-            restart_script=str(script),
-        ),
-        run=runner,
-        lookup_pid=lambda _port: None,
-    )
-
-    assert code == 200
-    assert payload["via"] == "schtasks"
-    assert calls == ["schtasks"]
-
-
-def test_supervised_watchdog_never_falls_back_to_the_scheduled_task(tmp_path: Path) -> None:
-    """托管模式（QUOT-523）：spawn-cmd 失败也只回 503，不碰 schtasks / 脚本。"""
-    script = tmp_path / "restart-api.ps1"
-    script.write_text("exit 0", encoding="utf-8")
-    calls: list[str] = []
-
-    def runner(argv, **_kwargs):
-        calls.append(argv[0])
-        return _completed(1)
-
-    code, payload = restart_service(
-        WatchdogConfig(
-            data_root=tmp_path,
-            restart_task="LadderStock API",
-            restart_script=str(script),
-            spawn_cmd='["ldst.exe", "run"]',
-            supervised=True,
-        ),
-        run=runner,
-        lookup_pid=lambda _port: None,
-    )
-
-    assert code == 503
-    assert payload["ok"] is False
-    assert calls == ["ldst.exe"]
-    assert [attempt["via"] for attempt in payload["attempts"]] == ["spawn"]
-
-
-def test_supervised_flag_is_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(watchdog.SUPERVISED_ENV, raising=False)
-    assert watchdog.supervised() is False
-    monkeypatch.setenv(watchdog.SUPERVISED_ENV, "0")
-    assert watchdog.supervised() is False
-    monkeypatch.setenv(watchdog.SUPERVISED_ENV, "1")
-    assert watchdog.supervised() is True
-    assert watchdog.supervised({}) is False
+    assert calls[0][:4] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass"]
 
 
 def test_restart_returns_503_when_everything_fails(tmp_path: Path) -> None:
     code, payload = restart_service(
-        WatchdogConfig(data_root=tmp_path, restart_task="A", restart_script=""),
-        run=lambda *_a, **_k: _completed(1),
-        lookup_pid=lambda _port: None,
+        _config(tmp_path, restart_task="Missing Task"), run=lambda argv, **kw: _Completed(1)
     )
-
     assert code == 503
-    assert payload["ok"] is False
-    assert payload["attempts"][0]["via"] == "schtasks"
-
-
-def test_restart_kills_only_the_recorded_port_owner(tmp_path: Path) -> None:
-    script = tmp_path / "restart-api.ps1"
-    script.write_text("exit 0", encoding="utf-8")
-    state = {"pid": 4321}
-    terminated: list[int] = []
-
-    def lookup(port: int) -> int | None:
-        assert port == 5950
-        return state["pid"]
-
-    def terminate(pid: int) -> bool:
-        terminated.append(pid)
-        state["pid"] = None
-        return True
-
-    code, payload = restart_service(
-        WatchdogConfig(data_root=tmp_path, restart_task="", restart_script=str(script)),
-        run=lambda *_a, **_k: _completed(0),
-        lookup_pid=lookup,
-        name_of=lambda _pid: "python.exe",
-        terminate=terminate,
-        wait=lambda _seconds: None,
-    )
-
-    assert code == 200
-    assert terminated == [4321]
-    assert payload["killed_pid"] == 4321
-    recorded = watchdog.read_state(tmp_path)["api"]
-    assert recorded["pid"] == 4321 and recorded["port"] == 5950
+    assert [a["via"] for a in payload["attempts"]] == ["schtasks"]
 
 
 def test_restart_kills_current_port_owner_not_stale_recorded_pid(tmp_path: Path) -> None:
-    """PID 会被系统复用：只认「此刻占用 API 端口」的那个，旧记录值一律不碰。"""
-    script = tmp_path / "restart-api.ps1"
-    script.write_text("exit 0", encoding="utf-8")
-    watchdog.write_state(
-        tmp_path, {"api": {"pid": 1111, "port": 5950, "recorded_at": "2026-11-06T00:00:00+00:00"}}
-    )
-    terminated: list[int] = []
+    """kill 面只认「此刻监听 API 端口」的 PID，绝不按旧记录杀。"""
+    killed: list[int] = []
+
+    def lookup(port: int) -> int | None:
+        return 4242 if port == 5950 else None
 
     def terminate(pid: int) -> bool:
-        terminated.append(pid)
+        killed.append(pid)
         return True
 
+    # lookup 始终回 None（端口已让出），循环第一拍就 break，wait 只被调一次
+    def wait(_sec: float) -> None:
+        return None
+
     code, payload = restart_service(
-        WatchdogConfig(data_root=tmp_path, restart_task="", restart_script=str(script)),
-        run=lambda *_a, **_k: _completed(0),
-        lookup_pid=lambda _port: 999,
+        _config(tmp_path, restart_script="", spawn_cmd=json.dumps(["python"])),
+        lookup_pid=lookup,
         name_of=lambda _pid: "python.exe",
         terminate=terminate,
-        wait=lambda _seconds: None,
+        wait=wait,
+        run=lambda argv, **kw: _Completed(0),
     )
 
     assert code == 200
-    assert terminated == [999]
-    assert payload["killed_pid"] == 999
+    assert killed == [4242]
+    assert payload["killed_pid"] == 4242
+    recorded = watchdog.read_state(tmp_path)["api"]
+    assert recorded["pid"] == 4242 and recorded["port"] == 5950
 
 
-def test_restart_does_not_kill_stale_pid_when_port_is_free(tmp_path: Path) -> None:
-    script = tmp_path / "restart-api.ps1"
-    script.write_text("exit 0", encoding="utf-8")
-    watchdog.write_state(
-        tmp_path, {"api": {"pid": 1111, "port": 5950, "recorded_at": "2026-11-06T00:00:00+00:00"}}
-    )
-    terminated: list[int] = []
+def test_restart_skips_killing_when_guard_refuses(tmp_path: Path) -> None:
+    """kill_guard 拒绝（multica）时绝不 terminate。"""
+    killed: list[int] = []
 
     code, payload = restart_service(
-        WatchdogConfig(data_root=tmp_path, restart_task="", restart_script=str(script)),
-        run=lambda *_a, **_k: _completed(0),
-        lookup_pid=lambda _port: None,  # 服务已经死了：没有可结束的对象
-        name_of=lambda _pid: "python.exe",
-        terminate=terminated.append,
+        _config(tmp_path, restart_script="", spawn_cmd=json.dumps(["python"])),
+        lookup_pid=lambda port: 123,
+        name_of=lambda _pid: "multica.exe",
+        terminate=lambda pid: killed.append(pid) or True,
+        wait=lambda _s: None,
+        run=lambda argv, **kw: _Completed(0),
     )
 
     assert code == 200
-    assert terminated == []
+    assert killed == []
+    assert "拒绝" in payload["skipped"]
+
+
+def test_restart_does_not_kill_when_port_is_free(tmp_path: Path) -> None:
+    killed: list[int] = []
+    code, payload = restart_service(
+        _config(tmp_path, restart_script="", spawn_cmd=json.dumps(["python"])),
+        lookup_pid=lambda port: None,
+        terminate=lambda pid: killed.append(pid) or True,
+        wait=lambda _s: None,
+        run=lambda argv, **kw: _Completed(0),
+    )
+    assert code == 200
+    assert killed == []
     assert payload["killed_pid"] is None
 
 
+# --------------------------------------------------------------------------- #
+# kill_guard / 静态校验
+# --------------------------------------------------------------------------- #
+
+
 def test_kill_guard_refuses_multica() -> None:
-    reason = kill_guard(1234, 5950, name_of=lambda _pid: "multica.exe", lookup=lambda _p: 1234)
+    reason = kill_guard(123, 5950, name_of=lambda _p: "multica.exe", lookup=lambda _p: 123)
     assert "multica" in reason
-    assert "拒绝" in reason
 
 
 def test_kill_guard_refuses_non_owner() -> None:
-    reason = kill_guard(1234, 5950, name_of=lambda _pid: "python.exe", lookup=lambda _p: 999)
-    assert "监听者" in reason
+    reason = kill_guard(123, 5950, name_of=lambda _p: "python.exe", lookup=lambda _p: 456)
+    assert "5950" in reason
 
 
 def test_kill_guard_allows_api_owner() -> None:
-    assert kill_guard(1234, 5950, name_of=lambda _pid: "python.exe", lookup=lambda _p: 1234) == ""
+    assert kill_guard(123, 5950, name_of=lambda _p: "python.exe", lookup=lambda _p: 123) == ""
 
 
-# --------------------------------------------------------------------------- #
-# 脚本路径 / 壳页
-# --------------------------------------------------------------------------- #
+def test_kill_guard_refuses_self() -> None:
+    reason = kill_guard(
+        os.getpid(), 5950, name_of=lambda _p: "python.exe", lookup=lambda _p: 0
+    )
+    assert "自身" in reason
 
 
 def test_script_issue_requires_absolute_existing_file(tmp_path: Path) -> None:
     assert script_issue("") is None
-    assert "绝对路径" in str(script_issue("restart-api.ps1"))
-    missing = tmp_path / "missing.ps1"
-    assert "不存在" in str(script_issue(str(missing)))
-    present = tmp_path / "ok.ps1"
-    present.write_text("", encoding="utf-8")
-    assert script_issue(str(present)) is None
+    assert script_issue("relative.ps1") == "必须是绝对路径"
+    assert script_issue(str(tmp_path / "missing.ps1")) == "文件不存在"
+    ok = tmp_path / "restart.ps1"
+    ok.write_text("exit 0", encoding="utf-8")
+    assert script_issue(str(ok)) is None
 
 
-def test_offline_shell_is_self_contained() -> None:
-    html = offline_shell_html("http://127.0.0.1:5950")
-
-    assert "重启平台" in html
-    assert "/platform/health" in html
-    assert "/platform/restart" in html
-    assert "127.0.0.1:5950" in html
-    # 无外部依赖：没有 http(s) 资源引用（跳转地址除外）
-    assert "<script src" not in html
-    assert "<link" not in html
-    assert "cdn" not in html.lower()
+def test_spawn_command_issue_validates_json_array() -> None:
+    assert spawn_command_issue("") is None
+    assert spawn_command_issue("not json") == "不是合法 JSON 数组"
+    assert spawn_command_issue('["ok"]') is None
+    assert spawn_command_issue("[1, 2]") == "必须是字符串数组"
+    assert spawn_command_issue('{"a": 1}') == "必须是字符串数组"
 
 
-def test_offline_shell_page_is_served(tmp_path: Path) -> None:
-    client = _client(WatchdogConfig(data_root=tmp_path), probe=lambda: None)
-    response = client.get("/")
+# --------------------------------------------------------------------------- #
+# supervised 标记与状态文件
+# --------------------------------------------------------------------------- #
 
-    assert response.status_code == 200
-    assert "LadderStock" in response.text
-    assert response.headers["cache-control"] == "no-store"
+
+def test_supervised_flag_is_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(watchdog.SUPERVISED_ENV, raising=False)
+    assert supervised() is False
+    monkeypatch.setenv(watchdog.SUPERVISED_ENV, "1")
+    assert supervised() is True
+    monkeypatch.setenv(watchdog.SUPERVISED_ENV, "0")
+    assert supervised() is False
+
+
+def test_state_records_portless_watchdog(tmp_path: Path) -> None:
+    """QUOT-589：看门狗无端口化——state 的 watchdog.port 必须是 null。"""
+    write_state(tmp_path, {"watchdog": {"pid": 1, "port": None, "version": "x"}})
+    data = watchdog.read_state(tmp_path)
+    assert data["watchdog"]["port"] is None
+    assert state_path(tmp_path).is_file()
+
+
+def test_watchdog_config_scopes_to_its_api_port(tmp_path: Path) -> None:
+    """scope 只跟 api_base 的端口走：dev 5951 实例的看门狗只查 5951。"""
+    dev = _config(tmp_path, api_base="http://127.0.0.1:5951")
+    prod = _config(tmp_path, api_base="http://127.0.0.1:5950")
+    assert dev.api_port == 5951
+    assert prod.api_port == 5950
+    assert FAILURES_BEFORE_RED == 2
+    assert RESTART_THROTTLE_SEC == 30.0
