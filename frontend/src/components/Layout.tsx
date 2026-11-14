@@ -14,6 +14,7 @@ import { AssistantObjectContext, AssistantShellContext, type AssistantDockState,
 import { useIsMobile } from '../lib/mediaQuery'
 import { PageToolsSlotContext } from '../lib/pageToolsSlot'
 import { HomeModeSlotContext } from '../lib/homeModeSlot'
+import { HomeAskFocusContext } from '../lib/homeAskFocus'
 import { buildDockView, routeObject, type AssistantObject } from '../lib/skills/dock'
 import {
   BRAND_ICON,
@@ -125,6 +126,9 @@ export default function Layout() {
   // 顶栏中间给首页双模式切换留的落点（QUOT-582）：只有 `/` 的 `HomeShell` 会往里送，
   // 其余屏读到 null，这个节点本身是空 div，不占宽度、不撑高
   const [modeSlot, setModeSlot] = useState<HTMLDivElement | null>(null)
+  // 首页 ask 聚焦信号（QUOT-590）：home 上「问 AI」不开抽屉，改广播聚焦既有输入框。
+  // seq 自增让重复请求也能被 HomeShell 感知（比对前值而不是布尔翻转）。
+  const [askFocusSeq, setAskFocusSeq] = useState(0)
   const menuRef = useRef<HTMLButtonElement>(null)
 
   const openAi = useCallback(() => setAiOpen(true), [])
@@ -133,9 +137,16 @@ export default function Layout() {
   /**
    * 打开助手抽屉：页面绑定按 `lib/skills/pageBindings.ts` 推断；
    * 调用方（页内按钮）给了对象就用它的，否则用路由 + 页内登记的对象。
+   * 首页（`/`）例外：home 已有 chat composer 与 desk 研究面两颗 ask 面，抽屉里的
+   * 研究聊天是同一颗 `HomeResearchChat` 的第二实例（QUOT-590 根因）——这里不开抽屉，
+   * 改广播聚焦信号，由 `HomeShell` 聚焦当前模式的既有输入框。只聚焦、不自动发送。
    */
   const openAssistant = useCallback(
     (input: AssistantOpenInput = {}) => {
+      if (input.pageKey ? input.pageKey === '/' : location.pathname === '/') {
+        setAskFocusSeq((seq) => seq + 1)
+        return
+      }
       const pageKey = input.pageKey ?? location.pathname
       const base = input.object ? {} : { ...routeObject(pageKey), ...(pageObject ?? {}) }
       const object: AssistantObject = { ...base, ...(input.object ?? {}) }
@@ -373,7 +384,7 @@ export default function Layout() {
             <div ref={setToolsSlot} className="flex items-center gap-2" />
             {/* QUOT-457：「运行本页命令」收进顶栏（图标 + 弹层）；无命令或控制面未开启时整颗不渲染 */}
             <PageCommandBar />
-            <TopbarTools onOpenAi={openAi} onAskAi={() => openAssistant()} />
+            <TopbarTools onOpenAi={openAi} onAskAi={() => openAssistant()} homeAskFocus={location.pathname === '/'} />
           </div>
         </header>
 
@@ -382,12 +393,15 @@ export default function Layout() {
           <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
             <PageToolsSlotContext.Provider value={toolsSlot}>
               <HomeModeSlotContext.Provider value={modeSlot}>
-                {/* QUOT-475：页内「研究助手」通过 shell 打开同一份抽屉；页面可把当前标的上报给顶栏 */}
-                <AssistantShellContext.Provider value={assistantShell}>
-                  <AssistantObjectContext.Provider value={setPageObject}>
-                    <Outlet />
-                  </AssistantObjectContext.Provider>
-                </AssistantShellContext.Provider>
+                {/* QUOT-590：home 上「问 AI」经这份信号聚焦既有 ask 面，不另开抽屉 */}
+                <HomeAskFocusContext.Provider value={{ seq: askFocusSeq }}>
+                  {/* QUOT-475：页内「研究助手」通过 shell 打开同一份抽屉；页面可把当前标的上报给顶栏 */}
+                  <AssistantShellContext.Provider value={assistantShell}>
+                    <AssistantObjectContext.Provider value={setPageObject}>
+                      <Outlet />
+                    </AssistantObjectContext.Provider>
+                  </AssistantShellContext.Provider>
+                </HomeAskFocusContext.Provider>
               </HomeModeSlotContext.Provider>
             </PageToolsSlotContext.Provider>
           </main>

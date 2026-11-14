@@ -6,12 +6,12 @@ adapter.start() 必须抛出含端口号的 SupervisorError，且不抢口、不
 启动失败后断言端口归属仍是测试进程、其余端口无新增监听，finally 释放占口，
 参数化 3 轮验证无残留。
 
-代表性端口（三种形态各一）：
-- 8787 tickhub 管理端（BaseAdapter，命令行型；其 start 已有 _foreign_occupant 预检）；
-- 8100 financecoffer（WSL / docker compose 形态）；
-- 8788 proxyfleet（Windows 计划任务形态）。
-派单建议的 8000 不可用作冲突靶口：它是生产 adopted 面（在听且命中关键字），
-红线禁止改动；用同模块的 8787 面代表 BaseAdapter 形态。
+代表性端口（三种形态各一；全部取测试环境 18000 系——QUOT-589 端口隔离红线）：
+- 18787 tickhub 管理端（BaseAdapter，命令行型；其 start 已有 _foreign_occupant 预检）；
+- 18100 financecoffer（WSL / docker compose 形态）；
+- 18788 proxyfleet（Windows 计划任务形态）。
+生产 8000/8787/8100/8788 等一律不用作冲突靶口：它们是生产 adopted 面（在听且
+命中关键字），红线禁止触碰；用同模块的测试环境端口代表各形态。
 
 平台门：仅 Windows 执行（CI ubuntu 整模块 skip，沿用 514 的模块级平台门）。
 部署前提与 514 相同：peer 部署就位、WSL 可用、ProxyFleet 计划任务存在、管理员权限。
@@ -35,8 +35,9 @@ import time
 
 import pytest
 
-from ladderstock.supervisor.adapters import MODULE_ORDER, MODULE_PORTS
+from ladderstock.supervisor.adapters import MODULE_ORDER
 from ladderstock.supervisor.engine import SupervisorError
+from ladderstock.supervisor.modules import module_ports
 from ops.test_lifecycle_cold_start import (
     POLL_INTERVAL_SEC,
     POLL_TIMEOUT_SEC,
@@ -47,14 +48,16 @@ from ops.test_lifecycle_cold_start import (
 
 pytestmark = WINDOWS_ONLY
 
-#: 冲突靶口 → 模块（三种形态各一；8000 是生产 adopted 面，红线不动，见模块 docstring）
+#: 冲突靶口 → 模块（三种形态各一；全部取测试环境 18000 系端口——QUOT-589
+#: 端口隔离红线：绝不占/不拉生产 8787/8100/8788）
 CONFLICT_TARGETS: dict[int, str] = {
-    8787: "tickhub",
-    8100: "financecoffer",
-    8788: "proxyfleet",
+    18787: "tickhub",
+    18100: "financecoffer",
+    18788: "proxyfleet",
 }
 
-ALL_PORTS = tuple(port for name in MODULE_ORDER for port in MODULE_PORTS[name])
+#: setup 已 select_env('test')（经 conftest world fixture），实时取 18000 系表
+ALL_PORTS = tuple(port for name in MODULE_ORDER for port in module_ports()[name])
 
 
 def _occupy(port: int) -> tuple[socket.socket, threading.Event, threading.Thread]:

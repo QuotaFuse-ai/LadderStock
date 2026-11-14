@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 /**
  * 极简异步取数 hook：只服务于页面渲染（loading / ready / error），不做缓存。
@@ -151,5 +151,11 @@ export function useAsync<T>(
   const refresh = useCallback((options?: { manual?: boolean }) => {
     return runRef.current(options?.manual ? 'manual' : 'auto')
   }, [])
-  return { status, data, error, reload, refresh, refreshing, refreshError, updatedAt, failures }
+  // 对象字面量每次渲染都是新引用；下游（useHomeSource 的 views / PublishTodoMovers 的 effect 依赖）
+  // 把整个结果对象当依赖时会被迫每拍重算，一旦再回写 state 就成发布死循环（QUOT-590 CI 挂死）。
+  // 用 useMemo 让字段未变时结果身份稳定。
+  return useMemo(
+    () => ({ status, data, error, reload, refresh, refreshing, refreshError, updatedAt, failures }),
+    [status, data, error, reload, refresh, refreshing, refreshError, updatedAt, failures],
+  )
 }

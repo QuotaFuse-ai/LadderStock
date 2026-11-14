@@ -16,6 +16,9 @@ import { useIsMobile } from '../../../lib/mediaQuery'
 import { useAsync } from '../../../lib/useAsync'
 import { BlockRenderer } from '../../../components/answer-blocks'
 import { Badge, Button, ErrorBlock, IconButton, Textarea } from '../../../components/ui'
+import { ActivityFeed } from './ActivityFeed'
+import { createMockStatusFeed } from './turnStatusMock'
+import type { TurnStatusFeed } from './turnStatus'
 
 /**
  * 首页对话主区（QUOT-582 / F3–F6）。
@@ -53,6 +56,14 @@ export const SUGGESTIONS = [
   '帮我核对一个观点，该先查哪些数据？',
 ] as const
 
+/**
+ * 等待态状态帧源（QUOT-585）。
+ *
+ * QUOT-581 的 `event: status` SSE 帧还没落地（并行中）：现行 `/api/conversation` 是同步
+ * 端点，请求期间拿不到任何过程帧。mock 帧源见 `turnStatusMock.ts`：
+ * 581 落地后把这里的订阅换到 SSE 即可，`ActivityFeed` 与测试都不用动。
+ */
+
 const WELCOME =
   '问一句就行：股票名或代码、板块、或者一个你想核实的观点。助手会先给结论，再列出用到的数据和可以点开的页面。'
 
@@ -72,6 +83,10 @@ export function statusLabel(status: TurnStatus): string {
 interface PendingTurn {
   localId: string
   status: 'streaming' | 'aborted'
+  /** 等待态起点（发送时刻，performance.now 口径） */
+  startedAt: number
+  /** 本轮的状态帧源（QUOT-581 未落地前由 mock 驱动，可整体替换为 SSE 订阅） */
+  feed: TurnStatusFeed
 }
 
 interface ChatPaneProps {
@@ -82,6 +97,21 @@ interface ChatPaneProps {
   onAskDesk: (question: string) => void
   /** 一轮问答落地后通知外壳：会话列表的标题 / 轮数要重取 */
   onRoundComplete: () => void
+  /**
+   * 空态两段式（QUOT-587）：首问发出即回调，外壳据此让会话列表从隐藏转出现。
+   * 空态层与消息层在同一页内互斥切换，不跳路由。
+   */
+  onFirstRoundStarted?: () => void
+  /**
+   * 首问落地（QUOT-588）：服务端返回新 `session_id` 时回调，外壳 `setActiveSessionId`。
+   * 不回传会导致 `activeSessionId` 恒 null：失败时闪回空白、第二问另起新会话（多轮断裂）。
+   */
+  onSessionCreated?: (sessionId: string) => void
+  /**
+   * 顶栏「问 AI」聚焦请求（QUOT-590）：计数变化即聚焦 composer，只聚焦不自动发送。
+   * chat 模式可见时触发；隐藏态的请求由外壳在聚焦时分流（不会发到这里）。
+   */
+  focusRequest?: number
 }
 
 interface PaneData {
@@ -91,7 +121,7 @@ interface PaneData {
 
 const EMPTY_PANE: PaneData = { session: null, turns: [] }
 
-export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundComplete }: ChatPaneProps) {
+export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundComplete, onFirstRoundStarted, onSessionCreated, focusRequest = 0 }: ChatPaneProps) {
   const navigate = useNavigate()
   const isMobile = useIsMobile()
 
@@ -132,13 +162,12 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
 
   const reloadPane = pane.reload
 
-  // 换会话：旧请求作废，本地追加与失败态一起清掉（同一会话的读取结果由 useAsync 保留）
+  // 换会话：旧请求作废，失败态一起清掉（同一会话的读取结果由 useAsync 保留）
   useEffect(() => {
     requestSeqRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
     setPending(null)
-    setAppendTurns([])
     setFailure(null)
     setFailedQuestion(null)
     setStoppedQuestion(null)
@@ -149,6 +178,11 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       window.clearTimeout(recoveryTimerRef.current)
       recoveryTimerRef.current = null
     }
+    // QUOT-588 首问交接不闪空：activeSessionId 落到首问新建的会话时，本地那条已落地
+    // 的答案保留到服务端读回（`turns` 按 seq 去重，读回即无缝替换）；其他换会话照旧清掉
+    if (activeSessionId === localSession?.id) return
+    setAppendTurns([])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId])
 
   // 「新对话」：首问还没发出去前先算作一条排队中的会话（不发请求、不建空会话）；
@@ -158,6 +192,11 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   }, [activeSessionId])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // 顶栏「问 AI」（QUOT-590）：计数变化即聚焦 composer，只聚焦不自动发送
+  useEffect(() => {
+    if (focusRequest > 0) inputRef.current?.focus()
+  }, [focusRequest])
 
   useEffect(
     () => () => {
@@ -233,6 +272,9 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       const question = raw.trim()
       if (!question || pending) return
 
+      // 空态两段式：首问发出，消息层接管（外壳会同时让会话列表出现）
+      onFirstRoundStarted?.()
+
       const seq = requestSeqRef.current + 1
       requestSeqRef.current = seq
       localSeqRef.current += 1
@@ -244,7 +286,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         ...prev,
         { seq: 0, question, blocks: null, status: 'streaming', created_at: '', updated_at: '', localId },
       ])
-      setPending({ localId, status: 'streaming' })
+      setPending({ localId, status: 'streaming', startedAt: performance.now(), feed: createMockStatusFeed() })
       setDraft('')
       setFailure(null)
       setFailedQuestion(null)
@@ -288,7 +330,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         if (requestSeqRef.current === seq) abortRef.current = null
       }
     },
-    [activeSessionId, onRoundComplete, pending, resync],
+    [activeSessionId, onFirstRoundStarted, onRoundComplete, pending, resync],
   )
 
   function applyReply(localId: string, reply: TurnSuccess) {
@@ -303,6 +345,8 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
     if (reply.session_id !== activeSessionId) {
       // 首问：会话 id 是新的，标题由服务端按首问截 40 码位生成，读回前先留空
       setLocalSession({ id: reply.session_id, title: '' })
+      // QUOT-588：把新 id 交回外壳——activeSessionId 落到新会话，第二问续同一会话
+      onSessionCreated?.(reply.session_id)
     }
     // 会话列表按服务端 `turns` / `title` 显示：这一轮落地后重取一次
     onRoundComplete()
@@ -383,6 +427,84 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   const busy = pending !== null
   const titleText = sessionTitle || (hasConversation ? '未命名对话' : '新对话')
   const recoverable = paneFailed && recoveryAttempts >= RECOVERY_MAX_ATTEMPTS
+  // 空态两段式（QUOT-587）：冷启动（未选中任何会话、也没有进行中的内容）整区就是
+  // 「空白背景 + 居中输入框」；首问发出后消息层接管、输入框落到底部。
+  // 选中了会话（含 0 轮的空会话）仍走常规消息层，标题行 / 重命名入口保留。
+  // QUOT-588：失败 / 停止态也停在消息层——否则首问失败瞬间（appendTurns 被滤掉、
+  // activeSessionId 还是 null）emptyStage 翻 true，失败 + 重试被藏进空白欢迎层。
+  const emptyStage =
+    activeSessionId === null && !hasConversation && !recoverable && !failure && !failedQuestion && !stoppedQuestion
+
+  const composer = (
+    <form
+      aria-label="对话输入区"
+      data-testid="composer"
+      className="flex shrink-0 flex-col gap-2 rounded-2xl border border-border-strong bg-surface p-2 transition-colors duration-fast ease-ldst"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void ask(draft)
+      }}
+    >
+      <Textarea
+        ref={inputRef}
+        aria-label="向对话提问"
+        placeholder={isMobile ? '问一句股票或板块…' : '问一句股票、板块，或一个想核实的观点…（Shift+Enter 换行）'}
+        value={draft}
+        rows={3}
+        maxLength={2000}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={onKeyDown}
+        className="min-w-0 resize-none !border-0 bg-transparent px-1.5 pt-0.5 focus-visible:!border-transparent focus-visible:!shadow-none"
+      />
+      <div className="flex items-center justify-end">
+        {busy ? (
+          <IconButton
+            label="停止"
+            variant="secondary"
+            onClick={stop}
+            icon={<Square className="size-3.5" aria-hidden="true" />}
+          />
+        ) : (
+          <IconButton
+            label="发送"
+            type="submit"
+            disabled={!draft.trim()}
+            className="size-9 rounded-full border border-border-strong"
+            style={
+              draft.trim()
+                ? { backgroundColor: 'var(--ldst-accent-solid)', color: '#ffffff', borderColor: 'var(--ldst-accent-solid)' }
+                : { backgroundColor: 'var(--ldst-surface-3)', color: 'var(--ldst-text-muted)' }
+            }
+            icon={<Send className="size-4" aria-hidden="true" />}
+          />
+        )}
+      </div>
+    </form>
+  )
+
+  if (emptyStage) {
+    return (
+      <section aria-label="首页对话" className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4">
+        <div className="flex w-full max-w-measure flex-col gap-3">
+          <p className="text-center text-body leading-body text-text-secondary">{WELCOME}</p>
+          {composer}
+          <div className="flex flex-wrap justify-center gap-2">
+            {SUGGESTIONS.map((text) => (
+              <button
+                key={text}
+                type="button"
+                onClick={() => void ask(text)}
+                className="inline-flex max-w-full items-center rounded-pill border border-border bg-accent-soft px-3 py-1.5 text-left text-13px leading-tight text-text transition-colors duration-fast hover:border-border-strong hover:bg-surface-3"
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+          <p className="text-center text-11px text-text-muted">对话只存本机 · 回车发送，Shift+Enter 换行</p>
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section aria-label="首页对话" className="flex min-h-0 flex-1 flex-col gap-2">
@@ -445,30 +567,13 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
           />
         ) : (
           <>
-            {!hasConversation && pane.status !== 'loading' && (
-              <div className="flex flex-col gap-3 py-4">
-                <p className="max-w-measure text-body leading-body text-text-secondary">{WELCOME}</p>
-                {paneFailed && stopsLikeOffline(pane.error) && (
-                  <ErrorBlock
-                    title="本机服务未连接"
-                    detail="对话记录存在本机服务里；服务恢复后这里会自动重试。"
-                    variant="banner"
-                    onRetry={retryNow}
-                  />
-                )}
-                <div className="flex flex-wrap gap-2">
-                  {SUGGESTIONS.map((text) => (
-                    <button
-                      key={text}
-                      type="button"
-                      onClick={() => void ask(text)}
-                      className="inline-flex max-w-full items-center rounded-pill border border-border bg-accent-soft px-3 py-1.5 text-left text-13px leading-tight text-text transition-colors duration-fast hover:border-border-strong hover:bg-surface-3"
-                    >
-                      {text}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            {paneFailed && stopsLikeOffline(pane.error) && (
+              <ErrorBlock
+                title="本机服务未连接"
+                detail="对话记录存在本机服务里；服务恢复后这里会自动重试。"
+                variant="banner"
+                onRetry={retryNow}
+              />
             )}
 
             {pane.status === 'loading' && !hasConversation && (
@@ -500,9 +605,11 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
               ))}
               {pending && (
                 <li key={pending.localId} className="flex flex-col gap-1">
-                  <p className="text-caption text-text-muted" aria-busy="true">
-                    生成中…
-                  </p>
+                  <ActivityFeed
+                    feed={pending.feed}
+                    startedAt={pending.startedAt}
+                    compact={false}
+                  />
                 </li>
               )}
             </ol>
@@ -540,44 +647,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         )}
       </div>
 
-      <form
-        aria-label="对话输入区"
-        data-testid="composer"
-        className="flex shrink-0 flex-col gap-1 rounded border border-border-strong bg-surface px-2 pb-1.5 pt-1 focus-within:border-accent transition-colors duration-fast ease-ldst"
-        onSubmit={(event) => {
-          event.preventDefault()
-          void ask(draft)
-        }}
-      >
-        <Textarea
-          ref={inputRef}
-          aria-label="向对话提问"
-          placeholder={isMobile ? '问一句股票或板块…' : '问一句股票、板块，或一个想核实的观点…（Shift+Enter 换行）'}
-          value={draft}
-          rows={2}
-          maxLength={2000}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onKeyDown}
-          className="min-w-0 resize-none border-0 bg-transparent px-1 focus-visible:border-transparent"
-        />
-        <div className="flex justify-end">
-          {busy ? (
-            <IconButton
-              label="停止"
-              variant="secondary"
-              onClick={stop}
-              icon={<Square className="size-3.5" aria-hidden="true" />}
-            />
-          ) : (
-            <IconButton
-              label="发送"
-              type="submit"
-              disabled={!draft.trim()}
-              icon={<Send className="size-4" aria-hidden="true" />}
-            />
-          )}
-        </div>
-      </form>
+      {composer}
 
       <div className="flex shrink-0 items-center justify-between gap-2 text-11px text-text-muted">
         <span className="truncate">对话只存本机 · 回车发送，Shift+Enter 换行</span>

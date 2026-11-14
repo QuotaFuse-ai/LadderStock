@@ -38,7 +38,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -52,13 +52,13 @@ from ladderstock.core import runtime
 from ladderstock.core.boundary import PEER_DIR_ENV, PEER_SIBLING_DIRS
 from ladderstock.supervisor.adapters import (
     MODULE_ORDER,
-    MODULE_PORTS,
     ON_DEMAND_MODULES,
     ModuleAdapter,
     SpawnedProcess,
     module_registry,
 )
 from ladderstock.supervisor.engine import SupervisorError
+from ladderstock.supervisor.modules import MODULE_PORTS, panel_port
 from ladderstock.supervisor.proctree import QUERY_TIMEOUT_SEC, split_windows_commandline
 
 #: 端口探测（socket connect）的短超时：只用于轮询，不能拖慢 state()
@@ -93,9 +93,8 @@ DEFAULT_PEER_ROOT_ENV = "LDST_PEER_ROOT"
 INSTALL_ROOT_ENV = "LDST_INSTALL_ROOT"
 #: 自有服务（看板 / 看门狗）的启动器覆盖；空 = 按安装根找 venv
 LAUNCHER_ENV = "LDST_LAUNCHER"
-#: watch 模块（5952 看门狗）默认端口，与 ops/start_watchdog.cmd 同口径
-WATCH_PORT = 5952
-#: 看板端口（DEC-004 固定 5950）：看门狗重启看板时用它，且看板「不是」被托管模块
+#: 看板端口按环境解析（QUOT-589 第二轮，prod=5950 / test=5951）：看门狗重启看板
+#: 时用它，且看板「不是」被托管模块
 PANEL_PORT = 5950
 #: 日志目录默认收在既有宿主日志目录下（与 ops/host 的约定一致）
 DEFAULT_LOG_SUBDIR = Path("LadderStock") / "logs" / "supervisor"
@@ -106,6 +105,15 @@ PROXYFLEET_TASK_ENV = "LDST_PROXYFLEET_TASK"
 DEFAULT_PROXYFLEET_TASK = "ProxyFleet"
 #: TickHub-CN 的运行时 env 文件（非密钥 + 代理密钥都在里面，按旧入口原样加载）
 TICKHUB_ENV_FILES_ENV = "LDST_TICKHUB_ENV_FILES"
+
+
+def panel_port_for_env(env: Mapping[str, str]) -> int:
+    """看门狗探活目标端口：显式 LDST_PANEL_PORT > 避让记忆 > 环境默认。
+
+    与 `_panel_spawn_command` 的 `--port` 共用 `resolve_panel_port` 单一真源，
+    保证避让发生后探活与拉起/重启是同一端口。
+    """
+    return resolve_panel_port(env)
 
 
 # --------------------------------------------------------------------------- #
@@ -797,8 +805,8 @@ def preflight(
                     module=name,
                     ok=usable,
                     detail=(
-                        f"启动器 {entry}（{source}）"
-                        f"· 看门狗端口 {WATCH_PORT} / 看板端口 {PANEL_PORT}"
+                        # QUOT-589 重修：看门狗无端口化，只核启动器
+                        f"启动器 {entry}（{source}）· 无端口自愈监控器"
                         + ("" if usable else "：启动器不存在")
                     ),
                     paths=(entry,),
@@ -1093,7 +1101,7 @@ def _command_adapters(
     evidence_cache_sec: float,
     clock: Callable[[], float],
     sleep: Callable[[float], None],
-) -> dict[str, BaseAdapter]:
+) -> dict[str, ModuleAdapter]:
     tickhub = default_peer_dir("tickhub", env)
     tickhub_us = default_peer_dir("tickhub_us", env)
     wire = default_peer_dir("wire", env)
@@ -1258,59 +1266,94 @@ def _command_adapters(
             clock=clock,
             sleep=sleep,
         ),
-        # 看门狗（5952）过去由 `LadderStock Watchdog` 计划任务独立拉起，是「散落
-        # 计划任务」里最难拆的一条：它守护看板 5950 本身，关掉看板它还要活着才能
-        # 重启看板。收进 supervisor 后它只是同一条进程树里的普通子进程——看板退出
-        # 即随全停一起停，不再跨入口存活。识别关键字 = 本仓库 CLI 的 watchdog 子命令，
-        # 不靠端口猜（5952 被别的进程占着时 probe 失败关闭，不会误认）。
-        "watch": BaseAdapter(
-            "watch",
-            MODULE_PORTS["watch"],
-            (
-                StartFace(
-                    face="watchdog",
-                    argv=(
-                        *launcher_entry(env),
-                        "watchdog",
-                        "--port",
-                        str(WATCH_PORT),
-                        # 看板由同一条 supervisor 托管时，重启看板不再走 schtasks：
-                        # 直接以同一启动器拉起看板 `run`（5950 不变）。命令由
-                        # `_panel_spawn_command()` 算好，argv 形式避免 shell 引号问题。
-                        "--spawn-cmd",
-                        _panel_spawn_command(env),
-                    ),
-                    cwd=_ldst_repo_root(),
-                    port=WATCH_PORT,
-                    match=("ladderstock.cli.main", "watchdog", "--port"),
-                    log_name="watchdog.log",
-                    # venv 的 `ldst.exe` 是 setuptools 启动器，监听者（它的子进程）
-                    # 的 cmdline 里没有 `-m ladderstock.cli.main`；`ldst` 入口点本身
-                    # 就是本 CLI，看到它 + 子命令即可判定归属
-                    inherit_chain=True,
-                    # 打包后 cmdline 是 `LadderStock.exe watchdog --port ...`，
-                    # 不再出现 `-m ladderstock.cli.main`（QUOT-525）。
-                    alt_match=("ldst", "watchdog", "--port"),
-                    alt_matches=(("ladderstock", "watchdog", "--port"),),
-                ),
+        # 看门狗（QUOT-589 重修）：无端口自愈监控器，不再监听 5952——probe/stop
+        # 全按 cmdline 扫描（WatchdogAdapter）。被 supervisor 拉起后它只认
+        # `--spawn-cmd` 直接拉起看板，不经 schtasks 复活（supervised 环境变量）。
+        "watch": WatchdogAdapter(
+            argv=(
+                *launcher_entry(env),
+                "watchdog",
+                "--api",
+                f"http://127.0.0.1:{panel_port_for_env(env)}",
+                "--spawn-cmd",
+                _panel_spawn_command(env),
             ),
+            cwd=_ldst_repo_root(),
             host=host,
             log_dir=log_dir,
             env_overrides={
-                # 被 supervisor 拉起后，看门狗的「重启看板」不再是 schtasks：看板
-                # 和它同一棵树，只允许按 spawn-cmd 直接拉起——supervised 模式下
-                # schtasks / --restart-script 两条兜底都被忽略（QUOT-523）。
                 "LDST_WATCHDOG_SUPERVISED": "1",
             },
-            evidence_cache_sec=evidence_cache_sec,
             clock=clock,
             sleep=sleep,
         ),
     }
 
 
+def rebase_adapter_ports(
+    adapter: BaseAdapter, ports: tuple[int, ...]
+) -> BaseAdapter:
+    """按避让后的实际端口重建命令行型适配器（QUOT-594 端口自动避让）。
+
+    `_command_adapters()` 构造时端口硬编码在 `StartFace.argv`（`--port NNNN`）
+    与 `face.port` 里；避让只换基准表中同位置端口的字面值，argv 其余部分、
+    匹配关键字里的端口号、env / 日志配置原样保留。face 顺序即端口表顺序
+    （构造处保证），逐位替换。匹配关键字（match/alt_match 等）里内嵌的
+    端口号是**基准端口**——避让后监听者 cmdline 用新端口，关键字仍能命中
+    exe / 子命令片段（判定不依赖端口字面值），不影响认领与对账。
+    """
+    if len(ports) != len(adapter.faces):
+        raise SupervisorError(
+            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数"
+            f"（{len(adapter.faces)}）不符"
+        )
+    faces = []
+    for face, port in zip(adapter.faces, ports, strict=True):
+        old = str(face.port)
+        new = str(port)
+        argv = tuple(new if token == old else token for token in face.argv)
+        faces.append(
+            replace(
+                face,
+                argv=argv,
+                port=port,
+                match=tuple(_rebase_match(m, old, new) for m in face.match),
+                alt_match=tuple(_rebase_match(m, old, new) for m in face.alt_match),
+                alt_matches=tuple(
+                    tuple(_rebase_match(m, old, new) for m in group)
+                    for group in face.alt_matches
+                ),
+            )
+        )
+    return BaseAdapter(
+        adapter.name,
+        tuple(ports),
+        faces,
+        host=adapter._host,
+        env_files=adapter._env_files,
+        env_overrides=dict(adapter._env_overrides),
+        log_dir=adapter._log_dir,
+        evidence_cache_sec=adapter._cache_sec,
+        graceful_wait_sec=adapter._graceful_wait,
+        readback_wait_sec=adapter._readback_wait,
+        clock=adapter._clock,
+        sleep=adapter._sleep,
+    )
+
+
+def _rebase_match(token: str, old: str, new: str) -> str:
+    """匹配关键字里的端口号同步替换（仅当片段整体是基准端口字面值）。"""
+    return new if token == old.lower() else token
+
+
 def _panel_spawn_command(env: Mapping[str, str]) -> str:
-    """看门狗用的看板拉起命令（JSON 字符串数组；`ldst watchdog --spawn-cmd` 解析）。"""
+    """看门狗用的看板拉起命令（JSON 字符串数组；`ldst watchdog --spawn-cmd` 解析）。
+
+    端口解析顺序（QUOT-589 第二轮 × QUOT-594 避让整合）：
+    `LDST_PANEL_PORT`（digits 才生效）> ports.yaml 避让记忆（config_dir() 是
+    安装根 scoped，test 安装根读自己的记录）> `panel_port(env)` 环境默认
+    （prod=5950 / test=5951）。test 环境任何路径都不得回落到正式 5950。
+    """
     return json.dumps(
         [
             str(part)
@@ -1318,11 +1361,36 @@ def _panel_spawn_command(env: Mapping[str, str]) -> str:
                 *launcher_entry(env),
                 "run",
                 "--port",
-                str(PANEL_PORT),
+                str(resolve_panel_port(env)),
             )
         ],
         ensure_ascii=False,
     )
+
+
+def resolve_panel_port(env: Mapping[str, str]) -> int:
+    """看板实际端口单一真源：spawn-cmd `--port`、watchdog `--api`、自愈
+    engine 的 panel_url 三处共用，保证避让后三方同一端口。"""
+
+    override = (env.get("LDST_PANEL_PORT") or "").strip()
+    if override.isdigit():
+        return int(override)
+    try:
+        from ladderstock.cli.paths import config_dir
+        from ladderstock.supervisor.port_allocator import load_board_override
+
+        remembered = load_board_override(config_dir())
+    except Exception:  # noqa: BLE001 - 读配置失败回落环境默认
+        remembered = None
+    if remembered:
+        return int(remembered)
+    return panel_port(_env_name(env))
+
+
+def _env_name(env: Mapping[str, str]) -> str | None:
+    """从进程环境映射取 LDST_ENV 显式值；未设返回 None（走当前环境检测）。"""
+    value = (env.get("LDST_ENV") or "").strip().lower()
+    return value or None
 
 
 def _tickhub_env_files(env: Mapping[str, str]) -> tuple[Path, ...]:
@@ -2278,6 +2346,124 @@ def _host_config_path(env: Mapping[str, str]) -> Path:
     return Path(__file__).resolve().parents[3] / HOST_CONFIG_REL
 
 
+class WatchdogAdapter:
+    """无端口看门狗适配器（QUOT-589 重修）：probe/start/stop 全按 cmdline 扫描。
+
+    用户裁决全机只留 5950/5951 两个端口后，看门狗不再监听 5952——BaseAdapter
+    的「端口在听 + cmdline 命中」证据链对它不成立。这里改用 `find_processes`
+    按识别关键字整机扫描（与 ProxyPoolAdapter 转发器同一手法）：
+
+    - probe：扫描命中本 CLI 的 watchdog 子命令 → True；失败关闭。
+    - stop/kill：拉起过的根 + 扫描命中的现行持有者，整树终止。
+    - 识别关键字与原 StartFace 相同的三形态（venv/打包），只去掉 `--port`。
+    """
+
+    MARKER = "watchdog"
+
+    def __init__(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        host: HostPivot | None = None,
+        log_dir: Path | None = None,
+        env_overrides: Mapping[str, str] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.name = "watch"
+        self.ports: tuple[int, ...] = ()
+        self._argv = argv
+        self._cwd = cwd
+        self._host = host or default_host_pivot()
+        self._log_dir = log_dir or _local_appdata_log_dir()
+        self._env_overrides = dict(env_overrides or {})
+        self._clock = clock
+        self._sleep = sleep
+        self._roots: list[int] = []
+
+    # ------------------------------------------------------------------ 协议
+
+    def start(self) -> SpawnedProcess:
+        pid = self._host.spawn(
+            self._argv,
+            cwd=self._cwd,
+            env=self._environment(),
+            log_path=self._log_dir / "watchdog.log",
+        )
+        self._roots.append(pid)
+        return SpawnedProcess(pid=pid, parent_pid=os.getpid(), cmdline=self._argv)
+
+    def stop(self, pid: int | None = None, timeout: float | None = None) -> None:
+        del pid, timeout
+        targets = self._stop_targets()
+        for root in self._roots:
+            self._host.terminate_tree(root, force=False)
+        if not self._wait_gone(targets, GRACEFUL_STOP_WAIT_SEC):
+            for target in targets:
+                self._host.terminate_tree(target, force=True)
+            self._wait_gone(targets, STOP_READBACK_WAIT_SEC)
+        self._roots.clear()
+
+    def kill(self) -> None:
+        for target in self._stop_targets():
+            self._host.terminate_tree(target, force=True)
+        self._roots.clear()
+
+    def probe(self) -> bool:
+        return bool(self._find())
+
+    def identify(self, port: int | None = None) -> Identification:
+        del port  # 无端口模块；识别只按 cmdline
+        found = self._find()
+        return Identification(module=self.name, matched=bool(found), ports=())
+
+    # ------------------------------------------------------------------ 识别
+
+    def _matches(self, snap: ProcessSnapshot) -> bool:
+        joined = snap.joined
+        return (
+            ("ladderstock.cli.main" in joined and self.MARKER in joined)
+            or ("ldst" in joined and self.MARKER in joined)
+            or ("ladderstock" in joined and self.MARKER in joined)
+        )
+
+    def _find(self) -> tuple[ProcessSnapshot, ...]:
+        try:
+            found = self._host.find_processes(self.MARKER)
+        except (OSError, subprocess.SubprocessError):
+            return ()
+        return tuple(snap for snap in found if self._matches(snap))
+
+    def _stop_targets(self) -> list[int]:
+        targets: list[int] = []
+        seen: set[int] = set()
+        for root in self._roots:
+            if root not in seen:
+                seen.add(root)
+                targets.append(root)
+        for snap in self._find():
+            if snap.pid not in seen:
+                seen.add(snap.pid)
+                targets.append(snap.pid)
+        return targets
+
+    def _wait_gone(self, targets: list[int], timeout: float) -> bool:
+        deadline = self._clock() + timeout
+        while True:
+            alive = [pid for pid in targets if self._host.snapshot(pid) is not None]
+            if not alive:
+                return True
+            if self._clock() >= deadline:
+                return False
+            self._sleep(0.1)
+
+    def _environment(self) -> dict[str, str]:
+        values = dict(os.environ)
+        values.update(self._env_overrides)
+        return values
+
+
 def build_default_adapters(
     *,
     env: Mapping[str, str] | None = None,
@@ -2313,6 +2499,18 @@ def build_default_adapters(
             sleep=sleep,
         )
     )
+    # QUOT-589：`_command_adapters` 的 StartFace.argv 里端口号是 prod 基准字面值，
+    # 而 `adapter.ports` 按当前环境实时解析（QUOT-593 test=18000 系）。非 prod
+    # 环境下 faces 与端口表不一致，识别/启动会拿 prod 端口字面值——按环境表
+    # 逐位重建命令行面（与 QUOT-594 避让重建同一实现）。
+    from ladderstock.supervisor.modules import current_env
+
+    if current_env() != "prod":
+        for name, adapter in adapters.items():
+            if isinstance(adapter, BaseAdapter) and tuple(adapter.ports) != tuple(
+                face.port for face in adapter.faces
+            ):
+                adapters[name] = rebase_adapter_ports(adapter, tuple(adapter.ports))
     adapters["financecoffer"] = FinanceCofferAdapter(
         peer_dir=default_peer_dir("financecoffer", values),
         host=pivot,

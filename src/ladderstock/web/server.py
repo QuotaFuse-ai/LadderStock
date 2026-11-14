@@ -61,6 +61,7 @@ from ladderstock.core.validation import load_validation, validation_path
 from ladderstock.core.validation import session_days as cached_session_days
 from ladderstock.data import archive
 from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats
+from ladderstock.supervisor.modules import current_env, panel_port
 from ladderstock.supervisor.selfheal import SelfHealEngine
 from ladderstock.watch import status as watch_status
 from ladderstock.watch.signal import KIND_LABELS, KIND_THRESHOLD_DOWN, KIND_THRESHOLD_UP
@@ -85,6 +86,7 @@ from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.knowledge import KnowledgePlane
 from ladderstock.web.knowledge import build_router as build_knowledge_router
+from ladderstock.web.platform import build_platform_router, request_bound_port
 from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
@@ -112,6 +114,14 @@ STATE_INDEX = Path("state") / "frontend-index.json"
 
 WEB_PORT = 5950
 MCP_PORT = 5951
+
+
+def panel_port_for_current_env() -> int:
+    """看板端口按当前环境解析（QUOT-589 第二轮）：prod=5950 / test=5951。"""
+    try:
+        return panel_port(current_env())
+    except ValueError:
+        return WEB_PORT
 
 #: 盯盘快照的可信窗口（`UI-SPEC.md §10` / `state.yaml:watch_snapshot.ttl_sec`）：
 #: 超过这个秒数的状态文件一律视为过期，旧值不返回。
@@ -1712,6 +1722,17 @@ def create_app(
     knowledge = knowledge_plane if knowledge_plane is not None else KnowledgePlane(data_root=root)
     app.include_router(build_knowledge_router(knowledge))
 
+    # ------------------------------------- 平台健康/重启同源面（QUOT-589 重修）
+    #
+    # 用户裁决：全机只留 5950 / 5951 两个端口，独立看门狗不再监听 5952/5953。
+    # `/platform/*` 改由主服务自己提供（`web/platform.py`），前端
+    # `platformBaseUrl()` 恒同源。注册在 SPA 兜底之前。
+    #
+    # QUOT-589 第二轮：端口按请求推导（`request.scope["server"][1]` = uvicorn
+    # 真实绑定端口）——测试服 5951 的 health 探活与 restart 脚本映射都指向
+    # 5951 自己，绝不误触正式 5950；任意 `--port` 天然正确。
+    app.include_router(build_platform_router(request_bound_port))
+
     # ------------------------------------------ 状态索引面（QUOT-288 / UI-SPEC §12.2 第 2 条）
     #
     # `/__state/index` 两个路由（GET 读回 / POST 上报）是前端分片索引的落盘通道，
@@ -1737,7 +1758,10 @@ def create_app(
     # 引擎、内部补建的 processes 不算——那保留 482-C 平面视图契约（configured=False）。
     wire_supervisor = processes is not None
     if supervisor_engine is None and processes is None:
-        engines = build_supervisor_engines(root, panel_url=f"http://127.0.0.1:{WEB_PORT}/")
+        panel_port = panel_port_for_current_env()
+        engines = build_supervisor_engines(
+            root, panel_url=f"http://127.0.0.1:{panel_port}/"
+        )
         engine = engines.heal
         processes = engines.processes
         wire_supervisor = True
@@ -1745,7 +1769,9 @@ def create_app(
         engine = (
             supervisor_engine
             if supervisor_engine is not None
-            else build_selfheal_engine(root, panel_url=f"http://127.0.0.1:{WEB_PORT}/")
+            else build_selfheal_engine(
+                root, panel_url=f"http://127.0.0.1:{panel_port_for_current_env()}/"
+            )
         )
         # 注入的自愈假件没有共享账本时只保留 482-C 面，不凭空造真启停引擎
         if processes is None and isinstance(engine, SelfHealEngine):

@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -109,6 +109,47 @@ def _require_text(text: Any, location: str) -> str:
     return text
 
 
+def _sse_deltas(lines: AsyncIterator[str]) -> AsyncIterator[str]:
+    """OpenAI / Anthropic 通用 SSE 增量解析：从 data: 行里抠正文增量。"""
+
+    async def _gen() -> AsyncIterator[str]:
+        # 入参是 `aiter_lines()`：它已经按行切好并剥掉了行尾 \n，
+        # 这里绝不能再做 buffer 拼接（行内永远没有 \n，逐行处理即可）。
+        async for line in lines:
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                event = json.loads(data)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "error":
+                message = event.get("error")
+                detail = (
+                    message.get("message") if isinstance(message, Mapping) else str(message)
+                )
+                raise ProviderError(f"上游流式错误：{detail}", status_code=529)
+            delta = event.get("delta") if isinstance(event, dict) else None
+            chunk: Any = None
+            if isinstance(delta, Mapping):  # anthropic content_block_delta
+                chunk = delta.get("text")
+            else:
+                choices = event.get("choices")
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    piece = choices[0].get("delta")
+                    if isinstance(piece, Mapping):
+                        chunk = piece.get("content")
+            if isinstance(chunk, str) and chunk:
+                yield chunk
+
+    return _gen()
+
+
 class OpenAiProvider:
     """OpenAI 兼容 `/chat/completions`。"""
 
@@ -151,6 +192,47 @@ class OpenAiProvider:
             raise ProviderError("finish_reason=length（输出达到长度上限）")
         return _require_text(text, "choices[0].message.content")
 
+
+    async def aiter_text(
+        self,
+        target: ModelTarget,
+        system: str,
+        user: str,
+        *,
+        timeout: float = 60.0,
+    ) -> AsyncIterator[str]:
+        """真流式补全（QUOT-581）：stream:true SSE，逐段 yield 正文增量。
+
+        与 `complete` 同 prompt、同非 JSON 模式；流式没有 json_mode 需求
+        （chat 正文本就是自然语言）。任何失败都从迭代器抛出，由上层决定
+        半流收尾——已 yield 的增量不收回。
+        """
+        base_url, api_key = _credentials(target)
+        payload: dict[str, Any] = {
+            "model": target.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.2,
+            "stream": True,
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST", f"{base_url.rstrip('/')}/chat/completions", headers=headers, json=payload
+            ) as response:
+                if response.status_code >= 400:
+                    body = (await response.aread()).decode("utf-8", "replace").strip()
+                    body = body.replace("\n", " ")[:240]
+                    text = (
+                        f"HTTP {response.status_code}: {body}"
+                        if body
+                        else f"HTTP {response.status_code}"
+                    )
+                    raise ProviderError(text, status_code=response.status_code)
+                async for chunk in _sse_deltas(response.aiter_lines()):
+                    yield chunk
 
     def complete_with_tools(
         self,
@@ -238,6 +320,45 @@ class AnthropicProvider:
             if isinstance(block, dict) and block.get("type") == "text"
         ]
         return _require_text("\n".join(parts), "content blocks")
+
+    async def aiter_text(
+        self,
+        target: ModelTarget,
+        system: str,
+        user: str,
+        *,
+        timeout: float = 60.0,
+    ) -> AsyncIterator[str]:
+        """Anthropic 流式：`stream:true`，正文增量在 content_block_delta。"""
+        base_url, api_key = _credentials(target)
+        base = base_url.rstrip("/")
+        url = f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
+        payload: dict[str, Any] = {
+            "model": target.model,
+            "max_tokens": DEFAULT_MAX_TOKENS,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+            "temperature": 0.2,
+            "stream": True,
+        }
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                if response.status_code >= 400:
+                    body = (await response.aread()).decode("utf-8", "replace").strip()
+                    body = body.replace("\n", " ")[:240]
+                    text = (
+                        f"HTTP {response.status_code}: {body}"
+                        if body
+                        else f"HTTP {response.status_code}"
+                    )
+                    raise ProviderError(text, status_code=response.status_code)
+                async for chunk in _sse_deltas(response.aiter_lines()):
+                    yield chunk
 
     def complete_with_tools(
         self,

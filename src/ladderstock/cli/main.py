@@ -195,8 +195,8 @@ def run(
     launch_dashboard(host=host, port=port)
 
 
-# 独立看门狗（QUOT-443 / DEC-063）：5952 探活 + 重启入口；主服务挂了它仍活着。
-# 实现体在 cli/watchdog.py（只绑回环、Origin 白名单、只结束自己记录的 PID）。
+# 无端口看门狗（QUOT-589 重修）：自愈监控器，不监听任何端口；主服务挂了它
+# 仍活着并自动重启。实现体在 cli/watchdog.py。
 register_watchdog(app)
 
 # 单入口 supervisor（QUOT-523）：不进看板也能全起 / 全停 / 单模块重启。

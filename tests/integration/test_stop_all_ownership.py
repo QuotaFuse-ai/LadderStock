@@ -44,7 +44,7 @@ from ladderstock.web.control import ControlPlane, PortOwner
 
 #: 红线端口：生产 peer 与看板，测试的任何端口都不许落在其中。
 PRODUCTION_PORTS = frozenset(
-    {5950, 5952, 8000, 8787, 8002, 8765, 8786, 8100, 8788, 8789, 8790, 8791, 9100, 9000}
+    {5950, 8000, 8787, 8002, 8765, 8786, 8100, 8788, 8789, 8790, 8791, 9100, 9000}
 )
 
 #: 绑固定临时端口的本机进程：命令行带识别 token，SIGTERM/SIGINT 正常退出。

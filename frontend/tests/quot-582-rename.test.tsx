@@ -160,7 +160,9 @@ describe('会话改名（F3）', () => {
 
   it('没有会话时不出改名入口', async () => {
     renderPane(null)
-    await screen.findByRole('heading', { name: '新对话' })
+    // QUOT-587：冷启动渲染两段式空态（居中输入 + 欢迎语），不再有「新对话」标题条
+    await screen.findByText(/问一句就行/)
+    expect(screen.getByTestId('composer')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '重命名会话' })).toBeNull()
   })
 })

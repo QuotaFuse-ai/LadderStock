@@ -29,7 +29,7 @@ from ladderstock.supervisor.ledger import (
 )
 from ladderstock.supervisor.selfheal import RestartOutcome, SelfHealEngine
 
-PORTS = {"wire": (8790, 8791), "watch": (5952,), "ghost": (1,)}
+PORTS = {"wire": (8790, 8791), "watch": (), "ghost": (1,)}
 
 
 class Clock:

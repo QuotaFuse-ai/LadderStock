@@ -196,10 +196,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:5950',
         changeOrigin: false,
       },
-      // 平台健康 / 重启由独立看门狗提供（QUOT-443 / DEC-063）：dev 下同源代理，
-      // 生产（5950 托管页面）由 usePlatformHealth 直连 5952，靠看门狗的白名单 CORS。
+      // 平台健康 / 重启（QUOT-589 重修）：主服务自己提供 /platform/*，本实例
+      // 同源直达；dev 实例监听 5951（LDST_PORT 覆盖）。无独立看门狗端口。
       '/platform': {
-        target: 'http://127.0.0.1:5952',
+        target: `http://127.0.0.1:${process.env.LDST_PORT || 5950}`,
         changeOrigin: false,
       },
     },

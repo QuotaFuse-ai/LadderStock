@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useContext, useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 
 import { describeApiError, isApiError } from '../api'
 import { useForcedState, resolveState, type PageState } from '../lib/pageState'
+import { useHomeMode } from '../lib/homeMode'
 import {
   MISSING,
   localDateIso,
@@ -20,7 +21,8 @@ import { DEMO_TRADE_DATE } from './home/demo'
 import { HomeIndexStrip } from './home/HomeIndexStrip'
 import { HomePositionsCard } from './home/HomePositionsCard'
 import { HomeSearch } from './home/HomeSearch'
-import { HomeTodoMoversCard, type HomeTodo } from './home/HomeTodoMoversCard'
+import { type HomeTodo } from './home/HomeTodoMoversCard'
+import { HomeTodoMoversBar, HomeTodoMoversShellMountedContext, type HomeTodoMoversData } from './home/HomeTodoMoversBar'
 import { HomeWatchlistCard } from './home/HomeWatchlistCard'
 import { buildHomeAssistant } from './home/homeAssistant'
 import { useHomeDemoEnabled, useHomeBlocks, INDICES_POLL_SECONDS } from './home/useHomeSource'
@@ -51,9 +53,19 @@ export interface HomeScreenProps {
    */
   initialQuestion?: string | null
   onQuestionConsumed?: () => void
+  /**
+   * QUOT-588：把待办异动数据上行发布给 shell 层的全局入口（context 只向下流动）。
+   * 未传（独立渲染 / 单测）时入口由本屏就地兜底渲染。
+   */
+  onTodoMoversData?: (data: HomeTodoMoversData) => void
+  /**
+   * 顶栏「问 AI」聚焦请求（QUOT-590）：计数变化即切「研究股票」页签并聚焦
+   * 底部唯一输入框，只聚焦不预填、不发送。
+   */
+  focusRequest?: number
 }
 
-export default function HomeScreen({ initialQuestion = null, onQuestionConsumed }: HomeScreenProps = {}) {
+export default function HomeScreen({ initialQuestion = null, onQuestionConsumed, onTodoMoversData, focusRequest = 0 }: HomeScreenProps = {}) {
   const forced = useForcedState()
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -62,6 +74,10 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
   // 自相矛盾的标题会写在首屏上。`?date=` 优先。
   const tradeDate = params.get('date') || (demoEnabled ? DEMO_TRADE_DATE : localDateIso())
   const { views, requests, reloadAll, session, indicesTicks, indicesFailures } = useHomeBlocks(tradeDate)
+  // QUOT-588：外壳已挂全局待办异动入口时不再在内容区挂兜底（全局只一颗）
+  const shellMountedTodoBar = useContext(HomeTodoMoversShellMountedContext)
+  // QUOT-588：刷新只属研究台。chat 模式下不门户刷新，避免「两个图标」泄漏回顶栏
+  const [mode] = useHomeMode()
 
   const indexView = views.indices
   const watchlistView = views.watchlist
@@ -69,15 +85,28 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
   const watchView = views.watch
   const validationView = views.validation
 
-  const watchRows = (watchView.state === 'normal' || watchView.state === 'partial' ? watchView.data?.payload.rows : null) ?? []
-  const conditions =
-    (validationView.state === 'normal' || validationView.state === 'partial'
-      ? validationView.data?.payload.conditions
-      : null) ?? []
-  const reconcile =
-    (validationView.state === 'normal' || validationView.state === 'partial'
-      ? validationView.data?.payload.reconcile
-      : null) ?? null
+  // 这三个派生值曾是裸表达式，每次渲染都产出新引用；`todos` / `movers` 的 memo 因此
+  // 每次重算 → `PublishTodoMovers` 的 effect 每次都发 → shell setState → 再渲染，
+  // 构成 update depth 无限循环（QUOT-590 CI 挂死根因之二）。memo 住引用。
+  const watchRows = useMemo(
+    () =>
+      (watchView.state === 'normal' || watchView.state === 'partial' ? watchView.data?.payload.rows : null) ?? [],
+    [watchView],
+  )
+  const conditions = useMemo(
+    () =>
+      (validationView.state === 'normal' || validationView.state === 'partial'
+        ? validationView.data?.payload.conditions
+        : null) ?? [],
+    [validationView],
+  )
+  const reconcile = useMemo(
+    () =>
+      (validationView.state === 'normal' || validationView.state === 'partial'
+        ? validationView.data?.payload.reconcile
+        : null) ?? null,
+    [validationView],
+  )
 
   const reviewSections = useReviewDraft((state) => selectSlot(state, tradeDate).sections)
   const reviewChars = useMemo(
@@ -107,6 +136,15 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
   const state = resolveState(forced, derived)
   const usable = state === 'normal' || state === 'partial'
   const busy = requests.some((request) => request.status === 'loading')
+  const headerRefresh =
+    mode === 'desk'
+      ? {
+          onClick: reloadAll,
+          label: '刷新全部',
+          loading: busy && state !== 'loading',
+          disabled: state === 'loading',
+        }
+      : undefined
   const offline = state === 'offline'
 
   const movers = useMemo(
@@ -145,7 +183,10 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
         : [],
     )
   }, [indexView.data, watchlistView.data, positionsView.data, watchView.data, validationView.data])
-  const degraded = envelopes.filter((envelope) => envelope.source_status !== null && envelope.source_status !== 'ok')
+  const degraded = useMemo(
+    () => envelopes.filter((envelope) => envelope.source_status !== null && envelope.source_status !== 'ok'),
+    [envelopes],
+  )
 
   // 页头副标题只报「屏级态」：加载 / 断连 / 取数失败 / 空态——这些是整页唯一的可见信号。
   // 数据完整度与取数时刻不在这里播报（参考页口径是「标题 + 面包屑」）：降级走待办条目 + 块级
@@ -193,6 +234,37 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
     return list.slice(0, 3)
   }, [usable, conditions.length, reconcile, reviewChars, degraded])
 
+  // 发布快照：`views.validation` / `views.watch` 是 `useHomeSource` 里每次渲染重建的对象
+  //（`blockView` 返回 `{ ...base, ... }` 字面量），直接把对象塞进 `PublishTodoMovers`
+  // 的 effect 依赖会让它每次渲染都重新发布，经 `HomeShell.setTodoMoversData` 回写 state
+  // 形成发布死循环（QUOT-590 CI 挂死根因之一）。这里按字段重建一份身份稳定的 BlockView。
+  const publishValidation = useMemo(
+    () => ({
+      state: validationView.state,
+      data: validationView.data,
+      error: validationView.error,
+      offline: validationView.offline,
+      endpointMissing: validationView.endpointMissing,
+      onRetry: validationView.onRetry,
+      onRefresh: validationView.onRefresh,
+      refreshing: validationView.refreshing,
+    }),
+    [validationView.state, validationView.data, validationView.error, validationView.offline, validationView.endpointMissing, validationView.onRetry, validationView.onRefresh, validationView.refreshing],
+  )
+  const publishWatch = useMemo(
+    () => ({
+      state: watchView.state,
+      data: watchView.data,
+      error: watchView.error,
+      offline: watchView.offline,
+      endpointMissing: watchView.endpointMissing,
+      onRetry: watchView.onRetry,
+      onRefresh: watchView.onRefresh,
+      refreshing: watchView.refreshing,
+    }),
+    [watchView.state, watchView.data, watchView.error, watchView.offline, watchView.endpointMissing, watchView.onRetry, watchView.onRefresh, watchView.refreshing],
+  )
+
   const failedLabels = useMemo(() => {
     const labels: string[] = []
     if (indexView.state === 'error') labels.push('大盘指数')
@@ -208,12 +280,7 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
       title="首页"
       subtitle={summary}
       badge={<DemoStateBadge state={forced} />}
-      refresh={{
-        onClick: reloadAll,
-        label: '刷新全部',
-        loading: busy && state !== 'loading',
-        disabled: state === 'loading',
-      }}
+      refresh={headerRefresh}
     />
   )
 
@@ -243,6 +310,12 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
       {header}
 
       {offline && <OfflineBanner onRetry={reloadAll} />}
+      {/* 待办与异动入口（QUOT-588）：由 HomeShell 在 shell 层显式全局挂载，
+          数据经 `onTodoMoversData` 上行；无外壳（单测 / 独立渲染）时这里挂兜底，全局只一颗 */}
+      <PublishTodoMovers todos={todos} movers={movers} validation={publishValidation} watch={publishWatch} onPublish={onTodoMoversData} />
+      {!shellMountedTodoBar && (
+        <HomeTodoMoversBar todos={todos} movers={movers} validation={validationView} watch={watchView} />
+      )}
       {state === 'partial' && failedLabels.length > 0 && (
         <ErrorBlock
           variant="banner"
@@ -273,34 +346,72 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed 
         />
       )}
 
-      {/* 两行工作台（§1.1）：8+4 / 4+4+4；卡片是直接的网格子项，行内等高由 stretch 保证。
-          行距 12px（gap-3）：1280×800 一屏预算的一部分，不是装饰性留白 */}
-      <div className="grid gap-3 desk:min-h-0 desk:flex-1 desk:grid-cols-12 desk:grid-rows-2 desk:auto-rows-fr">
-        <HomeIndexStrip
-          view={indexView}
-          session={session}
-          pollSeconds={INDICES_POLL_SECONDS}
-          pollTicks={indicesTicks}
-          pollFailures={indicesFailures}
-          className="desk:col-span-8"
-        />
-        <HomeTodoMoversCard
-          todos={todos}
-          movers={movers}
-          validation={validationView}
-          watch={watchView}
-          className="desk:col-span-4"
-        />
-        <HomeWatchlistCard view={watchlistView} className="desk:col-span-4" />
-        <HomePositionsCard view={positionsView} className="desk:col-span-4" />
+      {/* 版式按老板草图（QUOT-586 / QUOT-587 返工）：外层两栏（左区弹性 + 右列「研究」定宽通高）；
+          左区纵向两段——大盘吃满余高 → 自选/持仓平分一行；
+          待办与异动经顶栏槽（`HomeTodoMoversBar`）进 `header.workspace-topbar`，不再占内容区。
+          desk:h-full / min-h-0 链不退化（一屏无整页滚动，QUOT-570 门槛） */}
+      <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1 desk:flex-row">
+        {/* 左区：上下两段 */}
+        <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1">
+          <HomeIndexStrip
+            view={indexView}
+            session={session}
+            pollSeconds={INDICES_POLL_SECONDS}
+            pollTicks={indicesTicks}
+            pollFailures={indicesFailures}
+            className="desk:min-h-0 desk:flex-1"
+          />
+          <div className="grid gap-3 grid-cols-2">
+            <HomeWatchlistCard view={watchlistView} />
+            <HomePositionsCard view={positionsView} />
+          </div>
+        </div>
+        {/* 右列：研究面板独占、跨全高 */}
         <HomeSearch
           assistant={assistant}
           date={tradeDate}
           incomingQuestion={initialQuestion}
           onQuestionConsumed={onQuestionConsumed}
-          className="desk:col-span-4"
+          focusRequest={focusRequest}
+          className="shrink-0 desk:w-96 desk:min-h-0"
         />
       </div>
     </div>
   )
+}
+
+/** QUOT-588：待办异动数据上行发布（副作用组件，props 变化即发布，shell 层据此供全局入口）。 */
+function PublishTodoMovers(props: HomeTodoMoversData & { onPublish?: (data: HomeTodoMoversData) => void }) {
+  const { onPublish, ...data } = props
+  // 上游 BlockView 每次渲染都重建（onRetry/onRefresh 等闭包身份不稳定），仅靠 effect 依赖
+  // 比较无法收敛：发布 → setTodoMoversData → 重渲染 → 再发布，形成死循环（QUOT-590 CI 挂死）。
+  // 这里对发布内容做逐字段浅比较，内容未变则跳过发布；回调闭包（onRetry/onRefresh）语义不变，
+  // 不参与比较，否则永不收敛。
+  const lastPublished = useRef<HomeTodoMoversData | null>(null)
+  useEffect(() => {
+    const prev = lastPublished.current
+    if (
+      prev &&
+      prev.todos === data.todos &&
+      prev.movers === data.movers &&
+      prev.validation.state === data.validation.state &&
+      prev.validation.data === data.validation.data &&
+      prev.validation.error === data.validation.error &&
+      prev.validation.offline === data.validation.offline &&
+      prev.validation.endpointMissing === data.validation.endpointMissing &&
+      prev.validation.refreshing === data.validation.refreshing &&
+      prev.watch.state === data.watch.state &&
+      prev.watch.data === data.watch.data &&
+      prev.watch.error === data.watch.error &&
+      prev.watch.offline === data.watch.offline &&
+      prev.watch.endpointMissing === data.watch.endpointMissing &&
+      prev.watch.refreshing === data.watch.refreshing
+    ) {
+      return
+    }
+    lastPublished.current = data
+    onPublish?.(data)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onPublish, data.todos, data.movers, data.validation, data.watch])
+  return null
 }

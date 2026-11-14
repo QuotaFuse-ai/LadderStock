@@ -52,8 +52,8 @@ BLOCK_TYPES: tuple[str, ...] = (
     BLOCK_ACTION,
 )
 
-#: D2 待决策（6 还是 8）：决策落地只改这一个常量 + `MAX_BLOCKS` 相关测试。
-MAX_BLOCKS = 8
+#: D2 拍板取 6（QUOT-581 收口）。超限时由 `_enforce_limit` 瘦身 / 丢中段可省块。
+MAX_BLOCKS = 6
 
 #: §6.4-4 折叠阈值：表格超 5 行折叠、正文超 4 行折叠（§9.2）
 TABLE_COLLAPSE_ROWS = 5
@@ -574,9 +574,7 @@ def normalize_ai(ai: Any) -> dict[str, list[str]]:
     （`boundary.AI_WRITABLE` 的子集）。`narrative` 允许单字符串，统一成数组。
     多余键一律拒绝——数字必须由程序计算（DEC-006 闸门 5）。
     """
-    if ai is None:
-        return {field: [] for field in _NARRATIVE_FIELDS}
-    body = _require_mapping(ai, "ai")
+    body = {} if ai is None else _require_mapping(ai, "ai")
     extra = set(body) - set(_NARRATIVE_FIELDS)
     if extra:
         raise AnswerBlockError(
@@ -833,6 +831,10 @@ def build_blocks(
     ai: Any,
     sources: Sequence[Any] | None,
     failure: Any = None,
+    # 默认 False = 与现役非流式路径（assistant.py 三路由，只传 3 个位置参）的
+    # 「无来源 → WITHOUT_DATA」契约一致；有页内数据的调用方（chat.py 流式）
+    # 必须显式传 page_data=True，才会出 NO_RECORD。
+    page_data: bool = False,
 ) -> list[dict[str, Any]]:
     """§7 装配：AI 只决定「说什么话」，程序决定「给什么数」和「怎么摆」。
 
@@ -842,11 +844,31 @@ def build_blocks(
     - `sources`：`ChatSource` 形态的来源清单（`name / fetched_at / url`，
       可选 `symbol / as_of`）。
     - `failure`：`ChatFailure` 或同形 dict；非空即「整轮失败」，只回一条 notice。
+    - `page_data`：本轮是否带了页内数据；只影响「来源为空」那条例外说明的措辞，
+      默认 False（与现役非流式 assistant.py 的 3 参调用契约一致），有页内数据的
+      调用方（chat.py 流式）显式传 True。措辞与 `source_note(has_data=...)` 共源，
+      与 `web/chat.py` `_source_note(has_data=...)` 一一对应（同一句只出一次）。
 
     纯函数：不读写文件、不发请求、不碰全局状态。
     """
     metrics = dict(metrics or {})
     source_list = [_coerce_source(raw) for raw in (sources or [])]
+    # 附录类块先定：超限瘦身要保证它们不被「尾部丢块」剪掉（§6.4-2 / D7）
+    citation = _citation_from_sources(source_list)
+    source_notice = (
+        None
+        if citation is not None
+        else build_block(
+            BLOCK_NOTICE,
+            {
+                "kind": NOTICE_MISSING_DATA,
+                "section": "来源",
+                # notice 只在构不成 citation 时出现，措辞只取决于 page_data；
+                # 传空 sources 取 source_note 的 has_data 分支，与 chat.py 同源
+                "message": source_note(has_data=page_data, sources=[]),
+            },
+        )
+    )
 
     if failure is not None:
         return [_failure_notice(failure)]
@@ -920,22 +942,11 @@ def build_blocks(
         )
 
     # 7. 来源：空则不生成 citation，改成服务端文案 notice
-    citation = _citation_from_sources(source_list)
-    if citation is not None:
-        blocks.append(citation)
-    else:
-        blocks.append(
-            build_block(
-                BLOCK_NOTICE,
-                {
-                    "kind": NOTICE_MISSING_DATA,
-                    "section": "来源",
-                    "message": SOURCE_NOTE_WITHOUT_DATA,
-                },
-            )
-        )
+    tail = citation if citation is not None else source_notice
+    assert tail is not None
+    blocks.append(tail)
 
-    blocks = _enforce_limit(blocks)
+    blocks = _enforce_limit(blocks, protected=(tail,))
     check_ordering(blocks)
     return blocks
 
@@ -960,35 +971,37 @@ def _citation_from_sources(sources: Sequence[_Source]) -> dict[str, Any] | None:
     return build_block(BLOCK_CITATION, {"items": items})
 
 
-def _enforce_limit(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _enforce_limit(
+    blocks: list[dict[str, Any]], *, protected: Sequence[Mapping[str, Any]] = ()
+) -> list[dict[str, Any]]:
     """§6.4-4：总数 ≤ `MAX_BLOCKS`。
 
     步骤 1、2 只做**内容瘦身**（折表行、砍指标项），块数不变；真正压块数的只有
     步骤 3（从尾部丢非保护块）。瘦身先做，是为了超限时优先保留信息密度更高的块。
 
-    citation 永远保位（§6.4-2），conclusion 永远保位（§6.4-1），notice 不因超限
-    被丢到空——丢的总是中段可省块。
+    citation 永远保位（§6.4-2），conclusion 永远保位（§6.4-1），`protected` 里的
+    块（来源为空时的 missing_data notice）也不丢——丢的总是中段可省块。
     """
     if len(blocks) <= MAX_BLOCKS:
         return blocks
+    locked = [id(block) for block in protected]
     result = copy.deepcopy(blocks)
-    # 1) 内容瘦身：表格折叠到只留首行（collapsed + rows_total 保留真实总数），块数不变
+    # 1) 内容瘦身：表格折叠到只留首行（collapsed + rows_total 保留真实总数），块数不变。
+    #    首行/总行数保持原样，`table` 的样例与回放才对得上。
     for block in result:
         if block["type"] != BLOCK_TABLE:
             continue
         payload = block["payload"]
-        if len(payload["rows"]) > 1:
-            payload["rows"] = payload["rows"][:1]
+        if len(payload["rows"]) > TABLE_COLLAPSE_ROWS:
+            payload["rows"] = payload["rows"][:TABLE_COLLAPSE_ROWS]
             payload["collapsed"] = True
-    # 2) 内容瘦身：指标块超过 2 项就砍到 2 项，块数不变
-    for block in result:
-        if block["type"] == BLOCK_METRIC and len(block["payload"]["items"]) > 2:
-            block["payload"]["items"] = block["payload"]["items"][:2]
-            break
-    # 3) 仍超限：从尾部往前丢非保护块（citation / conclusion 除外）
+    # 2) 内容瘦身：不再砍指标项——块与样例一一对应，砍了回放就对不上
+    # 3) 仍超限：从尾部往前丢非保护块（citation / conclusion / protected 除外）
     while len(result) > MAX_BLOCKS:
         for index in range(len(result) - 1, 0, -1):
             if result[index]["type"] in (BLOCK_CITATION, BLOCK_CONCLUSION):
+                continue
+            if id(blocks[index]) in locked:
                 continue
             del result[index]
             break

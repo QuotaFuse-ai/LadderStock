@@ -1,28 +1,23 @@
-"""独立看门狗（QUOT-443 / DEC-063）：5952 上的探活与重启入口。
+"""无端口看门狗（QUOT-589 重修）：不监听任何端口的探活自愈监控器。
 
-为什么不塞进 `ldst run`：主服务自重启的前提是它还活着；进程挂在 uvicorn 里时
-重启入口和被测对象一起消失。看门狗因此是**第二个常驻进程**，只依赖标准库 +
-httpx + fastapi/uvicorn（web 依赖，与 `ldst run` 相同）：
+QUOT-589 用户裁决（硬约束）：全机只留 5950 正式 / 5951 测试两个端口，
+看门狗不得再占第三端口（旧 5952 与 QUOT-589 中途出现的 5953 都废除）。
+`/platform/health` + `/platform/restart` 改由主服务自己提供（`web/platform.py`）；
+本模块只做**自愈**：连续探测失败确认主服务死亡后，按配置的重启方式拉起它。
 
-- `GET /platform/health`：实时探测 `{api}/api/health`（超时 2s），三态
-  `ok` / `degraded` / `offline`；只读健康字段，不读持仓、日志、任何隐私数据。
-- `POST /platform/restart`：先结束**自己记录的、且此刻仍占用 API 端口的那个 PID**，
-  再按 `--spawn-cmd`（直接拉起 argv）→ `--restart-task`（schtasks）→
-  `--restart-script`（固定绝对路径）顺序尝试。被 supervisor 托管时只给
-  `--spawn-cmd`（QUOT-523：同一进程树，不再经计划任务复活看板）。
-  请求体不参与任何命令拼装；30s 内重复请求回 429。
-- `GET /`：纯内联离线壳页（无 CDN / 无外部依赖）。主服务已死时打开它，
-  能看到状态和重启按钮，恢复后自动跳回看板。
-
-安全边界（硬约束）：
-
-1. 只绑回环；`POST` 校验 `Origin` 白名单，无 `Origin` 拒绝，绝不回 `*`。
-2. 绝不按映像名批量杀进程；只杀「记录的 PID == 当前 API 端口监听者」，
-   且映像名含 `multica` 时一律拒绝（那是工作区守护进程）。
-3. 重启脚本路径只来自命令行参数，且必须是绝对路径的现存文件。
-4. 状态文件 `state/watchdog.json` 只写 PID / 端口 / 时间戳 / 版本，无凭据。
-
-端口 `5952` 是 DEC-063 的裁决：`5951` 已被 MCP http 固定占用（DEC-004）。
+- 探活：`GET {api}/api/health`（超时 2s）；连续 `FAILURES_BEFORE_RED` 次失败
+  才算确认中断（单次抖动不触发重启），恢复即清零。
+- 自愈：确认中断 → `restart_service()`（与重启入口同一套 kill_guard / 节流），
+  带冷却期防止「拉起又立刻失败」变成重启风暴。
+- 安全边界（沿用 QUOT-443 硬约束，一条不减）：
+  1. 绝不按映像名批量杀进程；只杀「此刻真的在监听 API 端口」的那个 PID，
+     且映像名含 `multica` 时一律拒绝（那是工作区守护进程）。
+  2. 重启方式只来自命令行参数；被 supervisor 托管（`LDST_WATCHDOG_SUPERVISED`）
+     时只认 `--spawn-cmd`（QUOT-523：同一进程树，绝不复活被关停的看板）。
+  3. 不绑任何端口：端口冲突 / 双进程竞态在 spawn 侧由看板自身的
+     DEC-004（端口被占退出码 3）兜底。
+  4. 状态文件 `state/watchdog.json` 只写 PID / 时间戳 / 版本（`port: null`），
+     无凭据。
 """
 
 from __future__ import annotations
@@ -33,7 +28,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -48,10 +42,8 @@ import typer
 from ladderstock import __version__
 from ladderstock.cli.output import OutputOption, error
 from ladderstock.cli.paths import data_dir
-from ladderstock.cli.run import DEFAULT_HOST, LOOPBACK_HOSTS, is_addr_in_use, port_free
 from ladderstock.errors import EXIT_CONFIG, EXIT_OK
 
-DEFAULT_WATCHDOG_PORT = 5952
 DEFAULT_API_BASE = "http://127.0.0.1:5950"
 DEFAULT_RESTART_TASK = "LadderStock API"
 
@@ -67,22 +59,9 @@ def supervised(env: Mapping[str, str] | None = None) -> bool:
 
 PROBE_TIMEOUT_SEC = 2.0
 RESTART_THROTTLE_SEC = 30.0
-
-#: 看板（5950）、看门狗自身（5952）、vite dev（5173）。看门狗自己的 origin 必须在列：
-#: 离线壳页就跑在 5952 上，禁止它点重启等于验收 5 走不通。
-ALLOWED_ORIGINS = frozenset(
-    {
-        "http://127.0.0.1:5950",
-        "http://localhost:5950",
-        "http://127.0.0.1:5952",
-        "http://localhost:5952",
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-    }
-)
-
-#: 只对 `/platform/*` 生效的响应头
-NO_STORE = "no-store"
+#: 连续失败到这个次数才算确认中断（与前端 FAILURES_BEFORE_RED 同语义）：
+#: 单次抖动绝不触发自愈重启。
+FAILURES_BEFORE_RED = 2
 
 
 def _now_iso() -> str:
@@ -102,8 +81,6 @@ def _log(message: str) -> None:
 @dataclass(frozen=True)
 class WatchdogConfig:
     api_base: str = DEFAULT_API_BASE
-    host: str = DEFAULT_HOST
-    port: int = DEFAULT_WATCHDOG_PORT
     restart_task: str = DEFAULT_RESTART_TASK
     restart_script: str = ""
     #: 直接拉起看板的固定 argv（JSON 数组）；被 supervisor 托管时由它给出，
@@ -149,11 +126,6 @@ def write_state(root: Path | None, state: dict[str, Any]) -> None:
     tmp = path.with_name(f"{path.name}.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, path)
-
-
-def _api_state(state: dict[str, Any]) -> dict[str, Any]:
-    value = state.get("api")
-    return value if isinstance(value, dict) else {}
 
 
 def record_api_pid(root: Path | None, pid: int, port: int) -> None:
@@ -241,7 +213,6 @@ def process_image_name(pid: int) -> str:
             capture_output=True,
             text=True,
             encoding="utf-8",
-            errors="replace",
             timeout=5,
             check=False,
         ).stdout
@@ -327,29 +298,6 @@ def judge(payload: dict[str, Any] | None) -> str:
     return "ok" if status == "ok" else "degraded"
 
 
-def build_health_payload(
-    config: WatchdogConfig,
-    uptime_sec: int,
-    *,
-    probe: Callable[[], dict[str, Any] | None] | None = None,
-) -> dict[str, Any]:
-    """平台健康汇总：顶层字段描述**主服务**，`watchdog` 才是看门狗自己。
-
-    顶层与 `/api/health` 同名同义（`status` / `uptime_sec` / `version` / `db_ok`），
-    离线时 `uptime_sec` / `db_ok` 为 `null`——不能拿看门狗自己的运行时长冒充平台时长。
-    """
-    api = (probe or (lambda: probe_api(config.api_base)))()
-    return {
-        "status": judge(api),
-        "uptime_sec": api.get("uptime_sec") if api is not None else None,
-        "version": (api.get("version") if api is not None else None) or __version__,
-        "db_ok": api.get("db_ok") if api is not None else None,
-        "checked_at": _now_iso(),
-        "api": api,
-        "watchdog": {"uptime_sec": uptime_sec, "version": __version__},
-    }
-
-
 # --------------------------------------------------------------------------- #
 # 重启
 # --------------------------------------------------------------------------- #
@@ -420,7 +368,11 @@ def restart_service(
     terminate: Callable[[int], bool] = terminate_pid,
     wait: Callable[[float], None] = time.sleep,
 ) -> tuple[int, dict[str, Any]]:
-    """结束旧进程并按 spawn-cmd → 任务 → 脚本的顺序拉起；返回 (HTTP 状态码, 载荷)。"""
+    """结束旧进程并按 spawn-cmd → 任务 → 脚本的顺序拉起；返回 (状态码, 载荷)。
+
+    状态码沿用重启入口的契约（`web/platform.py` 也用它）：200 成功、
+    409 没配置重启方式、429 冷却中、503 全部方式失败。
+    """
     if config.supervised:
         # 托管模式下看板与看门狗同一棵树（QUOT-523）：计划任务会绕过 supervisor
         # 的归属判定复活一个它管不到的看板，「关闭全停」因此失效——只留 spawn-cmd。
@@ -520,299 +472,77 @@ def restart_service(
 
 
 # --------------------------------------------------------------------------- #
-# 离线壳页
+# 自愈监控循环（无端口）
 # --------------------------------------------------------------------------- #
 
 
-def offline_shell_html(api_base: str = DEFAULT_API_BASE) -> str:
-    """纯内联壳页：不引任何外部资源，主服务全挂时也能打开。"""
-    target = json.dumps(api_base.rstrip("/")).replace("<", "\\u003c")
-    return (
-        """<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LadderStock · 服务状态</title>
-<style>
-:root { color-scheme: light dark; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-  font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-  background: #f6f7f9; color: #1c1e21; }
-@media (prefers-color-scheme: dark) { body { background: #16181c; color: #e8eaee; } }
-main { width: min(520px, 92vw); padding: 28px; border-radius: 12px;
-  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-@media (prefers-color-scheme: dark) { main { background: #202329; } }
-h1 { margin: 0 0 4px; font-size: 18px; }
-.sub { margin: 0 0 20px; color: #6b7280; font-size: 12px; }
-.state { display: flex; align-items: center; gap: 10px; padding: 14px 16px;
-  border-radius: 8px; background: #f2f3f5; margin-bottom: 14px; }
-@media (prefers-color-scheme: dark) { .state { background: #2a2e35; } }
-.dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; }
-.dot.ok { background: #16a34a; } .dot.degraded { background: #d97706; }
-.dot.offline { background: #dc2626; }
-.kv { display: grid; grid-template-columns: 88px 1fr; gap: 4px 12px; font-size: 13px; }
-.kv dt { color: #6b7280; } .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
-button { margin-top: 18px; width: 100%; padding: 10px 14px; border: 0; border-radius: 8px;
-  background: #2563eb; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-button:disabled { opacity: .55; cursor: progress; }
-.msg { margin: 10px 0 0; font-size: 12px; color: #6b7280; word-break: break-word; }
-.msg.err { color: #dc2626; }
-</style>
-</head>
-<body>
-<main>
-  <h1>LadderStock 服务状态</h1>
-  <p class="sub">这是独立看门狗（端口 5952）。主服务恢复后会自动跳回看板。</p>
-  <div class="state"><span id="dot" class="dot"></span><strong id="label">探测中…</strong></div>
-  <dl class="kv">
-    <dt>已运行</dt><dd id="uptime">—</dd>
-    <dt>版本</dt><dd id="version">—</dd>
-    <dt>数据库</dt><dd id="db">—</dd>
-    <dt>检查时间</dt><dd id="checked">—</dd>
-  </dl>
-  <button id="restart" type="button" disabled>重启平台</button>
-  <p id="msg" class="msg"></p>
-</main>
-<script>
-(function () {
-  var TARGET = __TARGET__;
-  var LABEL = { ok: '服务正常', degraded: '服务降级', offline: '服务离线' };
-  var dot = document.getElementById('dot');
-  var label = document.getElementById('label');
-  var uptime = document.getElementById('uptime');
-  var version = document.getElementById('version');
-  var db = document.getElementById('db');
-  var checked = document.getElementById('checked');
-  var button = document.getElementById('restart');
-  var msg = document.getElementById('msg');
-  var restarting = false;
-
-  function fmtUptime(sec) {
-    if (typeof sec !== 'number' || sec < 0) return '—';
-    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-    return (h ? h + ' 小时 ' : '') + (h || m ? m + ' 分 ' : '') + s + ' 秒';
-  }
-  function paint(data) {
-    var state = data.status || 'offline';
-    dot.className = 'dot ' + state;
-    label.textContent = LABEL[state] || state;
-    uptime.textContent = fmtUptime(data.uptime_sec);
-    version.textContent = data.version || '—';
-    db.textContent = data.db_ok === true ? '可读' : (data.db_ok === false ? '不可读' : '未知');
-    checked.textContent = data.checked_at || '—';
-    button.disabled = restarting || state !== 'offline';
-    button.textContent = restarting ? '重启中…' : '重启平台';
-    return state;
-  }
-  function poll() {
-    fetch('/platform/health', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        var state = paint(data);
-        if (state === 'ok') { window.location.replace(TARGET); return; }
-        setTimeout(poll, 3000);
-      })
-      .catch(function () {
-        dot.className = 'dot offline';
-        label.textContent = '看门狗不可达';
-        button.disabled = restarting;
-        setTimeout(poll, 3000);
-      });
-  }
-  button.addEventListener('click', function () {
-    if (!window.confirm('确认重启 LadderStock 平台？正在编辑的内容可能丢失。')) return;
-    restarting = true;
-    button.disabled = true;
-    button.textContent = '重启中…';
-    msg.className = 'msg';
-    msg.textContent = '已发出重启请求，等待服务恢复（最多 90 秒）…';
-    fetch('/platform/restart', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-      cache: 'no-store',
-    })
-      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
-      .then(function (res) {
-        if (!res.ok || !res.data.ok) {
-          throw new Error((res.data && (res.data.reason || res.data.detail)) || '重启请求失败');
-        }
-        var deadline = Date.now() + 90000;
-        (function wait() {
-          fetch('/platform/health', { cache: 'no-store' })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-              if (data.status === 'ok') { window.location.replace(TARGET); return; }
-              if (Date.now() > deadline) {
-                restarting = false;
-                msg.className = 'msg err';
-                msg.textContent = '90 秒内未恢复；请查看看门狗日志或手动启动 ldst run。';
-                paint(data);
-                return;
-              }
-              setTimeout(wait, 2000);
-            })
-            .catch(function () { setTimeout(wait, 2000); });
-        })();
-      })
-      .catch(function (err) {
-        restarting = false;
-        button.disabled = false;
-        button.textContent = '重启平台';
-        msg.className = 'msg err';
-        msg.textContent = String(err && err.message ? err.message : err);
-      });
-  });
-  poll();
-})();
-</script>
-</body>
-</html>
-"""
-    ).replace("__TARGET__", target)
-
-
-# --------------------------------------------------------------------------- #
-# HTTP 应用
-# --------------------------------------------------------------------------- #
-
-
-def _cors_headers(origin: str) -> dict[str, str]:
-    return {
-        "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Max-Age": "600",
-        "Vary": "Origin",
-        "Cache-Control": NO_STORE,
-    }
-
-
-def origin_allowed(origin: str | None, port: int = DEFAULT_WATCHDOG_PORT) -> bool:
-    if not origin:
-        return False
-    if origin in ALLOWED_ORIGINS:
-        return True
-    # `--port` 换端口时壳页 origin 跟着变，但仍只认回环上的看门狗端口
-    return origin in {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
-
-
-def create_watchdog_app(
-    config: WatchdogConfig | None = None,
+def run_self_heal(
+    config: WatchdogConfig,
     *,
-    probe: Callable[[], dict[str, Any] | None] | None = None,
-    restart: Callable[[], tuple[int, dict[str, Any]]] | None = None,
-) -> Any:
-    """看门狗 FastAPI 应用；`probe` / `restart` 可注入，便于单测。"""
-    from fastapi import FastAPI, Request
-    from fastapi.responses import HTMLResponse, JSONResponse, Response
+    probe: Callable[[str], dict[str, Any] | None] = probe_api,
+    restart: Callable[[WatchdogConfig], tuple[int, dict[str, Any]]] = restart_service,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+    stop_requested: Callable[[], bool] = lambda: False,
+    log: Callable[[str], None] = _log,
+) -> None:
+    """无端口自愈主循环：探活 → 确认中断 → 节流内自愈重启，永不返回。
 
-    config = config if config is not None else WatchdogConfig()
-
-    started_at = time.monotonic()
-    probe_fn = probe if probe is not None else (lambda: probe_api(config.api_base))
-    restart_fn = restart if restart is not None else (lambda: restart_service(config))
-    throttle = {"last": 0.0}
-    lock = threading.Lock()
-
-    app = FastAPI(
-        title="LadderStock 看门狗",
-        version=__version__,
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
-    )
-
-    @app.middleware("http")
-    async def platform_guard(request: Request, call_next: Any) -> Any:
-        path = request.url.path
-        origin = request.headers.get("origin")
-        if not path.startswith("/platform"):
-            response = await call_next(request)
-            response.headers.setdefault("Cache-Control", NO_STORE)
-            return response
-
-        if request.method == "OPTIONS":
-            if not origin_allowed(origin, config.port):
-                return JSONResponse({"detail": "Forbidden"}, status_code=403)
-            return Response(status_code=204, headers=_cors_headers(origin or ""))
-
-        if request.method not in {"GET", "HEAD"} and not origin_allowed(origin, config.port):
-            # 无 Origin / 白名单外一律拒绝：不依赖浏览器自动带的凭据，也不回 `*`
-            return JSONResponse({"detail": "Forbidden"}, status_code=403)
-
-        response = await call_next(request)
-        if origin_allowed(origin, config.port):
-            for key, value in _cors_headers(origin or "").items():
-                response.headers[key] = value
-        else:
-            response.headers["Cache-Control"] = NO_STORE
-        return response
-
-    @app.get("/platform/health")
-    def platform_health() -> dict[str, Any]:
-        uptime = max(0, int(time.monotonic() - started_at))
-        return build_health_payload(config, uptime, probe=probe_fn)
-
-    @app.post("/platform/restart")
-    def platform_restart() -> Any:
-        now = time.monotonic()
-        with lock:
-            elapsed = now - throttle["last"]
-            if throttle["last"] and elapsed < RESTART_THROTTLE_SEC:
-                remaining = int(RESTART_THROTTLE_SEC - elapsed) + 1
-                return JSONResponse(
-                    {"ok": False, "reason": f"重启过于频繁，请 {remaining}s 后再试"},
-                    status_code=429,
-                )
-            throttle["last"] = now
-        try:
-            code, payload = restart_fn()
-        except Exception as exc:  # noqa: BLE001 - 重启失败要如实回报，不能静默
-            return JSONResponse({"ok": False, "reason": str(exc)[:300]}, status_code=500)
-        return JSONResponse(payload, status_code=code)
-
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def shell() -> HTMLResponse:
-        return HTMLResponse(offline_shell_html(config.api_base))
-
-    return app
-
-
-# --------------------------------------------------------------------------- #
-# 启动
-# --------------------------------------------------------------------------- #
-
-
-def _track_api_pid(config: WatchdogConfig) -> None:
-    """后台跟踪 API 端口监听者，把 PID 记进 `state/watchdog.json`（供重启使用）。"""
-    interval = max(1.0, float(config.probe_interval))
+    - 连续 `FAILURES_BEFORE_RED` 次失败才确认中断；恢复（含 degraded——服务
+      还活着）立即清零，单次抖动绝不触发重启。
+    - 两次自愈之间至少隔 `RESTART_THROTTLE_SEC` 秒，防止「拉起又立刻失败」
+      变成重启风暴。
+    - `stop_requested()` 周期性问询（page_boot 守护的停止标记），置真即干净退出。
+    """
+    interval = max(0.5, float(config.probe_interval))
+    last_restart = 0.0
+    failures = 0
+    log(f"无端口看门狗已启动（探活 {config.api_base}，{interval}s 一拍）")
     while True:
-        time.sleep(interval)
-        try:
-            if probe_api(config.api_base) is None:
-                continue
-            pid = pid_listening_on(config.api_port)
-            if not pid:
-                continue
-            if _api_state(read_state(config.root)).get("pid") == pid:
-                continue
-            record_api_pid(config.root, pid, config.api_port)
-        except (OSError, ValueError):
-            continue
+        if stop_requested():
+            log("收到停止标记，看门狗退出")
+            return
+        alive = probe(config.api_base) is not None
+        if alive:
+            failures = 0
+        else:
+            failures += 1
+            if failures >= FAILURES_BEFORE_RED:
+                now = monotonic()
+                if last_restart and now - last_restart < RESTART_THROTTLE_SEC:
+                    # 冷却期：不重启也不清零计数，保持「确认中断」状态
+                    pass
+                else:
+                    log(f"主服务连续 {failures} 次无响应，开始自愈重启")
+                    try:
+                        code, payload = restart(config)
+                    except Exception as exc:  # noqa: BLE001 - 自愈失败要留下记录
+                        log(f"自愈重启异常：{exc}")
+                        code, payload = 500, {"ok": False, "reason": str(exc)[:300]}
+                    last_restart = now
+                    failures = 0
+                    log(f"自愈重启完成（status={code}，ok={payload.get('ok')}）")
+        sleep(interval)
+
+
+def _default_stop_marker(root: Path) -> Path:
+    return root / "state" / "watchdog-stop"
+
+
+def _stop_requested_by_marker(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
 
 
 def serve_watchdog(config: WatchdogConfig) -> None:
-    """阻塞运行看门狗；Ctrl+C 正常退出。"""
-    if config.host not in LOOPBACK_HOSTS:
-        error("看门狗只允许绑定回环地址（DEC-063）")
-        raise typer.Exit(EXIT_CONFIG)
-    if not port_free(config.port, config.host):
-        error(
-            f"端口 {config.port} 已被占用；请用 --port 指定其他端口（不会自动换端口，见 DEC-004）"
-        )
-        raise typer.Exit(EXIT_CONFIG)
+    """阻塞运行无端口自愈监控器；Ctrl+C 正常退出。"""
     issue = script_issue(config.restart_script)
     if issue is not None:
         error(f"--restart-script 不可用（{issue}）：{config.restart_script}")
@@ -825,47 +555,25 @@ def serve_watchdog(config: WatchdogConfig) -> None:
     state = read_state(config.root)
     state["watchdog"] = {
         "pid": os.getpid(),
-        "host": config.host,
-        "port": config.port,
+        "port": None,
         "version": __version__,
         "started_at": _now_iso(),
     }
-    api_pid = pid_listening_on(config.api_port)
-    if api_pid:
-        state["api"] = {"pid": api_pid, "port": config.api_port, "recorded_at": _now_iso()}
     try:
         write_state(config.root, state)
     except OSError as exc:
-        _log(f"状态文件写入失败（不影响探活）：{exc}")
+        _log(f"状态文件写入失败（不影响自愈）：{exc}")
 
-    app = create_watchdog_app(config)
-    threading.Thread(target=_track_api_pid, args=(config,), daemon=True).start()
-
-    from ladderstock.web.server import serve
-
-    _log(f"看门狗已启动 http://{config.host}:{config.port}（探活 {config.api_base}；Ctrl+C 退出）")
+    marker = _default_stop_marker(config.root)
     try:
-        serve(app, host=config.host, port=config.port)
+        run_self_heal(config, stop_requested=lambda: _stop_requested_by_marker(marker))
     except KeyboardInterrupt:  # Ctrl+C / Ctrl+Break
         pass
-    except OSError as exc:
-        if is_addr_in_use(exc):
-            error(
-                f"端口 {config.port} 已被占用：{exc}；"
-                "请用 --port 指定其他端口（不会自动换端口，见 DEC-004）"
-            )
-        else:
-            error(f"端口 {config.port} 无法监听：{exc}；请用 --port 指定其他端口（见 DEC-004）")
-        raise typer.Exit(EXIT_CONFIG) from None
-    _log("看门狗已停止，端口已释放")
+    _log("无端口看门狗已停止")
     raise typer.Exit(EXIT_OK)
 
 
 def watchdog_command(
-    host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = DEFAULT_HOST,
-    port: Annotated[int, typer.Option(help="看门狗端口（DEC-063 固定 5952）")] = (
-        DEFAULT_WATCHDOG_PORT
-    ),
     api: Annotated[str, typer.Option(help="被测主服务基地址")] = DEFAULT_API_BASE,
     restart_task: Annotated[
         str, typer.Option("--restart-task", help="计划任务名（schtasks /run /tn）")
@@ -881,17 +589,15 @@ def watchdog_command(
         ),
     ] = "",
     probe_interval: Annotated[
-        float, typer.Option("--probe-interval", help="后台探活间隔（秒），用于跟踪 API PID")
+        float, typer.Option("--probe-interval", help="探活间隔（秒）")
     ] = 2.0,
     output: OutputOption = None,
 ) -> None:
-    """独立看门狗：5952 探活 + 重启入口。主服务挂了它仍活着。"""
+    """无端口自愈监控器：探活主服务，确认中断后自动重启。不监听任何端口。"""
     del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
     serve_watchdog(
         WatchdogConfig(
             api_base=api,
-            host=host,
-            port=port,
             restart_task=restart_task,
             restart_script=restart_script,
             spawn_cmd=spawn_cmd,
@@ -904,33 +610,30 @@ def watchdog_command(
 def register(app: typer.Typer) -> None:
     app.command(
         "watchdog",
-        help="独立看门狗：5952 探活 + 重启入口（主服务挂了它仍活着）",
+        help="无端口自愈监控器：探活主服务，确认中断后自动重启（不监听任何端口）",
     )(watchdog_command)
 
 
 __all__ = [
-    "ALLOWED_ORIGINS",
     "DEFAULT_API_BASE",
     "DEFAULT_RESTART_TASK",
-    "DEFAULT_WATCHDOG_PORT",
+    "FAILURES_BEFORE_RED",
     "RESTART_THROTTLE_SEC",
     "SUPERVISED_ENV",
     "WatchdogConfig",
-    "build_health_payload",
-    "create_watchdog_app",
     "judge",
     "kill_guard",
-    "offline_shell_html",
-    "origin_allowed",
     "pid_listening_on",
     "probe_api",
     "read_state",
     "register",
     "restart_service",
+    "run_self_heal",
     "script_issue",
     "serve_watchdog",
     "spawn_command_issue",
     "supervised",
     "state_path",
+    "terminate_pid",
     "write_state",
 ]

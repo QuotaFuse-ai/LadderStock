@@ -92,6 +92,11 @@ export function PlatformStatusLightView({ api }: PlatformStatusLightViewProps) {
           <dl className="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1">
             <dt className="text-text-muted">状态</dt>
             <dd className={cn('font-medium', TEXT_CLASS[light])}>{label}</dd>
+            {light === 'offline' && (
+              <dd className="col-span-2 text-caption text-text-secondary">
+                服务离线，正在自动恢复…
+              </dd>
+            )}
             <dt className="text-text-muted">已运行</dt>
             <dd className="ldst-num">{formatUptime(uptime)}</dd>
             <dt className="text-text-muted">版本</dt>

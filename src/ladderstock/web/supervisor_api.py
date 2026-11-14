@@ -205,6 +205,100 @@ def build_port_inspector(
     return inspect
 
 
+def build_port_avoidance(
+    env: Mapping[str, str] | None = None,
+    spawned_pids: Callable[[], Mapping[int, str]] | None = None,
+) -> tuple[Any, Any]:
+    """生产端口避让装配（QUOT-594）：避让器 + 适配器重建器。
+
+    避让器按既有四分类判定（`classify_port_owner`，失败关闭）：own_child /
+    adopted_peer 在听回原端口（不避让），foreign 在听扫描 base+1..+100，
+    结果写 config/ports.yaml（下次启动复用）。重建器只支持命令行型适配器
+    （argv 可换端口字面值）；WSL compose / schtasks 形态回 None，维持拒绝
+    语义。psutil 不可用时避让器回 None 引擎自然降级为 DEC-004 原语义。
+    """
+
+    from ladderstock.cli.paths import config_dir
+    from ladderstock.supervisor.module_adapters import rebase_adapter_ports
+    from ladderstock.supervisor.port_allocator import (
+        PortOverrideStore,
+        allocate_ports,
+    )
+    from ladderstock.web.port_diagnostics import classify_port_owner
+
+    store = PortOverrideStore(config_dir())
+    store.refresh()
+
+    def avoid(module: str, base: tuple[int, ...], record: Any) -> tuple[int, ...]:
+        import socket
+
+        if psutil is None:  # pragma: no cover - 依赖探测
+            return base
+
+        def free_probe(port: int) -> bool:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                return sock.connect_ex(("127.0.0.1", port)) != 0
+
+        def classify(port: int) -> str:
+            # 端口在听才走到这里。归属判定复用诊断同一份实现：需要占用者
+            # pid + 本方 pid 集 + 账本记录 + 实时命令行；查不到占用者按
+            # foreign 处理（避让对自己永远安全——只是换自己监听的口）。
+            pid: int | None = None
+            try:
+                for conn in psutil.net_connections(kind="tcp"):
+                    if (
+                        conn.status == psutil.CONN_LISTEN
+                        and conn.laddr
+                        and int(conn.laddr.port) == port
+                    ):
+                        pid = int(conn.pid) if conn.pid else None
+                        break
+            except (psutil.Error, OSError):
+                return "foreign"
+            if pid is None:
+                return "foreign"
+            mine: set[int] = set()
+            try:
+                for owned, expected in processes_pids().items():
+                    try:
+                        live = tuple(psutil.Process(int(owned)).cmdline())
+                    except (psutil.Error, OSError):
+                        continue
+                    if cmdline_hash(live) == expected:
+                        mine.add(int(owned))
+            except Exception:  # noqa: BLE001 - 自有证据查询失败降级
+                mine = set()
+            owner, _reason = classify_port_owner(
+                pid=pid,
+                mine_pids=mine,
+                record=record,
+                live_cmdline=None,
+            )
+            return owner
+
+        allocation = allocate_ports(base, owner_classifier=classify, free_probe=free_probe)
+        if allocation.shifted:
+            store.set_module(module, allocation.actual)
+        return allocation.actual
+
+    def processes_pids() -> Mapping[int, str]:
+        if spawned_pids is None:
+            return {}
+        try:
+            return spawned_pids() or {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def rebase(adapter: Any, ports: tuple[int, ...]) -> Any:
+        rebase_adapter = getattr(adapter, "faces", None)
+        if rebase_adapter is None:
+            return None
+        return rebase_adapter_ports(adapter, ports)
+
+    return avoid, rebase
+
+
 #: 阶段探针的锚点数据集：行情主链路（`daily_k`），采集与入库都以它为准。
 #: 不做全数据集轮询——七阶段是管线级状态，主链路断了一切都断；主链路在而
 #: 某个次要数据集挂了，由 `ldst sync` 自己的 exit code / runs 记录表达。
@@ -527,10 +621,15 @@ def build_supervisor_engines(
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
     notifier = build_default_notifier(supervisor_dir / "notifications.log", panel_url=panel_url)
+    avoider, rebaser = build_port_avoidance(
+        env=env, spawned_pids=lambda: processes.spawned_pids
+    )
     processes = SupervisorEngine(
         adapters=build_default_adapters(env=env, log_dir=supervisor_dir / "logs"),
         ledger=ledger,
         procs=default_process_ops(),
+        port_avoider=avoider,
+        adapter_rebaser=rebaser,
     )
     cold_start = own_processes(env)
     bus = HealthEventBus()

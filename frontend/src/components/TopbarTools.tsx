@@ -27,11 +27,13 @@ import { Button } from './ui'
 export interface TopbarToolsProps {
   /** 接入 AI（配置 key） */
   onOpenAi: () => void
-  /** 问 AI（打开全站唯一的助手抽屉） */
+  /** 问 AI（打开全站唯一的助手抽屉；首页上改为聚焦既有输入框） */
   onAskAi: () => void
+  /** 首页（QUOT-590）：home 已有 chat / desk 两颗 ask 面，问 AI 只聚焦不另开抽屉 */
+  homeAskFocus?: boolean
 }
 
-export function TopbarTools({ onOpenAi, onAskAi }: TopbarToolsProps) {
+export function TopbarTools({ onOpenAi, onAskAi, homeAskFocus = false }: TopbarToolsProps) {
   const privacy = usePrivacyMode()
   const theme = useThemeChoice()
   const dark = resolveTheme(theme) === 'dark'
@@ -97,9 +99,13 @@ export function TopbarTools({ onOpenAi, onAskAi }: TopbarToolsProps) {
         <Button
           variant="secondary"
           onClick={onAskAi}
-          aria-label="问 AI"
-          title="问 AI：按当前页面绑定技能，打开研究助手"
-          aria-haspopup="dialog"
+          aria-label={homeAskFocus ? '聚焦研究 / 对话输入' : '问 AI'}
+          title={
+            homeAskFocus
+              ? '聚焦首页研究 / 对话输入框（首页已有研究面板与对话，不再另开抽屉）'
+              : '问 AI：按当前页面绑定技能，打开研究助手'
+          }
+          aria-haspopup={homeAskFocus ? undefined : 'dialog'}
           leadingIcon={<Sparkles className="size-3.5" aria-hidden="true" />}
           className="ml-0.5 border-accent px-2.5 text-accent hover:bg-accent-soft hover:text-accent"
         >
