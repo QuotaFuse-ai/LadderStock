@@ -937,6 +937,26 @@ def probe_health(url: str, timeout: float = HEALTH_TIMEOUT_SEC) -> tuple[bool, s
 #: 健康响应体最多读 64KB：/health 是小 JSON，大响应体不值得为它占内存
 _HEALTH_BODY_LIMIT = 65536
 
+
+def _probe_collection_name(url: str, timeout: float = HEALTH_TIMEOUT_SEC) -> str:
+    """取 mem0 `/configure` 返回的实际集合名；取不到返回空串（QUOT-569 验活用）。
+
+    `/configure` 会脱敏密钥，但 vector_store 段里的 collection_name 原样返回，
+    用它确认装起来的实例连的是自己的集合，而不是别的 mem0。
+    """
+    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+    try:
+        with _no_proxy_opener().open(request, timeout=timeout) as response:  # noqa: S310 - 只探回环
+            payload = json.loads(response.read(_HEALTH_BODY_LIMIT).decode("utf-8", "replace"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    vector_store = payload.get("vector_store")
+    config = vector_store.get("config") if isinstance(vector_store, dict) else None
+    name = config.get("collection_name") if isinstance(config, dict) else None
+    return name.strip() if isinstance(name, str) else ""
+
 #: `_HEALTH_OK_STATES`：这些状态词视为「这个检查项没问题」，其余原样列出
 _HEALTH_OK_STATES = frozenset({"ok", "healthy", "pass", "passed", "up", ""})
 
@@ -2869,14 +2889,27 @@ class ControlPlane:
     def _await_compose_health(self, job: Job, ctl: PeerControl) -> None:
         """验活：`/configure` 200 且返回的集合名与白名单一致（QUOT-569）。"""
         url = f"http://127.0.0.1:{ctl.mcp_port}{ctl.health_path}"
+        expected = read_env_file(Path(ctl.directory) / ctl.env_filename).get(
+            "POSTGRES_COLLECTION_NAME"
+        )
         deadline = time.monotonic() + START_GRACE_SEC * 4  # 首次拉模型可能较慢
+        detail = ""
         while time.monotonic() < deadline:
             ok, detail = self._health(url, HEALTH_TIMEOUT_SEC)
             if ok:
-                job.log(f"  健康检查通过（{url}）")
-                return
+                break
             time.sleep(1.0)
-        raise JobFailure(f"启动后验活超时：{url} 一直不通过（最后探测：{detail}）")
+        else:
+            raise JobFailure(f"启动后验活超时：{url} 一直不通过（最后探测：{detail}）")
+        if expected:
+            actual = _probe_collection_name(url)
+            if actual != expected:
+                raise JobFailure(
+                    f"验活失败：{url} 返回的集合名是 {actual or '（未取到）'}，"
+                    f"与部署配置的 {expected} 不一致——检查是否连错了 mem0 实例（9000 不可用）"
+                )
+            job.log(f"  集合名核对通过：{actual}")
+        job.log(f"  健康检查通过（{url}）")
 
     def _start_compose(self, job: Job, ctl: PeerControl) -> None:
         """Docker compose 生命周期的启动（QUOT-486 mem0）：`up -d` 后等端口。

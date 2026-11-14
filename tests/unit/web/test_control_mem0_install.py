@@ -154,7 +154,9 @@ def mem0_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     (assets / "docker-compose.yml").write_text("name: qf-mem0\n", encoding="utf-8")
     (assets / "init-db.sh").write_text("#!/bin/bash\n", encoding="utf-8")
     (assets / ".env.example").write_text(
-        "POSTGRES_PASSWORD=CHANGE_ME_RANDOM\nJWT_SECRET=CHANGE_ME_RANDOM\n",
+        "POSTGRES_PASSWORD=CHANGE_ME_RANDOM\n"
+        "JWT_SECRET=CHANGE_ME_RANDOM\n"
+        "POSTGRES_COLLECTION_NAME=ladderstock_memories\n",
         encoding="utf-8",
     )
     server = assets / "server"
@@ -218,8 +220,11 @@ def test_mem0_install_success_path(mem0_env, tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(control, "default_wsl_distro", lambda: "Ubuntu")
     rt = FakeRuntimeScripted()
     plane = _mem0_plane(tmp_path, rt, ports=lambda port: [])
-    # 验活：第一次探测直接成功
+    # 验活：第一次探测直接成功；集合名与 .env 一致
     plane._health = lambda url, timeout: (True, "HTTP 200")  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        control, "_probe_collection_name", lambda url, **kw: "ladderstock_memories"
+    )
     job = plane.create_job("mem0", "install")
     import time
 
@@ -239,3 +244,25 @@ def test_mem0_install_success_path(mem0_env, tmp_path, monkeypatch) -> None:
     assert "CHANGE_ME_RANDOM" not in env_text
     assert "sk-test-fake" not in env_text  # 密钥绝不落 .env
     assert any("compose" in " ".join(c) and "up" in " ".join(c) for c in rt.calls)
+
+
+def test_mem0_install_rejects_wrong_collection_name(mem0_env, tmp_path, monkeypatch) -> None:
+    """验活拿到的是别的实例的集合（如 9000 的 memories）→ 安装失败，不静默放行。"""
+    monkeypatch.setenv(control.MEM0_API_KEY_ENV, "sk-test-fake")
+    monkeypatch.setattr(control, "default_wsl_distro", lambda: "Ubuntu")
+    rt = FakeRuntimeScripted()
+    plane = _mem0_plane(tmp_path, rt, ports=lambda port: [])
+    plane._health = lambda url, timeout: (True, "HTTP 200")  # type: ignore[method-assign]
+    monkeypatch.setattr(control, "_probe_collection_name", lambda url, **kw: "memories")
+    job = plane.create_job("mem0", "install")
+    import time
+
+    done = plane.get_job(job.id)
+    for _ in range(300):
+        if done is not None and done.status in {"ok", "failed"}:
+            break
+        time.sleep(0.05)
+        done = plane.get_job(job.id)
+    assert done is not None and done.status == "failed"
+    assert done.error is not None
+    assert "memories" in done.error and "ladderstock_memories" in done.error
