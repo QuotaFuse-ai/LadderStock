@@ -7,6 +7,7 @@
  *   GET   /api/conversation/sessions                → { sessions: [{session_id,title,created_at,updated_at,turns}] }
  *   GET   /api/conversation/sessions/{id}/turns     → { session: {...}, turns: [{seq,question,blocks,status,created_at,updated_at}] }
  *   PATCH /api/conversation/sessions/{id}           { title } → { session_id, title }
+ *   DELETE /api/conversation/sessions/{id}          → { session_id, deleted }（QUOT-602，幂等）
  *   POST  /api/conversation/turns                   { message, session_id?, context? } → 同步一次返回整轮
  *
  * 边界（红线）：
@@ -210,7 +211,7 @@ const READ_TIMEOUT_MS = 8000
 const TURN_TIMEOUT_MS = 15000
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH'
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
   body?: unknown
   signal?: AbortSignal
   timeoutMs?: number
@@ -332,6 +333,25 @@ export async function renameSession(
   }
 }
 
+export interface DeleteResult {
+  session_id: string
+  /** 服务端真删到了 `true`；本来就没有（含重复删）是 `false`，同样算成功 */
+  deleted: boolean
+}
+
+/** 删除一条会话（服务端幂等）：`deleted: false` 不是失败，刷新列表即可 */
+export async function deleteSession(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<DeleteResult> {
+  const raw = await requestJson<unknown>(sessionPath(sessionId), { method: 'DELETE', signal })
+  const root = asRecord(raw)
+  return {
+    session_id: asString(root?.session_id) || sessionId,
+    deleted: root?.deleted === true,
+  }
+}
+
 /** 成功路径；失败抛 `ConversationError`（`status` / `body.code` / `retryable` 可用） */
 export async function sendTurn(
   request: TurnRequest,
@@ -378,6 +398,7 @@ export const httpConversation = {
   listSessions,
   listTurns,
   renameSession,
+  deleteSession,
   sendTurn,
 }
 

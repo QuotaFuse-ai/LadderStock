@@ -442,6 +442,18 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str) -> str
     return text if cursor.rowcount else None
 
 
+def delete_session(conn: sqlite3.Connection, session_id: str) -> bool:
+    """删除会话及其全部轮次（QUOT-602）；删到了返回 `True`，本来就不存在返回 `False`。
+
+    `chat_turn` 已 `ON DELETE CASCADE`，但删除仍逐表执行、不依赖连接上
+    `foreign_keys` 的开关状态——同一份库可能被别的进程以默认 pragma 打开。
+    重复删除不抛错（幂等），调用方按返回值区分「删掉了 / 本来就没有」。
+    """
+    conn.execute("DELETE FROM chat_turn WHERE session_id = ?", (session_id,))
+    cursor = conn.execute("DELETE FROM chat_session WHERE session_id = ?", (session_id,))
+    return bool(cursor.rowcount)
+
+
 def _evict(conn: sqlite3.Connection, *, keep: str, max_sessions: int) -> list[str]:
     """超上限时按 `updated_at` 从旧到新删，跳过 `keep`；返回被删的会话 ID。
 

@@ -298,6 +298,70 @@ def test_rename_endpoint_and_unknown_session_404(
     assert unknown_turns.status_code == 404
 
 
+def test_delete_session_removes_turns_and_is_idempotent(
+    tmp_path: Path, fake_client: _FakeClient
+) -> None:
+    """QUOT-602：真删（列表收缩、轮次一起走）+ 重复删幂等（200 `deleted: false`，不 5xx）。"""
+    client = _client(tmp_path)
+    _post_turn(client, message="留着的一问", session_id="sess-keep")
+    _post_turn(client, message="要删的一问", session_id="sess-drop")
+    _post_turn(client, message="要删的第二问", session_id="sess-drop")
+    assert len(client.get("/api/conversation/sessions", headers=HEADERS).json()["sessions"]) == 2
+
+    deleted = client.delete("/api/conversation/sessions/sess-drop", headers=HEADERS)
+    assert deleted.status_code == 200
+    assert deleted.json() == {"session_id": "sess-drop", "deleted": True}
+
+    sessions = client.get("/api/conversation/sessions", headers=HEADERS).json()["sessions"]
+    assert [item["session_id"] for item in sessions] == ["sess-keep"]
+    assert (
+        client.get("/api/conversation/sessions/sess-drop/turns", headers=HEADERS).status_code
+        == 404
+    )
+
+    conn = chat_store.connect(tmp_path, create=False)
+    assert conn is not None
+    try:
+        left = conn.execute(
+            "SELECT COUNT(*) FROM chat_turn WHERE session_id = ?", ("sess-drop",)
+        ).fetchone()[0]
+    finally:
+        chat_store.close(conn)
+    assert left == 0
+
+    # 同一条删两次、没删过的 id：都是 200 + `deleted: false`，不抛 404 / 5xx
+    for _ in range(2):
+        again = client.delete("/api/conversation/sessions/sess-drop", headers=HEADERS)
+        assert again.status_code == 200
+        assert again.json() == {"session_id": "sess-drop", "deleted": False}
+        missing = client.delete("/api/conversation/sessions/sess-never", headers=HEADERS)
+        assert missing.status_code == 200
+        assert missing.json() == {"session_id": "sess-never", "deleted": False}
+
+    # 删完了库还在、另一条会话不受影响
+    kept = client.get("/api/conversation/sessions/sess-keep/turns", headers=HEADERS)
+    assert kept.status_code == 200
+    assert [turn["seq"] for turn in kept.json()["turns"]] == [1]
+
+
+def test_delete_session_before_any_database(tmp_path: Path) -> None:
+    """从没问过（`chat.sqlite` 不存在）：按「本来就没有」返回，且**不**因为 DELETE 现建空库。"""
+    client = _client(tmp_path)
+    response = client.delete("/api/conversation/sessions/sess-any", headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json() == {"session_id": "sess-any", "deleted": False}
+
+
+def test_delete_requires_write_source_evidence(tmp_path: Path, fake_client: _FakeClient) -> None:
+    """`_guard` 对 DELETE 同样要写入证据：带会话删不掉，会话原样还在。"""
+    client = _client(tmp_path)
+    _post_turn(client, message="首问", session_id="sess-guard")
+    blocked = client.delete("/api/conversation/sessions/sess-guard")
+    assert blocked.status_code == 403
+    still = client.get("/api/conversation/sessions", headers=HEADERS).json()["sessions"]
+    assert [item["session_id"] for item in still] == ["sess-guard"]
+
+
 def test_no_database_yet_lists_empty(tmp_path: Path) -> None:
     client = _client(tmp_path)
     response = client.get("/api/conversation/sessions", headers=HEADERS)

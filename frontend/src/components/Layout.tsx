@@ -11,6 +11,7 @@ import PeerHealthAlert from './supervisor/PeerHealthDialog'
 import { AssistantDockDrawer } from './research/sections/AiDock'
 import { cn } from '../lib/cn'
 import { AssistantObjectContext, AssistantShellContext, type AssistantDockState, type AssistantOpenInput } from '../lib/assistant/shell'
+import { useHomeMode } from '../lib/homeMode'
 import { useIsMobile } from '../lib/mediaQuery'
 import { PageToolsSlotContext } from '../lib/pageToolsSlot'
 import { HomeModeSlotContext } from '../lib/homeModeSlot'
@@ -129,6 +130,12 @@ export default function Layout() {
   // 首页 ask 聚焦信号（QUOT-590）：home 上「问 AI」不开抽屉，改广播聚焦既有输入框。
   // seq 自增让重复请求也能被 HomeShell 感知（比对前值而不是布尔翻转）。
   const [askFocusSeq, setAskFocusSeq] = useState(0)
+  // 首页对话态要的是工作台而不是文章栏（QUOT-602 P2/P3）：`.page-shell` 的 24px 左右
+  // 内边距 + 1440px 上限是给长页（研究台等）用的，对话态套上就是两条空带、还不满高。
+  // 外壳只管去掉这层，页内边距由 `HomeShell` 自己按移动端原边距补。
+  // 只读模式、不在这里写：写入仍归 `HomeShell` 的顶栏切换器。
+  const [homeMode] = useHomeMode()
+  const homeChatFullBleed = location.pathname === '/' && homeMode === 'chat'
   const menuRef = useRef<HTMLButtonElement>(null)
 
   const openAi = useCallback(() => setAiOpen(true), [])
@@ -390,7 +397,14 @@ export default function Layout() {
 
         <div ref={scroller} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain">
           <PersistenceBanner />
-          <main id="main" tabIndex={-1} className="page-shell w-full flex-1 focus:outline-none">
+          <main
+            id="main"
+            tabIndex={-1}
+            className={cn(
+              'w-full focus:outline-none',
+              homeChatFullBleed ? 'flex min-h-0 flex-1 flex-col px-4 pb-5 pt-5' : 'page-shell flex-1',
+            )}
+          >
             <PageToolsSlotContext.Provider value={toolsSlot}>
               <HomeModeSlotContext.Provider value={modeSlot}>
                 {/* QUOT-590：home 上「问 AI」经这份信号聚焦既有 ask 面，不另开抽屉 */}
