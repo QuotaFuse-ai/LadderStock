@@ -177,24 +177,50 @@ def _same_origin(request: Request, origin: str) -> bool:
     return True
 
 
+def request_bound_port(request: Request) -> int:
+    """uvicorn 真实绑定端口（QUOT-589 第二轮）：本实例探活/重启一律指向自己。
+
+    `request.scope["server"]` 是 ASGI 服务器填的 `(host, port)`——dev 5951 上
+    就是 5951，prod 5950 上就是 5950，任意 `--port` 天然正确。异常时回落
+    `WEB_PORT`（仅发生在非 HTTP 上下文，正常服务路径不触达）。
+    """
+    from ladderstock.web.server import WEB_PORT
+
+    server = request.scope.get("server") or ()
+    raw = tuple(server)[1] if len(tuple(server)) > 1 else None
+    return raw if isinstance(raw, int) else WEB_PORT
+
+
 def build_platform_router(
-    api_port: int,
+    api_port: int | Callable[[Request], int],
     *,
     restart_script: str = "",
     default_script: Callable[[int], str] = default_restart_script,
     probe_health: Callable[[str], dict[str, Any]] = platform_health_payload,
     spawn: Callable[[list[str]], int] = detached_spawn,
 ) -> APIRouter:
-    """同源 `/platform/*` 路由；`probe_health` / `spawn` 供测试注入。"""
+    """同源 `/platform/*` 路由；`probe_health` / `spawn` 供测试注入。
+
+    `api_port` 是静态端口号或按请求推导端口的 callable（生产传
+    `request_bound_port`：从 `request.scope["server"][1]` 取真实绑定端口，
+    测试实例绝不错指 prod）。
+    """
     router = APIRouter(prefix="/platform")
 
     script_override = restart_script
     throttle = {"last": 0.0}
     lock = threading.Lock()
 
+    def _port_for(request: Request | None = None) -> int:
+        if callable(api_port):
+            if request is None:
+                raise RuntimeError("端口按请求推导时必须有 Request")
+            return api_port(request)
+        return api_port
+
     @router.get("/health")
-    def platform_health() -> JSONResponse:
-        payload = probe_health(f"http://127.0.0.1:{api_port}")
+    def platform_health(request: Request) -> JSONResponse:
+        payload = probe_health(f"http://127.0.0.1:{_port_for(request)}")
         if not isinstance(payload, dict):
             # 契约兜底：探活实现失败也不得把响应变成 null——离线也要有完整形状
             payload = {
@@ -221,7 +247,9 @@ def build_platform_router(
                     headers=_no_store(),
                 )
             throttle["last"] = now
-        script = script_override or resolve_restart_script(api_port, default_script=default_script)
+        script = script_override or resolve_restart_script(
+            _port_for(request), default_script=default_script
+        )
         issue = _script_issue(script)
         if issue is not None:
             return JSONResponse(

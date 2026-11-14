@@ -899,10 +899,30 @@ def test_watch_start_spawns_the_watchdog_that_spawns_the_panel(tmp_path: Path) -
     assert "--spawn-cmd" in argv
     assert cwd == _ROOT
     assert spawned.cmdline == argv
-    # 看板重启走同启动器的 `run --port 5950`，不再经 schtasks
+    # 看板重启走同启动器的 `run --port <按环境>`，不再经 schtasks；
+    # env 未设 LDST_ENV → prod → 5950
     assert json.loads(argv[-1]) == [launcher[0], "run", "--port", "5950"]
+    # 看门狗探活目标同样按环境：prod 指向 5950
+    assert "--api" in argv
+    assert argv[argv.index("--api") + 1] == "http://127.0.0.1:5950"
     # 托管标记落到子进程环境（进程级开关，不依赖继承自启动它的外壳）
     assert child_env["LDST_WATCHDOG_SUPERVISED"] == "1"
+
+
+def test_watch_is_test_env_scoped_to_5951(tmp_path: Path) -> None:
+    """QUOT-589 第二轮：test 环境看门狗只探/只重启 5951，绝不触碰正式 5950。"""
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    launcher = _watch_launcher(tmp_path)
+    env["LDST_LAUNCHER"] = launcher[0]
+    env["LDST_ENV"] = "test"
+
+    _build_watch(host, tmp_path, env).start()
+    argv, _cwd, _child_env = host.spawns[0]
+
+    assert json.loads(argv[-1]) == [launcher[0], "run", "--port", "5951"]
+    assert argv[argv.index("--api") + 1] == "http://127.0.0.1:5951"
+    assert "5950" not in argv
 
 
 def test_watch_probe_fails_closed_for_a_foreign_watchdog(tmp_path: Path) -> None:

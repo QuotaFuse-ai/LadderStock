@@ -201,3 +201,22 @@ class TestRegistryValidation:
         assert adapters_module.MODULE_PORTS["tickhub"] == (18000, 18787)
         monkeypatch.setenv("LDST_ENV", "prod")
         assert adapters_module.MODULE_PORTS["tickhub"] == (8000, 8787)
+
+
+class TestPanelPort:
+    """QUOT-589 第二轮：看板端口按环境解析（prod=5950 / test=5951）。"""
+
+    def test_prod_is_5950_and_test_is_5951(self):
+        assert modules_module.panel_port("prod") == 5950
+        assert modules_module.panel_port("test") == 5951
+
+    def test_missing_env_defaults_to_prod(self):
+        assert modules_module.panel_port() == 5950
+
+    def test_selected_env_wins(self):
+        select_env("test")
+        assert modules_module.panel_port() == 5951
+
+    def test_invalid_env_rejected(self):
+        with pytest.raises(ValueError, match="未知环境"):
+            modules_module.panel_port("staging")

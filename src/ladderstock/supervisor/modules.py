@@ -138,4 +138,24 @@ def module_ports(env: str | None = None) -> dict[str, tuple[int, ...]]:
     return dict(_ENV_PORTS[resolved])
 
 
-__all__ = ["MODULE_PORTS", "module_ports", "current_env", "select_env", "reset_env"]
+#: 看板（主服务）端口，用户批准的双端口裁决（QUOT-589 第二轮）：prod=5950 /
+#: test=5951。与 `_ENV_PORTS` 同处登记，是面板/看门狗/自愈引擎唯一的端口事实源。
+_PANEL_PORTS: dict[str, int] = {"prod": 5950, "test": 5951}
+
+
+def panel_port(env: str | None = None) -> int:
+    """返回指定环境的看板端口（prod=5950 / test=5951）；缺省 = 当前环境。"""
+    resolved = (env or _active_env or current_env()).strip().lower()
+    if resolved not in _VALID_ENVS:
+        raise ValueError(f"未知环境 {env!r}，仅支持 {'/'.join(_VALID_ENVS)}")
+    return _PANEL_PORTS[resolved]
+
+
+__all__ = [
+    "MODULE_PORTS",
+    "module_ports",
+    "panel_port",
+    "current_env",
+    "select_env",
+    "reset_env",
+]

@@ -19,6 +19,7 @@ from ladderstock.web.platform import (
     build_platform_router,
     default_restart_script,
     detached_spawn,
+    request_bound_port,
     resolve_restart_script,
 )
 
@@ -242,3 +243,102 @@ def test_detached_spawn_passes_process_group_flags() -> None:
     assert pid == 777
     assert captured["argv"] == ["powershell", "-File", "x.ps1"]
     assert captured["stderr"] is not None  # STDERR 合并进 stdout，不落管道
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-589 第二轮：端口按请求推导（request.scope["server"][1]）
+# --------------------------------------------------------------------------- #
+
+
+def _client_with_bound_port(
+    tmp_path: Path,
+    bound_port: int,
+    *,
+    probe_health: Any = None,
+    spawn: Any = None,
+) -> TestClient:
+    """按 uvicorn 真实绑定端口装配（生产形态：request_bound_port）。"""
+    for name in ("restart-api.ps1", "restart-dev.ps1"):
+        (tmp_path / name).write_text("exit 0", encoding="utf-8")
+
+    def default_script(port: int) -> str:
+        return str(tmp_path / ("restart-api.ps1" if port == 5950 else "restart-dev.ps1"))
+
+    probes: list[str] = []
+
+    def probe(base: str) -> dict[str, Any]:
+        probes.append(base)
+        return {"status": "ok", "db_ok": True}
+
+    app = FastAPI()
+    app.include_router(
+        build_platform_router(
+            request_bound_port,
+            default_script=default_script,
+            probe_health=probe_health or probe,
+            spawn=spawn or (lambda _argv: 4321),
+        )
+    )
+    # client 端口即 ASGI scope["server"][1]——用它模拟该实例的真实绑定端口
+    # base_url 决定 scope["server"]（host, port）；client 只改远端地址
+    return TestClient(
+        app,
+        base_url=f"http://127.0.0.1:{bound_port}",
+        client=("127.0.0.1", bound_port),
+    )
+
+
+def test_test_instance_probes_and_restarts_itself_not_prod(tmp_path: Path) -> None:
+    """5951 测试实例：探活 5951、重启映射 restart-dev.ps1，绝不触 5950。"""
+    probes: list[str] = []
+    spawned: list[list[str]] = []
+    client = _client_with_bound_port(
+        tmp_path,
+        5951,
+        probe_health=lambda base: probes.append(base) or {"status": "ok", "db_ok": True},
+        spawn=lambda argv: spawned.append(argv) or 7,
+    )
+
+    health = client.get("/platform/health")
+    assert health.status_code == 200
+    assert probes == ["http://127.0.0.1:5951"]
+
+    restart = client.post(
+        "/platform/restart",
+        headers={CLIENT_HEADER: CLIENT_HEADER_VALUE},
+    )
+    assert restart.status_code == 200
+    assert spawned and "restart-dev.ps1" in spawned[0][-1]
+    assert not any("restart-api.ps1" in part for arg in spawned for part in arg)
+
+
+def test_prod_instance_keeps_restart_api_script(tmp_path: Path) -> None:
+    """5950 正式实例行为不变：探活 5950、restart-api.ps1。"""
+    probes: list[str] = []
+    spawned: list[list[str]] = []
+    client = _client_with_bound_port(
+        tmp_path,
+        5950,
+        probe_health=lambda base: probes.append(base) or {"status": "ok", "db_ok": True},
+        spawn=lambda argv: spawned.append(argv) or 7,
+    )
+
+    assert client.get("/platform/health").status_code == 200
+    assert probes == ["http://127.0.0.1:5950"]
+
+    restart = client.post(
+        "/platform/restart",
+        headers={CLIENT_HEADER: CLIENT_HEADER_VALUE},
+    )
+    assert restart.status_code == 200
+    assert spawned and "restart-api.ps1" in spawned[0][-1]
+
+
+def test_request_bound_port_falls_back_to_web_port() -> None:
+    """异常 scope（无 server 元组）回落 WEB_PORT，不抛。"""
+    from ladderstock.web.server import WEB_PORT
+
+    class _Req:
+        scope: dict[str, Any] = {}
+
+    assert request_bound_port(_Req()) == WEB_PORT  # type: ignore[arg-type]

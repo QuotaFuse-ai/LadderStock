@@ -58,7 +58,7 @@ from ladderstock.supervisor.adapters import (
     module_registry,
 )
 from ladderstock.supervisor.engine import SupervisorError
-from ladderstock.supervisor.modules import MODULE_PORTS
+from ladderstock.supervisor.modules import MODULE_PORTS, panel_port
 from ladderstock.supervisor.proctree import QUERY_TIMEOUT_SEC, split_windows_commandline
 
 #: 端口探测（socket connect）的短超时：只用于轮询，不能拖慢 state()
@@ -93,7 +93,8 @@ DEFAULT_PEER_ROOT_ENV = "LDST_PEER_ROOT"
 INSTALL_ROOT_ENV = "LDST_INSTALL_ROOT"
 #: 自有服务（看板 / 看门狗）的启动器覆盖；空 = 按安装根找 venv
 LAUNCHER_ENV = "LDST_LAUNCHER"
-#: 看板端口（DEC-004 固定 5950）：看门狗重启看板时用它，且看板「不是」被托管模块
+#: 看板端口按环境解析（QUOT-589 第二轮，prod=5950 / test=5951）：看门狗重启看板
+#: 时用它，且看板「不是」被托管模块
 PANEL_PORT = 5950
 #: 日志目录默认收在既有宿主日志目录下（与 ops/host 的约定一致）
 DEFAULT_LOG_SUBDIR = Path("LadderStock") / "logs" / "supervisor"
@@ -104,6 +105,15 @@ PROXYFLEET_TASK_ENV = "LDST_PROXYFLEET_TASK"
 DEFAULT_PROXYFLEET_TASK = "ProxyFleet"
 #: TickHub-CN 的运行时 env 文件（非密钥 + 代理密钥都在里面，按旧入口原样加载）
 TICKHUB_ENV_FILES_ENV = "LDST_TICKHUB_ENV_FILES"
+
+
+def panel_port_for_env(env: Mapping[str, str]) -> int:
+    """看门狗探活目标端口：显式 LDST_PANEL_PORT > 避让记忆 > 环境默认。
+
+    与 `_panel_spawn_command` 的 `--port` 共用 `resolve_panel_port` 单一真源，
+    保证避让发生后探活与拉起/重启是同一端口。
+    """
+    return resolve_panel_port(env)
 
 
 # --------------------------------------------------------------------------- #
@@ -1263,6 +1273,8 @@ def _command_adapters(
             argv=(
                 *launcher_entry(env),
                 "watchdog",
+                "--api",
+                f"http://127.0.0.1:{panel_port_for_env(env)}",
                 "--spawn-cmd",
                 _panel_spawn_command(env),
             ),
@@ -1337,32 +1349,42 @@ def _rebase_match(token: str, old: str, new: str) -> str:
 def _panel_spawn_command(env: Mapping[str, str]) -> str:
     """看门狗用的看板拉起命令（JSON 字符串数组；`ldst watchdog --spawn-cmd` 解析）。
 
-    QUOT-594：看板端口避让后写 config/ports.yaml，看门狗重启看板时复用
-    同一实际端口；读不到记录回默认 5950。显式端口覆盖（LDST_PANEL_PORT）
-    最高优先，不被避让记录覆盖。
+    端口解析顺序（QUOT-589 第二轮 × QUOT-594 避让整合）：
+    `LDST_PANEL_PORT`（digits 才生效）> ports.yaml 避让记忆（config_dir() 是
+    安装根 scoped，test 安装根读自己的记录）> `panel_port(env)` 环境默认
+    （prod=5950 / test=5951）。test 环境任何路径都不得回落到正式 5950。
     """
-    panel_port = (env.get("LDST_PANEL_PORT") or "").strip()
-    if not panel_port.isdigit():
-        try:
-            from ladderstock.cli.paths import config_dir
-            from ladderstock.supervisor.port_allocator import load_board_override
+    return str(resolve_panel_port(env))
 
-            remembered = load_board_override(config_dir())
-        except Exception:  # noqa: BLE001 - 读配置失败回默认端口
-            remembered = None
-        panel_port = str(remembered) if remembered else str(PANEL_PORT)
-    return json.dumps(
-        [
-            str(part)
-            for part in (
-                *launcher_entry(env),
-                "run",
-                "--port",
-                panel_port,
+
+def resolve_panel_port(env: Mapping[str, str]) -> int:
+    """看板实际端口单一真源：spawn-cmd `--port`、watchdog `--api`、自愈
+    engine 的 panel_url 三处共用，保证避让后三方同一端口。"""
+    from ladderstock.supervisor.modules import panel_port
+
+    override = (env.get("LDST_PANEL_PORT") or "").strip()
+    if override.isdigit():
+        return int(override)
+    try:
+        from ladderstock.cli.paths import config_dir
+        from ladderstock.supervisor.port_allocator import load_board_override
+
+        remembered = load_board_override(config_dir())
+    except Exception:  # noqa: BLE001 - 读配置失败回落环境默认
+        remembered = None
+    if remembered:
+        return int(remembered)
+    return panel_port(_env_name(env))
             )
         ],
         ensure_ascii=False,
     )
+
+
+def _env_name(env: Mapping[str, str]) -> str | None:
+    """从进程环境映射取 LDST_ENV 显式值；未设返回 None（走当前环境检测）。"""
+    value = (env.get("LDST_ENV") or "").strip().lower()
+    return value or None
 
 
 def _tickhub_env_files(env: Mapping[str, str]) -> tuple[Path, ...]:
