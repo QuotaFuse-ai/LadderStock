@@ -134,13 +134,45 @@ describe('BlockRenderer · 结论块', () => {
     expect(screen.getByText('0.62')).toBeTruthy()
   })
 
-  it('载荷没给 confidence：走卡片自己的降级态，不伪造置信度', () => {
-    renderBlocks(<BlockRenderer blocks={[{ type: 'conclusion', payload: { text: '震荡偏弱', tone: 'neutral' } }]} />)
+  // QUOT-604 回归：后端刻意不给 confidence（AI 不评级），但 text 恒有值。
+  // 前端曾把可选当必选，整块返回 null 走 PlainConclusionCard 降级态，连已有结论都吞掉。
+  it('载荷只有 text + tone、没有 confidence：结论正文照样显示，不降级、不伪造置信度', () => {
+    renderBlocks(<BlockRenderer blocks={[{ type: 'conclusion', payload: { text: '估值处于近五年中低位，股息率高于行业均值。', tone: 'neutral' } }]} />)
 
-    expect(screen.getByText('后端尚未透传白话结论')).toBeTruthy()
+    const block = blockOf('conclusion')
+    expect(within(block).getByText('估值处于近五年中低位，股息率高于行业均值。')).toBeTruthy()
+    expect(within(block).getByText('本轮不提供置信度评级')).toBeTruthy()
+    expect(screen.queryByText('后端尚未透传白话结论')).toBeNull()
+    expect(screen.queryByText(/本轮没有可展示的结论/)).toBeNull()
+    // 没有置信度条，也没有补出来的数字
+    expect(within(block).queryByRole('img')).toBeNull()
     expect(screen.queryByText('0.5')).toBeNull()
-    // 正文属于载荷，但卡片降级时不该自行编结论
-    expect(screen.queryByText('震荡偏弱')).toBeNull()
+  })
+
+  it('没有 confidence 时不显示置信度标签，tone 仍是文字标记', () => {
+    renderBlocks(<BlockRenderer blocks={[{ type: 'conclusion', payload: { text: '震荡偏弱', tone: 'warning', confidence: null } }]} />)
+
+    expect(screen.getByText('结论 · 需谨慎')).toBeTruthy()
+    expect(screen.queryByText('置信度')).toBeNull()
+  })
+
+  it('confidence 越界（>1 / <0）按既有校验夹到 0~1，不崩', () => {
+    renderBlocks(<BlockRenderer blocks={[{ type: 'conclusion', payload: { text: '偏高', tone: 'positive', confidence: 1.7 } }]} />)
+
+    const block = blockOf('conclusion')
+    expect(within(block).getByRole('img', { name: '置信度 1（取值 0~1）' })).toBeTruthy()
+    expect(screen.queryByText(/NaN|Infinity/)).toBeNull()
+  })
+
+  it('confidence 非数字按缺失处理，正文仍显示', () => {
+    renderBlocks(
+      <BlockRenderer
+        blocks={[{ type: 'conclusion', payload: { text: '结论照出', tone: 'neutral', confidence: 'high' } as never }]}
+      />,
+    )
+
+    expect(screen.getByText('结论照出')).toBeTruthy()
+    expect(screen.getByText('本轮不提供置信度评级')).toBeTruthy()
   })
 })
 
