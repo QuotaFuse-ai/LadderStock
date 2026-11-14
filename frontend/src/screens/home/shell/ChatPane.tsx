@@ -17,6 +17,7 @@ import { useAsync } from '../../../lib/useAsync'
 import { BlockRenderer } from '../../../components/answer-blocks'
 import { Badge, Button, ErrorBlock, IconButton, Textarea } from '../../../components/ui'
 import { ActivityFeed } from './ActivityFeed'
+import { RENAME_EVENT, type RenameDetail } from './renameSessionEvent'
 import { createMockStatusFeed } from './turnStatusMock'
 import type { TurnStatusFeed } from './turnStatus'
 
@@ -192,6 +193,17 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   }, [activeSessionId])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // 左侧列表菜单改了名（QUOT-602）：只换会话不重载，标题行要跟着走
+  useEffect(() => {
+    const onRename = (event: Event) => {
+      const detail = (event as CustomEvent<RenameDetail>).detail
+      if (!detail?.sessionId || detail.sessionId !== activeSessionId) return
+      setLocalSession({ id: detail.sessionId, title: detail.title })
+    }
+    window.addEventListener(RENAME_EVENT, onRename)
+    return () => window.removeEventListener(RENAME_EVENT, onRename)
+  }, [activeSessionId])
 
   // 顶栏「问 AI」（QUOT-590）：计数变化即聚焦 composer，只聚焦不自动发送
   useEffect(() => {
@@ -484,7 +496,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
 
   if (emptyStage) {
     return (
-      <section aria-label="首页对话" className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4">
+      <section aria-label="首页对话" className="flex min-w-0 shrink-0 basis-0 grow flex-col items-center justify-center gap-3 px-4">
         <div className="flex w-full max-w-measure flex-col gap-3">
           <p className="text-center text-body leading-body text-text-secondary">{WELCOME}</p>
           {composer}
@@ -506,9 +518,13 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
     )
   }
 
+  // 消息层是三段定高：标题行 / 可滚消息流 / 底部（composer + 说明行）。整段必须
+  // `basis-0 grow` 而不是 `flex-1`——前者不受 `flex-basis: auto` 影响，父级链上任何一环
+  // 只给 `min-h-0 flex-1`、没给确定高度时也不会退回内容高度（QUOT-602 P3：
+  // 一点消息就把 composer 顶出视口）。
   return (
-    <section aria-label="首页对话" className="flex min-h-0 flex-1 flex-col gap-2">
-      <header className="flex min-h-control items-center justify-between gap-2">
+    <section aria-label="首页对话" className="flex min-w-0 shrink-0 basis-0 grow flex-col gap-2">
+      <header className="flex min-h-control shrink-0 items-center justify-between gap-2">
         {renaming ? (
           <form
             className="flex min-w-0 flex-1 items-center gap-2"
@@ -557,7 +573,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         )}
       </header>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div ref={scrollRef} data-testid="chat-scroll" className="min-h-0 basis-0 grow overflow-y-auto overscroll-contain">
         {recoverable ? (
           <ErrorBlock
             title="对话记录没能取回"

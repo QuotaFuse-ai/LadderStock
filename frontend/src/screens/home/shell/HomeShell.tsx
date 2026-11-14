@@ -20,6 +20,7 @@ import {
   type HomeTodoMoversData,
 } from '../HomeTodoMoversBar'
 import { ChatPane } from './ChatPane'
+import { broadcastRename } from './renameSessionEvent'
 import { SessionList } from './SessionList'
 
 /**
@@ -87,6 +88,29 @@ export default function HomeShell() {
     setDrawerOpen(false)
   }, [])
   const startChat = useCallback(() => setChatStarted(true), [])
+  // 列表菜单改名（QUOT-602）：标题以服务端返回为准，列表原地重取；右侧标题行靠广播同步
+  const renameSession = useCallback(
+    async (sessionId: string, title: string) => {
+      const result = await httpConversation.renameSession(sessionId, title)
+      broadcastRename({ sessionId: result.session_id, title: result.title })
+      refreshSessions()
+      return result
+    },
+    [refreshSessions],
+  )
+  // 列表菜单删除（QUOT-602）：服务端幂等，`deleted: false` 同样按「已不在」处理；
+  // 删的正是当前会话就退回空态（与「新对话」同一条路），否则列表原地收缩
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      await httpConversation.deleteSession(sessionId)
+      if (sessionId === activeSessionId) {
+        setActiveSessionId(null)
+        setChatStarted(false)
+      }
+      refreshSessions()
+    },
+    [activeSessionId, refreshSessions],
+  )
   // QUOT-588：首问落地，服务端建了新会话——activeSessionId 落到新 id，第二问续同一会话
   const onSessionCreated = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId)
@@ -124,12 +148,14 @@ export default function HomeShell() {
     activeId: activeSessionId,
     onSelect: selectSession,
     onNew: newSession,
+    onRename: renameSession,
+    onDelete: deleteSession,
   }
 
   return (
     <HomeTodoMoversShellMountedContext.Provider value>
       <HomeTodoMoversContext.Provider value={todoMoversData}>
-      <div className="flex min-h-0 flex-col gap-3 desk:h-full">
+      <div className="flex h-full min-h-0 flex-col gap-3">
         {!desktopSegment && (
           <div className="flex items-center justify-between gap-2">
             {switcher}
@@ -153,11 +179,17 @@ export default function HomeShell() {
           <HomeTodoMoversGlobalBar />
         </div>
 
-        {/* 两种模式常驻挂载、只切 `hidden`：对话里的在途请求与滚动位置不因切模式丢失 */}
+        {/* 两种模式常驻挂载、只切 `hidden`：对话里的在途请求与滚动位置不因切模式丢失。
+            高度：外壳在对话态把 `main` 改成确定高度的 flex 列（见 `Layout`），这里 `basis-0 grow`
+            才拿得到「剩下的高度」；`flex-1` 在只给 min-height 的链上会退回内容高度，
+            消息一多就把 composer 顶出视口（QUOT-602 P3）。
+            左右：对话态外壳不再套 `.page-shell`（无 24px 空带、无 1440 上限），这层自己补 12px，
+            与外壳的 16px 合成 28px——就是移动端 `.page-shell` 原本的边距（P2 只收桌面空带，
+            不把手机上的边距也吃掉）。列表 `pr-2` + 聊天 `pl-2` 合成 16px 缝，对齐顶栏 `px-4`。 */}
         <div
           hidden={mode !== 'chat'}
           className={cn(
-            'min-h-0 flex-1 flex-col gap-3 lg:flex-row',
+            'min-h-0 basis-0 grow flex-col gap-3 px-3 lg:flex-row lg:px-2',
             mode === 'chat' ? 'flex' : 'hidden',
           )}
         >
@@ -178,6 +210,7 @@ export default function HomeShell() {
           />
         </div>
 
+        {/* 研究台保持 `page-shell` 文章栏（外壳只对对话态放开），这里仍是 `flex-1` */}
         <div hidden={mode !== 'desk'} className="min-h-0 flex-1">
           <HomeScreen
             initialQuestion={deskQuestion}

@@ -1302,6 +1302,22 @@ def build_conversation_router(
             return _not_found()
         return {"session_id": session_id, "title": title}
 
+    @router.delete("/sessions/{session_id}")
+    def delete_session(session_id: str) -> Any:
+        """删除一条会话（QUOT-602）：真删 `chat_session` 行，轮次随级联一起走。
+
+        幂等：重复删返回 200 `deleted: false`，不报 5xx——前端删完可能因为并发重取再删一次。
+        库还没建（从没问过）同样按「本来就没有」返回，不现建一个空库。
+        """
+        conn = _open_read()
+        if conn is None:
+            return {"session_id": session_id, "deleted": False}
+        try:
+            deleted = chat_store.delete_session(conn, session_id)
+        finally:
+            chat_store.close(conn)
+        return {"session_id": session_id, "deleted": deleted}
+
     @router.post("/turns")
     def post_turn(body: ChatRequest) -> Any:
         try:
