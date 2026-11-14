@@ -24,9 +24,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Any
 
-from ladderstock.ai import fallback, tools
+from ladderstock.ai import fallback, registry_tools, tool_registry, tools
 from ladderstock.ai.cli_provider import build_chat_client
 from ladderstock.ai.error_taxonomy import AiFailure, classify_error
 from ladderstock.ai.orchestrator import ChatClient, supports_tools
@@ -37,7 +38,8 @@ from ladderstock.core.boundary import (
     is_provenance_payload,
     merge_narrative,
 )
-from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
+from ladderstock.data import provider_registry
+from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK, LadderStockError
 from ladderstock.research import artifacts, checkpoint, ladder, stages
 
 STAGES = checkpoint.STAGES
@@ -106,11 +108,17 @@ class ResearchPipeline:
         client: ChatClient | None = None,
         root: Any = None,
         config_root: Any = None,
+        event_bus: Any = None,
+        registry_root: Any = None,
     ) -> None:
         self.code = checkpoint.normalize_code(code)
         self.config = config or fallback.load_config(config_root)
         self.client: ChatClient = client or build_chat_client(self.config)
         self.root = root
+        #: 进程总线（`HealthEventBus`）；C2 工具事件与 peer 事件共用一条通道
+        self.event_bus = event_bus
+        #: 注册表快照根（默认 `<data_dir>`）；测试可指向临时目录
+        self.registry_root = registry_root
 
     # ------------------------------------------------------------------ #
     # 入口
@@ -263,17 +271,29 @@ class ResearchPipeline:
 
         R2：客户端支持 tool-calling 时，结构化一级带上本段白名单里的受控工具；
         客户端不支持（五段复盘、既有假客户端）时，消息与调用序列与今天一致。
+        C2（QUOT-598）：`LDST_REGISTRY_TOOLS` 打开时，再并入注册表里 read_only=真的
+        工具（命名空间 + 本段白名单双闸，执行/审计/事件都走 `ai/tools.py`）；
+        开关关掉时 `use_tools` / `ctx` 与 R2 逐字一致。
         """
         names = stages.allowed_tools(stage)
+        registry = self._registry_tools(stage, day) if registry_tools.enabled() else None
+        if registry is not None:
+            names = tuple(dict.fromkeys((*names, *registry.names())))
         use_tools = bool(names) and supports_tools(self.client)
-        ctx = self._tool_context(stage, day, names) if use_tools else None
+        ctx = self._tool_context(stage, day, names, registry) if use_tools else None
         tool_names = names if use_tools else None
         outcome = ladder.generate(
             self.client,
             self.config,
             stage,
             messages=stages.build_messages(
-                self.code, stage, day, facts, provenance=slot, tool_names=tool_names
+                self.code,
+                stage,
+                day,
+                facts,
+                provenance=slot,
+                tool_names=tool_names,
+                registry=registry,
             ),
             plain=stages.plain_messages(self.code, stage, day, facts, provenance=slot),
             ctx=ctx,
@@ -317,7 +337,13 @@ class ResearchPipeline:
             "ai": merged["ai"],
         }
 
-    def _tool_context(self, stage: str, day: str, names: tuple[str, ...]) -> tools.ToolContext:
+    def _tool_context(
+        self,
+        stage: str,
+        day: str,
+        names: tuple[str, ...],
+        registry: registry_tools.RegistryTools | None = None,
+    ) -> tools.ToolContext:
         """本段的工具视野：只交出本次研究的落盘目录，别的根目录一概没有。"""
         run_dir = artifacts.artifact_dir(self.code, day, self.root)
         # 第一段跑起来时目录还不存在，而 `list_artifacts` 与审计日志都要有地方落
@@ -326,7 +352,59 @@ class ResearchPipeline:
             stage=stage,
             roots={tools.RUN_ROOT: run_dir},
             allowed=frozenset(names),
+            registry=registry,
         )
+
+    def _registry_tools(self, stage: str, day: str) -> registry_tools.RegistryTools | None:
+        """装配本段的注册表执行器；注册表读不到就退回「只有常量工具」（不挡研究）。
+
+        数据根沿用研究落盘的父目录（`data/research` → `data`），本仓 MCP 工具的
+        `dispatch(root=...)` 与页面同一个口径；peer 工具走真实传输层（测试注入假传输）。
+        """
+        try:
+            namespace = registry_tools.namespace_from_env()
+            registry = tool_registry.ToolRegistry(
+                root=self.registry_root, sources=self._sources_doc()
+            )
+            snapshot = registry_tools.load_snapshot(registry, namespace)
+            if snapshot is None:
+                return None
+            return registry_tools.build_for_stage(
+                snapshot,
+                namespace=namespace,
+                stage=stage,
+                base_day=day,
+                transport=provider_registry.build_transport(registry.peers),
+                peers=registry.peers,
+                data_root=self._data_root(),
+                on_call=self._on_registry_call,
+            )
+        except (LadderStockError, OSError):
+            return None
+
+    def _sources_doc(self) -> dict[str, Any]:
+        try:
+            return provider_registry.load_sources_config()
+        except LadderStockError:
+            return {"peers": {}, "sources": []}
+
+    def _data_root(self) -> Any:
+        from ladderstock.cli.paths import data_dir
+
+        if self.root is not None:
+            return Path(self.root).parent
+        return data_dir()
+
+    def _on_registry_call(self, call: dict[str, Any]) -> None:
+        """一次真实工具调用 → 一条 cog `StageSample`（拒绝如实发拒绝态，不伪造成功）。"""
+        sample = registry_tools.sample_for(
+            stage=str(call["stage"]),
+            tool=str(call["tool"]),
+            rejected=bool(call["rejected"]),
+            reason=call.get("reason"),
+            detail=str(call.get("detail") or ""),
+        )
+        registry_tools.publish_sample(self.event_bus, sample)
 
     def _report_inputs(self, day: str) -> tuple[dict[str, Any], list[str]]:
         """报告段的唯一输入 = 前五段已落盘的结构化产物（禁止重新取数）。"""

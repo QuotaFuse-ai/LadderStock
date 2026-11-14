@@ -192,7 +192,7 @@ def _tool_loop(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    descriptors = tools.tool_descriptors(sorted(ctx.allowed))
+    descriptors = tools.descriptors_from_ctx(ctx, sorted(ctx.allowed))
     ctx.model = model
     for _ in range(MAX_TOOL_TURNS):
         turn = client.complete_with_tools(model, history, descriptors, json_mode=True)

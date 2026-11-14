@@ -808,3 +808,160 @@ def test_incremental_blocks_match_non_streaming_payload(
     # 结论块不含数字（红线 4：数值只来自 metrics，本场景没传 metrics）
     conclusion = blocks[0]
     assert _no_numbers(conclusion["payload"]["text"])
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-598 C2 工具环：真实调用 → cog 事件 + status 流水账里的 "tool" 动作
+# --------------------------------------------------------------------------- #
+
+class _FakeBus:
+    def __init__(self) -> None:
+        self.samples: list[Any] = []
+
+    def publish_stage(self, sample: Any) -> None:
+        self.samples.append(sample)
+
+
+class _FakeRegistry:
+    """只在模型调用期间「发生」若干次真实工具调用的假执行器。
+
+    与真实 `RegistryTools` 同形：`on_call` 可被 `stream_turn` 临时改挂，
+    模型调用点主动回调它（真实实现由 `ai/tools.py:execute` 在审计后回调）。
+    """
+
+    def __init__(self, calls: list[dict[str, Any]]) -> None:
+        self.calls = calls
+        self.on_call: Any = None
+        self.fired = 0
+
+    def fire(self) -> None:
+        for call in self.calls:
+            record = {"started_ms": chat_channel._monotonic_ms(), **call}
+            self.fired += 1
+            if self.on_call is not None:
+                self.on_call(record)
+
+
+def _stub_with_registry(monkeypatch: pytest.MonkeyPatch, registry: _FakeRegistry) -> None:
+    async def fake_complete(channel, system, user, *, timeout):
+        registry.fire()
+        return "今天量能温和放大。"
+
+    monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _ok_channel())
+    monkeypatch.setattr(chat_channel, "complete", fake_complete)
+
+
+def _collect_turn(**kwargs: Any) -> list[str]:
+    async def collect() -> list[str]:
+        return [frame async for frame in chat_channel.stream_turn(**kwargs)]
+
+    return asyncio.run(collect())
+
+
+def _run_turn(session_id: str, registry: Any, bus: Any) -> list[tuple[str, dict[str, Any]]]:
+    text = "".join(
+        _collect_turn(
+            message="今天怎么样？", session_id=session_id, registry=registry, event_bus=bus
+        )
+    )
+    return _parse_sse(text)
+
+
+def _tool_status(frames: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    return [
+        data for event, data in frames if event == "status" and data.get("action") == "tool"
+    ]
+
+
+def test_tool_call_emits_one_cog_sample_and_a_status_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _FakeRegistry(
+        [{"stage": "chat", "tool": "ladder_get_review", "rejected": False, "detail": "ok"}]
+    )
+    _stub_with_registry(monkeypatch, registry)
+    bus = _FakeBus()
+
+    frames = _run_turn("s-tool-ok", registry, bus)
+
+    tool_frames = _tool_status(frames)
+    assert [data["state"] for data in tool_frames] == ["running", "done"]
+    assert all(data["item_id"] == "tool:chat/ladder_get_review" for data in tool_frames)
+    assert tool_frames[1]["rejected"] is False
+    assert isinstance(tool_frames[1]["elapsed_ms"], int) and tool_frames[1]["elapsed_ms"] >= 0
+
+    # 一次真实调用 = 一条 cog 事件，健康，不伪造
+    assert len(bus.samples) == 1
+    sample = bus.samples[0]
+    assert sample.module_class == "cog" and sample.health == "ok"
+
+    done = _done(frames)
+    tool_actions = [action for action in done["actions"] if action["action"] == "tool"]
+    assert len(tool_actions) == 1 and tool_actions[0]["state"] == "done"
+    assert tool_actions[0]["rejected"] is False
+
+
+def test_rejected_tool_call_emits_rejection_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = _FakeRegistry(
+        [{"stage": "chat", "tool": "ladder_get_watch", "rejected": True, "reason": "future_date"}]
+    )
+    _stub_with_registry(monkeypatch, registry)
+    bus = _FakeBus()
+
+    frames = _run_turn("s-tool-rej", registry, bus)
+
+    tool_frames = _tool_status(frames)
+    assert [data["state"] for data in tool_frames] == ["running", "done"]
+    done_frame = tool_frames[1]
+    assert done_frame["rejected"] is True and done_frame["reason"] == "future_date"
+    assert "被拒" in done_frame["item"]
+
+    assert len(bus.samples) == 1
+    sample = bus.samples[0]
+    assert sample.module_class == "cog"
+    assert sample.health != "ok"
+    # 拒绝态如实进事件：不是「成功返回」，拒因也在
+    assert "成功" not in sample.reason
+    assert "被拒" in sample.reason and "future_date" in sample.reason
+
+
+def test_no_tool_calls_emit_no_tool_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = _FakeRegistry([])
+    _stub_with_registry(monkeypatch, registry)
+    bus = _FakeBus()
+
+    frames = _run_turn("s-tool-none", registry, bus)
+
+    assert _tool_status(frames) == []
+    assert bus.samples == []
+    assert not [action for action in _done(frames)["actions"] if action["action"] == "tool"]
+    assert registry.fired == 0
+
+
+def test_registry_is_not_installed_without_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`registry=None`：与 C2 之前逐字节一致——没有 tool 帧、没有事件。"""
+    registry = _FakeRegistry([{"stage": "chat", "tool": "ladder_get_review"}])
+    _stub_with_registry(monkeypatch, registry)
+    bus = _FakeBus()
+
+    frames = _parse_sse(
+        "".join(_collect_turn(message="今天怎么样？", session_id="s-tool-off", event_bus=bus))
+    )
+
+    assert _tool_status(frames) == []
+    assert bus.samples == []
+    # 没挂回调：即便模型「调用」了工具也不会漏出一帧
+    assert registry.on_call is None
+
+
+def test_on_call_is_restored_after_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = lambda record: None  # noqa: E731
+    registry = _FakeRegistry([])
+    registry.on_call = original
+    _stub_with_registry(monkeypatch, registry)
+
+    _collect_turn(message="今天怎么样？", session_id="s-tool-restore", registry=registry)
+
+    assert registry.on_call is original

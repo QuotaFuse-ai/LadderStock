@@ -134,7 +134,12 @@ class ToolSpec:
 
 @dataclass
 class ToolContext:
-    """一次段内生成的工具视野：段、可落盘根目录、本段白名单、调用轨迹。"""
+    """一次段内生成的工具视野：段、可落盘根目录、本段白名单、调用轨迹。
+
+    `registry`（C2 / QUOT-598）是可选扩展位：插上一个带 `descriptors` / `describe` /
+    `execute` 的执行器后，注册表工具与常量工具走同一个 `tool_descriptors` /
+    `tool_instruction` / `execute`；不插（默认 None）时行为与此前逐字节一致。
+    """
 
     stage: str
     roots: Mapping[str, Path]
@@ -145,6 +150,8 @@ class ToolContext:
     calls: list[dict[str, Any]] = field(default_factory=list)
     #: 本段已用的受控检索次数（DEC-018 的限速就落在这一层）
     search_calls: int = 0
+    #: 注册表工具执行器（`ai/registry_tools.RegistryTools`）；None = 只用常量工具
+    registry: Any = None
 
     def run_dir(self) -> Path:
         return self.run_root(RUN_ROOT)
@@ -574,30 +581,61 @@ TOOLS: dict[str, ToolSpec] = {
 }
 
 
-def validate_allowed(names: Sequence[str]) -> tuple[str, ...]:
-    """白名单表自检：每一项都得是注册表里的名字（供 stages.py 与测试用）。"""
+def validate_allowed(
+    names: Sequence[str], *, registry: Any = None
+) -> tuple[str, ...]:
+    """白名单表自检：每一项都得是注册表里的名字（供 stages.py 与测试用）。
+
+    给了执行器时，它名下的注册表工具也算「已登记」。
+    """
+    known = set(TOOLS)
+    if registry is not None:
+        known.update(registry.names())
     for name in names:
-        if name not in TOOLS:
+        if name not in known:
             raise ValueError(f"白名单里有未注册的工具：{name}")
     return tuple(names)
 
 
-def tool_descriptors(names: Sequence[str]) -> list[dict[str, Any]]:
-    """OpenAI 兼容的 `tools` 数组：只描述本段白名单里的工具。"""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": TOOLS[name].description,
-                "parameters": dict(TOOLS[name].parameters),
-            },
-        }
-        for name in names
-    ]
+def tool_descriptors(
+    names: Sequence[str], *, registry: Any = None
+) -> list[dict[str, Any]]:
+    """OpenAI 兼容的 `tools` 数组：只描述本段白名单里的工具。
+
+    `registry`（`ToolContext.registry`）非空时，常量表里没有的名字交给执行器的
+    `descriptors`（注册表工具）；仍然查不到就照旧 `KeyError`——描述符永远与
+    「真能执行」对齐，不凭空多给。不给执行器时输出与 R2 逐字一致。
+    """
+    rows: list[dict[str, Any]] = []
+    extra: list[str] = []
+    for name in names:
+        spec = TOOLS.get(name)
+        if spec is None:
+            extra.append(name)
+            continue
+        rows.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": spec.description,
+                    "parameters": dict(spec.parameters),
+                },
+            }
+        )
+    if extra:
+        if registry is None:
+            raise KeyError(extra[0])
+        rows.extend(registry.descriptors(extra))
+    return rows
 
 
-def tool_instruction(names: Sequence[str]) -> str:
+def descriptors_from_ctx(ctx: ToolContext, names: Sequence[str]) -> list[dict[str, Any]]:
+    """`tool_descriptors` 的上下文版：注册表工具由 `ctx.registry` 描述。"""
+    return tool_descriptors(names, registry=ctx.registry)
+
+
+def tool_instruction(names: Sequence[str], *, registry: Any = None) -> str:
     """拼进 system 的工具约束段：模型看到的工具与白名单永远一致。"""
     if not names:
         return ""
@@ -605,7 +643,13 @@ def tool_instruction(names: Sequence[str]) -> str:
         "\n\n受控工具（本段只允许这几个，调用其他任何工具本段直接判失败）：",
     ]
     for name in names:
-        lines.append(f"- {name}：{TOOLS[name].description}")
+        spec = TOOLS.get(name)
+        if spec is not None:
+            lines.append(f"- {name}：{spec.description}")
+        elif registry is not None:
+            lines.append(f"- {name}：{registry.describe(name)}")
+        else:
+            lines.append(f"- {name}：")
     lines += [
         "使用规则：",
         "1. 数字只能引用快照或 compute 的返回，禁止心算、禁止改写；",
@@ -636,6 +680,8 @@ def execute(ctx: ToolContext, name: str, arguments: Any) -> dict[str, Any]:
         _audit(ctx, name, arguments, None, started, rejected=True, reason="unauthorized_tool")
         ctx.add_call({"tool": name, "rejected": True, "reason": "unauthorized_tool"})
         raise UnauthorizedToolCall(name, stage=ctx.stage, allowed=allowed)
+    if name not in TOOLS and ctx.registry is not None:
+        return _execute_registry(ctx, name, arguments, started)
     entry: dict[str, Any] = {"tool": name, "rejected": False, "reason": None}
     try:
         payload = _coerce_arguments(arguments)
@@ -660,6 +706,37 @@ def execute(ctx: ToolContext, name: str, arguments: Any) -> dict[str, Any]:
         return {"ok": False, "tool": name, "reason": reason, "content": f"工具被拒绝：{message}"}
     ctx.add_call(entry)
     _audit(ctx, name, payload, content, started, rejected=False, reason=None)
+    return {"ok": True, "tool": name, "reason": None, "content": content[:MAX_OUTPUT_CHARS]}
+
+
+def _execute_registry(
+    ctx: ToolContext, name: str, arguments: Any, started: float
+) -> dict[str, Any]:
+    """注册表工具（C2）走这一支：与常量工具同一套审计、同一套拒因回喂。
+
+    事件只在审计落盘之后发（`emit`），调用本身被拒也一样发——拒因如实，绝不伪造成成功。
+    本段没预算就直接拒，不通过任何真实调用。
+    """
+    registry = ctx.registry
+    entry: dict[str, Any] = {"tool": name, "rejected": False, "reason": None}
+    try:
+        payload = _coerce_arguments(arguments)
+        if ctx.call_count >= MAX_CALLS_PER_STAGE:
+            raise ToolRefusal(
+                "call_budget_exceeded", f"本段工具调用已达上限 {MAX_CALLS_PER_STAGE} 次"
+            )
+        content = registry.execute(ctx, name, payload)
+    except (ToolRefusal, ValueError, TypeError) as exc:
+        reason = getattr(exc, "reason", "bad_arguments")
+        message = str(exc) or reason
+        entry.update({"rejected": True, "reason": reason})
+        ctx.add_call(entry)
+        _audit(ctx, name, arguments, message, started, rejected=True, reason=reason)
+        registry.emit(stage=ctx.stage, tool=name, rejected=True, reason=reason, detail=message)
+        return {"ok": False, "tool": name, "reason": reason, "content": f"工具被拒绝：{message}"}
+    ctx.add_call(entry)
+    _audit(ctx, name, payload, content, started, rejected=False, reason=None)
+    registry.emit(stage=ctx.stage, tool=name, rejected=False, reason=None, detail=content)
     return {"ok": True, "tool": name, "reason": None, "content": content[:MAX_OUTPUT_CHARS]}
 
 
