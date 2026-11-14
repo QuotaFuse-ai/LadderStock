@@ -11,7 +11,7 @@ export {
   InvalidBlockPanel,
   UnreachableActionPanel,
 } from './BlockShell'
-export { ConclusionBlock, toPlainConclusion } from './ConclusionBlock'
+export { ConclusionBlock } from './ConclusionBlock'
 export { MetricBlock, formatMetricValue } from './MetricBlock'
 export { ChartBlock } from './ChartBlock'
 export { TableBlock } from './TableBlock'
