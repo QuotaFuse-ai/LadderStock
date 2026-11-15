@@ -92,7 +92,9 @@ def _prefixed_code(code: str) -> str:
     return f"bj{bare}"
 
 
-def select_dataset(question: str, symbol: str | None) -> tuple[str | None, dict[str, Any], str | None]:
+def select_dataset(
+    question: str, symbol: str | None
+) -> tuple[str | None, dict[str, Any], str | None]:
     """按问题里的需求词选已登记 dataset；返回 `(dataset, params, gap)`。
 
     - 涨停/炸板/情绪类：`limit_pool` / `broken_board` / `sentiment`（市场级，不依赖标的）
@@ -241,10 +243,13 @@ def metrics_from_outcome(outcome: Any, dataset: str, symbol: str | None) -> dict
     if source_name is None:
         return {}
     fetched_at = _now_iso()
-    envelope_as_of = getattr(outcome.envelope, "data_as_of", None)
     metrics: dict[str, Any] = {}
     if dataset == "spot_quote":
-        row = next((r for r in rows if str(r.get("code") or "").partition(".")[0] == (symbol or "").partition(".")[0]), rows[0])
+        bare_symbol = (symbol or "").partition(".")[0]
+        row = next(
+            (r for r in rows if str(r.get("code") or "").partition(".")[0] == bare_symbol),
+            rows[0],
+        )
         as_of = _as_of_of(outcome, row)
         for key, _label, keys in _QUOTE_SPECS:
             number = _row_value(row, keys)
@@ -331,7 +336,9 @@ def source_from_outcome(outcome: Any, dataset: str, symbol: str | None) -> dict[
     }
 
 
-def run_fetch(plan: FetchPlan, *, data_root: Any = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def run_fetch(
+    plan: FetchPlan, *, data_root: Any = None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """执行取数计划，返回 `(metrics, sources)`。失败如实降级，不编数、不抛 500。
 
     单次提问总预算 `TOTAL_FETCH_BUDGET_SEC`；registry 内部按 `sources.yaml` 的
