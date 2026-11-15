@@ -10,8 +10,10 @@
 
 - **块只能由本模块拼**：模型产出的是 `AI_WRITABLE` 那套叙述 payload，`blocks`
   一律由 `build_blocks()` 从 `metrics + ai` 装配（红线 2）；
-- **叙述文本里不出现数字**：`conclusion.text` / `notice.message` 里的数字一律剥掉，
-  数字只走 `metric` 块，且必须是 `number` 而不是字符串（红线 4）；
+- **叙述文本里不出现未经核实的数字**：`conclusion.text` / `notice.message` 里的数字
+  默认剥掉，数字只走 `metric` 块且必须是 `number`（红线 4）；调用方确认本轮数字
+  带出处（`sources` 非空，或回答自述了来源 / as_of，如标的档案召回）时传
+  `keep_numbers=True`，这类已核对数字保留原文（QUOT-612）。
 - **没有出处的数宁可不显示**：进 `metric` 的每个值都要过 `Provenance`，
   没过就改 `notice(missing_data)`（红线 6）。
 
@@ -90,6 +92,12 @@ NOTICE_MISSING_DATA = "missing_data"
 #: 与 `web/chat.py:434` `_source_note` 逐字一致（服务端文案，不是模型编的）。
 SOURCE_NOTE_WITHOUT_DATA = "（说明：本轮没有任何可核实的数据来源，以下内容不含具体行情数据。）"
 SOURCE_NOTE_NO_RECORD = "（说明：本轮页内数据未附带取数记录，回答不列外部来源。）"
+#: QUOT-612：页面上下文没带行情、但回答本身引用了已核对来源（标的档案召回等）时的
+#: 第三种措辞——不再断言「没有任何可核实的数据来源」，也不伪造 citation。
+SOURCE_NOTE_PROFILE_ONLY = (
+    "（说明：本页上下文没带行情数据；以上数字取自标的档案等已核对来源，"
+    "实时行情可到个股研究页查看。）"
+)
 
 #: QUOT-617：capability 意图的能力清单。固定服务端文案，不让模型自由生成
 #: （避免每次措辞漂移）；与 `web/assistant.py` 的 `PAGE_SYSTEM_PROMPT` 能力描述同源
@@ -230,6 +238,26 @@ def strip_source_note(answer: str, *, has_data: bool, sources: Sequence[Any]) ->
     return answer[: -len(suffix)] if answer.endswith(suffix) else answer
 
 
+#: QUOT-612：回答正文自述了来源 / as_of 的线索——命中即视为「数字已核对」，
+#: `build_blocks` 不再剥离叙述里的数字（降级路径：标的档案召回带 as_of 与来源名）。
+#: 来源名限定 ASCII 标识符（`tencent_quote_batch` 这类）——服务端说明里的
+#: 「数据来源，以下…」这类中文接续不算自述来源。
+_SELF_SOURCE_RE = re.compile(
+    r"来源[:：]?\s*[A-Za-z][A-Za-z0-9_-]+|as_of\s*[=＝]?\s*\d{4}-\d{2}-\d{2}"
+)
+
+
+def _answer_cites_own_source(ai: Any) -> bool:
+    """叙述四键里是否自述了来源（「来源 xxx」/「as_of=YYYY-MM-DD」）。"""
+    if not isinstance(ai, Mapping):
+        return False
+    for field in _NARRATIVE_FIELDS:
+        for line in ai.get(field) or ():
+            if _SELF_SOURCE_RE.search(str(line or "")):
+                return True
+    return False
+
+
 def first_sentence(text: str) -> str:
     """取第一句（保留句末标点）。"""
     parts = [part for part in _SENTENCE_END.split(str(text or "").strip()) if part.strip()]
@@ -291,11 +319,13 @@ def _check_date(value: str, where: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def validate_conclusion(payload: Any) -> dict[str, Any]:
+def validate_conclusion(payload: Any, *, allow_numbers: bool = False) -> dict[str, Any]:
+    """校验 conclusion payload；`allow_numbers=True` 放行已核对数字（QUOT-612，
+    供 `build_blocks` 降级路径内部使用，不改变 payload schema）。"""
     body = _require_mapping(payload, "conclusion")
     _require_keys(body, ("text", "tone"), ("text", "tone", "confidence"), "conclusion")
     text = _require_str(body["text"], "conclusion.text")
-    if contains_number(text):
+    if contains_number(text) and not allow_numbers:
         raise AnswerBlockError(f"conclusion.text 含数字（红线 4）：{text!r}")
     tone = _require_str(body["tone"], "conclusion.tone")
     if tone not in TONES:
@@ -850,6 +880,9 @@ def build_blocks(
     # 「无来源 → WITHOUT_DATA」契约一致；有页内数据的调用方（chat.py 流式）
     # 必须显式传 page_data=True，才会出 NO_RECORD。
     page_data: bool = False,
+    # QUOT-612：叙述里的数字已带出处（sources 非空，或回答自述了来源 / as_of，
+    # 如标的档案召回）时保留原文，不再剥离——残句「收盘价元」比数字更糟。
+    keep_numbers: bool = False,
     # QUOT-615：意图分流。默认 data_query 保持既有行为（旧调用方不改不回归）；
     # chitchat 只出 conclusion（不出两类 missing_data notice），concept 不出指标 notice。
     intent: str = INTENT_DATA_QUERY,
@@ -866,13 +899,27 @@ def build_blocks(
       默认 False（与现役非流式 assistant.py 的 3 参调用契约一致），有页内数据的
       调用方（chat.py 流式）显式传 True。措辞与 `source_note(has_data=...)` 共源，
       与 `web/chat.py` `_source_note(has_data=...)` 一一对应（同一句只出一次）。
+    - `keep_numbers`：叙述文本是否保留数字。默认 False（红线 4 原契约）；本轮数字
+      带出处时传 True——conclusion / 风险 / 补充说明跳过 `strip_numbers`，
+      避免「收盘价元」这类空值残句下发。
 
     纯函数：不读写文件、不发请求、不碰全局状态。
     """
     metrics = dict(metrics or {})
     source_list = [_coerce_source(raw) for raw in (sources or [])]
+    # QUOT-612：回答自述了来源（「来源 xxx」「as_of」）也算数字有出处——
+    # 无 sources 的降级路径（标的档案召回）数字同样已核对，不再剥离。
+    if not keep_numbers and not source_list:
+        keep_numbers = _answer_cites_own_source(ai)
     # 附录类块先定：超限瘦身要保证它们不被「尾部丢块」剪掉（§6.4-2 / D7）
     citation = _citation_from_sources(source_list)
+    # QUOT-612：无 citation 时按三种实情措辞，不再一律断言「没有任何可核实的数据来源」——
+    # 回答自述了来源（标的档案召回）时应说「数字取自档案」，而不是与正文自相矛盾。
+    note_message = (
+        SOURCE_NOTE_PROFILE_ONLY
+        if _answer_cites_own_source(ai)
+        else source_note(has_data=page_data, sources=[])
+    )
     source_notice = (
         None
         if citation is not None
@@ -881,9 +928,7 @@ def build_blocks(
             {
                 "kind": NOTICE_MISSING_DATA,
                 "section": "来源",
-                # notice 只在构不成 citation 时出现，措辞只取决于 page_data；
-                # 传空 sources 取 source_note 的 has_data 分支，与 chat.py 同源
-                "message": source_note(has_data=page_data, sources=[]),
+                "message": note_message,
             },
         )
     )
@@ -916,12 +961,23 @@ def build_blocks(
     skip_source_notice = intent == INTENT_CHITCHAT
     emit_evidence = intent == INTENT_CONCEPT and bool(narrative["evidence"])
 
-    # 1. 结论：narrative[0] 取第一句、剥数字；tone 中性、置信度不评级
-    headline = strip_numbers(first_sentence(narrative["narrative"][0]))
+    # 1. 结论：narrative[0] 取第一句、剥数字（tone 中性、置信度不评级）；
+    #    QUOT-612：数字已核对（keep_numbers）时保留原文
+    raw_headline = first_sentence(narrative["narrative"][0])
+    headline = raw_headline if keep_numbers else strip_numbers(raw_headline)
     if not headline:
         headline = "本轮没有可展示的结论。"
     conclusion: dict[str, Any] = {"text": headline, "tone": "neutral"}
-    blocks.append(build_block(BLOCK_CONCLUSION, conclusion))
+    if keep_numbers:
+        # 已核对数字保留原句（QUOT-612）：payload 仍是 `{text, tone}` 两键，schema 不变
+        # （前端 47 项 vitest 依赖），只放行数字校验。
+        conclusion_block = {
+            "type": BLOCK_CONCLUSION,
+            "payload": validate_conclusion(conclusion, allow_numbers=True),
+        }
+    else:
+        conclusion_block = build_block(BLOCK_CONCLUSION, conclusion)
+    blocks.append(conclusion_block)
 
     # 2. 指标：白名单 + 出处；拿不到时如实说没取到，而不是凭空造数
     items = _pick_metrics(metrics)
@@ -954,7 +1010,7 @@ def build_blocks(
     #    没有「风险」这一档，detail 段落装风险提示是枚举约束下的取舍；待 D7 决策
     #    补 risk kind 后改这里一处即可。
     for risk in narrative["risks"][:2]:
-        text = strip_numbers(risk)
+        text = risk if keep_numbers else strip_numbers(risk)
         if text:
             blocks.append(
                 build_block(
@@ -966,7 +1022,8 @@ def build_blocks(
     # 6. narrative[1:] + highlights：合并成一条 notice，每块 ≤4 行
     #    同样借 kind="degraded" 表达「补充说明」，原因见第 5 步。
     extras = [
-        strip_numbers(line) for line in (narrative["narrative"][1:] + narrative["highlights"])
+        line if keep_numbers else strip_numbers(line)
+        for line in (narrative["narrative"][1:] + narrative["highlights"])
     ]
     extras = [line for line in extras if line]
     if extras:
@@ -1093,6 +1150,7 @@ __all__ = [
     "NOTICE_MISSING_DATA",
     "ROUTE_TARGETS",
     "SOURCE_NOTE_NO_RECORD",
+    "SOURCE_NOTE_PROFILE_ONLY",
     "SOURCE_NOTE_WITHOUT_DATA",
     "SERIES_METRIC_KEYS",
     "TABLE_COLLAPSE_ROWS",
