@@ -351,7 +351,7 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
           待办与异动经顶栏槽（`HomeTodoMoversBar`）进 `header.workspace-topbar`，不再占内容区。
           desk:h-full / min-h-0 链不退化（一屏无整页滚动，QUOT-570 门槛） */}
       <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1 desk:flex-row">
-        {/* 左区：上下两段 */}
+        {/* 左区：上段大盘（按内容高度，不再吃满余高）+ 下段自选/持仓（吃剩余高度、贴底） */}
         <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1">
           <HomeIndexStrip
             view={indexView}
@@ -359,9 +359,9 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
             pollSeconds={INDICES_POLL_SECONDS}
             pollTicks={indicesTicks}
             pollFailures={indicesFailures}
-            className="desk:min-h-0 desk:flex-1"
+            className="desk:min-h-0 desk:shrink-0"
           />
-          <div className="grid gap-3 grid-cols-2">
+          <div className="grid gap-3 grid-cols-2 desk:min-h-0 desk:flex-1">
             <HomeWatchlistCard view={watchlistView} />
             <HomePositionsCard view={positionsView} />
           </div>

@@ -138,7 +138,7 @@ export function HomeIndexStrip({ view, session, pollSeconds, pollTicks = 0, poll
           loading={view.refreshing}
         />
       }
-      bodyClassName="flex grow flex-col p-3"
+      bodyClassName="flex flex-col p-3"
     >
       {view.state === 'loading' && (
         <div className="grid grid-cols-2 gap-4 desk:grid-cols-4" aria-hidden="true">
@@ -195,7 +195,7 @@ export function HomeIndexStrip({ view, session, pollSeconds, pollTicks = 0, poll
         <EmptyState compact title="本机服务未连接" description="指数条不落缓存，断连时不显示上一次的读数。" />
       )}
 
-      <div className="mt-auto pt-2">
+      <div className="pt-2">
         <p className="border-t border-border pt-1 text-11px leading-body text-text-muted">
           {payload?.footnote ?? '指数为行情快照，不是逐笔实时'} · 源：
           <span className="ldst-num">{(payload?.datasets ?? ['index_quote']).map(quoteSourceLabel).join(' + ')}</span>
