@@ -82,7 +82,7 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
     setParams(next, { replace: true })
   }, [hasDeepLink, params, setParams])
 
-  const { model, actions, openPanel } = useHomeSearch({
+  const { model, actions, openPanel, remember } = useHomeSearch({
     initialQuery,
     onNavigate: (href) => navigate(href),
   })
@@ -142,6 +142,9 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
       actions.onExit(route.href)
       return
     }
+    // 关键词 / 名称搜索：回车就已是一次「搜过的词」，先记历史再开面板。
+    // 原来只在面板里点了结果才记，用户「搜了但没点」时历史里一片空白，才觉得没作用。
+    remember(route.text)
     openPanel()
   }
 
@@ -170,12 +173,15 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
         dense
       />
 
-      {/* 固定高度：切页签 / 对话增长都不顶高卡片（一页无滚动的预算件）；行内被拉高时跟着长 */}
-      <div className="grow" style={{ height: 160 }}>
-        <div hidden={tab !== 'shortcuts'} className="h-full overflow-y-auto px-4 py-3">
+      {/* 吃满卡内余高（`min-h-0` 防内容把卡片顶高）：三个页签各自内部滚动，
+          输入区固定在底部——原来写死 160px 只剩一小条能滚，下面一大片空白。
+          高度走 `flex-1` 链而不是 `h-full`：百分比高度在 flex 分配出的高度上不保证解析，
+          实测会让内容区退回内容高度、余下一大片空白。 */}
+      <div className="flex grow min-h-0 flex-col">
+        <div hidden={tab !== 'shortcuts'} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           <HomeResearchShortcuts embedded />
         </div>
-        <div hidden={tab !== 'chat'} className="h-full overflow-y-auto px-4 py-3">
+        <div hidden={tab !== 'chat'} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           <HomeResearchChat
             embedded
             assistant={assistant}
@@ -190,7 +196,7 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
             onFocusInput={focusInput}
           />
         </div>
-        <div hidden={tab !== 'history'} className="h-full overflow-y-auto px-4 py-3">
+        <div hidden={tab !== 'history'} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {model.recent.length === 0 ? (
             <EmptyState
               compact

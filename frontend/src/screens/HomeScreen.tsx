@@ -9,7 +9,7 @@ import {
   MISSING,
   localDateIso,
 } from '../lib/format'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../components/PageShell'
 import {
   Button,
   EmptyState,
@@ -284,15 +284,11 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
     />
   )
 
-  if (state === 'loading') {
-    return (
-      <div className="flex flex-col gap-4">
-        {header}
-        {/* 首页已无 5 卡阵：骨架形状跟着真实版式走（§7 / §11.0） */}
-        <ScreenSkeleton metrics={2} rows={8} />
-      </div>
-    )
-  }
+  // 加载态不再整页换成骨架（本轮返工）：五个块本来就各自独立取数（`useHomeSource`
+  // 里 indices / watchlist / positions / watch / validation 各一条 `useAsync`），每张卡
+  // 自身都带 `view.state === 'loading'` 的块内骨架。整页骨架反而把已经能立刻画出来的
+  // 框架（页头、四张卡的壳、右栏研究面板）一起藏起来，谁快谁慢都看不出来。
+  // 所以这里直接落到正常版式：外壳先出，哪块数据先回来就先填哪块。
 
   if (state === 'error') {
     const firstError = requests.map((request) => request.error).find(Boolean)
@@ -351,7 +347,7 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
           待办与异动经顶栏槽（`HomeTodoMoversBar`）进 `header.workspace-topbar`，不再占内容区。
           desk:h-full / min-h-0 链不退化（一屏无整页滚动，QUOT-570 门槛） */}
       <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1 desk:flex-row">
-        {/* 左区：上下两段 */}
+        {/* 左区：上段大盘（按内容高度，不再吃满余高）+ 下段自选/持仓（吃剩余高度、贴底） */}
         <div className="flex flex-col gap-3 desk:min-h-0 desk:flex-1">
           <HomeIndexStrip
             view={indexView}
@@ -359,9 +355,9 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
             pollSeconds={INDICES_POLL_SECONDS}
             pollTicks={indicesTicks}
             pollFailures={indicesFailures}
-            className="desk:min-h-0 desk:flex-1"
+            className="desk:min-h-0 desk:shrink-0"
           />
-          <div className="grid gap-3 grid-cols-2">
+          <div className="grid gap-3 grid-cols-2 desk:min-h-0 desk:flex-1">
             <HomeWatchlistCard view={watchlistView} />
             <HomePositionsCard view={positionsView} />
           </div>

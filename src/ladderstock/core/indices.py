@@ -96,8 +96,10 @@ Status = Literal["ok", "partial", "missing"]
 #: 「一个 down peer 不拖垮整屏」，不是给上游加压。
 DEFAULT_CELL_TIMEOUT_SEC = 3.0
 
-#: 八格总预算（秒）：预算内返回，超预算的块出 missing。前端门限 8s，这里留一半余量。
-DEFAULT_TOTAL_BUDGET_SEC = 4.5
+#: 八格总预算（秒）：预算内返回，超预算的块出 missing。前端门限 8s，这里留余量。
+#: 实测冷启动（进程刚起、MCP 尚未建会话）一次整批要 4.6s，原 4.5s 会把 A 股 + 美股
+#: 六格判成「预算内未取回」；热态 1.0–1.6s。放宽到 6.5s 覆盖冷启动，仍留 1.5s 给前端。
+DEFAULT_TOTAL_BUDGET_SEC = 6.5
 
 #: 健康通道里「确认坏了」的跃迁（`supervisor/health_events.py` 的事件名，QUOT-556）。
 #: 只认这两种：恢复中 / 进程在但是探针没回来都不算坏，照常发请求。

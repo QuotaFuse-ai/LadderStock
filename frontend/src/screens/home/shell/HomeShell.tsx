@@ -210,8 +210,9 @@ export default function HomeShell() {
           />
         </div>
 
-        {/* 研究台保持 `page-shell` 文章栏（外壳只对对话态放开），这里仍是 `flex-1` */}
-        <div hidden={mode !== 'desk'} className="min-h-0 flex-1">
+        {/* 研究台：外壳这轮也对首页放开 `.page-shell`（去掉 1440 上限与 24px 空带），
+            所以这里自己补页内边距（与对话态同一条 16px / 20px），版式仍是内容吃满整宽 */}
+        <div hidden={mode !== 'desk'} className="min-h-0 flex-1 px-4 pb-5 pt-5">
           <HomeScreen
             initialQuestion={deskQuestion}
             onQuestionConsumed={consumeDeskQuestion}

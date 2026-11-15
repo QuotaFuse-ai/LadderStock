@@ -422,5 +422,5 @@ export function useHomeSearch(options: HomeSearchOptions = {}) {
     [clearQuery, closePanel, moveActive, navigateTo, normalized.text, retry, selectHit, setQuery, submit],
   )
 
-  return { open, model, actions, openPanel, openPanelFromPointer }
+  return { open, model, actions, openPanel, openPanelFromPointer, remember }
 }

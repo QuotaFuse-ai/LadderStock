@@ -130,12 +130,12 @@ export default function Layout() {
   // 首页 ask 聚焦信号（QUOT-590）：home 上「问 AI」不开抽屉，改广播聚焦既有输入框。
   // seq 自增让重复请求也能被 HomeShell 感知（比对前值而不是布尔翻转）。
   const [askFocusSeq, setAskFocusSeq] = useState(0)
-  // 首页对话态要的是工作台而不是文章栏（QUOT-602 P2/P3）：`.page-shell` 的 24px 左右
-  // 内边距 + 1440px 上限是给长页（研究台等）用的，对话态套上就是两条空带、还不满高。
-  // 外壳只管去掉这层，页内边距由 `HomeShell` 自己按移动端原边距补。
+  // 首页两种模式（对话 / 研究台）都要的是工作台而不是文章栏（QUOT-602 P2/P3 + 本轮返工）：
+  // `.page-shell` 的 24px 左右内边距 + 1440px 上限在宽屏上就是两条空带（研究台左侧尤其明显），
+  // 对话态早先已放开，研究台这轮一并放开。外壳只管去掉这层，页内边距由 `HomeShell` 自己补。
   // 只读模式、不在这里写：写入仍归 `HomeShell` 的顶栏切换器。
   const [homeMode] = useHomeMode()
-  const homeChatFullBleed = location.pathname === '/' && homeMode === 'chat'
+  const homeChatFullBleed = location.pathname === '/' && (homeMode === 'chat' || homeMode === 'desk')
   const menuRef = useRef<HTMLButtonElement>(null)
 
   const openAi = useCallback(() => setAiOpen(true), [])
