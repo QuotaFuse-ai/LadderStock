@@ -43,6 +43,8 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
+
 from ladderstock.ai import answer_blocks, fallback, memory, module_memory
 from ladderstock.ai.answer_blocks import AnswerBlockError, build_block, normalize_ai
 from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
@@ -56,7 +58,6 @@ from ladderstock.data import chat_store
 from ladderstock.knowledge.recall import recall_wrapped
 from ladderstock.web.qa_fetch import FetchPlan, build_plan, run_fetch
 from ladderstock.web.research import _guard
-from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("ladderstock.web.assistant")
 
