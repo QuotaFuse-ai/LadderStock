@@ -46,7 +46,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ladderstock.ai import answer_blocks, fallback, memory, module_memory
-from ladderstock.ai.answer_blocks import AnswerBlockError, normalize_ai
+from ladderstock.ai.answer_blocks import AnswerBlockError, build_block, normalize_ai
 from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
@@ -56,6 +56,7 @@ from ladderstock.cli.paths import data_dir
 from ladderstock.core.boundary import BoundaryViolation
 from ladderstock.data import chat_store
 from ladderstock.knowledge.recall import recall_wrapped
+from ladderstock.web.qa_fetch import FetchPlan, build_plan, run_fetch
 from ladderstock.web.research import _guard
 
 logger = logging.getLogger("ladderstock.web.assistant")
@@ -409,19 +410,73 @@ def _success_response(
     result: Mapping[str, Any],
     sources: Sequence[ChatSource],
     intent: str = INTENT_DATA_QUERY,
+    *,
+    plan: FetchPlan | None = None,
+    fetched_metrics: Mapping[str, Any] | None = None,
+    fetched_sources: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """成功响应：既有四键原样透传，**只追加** `blocks` 与 `ai_structured`。
 
     `ai` 仍是原来的 `{model, source}` 回显（旧调用方可能在用，不得顶替）；结构化叙述
     旁挂在 `ai_structured`（`narrative / highlights / risks / evidence`），供 QUOT-581
     直接喂 `build_blocks`。字段名不与 581 的 `seq / last_seq / completed` 冲突。
+
+    QUOT-616：`fetched_metrics` / `fetched_sources` 是问答取数接线的真实产出，
+    非空时替换掉 `metrics={}` 的空契约——进 metric 块的每个值都带 Provenance 出处。
     """
     adapted = reply_to_structured(result["reply"])
+    metrics = dict(fetched_metrics or {})
+    all_sources: list[Any] = [*sources, *(fetched_sources or [])]
+    blocks = _build_blocks(
+        metrics,
+        adapted["build_input"],
+        all_sources,
+        intent=intent,
+        # 取到数或点了名失败源时，本轮确实带了真实取数行为
+        page_data=bool(metrics),
+    )
+    if plan is not None and plan.source_failures and not metrics:
+        blocks = [b for b in blocks if not (
+            b.get("type") == "notice" and b.get("payload", {}).get("kind") == "missing_data"
+            and b.get("payload", {}).get("section") == "指标"
+        )]
+        blocks.append(
+            build_block(
+                "notice",
+                {
+                    "kind": "missing_data",
+                    "section": "指标",
+                    # notice.message 不允许出现数字（answer_blocks 红线 4），
+                    # 失败细节里往往带数字，只点名具体源，细节进服务端日志。
+                    "message": "取数失败，"
+                    + "、".join(
+                        failure.split(":")[0].strip() for failure in plan.source_failures
+                    )
+                    + " 没有返回可用数据",
+                },
+            )
+        )
     return {
         **result,
-        "blocks": _build_blocks({}, adapted["build_input"], sources, intent=intent),
+        "blocks": blocks,
         "ai_structured": adapted["ai_structured"],
     }
+
+
+def _fetch_for_intent(
+    question: str,
+    intent: str,
+    context_symbol: str | None = None,
+    data_root: Any = None,
+) -> FetchPlan:
+    """按意图构建并执行取数（QUOT-616）。闲聊等非取数意图返回空计划，零 peer 调用。"""
+    plan = build_plan(question, intent, context_symbol=context_symbol)
+    if plan.dataset is None:
+        return plan
+    metrics, sources = run_fetch(plan, data_root=data_root)
+    plan.fetched_metrics = metrics
+    plan.fetched_sources = sources
+    return plan
 
 
 def _failure_blocks(exc: AssistantFailure) -> list[dict[str, Any]]:
@@ -1226,7 +1281,15 @@ def build_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        return _success_response(result, sources, intent)
+        plan = _fetch_for_intent(question, intent, context_symbol=code, data_root=data_root)
+        return _success_response(
+            result,
+            sources,
+            intent,
+            plan=plan,
+            fetched_metrics=plan.fetched_metrics,
+            fetched_sources=plan.fetched_sources,
+        )
 
     return router
 
@@ -1385,7 +1448,15 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        return _success_response(result, sources, intent)
+        plan = _fetch_for_intent(question, intent, data_root=data_root)
+        return _success_response(
+            result,
+            sources,
+            intent,
+            plan=plan,
+            fetched_metrics=plan.fetched_metrics,
+            fetched_sources=plan.fetched_sources,
+        )
 
     return router
 
@@ -1427,7 +1498,15 @@ def build_page_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        return _success_response(result, sources, intent)
+        plan = _fetch_for_intent(question, intent, data_root=data_root)
+        return _success_response(
+            result,
+            sources,
+            intent,
+            plan=plan,
+            fetched_metrics=plan.fetched_metrics,
+            fetched_sources=plan.fetched_sources,
+        )
 
     return router
 

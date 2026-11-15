@@ -169,6 +169,13 @@ METRIC_LABELS: dict[str, str] = {
     "count": "梯队数量",
     "gap": "断层档位",
     "gap_levels": "断层档位",
+    # QUOT-616 问答取数接线：spot_quote / kline_chart 的行情键（程序从 peer 取的）
+    "close": "最新价",
+    "open": "开盘价",
+    "high": "最高价",
+    "low": "最低价",
+    "prev_close": "昨收",
+    "change_pct": "涨跌幅",
 }
 
 #: 白名单键的单位（缺省空串）。显示用，不参与计算。
@@ -183,6 +190,12 @@ METRIC_UNITS: dict[str, str] = {
     "height": "板",
     "count": "只",
     "gap": "档",
+    "close": "元",
+    "open": "元",
+    "high": "元",
+    "low": "元",
+    "prev_close": "元",
+    "change_pct": "%",
 }
 
 #: 序列类指标：这些键的值是 `[(x, y), ...]`，交给 `chart` 而不是 `metric`。
