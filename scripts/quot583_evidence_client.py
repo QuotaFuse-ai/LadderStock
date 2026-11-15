@@ -48,7 +48,8 @@ def read_rows() -> list[dict]:
     conn.row_factory = sqlite3.Row
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT session_id, seq, status, updated_at, length(blocks_json) AS blocks_len FROM chat_turn ORDER BY seq"
+            "SELECT session_id, seq, status, updated_at, length(blocks_json) AS blocks_len"
+            " FROM chat_turn ORDER BY seq"
         )]
     finally:
         conn.close()
@@ -69,7 +70,11 @@ def main() -> int:
     print("\n== chat_turn 落库读回 ==", flush=True)
     rows = read_rows()
     for r in rows:
-        print(f"  {r['session_id']} seq={r['seq']} status={r['status']} blocks_len={r['blocks_len']}", flush=True)
+        print(
+            f"  {r['session_id']} seq={r['seq']} status={r['status']}"
+            f" blocks_len={r['blocks_len']}",
+            flush=True,
+        )
     n_done = sum(1 for r in rows if r["status"] == "done")
     print(f"rows={len(rows)} done={n_done}", flush=True)
     ok = hits == 10 and n_done >= 10
