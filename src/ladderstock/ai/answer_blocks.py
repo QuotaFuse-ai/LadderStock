@@ -930,7 +930,10 @@ def build_blocks(
     if keep_numbers:
         # 已核对数字保留原句（QUOT-612）：payload 仍是 `{text, tone}` 两键，schema 不变
         # （前端 47 项 vitest 依赖），只放行数字校验。
-        conclusion_block = {"type": BLOCK_CONCLUSION, "payload": validate_conclusion(conclusion, allow_numbers=True)}
+        conclusion_block = {
+            "type": BLOCK_CONCLUSION,
+            "payload": validate_conclusion(conclusion, allow_numbers=True),
+        }
     else:
         conclusion_block = build_block(BLOCK_CONCLUSION, conclusion)
     blocks.append(conclusion_block)
