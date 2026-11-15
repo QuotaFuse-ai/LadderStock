@@ -25,6 +25,11 @@ dependencies = [
   "platformdirs>=4,<5",
   # QUOT-523：跨平台进程识别（Windows/Linux/macOS 一套实现）；缺失时回退 Windows CIM
   "psutil>=5.9,<8",
+  # QUOT-611：进程内 mem0 记忆引擎（不再依赖 Docker mem0 实例）
+  "mem0ai>=2.2,<3",
+  "qdrant-client>=1.12,<2",
+  "fastembed>=0.3,<1",
+  "onnxruntime>=1.18,<2",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +69,20 @@ warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = ["yaml.*", "jsonschema.*"]
+ignore_missing_imports = true
+
+# QUOT-611：进程内 mem0 SDK 及其可选运行时（torch / sentence-transformers）
+# 都没有 py.typed，且 torch 是安装包按需携带的可选依赖；这些模块在 CI 里
+# 只可能被「找不到存根」这一种原因报错，按官方建议整包忽略缺失导入。
+[[tool.mypy.overrides]]
+module = [
+    "mem0",
+    "mem0.*",
+    "torch",
+    "torch.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+]
 ignore_missing_imports = true
 
 # `ctypes.windll` 只在 Windows 存在（typeshed 也只给 win32 平台定义），

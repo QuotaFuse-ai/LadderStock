@@ -1,18 +1,16 @@
 """QUOT-487：助手问答链上的 mem0 记忆接入（注入分段 / 写入门槛 / 降级）。
 
-只测适配层，不连真实 mem0：召回与写入都走 `httpx.MockTransport` 假实例，
-断言「提示词里出现的分段」与「写进 mem0 的载荷」两件事。
+只测适配层，不连真实引擎：召回与写入都注入假 engine，
+断言「提示词里出现的分段」与「传给引擎的载荷」两件事。
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -24,7 +22,6 @@ from ladderstock.web.server import create_app
 CODE = "600000"
 BASE_URL = "http://127.0.0.1:5950"
 LOOPBACK = ("127.0.0.1", 54321)
-MEMORY_URL = "http://127.0.0.1:9100"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 MEMORY_HEADER = memory.MEMORY_SECTION_HEADER
@@ -49,52 +46,81 @@ class _FakeClient:
 
 def _settings(**overrides: Any) -> memory.MemorySettings:
     payload: dict[str, Any] = {
-        "base_url": MEMORY_URL,
         "user_id": "u-quot487",
         "top_k": 5,
         "score_threshold": 0.55,
         "timeout_sec": 5.0,
         "enabled": True,
+        "models_dir": Path("models"),
+        "state_dir": Path("data/mem0"),
     }
     payload.update(overrides)
     return memory.MemorySettings(**payload)
 
 
-class _FakeMemory:
-    """记录请求的假 mem0：search 返回给定 hits，POST /memories/ 记计数。"""
+class _FakeEngine:
+    """记录调用的假引擎：search 返回给定 hits，add 记载荷，可注入故障。"""
 
     def __init__(
         self,
         hits: list[dict[str, Any]] | None = None,
         exc: BaseException | None = None,
-        add_status: int = 200,
+        add_error: BaseException | None = None,
     ) -> None:
         self.hits = hits or []
         self.exc = exc
-        self.add_status = add_status
-        self.requests: list[tuple[str, str]] = []
+        self.add_error = add_error
         self.added: list[dict[str, Any]] = []
         self.searched: list[dict[str, Any]] = []
+        self.calls: list[str] = []
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append((request.method, str(request.url.path)))
+    def add(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        user_id: str,
+        agent_id: str | None = None,
+        run_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        infer: bool = True,
+    ) -> dict[str, Any]:
+        self.calls.append("add")
         if self.exc is not None:
             raise self.exc
-        if request.url.path.rstrip("/") == "/search":
-            self.searched.append(json.loads(request.content))
-            return httpx.Response(200, json={"results": self.hits})
-        if request.url.path.rstrip("/") == "/memories" and request.method == "POST":
-            if self.add_status >= 400:
-                return httpx.Response(self.add_status, json={"detail": "boom"})
-            self.added.append(json.loads(request.content))
-            return httpx.Response(200, json={"ok": True})
-        return httpx.Response(404, json={"detail": "not found"})
+        if self.add_error is not None:
+            raise self.add_error
+        self.added.append(
+            {
+                "messages": messages,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "run_id": run_id,
+                "metadata": dict(metadata or {}),
+            }
+        )
+        return {"results": []}
+
+    def search(
+        self, query: str, *, top_k: int = 5, filters: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        self.calls.append("search")
+        if self.exc is not None:
+            raise self.exc
+        self.searched.append(
+            {"query": query, "top_k": top_k, "filters": dict(filters or {})}
+        )
+        return {"results": self.hits}
+
+    def get_all(self, *, filters: dict[str, Any] | None = None, top_k: int = 100) -> dict[str, Any]:
+        self.calls.append("get_all")
+        return {"results": []}
+
+    def delete_all(self, *, user_id: str, agent_id: str | None = None) -> None:
+        self.calls.append("delete_all")
 
 
-def _fake_client(fake_memory: _FakeMemory, settings: memory.MemorySettings):
-    return memory.MemoryClient(
-        settings.base_url, settings.timeout_sec, transport=httpx.MockTransport(fake_memory)
-    )
+def _fake_client(fake_engine: _FakeEngine, settings: memory.MemorySettings):
+    return memory.MemoryClient(settings, engine=fake_engine)
 
 
 def _patch_files(monkeypatch: pytest.MonkeyPatch, fake: _FakeClient) -> None:
@@ -108,7 +134,7 @@ def _patch_files(monkeypatch: pytest.MonkeyPatch, fake: _FakeClient) -> None:
 def _ask_direct(
     monkeypatch: pytest.MonkeyPatch,
     fake: _FakeClient,
-    fake_memory: _FakeMemory,
+    fake_engine: _FakeEngine,
     settings: memory.MemorySettings,
     *,
     question: str = "这只最近的走势怎么样？",
@@ -125,7 +151,7 @@ def _ask_direct(
         symbol=CODE,
         page="research",
         memory_settings=settings,
-        memory_client=_fake_client(fake_memory, settings),
+        memory_client=_fake_client(fake_engine, settings),
         sync_memory=sync_memory,
     )
 
@@ -134,20 +160,22 @@ def _endpoint_setup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     fake: _FakeClient,
-    fake_memory: _FakeMemory,
+    fake_engine: _FakeEngine,
     settings: memory.MemorySettings,
     *,
     sync_store: bool = False,
 ) -> TestClient:
-    """走真实 HTTP 端点：假 AI 客户端 + 假 mem0 实例注入 `assistant` 模块。"""
+    """走真实 HTTP 端点：假 AI 客户端 + 假引擎注入 `assistant` 模块。"""
     _patch_files(monkeypatch, fake)
     monkeypatch.setattr(
         assistant_module.memory,
         "shared_client",
-        lambda _s: _fake_client(fake_memory, settings),
+        lambda _s: _fake_client(fake_engine, settings),
     )
-    monkeypatch.setenv("LDST_MEMORY_BASE_URL", MEMORY_URL)
     monkeypatch.setenv("LDST_MEMORY_USER_ID", settings.user_id)
+    # conftest 隔离 fixture 关了通道（哨兵 env）；端点级测试显式开回
+    monkeypatch.delenv(memory.LEGACY_ENV_BASE_URL, raising=False)
+    monkeypatch.setenv("LDST_MEMORY_ENABLED", "1")
     if sync_store:
 
         def _sync_dispatch(
@@ -189,7 +217,7 @@ def test_memory_hit_injected_as_separated_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory(
+    fake_engine = _FakeEngine(
         hits=[
             {
                 "memory": "用户偏好看周线做波段",
@@ -198,7 +226,7 @@ def test_memory_hit_injected_as_separated_block(
             }
         ]
     )
-    _ask_direct(monkeypatch, fake, fake_memory, _settings())
+    _ask_direct(monkeypatch, fake, fake_engine, _settings())
 
     _, system, user, json_mode = fake.calls[0]
     assert json_mode is False
@@ -225,7 +253,7 @@ def test_symbol_hit_boosted_and_shown_with_boosted_score(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory(
+    fake_engine = _FakeEngine(
         hits=[
             # 当前标的的记忆加分：0.56 + 0.05 = 0.61（原始分低于阈值但加分后过线）
             {"memory": "用户关注该行基本面", "score": 0.56, "metadata": {"symbol": CODE}},
@@ -237,7 +265,7 @@ def test_symbol_hit_boosted_and_shown_with_boosted_score(
             },
         ]
     )
-    _ask_direct(monkeypatch, fake, fake_memory, _settings())
+    _ask_direct(monkeypatch, fake, fake_engine, _settings())
 
     system = fake.calls[0][1]
     assert "- (score 0.61) 用户关注该行基本面" in system
@@ -246,19 +274,19 @@ def test_symbol_hit_boosted_and_shown_with_boosted_score(
 
 def test_low_score_memory_not_injected(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory(
+    fake_engine = _FakeEngine(
         hits=[{"memory": "用户问过这只票", "score": 0.30, "metadata": {"symbol": CODE}}]
     )
-    _ask_direct(monkeypatch, fake, fake_memory, _settings())
+    _ask_direct(monkeypatch, fake, fake_engine, _settings())
 
-    assert ("POST", "/search") in fake_memory.requests
+    assert fake_engine.searched  # 召回确实发生了
     assert fake.calls[0][1] == assistant_module.SYSTEM_PROMPT
     assert MEMORY_HEADER not in fake.calls[0][1]
 
 
 def test_cross_user_memory_not_injected(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory(
+    fake_engine = _FakeEngine(
         hits=[
             {
                 "memory": "别人的偏好",
@@ -267,20 +295,20 @@ def test_cross_user_memory_not_injected(monkeypatch: pytest.MonkeyPatch) -> None
             }
         ]
     )
-    _ask_direct(monkeypatch, fake, fake_memory, _settings())
+    _ask_direct(monkeypatch, fake, fake_engine, _settings())
 
     assert MEMORY_HEADER not in fake.calls[0][1]
 
 
 def test_recall_capped_by_top_k(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory(
+    fake_engine = _FakeEngine(
         hits=[
             {"memory": f"偏好 {i}", "score": 0.9 - 0.01 * i, "metadata": {"symbol": CODE}}
             for i in range(8)
         ]
     )
-    _ask_direct(monkeypatch, fake, fake_memory, _settings(top_k=2))
+    _ask_direct(monkeypatch, fake, fake_engine, _settings(top_k=2))
 
     system = fake.calls[0][1]
     assert "- (score 0.95) 偏好 0" in system  # 最高分保留（0.90 + symbol 加权）
@@ -295,18 +323,18 @@ def test_recall_capped_by_top_k(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_preference_stored_with_namespace_and_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory()
+    fake_engine = _FakeEngine()
     _ask_direct(
         monkeypatch,
         fake,
-        fake_memory,
+        fake_engine,
         _settings(),
         question="我只看周线，日线太碎",
         sync_memory=True,
     )
 
-    assert len(fake_memory.added) == 1
-    payload = fake_memory.added[0]
+    assert len(fake_engine.added) == 1
+    payload = fake_engine.added[0]
     scope = assistant_module.memory_scope_for(assistant_module.DEFAULT_MODULE)
     assert scope is not None
     assert payload["user_id"] == "u-quot487"
@@ -326,69 +354,69 @@ def test_preference_stored_with_namespace_and_metadata(monkeypatch: pytest.Monke
 
 def test_explicit_remember_always_stored(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory()
+    fake_engine = _FakeEngine()
     _ask_direct(
         monkeypatch,
         fake,
-        fake_memory,
+        fake_engine,
         _settings(),
         question="记住：别给我推 ST 股",
         sync_memory=True,
     )
 
-    assert len(fake_memory.added) == 1
-    assert fake_memory.added[0]["metadata"]["symbol"] == CODE
+    assert len(fake_engine.added) == 1
+    assert fake_engine.added[0]["metadata"]["symbol"] == CODE
 
 
 def test_chitchat_not_stored(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory()
+    fake_engine = _FakeEngine()
     result = _ask_direct(
         monkeypatch,
         fake,
-        fake_memory,
+        fake_engine,
         _settings(),
         question="你好呀",
         sync_memory=True,
     )
 
     assert result["reply"] == fake.reply  # 回复照常
-    assert fake_memory.added == []  # 无意义闲聊不落库
-    assert ("POST", "/memories") not in fake_memory.requests
+    assert fake_engine.added == []  # 无意义闲聊不落库
+    assert "add" not in fake_engine.calls
 
 
 def test_secret_never_stored(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory()
+    fake_engine = _FakeEngine()
     _ask_direct(
         monkeypatch,
         fake,
-        fake_memory,
+        fake_engine,
         _settings(),
         question="我的 key 是 sk-abcdefgh12345678 帮我记住",
         sync_memory=True,
     )
 
-    assert fake_memory.added == []  # 红线优先于「帮我记住」
+    assert fake_engine.added == []  # 红线优先于「帮我记住」
 
 
 def test_unverified_number_not_stored(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory()
+    fake_engine = _FakeEngine()
     _ask_direct(
         monkeypatch,
         fake,
-        fake_memory,
+        fake_engine,
         _settings(),
         question="这只今年涨了 30% 帮我记住",
         sync_memory=True,
     )
 
-    assert fake_memory.added == []
+    assert fake_engine.added == []
 
 
 # --------------------------------------------------------------------------- #
-# 降级：mem0 不可达不影响回答
+# 降级：记忆引擎不可用不影响回答
 # --------------------------------------------------------------------------- #
 
 
@@ -396,8 +424,8 @@ def test_memory_unavailable_still_answers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     fake = _FakeClient()
-    fake_memory = _FakeMemory(exc=httpx.ConnectError("connection refused"))
-    client = _endpoint_setup(monkeypatch, tmp_path, fake, fake_memory, _settings(), sync_store=True)
+    fake_engine = _FakeEngine(exc=RuntimeError("engine boom"))
+    client = _endpoint_setup(monkeypatch, tmp_path, fake, fake_engine, _settings(), sync_store=True)
 
     with caplog.at_level(logging.WARNING, logger="ladderstock.web.assistant"):
         response = client.post(
@@ -417,8 +445,8 @@ def test_research_endpoint_passes_symbol_and_page(
 ) -> None:
     captured: dict[str, Any] = {}
     fake = _FakeClient()
-    fake_memory = _FakeMemory()
-    client = _endpoint_setup(monkeypatch, tmp_path, fake, fake_memory, _settings())
+    fake_engine = _FakeEngine()
+    client = _endpoint_setup(monkeypatch, tmp_path, fake, fake_engine, _settings())
 
     def _capture(question: str, **kwargs: Any) -> None:
         captured["question"] = question
@@ -442,8 +470,8 @@ def test_research_endpoint_passes_symbol_and_page(
     assert senate is not None
     assert captured["scope"].agent_id == senate["agent_id"]
     assert captured["scope"].kb_scope == senate["kb_scope"]
-    assert fake_memory.searched[0]["agent_id"] == senate["agent_id"]
-    assert fake_memory.searched[0]["kb_scope"] == senate["kb_scope"]
+    assert fake_engine.searched[0]["filters"]["agent_id"] == senate["agent_id"]
+    assert fake_engine.searched[0]["filters"]["kb_scope"] == senate["kb_scope"]
 
 
 def test_skills_endpoint_passes_page_skills(
@@ -451,8 +479,8 @@ def test_skills_endpoint_passes_page_skills(
 ) -> None:
     captured: dict[str, Any] = {}
     fake = _FakeClient()
-    fake_memory = _FakeMemory()
-    client = _endpoint_setup(monkeypatch, tmp_path, fake, fake_memory, _settings())
+    fake_engine = _FakeEngine()
+    client = _endpoint_setup(monkeypatch, tmp_path, fake, fake_engine, _settings())
 
     def _capture(question: str, **kwargs: Any) -> None:
         captured["question"] = question
@@ -483,14 +511,14 @@ def test_skills_endpoint_passes_page_skills(
 def test_write_failure_does_not_break_reply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """召回成功、写入被 mem0 拒绝：回答仍然是 200，只记日志。"""
+    """召回成功、写入被引擎拒绝：回答仍然是 200，只记日志。"""
     fake = _FakeClient()
-    fake_memory = _FakeMemory(add_status=500)
+    fake_engine = _FakeEngine(add_error=RuntimeError("write rejected"))
     client = _endpoint_setup(
         monkeypatch,
         tmp_path,
         fake,
-        fake_memory,
+        fake_engine,
         _settings(),
         sync_store=True,
     )

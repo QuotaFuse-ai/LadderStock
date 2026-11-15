@@ -310,14 +310,17 @@ def ai_memory_clear(
     yes: Annotated[bool, typer.Option("--yes", help="跳过确认直接清空")] = False,
     output: OutputOption = None,
 ) -> None:
-    """QUOT-487：清空助手记忆（本命名空间下全部，mem0 独立实例 QUOT-486）。
+    """QUOT-487：清空助手记忆（本命名空间下全部；QUOT-611 起为进程内 mem0 引擎）。
 
     只删 `LDST_MEMORY_USER_ID` + `ladderstock-assistant` 名下的记忆，绝不越命名
     空间；清空动作进日志（`memory_cleared`）。密钥 / 9000 端口与本命令无关。
     """
     settings = memory.load_settings()
     if not settings.enabled:
-        error("记忆通道未启用（LDST_MEMORY_BASE_URL 为空或被禁用），没有可清空的记忆库。")
+        error(
+            "记忆通道未启用（LDST_MEMORY_ENABLED 关闭或 "
+            "LDST_MEMORY_BASE_URL=''），没有可清空的记忆库。"
+        )
         raise typer.Exit(EXIT_CONFIG)
     if not yes:
         typer.confirm(
@@ -325,15 +328,14 @@ def ai_memory_clear(
             f"agent_id={memory.AGENT_ID} 名下的全部对话记忆，不可恢复。继续？",
             abort=True,
         )
-    client = memory.MemoryClient(settings.base_url, settings.timeout_sec)
+    client = memory.MemoryClient(settings)
     try:
         removed = client.clear(user_id=settings.user_id, agent_id=memory.AGENT_ID)
     except memory.MemoryUnavailable as exc:
-        error(f"mem0 不可达，未执行清空：{exc}")
+        error(f"记忆引擎不可用，未执行清空：{exc}")
         raise typer.Exit(EXIT_AI_DEGRADED) from None
     logger.info(
-        "memory_cleared endpoint=%s user_id=%s agent_id=%s removed=%s",
-        settings.base_url,
+        "memory_cleared user_id=%s agent_id=%s removed=%s",
         settings.user_id,
         memory.AGENT_ID,
         removed,
@@ -341,7 +343,6 @@ def ai_memory_clear(
     emit(
         {
             "cleared": True,
-            "endpoint": settings.base_url,
             "user_id": settings.user_id,
             "agent_id": memory.AGENT_ID,
             "removed": removed,

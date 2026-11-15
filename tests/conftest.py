@@ -26,12 +26,11 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> Path:
 def _isolate_memory_channel(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """默认关掉跨会话记忆通道（QUOT-487）：单测不连本机 mem0 实例（9100/9000）。
 
-    需要真实记忆行为的测试自行 `monkeypatch.setenv("LDST_MEMORY_BASE_URL", ...)` 打开，
-    或直接注入 `MemoryClient`。
+    需要记忆行为的测试自行注入 `MemoryClient(settings, engine=...)`，或覆盖回测试开关。
     """
     from ladderstock.ai import memory as memory_module
 
-    monkeypatch.setenv(memory_module.ENV_BASE_URL, "")
+    monkeypatch.setenv(memory_module.LEGACY_ENV_BASE_URL, "")
     memory_module.reset_runtime_state()
     yield
     memory_module.reset_runtime_state()
