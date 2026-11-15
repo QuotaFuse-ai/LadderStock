@@ -60,6 +60,7 @@ from ladderstock.core.boundary import (
     BoundaryViolation,
     ComponentControl,
     PeerControl,
+    port_offset,
     resolve_components,
     resolve_peer_control,
 )
@@ -2240,6 +2241,13 @@ class ControlPlane:
             port: int | None = int(item.get("default_port") or 0) or None
         except (TypeError, ValueError):
             port = None
+        # QUOT-618 补充：注册表这一行的端口必须与同响应里 `peers` 卡片的端口同源。
+        # `peers` 走 resolve_peer_control()（已按 LDST_PORT_OFFSET 平移），这里原来
+        # 直读 sources.yaml 的 default_port 原值，导致测试服里表格显示生产端口、
+        # 卡片显示测试端口，同一页出现两套号。偏移量非 0 时才动，0 档零回归。
+        offset = port_offset()
+        if port and offset:
+            port += offset
         if snapshot:
             status = str(snapshot.get("status"))
             status_label = str(snapshot.get("status_label"))
