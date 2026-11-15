@@ -22,6 +22,8 @@ export const NOTICE_KINDS: readonly AiNoticeKind[] = [
   'internal',
   'degraded',
   'missing_data',
+  // 正常内容块（能力 / 风险提示 / 补充说明 / 佐证），不是失败
+  'note',
 ]
 
 export function asNoticeKind(kind: string): AiNoticeKind {

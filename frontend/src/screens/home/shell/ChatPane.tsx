@@ -17,8 +17,8 @@ import { useAsync } from '../../../lib/useAsync'
 import { BlockRenderer } from '../../../components/answer-blocks'
 import { Badge, Button, ErrorBlock, IconButton, Textarea } from '../../../components/ui'
 import { ActivityFeed } from './ActivityFeed'
+import { createLiveStatusFeed } from './liveStatusFeed'
 import { RENAME_EVENT, type RenameDetail } from './renameSessionEvent'
-import { createMockStatusFeed } from './turnStatusMock'
 import type { TurnStatusFeed } from './turnStatus'
 
 /**
@@ -128,6 +128,8 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
 
   const [draft, setDraft] = useState('')
   const [pending, setPending] = useState<PendingTurn | null>(null)
+  /** 流式期间已到达的正文（累积全文，整段替换） */
+  const [liveText, setLiveText] = useState('')
   const [appendTurns, setAppendTurns] = useState<PaneData['turns']>([])
   const [failure, setFailure] = useState<{ detail: string; retryable: boolean } | null>(null)
   const [failedQuestion, setFailedQuestion] = useState<string | null>(null)
@@ -298,7 +300,9 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         ...prev,
         { seq: 0, question, blocks: null, status: 'streaming', created_at: '', updated_at: '', localId },
       ])
-      setPending({ localId, status: 'streaming', startedAt: performance.now(), feed: createMockStatusFeed() })
+      const feed = createLiveStatusFeed()
+      setPending({ localId, status: 'streaming', startedAt: performance.now(), feed })
+      setLiveText('')
       setDraft('')
       setFailure(null)
       setFailedQuestion(null)
@@ -306,12 +310,28 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       setRenaming(false)
 
       try {
-        const reply = await httpConversation.sendTurn(
+        const reply = await httpConversation.sendTurnStream(
           {
             message: question,
             session_id: activeSessionId ?? undefined,
             // 契约（D3）：不带 history，会话历史由服务端从 chat.sqlite 读；首页没有页级数据可塞
             context: { page: 'home' },
+          },
+          {
+            // 过程帧直接喂等待态流水账；正文帧驱动下面的虚线框逐字预览
+            onStatus: (status) => {
+              feed.emitStatus({
+                action: status.action,
+                item: status.item,
+                state: status.state,
+                item_id: status.item_id,
+                elapsed_ms: status.elapsed_ms,
+              })
+            },
+            onText: (text) => {
+              if (requestSeqRef.current !== seq) return
+              setLiveText(text)
+            },
           },
           controller.signal,
         )
@@ -334,12 +354,16 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         setFailure({ detail: info.detail, retryable: info.retryable })
         setFailedQuestion(question)
         setPending(null)
+        setLiveText('')
         // 连不上 / 超时：服务端可能已经落了一行，重新拉一次按真实状态显示
         if (error instanceof ConversationError && (error.kind === 'not-connected' || error.kind === 'timeout')) {
           resync()
         }
       } finally {
-        if (requestSeqRef.current === seq) abortRef.current = null
+        if (requestSeqRef.current === seq) {
+          abortRef.current = null
+          feed.close()
+        }
       }
     },
     [activeSessionId, onFirstRoundStarted, onRoundComplete, pending, resync],
@@ -354,6 +378,8 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       ),
     )
     setPending(null)
+    // 结构化终态已落地，逐字预览让位给 BlockRenderer
+    setLiveText('')
     if (reply.session_id !== activeSessionId) {
       // 首问：会话 id 是新的，标题由服务端按首问截 40 码位生成，读回前先留空
       setLocalSession({ id: reply.session_id, title: '' })
@@ -610,12 +636,15 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
                     {statusLabel(turn.status) && (
                       <p className="text-caption text-text-muted">{statusLabel(turn.status)}</p>
                     )}
-                    <BlockRenderer
-                      blocks={turn.blocks}
-                      onRetry={retry}
-                      onNavigate={navigateTarget}
-                      onOpenStatus={() => navigate('/settings')}
-                    />
+                    {/* 流式进行中这一轮的 blocks 还是空的：跳过渲染，免得画「没有可展示的答案块」 */}
+                    {!(pending && pending.localId === turn.localId) && (
+                      <BlockRenderer
+                        blocks={turn.blocks}
+                        onRetry={retry}
+                        onNavigate={navigateTarget}
+                        onOpenStatus={() => navigate('/settings')}
+                      />
+                    )}
                   </div>
                 </li>
               ))}
@@ -626,6 +655,16 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
                     startedAt={pending.startedAt}
                     compact={false}
                   />
+                  {liveText && (
+                    <div
+                      className="rounded border border-dashed border-border bg-surface-2 px-3 py-2 text-body leading-body whitespace-pre-wrap text-text"
+                      aria-live="polite"
+                      aria-busy="true"
+                    >
+                      {liveText}
+                      <span className="ml-0.5 inline-block animate-pulse text-text-muted">▍</span>
+                    </div>
+                  )}
                 </li>
               )}
             </ol>

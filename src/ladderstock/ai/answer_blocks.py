@@ -77,7 +77,7 @@ TONES: tuple[str, ...] = ("neutral", "positive", "negative", "warning")
 DIRECTIONS: tuple[str, ...] = ("up", "down", "flat")
 CHART_KINDS: tuple[str, ...] = ("line", "bar", "area")
 
-#: `AiErrorNotice` 的 6 种 kind（§3.4）。`missing_data` 是 D7 新增的第 7 种，
+#: `AiErrorNotice` 的 6 种失败 kind（§3.4）。`missing_data` 是 D7 新增的第 7 种，
 #: 决策为「不新增」时删掉这一项即可。
 NOTICE_KINDS: tuple[str, ...] = (
     "network",
@@ -88,6 +88,10 @@ NOTICE_KINDS: tuple[str, ...] = (
     "degraded",
 )
 NOTICE_MISSING_DATA = "missing_data"
+#: 第 8 种、**不是失败**：承载「能力」「风险提示」「补充说明」「佐证」这类正常内容。
+#: 此前这些块借 `degraded`，前端于是显示成「AI 叙述降级 · 已用备用路径 / 本地回放」——
+#: 明明没降级却说降级，是错的话术，故独立成中性 kind。
+NOTICE_NOTE = "note"
 
 #: 与 `web/chat.py:434` `_source_note` 逐字一致（服务端文案，不是模型编的）。
 SOURCE_NOTE_WITHOUT_DATA = "（说明：本轮没有任何可核实的数据来源，以下内容不含具体行情数据。）"
@@ -519,7 +523,7 @@ def validate_notice(payload: Any) -> dict[str, Any]:
     body = _require_mapping(payload, "notice")
     _require_keys(body, ("kind",), ("kind", "section", "message", "actions"), "notice")
     kind = _require_str(body["kind"], "notice.kind")
-    allowed = NOTICE_KINDS + (NOTICE_MISSING_DATA,)
+    allowed = NOTICE_KINDS + (NOTICE_MISSING_DATA, NOTICE_NOTE)
     if kind not in allowed:
         raise AnswerBlockError(f"notice.kind 必须取自 {allowed}，收到 {kind!r}")
     cleaned: dict[str, Any] = {"kind": kind}
@@ -962,7 +966,7 @@ def build_blocks(
         blocks.append(
             build_block(
                 BLOCK_NOTICE,
-                {"kind": "degraded", "section": "能力", "message": CAPABILITY_NOTE},
+                {"kind": NOTICE_NOTE, "section": "能力", "message": CAPABILITY_NOTE},
             )
         )
         check_ordering(blocks)
@@ -1019,21 +1023,19 @@ def build_blocks(
         blocks.append(build_block(BLOCK_TABLE, table))
 
     # 5. 风险：必须可见，不折叠；每条独立 notice（notice 不得在首位）
-    #    这里借 kind="degraded" 承载「风险提示」：AiErrorNotice 现有 6 种 kind 里
-    #    没有「风险」这一档，detail 段落装风险提示是枚举约束下的取舍；待 D7 决策
-    #    补 risk kind 后改这里一处即可。
+    #    风险提示是正常内容，不是降级：用中性 `note`，标题取段名。
     for risk in narrative["risks"][:2]:
         text = risk if keep_numbers else strip_numbers(risk)
         if text:
             blocks.append(
                 build_block(
                     BLOCK_NOTICE,
-                    {"kind": "degraded", "section": "风险提示", "message": text},
+                    {"kind": NOTICE_NOTE, "section": "风险提示", "message": text},
                 )
             )
 
     # 6. narrative[1:] + highlights：合并成一条 notice，每块 ≤4 行
-    #    同样借 kind="degraded" 表达「补充说明」，原因见第 5 步。
+    #    同样是正常内容，用 `note`（见第 5 步）。
     extras = [
         line if keep_numbers else strip_numbers(line)
         for line in (narrative["narrative"][1:] + narrative["highlights"])
@@ -1044,7 +1046,7 @@ def build_blocks(
             build_block(
                 BLOCK_NOTICE,
                 {
-                    "kind": "degraded",
+                    "kind": NOTICE_NOTE,
                     "section": "补充说明",
                     "message": "\n".join(extras[:MAX_TEXT_LINES]),
                 },
@@ -1058,7 +1060,7 @@ def build_blocks(
                 blocks.append(
                     build_block(
                         BLOCK_NOTICE,
-                        {"kind": "degraded", "section": "佐证", "message": line},
+                        {"kind": NOTICE_NOTE, "section": "佐证", "message": line},
                     )
                 )
 
@@ -1161,6 +1163,7 @@ __all__ = [
     "METRIC_UNITS",
     "NOTICE_KINDS",
     "NOTICE_MISSING_DATA",
+    "NOTICE_NOTE",
     "ROUTE_TARGETS",
     "SOURCE_NOTE_NO_RECORD",
     "SOURCE_NOTE_PROFILE_ONLY",

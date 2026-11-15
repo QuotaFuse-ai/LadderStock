@@ -5,6 +5,7 @@ import {
   ChevronUp,
   FileWarning,
   Gauge,
+  Info,
   PackageOpen,
   Scissors,
   WifiOff,
@@ -24,13 +25,13 @@ import { Badge, Button } from '../ui'
  * `error_taxonomy._RETRYABLE` 一致）。
  */
 
-export type AiNoticeKind = AiFailureKind | 'degraded' | 'missing_data'
+export type AiNoticeKind = AiFailureKind | 'degraded' | 'missing_data' | 'note'
 
 type ActionKey = 'retry' | 'switchModel' | 'status' | 'export'
 
 interface KindMeta {
   title: string
-  tone: 'danger' | 'warn'
+  tone: 'danger' | 'warn' | 'neutral'
   retryable: boolean
   /** 按优先级排列；最终只渲染调用方真正传了回调的动作 */
   actions: ActionKey[]
@@ -84,6 +85,16 @@ const META: Record<AiNoticeKind, KindMeta> = {
     hint: '已用备用路径 / 本地回放完成该段；叙述可能比正常路径简略，程序指标不受影响。',
     icon: AlertTriangle,
   },
+  // QUOT-581 收口：`degraded` 只表示**真的**走了备用路径 / 本地回放。
+  // 分块器里的「能力」「风险提示」「补充说明」「佐证」属于正常内容，用 `note`，
+  // 标题取 section 名，不摆降级话术。
+  note: {
+    title: '补充说明',
+    tone: 'neutral',
+    retryable: false,
+    actions: ['status'],
+    icon: Info,
+  },
   // QUOT-578 / D7：表达「本页这块数据没取到」。不是失败——整轮仍然成功，
   // 所以不自动重试它、也不把它当警报（`role="status"`），文案必须说清缺的是哪一块。
   missing_data: {
@@ -130,11 +141,13 @@ function metaOf(kind: AiNoticeKind): KindMeta {
 const TONE_BOX: Record<KindMeta['tone'], string> = {
   danger: 'border-danger bg-danger-soft',
   warn: 'border-warn bg-warn-soft',
+  neutral: 'border-border bg-surface-2',
 }
 
 const TONE_TEXT: Record<KindMeta['tone'], string> = {
   danger: 'text-danger',
   warn: 'text-warn',
+  neutral: 'text-text',
 }
 
 const ACTION_LABEL: Record<ActionKey, string> = {
@@ -171,6 +184,11 @@ export function AiErrorNotice({
   const meta = metaOf(kind)
   const Icon = meta.icon
   const body = detailOf(kind, message, detail)
+  // `note` 是正常内容块：标题直接用段名（补充说明 / 风险提示 / 能力 / 佐证），
+  // 不重复摆 badge，也不摆任何降级话术。
+  const isNote = kind === 'note'
+  const title = isNote ? (section ?? meta.title) : meta.title
+  const showSectionBadge = section !== undefined && !isNote
 
   const handlers: Record<ActionKey, (() => void) | undefined> = {
     // 截断 / 未归类 / 降级不接受「原样重试」，即使调用方传了 onRetry 也不渲染；
@@ -199,8 +217,8 @@ export function AiErrorNotice({
         <Icon className={cn('mt-0.5 size-4 shrink-0', TONE_TEXT[meta.tone])} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <p className={cn('font-medium', TONE_TEXT[meta.tone])}>{meta.title}</p>
-            {section && <Badge tone="neutral">{section}</Badge>}
+            <p className={cn('font-medium', TONE_TEXT[meta.tone])}>{title}</p>
+            {showSectionBadge && <Badge tone="neutral">{section}</Badge>}
             {keptPrevious && <Badge tone="info">已保留上一次结果</Badge>}
           </div>
 

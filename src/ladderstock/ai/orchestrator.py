@@ -22,7 +22,7 @@ R2（QUOT-140）在这层加了可选的 tool-calling 通道：`ToolChatClient` 
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol, TypeGuard
@@ -102,6 +102,30 @@ class HttpChatClient:
             timeout=self.timeout,
             transport=self.transport,
         )
+
+    async def aiter_text(
+        self,
+        model: str,
+        system: str,
+        user: str,
+        *,
+        timeout: float | None = None,
+    ) -> AsyncIterator[str]:
+        """逐段增量补全（QUOT-581 迁入现役链路）：只 HTTP 通道有真增量。
+
+        与 `complete` **互不替代**：`complete` 一个字没改，五段复盘与全部既有假客户端
+        照旧走单次补全。CLI 通道物理上是一次性子进程，这里直接
+        `NotImplementedError`，由调用方回落到 `complete` 并如实标注降级，不假装逐字流。
+        """
+        target = self.config.resolve(model)
+        if target.backend.kind == "cli":
+            raise NotImplementedError("CLI 通道没有 token 级增量")
+        provider = providers.provider_for(target.backend.kind)
+        effective = self.timeout if timeout is None else timeout
+        async for chunk in provider.aiter_text(
+            target, system, user, timeout=effective
+        ):
+            yield chunk
 
     def complete_with_tools(
         self,

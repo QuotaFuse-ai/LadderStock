@@ -35,15 +35,18 @@ import re
 import secrets
 import socket
 import sqlite3
+import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from ladderstock.ai import answer_blocks, fallback, memory, module_memory
 from ladderstock.ai.answer_blocks import AnswerBlockError, build_block, normalize_ai
@@ -257,6 +260,10 @@ def _failure_response(exc: AssistantFailure) -> JSONResponse:
 #: 现役 `ask()` 不做结构化输出（`json_mode=False`），`reply` 是纯文本；本适配器把 reply
 #: 按句切成 `narrative`，供 `build_blocks` 装配 conclusion。**不让模型产出块**（红线 2）。
 _SENTENCE_RE = re.compile(r"[^。！？；!?;\n]+[。！？；!?;]?")
+#: 分点列表的行首标记：`- ` / `* ` / `• ` / `1. ` / `1、` / `1)`。
+#: 命中两行以上就按「列表」处理——整行成一条，不再按句切开，否则首句被抽去当
+#: 结论、剩下的半句散进补充说明，用户看到的就是断成两截。
+_LIST_MARK_RE = re.compile(r"^(?:[-*•·]|\d+[.、)])\s*")
 
 #: 归类线索：只做**确定性**判定——句子以线索词**开头**才归类，不猜语义、不补内容。
 #: 正文中间顺带提到「风险」不算风险句，宁可留在 narrative 也不误收（切不干净就留空）。
@@ -310,7 +317,14 @@ def reply_to_structured(reply: str) -> dict[str, Any]:
     前者旁挂进响应（`ai_structured`），后者原样可喂 `build_blocks(metrics, ..., sources)`。
     """
     text = (reply or "").strip()
-    sentences = [part.strip() for part in _SENTENCE_RE.findall(text) if part.strip()]
+    # 分点式回答按**整行**切：一行就是一个要点。逐句切会把第一行的首句抽去当结论、
+    # 其余半句散进「补充说明」，同一段话被劈成两处，用户读到的是断句。
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    is_list = sum(1 for line in lines if _LIST_MARK_RE.match(line)) >= 2
+    if is_list:
+        sentences = lines
+    else:
+        sentences = [part.strip() for part in _SENTENCE_RE.findall(text) if part.strip()]
     if not sentences and text:
         sentences = [text]
     narrative: list[str] = []
@@ -928,6 +942,153 @@ def run_turn(
             raise
 
 
+#: 正文增量的最小间隔：每 0.12s 推一次累积全文，避免逐 token 刷爆事件循环
+STREAM_TEXT_INTERVAL_SEC = 0.12
+
+
+def _sse_frame(event: str, payload: Mapping[str, Any]) -> str:
+    """一帧 SSE：`event:` + 单行 JSON。JSON 用 `ensure_ascii=False` 保留中文原文。"""
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def wants_stream(request: Request) -> bool:
+    """`Accept: text/event-stream` 才走流；其余（含不带 Accept 的调用方）原样走 JSON。"""
+    return "text/event-stream" in (request.headers.get("accept") or "").lower()
+
+
+def _precheck_turn(body: ChatRequest) -> tuple[str, str]:
+    """流式路径的入参校验，与 `run_turn` 首段同口径；返回 `(session_id, message)`。"""
+    text = (body.message or "").strip()
+    if not text:
+        raise ChatFailure(
+            400,
+            code="empty_message",
+            reason="invalid_request",
+            kind="internal",
+            message="message 不能为空",
+            retryable=False,
+        )
+    if len(text) > MAX_QUESTION_ASK_CHARS:
+        raise ChatFailure(
+            400,
+            code="message_too_long",
+            reason="invalid_request",
+            kind="internal",
+            message=f"message 过长（上限 {MAX_QUESTION_ASK_CHARS} 字）",
+            retryable=False,
+        )
+    return resolve_session_id(body.session_id), text
+
+
+async def run_turn_stream(
+    *,
+    message: str,
+    session_id: str,
+    context: ChatRequestContext | None = None,
+    data_root: Any = None,
+) -> AsyncIterator[str]:
+    """会话模式的一轮问答，以 SSE 帧逐段交付。
+
+    帧契约（与前端 `conversation.ts` 的 `parseSseFrame` 对齐）：
+
+    - `status`：`{action, item, state, item_id?, elapsed_ms?}`，只服务等待态的流水账；
+    - `text`：`{text}`，**累积全文**（前端整段替换，不做拼接）；
+    - `done`：与 JSON 路径的响应同形（含 `blocks` / `turn_seq` / `status`）。
+
+    与 `run_turn` 的另一处差别是**正文直接从流式通道拿**，不走 `ask()` 的一次性返回；
+    但 prompt、记忆写入、块装配、落库时机全部复用同一条现役链路，最终 `blocks`
+    与串行路径逐字段一致。
+    """
+    started = time.monotonic()
+
+    def _status(item: str, state: str, *, item_id: str | None = None, action: str = "run") -> str:
+        payload: dict[str, Any] = {
+            "action": action,
+            "item": item,
+            "state": state,
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+        }
+        if item_id is not None:
+            payload["item_id"] = item_id
+        return _sse_frame("status", payload)
+
+    sources = list(context.sources) if context is not None else []
+    history = _session_history(data_root, session_id)
+    structured = AsyncStructuredContext(
+        page=context.page if context is not None else None,
+        data=context.data if context is not None else None,
+        sources=sources,
+        history=history,
+    )
+    context_text, _ = _normalize_context(structured)
+
+    yield _status("history", "done", item_id="history")
+
+    with _TurnWriter(data_root, session_id, message) as writer:
+        yield _status("model", "running", item_id="model")
+        try:
+            accumulated = ""
+            last_push = 0.0
+            reply = ""
+            async for kind, payload in ask_stream(
+                question=message,
+                context=context_text,
+                page_label="对话模式",
+                module=RUN_TURN_MODULE,
+                page=(
+                    context.page if context is not None and context.page else PAGE_PREFIX.strip("/")
+                ),
+                data_root=data_root,
+            ):
+                if kind == "text":
+                    accumulated = payload
+                    now = time.monotonic()
+                    if now - last_push >= STREAM_TEXT_INTERVAL_SEC:
+                        last_push = now
+                        yield _sse_frame("text", {"text": accumulated})
+                elif kind == "final":
+                    reply = payload
+            if accumulated and accumulated != reply:
+                yield _sse_frame("text", {"text": accumulated})
+            elif reply and not accumulated:
+                yield _sse_frame("text", {"text": reply})
+        except (AssistantFailure, asyncio.CancelledError, GeneratorExit) as exc:
+            if isinstance(exc, AssistantFailure):
+                chat_failure = _as_chat_failure(exc)
+                writer.finish(
+                    chat_store.FAILED,
+                    _conversation_blocks(reply="", sources=sources, failure=chat_failure),
+                )
+                yield _sse_frame(
+                    "done",
+                    {
+                        "ok": False,
+                        "code": chat_failure.code,
+                        "reason": chat_failure.reason,
+                        "retryable": chat_failure.retryable,
+                        "detail": chat_failure.message,
+                    },
+                )
+                return
+            writer.finish(chat_store.ABORTED)
+            raise
+
+        blocks = _arrive_blocks(reply=reply, sources=sources, on_block=writer.arrive)
+        writer.finish(chat_store.DONE, blocks)
+        yield _status("model", "done", item_id="model")
+        yield _sse_frame(
+            "done",
+            {
+                "ok": True,
+                "session_id": session_id,
+                "reply": reply,
+                "blocks": blocks,
+                "turn_seq": writer.turn_seq,
+                "status": chat_store.DONE,
+            },
+        )
+
+
 def _run_turn_logged(
     writer: _TurnWriter,
     *,
@@ -1108,7 +1269,21 @@ def _recall_memories(
         return []
 
 
-def ask(
+@dataclass
+class _PreparedCall:
+    """一次问答的完整准备结果（`ask` 与 `ask_stream` 共用，保证 prompt 同源）。"""
+
+    client: Any
+    model: str
+    echo: dict[str, str]
+    system: str
+    user: str
+    settings: memory.MemorySettings
+    mem_client: memory.MemoryClient | None
+    scope: fallback.MemoryScope | None
+
+
+def _prepare_call(
     *,
     question: str,
     context: str,
@@ -1118,25 +1293,15 @@ def ask(
     system_prompt: str = SYSTEM_PROMPT,
     module: str = DEFAULT_MODULE,
     symbol: str | None = None,
-    page: str = "research",
     memory_settings: memory.MemorySettings | None = None,
     memory_client: memory.MemoryClient | None = None,
-    sync_memory: bool = False,
     data_root: Any = None,
-) -> dict[str, Any]:
-    """跑一轮问答。成功返回 `{reply, model, ai, fetched_at}`；失败抛 `AssistantFailure`。
+) -> _PreparedCall:
+    """通道 + 记忆召回 + 知识库 + 拼 system/user。
 
-    QUOT-487：同一条链上先召回跨会话记忆并注入系统提示（独立分段，见
-    `ai/memory.render_memory_block`），回复完成后异步按策略写入记忆——
-    写入失败只记日志，绝不影响已经完成的回答。测试可用 `sync_memory=True`
-    同步等写入结束。
-
-    QUOT-498：记忆检索/写入走模块命名空间（`memory_scope_for`），`agent_id` 与
-    `kb_scope` 两维同时到位；配置读不出命名空间时跳过记忆，回答照常。
-
-    QUOT-566：`data_root` 指档案数据目录（`<data_root>/knowledge/`）；不传时按
-    `cli.paths.data_dir()` 解析（与知识库 REST 出口同一口径）。记忆段固定排在
-    档案段之前（`render_memory_block` 的分段顺序）。
+    抽出来的唯一目的是让 `ask()`（一次性）与 `ask_stream()`（逐段）走**同一份**
+    prompt 与同一段召回顺序：流式只换交付方式，不换内容。任何一侧改 prompt
+    都必须改到这里，否则两条路径会漂移。
     """
     client, model = _load_client(module)
     echo = _ai_echo(module, model)
@@ -1168,55 +1333,196 @@ def ask(
     header = "【页级上下文】\n" + (context.strip() or "（这一页的数据还没取到。）")
     meta = f"页面：{page_label} · 视图 {tab or '未标注'} · 日期 {day or '未标注'}"
     user = f"{meta}\n{header}\n\n【问题】\n{question.strip()}"
-    try:
-        reply = client.complete(model, system, user, json_mode=False)
-    except (UnconfiguredError, BoundaryViolation) as exc:
-        raise AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}") from None
-    except CliUnavailable as exc:
-        raise AssistantFailure(503, "ai_cli_unavailable", f"订阅版 CLI 不可用：{exc}") from None
-    except (ProviderError, httpx.HTTPError, OSError) as exc:
+    return _PreparedCall(
+        client=client,
+        model=model,
+        echo=echo,
+        system=system,
+        user=user,
+        settings=settings,
+        mem_client=mem_client,
+        scope=scope,
+    )
+
+
+def _as_assistant_failure(exc: BaseException) -> AssistantFailure:
+    """把通道异常统一归类成 `AssistantFailure`（`ask` / `ask_stream` 共用一份口径）。"""
+    if isinstance(exc, (UnconfiguredError, BoundaryViolation)):
+        return AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}")
+    if isinstance(exc, CliUnavailable):
+        return AssistantFailure(503, "ai_cli_unavailable", f"订阅版 CLI 不可用：{exc}")
+    if isinstance(exc, (ProviderError, httpx.HTTPError, OSError)):
         failure = classify_error(exc)
         if _is_timeout(exc):
-            raise AssistantFailure(
+            return AssistantFailure(
                 504, "ai_timeout", f"AI 响应超时（{int(ASSISTANT_TIMEOUT_SEC)}s）：{failure.detail}"
-            ) from None
+            )
         if failure.kind == "quota":
-            raise AssistantFailure(429, "ai_quota", failure.message) from None
+            return AssistantFailure(429, "ai_quota", failure.message)
         if failure.kind == "network":
-            raise AssistantFailure(
+            return AssistantFailure(
                 502, "ai_network", f"AI 请求未送达（网络/代理）：{failure.detail}"
-            ) from None
-        raise AssistantFailure(502, "ai_upstream", failure.message) from None
+            )
+        return AssistantFailure(502, "ai_upstream", failure.message)
+    failure = classify_error(exc)
+    if _is_timeout(exc):
+        return AssistantFailure(
+            504, "ai_timeout", f"AI 响应超时（{int(ASSISTANT_TIMEOUT_SEC)}s）：{failure.detail}"
+        )
+    return AssistantFailure(502, "ai_upstream", failure.message)
+
+
+def _remember(
+    prepared: _PreparedCall,
+    *,
+    question: str,
+    symbol: str | None,
+    page: str,
+    sync_memory: bool,
+) -> None:
+    """回答成立后写记忆；没有命名空间/客户端就跳过，失败只记日志（绝不影响回答）。"""
+    if prepared.mem_client is None or prepared.scope is None:
+        return
+    memory.dispatch_store(
+        question,
+        symbol=symbol,
+        page=page,
+        run_id=uuid.uuid4().hex,
+        settings=prepared.settings,
+        client=prepared.mem_client,
+        sync=sync_memory,
+        scope=prepared.scope,
+    )
+
+
+def ask(
+    *,
+    question: str,
+    context: str,
+    day: str | None = None,
+    tab: str | None = None,
+    page_label: str = "个股深挖",
+    system_prompt: str = SYSTEM_PROMPT,
+    module: str = DEFAULT_MODULE,
+    symbol: str | None = None,
+    page: str = "research",
+    memory_settings: memory.MemorySettings | None = None,
+    memory_client: memory.MemoryClient | None = None,
+    sync_memory: bool = False,
+    data_root: Any = None,
+) -> dict[str, Any]:
+    """跑一轮问答。成功返回 `{reply, model, ai, fetched_at}`；失败抛 `AssistantFailure`。
+
+    QUOT-487：同一条链上先召回跨会话记忆并注入系统提示（独立分段，见
+    `ai/memory.render_memory_block`），回复完成后异步按策略写入记忆——
+    写入失败只记日志，绝不影响已经完成的回答。测试可用 `sync_memory=True`
+    同步等写入结束。
+
+    QUOT-498：记忆检索/写入走模块命名空间（`memory_scope_for`），`agent_id` 与
+    `kb_scope` 两维同时到位；配置读不出命名空间时跳过记忆，回答照常。
+
+    QUOT-566：`data_root` 指档案数据目录（`<data_root>/knowledge/`）；不传时按
+    `cli.paths.data_dir()` 解析（与知识库 REST 出口同一口径）。记忆段固定排在
+    档案段之前（`render_memory_block` 的分段顺序）。
+    """
+    prepared = _prepare_call(
+        question=question,
+        context=context,
+        day=day,
+        tab=tab,
+        page_label=page_label,
+        system_prompt=system_prompt,
+        module=module,
+        symbol=symbol,
+        memory_settings=memory_settings,
+        memory_client=memory_client,
+        data_root=data_root,
+    )
+    try:
+        reply = prepared.client.complete(
+            prepared.model, prepared.system, prepared.user, json_mode=False
+        )
     except Exception as exc:  # noqa: BLE001 - 兜底也要给可读原因，绝不静默失败
-        failure = classify_error(exc)
-        if _is_timeout(exc):
-            raise AssistantFailure(
-                504, "ai_timeout", f"AI 响应超时（{int(ASSISTANT_TIMEOUT_SEC)}s）：{failure.detail}"
-            ) from None
-        raise AssistantFailure(502, "ai_upstream", failure.message) from None
+        raise _as_assistant_failure(exc) from None
 
     text = (reply or "").strip()
     if not text:
         raise AssistantFailure(502, "ai_empty", "AI 返回了空回答（模型未产出内容），请重试。")
-    if mem_client is not None and scope is not None:
-        # QUOT-487 写入：回答已经成立，异步落库；失败只记日志，不影响本次响应。
-        # 命名空间两维随载荷同行（QUOT-498），无命名空间时不落库
-        memory.dispatch_store(
-            question,
-            symbol=symbol,
-            page=page,
-            run_id=uuid.uuid4().hex,
-            settings=settings,
-            client=mem_client,
-            sync=sync_memory,
-            scope=scope,
-        )
+    # QUOT-487 写入：回答已经成立，异步落库；失败只记日志，不影响本次响应。
+    _remember(prepared, question=question, symbol=symbol, page=page, sync_memory=sync_memory)
     return {
         "reply": text,
-        "model": model,
-        "ai": echo,
+        "model": prepared.model,
+        "ai": prepared.echo,
         "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
+
+
+async def ask_stream(
+    *,
+    question: str,
+    context: str,
+    day: str | None = None,
+    tab: str | None = None,
+    page_label: str = "个股深挖",
+    system_prompt: str = SYSTEM_PROMPT,
+    module: str = DEFAULT_MODULE,
+    symbol: str | None = None,
+    page: str = "research",
+    memory_settings: memory.MemorySettings | None = None,
+    memory_client: memory.MemoryClient | None = None,
+    sync_memory: bool = False,
+    data_root: Any = None,
+) -> AsyncIterator[tuple[str, str]]:
+    """逐段产出 `(kind, payload)`；`kind='text'` 是**累积全文**。
+
+    与 `ask()` 共用 `_prepare_call()`——prompt、记忆、知识库的顺序一字不差。
+    通道没有 token 增量（CLI 一次性子进程 / 假客户端）时回落到一次 `complete`，
+    仍然只发一帧 `text`，由调用方按「不是逐字」如实展示，不假装流式。
+    """
+    prepared = _prepare_call(
+        question=question,
+        context=context,
+        day=day,
+        tab=tab,
+        page_label=page_label,
+        system_prompt=system_prompt,
+        module=module,
+        symbol=symbol,
+        memory_settings=memory_settings,
+        memory_client=memory_client,
+        data_root=data_root,
+    )
+    streamer = getattr(prepared.client, "aiter_text", None)
+    accumulated = ""
+    try:
+        if streamer is not None:
+            async for chunk in streamer(prepared.model, prepared.system, prepared.user):
+                accumulated += chunk
+                yield ("text", accumulated)
+        else:
+            reply = prepared.client.complete(
+                prepared.model, prepared.system, prepared.user, json_mode=False
+            )
+            accumulated = (reply or "")
+            if accumulated:
+                yield ("text", accumulated)
+    except NotImplementedError:
+        # CLI 通道没有 token 级增量：退回一次性补全，正文照旧完整
+        reply = prepared.client.complete(
+            prepared.model, prepared.system, prepared.user, json_mode=False
+        )
+        accumulated = (reply or "")
+        if accumulated:
+            yield ("text", accumulated)
+    except Exception as exc:  # noqa: BLE001
+        raise _as_assistant_failure(exc) from None
+
+    text = accumulated.strip()
+    if not text:
+        raise AssistantFailure(502, "ai_empty", "AI 返回了空回答（模型未产出内容），请重试。")
+    _remember(prepared, question=question, symbol=symbol, page=page, sync_memory=sync_memory)
+    yield ("final", text)
 
 
 def _question_payload_error(
@@ -1385,10 +1691,26 @@ def build_conversation_router(
         return {"session_id": session_id, "deleted": deleted}
 
     @router.post("/turns")
-    def post_turn(body: ChatRequest) -> Any:
+    async def post_turn(request: Request, body: ChatRequest) -> Any:
+        if wants_stream(request):
+            try:
+                session_id, text = _precheck_turn(body)
+            except ChatFailure as exc:
+                return _record_failure(body.session_id or "", exc)
+            return StreamingResponse(
+                run_turn_stream(
+                    message=text,
+                    session_id=session_id,
+                    context=body.context,
+                    data_root=data_root,
+                ),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
         try:
             session_id = resolve_session_id(body.session_id)
-            return run_turn(
+            return await run_in_threadpool(
+                run_turn,
                 message=body.message,
                 session_id=session_id,
                 context=body.context,
