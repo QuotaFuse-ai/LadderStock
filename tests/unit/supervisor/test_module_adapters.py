@@ -1049,12 +1049,144 @@ def test_watch_probe_requires_every_match_token(tmp_path: Path) -> None:
             r"D:\LadderStock\.venv\Scripts\python.exe",
             r"D:\LadderStock\.venv\Scripts\ldst.exe",
             "watchdog",
+            "--api",
+            "http://127.0.0.1:5950",
         )
     )
     assert watch.probe() is True
     host.procs.clear()
-    host.add_process(("python.exe", "-m", "ladderstock.cli.main", "watchdog"))
+    host.add_process(
+        (
+            "python.exe",
+            "-m",
+            "ladderstock.cli.main",
+            "watchdog",
+            "--api",
+            "http://127.0.0.1:5950",
+        )
+    )
     assert watch.probe() is True
+
+
+def _watch_pair(tmp_path: Path) -> tuple[Any, Any]:
+    """构造 prod / test 两个 WatchdogAdapter（各自 --api 指向 5950 / 5951）。"""
+    launcher = _watch_launcher(tmp_path)
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    env["LDST_LAUNCHER"] = launcher[0]
+    prod = cast(
+        Any,
+        build_default_adapters(
+            host=host, env=dict(env), log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+        )["watch"],
+    )
+    test_env = dict(env)
+    test_env["LDST_ENV"] = "test"
+    test = cast(
+        Any,
+        build_default_adapters(
+            host=host, env=test_env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+        )["watch"],
+    )
+    return prod, test
+
+
+def _host_of(*adapters: Any) -> FakeHost:
+    return cast(FakeHost, adapters[0]._host)
+
+
+def test_watch_matches_are_env_scoped_and_never_kill_each_other(tmp_path: Path) -> None:
+    """QUOT-597 验收：prod/test 双 watchdog 并存时各适配器只认本环境那个。"""
+    prod_watch, test_watch = _watch_pair(tmp_path)
+    prod_watch.start()
+    test_watch.start()
+    host = _host_of(prod_watch, test_watch)
+    prod_target = host.add_process(
+        (
+            "python.exe",
+            "-m",
+            "ladderstock.cli.main",
+            "watchdog",
+            "--api",
+            "http://127.0.0.1:5950",
+        )
+    )
+    test_target = host.add_process(
+        (
+            "python.exe",
+            "-m",
+            "ladderstock.cli.main",
+            "watchdog",
+            "--api",
+            "http://127.0.0.1:5951",
+        )
+    )
+
+    # probe：各环境只认自己的 watchdog
+    assert prod_watch.probe() is True
+    assert test_watch.probe() is True
+
+    # kill：prod 只终止 5950 那个，绝不误杀 5951
+    prod_watch.kill()
+    terminated = {pid for pid, _force in host.terminated}
+    assert prod_target in terminated
+    assert test_target not in terminated
+
+    # kill：test 只终止 5951 那个
+    host.terminated.clear()
+    test_watch.kill()
+    terminated = {pid for pid, _force in host.terminated}
+    assert test_target in terminated
+    assert prod_target not in terminated
+
+
+def test_watch_match_fails_closed_without_api_port(tmp_path: Path) -> None:
+    """QUOT-597 验收补充：拿不到 `--api` 端口一律 False（失败关闭）。"""
+    host, adapters = _adapters(tmp_path)
+    watch = cast(BaseAdapter, adapters["watch"])
+    # 本适配器自身 argv 有 `--api`，但目标进程没有 → 不命中
+    host.add_process(
+        ("python.exe", "-m", "ladderstock.cli.main", "watchdog"),
+    )
+    assert watch.probe() is False
+    # 别的环境的端口 → 不命中
+    host.add_process(
+        (
+            "python.exe",
+            "-m",
+            "ladderstock.cli.main",
+            "watchdog",
+            "--api",
+            "http://127.0.0.1:5951",
+        )
+    )
+    assert watch.probe() is False
+
+
+def test_watch_fails_closed_when_adapter_argv_has_no_api(tmp_path: Path) -> None:
+    """适配器自身 argv 没有 `--api` 时，即使别的环境有 watchdog 也不 probe/stop 成功。"""
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    env["LDST_LAUNCHER"] = _watch_launcher(tmp_path)[0]
+    built = build_default_adapters(
+        host=host, env=env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+    )
+    watch = cast(Any, built["watch"])
+    # 模拟异常形态：适配器解析不到自身 `--api` 端口
+    watch._api_port = None
+    target = host.add_process(
+        (
+            "python.exe",
+            "-m",
+            "ladderstock.cli.main",
+            "watchdog",
+            "--api",
+            "http://127.0.0.1:5951",
+        )
+    )
+    assert watch.probe() is False
+    watch.kill()
+    assert target not in {pid for pid, _force in host.terminated}
 
 
 def test_launcher_entry_prefers_env_then_venv_next_to_install_root(

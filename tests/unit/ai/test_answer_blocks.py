@@ -508,3 +508,55 @@ def test_recorded_full_answer_rebuilds_identically() -> None:
     blocks = build_blocks(recorded["metrics"], recorded["ai"], recorded["sources"])
 
     assert blocks == recorded["blocks"]
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-617：capability 意图装配——不出 missing_data，只出一条能力 notice
+# --------------------------------------------------------------------------- #
+
+CAPABILITY_QUESTIONS = ("你能做什么", "有什么功能", "怎么用")
+
+
+@pytest.mark.parametrize("question", CAPABILITY_QUESTIONS)
+def test_capability_intent_no_missing_data(question: str) -> None:
+    from ladderstock.ai.intent import INTENT_CAPABILITY, classify_intent
+
+    assert classify_intent(question) == INTENT_CAPABILITY
+    ai = {
+        "narrative": ["你好，这里是 LadderStock 页面助手。"],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
+    blocks = build_blocks({}, ai, [], intent=INTENT_CAPABILITY)
+
+    missing = [
+        b
+        for b in blocks
+        if b["type"] == "notice" and b["payload"].get("kind") == answer_blocks.NOTICE_MISSING_DATA
+    ]
+    assert missing == []
+
+
+@pytest.mark.parametrize("question", CAPABILITY_QUESTIONS)
+def test_capability_intent_has_exactly_one_capability_notice(question: str) -> None:
+    from ladderstock.ai.intent import classify_intent
+
+    ai = {"narrative": ["你好。"], "highlights": [], "risks": [], "evidence": []}
+    blocks = build_blocks({}, ai, [], intent=classify_intent(question))
+
+    notices = [b for b in blocks if b["type"] == "notice"]
+    assert len(notices) == 1
+    payload = notices[0]["payload"]
+    assert payload["section"] not in ("指标", "来源")
+    assert payload["message"] == answer_blocks.CAPABILITY_NOTE
+
+
+def test_capability_blocks_structure() -> None:
+    from ladderstock.ai.intent import INTENT_CAPABILITY
+
+    ai = {"narrative": ["你好。"], "highlights": [], "risks": [], "evidence": []}
+    blocks = build_blocks({}, ai, [], intent=INTENT_CAPABILITY)
+
+    assert [b["type"] for b in blocks] == ["conclusion", "notice"]
+    assert blocks[0]["payload"]["text"] == "你好。"

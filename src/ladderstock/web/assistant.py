@@ -43,6 +43,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from ladderstock.web.qa_fetch import FetchPlan, build_plan, run_fetch
 from pydantic import BaseModel, ConfigDict, Field
 
 from ladderstock.ai import answer_blocks, fallback, memory, module_memory
@@ -51,7 +52,6 @@ from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.ai.intent import INTENT_DATA_QUERY, classify_intent
-from ladderstock.web.qa_fetch import FetchPlan, build_plan, run_fetch
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
 from ladderstock.cli.paths import data_dir
 from ladderstock.core.boundary import BoundaryViolation
