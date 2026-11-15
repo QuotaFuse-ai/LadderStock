@@ -9,7 +9,7 @@ import {
   MISSING,
   localDateIso,
 } from '../lib/format'
-import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
+import { DemoStateBadge, OfflineBanner, PageHeader } from '../components/PageShell'
 import {
   Button,
   EmptyState,
@@ -284,15 +284,11 @@ export default function HomeScreen({ initialQuestion = null, onQuestionConsumed,
     />
   )
 
-  if (state === 'loading') {
-    return (
-      <div className="flex flex-col gap-4">
-        {header}
-        {/* 首页已无 5 卡阵：骨架形状跟着真实版式走（§7 / §11.0） */}
-        <ScreenSkeleton metrics={2} rows={8} />
-      </div>
-    )
-  }
+  // 加载态不再整页换成骨架（本轮返工）：五个块本来就各自独立取数（`useHomeSource`
+  // 里 indices / watchlist / positions / watch / validation 各一条 `useAsync`），每张卡
+  // 自身都带 `view.state === 'loading'` 的块内骨架。整页骨架反而把已经能立刻画出来的
+  // 框架（页头、四张卡的壳、右栏研究面板）一起藏起来，谁快谁慢都看不出来。
+  // 所以这里直接落到正常版式：外壳先出，哪块数据先回来就先填哪块。
 
   if (state === 'error') {
     const firstError = requests.map((request) => request.error).find(Boolean)
