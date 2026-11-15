@@ -50,6 +50,7 @@ from ladderstock.ai.answer_blocks import AnswerBlockError, normalize_ai
 from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
+from ladderstock.ai.intent import INTENT_DATA_QUERY, classify_intent
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
 from ladderstock.cli.paths import data_dir
 from ladderstock.core.boundary import BoundaryViolation
@@ -407,6 +408,7 @@ def _blocks_for(
 def _success_response(
     result: Mapping[str, Any],
     sources: Sequence[ChatSource],
+    intent: str = INTENT_DATA_QUERY,
 ) -> dict[str, Any]:
     """成功响应：既有四键原样透传，**只追加** `blocks` 与 `ai_structured`。
 
@@ -417,7 +419,7 @@ def _success_response(
     adapted = reply_to_structured(result["reply"])
     return {
         **result,
-        "blocks": _build_blocks({}, adapted["build_input"], sources),
+        "blocks": _build_blocks({}, adapted["build_input"], sources, intent=intent),
         "ai_structured": adapted["ai_structured"],
     }
 
@@ -1210,6 +1212,7 @@ def build_router(data_root: Any = None) -> APIRouter:
         if error is not None:
             return error
         context, sources = _normalize_context(body.context)
+        intent = classify_intent(question, context)
         try:
             result = ask(
                 question=question,
@@ -1223,7 +1226,7 @@ def build_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        return _success_response(result, sources)
+        return _success_response(result, sources, intent)
 
     return router
 
@@ -1368,6 +1371,7 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
         if body.bound_skill:
             page_label += f" · {body.bound_skill}"
         context, sources = _normalize_context(body.context)
+        intent = classify_intent(question, context)
         try:
             result = ask(
                 question=question,
@@ -1381,7 +1385,7 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        return _success_response(result, sources)
+        return _success_response(result, sources, intent)
 
     return router
 
@@ -1410,6 +1414,7 @@ def build_page_router(data_root: Any = None) -> APIRouter:
             page_label += f" · {body.page_key}"
         if body.bound_skill:
             page_label += f" · {body.bound_skill}"
+        intent = classify_intent(question, context)
         try:
             result = ask(
                 question=question,
@@ -1422,7 +1427,7 @@ def build_page_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        return _success_response(result, sources)
+        return _success_response(result, sources, intent)
 
     return router
 

@@ -482,9 +482,11 @@ def test_no_channel_failure_is_single_stage_a_notice(
 # 失败半流（拍板 B）：已发块保留、不追加 notice、done{completed:false, reason}
 # --------------------------------------------------------------------------- #
 
-def test_midstream_failure_keeps_sent_blocks_and_marks_incomplete(
+def test_midstream_disconnect_keeps_generating_and_completes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """断开不停（QUOT-583）：探针第 2 次起报告断开——但生成照跑，块照发，
+    `done{completed:true}`；会话记忆照落（断开 ≠ 作废，跑完落库）。"""
     _stub(monkeypatch, "今天量能比昨日放大。")
     probes = 0
 
@@ -507,16 +509,18 @@ def test_midstream_failure_keeps_sent_blocks_and_marks_incomplete(
 
     frames = _parse_sse("".join(asyncio.run(collect())))
     blocks = _blocks(frames)
-    assert len(blocks) == 1
-    assert blocks[0]["type"] == "conclusion"
+    assert [block["type"] for block in blocks] == [
+        "conclusion",
+        "metric",
+        "notice",
+        "notice",
+        "notice",
+    ]
     done = _done(frames)
-    assert done["ok"] is False
-    assert done["completed"] is False
-    assert done["reason"] == "cancelled"
-    assert done["last_seq"] == 1
-    # 不追加 notice：失败信息只在 done 里
-    assert all(block["type"] != "notice" for block in blocks)
-    # 已落账的问答不回滚：两问同一个 session 能带上历史
+    assert done["ok"] is True
+    assert done["completed"] is True
+    assert done["last_seq"] == 5
+    # 断开后生成照跑：会话记忆照落
     assert len(chat_channel._history("session-half-stream")) == 1
 
 
