@@ -317,7 +317,10 @@ def ai_memory_clear(
     """
     settings = memory.load_settings()
     if not settings.enabled:
-        error("记忆通道未启用（LDST_MEMORY_ENABLED 关闭或 LDST_MEMORY_BASE_URL=''），没有可清空的记忆库。")
+        error(
+            "记忆通道未启用（LDST_MEMORY_ENABLED 关闭或 "
+            "LDST_MEMORY_BASE_URL=''），没有可清空的记忆库。"
+        )
         raise typer.Exit(EXIT_CONFIG)
     if not yes:
         typer.confirm(
