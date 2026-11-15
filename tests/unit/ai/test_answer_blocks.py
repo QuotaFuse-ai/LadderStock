@@ -522,7 +522,12 @@ def test_capability_intent_no_missing_data(question: str) -> None:
     from ladderstock.ai.intent import INTENT_CAPABILITY, classify_intent
 
     assert classify_intent(question) == INTENT_CAPABILITY
-    ai = {"narrative": ["你好，这里是 LadderStock 页面助手。"], "highlights": [], "risks": [], "evidence": []}
+    ai = {
+        "narrative": ["你好，这里是 LadderStock 页面助手。"],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
     blocks = build_blocks({}, ai, [], intent=INTENT_CAPABILITY)
 
     missing = [
@@ -535,7 +540,7 @@ def test_capability_intent_no_missing_data(question: str) -> None:
 
 @pytest.mark.parametrize("question", CAPABILITY_QUESTIONS)
 def test_capability_intent_has_exactly_one_capability_notice(question: str) -> None:
-    from ladderstock.ai.intent import INTENT_CAPABILITY, classify_intent
+    from ladderstock.ai.intent import classify_intent
 
     ai = {"narrative": ["你好。"], "highlights": [], "risks": [], "evidence": []}
     blocks = build_blocks({}, ai, [], intent=classify_intent(question))
