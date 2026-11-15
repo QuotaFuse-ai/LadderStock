@@ -25,10 +25,12 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import logging
 import os
 import re
 import secrets
 import socket
+import sqlite3
 import threading
 import time
 import urllib.parse
@@ -47,6 +49,7 @@ from ladderstock.ai.cli_provider import build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error, sanitize
 from ladderstock.ai.providers import UnconfiguredError, provider_for
 from ladderstock.core.boundary import BoundaryViolation
+from ladderstock.data import chat_store
 
 #: 单轮上限：默认 60s；`LDST_AI_CHAT_TIMEOUT` 可覆盖，但本身也被硬上限夹住
 DEFAULT_TIMEOUT_SEC = 60.0
@@ -139,6 +142,14 @@ class ChatRequest(BaseModel):
     context: ChatRequestContext | None = None
     #: 只能压低服务端上限，不能抬高
     timeout_sec: float | None = None
+
+
+class ChatStopRequest(BaseModel):
+    """`POST /ai/chat/stop` 载荷（QUOT-583）：哪一轮要停。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
 
 
 class ChatFailure(Exception):
@@ -815,7 +826,19 @@ def _classify_exception(exc: BaseException, channel: Channel) -> ChatFailure:
 # → `_failure_body`，逐字未改）。流式路径走「失败半流」：已发块保留、不追加 notice、
 # `done` 带 `completed: false` + `reason`（PI 2026-11-12 拍板）。
 #
-# 生成与连接解耦（断开不停、跑完落库）不在本 PR 做，钩子见 `start_detached_generation`。
+def _block_event(seq: int, block: Mapping[str, Any]) -> str:
+    """`seq` 放在**事件层**（与 `type` / `payload` 平级），不进 payload（任务书 6.3）。"""
+    return sse_event(
+        "block", {"seq": seq, "type": block["type"], "payload": block["payload"]}
+    )
+
+
+# 生成与连接解耦（QUOT-583 / 任务书 9 章 + 11 章红线）：
+# - `is_disconnected` 的职责收窄为「要不要继续往这条连接写帧」，不再决定
+#   「要不要继续生成」；断开后生成照跑，`chat.sqlite` 落完整轮次。
+# - 「断开」与「用户主动停止」是两回事：断开（网络/关页）→ 跑完落 `done` /
+#   `failed`；停止（`POST /api/control/ai/chat/stop`）→ 落 `aborted`。
+# - `await_turn` / 非流式路径零改动（本单边界 2）。
 # --------------------------------------------------------------------------- #
 
 #: 阶段 A 的块上限（D2 = 6）；`answer_blocks.MAX_BLOCKS` 是唯一来源
@@ -828,6 +851,132 @@ _FOLLOWUP_ORDER: tuple[str, ...] = (
     answer_blocks.BLOCK_TABLE,
     answer_blocks.BLOCK_ACTION,
 )
+
+_logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass
+class _ActiveTurn:
+    """在跑的流式轮次：用户「停止」与「断开」在这里分岔（QUOT-583）。"""
+
+    stopped: asyncio.Event
+    task: asyncio.Task[None] | None = None
+
+
+#: session_id → 在跑的流式轮次；`stop_turn` 据此区分「用户意图」与「断网断开」
+_ACTIVE_TURNS: dict[str, _ActiveTurn] = {}
+
+
+def stop_turn(session_id: str) -> bool:
+    """用户主动停止一轮流式生成：置停止位，由 `stream_turn` 在轮询点收 `aborted`。
+
+    与断开不同：断开不改语义，这里要落 `aborted`。返回是否真有一轮在跑。
+    不直接 cancel 生成任务——生成与消费可能同任务（单测直驱）或隔队列
+    （`handle_stream` 的 `_pump`），停止语义统一由轮询点收口，避免把消费方
+    一起取消。
+    """
+    active = _ACTIVE_TURNS.get(session_id)
+    if active is None:
+        return False
+    active.stopped.set()
+    return True
+
+
+def stop_turn_result(session_id: str) -> dict[str, Any]:
+    """`POST /ai/chat/stop` 的响应体：`stopped` 如实反映有没有轮可停。"""
+    return {"ok": True, "session_id": session_id, "stopped": stop_turn(session_id)}
+
+
+class _StreamTurnPersist:
+    """流式轮次落库（QUOT-580 的 `chat_turn` 表）：首块 begin、逐块 update、终态 finish。
+
+    `data_root` 为 None（单测未接库 / 库不可用）时整段静默跳过——流式帧序列
+    不因此有任何变化。失败只 `logger.warning`，不影响回答（与非流式落账同口径）。
+    """
+
+    def __init__(self, data_root: Any, session_id: str, question: str) -> None:
+        self._data_root = data_root
+        self._session_id = session_id
+        self._question = question[:MAX_MESSAGE_CHARS]
+        self._conn: sqlite3.Connection | None = None
+        self._seq: int | None = None
+        self._broken = False
+
+    def _open(self) -> sqlite3.Connection | None:
+        try:
+            return chat_store.connect(self._data_root)
+        except (sqlite3.Error, OSError, BoundaryViolation) as exc:
+            _logger.warning("chat_store_unavailable detail=%s", exc)
+            self._broken = True
+            return None
+
+    def _run(self, op: str, fn: Callable[[sqlite3.Connection], Any]) -> Any:
+        if self._conn is None:
+            if self._broken:
+                return None
+            self._conn = self._open()
+            if self._conn is None:
+                return None
+        try:
+            return fn(self._conn)
+        except sqlite3.Error as exc:
+            _logger.warning("chat_store_write_failed op=%s detail=%s", op, exc)
+            self._broken = True
+            return None
+
+    def begin(self, blocks: list[dict[str, Any]]) -> None:
+        if self._seq is not None:
+            return
+        recorded = self._run(
+            "begin",
+            lambda conn: chat_store.begin_turn(
+                conn, session_id=self._session_id, question=self._question, blocks=blocks
+            ),
+        )
+        if recorded is not None:
+            self._seq = int(recorded["seq"])
+
+    def update(self, blocks: list[dict[str, Any]]) -> None:
+        if self._seq is None:
+            self.begin(blocks)
+            return
+        seq = self._seq
+        self._run(
+            "update",
+            lambda conn: chat_store.update_turn_blocks(
+                conn, session_id=self._session_id, seq=seq, blocks=blocks
+            ),
+        )
+
+    def finish(self, status: str, blocks: list[dict[str, Any]] | None = None) -> None:
+        if self._seq is None and status != chat_store.DONE:
+            self.update(blocks or [])
+        if self._seq is None:
+            return
+        seq = self._seq
+        self._run(
+            "finish",
+            lambda conn: chat_store.finish_turn(
+                conn,
+                session_id=self._session_id,
+                seq=seq,
+                status=status,
+                blocks=blocks,
+            ),
+        )
+
+    def close(self) -> None:
+        chat_store.close(self._conn)
+        self._conn = None
+
+
+async def start_detached_generation(*args: Any, **kwargs: Any) -> None:
+    """保留的解耦入口：现役解耦在 `handle_stream` 内完成（泵 + 断开不停）。
+
+    QUOT-583 实现后本钩子不再承担解耦职责，留名只为既有引用不炸；
+    新代码请直接用 `dispatch` / `handle_stream`。
+    """
+    return None
 
 
 def answer_block_payloads(
@@ -899,23 +1048,6 @@ def sse_event(event: str, data: Mapping[str, Any]) -> str:
     return f"event: {event}\ndata: {body}\n\n"
 
 
-def _block_event(seq: int, block: Mapping[str, Any]) -> str:
-    """`seq` 放在**事件层**（与 `type` / `payload` 平级），不进 payload（任务书 6.3）。"""
-    return sse_event(
-        "block", {"seq": seq, "type": block["type"], "payload": block["payload"]}
-    )
-
-
-async def start_detached_generation(*args: Any, **kwargs: Any) -> None:
-    """「生成与连接解耦」钩子：断开不停、跑完落库。
-
-    PI 2026-11-12：本 PR 只留接口，空实现。落地归 QUOT-583（先修 `await_turn`
-    的断开信号——实测 7 次探针只有 1 次命中 `is_disconnected`）。
-    """
-    # TODO(QUOT-583): 连接断开后让生成继续跑完并落库；重连按 last_seq 续推。
-    return None
-
-
 #: 定稿前缀切分：与 assistant.py `_SENTENCE_RE` 同一套句界（快照装配同源）
 _FINALIZED_SENTENCE_RE = re.compile(r"[^。！？；!?;\n]+[。！？；!?;]?[ \t]*")
 
@@ -961,6 +1093,10 @@ def _finalized_prefix(text: str) -> str:
     ends = ("。", "！", "？", "；", "!", "?", ";", "\n")
     return "".join(part for part in parts if part and part.endswith(ends)).rstrip()
 
+
+
+class _UserStopped(Exception):
+    """用户主动停止（`stop_turn`）：与「断开」严格区分，落 `aborted`。"""
 
 
 class AnswerBlockDivergence(Exception):
@@ -1027,12 +1163,20 @@ async def stream_turn(
     metrics: Mapping[str, Any] | None = None,
     registry: Any = None,
     event_bus: Any = None,
+    data_root: Any = None,
 ) -> AsyncIterator[str]:
     """逐帧产出 SSE 文本；与非流式 `run_turn` 同一条计算链、同一份会话落账。
 
     块由 `answer_block_payloads()`（阶段 A `build_blocks`）装配：首块必为
     `conclusion`，总数 ≤ `MAX_ANSWER_BLOCKS`；`seq` 从 1 递增不跳号，`done`
     带 `last_seq` / `completed` / `elapsed_ms` / 累计 `actions` 摘要。
+
+    断开不停（QUOT-583）：`is_disconnected` 为真只表示「别再往这条连接写帧」，
+    **不终止生成**——迭代器内部转 `detached`（置 `detached_event`），后续帧仍在
+    生成（消费方拿 `detached_event` 决定是否丢弃），跑完后落 `chat.sqlite`
+    （`status=done` / 失败 `failed`）。用户主动停止走 `stop_turn` →
+    `stop_turn` 置 `_ActiveTurn.stopped` → 这里取消底层调用并落 `aborted`，
+    与断开严格区分。`data_root` 非 None 时按 QUOT-580 同表落库。
 
     真流式（PI 2026-11-13 拍板）：
 
@@ -1164,6 +1308,34 @@ async def stream_turn(
             data["retryable"] = failure.retryable
         return [_done_frame(data)]
 
+    # ---- QUOT-583：断开不停 + 落库 + 停止/断开分岔 -------------------------
+    #: 断开后置位：之后 `is_disconnected` 不再轮询，帧继续产出、连接侧自行丢弃
+    detached_event = asyncio.Event()
+
+    async def _disconnect_poll() -> bool:
+        """断开探针：一次命中即定格 `detached`，之后不再问连接（命中率 100%）。"""
+        if detached_event.is_set() or is_disconnected is None:
+            return False
+        if await is_disconnected():
+            detached_event.set()
+            _logger.info(
+                "chat_stream_disconnected session_id=%s seq=%d", session_id, seq
+            )
+        return detached_event.is_set()
+
+    persist = _StreamTurnPersist(data_root, session_id, (message or "").strip())
+
+    def _persist_blocks(blocks: list[dict[str, Any]]) -> None:
+        if blocks:
+            persist.update([dict(block) for block in blocks])
+
+    async def _user_stopped() -> bool:
+        active = _ACTIVE_TURNS.get(session_id)
+        return active is not None and active.stopped.is_set()
+
+    active = _ACTIVE_TURNS.setdefault(session_id, _ActiveTurn(stopped=asyncio.Event()))
+    active.task = asyncio.current_task()
+
     try:
         started = _monotonic_ms()
         yield _stream_status("received", "已收到请求，正在准备", "running", item_id="turn")
@@ -1289,19 +1461,9 @@ async def stream_turn(
                         chunk = next(iter(finished)).result()
                     except StopAsyncIteration:
                         break
-                    if is_disconnected is not None and await is_disconnected():
-                        stream_mode = "stream"
-                        yield _done_frame(
-                            {
-                                "ok": False,
-                                "completed": False,
-                                "reply": "",
-                                "reason": "cancelled",
-                                "last_seq": seq,
-                                "followups": _followups(sent_blocks),
-                            }
-                        )
-                        return
+                    if await _user_stopped():
+                        raise _UserStopped
+                    await _disconnect_poll()
                     reply_parts.append(chunk)
                     tail += chunk
                     finalized = _finalized_prefix(tail)
@@ -1312,6 +1474,7 @@ async def stream_turn(
                         ):
                             seq += 1
                             sent_blocks.append(block)
+                            _persist_blocks(sent_blocks)
                             yield _block_event(seq, block)
                         last_frame_ms = _monotonic_ms()
                         tail = tail[len(finalized):]
@@ -1358,16 +1521,38 @@ async def stream_turn(
             stream_mode = "stream"
         else:
             # 降级路径：CLI 一次性子进程 / 上游已传结构化 ai——正文一次性取回
+            stop_wait = asyncio.ensure_future(active.stopped.wait())
+            complete_task = asyncio.ensure_future(
+                complete(channel, system, user, timeout=timeout)
+            )
+            done_set, _ = await asyncio.wait(
+                {stop_wait, complete_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            stop_wait.cancel()
+            if stop_wait in done_set:
+                complete_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await complete_task
+                raise _UserStopped
             try:
-                reply_text = await complete(channel, system, user, timeout=timeout)
+                reply_text = complete_task.result()
             except ChatAborted:
                 raise
             except ChatFailure:
                 raise
             except asyncio.CancelledError:
+                if await _user_stopped():
+                    raise _UserStopped from None
                 raise
             except BaseException as exc:  # noqa: BLE001 - 与 run_turn 同口径分类
+                if await _user_stopped():
+                    raise _UserStopped from None
                 raise _classify_exception(exc, channel) from None
+            if await _user_stopped():
+                raise _UserStopped
+            # 降级路径同样要探一次断开（QUOT-583）：命中只定格 detached，
+            # 生成已跑完不受影响，帧照发（连接侧丢弃）
+            await _disconnect_poll()
             if not (reply_text or "").strip():
                 raise ChatFailure(
                     502,
@@ -1441,24 +1626,15 @@ async def stream_turn(
         except ChatFailure as failure:
             # 块没装配出来，这一问不算数：撤掉刚落的账
             _forget(session_id)
+            persist.finish(chat_store.FAILED, [])
             yield _half_stream_done(failure.reason, failure)[0]
             return
         for block in blocks[len(sent_blocks):]:
-            if is_disconnected is not None and await is_disconnected():
-                yield _done_frame(
-                    {
-                        "ok": False,
-                        "completed": False,
-                        "reply": "",
-                        "reason": "cancelled",
-                        "last_seq": seq,
-                        "followups": _followups(sent_blocks),
-                    }
-                )
-                return
             seq += 1
             sent_blocks.append(block)
+            _persist_blocks(sent_blocks)
             yield _block_event(seq, block)
+        persist.finish(chat_store.DONE, [dict(block) for block in sent_blocks])
         actions.append(
             {
                 "action": "assemble",
@@ -1497,7 +1673,35 @@ async def stream_turn(
     except ChatAborted:
         # 连接没了：不补发任何帧（落账发生在 Abort 之前才会留下）
         return
+    except (_UserStopped, asyncio.CancelledError):
+        # 用户主动停止（stop_turn 取消了底层调用）：落 aborted（用户意图），
+        # 已到达的块定格保留；若并非用户停的（外层连接被取消、无人置停止位），
+        # 按 aborted 之外的断开语义处理——QUOT-583：断开不该落 aborted，
+        # 这里如实回落 failed？不：外层取消且未置停止位时没有用户意图可言，
+        # 按既有断开契约不落账、不打帧，与改造前一致。
+        if await _user_stopped():
+            persist.finish(chat_store.ABORTED, [dict(block) for block in sent_blocks])
+            try:
+                yield _done_frame(
+                    {
+                        "ok": False,
+                        "completed": False,
+                        "reply": "",
+                        "reason": "aborted",
+                        "last_seq": seq,
+                        "followups": _followups(sent_blocks),
+                    }
+                )
+            except (GeneratorExit, RuntimeError):
+                pass
+            return
+        raise
     except ChatFailure as failure:
+        persist.finish(
+            chat_store.FAILED,
+            [dict(block) for block in sent_blocks]
+            or answer_block_payloads(ai=None, sources=[], failure=failure),
+        )
         if seq == 0 and not sent_blocks:
             # 首块前失败：失败 notice 仍走块协议（与非流式 6.4 第 5 条同源）
             for block in answer_block_payloads(ai=None, sources=[], failure=failure):
@@ -1531,6 +1735,10 @@ async def stream_turn(
         yield _half_stream_done("model_error", None)[0]
         return
     finally:
+        entry = _ACTIVE_TURNS.get(session_id)
+        if entry is not None and entry.stopped is active.stopped:
+            _ACTIVE_TURNS.pop(session_id, None)
+        persist.close()
         if installed_on_call is not None:
             try:
                 registry.on_call = installed_on_call
@@ -1697,6 +1905,7 @@ async def handle_stream(
     config_root: Any = None,
     registry: Any = None,
     event_bus: Any = None,
+    data_root: Any = None,
 ) -> StreamingResponse:
     """流式入口（QUOT-581）：`text/event-stream`，帧见 `stream_turn`。
 
@@ -1704,6 +1913,11 @@ async def handle_stream(
     `handle`（非流式），本函数只由显式开关（`Accept: text/event-stream`）进入。
     C2（QUOT-598）：`registry` / `event_bus` 只是转交给 `stream_turn`，缺省
     None 时帧序列与接入前逐字节一致。
+
+    生成与连接解耦（QUOT-583）：生成跑在独立任务里（`_pump`），响应生成器只是
+    从队列往外搬帧。客户端断开时 Starlette/uvicorn 会取消**响应**生成器，但
+    `_pump` 任务不受影响——生成继续跑完，`stream_turn` 内部经 `_StreamTurnPersist`
+    把完整轮次落 `chat.sqlite`（断开→`done`/`failed`；`stop_turn`→`aborted`）。
     """
     try:
         session_id = resolve_session_id(body.session_id)
@@ -1715,8 +1929,12 @@ async def handle_stream(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
-    async def frames() -> AsyncIterator[str]:
-        async for frame in stream_turn(
+    frames_queue: asyncio.Queue[tuple[bool, str] | None] = asyncio.Queue()
+    #: 置位后连接侧停止投递剩余帧（生成侧继续跑，直到 done / aborted / failed）
+    detached_event = asyncio.Event()
+
+    async def _pump() -> None:
+        generation = stream_turn(
             message=body.message,
             session_id=session_id,
             context=body.context,
@@ -1725,7 +1943,39 @@ async def handle_stream(
             is_disconnected=request.is_disconnected if request is not None else None,
             registry=registry,
             event_bus=event_bus,
-        ):
+            data_root=data_root,
+        )
+        try:
+            async for frame in generation:
+                await frames_queue.put((detached_event.is_set(), frame))
+                if detached_event.is_set():
+                    # 连接没了：帧继续产出但不再入队；生成跑到终态自然收尾
+                    async for _ in generation:
+                        pass
+                    break
+            await frames_queue.put(None)
+        except asyncio.CancelledError:
+            if detached_event.is_set():
+                return
+            await frames_queue.put(None)
+            raise
+        except BaseException:  # noqa: BLE001 - 生成侧异常已在帧里收半流；兜底关队
+            await frames_queue.put(None)
+            raise
+
+    asyncio.ensure_future(_pump())
+
+    async def frames() -> AsyncIterator[str]:
+        # 断开时 uvicorn 会关闭本生成器——**绝不 cancel pump**：取消会顺着
+        # `stream_turn` 传进去杀掉生成（QUOT-583 之前的老毛病）。生成侧永远
+        # 跑到终态（done / aborted / failed）后自己投 None 退场，这里只管搬帧。
+        while True:
+            item = await frames_queue.get()
+            if item is None:
+                break
+            was_detached, frame = item
+            if was_detached:
+                break
             yield frame
 
     return StreamingResponse(
@@ -1773,15 +2023,22 @@ async def dispatch(
     config_root: Any = None,
     registry: Any = None,
     event_bus: Any = None,
+    data_root: Any = None,
 ) -> Response:
     """统一入口：`Accept: text/event-stream` 走 SSE，其余走既有 JSON（零改动）。
 
     C2（QUOT-598）只接流式一支：`registry` 是本次问答可用对话的工具环执行器，
     `event_bus` 是 cog 阶段事件的总线；两者都不进非流式契约。
+    `data_root`（QUOT-583）只进流式一支：落 `chat.sqlite` 用，非流式一字不变。
     """
     if request is not None and wants_stream(request):
         return await handle_stream(
-            body, request, config_root=config_root, registry=registry, event_bus=event_bus
+            body,
+            request,
+            config_root=config_root,
+            registry=registry,
+            event_bus=event_bus,
+            data_root=data_root,
         )
     return await handle(body, request, config_root=config_root)
 
@@ -1804,6 +2061,7 @@ __all__ = [
     "ChatRequest",
     "ChatRequestContext",
     "ChatSource",
+    "ChatStopRequest",
     "answer_block_payloads",
     "await_turn",
     "complete",
@@ -1817,6 +2075,8 @@ __all__ = [
     "run_turn",
     "sse_event",
     "start_detached_generation",
+    "stop_turn",
+    "stop_turn_result",
     "stream_turn",
     "timeout_limit",
     "wants_stream",

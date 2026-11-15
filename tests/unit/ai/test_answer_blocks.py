@@ -508,3 +508,114 @@ def test_recorded_full_answer_rebuilds_identically() -> None:
     blocks = build_blocks(recorded["metrics"], recorded["ai"], recorded["sources"])
 
     assert blocks == recorded["blocks"]
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-612：降级路径数字保留 + 来源措辞按实情区分
+# --------------------------------------------------------------------------- #
+
+_ARCHIVE_REPLY_AI = {
+    "narrative": [
+        (
+            "从标的档案（as_of 2026-11-09）参考：最近一个交易日 2026-11-06 "
+            "收盘价 10.03 元，涨幅 +1.62%，来源 tencent_quote_batch。"
+        ),
+    ],
+    "highlights": [],
+    "risks": [],
+    "evidence": [],
+}
+
+
+def _notice_messages(blocks: list[dict[str, object]]) -> list[str]:
+    return [block["payload"]["message"] for block in blocks if block["type"] == "notice"]
+
+
+def test_degraded_reply_keeps_verified_numbers_when_answer_cites_source() -> None:
+    blocks = build_blocks({}, _ARCHIVE_REPLY_AI, [])
+
+    conclusion = blocks[0]["payload"]["text"]
+    assert "10.03 元" in conclusion
+    assert "2026-11-06" in conclusion
+    for message in _notice_messages(blocks):
+        assert "是元" not in message
+        assert "涨幅 ，" not in message
+
+
+def test_no_source_reply_still_strips_numbers_without_self_citation() -> None:
+    plain_ai = {
+        "narrative": ["近 20 日震荡偏弱，主力资金连续净流出。"],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
+
+    blocks = build_blocks({}, plain_ai, [])
+
+    assert "20 日" not in blocks[0]["payload"]["text"]
+
+
+def test_source_notice_distinguishes_profile_recall_from_no_data() -> None:
+    blocks = build_blocks({}, _ARCHIVE_REPLY_AI, [])
+
+    messages = _notice_messages(blocks)
+    assert answer_blocks.SOURCE_NOTE_PROFILE_ONLY in messages
+    assert answer_blocks.SOURCE_NOTE_WITHOUT_DATA not in messages
+
+
+def test_source_notice_without_self_citation_keeps_original_wording() -> None:
+    blocks = build_blocks({}, {}, [])
+
+    assert answer_blocks.SOURCE_NOTE_WITHOUT_DATA in _notice_messages(blocks)
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-617：capability 意图装配——不出 missing_data，只出一条能力 notice
+# --------------------------------------------------------------------------- #
+
+CAPABILITY_QUESTIONS = ("你能做什么", "有什么功能", "怎么用")
+
+
+@pytest.mark.parametrize("question", CAPABILITY_QUESTIONS)
+def test_capability_intent_no_missing_data(question: str) -> None:
+    from ladderstock.ai.intent import INTENT_CAPABILITY, classify_intent
+
+    assert classify_intent(question) == INTENT_CAPABILITY
+    ai = {
+        "narrative": ["你好，这里是 LadderStock 页面助手。"],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
+    blocks = build_blocks({}, ai, [], intent=INTENT_CAPABILITY)
+
+    missing = [
+        b
+        for b in blocks
+        if b["type"] == "notice" and b["payload"].get("kind") == answer_blocks.NOTICE_MISSING_DATA
+    ]
+    assert missing == []
+
+
+@pytest.mark.parametrize("question", CAPABILITY_QUESTIONS)
+def test_capability_intent_has_exactly_one_capability_notice(question: str) -> None:
+    from ladderstock.ai.intent import classify_intent
+
+    ai = {"narrative": ["你好。"], "highlights": [], "risks": [], "evidence": []}
+    blocks = build_blocks({}, ai, [], intent=classify_intent(question))
+
+    notices = [b for b in blocks if b["type"] == "notice"]
+    assert len(notices) == 1
+    payload = notices[0]["payload"]
+    assert payload["section"] not in ("指标", "来源")
+    assert payload["message"] == answer_blocks.CAPABILITY_NOTE
+
+
+def test_capability_blocks_structure() -> None:
+    from ladderstock.ai.intent import INTENT_CAPABILITY
+
+    ai = {"narrative": ["你好。"], "highlights": [], "risks": [], "evidence": []}
+    blocks = build_blocks({}, ai, [], intent=INTENT_CAPABILITY)
+
+    assert [b["type"] for b in blocks] == ["conclusion", "notice"]
+    assert blocks[0]["payload"]["text"] == "你好。"

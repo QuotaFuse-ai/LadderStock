@@ -2371,6 +2371,26 @@ def _safe_log_name(mapping_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", mapping_id)[:64] or "mapping"
 
 
+def _api_port_from_argv(argv: Sequence[str]) -> int | None:
+    """从看门狗 argv 解析 `--api http://127.0.0.1:<port>` 的端口（QUOT-597）。
+
+    解析不到（缺 `--api`、URL 无端口、端口非数字）返回 None，由调用方按
+    失败关闭处理。
+    """
+    for i, part in enumerate(argv):
+        if part == "--api" and i + 1 < len(argv):
+            url = argv[i + 1].rsplit(":", 1)
+            if len(url) == 2 and url[1].isdigit():
+                return int(url[1])
+            return None
+        if part.startswith("--api="):
+            url = part[6:].rsplit(":", 1)
+            if len(url) == 2 and url[1].isdigit():
+                return int(url[1])
+            return None
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # 组装
 # --------------------------------------------------------------------------- #
@@ -2400,6 +2420,12 @@ class WatchdogAdapter:
     - probe：扫描命中本 CLI 的 watchdog 子命令 → True；失败关闭。
     - stop/kill：拉起过的根 + 扫描命中的现行持有者，整树终止。
     - 识别关键字与原 StartFace 相同的三形态（venv/打包），只去掉 `--port`。
+
+    QUOT-597 env scoped：`--api http://127.0.0.1:<panel_port>` 是看门狗自带的
+    环境判别位（prod=5950 / test=5951）。`_matches()` 除关键字命中外，还要求
+    目标进程 cmdline 的 `--api` 端口与本适配器自身 argv 里的 `--api` 端口一致，
+    否则 prod/test 并行时会互杀对方的自愈监控器。任一侧拿不到 `--api` 端口
+    一律 False（失败关闭，与既有语义不弱化）。
     """
 
     MARKER = "watchdog"
@@ -2425,6 +2451,7 @@ class WatchdogAdapter:
         self._clock = clock
         self._sleep = sleep
         self._roots: list[int] = []
+        self._api_port = _api_port_from_argv(argv)
 
     # ------------------------------------------------------------------ 协议
 
@@ -2466,11 +2493,18 @@ class WatchdogAdapter:
 
     def _matches(self, snap: ProcessSnapshot) -> bool:
         joined = snap.joined
-        return (
+        keyword = (
             ("ladderstock.cli.main" in joined and self.MARKER in joined)
             or ("ldst" in joined and self.MARKER in joined)
             or ("ladderstock" in joined and self.MARKER in joined)
         )
+        if not keyword:
+            return False
+        # QUOT-597 env scoped：目标 `--api` 端口必须等于本适配器自身的端口；
+        # 任一侧拿不到 `--api` 端口一律 False（失败关闭，绝不误杀别的环境）。
+        if self._api_port is None:
+            return False
+        return _api_port_from_argv(snap.cmdline) == self._api_port
 
     def _find(self) -> tuple[ProcessSnapshot, ...]:
         try:

@@ -1,6 +1,7 @@
 # SPEC-AI-CHAT 对话通道：一轮问答端点
 
-- 版本：v0.4（2026-11-13，QUOT-580 第二轮：边到达边 upsert + `chat_turn.status` 四态；
+- 版本：v0.5（2026-11-15，QUOT-583：断开不停、跑完落库，`/ai/chat/stop` 主动中止；
+  v0.4 2026-11-13，QUOT-580 第二轮：边到达边 upsert + `chat_turn.status` 四态；
   v0.3 同日，QUOT-573 补 §1.1、QUOT-580 补 §4.1 / §5；v0.2 2026-11-08，QUOT-473；v0.1 首版 2026-11-07）
 - 关联：DEC-067（本规格的决策记录）、DEC-084（会话落库 `chat.sqlite`，取代 DEC-067
   「不持久化」）、DEC-085（写入时机与 `status` 四态，在 DEC-084 上加列不推翻）、
@@ -363,16 +364,25 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
 - 上游返回 5xx 时单独归为 `ai_upstream`（502，`kind=network`，可重试）：
   请求已经送达、是上游自己报错，不能和「本地请求没送出去」混在一起说。
 
-### 6.3 中止（前端 abort）
+### 6.3 中止（前端 abort）与断开（QUOT-583）
 
-- 端点每 0.2s 轮询 `Request.is_disconnected()`；发现断连即取消本轮；
-- CLI 通道：`asyncio.create_subprocess_exec` 启动，取消时 Windows 用
-  `taskkill /PID <pid> /T /F`、POSIX 用 `killpg(SIGKILL)`，**整棵进程树一并终止**，
-  不留孤儿进程；
+- **断开 ≠ 中止**（QUOT-583 起生效）：客户端断连（`Request.is_disconnected()`）
+  只表示「别再往这条连接写帧」，**不终止生成**——生成继续跑完，完整块落
+  `chat_turn`（`status=done`；失败 `failed`），刷新 / 重连可从库取回。
+  uvicorn 0.54 + Starlette 1.10 的 `http.disconnect` 是一次性信号，实现侧命中
+  一次即定格、之后不再轮询（真服务器 10 次中途断开实测命中率 10/10）；
+- 流式路径生成跑在独立 pump 任务里，响应生成器断开时被取消也不影响生成
+  （cancel 不再顺链传递）；
+- **用户主动中止**走新端点 `POST /api/control/ai/chat/stop`（`session_id`）：
+  置轮次的停止事件，生成在下一个轮询点收尾，落 `status=aborted`，与断开严格
+  区分；幂等——没有在跑的轮次回 200 `stopped:false`；
+- CLI 通道：`asyncio.create_subprocess_exec` 启动，**主动中止**（`stop`）时
+  Windows 用 `taskkill /PID <pid> /T /F`、POSIX 用 `killpg(SIGKILL)`，**整棵
+  进程树一并终止**，不留孤儿进程；断开不停（CLI 子进程跑完即止）；
 - 中止**落一行 `status=aborted`**（`/api/conversation`，DEC-085）：内容定格，
   已到达的块保留，可回看、可作下一问上下文；`/api/control/ai/chat` 旧端点仍不写历史；
 - 中止响应码 499 `ai_aborted`（客户端已断开，通常看不到）；
-- HTTP 通道没有子进程，取消任务后底层线程由 httpx 自身超时兜底。
+- HTTP 通道没有子进程，主动中止时取消任务后底层线程由 httpx 自身超时兜底。
 
 ## 7. 错误码
 
@@ -418,3 +428,4 @@ DEC-067「进程重启即清空」的口径已被 DEC-084 取代（现役链路�
 | 2026-11-13 | v0.3 | 新增 §1.1「对首页的适用性」：首页不走本控制面端点，改走 `POST /api/page/assistant`；首页单轮无状态、§4 会话记忆不适用；`pending_research` 首页不返回（DEC-083 / QUOT-573） |
 | 2026-11-13 | v0.3 | QUOT-580：会话落库 `chat.sqlite`（DEC-084，取代 DEC-067「不持久化」）；新增现役端点 `/api/conversation`（列会话 / 取轮次 / 重命名 / 追加一轮）；块由现役 `reply_to_structured()` → `build_blocks()` 装配、会话侧上限 6；`notice.kind=missing_data`；`chat.py` 保留未挂载（§4.1 / §5） |
 | 2026-11-13 | v0.4 | QUOT-580 第二轮：写入时机改为「边到达边 upsert」（落点 B）；`chat_turn` 加 `status`（streaming / done / aborted / failed）与 `updated_at`，迁移 v2 把存量行回填 `done`；「已停止」走 `status` 不走 `notice.kind`；明确 `turn_seq`（轮次）与 `block_seq`（块）命名纪律（DEC-085） |
+| 2026-11-15 | v0.5 | QUOT-583：断开不停——`is_disconnected` 收窄为「别再写帧」，生成跑在独立 pump 任务、断开不取消；流式轮次跑完落 `chat_turn`（断开→`done`/`failed`）；新增 `POST /api/control/ai/chat/stop` 主动中止→`aborted`，与断开严格区分；断开信号命中一次即定格（真服务器 10/10 实测） |

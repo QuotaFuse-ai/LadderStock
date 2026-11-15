@@ -725,19 +725,78 @@ def resolve_components(env: Mapping[str, str] | None = None) -> dict[str, Compon
     return resolved
 
 
+#: 进程级端口偏移（QUOT-618）：正式服不设（0），测试服设 10000。
+#: 5950 / 5951 因此共用同一套代码与同一份 config，却各占一套 peer 端口——
+#: 测试服的子模块不再跟正式服抢 8000 / 8765 / 8788 这些生产端口。
+PORTS_OFFSET_ENV = "LDST_PORT_OFFSET"
+
+
+def port_offset(env: Mapping[str, str] | None = None) -> int:
+    """读进程级端口偏移；未设或非法一律回 0（正式服零回归）。"""
+    values = os.environ if env is None else env
+    raw = (values.get(PORTS_OFFSET_ENV) or "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        return 0
+    return value if value > 0 else 0
+
+
+def _shift_start_command(argv: tuple[str, ...], offset: int) -> tuple[str, ...]:
+    """把启动命令里 `--port <N>` 的 N 加偏移（只认紧跟 --port 的那个参数）。"""
+    if offset == 0:
+        return argv
+    parts: list[str] = []
+    pending = False
+    for part in argv:
+        if pending:
+            pending = False
+            try:
+                parts.append(str(int(part) + offset))
+            except ValueError:
+                parts.append(part)
+            continue
+        parts.append(part)
+        if part == "--port":
+            pending = True
+    return tuple(parts)
+
+
+def _shift_control(ctl: PeerControl, offset: int, directory: str) -> PeerControl:
+    """按偏移改写一个模块的端口口径与启动命令；目录变更照旧处理。"""
+    changed: dict[str, Any] = {}
+    if directory != ctl.directory:
+        changed["directory"] = directory
+    if offset:
+        changed["mcp_port"] = ctl.mcp_port + offset
+        if ctl.web_port is not None:
+            changed["web_port"] = ctl.web_port + offset
+        if ctl.extra_ports:
+            changed["extra_ports"] = tuple(port + offset for port in ctl.extra_ports)
+        changed["start_commands"] = tuple(
+            _shift_start_command(command, offset) for command in ctl.start_commands
+        )
+    return ctl if not changed else replace(ctl, **changed)
+
+
 def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, PeerControl]:
-    """解析 peer 目录：环境变量 > LadderStock 同级目录 > 占位符。
+    """解析 peer 目录与端口：环境变量 > LadderStock 同级目录 > 占位符。
 
     占位符目录不存在时控制面仍只读展示该 peer，只是不出安装按钮。
+    端口按 `LDST_PORT_OFFSET` 整体平移（QUOT-618）：面板展示、端口冲突判定与
+    `start_commands` 里的 `--port` 三处同时生效，避免「显示 18000、实际起 8000」。
     """
     values = os.environ if env is None else env
+    offset = port_offset(values)
     resolved: dict[str, PeerControl] = {}
     for key, ctl in PEER_CONTROL.items():
         directory = (values.get(PEER_DIR_ENV[key]) or "").strip()
         if not directory:
             sibling = _install_root() / PEER_SIBLING_DIRS[key]
             directory = str(sibling) if sibling.is_dir() else ctl.directory
-        resolved[key] = ctl if directory == ctl.directory else replace(ctl, directory=directory)
+        resolved[key] = _shift_control(ctl, offset, directory)
     return resolved
 
 

@@ -60,6 +60,7 @@ from ladderstock.core.boundary import (
     BoundaryViolation,
     ComponentControl,
     PeerControl,
+    port_offset,
     resolve_components,
     resolve_peer_control,
 )
@@ -2240,6 +2241,13 @@ class ControlPlane:
             port: int | None = int(item.get("default_port") or 0) or None
         except (TypeError, ValueError):
             port = None
+        # QUOT-618 补充：注册表这一行的端口必须与同响应里 `peers` 卡片的端口同源。
+        # `peers` 走 resolve_peer_control()（已按 LDST_PORT_OFFSET 平移），这里原来
+        # 直读 sources.yaml 的 default_port 原值，导致测试服里表格显示生产端口、
+        # 卡片显示测试端口，同一页出现两套号。偏移量非 0 时才动，0 档零回归。
+        offset = port_offset()
+        if port and offset:
+            port += offset
         if snapshot:
             status = str(snapshot.get("status"))
             status_label = str(snapshot.get("status_label"))
@@ -4487,7 +4495,17 @@ def build_router(plane: ControlPlane) -> APIRouter:
             config_root=plane.config_root,
             registry=registry,
             event_bus=_chat_event_bus(plane),
+            data_root=getattr(plane, "data_root", None),
         )
+
+    @router.post("/ai/chat/stop")
+    def ai_chat_stop(body: chat_channel.ChatStopRequest) -> dict[str, Any]:
+        """用户主动停止一轮流式生成（QUOT-583）：落 `aborted`，与「断开」严格区分。
+
+        没有在跑的轮次也回 200（`stopped: false`）——停止按幂等处理，前端断线重试
+        或重复点击不报 5xx。
+        """
+        return chat_channel.stop_turn_result(body.session_id)
 
     @router.post("/ai/generate")
     def ai_generate(body: AiGenerateRequest) -> dict[str, Any]:
