@@ -26,7 +26,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ladderstock.ai.intent import INTENT_CHITCHAT, INTENT_CONCEPT, INTENT_DATA_QUERY
+from ladderstock.ai.intent import (
+    INTENT_CAPABILITY,
+    INTENT_CHITCHAT,
+    INTENT_CONCEPT,
+    INTENT_DATA_QUERY,
+)
 from ladderstock.core.boundary import (
     assert_provenance,
 )
@@ -85,6 +90,15 @@ NOTICE_MISSING_DATA = "missing_data"
 #: 与 `web/chat.py:434` `_source_note` 逐字一致（服务端文案，不是模型编的）。
 SOURCE_NOTE_WITHOUT_DATA = "（说明：本轮没有任何可核实的数据来源，以下内容不含具体行情数据。）"
 SOURCE_NOTE_NO_RECORD = "（说明：本轮页内数据未附带取数记录，回答不列外部来源。）"
+
+#: QUOT-617：capability 意图的能力清单。固定服务端文案，不让模型自由生成
+#: （避免每次措辞漂移）；与 `web/assistant.py` 的 `PAGE_SYSTEM_PROMPT` 能力描述同源
+#: ——描述的是同一套「页面内轻量问答」的能力边界。
+CAPABILITY_NOTE = (
+    "我可以：查当前页面的行情与指标数据、解释概念术语、做多标的对比、"
+    "读页面上下文回答页内问题。我不做单只股票的深度研究，"
+    "需要深挖时请到个股研究页提问。"
+)
 
 #: `action.target` 只能指向既有页路由（frontend/src/routes.ts 的 `ROUTE_PATHS`，
 #: 去掉 `*` 与 `/index.html` 两个非页面条目）。
@@ -880,6 +894,22 @@ def build_blocks(
     narrative = normalize_ai(ai)
     blocks: list[dict[str, Any]] = []
 
+    # QUOT-617：capability 意图只出 conclusion + 一条固定能力清单 notice，
+    # 不出 missing_data（问「你能做什么」挂数据告警即答非所问）。
+    if intent == INTENT_CAPABILITY:
+        headline = strip_numbers(first_sentence(narrative["narrative"][0]))
+        if not headline:
+            headline = "本轮没有可展示的结论。"
+        blocks.append(build_block(BLOCK_CONCLUSION, {"text": headline, "tone": "neutral"}))
+        blocks.append(
+            build_block(
+                BLOCK_NOTICE,
+                {"kind": "degraded", "section": "能力", "message": CAPABILITY_NOTE},
+            )
+        )
+        check_ordering(blocks)
+        return blocks
+
     # QUOT-615 意图分流：chitchat / concept 不出「指标」missing_data notice；
     # chitchat 连「来源」notice 也不出（问候语挂数据告警即答非所问）。
     skip_metric_notice = intent in (INTENT_CHITCHAT, INTENT_CONCEPT)
@@ -1052,6 +1082,7 @@ __all__ = [
     "BLOCK_TABLE",
     "BLOCK_TYPES",
     "CHART_KINDS",
+    "CAPABILITY_NOTE",
     "DIRECTIONS",
     "MAX_BLOCKS",
     "MAX_CHART_POINTS",
