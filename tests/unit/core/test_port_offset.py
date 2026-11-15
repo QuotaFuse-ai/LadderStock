@@ -62,7 +62,11 @@ def test_test_ports_shifted_by_offset(monkeypatch, tmp_path) -> None:
     assert resolved["senate"].mcp_port == 18765
     assert resolved["senate"].web_port == 18786
     assert resolved["financecoffer"].mcp_port == 18100
-    assert resolved["mem0"].mcp_port == 19100
+    # QUOT-611 把 mem0 从 Docker peer 下线为进程内 SDK，PEERS/PEER_CONTROL 里不再有
+    # 这个 key。这条断言因此不能硬绑「mem0 必须存在」——存在才校验它的偏移，
+    # 否则跳过，两个单子才能同时合并进去。
+    if "mem0" in resolved:
+        assert resolved["mem0"].mcp_port == 19100
     assert resolved["proxyfleet"].extra_ports == (18789,)
     assert resolved["qdrant"].web_port == 16333
 
