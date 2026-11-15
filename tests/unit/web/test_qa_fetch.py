@@ -10,8 +10,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-
-from ladderstock.web import qa_fetch
 from ladderstock.web.qa_fetch import (
     FetchPlan,
     build_plan,
@@ -20,6 +18,8 @@ from ladderstock.web.qa_fetch import (
     run_fetch,
     select_dataset,
 )
+
+from ladderstock.web import qa_fetch
 
 
 @dataclass
@@ -38,7 +38,14 @@ class _FakeRegistry:
     exc: Exception | None = None
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
-    def fetch_live(self, dataset: str, *, params: dict[str, Any], allow_cache: bool, timeout: float) -> Any:
+    def fetch_live(
+        self,
+        dataset: str,
+        *,
+        params: dict[str, Any],
+        allow_cache: bool,
+        timeout: float,
+    ) -> Any:
         self.calls.append((dataset, dict(params)))
         if self.exc is not None:
             raise self.exc
@@ -155,7 +162,12 @@ def test_metrics_kline_uses_last_row() -> None:
 
 def test_metrics_limit_pool_counts_rows() -> None:
     outcome = _Outcome(
-        payload={"records": [{"trade_date": "2026-11-14", "code": "600519"}, {"trade_date": "2026-11-14", "code": "000001"}]}
+        payload={
+            "records": [
+                {"trade_date": "2026-11-14", "code": "600519"},
+                {"trade_date": "2026-11-14", "code": "000001"},
+            ]
+        }
     )
     metrics = metrics_from_outcome(outcome, "limit_pool", None)
     assert metrics["limit_up_count"]["value"] == 2.0
