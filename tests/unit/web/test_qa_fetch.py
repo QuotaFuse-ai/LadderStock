@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from ladderstock.web import qa_fetch
 from ladderstock.web.qa_fetch import (
     FetchPlan,
     build_plan,
@@ -18,8 +19,6 @@ from ladderstock.web.qa_fetch import (
     run_fetch,
     select_dataset,
 )
-
-from ladderstock.web import qa_fetch
 
 
 @dataclass
