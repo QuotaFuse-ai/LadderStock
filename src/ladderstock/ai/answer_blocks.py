@@ -108,15 +108,6 @@ CAPABILITY_NOTE = (
     "需要深挖时请到个股研究页提问。"
 )
 
-#: QUOT-617：capability 意图的能力清单。固定服务端文案，不让模型自由生成
-#: （避免每次措辞漂移）；与 `web/assistant.py` 的 `PAGE_SYSTEM_PROMPT` 能力描述同源
-#: ——描述的是同一套「页面内轻量问答」的能力边界。
-CAPABILITY_NOTE = (
-    "我可以：查当前页面的行情与指标数据、解释概念术语、做多标的对比、"
-    "读页面上下文回答页内问题。我不做单只股票的深度研究，"
-    "需要深挖时请到个股研究页提问。"
-)
-
 #: `action.target` 只能指向既有页路由（frontend/src/routes.ts 的 `ROUTE_PATHS`，
 #: 去掉 `*` 与 `/index.html` 两个非页面条目）。
 ROUTE_TARGETS: frozenset[str] = frozenset(
