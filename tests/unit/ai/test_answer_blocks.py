@@ -516,7 +516,10 @@ def test_recorded_full_answer_rebuilds_identically() -> None:
 
 _ARCHIVE_REPLY_AI = {
     "narrative": [
-        "从标的档案（as_of 2026-11-09）参考：最近一个交易日 2026-11-06 收盘价 10.03 元，涨幅 +1.62%，来源 tencent_quote_batch。",
+        (
+            "从标的档案（as_of 2026-11-09）参考：最近一个交易日 2026-11-06 "
+            "收盘价 10.03 元，涨幅 +1.62%，来源 tencent_quote_batch。"
+        ),
     ],
     "highlights": [],
     "risks": [],
