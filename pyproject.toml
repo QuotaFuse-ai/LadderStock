@@ -71,6 +71,20 @@ warn_unused_ignores = true
 module = ["yaml.*", "jsonschema.*"]
 ignore_missing_imports = true
 
+# QUOT-611：进程内 mem0 SDK 及其可选运行时（torch / sentence-transformers）
+# 都没有 py.typed，且 torch 是安装包按需携带的可选依赖；这些模块在 CI 里
+# 只可能被「找不到存根」这一种原因报错，按官方建议整包忽略缺失导入。
+[[tool.mypy.overrides]]
+module = [
+    "mem0",
+    "mem0.*",
+    "torch",
+    "torch.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+]
+ignore_missing_imports = true
+
 # `ctypes.windll` 只在 Windows 存在（typeshed 也只给 win32 平台定义），
 # 但 posix 平台检查时该行会报 attr-defined、win 平台检查时 ignore 又判「未使用」，
 # 平台二选一都挂一头——此模块只允许平台相关的 ignore（mypy 官方对平台特定代码的建议）。
