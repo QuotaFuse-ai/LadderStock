@@ -4487,7 +4487,17 @@ def build_router(plane: ControlPlane) -> APIRouter:
             config_root=plane.config_root,
             registry=registry,
             event_bus=_chat_event_bus(plane),
+            data_root=getattr(plane, "data_root", None),
         )
+
+    @router.post("/ai/chat/stop")
+    def ai_chat_stop(body: chat_channel.ChatStopRequest) -> dict[str, Any]:
+        """用户主动停止一轮流式生成（QUOT-583）：落 `aborted`，与「断开」严格区分。
+
+        没有在跑的轮次也回 200（`stopped: false`）——停止按幂等处理，前端断线重试
+        或重复点击不报 5xx。
+        """
+        return chat_channel.stop_turn_result(body.session_id)
 
     @router.post("/ai/generate")
     def ai_generate(body: AiGenerateRequest) -> dict[str, Any]:
