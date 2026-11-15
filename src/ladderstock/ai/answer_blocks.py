@@ -26,6 +26,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from ladderstock.ai.intent import INTENT_CHITCHAT, INTENT_CONCEPT, INTENT_DATA_QUERY
 from ladderstock.core.boundary import (
     assert_provenance,
 )
@@ -835,6 +836,9 @@ def build_blocks(
     # 「无来源 → WITHOUT_DATA」契约一致；有页内数据的调用方（chat.py 流式）
     # 必须显式传 page_data=True，才会出 NO_RECORD。
     page_data: bool = False,
+    # QUOT-615：意图分流。默认 data_query 保持既有行为（旧调用方不改不回归）；
+    # chitchat 只出 conclusion（不出两类 missing_data notice），concept 不出指标 notice。
+    intent: str = INTENT_DATA_QUERY,
 ) -> list[dict[str, Any]]:
     """§7 装配：AI 只决定「说什么话」，程序决定「给什么数」和「怎么摆」。
 
@@ -876,6 +880,12 @@ def build_blocks(
     narrative = normalize_ai(ai)
     blocks: list[dict[str, Any]] = []
 
+    # QUOT-615 意图分流：chitchat / concept 不出「指标」missing_data notice；
+    # chitchat 连「来源」notice 也不出（问候语挂数据告警即答非所问）。
+    skip_metric_notice = intent in (INTENT_CHITCHAT, INTENT_CONCEPT)
+    skip_source_notice = intent == INTENT_CHITCHAT
+    emit_evidence = intent == INTENT_CONCEPT and bool(narrative["evidence"])
+
     # 1. 结论：narrative[0] 取第一句、剥数字；tone 中性、置信度不评级
     headline = strip_numbers(first_sentence(narrative["narrative"][0]))
     if not headline:
@@ -887,7 +897,7 @@ def build_blocks(
     items = _pick_metrics(metrics)
     if items:
         blocks.append(build_block(BLOCK_METRIC, {"items": items}))
-    else:
+    elif not skip_metric_notice:
         blocks.append(
             build_block(
                 BLOCK_NOTICE,
@@ -941,9 +951,26 @@ def build_blocks(
             )
         )
 
+    # 6.5 QUOT-615：concept 意图把 evidence 作为佐证块补充（notice 之后、来源之前）
+    if emit_evidence:
+        for line in (strip_numbers(e) for e in narrative["evidence"]):
+            if line:
+                blocks.append(
+                    build_block(
+                        BLOCK_NOTICE,
+                        {"kind": "degraded", "section": "佐证", "message": line},
+                    )
+                )
+
     # 7. 来源：空则不生成 citation，改成服务端文案 notice
-    tail = citation if citation is not None else source_notice
-    assert tail is not None
+    tail = citation if citation is not None else (None if skip_source_notice else source_notice)
+    if tail is None:
+        # chitchat 且无来源：以补充说明位置补一条空 notice 占位不必要，直接出 citation
+        # 兜底——但 citation 为 None 说明没有可引用来源，按协议仍需末尾块，用结论重复
+        # 不合适；协议要求 citation 末尾存在，chitchat 缺来源时跳过尾块。
+        blocks = _enforce_limit(blocks, protected=())
+        check_ordering(blocks)
+        return blocks
     blocks.append(tail)
 
     blocks = _enforce_limit(blocks, protected=(tail,))
