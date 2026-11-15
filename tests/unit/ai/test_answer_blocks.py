@@ -508,3 +508,59 @@ def test_recorded_full_answer_rebuilds_identically() -> None:
     blocks = build_blocks(recorded["metrics"], recorded["ai"], recorded["sources"])
 
     assert blocks == recorded["blocks"]
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-612：降级路径数字保留 + 来源措辞按实情区分
+# --------------------------------------------------------------------------- #
+
+_ARCHIVE_REPLY_AI = {
+    "narrative": [
+        "从标的档案（as_of 2026-11-09）参考：最近一个交易日 2026-11-06 收盘价 10.03 元，涨幅 +1.62%，来源 tencent_quote_batch。",
+    ],
+    "highlights": [],
+    "risks": [],
+    "evidence": [],
+}
+
+
+def _notice_messages(blocks: list[dict[str, object]]) -> list[str]:
+    return [block["payload"]["message"] for block in blocks if block["type"] == "notice"]
+
+
+def test_degraded_reply_keeps_verified_numbers_when_answer_cites_source() -> None:
+    blocks = build_blocks({}, _ARCHIVE_REPLY_AI, [])
+
+    conclusion = blocks[0]["payload"]["text"]
+    assert "10.03 元" in conclusion
+    assert "2026-11-06" in conclusion
+    for message in _notice_messages(blocks):
+        assert "是元" not in message
+        assert "涨幅 ，" not in message
+
+
+def test_no_source_reply_still_strips_numbers_without_self_citation() -> None:
+    plain_ai = {
+        "narrative": ["近 20 日震荡偏弱，主力资金连续净流出。"],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
+
+    blocks = build_blocks({}, plain_ai, [])
+
+    assert "20 日" not in blocks[0]["payload"]["text"]
+
+
+def test_source_notice_distinguishes_profile_recall_from_no_data() -> None:
+    blocks = build_blocks({}, _ARCHIVE_REPLY_AI, [])
+
+    messages = _notice_messages(blocks)
+    assert answer_blocks.SOURCE_NOTE_PROFILE_ONLY in messages
+    assert answer_blocks.SOURCE_NOTE_WITHOUT_DATA not in messages
+
+
+def test_source_notice_without_self_citation_keeps_original_wording() -> None:
+    blocks = build_blocks({}, {}, [])
+
+    assert answer_blocks.SOURCE_NOTE_WITHOUT_DATA in _notice_messages(blocks)
