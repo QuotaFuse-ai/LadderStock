@@ -108,6 +108,15 @@ CAPABILITY_NOTE = (
     "需要深挖时请到个股研究页提问。"
 )
 
+#: QUOT-617：capability 意图的能力清单。固定服务端文案，不让模型自由生成
+#: （避免每次措辞漂移）；与 `web/assistant.py` 的 `PAGE_SYSTEM_PROMPT` 能力描述同源
+#: ——描述的是同一套「页面内轻量问答」的能力边界。
+CAPABILITY_NOTE = (
+    "我可以：查当前页面的行情与指标数据、解释概念术语、做多标的对比、"
+    "读页面上下文回答页内问题。我不做单只股票的深度研究，"
+    "需要深挖时请到个股研究页提问。"
+)
+
 #: `action.target` 只能指向既有页路由（frontend/src/routes.ts 的 `ROUTE_PATHS`，
 #: 去掉 `*` 与 `/index.html` 两个非页面条目）。
 ROUTE_TARGETS: frozenset[str] = frozenset(
@@ -961,7 +970,8 @@ def build_blocks(
     skip_source_notice = intent == INTENT_CHITCHAT
     emit_evidence = intent == INTENT_CONCEPT and bool(narrative["evidence"])
 
-    # 1. 结论：narrative[0] 取第一句；数字默认剥掉，已核对（keep_numbers）保留
+    # 1. 结论：narrative[0] 取第一句、剥数字（tone 中性、置信度不评级）；
+    #    QUOT-612：数字已核对（keep_numbers）时保留原文
     raw_headline = first_sentence(narrative["narrative"][0])
     headline = raw_headline if keep_numbers else strip_numbers(raw_headline)
     if not headline:
