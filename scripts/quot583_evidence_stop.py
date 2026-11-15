@@ -43,7 +43,13 @@ def main() -> int:
     proc.wait(timeout=5)
     done_line = [ln for ln in tail.split("\n") if ln.startswith("data: ")]
     done_data = json.loads(done_line[-1][6:]) if done_line else {}
-    print("done reason:", done_data.get("reason"), "completed:", done_data.get("completed"), flush=True)
+    print(
+        "done reason:",
+        done_data.get("reason"),
+        "completed:",
+        done_data.get("completed"),
+        flush=True,
+    )
 
     time.sleep(2)
     db = DATA_ROOT / "chat.sqlite"
@@ -51,7 +57,8 @@ def main() -> int:
     conn.row_factory = sqlite3.Row
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT session_id, status, length(blocks_json) AS blocks_len FROM chat_turn WHERE session_id='sess-evidence-stop'"
+            "SELECT session_id, status, length(blocks_json) AS blocks_len"
+            " FROM chat_turn WHERE session_id='sess-evidence-stop'"
         )]
     finally:
         conn.close()
