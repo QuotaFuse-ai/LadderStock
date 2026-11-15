@@ -592,8 +592,7 @@ def test_capability_intent_no_missing_data(question: str) -> None:
     missing = [
         b
         for b in blocks
-        if b["type"] == "notice"
-        and b["payload"].get("kind") == answer_blocks.NOTICE_MISSING_DATA
+        if b["type"] == "notice" and b["payload"].get("kind") == answer_blocks.NOTICE_MISSING_DATA
     ]
     assert missing == []
 
