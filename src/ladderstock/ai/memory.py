@@ -796,16 +796,6 @@ def _boost(metadata: dict[str, Any], symbol: str | None) -> float:
     return 0.0
 
 
-def _note_disabled_once() -> None:
-    """「记忆通道未启用」整个进程只提示一次，避免每个请求刷同一条日志。"""
-    global _disabled_notified  # noqa: PLW0602 - 进程内一次性标志
-    if not _disabled_notified:
-        _disabled_notified = True
-        logger.info(
-            "memory_disabled 未启用（LDST_MEMORY_ENABLED=falsey 或 LDST_MEMORY_BASE_URL=''）"
-        )
-
-
 def recall(
     question: str,
     *,
