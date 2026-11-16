@@ -44,7 +44,17 @@ const ITEM_LABELS: Record<string, Partial<Record<string, string>>> = {
     },
 }
 
-function labelFor(item: string, state: string): string {
+/**
+ * `tool` 是 agent 自己决定调用的取数工具（后端把中文名放在 `action` 里）。
+ *
+ * 这一行不是装饰：它让人看得见「模型正在查什么」——查不到时也有据可依，
+ * 比一句「正在生成回答」更接近真实发生的动作。
+ */
+function labelFor(item: string, state: string, action: string): string {
+    if (item === 'tool') {
+        const name = action || '数据'
+        return state === 'done' ? `${name}已取到` : `正在查${name}`
+    }
     return ITEM_LABELS[item]?.[state] ?? item
 }
 
@@ -63,7 +73,7 @@ export function createLiveStatusFeed(): LiveStatusFeed {
             const action = pickString(raw, 'action') || 'model'
             const rawItem = pickString(raw, 'item') || action
             const itemId = pickString(raw, 'item_id') || `auto:${action}`
-            const item = labelFor(rawItem, pickString(raw, 'state') || 'running')
+            const item = labelFor(rawItem, pickString(raw, 'state') || 'running', action)
             const state = pickString(raw, 'state') || 'running'
             const elapsed = typeof raw.elapsed_ms === 'number' ? Math.max(0, raw.elapsed_ms) : 0
             seq += 1

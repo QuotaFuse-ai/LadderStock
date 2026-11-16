@@ -49,6 +49,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from ladderstock.ai import answer_blocks, fallback, memory, module_memory
+from ladderstock.ai.agent_runtime import (
+    EVENT_FINAL as AGENT_FINAL,
+    EVENT_TEXT as AGENT_TEXT,
+    EVENT_TOOL as AGENT_TOOL,
+    build_agent,
+    build_tools,
+    run_agent_stream,
+)
 from ladderstock.ai.answer_blocks import AnswerBlockError, build_block, normalize_ai
 from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
@@ -107,6 +115,12 @@ SYSTEM_PROMPT = (
     "你是 LadderStock「个股深挖」页的研究助手。只依据【页级上下文】里给出的数据回答，"
     "不要编造上下文里没有的数字、日期或结论。\n"
     "- 上下文缺失的行情 / 财报 / 事件，就直说「这一项页面没有取到」，不要用一般知识补。\n"
+    "- 用户问「该查哪些数据 / 怎么核对」这类方法问题时，直接给一份可执行的查证清单"
+    "（查什么、在哪个页面查、核对什么口径），不要回答成「页面没有取到」。\n"
+    "- 用户问「该查哪些数据 / 怎么核对」这类方法问题时，直接给一份可执行的查证清单"
+    "（查什么、在哪个页面查、核对什么口径），不要回答成「页面没有取到」。\n"
+    "- 用户问某家公司 / 某只股票、但没说是哪一家时，**先反问标的**：一句话说明你是 LadderStock 助手、"
+    "能做什么，再请他给公司名或代码。不要罗列一串「这一项页面没有取到」，那是在答另一个问题。\n"
     "- 上下文里的数字只是页面已展示数据的摘要，不能当作新的行情结论；"
     "不要给出买卖建议，也不要预测价格。\n"
     "- 回答用简洁中文，必要时分点；不要输出 JSON，不要使用 Markdown 标记"
@@ -143,6 +157,8 @@ PAGE_SYSTEM_PROMPT = (
     "你是 LadderStock 页面助手，只回答当前页面（行情 / 产业 / 日历等）的问题。"
     "只依据【页级上下文】里给出的数据回答，不要编造其中没有的行情、新闻、财报数字、日期或结论。\n"
     "- 上下文缺失的行情 / 新闻 / 财报 / 事件，就直说「本页这项没取到」，不要用一般知识补。\n"
+    "- 用户问某家公司 / 某只股票、但没说是哪一家时，**先反问标的**：一句话说明你是 LadderStock 助手、"
+    "能做什么，再请他给公司名或代码。不要罗列「这一项页面没有取到」，那是在答另一个问题。\n"
     "- 这是页面内的轻量问答，不做单只股票的深度研究；需要深挖单个标的时，请回到个股研究页再问。\n"
     "- 上下文里的数字只是页面已展示数据的摘要，不能当作新的行情结论；"
     "不要给出买卖建议，也不要预测价格。\n"
@@ -410,14 +426,22 @@ def _normalize_context(
 def _blocks_for(
     reply: str,
     sources: Sequence[ChatSource],
+    *,
+    fetch_attempted: bool = False,
+    metrics: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """成功路径装配 `blocks`。
+    """会话模式的成功路径装配 `blocks`。
 
-    `metrics` 一律传 `{}`：现役三路由拿不到任何程序算出的数，`build_blocks` 于是生成
-    `notice(missing_data)`——**不伪造 metrics**（红线 6 / 本单第 5 条）。真实 metrics
-    接入是待办（见回报）。`sources=[]` 时由 `build_blocks` 生成「无来源」notice。
+    `metrics` 是 agent 这一轮工具调用的真实产出（带 `Provenance`）；没调工具时为空，
+    metric 块的缺失提示由 `fetch_attempted` 决定——没查就不摆「没取到」，查了才摆。
     """
-    return _build_blocks({}, reply_to_structured(reply)["build_input"], sources)
+    return _build_blocks(
+        dict(metrics or {}),
+        reply_to_structured(reply)["build_input"],
+        sources,
+        fetch_attempted=fetch_attempted,
+        keep_numbers=bool(metrics),
+    )
 
 
 def _success_response(
@@ -441,6 +465,10 @@ def _success_response(
     adapted = reply_to_structured(result["reply"])
     metrics = dict(fetched_metrics or {})
     all_sources: list[Any] = [*sources, *(fetched_sources or [])]
+    # 本轮是否真的发起了取数：`plan.dataset is None` 表示没找到可查的数据集
+    # （问题里没有标的、或问的是方法而非某个数值）——那是「没查」，不是「查了没取到」，
+    # 装配层据此不再摆「指标 / 来源没取到」。判断依据是真实取数计划，不是关键词猜意图。
+    fetch_attempted = True if plan is None else plan.dataset is not None
     blocks = _build_blocks(
         metrics,
         adapted["build_input"],
@@ -448,6 +476,7 @@ def _success_response(
         intent=intent,
         # 取到数或点了名失败源时，本轮确实带了真实取数行为
         page_data=bool(metrics),
+        fetch_attempted=fetch_attempted,
     )
     if plan is not None and plan.source_failures and not metrics:
         blocks = [b for b in blocks if not (
@@ -599,13 +628,18 @@ MAX_ANSWER_BLOCKS = 6
 
 
 def _conversation_blocks(
-    *, reply: str, sources: Sequence[ChatSource], failure: ChatFailure | None = None
+    *,
+    reply: str,
+    sources: Sequence[ChatSource],
+    failure: ChatFailure | None = None,
+    fetch_attempted: bool = False,
+    metrics: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """一轮的块：失败只有一条 `notice`；成功复用现役装配链，再收到 D2 上限 6。
 
-    `metrics` 一律 `{}`（与 `_blocks_for` 同口径：会话模式同样拿不到程序算出的数，
-    由 `build_blocks` 出 `notice(missing_data)`，不伪造）。块的顺序、文案、数字剥离
-    全部由 `ai/answer_blocks.py` 负责，这里不另拼。
+    `fetch_attempted` 由调用方给：只有 agent 这一轮**真的调了工具**才算查过。没查过
+    就不摆「指标 / 来源没取到」——那是把「没查」说成「查了没取到」，等于用告警块回答
+    一个没问的问题。块的顺序、文案、数字剥离仍全部由 `ai/answer_blocks.py` 负责。
     """
     if failure is not None:
         return _failure_blocks(
@@ -616,7 +650,9 @@ def _conversation_blocks(
                 retryable=failure.retryable,
             )
         )[:MAX_ANSWER_BLOCKS]
-    return _blocks_for(reply, sources)[:MAX_ANSWER_BLOCKS]
+    return _blocks_for(
+        reply, sources, fetch_attempted=fetch_attempted, metrics=metrics
+    )[:MAX_ANSWER_BLOCKS]
 
 
 def _arrive_blocks(
@@ -624,6 +660,8 @@ def _arrive_blocks(
     reply: str,
     sources: Sequence[ChatSource],
     on_block: Callable[[list[dict[str, Any]]], None],
+    fetch_attempted: bool = False,
+    metrics: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """同 `_conversation_blocks` 成功路径，但逐块交付：每多一块就 `on_block(当前全部块)`。
 
@@ -631,7 +669,12 @@ def _arrive_blocks(
     不在这里重排；逐块交付只服务「边到达边 upsert」的落库时机（DEC-085）。返回值与
     `_conversation_blocks()` 完全一致，`on_block` 收到的最后一次快照就是返回值。
     """
-    full = _conversation_blocks(reply=reply, sources=sources)
+    full = _conversation_blocks(
+        reply=reply,
+        sources=sources,
+        fetch_attempted=fetch_attempted,
+        metrics=metrics,
+    )
     for count in range(1, len(full) + 1):
         on_block([dict(block) for block in full[:count]])
     return full
@@ -980,6 +1023,80 @@ def _precheck_turn(body: ChatRequest) -> tuple[str, str]:
     return resolve_session_id(body.session_id), text
 
 
+async def _run_agent_turn(
+    *,
+    question: str,
+    context: str,
+    page_label: str,
+    module: str,
+    page: str,
+    data_root: Any,
+) -> AsyncIterator[tuple[str, Any]]:
+    """agent 路径的一轮：与 `ask_stream` 同形（`text` / `final`），额外多一个 `tool`。
+
+    与 `ask_stream` 的差别只在**决策权**：这里把取数当工具交出去，由模型自己决定查不查、
+    查几个、查几轮；prompt 仍是 `_prepare_call()` 拼的那份（记忆 / 知识库 / 页级上下文
+    一并保留），两条路径的内容不会漂移。
+
+    通道不满足条件时抛 `AssistantFailure`，由调用方决定是否回落——本函数不自己吞。
+    """
+    try:
+        config = fallback.load_config()
+        target = config.resolve_for(module)
+    except BoundaryViolation as exc:
+        raise AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}") from None
+    # SDK 走 /chat/completions，只有 openai 型后端能用；CLI 订阅通道与 anthropic 不在此列
+    if target.backend.kind != "openai":
+        raise AssistantFailure(
+            503,
+            "ai_channel_not_supported",
+            f"当前通道（{target.backend.kind}）不支持工具调用，需要 OpenAI 兼容后端",
+        )
+    base_url = target.backend.base_url
+    api_key = target.backend.api_key
+    if not (base_url and api_key):
+        raise AssistantFailure(503, "ai_not_configured", "AI 通道缺少 base_url / api_key")
+
+    prepared = _prepare_call(
+        question=question,
+        context=context,
+        page_label=page_label,
+        module=module,
+        tab=page,
+        data_root=data_root,
+    )
+    specs = build_tools(data_root)
+    labels = {spec.name: spec.label for spec in specs}
+    # 工具跑出来的 metrics / sources 收在这里，final 时一并交给装配层：
+    # 模型写的正文会被块协议剥数字（红线 4），数字只能从这条通道进 metric 块。
+    collected: dict[str, Any] = {"metrics": {}, "sources": []}
+    agent, client = build_agent(
+        model=target.model,
+        base_url=base_url,
+        api_key=api_key,
+        instructions=prepared.system,
+        tool_specs=specs,
+        collector=collected,
+    )
+    try:
+        async for kind, payload in run_agent_stream(
+            agent, prepared.user, labels=labels, collector=collected
+        ):
+            if kind == AGENT_TOOL:
+                yield "tool", payload
+            elif kind == AGENT_TEXT:
+                yield "text", payload.get("text", "")
+            elif kind == AGENT_FINAL:
+                yield "final", payload.get("text", "")
+                if payload.get("metrics") or payload.get("sources"):
+                    yield "data", {
+                        "metrics": payload.get("metrics") or {},
+                        "sources": payload.get("sources") or [],
+                    }
+    finally:
+        await client.close()
+
+
 async def run_turn_stream(
     *,
     message: str,
@@ -1030,7 +1147,11 @@ async def run_turn_stream(
             accumulated = ""
             last_push = 0.0
             reply = ""
-            async for kind, payload in ask_stream(
+            used_tools = False
+            fetched: dict[str, Any] = {}
+            # 首选 agent 路径：模型自主选工具、定轮次。它解决的是"该不该查"——查过就
+            # 有真实数据可装配，没查就说明缺什么，不再靠猜意图决定要不要打「没取到」。
+            async for kind, payload in _run_agent_turn(
                 question=message,
                 context=context_text,
                 page_label="对话模式",
@@ -1040,7 +1161,17 @@ async def run_turn_stream(
                 ),
                 data_root=data_root,
             ):
-                if kind == "text":
+                if kind == "tool":
+                    used_tools = True
+                    label = str(payload.get("label") or payload.get("name") or "工具")
+                    state = "done" if payload.get("state") == "done" else "running"
+                    yield _status(
+                        "tool",
+                        state,
+                        item_id=f"tool:{payload.get('name')}",
+                        action=label,
+                    )
+                elif kind == "text":
                     accumulated = payload
                     now = time.monotonic()
                     if now - last_push >= STREAM_TEXT_INTERVAL_SEC:
@@ -1048,6 +1179,8 @@ async def run_turn_stream(
                         yield _sse_frame("text", {"text": accumulated})
                 elif kind == "final":
                     reply = payload
+                elif kind == "data":
+                    fetched = payload
             if accumulated and accumulated != reply:
                 yield _sse_frame("text", {"text": accumulated})
             elif reply and not accumulated:
@@ -1073,7 +1206,21 @@ async def run_turn_stream(
             writer.finish(chat_store.ABORTED)
             raise
 
-        blocks = _arrive_blocks(reply=reply, sources=sources, on_block=writer.arrive)
+        # 工具调用是「这一轮真的发起取数」的唯一证据：用它决定要不要出取数类告警，
+        # 而不是靠问题里有没有某些词。模型一次没查，就不该摆「指标没取到」。
+        # 同时把工具产出的 metrics / sources 交给装配层——那才是页面上能看到的数。
+        tool_sources = [
+            ChatSource(**item)
+            for item in (fetched.get("sources") or [])
+            if isinstance(item, Mapping) and item.get("name")
+        ]
+        blocks = _arrive_blocks(
+            reply=reply,
+            sources=[*sources, *tool_sources],
+            on_block=writer.arrive,
+            fetch_attempted=used_tools,
+            metrics=fetched.get("metrics") or {},
+        )
         writer.finish(chat_store.DONE, blocks)
         yield _status("model", "done", item_id="model")
         yield _sse_frame(

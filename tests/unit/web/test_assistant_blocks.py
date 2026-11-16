@@ -254,6 +254,11 @@ def test_failure_blocks_message_has_no_digits() -> None:
 def test_empty_sources_notice_matches_chat_source_note(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """「今天表现？」没有可查标的 → 本轮没取数 → 不出「来源没取到」。
+
+    守的是新语义：没查 ≠ 查了没取到。把两者混为一谈时，会用一个告警块回答用户根本
+    没问的问题（他问的是"表现如何"，不是"数据在哪"）。
+    """
     fake = _FakeClient(SNAPSHOT_PAGE)
     client = _patch(tmp_path, monkeypatch, fake)
 
@@ -263,7 +268,19 @@ def test_empty_sources_notice_matches_chat_source_note(
 
     assert response.status_code == 200
     notices = [b for b in response.json()["blocks"] if b["type"] == "notice"]
-    source_notices = [b for b in notices if b["payload"].get("section") == "来源"]
+    assert not any(b["payload"].get("section") == "来源" for b in notices)
+
+
+def test_source_notice_text_matches_chat_source_note_when_fetch_attempted() -> None:
+    """真发起过取数、但仍无来源时，文案必须与 `chat.py:_source_note` 逐字一致。"""
+    plan = assistant_module.FetchPlan(dataset="spot_quote")
+    result = {"reply": "现价没取到。", "model": "model-a", "channel": "http", "sources": []}
+    out = assistant_module._success_response(result, [], plan=plan)
+    source_notices = [
+        b
+        for b in out["blocks"]
+        if b["type"] == "notice" and b["payload"].get("section") == "来源"
+    ]
     assert len(source_notices) == 1
     expected = chat_module._source_note(has_data=False, sources=[])
     assert source_notices[0]["payload"]["message"] == expected
@@ -508,13 +525,11 @@ def test_history_lands_in_context_text_but_not_in_sources(
     # 历史不进 sources：无来源 notice 照旧
     citations = [b for b in body["blocks"] if b["type"] == "citation"]
     assert citations == []
+    # 本轮没有可查标的 → 没取数 → 不出「来源没取到」（历史也不是来源）
     source_notices = [
         b for b in body["blocks"] if b["type"] == "notice" and b["payload"].get("section") == "来源"
     ]
-    assert len(source_notices) == 1
-    assert source_notices[0]["payload"]["message"] == chat_module._source_note(
-        has_data=False, sources=[]
-    )
+    assert source_notices == []
     # 历史文字不进 conclusion（结论只取本轮 reply）
     assert "上一轮" not in body["blocks"][0]["payload"]["text"]
 

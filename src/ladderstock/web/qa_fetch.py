@@ -244,10 +244,21 @@ def metrics_from_outcome(outcome: Any, dataset: str, symbol: str | None) -> dict
         return {}
     fetched_at = _now_iso()
     metrics: dict[str, Any] = {}
-    if dataset == "spot_quote":
+    if dataset in ("spot_quote", "index_quote"):
         bare_symbol = (symbol or "").partition(".")[0]
+        # 指数记录里的 `code` 是不带 sh/sz 前缀的纯代码（`000001`），所以比较前
+        # 也要把前缀剥掉，否则会错配到 rows[0]（问深证成指却回上证）。
+        bare_symbol = bare_symbol.removeprefix("sh").removeprefix("sz").removeprefix("bj")
         row = next(
-            (r for r in rows if str(r.get("code") or "").partition(".")[0] == bare_symbol),
+            (
+                r
+                for r in rows
+                if str(r.get("code") or "").partition(".")[0]
+                .removeprefix("sh")
+                .removeprefix("sz")
+                .removeprefix("bj")
+                == bare_symbol
+            ),
             rows[0],
         )
         as_of = _as_of_of(outcome, row)
@@ -255,7 +266,7 @@ def metrics_from_outcome(outcome: Any, dataset: str, symbol: str | None) -> dict
             number = _row_value(row, keys)
             if number is None:
                 continue
-            unit = "%" if key == "change_pct" else "元"
+            unit = "%" if key == "change_pct" else ("点" if dataset == "index_quote" else "元")
             metrics[key] = Provenance(
                 value=number,
                 unit=unit,

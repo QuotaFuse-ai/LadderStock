@@ -79,10 +79,18 @@ def _source(name: str = "本地 /api/control/peers（工作区状态）") -> dic
 
 
 def _blocks(
-    reply: str, sources: list[Any] | None = None, failure: Any = None
+    reply: str,
+    sources: list[Any] | None = None,
+    failure: Any = None,
+    *,
+    fetch_attempted: bool = False,
 ) -> list[dict[str, Any]]:
+    """默认 `fetch_attempted=False`：会话链路没调工具时不该摆「没取到」类告警。
+
+    要验证「查了但缺数据」的文案，显式传 `True`。
+    """
     return assistant_module._conversation_blocks(
-        reply=reply, sources=sources or [], failure=failure
+        reply=reply, sources=sources or [], failure=failure, fetch_attempted=fetch_attempted
     )
 
 
@@ -130,8 +138,8 @@ def test_conversation_cap_truncates_engine_output_beyond_six(
 def test_blocks_reuse_canonical_chain_and_strip_numbers() -> None:
     sources = [assistant_module.ChatSource(**_source())]
     reply = "近 20 日震荡偏弱，现价 9.87 元。"
-    blocks = _blocks(reply, sources)
-    assert blocks == assistant_module._blocks_for(reply, sources)[:6]
+    blocks = _blocks(reply, sources, fetch_attempted=True)
+    assert blocks == assistant_module._blocks_for(reply, sources, fetch_attempted=True)[:6]
     conclusion = blocks[0]["payload"]
     assert conclusion["tone"] == "neutral"
     assert not answer_blocks.contains_number(conclusion["text"])
@@ -149,7 +157,8 @@ def test_blocks_reuse_canonical_chain_and_strip_numbers() -> None:
 
 
 def test_blocks_add_missing_data_notice_when_no_sources() -> None:
-    blocks = _blocks("中短期以震荡为主。")
+    # 只有「这一轮真的查过」才出缺数据告警；没查过时不该用告警块回答没问过的问题
+    blocks = _blocks("中短期以震荡为主。", fetch_attempted=True)
     notices = [block["payload"] for block in blocks if block["type"] == answer_blocks.BLOCK_NOTICE]
     assert all(notice["kind"] == answer_blocks.NOTICE_MISSING_DATA for notice in notices)
     source_notice = next(notice for notice in notices if notice["section"] == "来源")
@@ -600,7 +609,9 @@ def test_no_new_notice_kinds_from_status(tmp_path: Path, fake_client: _FakeClien
 def test_streaming_row_persists_after_hard_stop(tmp_path: Path) -> None:
     """「第 2 块后杀进程」：进程内已写完 streaming 行，重开 app 仍读得到。"""
     two_blocks = assistant_module._conversation_blocks(
-        reply="第一句。", sources=[assistant_module.ChatSource(**_source())]
+        reply="第一句。",
+        sources=[assistant_module.ChatSource(**_source())],
+        fetch_attempted=True,
     )[:2]
     conn = chat_store.connect(tmp_path)
     assert conn is not None

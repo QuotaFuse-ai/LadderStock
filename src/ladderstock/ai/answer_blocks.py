@@ -903,6 +903,11 @@ def build_blocks(
     # QUOT-615：意图分流。默认 data_query 保持既有行为（旧调用方不改不回归）；
     # chitchat 只出 conclusion（不出两类 missing_data notice），concept 不出指标 notice。
     intent: str = INTENT_DATA_QUERY,
+    # 本轮是否**真的发起过取数**。默认 True 保持既有行为。
+    # 传 False 时不摆「指标 / 来源没取到」——那是「没查」，不是「查了没取到」：
+    # 用户问「该查哪些数据」「这家公司基本面怎么样（但没说哪家）」时本就没取数，
+    # 报一屏缺失等于答错问题。这个判断由调用方按实际取数计划给，不靠关键词猜意图。
+    fetch_attempted: bool = True,
 ) -> list[dict[str, Any]]:
     """§7 装配：AI 只决定「说什么话」，程序决定「给什么数」和「怎么摆」。
 
@@ -972,10 +977,15 @@ def build_blocks(
         check_ordering(blocks)
         return blocks
 
-    # QUOT-615 意图分流：chitchat / concept 不出「指标」missing_data notice；
+    # QUOT-615 意图分流：chitchat / concept / needs_symbol 不出「指标」missing_data notice；
     # chitchat 连「来源」notice 也不出（问候语挂数据告警即答非所问）。
-    skip_metric_notice = intent in (INTENT_CHITCHAT, INTENT_CONCEPT)
-    skip_source_notice = intent == INTENT_CHITCHAT
+    # needs_symbol 同理：用户还没说是哪家公司，这时报「没取到数据」是答错问题——
+    # 该反问标的，不是罗列缺失项。
+    skip_metric_notice = intent in (
+        INTENT_CHITCHAT,
+        INTENT_CONCEPT,
+    ) or not fetch_attempted
+    skip_source_notice = intent in (INTENT_CHITCHAT,) or not fetch_attempted
     emit_evidence = intent == INTENT_CONCEPT and bool(narrative["evidence"])
 
     # 1. 结论：narrative[0] 取第一句、剥数字（tone 中性、置信度不评级）；
@@ -1024,8 +1034,11 @@ def build_blocks(
 
     # 5. 风险：必须可见，不折叠；每条独立 notice（notice 不得在首位）
     #    风险提示是正常内容，不是降级：用中性 `note`，标题取段名。
+    #    notice **永远剥数字**：校验器禁止 notice 携带数字（红线 4），`keep_numbers`
+    #    是给「正文允许保留有出处的数字」用的，不能给 notice 开口子——否则回答里
+    #    一出现带行情数字的分点，装配就抛 `AnswerBlockError`，整轮变成 500。
     for risk in narrative["risks"][:2]:
-        text = risk if keep_numbers else strip_numbers(risk)
+        text = strip_numbers(risk)
         if text:
             blocks.append(
                 build_block(
@@ -1036,11 +1049,14 @@ def build_blocks(
 
     # 6. narrative[1:] + highlights：合并成一条 notice，每块 ≤4 行
     #    同样是正常内容，用 `note`（见第 5 步）。
+    #    **含数字的行直接丢弃，不剥成残句**：agent 会把工具结果写成「最新点位 3634.35」
+    #    这样的分点，而 notice 不许带数字（红线 4）；剥完剩「最新点位」半句比不说更糟。
+    #    数字已经由 metric / table 块承载，正文只留定性描述。
     extras = [
-        line if keep_numbers else strip_numbers(line)
+        line
         for line in (narrative["narrative"][1:] + narrative["highlights"])
+        if line and not contains_number(line)
     ]
-    extras = [line for line in extras if line]
     if extras:
         blocks.append(
             build_block(

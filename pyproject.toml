@@ -30,6 +30,9 @@ dependencies = [
   "qdrant-client>=1.12,<2",
   "fastembed>=0.3,<1",
   "onnxruntime>=1.18,<2",
+  # 模型自主选工具 / 定轮次的 agent 运行时（OpenAI Agents SDK）。进核心依赖而不是
+  # optional：AI 对话与研究台是主线功能，安装包必须自带，用户不该自己 pip install。
+  "openai-agents>=0.24,<1",
 ]
 
 [project.optional-dependencies]

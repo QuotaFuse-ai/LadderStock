@@ -34,7 +34,7 @@ datas += collect_data_files("uvicorn")
 datas += collect_data_files("fastapi")
 
 hiddenimports = list(HIDDEN_IMPORTS)
-for package in ("uvicorn", "fastapi", "pydantic", "mcp", "apscheduler"):
+for package in ("uvicorn", "fastapi", "pydantic", "mcp", "apscheduler", "agents"):
     hiddenimports += collect_submodules(package)
 
 a = Analysis(

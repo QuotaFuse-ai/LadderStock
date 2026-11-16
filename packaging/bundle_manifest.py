@@ -20,6 +20,14 @@ RESOURCE_DIRS: tuple[tuple[str, str], ...] = (
 
 #: 动态导入/运行期才用到的包：静态分析抓不到，必须显式声明。
 HIDDEN_IMPORTS: tuple[str, ...] = (
+    # OpenAI Agents SDK：模型 provider / session / handoff 都走运行期动态加载
+    # （`openai_provider` 按字符串取 `OpenAIChatCompletionsModel` 之类），
+    # 静态分析抓不到。漏了它的表现是打包后一调 AI 就 ModuleNotFoundError，
+    # 而源码态完全正常——正是「安装包必须自带」这句话最容易漏的一环。
+    "agents",
+    "agents.models.openai_chatcompletions",
+    "agents.models.openai_responses",
+    "agents.models.chatcmpl_stream_handler",
     # anyio 在首个请求时用 importlib.import_module("anyio._backends._asyncio")
     # 动态选后端，静态分析抓不到。PyInstaller 有 contrib hook 自动收它，py2app
     # 没有对应 hook（CI macos smoke 实测 ModuleNotFoundError），必须显式声明。
