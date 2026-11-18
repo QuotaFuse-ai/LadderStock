@@ -124,7 +124,7 @@ PEERS: tuple[PeerManifest, ...] = (
         label="ProxyFleet（代理池）",
         target="proxyfleet",
         kind="pypi",
-        package="proxyfleet",
+        package="ldst-proxyfleet",
         version=">=0.2",
         size_mb=5,
         required=True,
