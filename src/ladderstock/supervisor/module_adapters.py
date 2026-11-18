@@ -49,7 +49,12 @@ except ImportError:  # pragma: no cover - 依赖探测
     psutil = None  # type: ignore[assignment]
 
 from ladderstock.core import runtime
-from ladderstock.core.boundary import PEER_DIR_ENV, PEER_SIBLING_DIRS
+from ladderstock.core.boundary import (
+    PEER_CONTAINER_DIRS,
+    PEER_DIR_ENV,
+    PEER_SIBLING_DIRS,
+    modules_root,
+)
 from ladderstock.supervisor.adapters import (
     MODULE_ORDER,
     ON_DEMAND_MODULES,
@@ -713,10 +718,16 @@ def default_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path:
     override = (values.get(PEER_DIR_ENV[key]) or "").strip()
     if override:
         return Path(override)
-    sibling_name = PEER_SIBLING_DIRS[key]
     root = (values.get(DEFAULT_PEER_ROOT_ENV) or "").strip()
-    base = Path(root) if root else _install_root_from(values)
-    return base / sibling_name
+    if root:
+        # 显式给了 peer 根：沿用老口径（根 + 同级历史名），不做容器化。
+        return Path(root) / PEER_SIBLING_DIRS[key]
+    container = modules_root(values) / PEER_CONTAINER_DIRS[key]
+    if container.is_dir():
+        # 容器态（便携包）：`<安装根>/file/modules/<规范名>`
+        return container
+    # 开发态：`<安装根>/<历史名>`，仓库 clone 到 LadderStock 旁边即可
+    return _install_root_from(values) / PEER_SIBLING_DIRS[key]
 
 
 def _ldst_repo_root() -> Path:

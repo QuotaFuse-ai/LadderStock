@@ -509,7 +509,7 @@ PEER_CONTROL: dict[str, PeerControl] = {
     ),
     "financecoffer": PeerControl(
         key="financecoffer",
-        directory=r"[local-path]\FinanceCoffer",
+        directory=r"[modules-path]\financecoffer",
         import_package="financecoffer",
         repo="QuotaFuse-ai/FinanceCoffer",
         dist_name="financecoffer",
@@ -730,6 +730,55 @@ PEER_SIBLING_DIRS: dict[str, str] = {
     "qdrant": "Qdrant",
 }
 
+#: 便携包容器内的规范目录名（`<安装根>/file/modules/` 下）。
+#: 和 `PEER_SIBLING_DIRS` 分开，是因为两件事该用两套名字：容器态用规范名
+#: （小写、无空格），开发态沿用仓库历史名（`TickHub-CN` 这种）。
+PEER_CONTAINER_DIRS: dict[str, str] = {
+    "tickhub": "tickhub-cn",
+    "tickhub_us": "tickhub-us",
+    "wire": "wire",
+    "senate": "stock-senate",
+    "financecoffer": "financecoffer",
+    "proxyfleet": "proxyfleet",
+    "qdrant": "qdrant",
+}
+
+#: 子模块容器根整体覆盖入口（想把数据放外置盘时用）。
+MODULES_ROOT_ENV = "LDST_MODULES_ROOT"
+
+
+def modules_root(env: Mapping[str, str] | None = None) -> Path:
+    """便携包内的子模块容器：`<安装根>/file/modules`。
+
+    与 `layout.py` 的 `file/modules/financecoffer` 是同一处——peer、增强包、
+    模型共用这一个容器，不再散落到安装根下的同级目录。
+    """
+    values = os.environ if env is None else env
+    override = (values.get(MODULES_ROOT_ENV) or "").strip()
+    if override:
+        return Path(override)
+    return _install_root() / "file" / "modules"
+
+
+def resolved_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path | None:
+    """peer 目录的真实落点：显式覆盖 > 容器 > 开发态同级 > None。
+
+    - 显式 ``LDST_PEER_DIR_<KEY>``：用户指定，最高优先
+    - 容器 ``<安装根>/file/modules/<规范名>``：便携包 / 统一态
+    - 同级 ``<安装根>/<历史名>``：开发态兼容（仓库 clone 到 LadderStock 旁边）
+    """
+    values = os.environ if env is None else env
+    override = (values.get(PEER_DIR_ENV[key]) or "").strip()
+    if override:
+        return Path(override)
+    container = modules_root(values) / PEER_CONTAINER_DIRS[key]
+    if container.is_dir():
+        return container
+    sibling = _install_root() / PEER_SIBLING_DIRS[key]
+    if sibling.is_dir():
+        return sibling
+    return None
+
 # --------------------------------------------------------------------------- #
 # 工具组件（不是 peer：不提供数据集，只提供生态里的公共能力）
 # --------------------------------------------------------------------------- #
@@ -766,7 +815,8 @@ COMPONENTS: dict[str, ComponentControl] = {}
 #: 组件目录覆盖入口：与 peer 一样是固定键白名单。
 COMPONENT_DIR_ENV: dict[str, str] = {}
 
-COMPONENT_SIBLING_DIRS: dict[str, str] = {}
+#: 组件（只观测不纳管的基础设施）在容器内的目录；与 peer 共用 `file/modules`。
+COMPONENT_SIBLING_DIRS: dict[str, str] = {"financecoffer": "financecoffer"}
 
 
 def _install_root() -> Path:
@@ -783,7 +833,7 @@ def resolve_components(env: Mapping[str, str] | None = None) -> dict[str, Compon
     for key, ctl in COMPONENTS.items():
         directory = (values.get(COMPONENT_DIR_ENV[key]) or "").strip()
         if not directory:
-            sibling = _install_root() / COMPONENT_SIBLING_DIRS[key]
+            sibling = modules_root(values) / COMPONENT_SIBLING_DIRS[key]
             directory = str(sibling) if sibling.is_dir() else ctl.directory
         resolved[key] = ctl if directory == ctl.directory else replace(ctl, directory=directory)
     return resolved
@@ -857,10 +907,12 @@ def peer_directory(key: str, env: Mapping[str, str] | None = None) -> str:
     `[modules-path]` 的目录。
     """
     values = os.environ if env is None else env
-    directory = (values.get(PEER_DIR_ENV[key]) or "").strip()
-    if directory:
-        return directory
-    return str(_install_root() / PEER_SIBLING_DIRS[key])
+    resolved = resolved_peer_dir(key, values)
+    if resolved is not None:
+        return str(resolved)
+    # 都探测不到时返回容器路径：真要写文件（一键接入）就应该落在包里，
+    # 而不是造一个同级目录出来。
+    return str(modules_root(values) / PEER_CONTAINER_DIRS[key])
 
 
 def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, PeerControl]:
@@ -874,11 +926,9 @@ def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, Peer
     offset = port_offset(values)
     resolved: dict[str, PeerControl] = {}
     for key, ctl in PEER_CONTROL.items():
-        directory = (values.get(PEER_DIR_ENV[key]) or "").strip()
-        if not directory:
-            sibling = _install_root() / PEER_SIBLING_DIRS[key]
-            directory = str(sibling) if sibling.is_dir() else ctl.directory
-        resolved[key] = _shift_control(ctl, offset, directory)
+        directory = resolved_peer_dir(key, values)
+        directory_str = str(directory) if directory is not None else ctl.directory
+        resolved[key] = _shift_control(ctl, offset, directory_str)
     return resolved
 
 
