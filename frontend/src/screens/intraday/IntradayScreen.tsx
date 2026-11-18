@@ -76,7 +76,7 @@ interface SlotVisual {
 const SLOT_VISUALS: Record<string, SlotVisual> = {
   ok: { label: '已写入', icon: CheckCircle2, dot: 'ok', cell: 'border-ok' },
   degraded: { label: '降级写入', icon: AlertTriangle, dot: 'warn', cell: 'border-warn' },
-  already: { label: '已存在·未覆盖', icon: CircleDot, dot: 'accent', cell: 'border-accent' },
+  already: { label: '已有快照·非本轮写入', icon: CircleDot, dot: 'accent', cell: 'border-accent' },
   skipped: { label: '已过窗口，不补跑', icon: CircleSlash2, dot: 'idle', cell: 'border-dashed border-border-strong' },
   missing: { label: '未取到', icon: MinusCircle, dot: 'flat', cell: 'border-dashed border-border' },
   failed: { label: '抓取失败', icon: XCircle, dot: 'danger', cell: 'border-danger' },
@@ -469,7 +469,9 @@ function SnapshotBody({
               {oneToTwo === null
                 ? '该时点没有 1进2 载荷。'
                 : oneToTwo.available
-                  ? `昨日首板 ${readingCell(oneToTwo.yesterday_first_board)} 只 · 今晋级 ${readingCell(oneToTwo.today_second_board)} 只 · 成功 ${readingCell(oneToTwo.promoted)} 只 · 晋级率 ${pctCell(oneToTwo.rate_pct)}`
+                  ? oneToTwo.recomputed
+                    ? `昨日首板 ${readingCell(oneToTwo.yesterday_first_board)} 只 · 其中今日封板 ${readingCell(oneToTwo.today_second_board)} 只 · 晋级率 ${pctCell(oneToTwo.rate_pct)}（由该时点快照的原始读数重算：写入那一刻 limit_pool 取数失败，读数本身是当时的）`
+                    : `昨日首板 ${readingCell(oneToTwo.yesterday_first_board)} 只 · 今晋级 ${readingCell(oneToTwo.today_second_board)} 只 · 成功 ${readingCell(oneToTwo.promoted)} 只 · 晋级率 ${pctCell(oneToTwo.rate_pct)}`
                   : `未取到：${oneToTwo.reason ?? '上游没有给出可判定的首板集合'}`}
             </p>
           </div>
@@ -560,10 +562,12 @@ function SectionHeadline({
           <DetailRow term="取数工具" desc={snapshot.source.tool ?? MISSING} />
           <DetailRow term="快照时刻" desc={snapshot.captured_at ?? MISSING} />
         </dl>
-        {slot.detail && (
+        {(slot.detail || slot.status === 'already') && (
           <p className="mt-3 text-caption leading-body text-text-secondary">
             <span className="font-medium text-text">时点记录：</span>
-            {slot.detail}
+            {slot.status === 'already'
+              ? `${slot.slot} 的快照在窗口内已经写过一次，本轮发现文件已在就不再重写——文件与读数都可用，不是没取到。`
+              : slot.detail}
           </p>
         )}
         {payload?.reason && (

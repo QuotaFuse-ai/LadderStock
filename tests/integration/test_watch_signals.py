@@ -225,15 +225,21 @@ def test_notify_test_unavailable_channel_exits_4(
 # --------------------------------------------------------------------------- #
 
 def test_schedule_list_shows_default_jobs(repo: Path) -> None:
-    """仓库自带 config/schedule.yaml：资讯采集 + 三份摘要 + 6 时点快照 + 对账 + 收盘同步。"""
+    """仓库自带 config/schedule.yaml 的任务快照。
+
+    含资讯采集、早盘与收盘盯盘、6 时点快照、对账、收盘同步、收盘知识刷新、
+    收盘异动研究与计划回写，以及三个盘中高频任务（快照 / 盯盘实时 / 资金流）。
+    配置改动时这条断言要同步——它就是配置的看门狗。
+    """
     result = runner.invoke(app, ["schedule", "list", "--output", "json"])
 
     assert result.exit_code == 0, result.stderr
     payload = _json(result)
-    assert payload["job_count"] == 15
+    assert payload["job_count"] == 19
     assert payload["timezone"] == "Asia/Shanghai"
     assert [job["trigger"] for job in payload["jobs"]] == [
         "07:30",
+        "08:45",
         "09:05",
         "09:25",
         "09:35",
@@ -246,11 +252,15 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "15:40",
         "16:15",
         "16:30",
+        "16:40",
+        "16:55",
+        "30s",
         "30s",
         "60s",
     ]
     assert [job["kind"] for job in payload["jobs"]] == [
         "wire_news",
+        "watch_alert",
         "digest",
         "snapshot",
         "snapshot",
@@ -263,7 +273,10 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "digest",
         "digest",
         "knowledge_refresh",
+        "agent_research",
+        "plan_tick",
         "snapshot_fast",
+        "watch_live",
         "sync_batch",
     ]
     _assert_knowledge_refresh(payload["jobs"])

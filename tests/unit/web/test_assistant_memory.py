@@ -124,9 +124,33 @@ def _fake_client(fake_engine: _FakeEngine, settings: memory.MemorySettings):
 
 
 def _patch_files(monkeypatch: pytest.MonkeyPatch, fake: _FakeClient) -> None:
+    """两个桩：直调 `ask` 的用例走 `_load_client`；走 HTTP 的用例走 `ask_agent`。
+
+    本组要验的是**记忆召回与写入**，因此 ask_agent 的替身不返回假文本，而是把这一轮
+    转给真实的 `ask()`——召回、写回、降级日志都按现役代码跑，只有模型客户端是假的。
+    """
+
     monkeypatch.setattr(
         assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
     )
+
+    async def _ask_agent(**kwargs: Any) -> dict[str, Any]:
+        result = assistant_module.ask(
+            question=kwargs.get("question", ""),
+            context=kwargs.get("context", ""),
+            day=kwargs.get("day"),
+            tab=kwargs.get("tab"),
+            page_label=kwargs.get("page_label", "个股深挖"),
+            system_prompt=kwargs.get("system_prompt", assistant_module.SYSTEM_PROMPT),
+            module=kwargs.get("module", assistant_module.DEFAULT_MODULE),
+            symbol=kwargs.get("symbol"),
+            page=kwargs.get("page", "research"),
+            data_root=kwargs.get("data_root"),
+            sync_memory=bool(kwargs.get("sync_memory", False)),
+        )
+        return {**result, "metrics": {}, "sources": [], "used_tools": False}
+
+    monkeypatch.setattr(assistant_module, "ask_agent", _ask_agent)
     # 命名空间解析走仓库真实配置（modules 未配置 → 默认命名空间），不依赖 CWD
     monkeypatch.setenv("LDST_CONFIG_DIR", str(REPO_ROOT / "config"))
 
@@ -140,8 +164,13 @@ def _ask_direct(
     question: str = "这只最近的走势怎么样？",
     context: str = "标的：浦发银行（600000）",
     sync_memory: bool = False,
+    data_root: Any = None,
 ) -> dict[str, Any]:
-    """绕过 HTTP 层直调 `ask`：记忆 settings/client 显式注入，可控同步写入。"""
+    """绕过 HTTP 层直调 `ask`：记忆 settings/client 显式注入，可控同步写入。
+
+    `data_root` 必须由调用方给空目录：档案段会读 `<root>/knowledge`，不传就落到
+    仓库真实数据盘，盘里有该标的档案时「无档案」的断言会随盘数据而失效。
+    """
     _patch_files(monkeypatch, fake)
     return assistant_module.ask(
         question=question,
@@ -153,6 +182,7 @@ def _ask_direct(
         memory_settings=settings,
         memory_client=_fake_client(fake_engine, settings),
         sync_memory=sync_memory,
+        data_root=data_root,
     )
 
 
@@ -215,6 +245,7 @@ def _endpoint_setup(
 
 def test_memory_hit_injected_as_separated_block(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     fake = _FakeClient()
     fake_engine = _FakeEngine(
@@ -226,7 +257,7 @@ def test_memory_hit_injected_as_separated_block(
             }
         ]
     )
-    _ask_direct(monkeypatch, fake, fake_engine, _settings())
+    _ask_direct(monkeypatch, fake, fake_engine, _settings(), data_root=tmp_path)
 
     _, system, user, json_mode = fake.calls[0]
     assert json_mode is False
@@ -280,7 +311,11 @@ def test_low_score_memory_not_injected(monkeypatch: pytest.MonkeyPatch) -> None:
     _ask_direct(monkeypatch, fake, fake_engine, _settings())
 
     assert fake_engine.searched  # 召回确实发生了
-    assert fake.calls[0][1] == assistant_module.SYSTEM_PROMPT
+    # 低分不注入：判断的是「记忆段不出现」，而不是「system 逐字等于常量」——
+    # 数据盘里合法的长期偏好段（preferences.json）不属于记忆，允许存在。
+    system = fake.calls[0][1]
+    assert MEMORY_HEADER not in system
+    assert "用户问过这只票" not in system
     assert MEMORY_HEADER not in fake.calls[0][1]
 
 

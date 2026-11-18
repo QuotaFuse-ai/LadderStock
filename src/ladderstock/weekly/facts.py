@@ -240,7 +240,7 @@ def breadth_metrics(days: list[date], root: Any = None) -> dict[str, Any]:
                     "available": False,
                     "reason": (
                         f"本地缓存没有 {BREADTH_DATASET} 数据或记录里没有涨跌幅字段"
-                        f"（先运行 ldst sync --dataset {BREADTH_DATASET}）"
+                        "（盘中不取，收盘后本机会自动补取）"
                     ),
                     "samples": 0,
                     "bands": dict.fromkeys(labels, 0),
@@ -275,8 +275,8 @@ def breadth_metrics(days: list[date], root: Any = None) -> dict[str, Any]:
         "reason": (
             None
             if samples
-            else f"本周没有 {BREADTH_DATASET} 涨跌幅样本（先运行 ldst sync --dataset "
-            f"{BREADTH_DATASET}），涨跌分布不估算"
+            else f"本周没有 {BREADTH_DATASET} 涨跌幅样本"
+            "（盘中不取，收盘后本机会自动补取），涨跌分布不估算"
         ),
         "bands": [label for label, _low, _high in BREADTH_BANDS],
         "days": per_day,
@@ -316,7 +316,7 @@ def theme_metrics(days: list[date], root: Any = None) -> dict[str, Any]:
         return {
             "available": False,
             "reason": (
-                f"本周没有 {THEME_DATASET} 数据（先运行 ldst sync --dataset {THEME_DATASET}）"
+                f"本周没有 {THEME_DATASET} 数据（收盘后本机会自动补取）"
             ),
             "window": THEME_WINDOW,
             "days": rows,
@@ -480,6 +480,7 @@ def build_facts(week_tag: Any, *, root: Any = None) -> dict[str, Any]:
     snapshots = {day: day_snapshots(day, root=root) for day in weekdays}
     statuses = {day: checkpoint_status(day, root) for day in weekdays}
     validations = {day: validation_module.load_validation(day, root=root) for day in weekdays}
+    today = date.today()
     session_days = [day for day in weekdays if snapshots[day]["available"]]
 
     def metric(day: date, section: str, name: str) -> Any:
@@ -601,14 +602,21 @@ def build_facts(week_tag: Any, *, root: Any = None) -> dict[str, Any]:
                 "has_report": snapshots[day]["has_report"],
             }
             for day in weekdays
-            if not snapshots[day]["available"]
+            # 今天之后的日期不是「缺数」——那天的收盘还没发生，算进去等于把未来当缺口报。
+            if not snapshots[day]["available"] and day <= today
         ],
+        "future_days": [day.isoformat() for day in weekdays if day > today],
+        "ongoing": any(day > today for day in weekdays),
         "available": bool(session_days),
         "reason": (
             None
             if session_days
-            else f"{week} 没有可用单日指标：本周 5 个工作日的涨停池都是空的"
-            "（先运行 ldst sync，或等本周收盘后再生成）"
+            else (
+                f"{week} 还没有交易日：本周从 {weekdays[0].isoformat()} 开始，"
+                f"今天 {today.isoformat()} 还没走到"
+                if all(day > today for day in weekdays)
+                else f"{week} 已过的交易日还没有涨停池产物（交易日收盘后自动同步，打开页面也会自动补取）"
+            )
         ),
         "sentiment": {
             "series": sentiment_series,

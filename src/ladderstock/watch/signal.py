@@ -69,13 +69,14 @@ class SignalInputError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class MinuteBar:
-    """一根分钟 bar：价格 + 可选的涨停价（用于封板判定）。"""
+    """一根分钟 bar：价格 + 可选的涨停价（用于封板判定）+ 可选的名称（显示用）。"""
 
     ts: datetime
     code: str
     price: float
     limit_price: float | None = None
     source_detail: str = DEFAULT_SOURCE_DETAIL
+    name: str = ""
 
     @property
     def sealed(self) -> bool | None:
@@ -91,13 +92,18 @@ class MinuteBar:
 
 @dataclass(frozen=True, slots=True)
 class WatchEvent:
-    """一条盯盘信号事件（`ts / code / kind / value / source_detail` 五字段契约）。"""
+    """一条盯盘信号事件（`ts / code / kind / value / source_detail` 五字段契约 + 可选的 `name`）。
+
+    `name` 只用于页面显示（`/watch` 的名称列）；取不到时留空，前端显示 `—`，
+    绝不拿代码顶名称。`as_dict` 只在有名称时写出该键，老事件读回不受影响。
+    """
 
     ts: datetime
     code: str
     kind: str
     value: float | None
     source_detail: str
+    name: str = ""
 
     @property
     def minute(self) -> datetime:
@@ -109,13 +115,16 @@ class WatchEvent:
         return (self.code, self.kind, self.minute.isoformat(timespec="minutes"))
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "ts": self.ts.isoformat(timespec="seconds"),
             "code": self.code,
             "kind": self.kind,
             "value": self.value,
             "source_detail": self.source_detail,
         }
+        if self.name:
+            body["name"] = self.name
+        return body
 
     @classmethod
     def from_dict(cls, row: Mapping[str, Any]) -> WatchEvent:
@@ -129,6 +138,7 @@ class WatchEvent:
             kind=kind,
             value=None if value is None else float(value),
             source_detail=str(row.get("source_detail") or DEFAULT_SOURCE_DETAIL),
+            name=str(row.get("name") or "").strip(),
         )
 
 
@@ -190,6 +200,7 @@ def parse_bars(
                 price=_as_float(row.get("price"), field="price", index=index),
                 limit_price=parsed_limit,
                 source_detail=str(row.get("source_detail") or source_detail),
+                name=str(row.get("name") or "").strip(),
             )
         )
     return bars
@@ -225,6 +236,7 @@ def _event(bar: MinuteBar, kind: str, value: float) -> WatchEvent:
         kind=kind,
         value=round(value, 2),
         source_detail=bar.source_detail,
+        name=bar.name,
     )
 
 

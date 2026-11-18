@@ -814,6 +814,25 @@ def build_snapshot(
     return _finalize(payload, sources, catalog, reason=unbound_reason)
 
 
+def _missing_reason(sources: dict[str, _Source]) -> str:
+    """一句照着就能做的缺数理由：点名到底缺哪几个数据集。
+
+    别把「六个输入数据集都没有」写成通稿——实际常态是四五个有记录、只缺其中一两个
+    （例如申万行业归属为空），写成「全都没」会让人以为整台机器坏了，还会把排查方向带偏。
+    """
+    empty = [name for name in SNAPSHOT_DATASETS if not sources[name].records]
+    loaded = [name for name in SNAPSHOT_DATASETS if sources[name].records]
+    if not empty:
+        return (
+            "六个输入数据集本机都有记录，但五维指标仍算不出来："
+            "缺的可能是行业归属里的字段，可点「重算行业快照」再试"
+        )
+    head = f"本机缺 {len(empty)} 个输入数据集：" + "、".join(empty)
+    if loaded:
+        head += "（另外 " + str(len(loaded)) + " 个有记录：" + "、".join(loaded) + "）"
+    return head + "；行业快照要六个数据集齐了才出指标，缺的那几个同步完再点「重算行业快照」"
+
+
 def _dataset_status(sources: dict[str, _Source]) -> dict[str, Any]:
     """六个输入数据集本次各读到什么（空 / 行数 / 时点 / 读失败原因）。"""
     return {
@@ -851,7 +870,7 @@ def _finalize(
         "ok" if not unavailable else ("partial" if present else "missing")
     )
     payload["reason"] = reason or (
-        None if present else "六个输入数据集在本机缓存里都没有可用记录，五维全部显式 null"
+        None if present else _missing_reason(sources)
     )
     payload["source_detail"] = _source_detail(sources)
     return payload
@@ -1027,7 +1046,7 @@ def industry_list(
         "source_detail": _source_detail(sources),
         "reason": None
         if any(row["available"] for row in rows)
-        else "六个输入数据集在本机缓存里都没有可用记录（行业清单本身可读，指标全部显式 null）",
+        else _missing_reason(sources),
     }
     if with_metrics:
         # 顶层时点 = 所有行业该维度时点里最新的一个（不是缓存全局最大值，也不是请求日期）

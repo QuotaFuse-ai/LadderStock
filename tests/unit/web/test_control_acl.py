@@ -73,6 +73,11 @@ def peer_dirs(tmp_path: Path) -> dict[str, Path]:
     beta = tmp_path / "peers" / "beta"
     alpha.mkdir(parents=True)
     beta.mkdir(parents=True)
+    # 配置可写的前提是「模块已安装」（.venv 有解释器）：占位造出来，语义与真实一致。
+    for directory in (alpha, beta):
+        bin_dir = directory / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        bin_dir.mkdir(parents=True)
+        (bin_dir / ("python.exe" if os.name == "nt" else "python")).touch()
     return {"alpha": alpha, "beta": beta}
 
 

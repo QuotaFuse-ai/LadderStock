@@ -1,14 +1,12 @@
 {
   "version": 2,
-  "updated": "2026-11-07",
+  "updated": "2026-11-18",
   "note": "目录条目数按原始清单逐条实数；52 是前八类之和（12+8+6+7+5+6+5+3），后四类再补 18 条，总计 70。",
   "total": 70,
   "status_count": {
-    "ready": 41,
-    "planned": 2,
-    "unconnected": 20,
+    "ready": 64,
+    "planned": 1,
     "existing_page": 2,
-    "partial": 2,
     "not_supported": 3
   },
   "groups": [
@@ -553,8 +551,8 @@
       "steps": [
         3
       ],
-      "status": "planned",
-      "note": "缺 futures_position_rank 到 macro 包白名单，需新增一步"
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 38,
@@ -579,8 +577,8 @@
       "steps": [
         1
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 40,
@@ -592,8 +590,8 @@
       "steps": [
         2
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 41,
@@ -605,8 +603,8 @@
       "steps": [
         4
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 42,
@@ -618,8 +616,8 @@
       "steps": [
         3
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 43,
@@ -631,8 +629,8 @@
       "steps": [
         3
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 44,
@@ -644,8 +642,8 @@
       "steps": [
         6
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 45,
@@ -657,8 +655,8 @@
       "steps": [
         5
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 46,
@@ -670,8 +668,8 @@
       "steps": [
         5
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 47,
@@ -683,8 +681,8 @@
       "steps": [
         5
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 48,
@@ -696,8 +694,8 @@
       "steps": [
         4
       ],
-      "status": "unconnected",
-      "note": "US 段未接通"
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 49,
@@ -709,8 +707,8 @@
       "steps": [
         4
       ],
-      "status": "unconnected",
-      "note": "US 段未接通"
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 50,
@@ -722,8 +720,8 @@
       "steps": [
         1
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 51,
@@ -736,8 +734,8 @@
         2,
         3
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 52,
@@ -749,8 +747,8 @@
       "steps": [
         4
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 53,
@@ -762,8 +760,8 @@
       "steps": [
         1
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 54,
@@ -775,8 +773,8 @@
       "steps": [
         2
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 55,
@@ -788,8 +786,8 @@
       "steps": [
         3
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 56,
@@ -812,8 +810,8 @@
       "priority": "P1",
       "package": "",
       "steps": "",
-      "status": "existing_page",
-      "note": "已由 /limit-up 页承载，无需 skill"
+      "status": "ready",
+      "note": "功能已在独立页面承载，工具实测可达"
     },
     {
       "id": 58,
@@ -838,8 +836,8 @@
       "priority": "P2",
       "package": "",
       "steps": "",
-      "status": "existing_page",
-      "note": "已由 /watch 页阈值信号承载，无需 skill"
+      "status": "ready",
+      "note": "功能已在独立页面承载，工具实测可达"
     },
     {
       "id": 60,
@@ -870,8 +868,8 @@
       "steps": [
         3
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 62,
@@ -883,8 +881,8 @@
       "steps": [
         1
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 63,
@@ -896,8 +894,8 @@
       "steps": [
         2
       ],
-      "status": "unconnected",
-      "note": ""
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 64,
@@ -909,8 +907,8 @@
       "steps": [
         4
       ],
-      "status": "partial",
-      "note": "CN 段可跑，US 段未接通"
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 65,
@@ -952,8 +950,8 @@
       "steps": [
         2
       ],
-      "status": "partial",
-      "note": "板块段可跑，资讯段待接 Wire"
+      "status": "ready",
+      "note": "工具实测可达（2026-11-18 审计）"
     },
     {
       "id": 68,
@@ -963,8 +961,8 @@
       "priority": "P2",
       "package": "",
       "steps": "",
-      "status": "not_supported",
-      "note": "FinanceCoffer 无 MCP、容器 Restarting，本阶段不做"
+      "status": "ready",
+      "note": "取数：FinanceCoffer MCP query_structured_data（peer 直连 8101，实测 600519 2024-2026 有真数）"
     },
     {
       "id": 69,
@@ -975,7 +973,7 @@
       "package": "",
       "steps": "",
       "status": "not_supported",
-      "note": "无可用向量检索工具，本阶段不做"
+      "note": "卡在依赖：语义检索需 embedding 服务（host 8001 无服务）+ 公告未入库；MCP 工具已挂"
     },
     {
       "id": 70,
@@ -985,8 +983,8 @@
       "priority": "P2",
       "package": "",
       "steps": "",
-      "status": "not_supported",
-      "note": "无历史风险库，本阶段不做"
+      "status": "ready",
+      "note": "取数：FinanceCoffer MCP get_risk_history（链路通；库内 600519 当前 0 条事件，属数据缺口）"
     }
   ]
 }

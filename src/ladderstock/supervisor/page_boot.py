@@ -225,6 +225,13 @@ class WatchScanner:
                 return {"ok": False, "trigger": trigger, "detail": f"事件落盘失败：{exc}"}
         total = known + fresh
         stamp = _local_iso()
+        # 代码→名称：事件只在新 key 出现时落盘，持续封板的票不会再有新事件，
+        # 只看 `recent_events` 名称列就会一直是 `—`。这里把当天样本里已知的名称
+        # 一并写上，页面按 code 兜底取，不必等这只票再出信号。
+        names: dict[str, str] = {}
+        for bar in bars:
+            if bar.name:
+                names[bar.code] = bar.name
         document: dict[str, Any] = {
             "running": True,
             "mode": mode,
@@ -236,6 +243,7 @@ class WatchScanner:
             "source": str(source),
             "source_detail": bars[0].source_detail if bars else "-",
             "event_count": len(total),
+            "names": names,
             "recent_events": [
                 event.as_dict() for event in total[-watch_status.STATUS_RECENT_EVENTS :]
             ],

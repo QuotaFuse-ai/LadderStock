@@ -487,11 +487,24 @@ def _evict(conn: sqlite3.Connection, *, keep: str, max_sessions: int) -> list[st
 
 
 def list_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """会话列表：最近更新的在前，附轮数。"""
+    """会话列表：最近更新的在前，附轮数。
+
+    只列「真有内容」的会话：至少有一轮落到 `done` / `streaming`。
+    此前不过滤，一次失败的探针、一次中断、甚至只建了行没发问的空会话
+    都会留在「最近对话」里，列表被同题的空壳会话灌满（用户看到「今天
+    没有聊这么多，却有一堆重复条目」就是这个）。失败轮次仍然保留在库里，
+    点进去看得到，只是不作为会话出现在列表上。
+    """
     rows = conn.execute(
         "SELECT s.session_id, s.title, s.created_at, s.updated_at, "
         "       (SELECT COUNT(*) FROM chat_turn t WHERE t.session_id = s.session_id) AS turns "
-        "FROM chat_session s ORDER BY s.updated_at DESC, s.session_id DESC"
+        "FROM chat_session s "
+        "WHERE EXISTS ("
+        "  SELECT 1 FROM chat_turn t WHERE t.session_id = s.session_id "
+        "  AND t.status IN (?, ?)"
+        ") "
+        "ORDER BY s.updated_at DESC, s.session_id DESC",
+        (DONE, STREAMING),
     ).fetchall()
     return [
         {

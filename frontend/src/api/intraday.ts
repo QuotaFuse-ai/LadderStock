@@ -120,6 +120,8 @@ export interface IntradayYesterdayLimitUp {
 
 export interface IntradayOneToTwo {
   available: boolean
+  /** 该时点写入时没算出来、读页面时用**同一份快照读数**补算的标记 */
+  recomputed?: boolean
   yesterday_first_board: number | null
   today_second_board: number | null
   promoted: number | null
@@ -347,6 +349,7 @@ function parseSentiment(value: unknown): IntradaySentimentBlock | null {
     one_to_two: oneToTwo
       ? {
           available: requiredBoolean(oneToTwo.available),
+          recomputed: oneToTwo.recomputed === true,
           yesterday_first_board: numberOrNull(oneToTwo.yesterday_first_board),
           today_second_board: numberOrNull(oneToTwo.today_second_board),
           promoted: numberOrNull(oneToTwo.promoted),

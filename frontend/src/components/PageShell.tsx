@@ -1,16 +1,15 @@
 import { useContext, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2, RefreshCw, WifiOff } from 'lucide-react'
-import { useLocation } from 'react-router-dom'
 
 import { cn } from '../lib/cn'
 import { PageToolsSlotContext } from '../lib/pageToolsSlot'
 import { useDemoEnabled, useDemoUrlEnabled, type PageState } from '../lib/pageState'
-import { NAV_SECTIONS } from './Layout'
-import { Badge, Banner, IconButton, NavPills, Skeleton } from './ui'
+import { PageSubNav } from './PageSubNav'
+import { Badge, Banner, IconButton, Skeleton } from './ui'
 
 /**
- * 页面骨架件：内容区状态行 + 横向胶囊页签 + 演示态标记 / 离线提示 / 整屏骨架。
+ * 页面骨架件：内容区状态行 + 演示态标记 / 离线提示 / 整屏骨架。
  *
  * 五态演示统一走 `?state=`（§8），真实数据态与演示态共用同一套 DOM，
  * 保证截图和真实渲染不会两套结构。
@@ -19,30 +18,21 @@ import { Badge, Banner, IconButton, NavPills, Skeleton } from './ui'
  * 标题只留一颗对读屏可见的 `h1.sr-only`（页面必须有 h1，顶栏的 `<strong>` 是导航不是标题），
  * 主操作「刷新」经 `PageToolsSlotContext` 送进顶栏工具区；没有外壳时（组件单测 / Storybook）
  * 退回内容区就地渲染，屏幕本身不区分环境。
+ *
+ * **栏目内子导航搬到顶栏（2026-11-16）**：内容区不再有第二排同组胶囊
+ * （原 `SectionNavPills`），改由 `Layout` 顶栏的 `PageSubNav` 渲染。
  */
-
-/** 同一路径挂了几颗（市场三段都是 `/market?tab=`），没有返回 undefined。 */
-function sharedPath(pages: readonly { to: string }[]): string | undefined {
-  const counts = new Map<string, number>()
-  for (const page of pages) {
-    const path = page.to.split('?')[0]
-    counts.set(path, (counts.get(path) ?? 0) + 1)
-  }
-  return [...counts].find(([, count]) => count > 1)?.[0]
-}
 
 /**
- * 当前路由所属导航组 → 页头下方那一行横向胶囊（QUOT-390）。
+ * 当前路由所属导航组 → 一组横向胶囊（QUOT-390）。
  *
- * 数据源就是侧栏的 `NAV_SECTIONS`，不再另立一份页签表：二级页加进侧栏，胶囊条自动跟上，
- * 两边不会走样。**组里只有一页时整条不渲染**（首页 / 日志 / 个股深挖 / 设置），
- * 单颗页签既没有导航价值，又比没有更吵。
+ * ⚠️ **已迁出内容区（2026-11-16）**：`PageHeader` 不再调用它，胶囊改由顶栏的
+ * `PageSubNav` 渲染（与面包屑同一行）。函数保留给 `tests/nav-pills.test.tsx`
+ * 的归组口径单测（选中态、同路径多入口），实现直接转调 `PageSubNav`，
+ * 两边只有一处真源。
  */
 export function SectionNavPills({ className }: { className?: string }) {
-  const { pathname } = useLocation()
-  const section = NAV_SECTIONS.find((entry) => entry.pages.some((page) => page.to.split('?')[0] === pathname))
-  if (!section || section.pages.length < 2) return null
-  return <NavPills items={section.pages} basePath={sharedPath(section.pages)} className={className} />
+  return <PageSubNav className={className} />
 }
 
 /** 页面主操作「刷新」：各屏只给行为与状态，按钮形状由骨架件统一。 */
@@ -107,8 +97,10 @@ export function PageHeader({ title, subtitle, actions, badge, meta, refresh, cla
         )}
       </div>
       {toolsSlot && refreshControl && createPortal(refreshControl, toolsSlot)}
-      {/* 页签留在内容区第一行：屏幕自己不写导航，位置由骨架件保证一致 */}
-      <SectionNavPills />
+      {/* QUOT-397 返工：页头下方的横向胶囊页签已撤掉。
+          它与侧栏二级导航是同一份 `NAV_SECTIONS` 的两处渲染：组内 2 页时页面出现
+          两条同组入口、组内 1 页时一条都没有，全站看起来「有的页面两个导航、有的一个」。
+          导航只留侧栏一处，页头不再重复。 */}
     </>
   )
 }

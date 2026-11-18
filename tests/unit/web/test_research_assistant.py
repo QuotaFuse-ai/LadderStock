@@ -1,7 +1,9 @@
 """QUOT-454：`POST /api/research/{code}/assistant` 的契约测试。
 
-只测适配层：成功回文本、空回答不算成功、未配 Key / 断网 / 超时三种降级各自
-给出可读且可区分的状态码与 `code`。模型调用用假客户端，不联网、不读密钥。
+路由在接入 agent 之后不再「自己调一次模型、再按意图补取数」，而是把整轮交给
+`ask_agent`（模型自主选工具、定轮次）。因此适配层的桩打在 **`ask_agent`** 上：
+成功回文本 + 模型名、空回答不算成功、未配 Key / 断网 / 超时三种降级各自给出
+可读且可区分的状态码与 `code`。全程不联网、不读密钥。
 """
 
 from __future__ import annotations
@@ -9,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,25 +22,11 @@ CODE = "600000"
 BASE_URL = "http://127.0.0.1:5950"
 LOOPBACK = ("127.0.0.1", 54321)
 
+DEFAULT_REPLY = "页面里的现价是 9.87 元。"
+
 
 class _NullControlPlane:
     peers: dict[str, Any] = {}
-
-
-class _FakeClient:
-    def __init__(
-        self, reply: str = "页面里的现价是 9.87 元。", exc: BaseException | None = None
-    ) -> None:
-        self.reply = reply
-        self.exc = exc
-        self.calls: list[tuple[str, str, str, bool]] = []
-        self.timeout = 0.0
-
-    def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
-        self.calls.append((model, system, user, json_mode))
-        if self.exc is not None:
-            raise self.exc
-        return self.reply
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -61,26 +48,99 @@ def _post(client: TestClient, **body: Any) -> Any:
     )
 
 
-def test_assistant_returns_text_and_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _FakeClient()
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:deepseek-chat")
-    )
+def _patch_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    reply: str = DEFAULT_REPLY,
+    exc: BaseException | None = None,
+    used_tools: bool = True,
+    metrics: dict[str, Any] | None = None,
+    sources: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """把 `ask_agent` 换成本地桩，返回它收到的 kwargs（供断言入参被原样带过去）。"""
+    calls: dict[str, Any] = {}
+
+    async def _ask_agent(**kwargs: Any) -> dict[str, Any]:
+        calls.update(kwargs)
+        if exc is not None:
+            raise exc
+        return {
+            "reply": reply,
+            "model": "openai:deepseek-chat",
+            "ai": {"model": "openai:deepseek-chat", "source": "config"},
+            "fetched_at": "2026-11-06T10:00:00+00:00",
+            "metrics": metrics or {},
+            "sources": sources or [],
+            "used_tools": used_tools,
+        }
+
+    monkeypatch.setattr(assistant_module, "ask_agent", _ask_agent)
+    return calls
+
+
+def test_assistant_returns_text_and_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _patch_agent(monkeypatch)
 
     response = _post(_client(tmp_path), date="2026-11-06", tab="overview")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["reply"] == fake.reply
+    assert body["reply"] == DEFAULT_REPLY
     assert body["model"] == "openai:deepseek-chat"
     assert body["fetched_at"]
-    # 上下文与问题确实进了同一条用户消息；system 里含「不要编造」
-    _, system, user, json_mode = fake.calls[0]
-    assert json_mode is False
-    assert "不要编造" in system
-    assert "【页级上下文】" in user
-    assert "浦发银行（600000）" in user
-    assert "这只最近的走势怎么样？" in user
+    # 问题与页级上下文原样交给 agent：路由不再自己拼提示词、也不再按意图补取数
+    assert calls["question"] == "这只最近的走势怎么样？"
+    assert "浦发银行（600000）" in calls["context"]
+    assert calls["day"] == "2026-11-06"
+    assert calls["tab"] == "overview"
+
+
+def test_assistant_tool_sources_reach_citation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """工具取到的来源要进 citation 块：正文不写来源，来源只能走这条通道。
+
+    `metric` 块需要带出处的数值（`assert_provenance` 的红线），这里只给来源，
+    因此断言落在 citation——数值那一层由 `test_assistant_blocks` 覆盖。
+    """
+    _patch_agent(
+        monkeypatch,
+        reply="浦发银行现价取到了。",
+        metrics={},
+        sources=[{"name": "tickhub · tencent_quote", "fetched_at": "2026-11-16T10:00:00+08:00"}],
+    )
+
+    body = _post(_client(tmp_path)).json()
+
+    assert "citation" in [block["type"] for block in body["blocks"]]
+
+
+def test_assistant_no_tool_turn_does_not_claim_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """模型没调任何工具（如「介绍下自己」），不该摆「本轮没有取到可核实的指标数据」。
+
+    `fetch_attempted` 的语义是「模型有没有查」，不是「页面上有没有数」——
+    没查就没有"没取到"可言，这是改走 agent 之后与旧路径的关键差别。
+    """
+    _patch_agent(monkeypatch, reply="我是 LadderStock 的研究助手。", used_tools=False)
+
+    body = _post(_client(tmp_path)).json()
+
+    assert not [
+        block
+        for block in body["blocks"]
+        if block["type"] == "notice"
+        and block["payload"].get("kind") == "missing_data"
+        and block["payload"].get("section") == "指标"
+    ]
+    assert not [
+        block
+        for block in body["blocks"]
+        if block["type"] == "citation"
+    ]
 
 
 def test_assistant_rejects_blank_question(tmp_path: Path) -> None:
@@ -125,10 +185,12 @@ def test_assistant_missing_key_is_readable_503(
     assert "LDST_LLM_API_KEY" in body["detail"]
 
 
-def test_assistant_timeout_is_readable_504(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _FakeClient(exc=httpx.ReadTimeout("timed out"))
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+def test_assistant_timeout_is_readable_504(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_agent(
+        monkeypatch,
+        exc=assistant_module.AssistantFailure(504, "ai_timeout", "模型调用超时，请稍后重试。"),
     )
 
     response = _post(_client(tmp_path))
@@ -142,9 +204,9 @@ def test_assistant_timeout_is_readable_504(tmp_path: Path, monkeypatch: pytest.M
 def test_assistant_network_failure_is_readable_502(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake = _FakeClient(exc=httpx.ConnectError("connection refused"))
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    _patch_agent(
+        monkeypatch,
+        exc=assistant_module.AssistantFailure(502, "ai_network", "连不上模型服务（网络）。"),
     )
 
     response = _post(_client(tmp_path))
@@ -158,9 +220,12 @@ def test_assistant_network_failure_is_readable_502(
 def test_assistant_empty_reply_is_not_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake = _FakeClient(reply="   ")
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
+    # 空回答由 `ask_agent` 自己判失败（502 ai_empty），路由只需把它翻成可读响应
+    _patch_agent(
+        monkeypatch,
+        exc=assistant_module.AssistantFailure(
+            502, "ai_empty", "AI 返回了空回答（模型未产出内容），请重试。"
+        ),
     )
 
     response = _post(_client(tmp_path))

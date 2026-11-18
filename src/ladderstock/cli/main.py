@@ -26,6 +26,7 @@ from ladderstock.cli.backtest import register as register_backtest
 from ladderstock.cli.export import export as export_command
 from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
+from ladderstock.cli.knowledge import register as register_knowledge
 from ladderstock.cli.legacy_ports import warn_legacy_port
 from ladderstock.cli.mcp import register as register_mcp
 from ladderstock.cli.news import events_command, news_command
@@ -42,6 +43,7 @@ from ladderstock.cli.service import register as register_service
 from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.supervisor import register as register_supervisor
+from ladderstock.cli.symbol import register as register_symbol
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
 from ladderstock.cli.watchdog import register as register_watchdog
@@ -89,6 +91,8 @@ mcp_app = typer.Typer(no_args_is_help=True, help="MCP Server")
 tools_app = typer.Typer(no_args_is_help=True, help="MCP 工具枚举")
 config_app = typer.Typer(no_args_is_help=True, help="配置")
 schedule_app = typer.Typer(no_args_is_help=True, help="定时调度")
+# 标的字典（代码 ↔ 名称）：全市场 `symbol_basic` 表的刷新与查询，实现体在 cli/symbol.py
+symbol_app = typer.Typer(no_args_is_help=True, help="标的字典（代码 ↔ 名称）")
 backtest_app = typer.Typer(no_args_is_help=True, help="回测（A 股日频策略，M1）")
 
 for parent, child, name in (
@@ -111,6 +115,7 @@ for parent, child, name in (
     (mcp_app, tools_app, "tools"),
     (app, config_app, "config"),
     (app, schedule_app, "schedule"),
+    (app, symbol_app, "symbol"),
     (app, backtest_app, "backtest"),
 ):
     parent.add_typer(child, name=name)
@@ -202,6 +207,9 @@ register_watchdog(app)
 # 单入口 supervisor（QUOT-523）：不进看板也能全起 / 全停 / 单模块重启。
 register_supervisor(app)
 
+# 知识库投影（形态 2）：公告正文 → qdrant，可被脚本/监控调度。
+register_knowledge(app)
+
 # 跨平台服务/开机自启/托盘（QUOT-527）：三平台原生机制 + dry-run 安装面。
 register_service(app)
 
@@ -219,6 +227,8 @@ register_weekly(app)
 # 实现体在 cli/sync.py / cli/sources.py；此处只做注册（DEC-003 命令名不变）
 register_sync(sync_app)
 register_sources(sources_app)
+# 全市场标的字典（代码 ↔ 名称）：`symbol refresh|status|lookup`，实现体在 cli/symbol.py
+register_symbol(symbol_app)
 
 # 历史日线回补 + 缺口报表（QUOT-501）：票池与窗口在 config/backfill.yaml，
 # 实现体在 cli/backfill.py + data/backfill.py（缺口口径见 docs/CLI.md §N）
@@ -754,6 +764,12 @@ def doctor(
 
 
 def main() -> None:
+    # 记忆子模块（mem0/torch）随包分发在 `file/modules/memory/site-packages`，
+    # 必须在解析任何子命令之前上 sys.path：源码态与便携包同一相对路径，
+    # 因此启动脚本不再需要写 PYTHONPATH。
+    from ladderstock.core import runtime
+
+    runtime.install_memory_path()
     try:
         app()
     except LadderStockError as exc:

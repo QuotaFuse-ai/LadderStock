@@ -113,6 +113,45 @@ def test_name_query_is_case_insensitive_and_prefix_ranks_first(tmp_path: Path) -
     assert body["payload"]["matches"][0]["symbol"] == "600809"
 
 
+def test_symbol_basic_dictionary_answers_name_query(tmp_path: Path) -> None:
+    """全市场字典（`symbol_basic`）是名称检索的权威源。
+
+    这条钉住「普通人说茅台就能出 600519」这个功能的落点：字典表一进，
+    检索必须命中，且名称来自表里的 `name` 字段（不是按代码猜的）。
+    """
+    duckdb_store.write_dataset(
+        "symbol_basic",
+        [
+            {
+                "code": "600519",
+                "name": "贵州茅台",
+                "market": "SH",
+                "price": 1438.55,
+                "prev_close": 1410.0,
+                "volume": 12000,
+                "active": True,
+                "trade_date": STAMP,
+            }
+        ],
+        root=tmp_path,
+    )
+    matches = _search(tmp_path, "茅台")["payload"]["matches"]
+    assert [(item["symbol"], item["name"]) for item in matches] == [("600519", "贵州茅台")]
+
+
+def test_name_with_inner_spaces_is_folded(tmp_path: Path) -> None:
+    """上游名称里夹着全角空格（「万  科Ａ」），用户敲「万科」也必须命中。"""
+    duckdb_store.write_dataset(
+        "symbol_basic",
+        [
+            {"code": "000002", "name": "万  科Ａ", "market": "SZ", "trade_date": STAMP}
+        ],
+        root=tmp_path,
+    )
+    matches = _search(tmp_path, "万科")["payload"]["matches"]
+    assert matches and matches[0]["symbol"] == "000002"
+
+
 # --------------------------------------------------------------------------- #
 # 3. 空结果：查无此代码不许编名称
 # --------------------------------------------------------------------------- #

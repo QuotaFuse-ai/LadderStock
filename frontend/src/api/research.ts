@@ -1028,6 +1028,52 @@ export function askHomeAssistant(
   return askResearchAssistant(HOME_ASSISTANT_SCOPE, payload, signal)
 }
 
+/** 首页研究台的一轮历史（`chat_turn` 里 `desk:home` 那一条会话）。 */
+export interface DeskHistoryTurn {
+  seq: number
+  question: string
+  blocks: unknown[]
+  status: string
+}
+
+/**
+ * `GET /api/research/desk/history`：首页研究台的最近若干轮，供刷新回看。
+ *
+ * 回看是锦上添花：读不到（库还没建 / 服务不可达）一律按"没有历史"返回空数组，
+ * 不抛错——不能让一次历史读取失败把首页打成错误态。
+ */
+export async function loadDeskHistory(signal?: AbortSignal): Promise<DeskHistoryTurn[]> {
+  try {
+    const data = await request<unknown>('/api/research/desk/history', { signal })
+    const root = asRecord(data, '研究台历史')
+    const rows = Array.isArray(root.turns) ? root.turns : []
+    return rows.flatMap((row): DeskHistoryTurn[] => {
+      const item = asRecord(row, '研究台历史轮次')
+      const seq = asNumber(item.seq, 0)
+      const question = asString(item.question) ?? ''
+      if (seq <= 0 || !question) return []
+      const blocks = Array.isArray(item.blocks) ? item.blocks : []
+      return [{ seq, question, blocks, status: asString(item.status) ?? '' }]
+    })
+  } catch {
+    return []
+  }
+}
+
+/**
+ * `POST /api/research/desk/history/clear`：清空按钮的服务端口径。
+ *
+ * 用 POST 而不是 DELETE：本仓统一的 `request` 封装只发 GET / POST，为一个清空动作
+ * 去扩公共请求层不值得。
+ */
+export async function clearDeskHistory(): Promise<void> {
+  try {
+    await request<unknown>('/api/research/desk/history/clear', { method: 'POST' })
+  } catch {
+    // 清空失败不影响前端已经清掉的画面；下次刷新会重新读回旧记录
+  }
+}
+
 /**
  * `/skills` 页抽屉的技能助手载荷（QUOT-476）。
  *

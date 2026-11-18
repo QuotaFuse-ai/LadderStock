@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Play, RefreshCw, Trash2 } from 'lucide-react'
 
-import { describeApiError, isApiError, type WatchSnapshotRow } from '../api'
+import { api, describeApiError, isApiError, type WatchSnapshotRow } from '../api'
 import {
   WATCH_SNAPSHOT_TTL_SEC,
   useWatchSnapshot,
@@ -280,6 +280,8 @@ export default function WatchScreen() {
   const columns = useMemo(() => buildColumns(thresholdPct), [thresholdPct])
 
   const [confirmClear, setConfirmClear] = useState(false)
+  /** 「立即取数」的真实结果：交易时段写入条数，或盘后/失败的原因。按钮不能只转圈。 */
+  const [refreshNote, setRefreshNote] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null)
 
   /**
    * 通知链路自检（QUOT-561）：原来是一颗永久 disabled 的死按钮。现在提交控制面白名单
@@ -376,7 +378,29 @@ export default function WatchScreen() {
       badge={<DemoStateBadge state={forced} />}
       refresh={{
         label: '立即取数',
-        onClick: request.reload,
+        onClick: async () => {
+          // 先让后端真的取一次数（写 minute_bars），再刷新读面。
+          // 结果直接说给用户听：写了多少条，或者为什么没写（盘后不取收盘价冒充盘中信号）。
+          try {
+            const result = await api.watchRefresh()
+            if (result.status === 'ok') {
+              const written = result.minute_bars?.written ?? 0
+              setRefreshNote({
+                tone: 'ok',
+                text: `已取数：写入当日分钟样本 ${written} 条${result.alerted ? `，触发提醒 ${result.alerted} 只` : ''}`,
+              })
+            } else {
+              setRefreshNote({
+                tone: 'warn',
+                text: `${result.status === 'skipped' ? '本次没有取数' : '取数失败'}：${result.detail ?? '后端没有给出原因'}`,
+              })
+            }
+          } catch {
+            // 请求本身失败（服务未连）交由下面的 reload 用响应/空态说话，这里只留一句提示
+            setRefreshNote({ tone: 'warn', text: '取数请求未送达本地服务，已在下方显示读面状态' })
+          }
+          request.reload()
+        },
         loading: request.status === 'loading',
       }}
       actions={
@@ -417,6 +441,8 @@ export default function WatchScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {refreshNote && <Badge tone={refreshNote.tone}>{refreshNote.text}</Badge>}
 
       {state === 'offline' && <OfflineBanner onRetry={request.reload} />}
       {!demo && (state === 'offline' || backendMissing) && trustedRows.length > 0 && (

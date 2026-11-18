@@ -133,6 +133,9 @@ ROW_SHAPES: dict[str, RowShape] = {
     # 盘中快照（QUOT-286）：`tencent_quote_batch` 的 `quotes` 是按 code 索引的对象，
     # 取值即记录行（见 `normalize_records` 对 Mapping 的处理）；行内只有 `timestamp`。
     "spot_quote": RowShape("quotes"),
+    # 全市场标的字典：与 `spot_quote` 同一个工具、同一种 `{code: row}` 形状，
+    # 区别只在用途——这份整表落库当「代码 + 名称」字典，供名称↔代码检索。
+    "symbol_basic": RowShape("quotes"),
     # 逐只归属（QUOT-362）：一行 = 「这只股票挂在这个板块」，股票维度，`require_code`。
     # `boards[].name` 改成 `board_name` 是与板块榜（`concept_board`）同一套列名，
     # `boards[].code`（东财板块码）改成 `board_code` 是给 `data.code`（股票代码）让位。

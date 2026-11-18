@@ -48,6 +48,10 @@ function errorCodeOf(error: unknown): string | null {
 interface RoleDraft {
   provider: string
   model: string
+  /** 该角色自己的网关地址；留空 = 用全局 / provider 默认。 */
+  backendUrl: string
+  /** 该角色自己的密钥；留空 = 用全局 api_key_env。 */
+  apiKey: string
 }
 
 interface PanelNotice {
@@ -70,6 +74,35 @@ function sourceOf(
   return { tone: 'warn', label: '未配置' }
 }
 
+/** 按 StockSenate `agent_roles` 的 `kind` 分组，顺序即合议流程；未知 kind 归「其他」。
+ *  16 个角色平铺是一屏放不下的一长条，分组后默认只展开分析师（7 个）。 */
+const ROLE_GROUPS: { kind: string; title: string; note: string }[] = [
+  { kind: 'analyst', title: '分析师', note: '7 个分析师并行产出独立观点' },
+  { kind: 'researcher', title: '多空研究员', note: '多头 / 空头就分析师结论展开辩论' },
+  { kind: 'manager', title: '研究经理 / 投资经理', note: '汇总辩论，出研究结论与组合意见' },
+  { kind: 'trader', title: '交易员', note: '按研究结论给出方案（不含交易指令）' },
+  { kind: 'risk', title: '风险辩手', note: '激进 / 中立 / 保守三方风险辩论' },
+  { kind: 'judge', title: '质量闸门', note: '校验输出质量，未达标不进终审' },
+]
+
+const OTHER_GROUP = { kind: 'other', title: '其他角色', note: '后端未标注 kind 的角色' }
+
+function groupRoles(roles: SenateRoleStatus[]): { kind: string; title: string; note: string; roles: SenateRoleStatus[] }[] {
+  const buckets = new Map<string, SenateRoleStatus[]>()
+  for (const role of roles) {
+    const kind = role.kind && role.kind !== '' ? role.kind : 'other'
+    const list = buckets.get(kind)
+    if (list) list.push(role)
+    else buckets.set(kind, [role])
+  }
+  const ordered = ROLE_GROUPS.map((group) => ({ ...group, roles: buckets.get(group.kind) ?? [] })).filter(
+    (group) => group.roles.length > 0,
+  )
+  const rest = buckets.get(OTHER_GROUP.kind)
+  if (rest && rest.length > 0) ordered.push({ ...OTHER_GROUP, roles: rest })
+  return ordered
+}
+
 export function SenateRoleModels({
   controlReady,
   push,
@@ -78,6 +111,8 @@ export function SenateRoleModels({
   push?: (message: string, tone?: ToastItem['tone']) => void
 }) {
   const [expanded, setExpanded] = useState(true)
+  // 分组折叠：默认只展开「分析师（7）」，其余收起，避免 16 条一起铺满。
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ analyst: true })
   const [payload, setPayload] = useState<SenateRoleModelsPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<{ code: string | null; detail: string } | null>(null)
@@ -89,6 +124,18 @@ export function SenateRoleModels({
   const [notice, setNotice] = useState<PanelNotice | null>(null)
   const [stale, setStale] = useState(false)
   const [savingAll, setSavingAll] = useState(false)
+  /** 当前展开技能勾选面板的角色；null 表示都收起。 */
+  const [skillEditing, setSkillEditing] = useState<string | null>(null)
+  const [skillDrafts, setSkillDrafts] = useState<Record<string, string[]>>({})
+  const [skillBusy, setSkillBusy] = useState<string | null>(null)
+  /** 当前打开提示词编辑器的角色；null 表示都收起。 */
+  const [promptEditing, setPromptEditing] = useState<string | null>(null)
+  const [promptText, setPromptText] = useState('')
+  const [promptMeta, setPromptMeta] = useState<{ path: string | null; exists: boolean }>({
+    path: null,
+    exists: false,
+  })
+  const [promptBusy, setPromptBusy] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -116,7 +163,12 @@ export function SenateRoleModels({
     if (!payload) return
     const next: Record<string, RoleDraft> = {}
     for (const role of payload.roles) {
-      next[role.role] = { provider: role.provider ?? '', model: role.model ?? '' }
+      next[role.role] = {
+        provider: role.provider ?? '',
+        model: role.model ?? '',
+        backendUrl: role.backend_url ?? '',
+        apiKey: '',
+      }
     }
     setDrafts(next)
     setKeyEnv(payload.global?.api_key_env ?? '')
@@ -125,6 +177,9 @@ export function SenateRoleModels({
   const providers = payload?.providers ?? []
   const globalProvider = payload?.global?.provider ?? null
   const baselineKeyEnv = payload?.global?.api_key_env ?? ''
+  // 全局密钥变量只在顶部填一次（写 `[llm].api_key_env`，所有角色共用），
+  // 不再在每个角色行里重复同一个输入框。
+  const globalKeySuggestion = providerByName(providers, globalProvider ?? '')?.api_key_env ?? ''
 
   const dirtyRoles = useMemo(() => {
     if (!payload) return []
@@ -132,7 +187,12 @@ export function SenateRoleModels({
       .filter((role) => {
         const draft = drafts[role.role]
         if (!draft) return false
-        return draft.provider !== (role.provider ?? '') || draft.model !== (role.model ?? '')
+        return (
+          draft.provider !== (role.provider ?? '') ||
+          draft.model !== (role.model ?? '') ||
+          draft.backendUrl !== (role.backend_url ?? '') ||
+          draft.apiKey.trim() !== ''
+        )
       })
       .map((role) => role.role)
   }, [payload, drafts])
@@ -158,11 +218,12 @@ export function SenateRoleModels({
 
   const buildChanges = (): {
     roles: Record<string, SenateRoleEntry>
+    globalKeyEnv: string | null
     errors: Record<string, string>
   } => {
     const roles: Record<string, SenateRoleEntry> = {}
     const errors: Record<string, string> = {}
-    if (!payload) return { roles, errors }
+    if (!payload) return { roles, globalKeyEnv: null, errors }
 
     for (const name of dirtyRoles) {
       const draft = drafts[name]
@@ -174,29 +235,24 @@ export function SenateRoleModels({
         errors[name] = 'provider 与 model 需同时填写；留空两格表示继续继承'
         continue
       }
-      roles[name] = { provider, model }
+      const url = draft.backendUrl.trim()
+      if (url && !/^https?:\/\//i.test(url)) {
+        errors[name] = '角色地址必须以 http:// 或 https:// 开头'
+        continue
+      }
+      const entry: SenateRoleEntry = { provider, model }
+      if (url) entry.backend_url = url
+      const key = draft.apiKey.trim()
+      if (key) entry.api_key = key
+      roles[name] = entry
     }
 
-    const trimmedKeyEnv = keyEnv.trim()
-    if (keyEnvDirty && trimmedKeyEnv !== '' && !KEY_ENV_PATTERN.test(trimmedKeyEnv)) {
+    // 全局密钥变量走独立字段 `global_key_env`，不再塞进某个角色条目。
+    const globalKeyEnv = keyEnvDirty ? keyEnv.trim() || null : null
+    if (globalKeyEnv && !KEY_ENV_PATTERN.test(globalKeyEnv)) {
       errors.__key_env = 'api_key_env 只能填环境变量名（字母、数字、下划线）'
     }
-    if (keyEnvDirty && errors.__key_env === undefined && Object.keys(roles).length === 0) {
-      // `role_llms` 必须至少带一个角色；只改变量名时用第一个已配置角色的现值占位。
-      const configured = payload.roles.find((role) => role.configured && role.provider && role.model)
-      if (configured) {
-        roles[configured.role] = {
-          provider: configured.provider ?? '',
-          model: configured.model ?? '',
-        }
-      } else {
-        errors.__key_env = '先为至少一个角色选择 provider 与 model，再保存全局 api_key_env'
-      }
-    }
-    if (keyEnvDirty && trimmedKeyEnv !== '' && Object.keys(roles).length > 0) {
-      roles[Object.keys(roles)[0]] = { ...roles[Object.keys(roles)[0]], api_key_env: trimmedKeyEnv }
-    }
-    return { roles, errors }
+    return { roles, globalKeyEnv, errors }
   }
 
   const runTest = async (
@@ -231,6 +287,78 @@ export function SenateRoleModels({
     }
   }
 
+  /** 勾选/取消某个技能：草稿按角色隔离，未改动的角色回落到已保存值。 */
+  const toggleSkill = (role: string, name: string): void => {
+    setSkillDrafts((current) => {
+      const saved = payload?.roles.find((item) => item.role === role)?.skills ?? []
+      const base = current[role] ?? saved
+      const next = base.includes(name) ? base.filter((item) => item !== name) : [...base, name]
+      return { ...current, [role]: next }
+    })
+  }
+
+  const saveSkills = async (role: string, skills: string[]): Promise<void> => {
+    setSkillBusy(role)
+    setRowErrors((current) => ({ ...current, [role]: '' }))
+    try {
+      await api.control.saveSenateRoleSkills(role, skills)
+      setSkillEditing(null)
+      setSkillDrafts((current) => {
+        const next = { ...current }
+        delete next[role]
+        return next
+      })
+      await load()
+    } catch (error) {
+      const info = describeApiError(error)
+      setRowErrors((current) => ({
+        ...current,
+        [role]: senateErrorText(info.code, info.detail),
+      }))
+    } finally {
+      setSkillBusy(null)
+    }
+  }
+
+  const openPrompt = async (role: string): Promise<void> => {
+    if (promptEditing === role) {
+      setPromptEditing(null)
+      return
+    }
+    setPromptEditing(role)
+    setPromptBusy(true)
+    setRowErrors((current) => ({ ...current, [role]: '' }))
+    try {
+      const data = await api.control.senateRolePrompt(role)
+      setPromptText(data.text)
+      setPromptMeta({ path: data.path, exists: data.exists })
+    } catch (error) {
+      const info = describeApiError(error)
+      setRowErrors((current) => ({ ...current, [role]: senateErrorText(info.code, info.detail) }))
+      setPromptEditing(null)
+    } finally {
+      setPromptBusy(false)
+    }
+  }
+
+  const savePrompt = async (role: string): Promise<void> => {
+    setPromptBusy(true)
+    setRowErrors((current) => ({ ...current, [role]: '' }))
+    try {
+      const result = await api.control.saveSenateRolePrompt(role, promptText)
+      setNotice({
+        tone: 'ok',
+        text: `已保存 ${role} 的提示词（${result.chars} 字${result.backup ? '，原文件已备份 .bak' : ''}）`,
+      })
+      setPromptEditing(null)
+    } catch (error) {
+      const info = describeApiError(error)
+      setRowErrors((current) => ({ ...current, [role]: senateErrorText(info.code, info.detail) }))
+    } finally {
+      setPromptBusy(false)
+    }
+  }
+
   const testRow = (role: SenateRoleStatus): void => {
     // 首帧草稿 effect 还没跑完时按已保存值探测，避免丢 provider/model。
     const draft = drafts[role.role] ?? { provider: role.provider ?? '', model: role.model ?? '' }
@@ -244,13 +372,13 @@ export function SenateRoleModels({
 
   const submit = async (alsoTest: boolean): Promise<void> => {
     if (!payload) return
-    const { roles, errors } = buildChanges()
+    const { roles, globalKeyEnv, errors } = buildChanges()
     if (Object.keys(errors).length > 0) {
       setRowErrors(errors)
       setNotice(null)
       return
     }
-    if (Object.keys(roles).length === 0) {
+    if (Object.keys(roles).length === 0 && !globalKeyEnv) {
       setNotice({ tone: 'info', text: '没有需要保存的改动' })
       return
     }
@@ -258,7 +386,7 @@ export function SenateRoleModels({
     setStale(false)
     setNotice(null)
     try {
-      const fresh = await api.control.saveSenateRoleModels(roles, payload.revision)
+      const fresh = await api.control.saveSenateRoleModels(roles, payload.revision, globalKeyEnv)
       const updated = fresh.updated ?? Object.keys(roles)
       setPayload(fresh)
       setNotice({
@@ -416,6 +544,19 @@ export function SenateRoleModels({
                   revision <span className="ldst-num">{payload.revision}</span>
                 </span>
                 <span>契约来源 {payload.engine.contract_source}</span>
+                {payload.memory && (
+                  <span data-testid="senate-memory">
+                    记忆{' '}
+                    <span className="ldst-num">{payload.memory.count}</span> 条 ·{' '}
+                    {payload.memory.backend === 'mem0' ? 'mem0' : '本地 JSONL'}
+                    {payload.memory.mem0_url ? `（${payload.memory.mem0_url}）` : ''}
+                  </span>
+                )}
+                {payload.skill_library && (
+                  <span>
+                    技能库 <span className="ldst-num">{payload.skill_library.length}</span> 个
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-text-muted">
@@ -443,120 +584,316 @@ export function SenateRoleModels({
 
               <p className="text-caption text-text-muted">{payload.engine.reload_hint}</p>
 
-              <ul className="flex flex-col gap-2">
-                {payload.roles.map((role) => {
-                  const draft = drafts[role.role] ?? { provider: role.provider ?? '', model: role.model ?? '' }
-                  const source = sourceOf(role, globalProvider)
-                  const dirty = dirtyRoles.includes(role.role)
-                  const provider = providerByName(providers, draft.provider)
-                  const models = provider?.models ?? []
-                  const rowBusy = busy[role.role]
-                  const rowError = rowErrors[role.role]
-                  const suggestion = provider?.api_key_env ?? ''
+              <Field
+                label="api_key_env（全局，所有角色共用）"
+                htmlFor="senate-global-key"
+                hint="只存变量名；写入 [llm].api_key_env。密钥本身留在 .env / 环境变量，不进 TOML、不进页面。"
+              >
+                <Input
+                  id="senate-global-key"
+                  spellCheck={false}
+                  placeholder={globalKeySuggestion || '例如 MINIMAX_API_KEY'}
+                  value={keyEnv}
+                  onChange={(event) => {
+                    setKeyEnv(event.target.value)
+                    setRowErrors((current) => ({ ...current, __key_env: '' }))
+                  }}
+                />
+              </Field>
+
+              <div className="flex flex-col gap-2">
+                {groupRoles(payload.roles).map((group) => {
+                  const open = openGroups[group.kind] ?? false
+                  const configuredInGroup = group.roles.filter((role) => role.configured).length
+                  const dirtyInGroup = group.roles.filter((role) => dirtyRoles.includes(role.role)).length
                   return (
-                    <li
-                      key={role.role}
-                      role="group"
-                      aria-label={`辩论角色 ${role.role}`}
-                      data-testid={`senate-role-${role.role}`}
-                      className="flex flex-col gap-2 rounded border border-border bg-surface px-3 py-2"
+                    <section
+                      key={group.kind}
+                      aria-label={`辩论角色分组 ${group.title}`}
+                      data-testid={`senate-group-${group.kind}`}
+                      className="flex flex-col overflow-hidden rounded border border-border bg-surface"
                     >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="ldst-num text-body font-medium text-text">{role.role}</span>
-                        {role.label !== role.role && (
-                          <span className="text-caption text-text-muted">{role.label}</span>
+                      <button
+                        type="button"
+                        aria-expanded={open}
+                        onClick={() => setOpenGroups((current) => ({ ...current, [group.kind]: !open }))}
+                        className="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left"
+                      >
+                        {open ? (
+                          <ChevronDown className="size-4 text-text-muted" aria-hidden="true" />
+                        ) : (
+                          <ChevronRight className="size-4 text-text-muted" aria-hidden="true" />
                         )}
-                        <Badge tone={source.tone}>{source.label}</Badge>
-                        {dirty && <Badge tone="warn">未保存</Badge>}
-                        <div className="ml-auto">
-                          <Button
-                            size="md"
-                            variant="ghost"
-                            disabled={!controlReady || rowBusy !== undefined}
-                            loading={rowBusy === 'test'}
-                            onClick={() => testRow(role)}
-                            data-testid={`senate-test-${role.role}`}
-                          >
-                            <FlaskConical className="mr-1 size-3.5" aria-hidden="true" />
-                            测试
-                          </Button>
+                        <span className="text-body font-medium text-text">{group.title}</span>
+                        <Badge tone="flat">{group.roles.length}</Badge>
+                        <span className="text-caption text-text-muted">
+                          已配置 <span className="ldst-num">{configuredInGroup}</span> /{' '}
+                          <span className="ldst-num">{group.roles.length}</span>
+                        </span>
+                        {dirtyInGroup > 0 && <Badge tone="warn">{dirtyInGroup} 项未保存</Badge>}
+                        <span className="ml-auto text-caption text-text-muted">{group.note}</span>
+                      </button>
+
+                      {open && (
+                        <div className="flex flex-col border-t border-border">
+                          <div className="hidden gap-2 px-3 py-1 text-caption text-text-muted lg:grid lg:grid-cols-[minmax(0,1fr)_160px_minmax(0,1fr)_auto_112px]">
+                            <span>角色</span>
+                            <span>Provider</span>
+                            <span>模型</span>
+                            <span>来源</span>
+                            <span />
+                          </div>
+                          {group.roles.map((role) => {
+                            const draft = drafts[role.role] ?? {
+                              provider: role.provider ?? '',
+                              model: role.model ?? '',
+                              backendUrl: role.backend_url ?? '',
+                              apiKey: '',
+                            }
+                            const source = sourceOf(role, globalProvider)
+                            const dirty = dirtyRoles.includes(role.role)
+                            const provider = providerByName(providers, draft.provider)
+                            const models = provider?.models ?? []
+                            const rowBusy = busy[role.role]
+                            const rowError = rowErrors[role.role]
+                            return (
+                              <div
+                                key={role.role}
+                                role="group"
+                                aria-label={`辩论角色 ${role.role}`}
+                                data-testid={`senate-role-${role.role}`}
+                                className="flex flex-col gap-1 border-b border-border px-3 py-2 last:border-b-0 lg:grid lg:grid-cols-[minmax(0,1fr)_160px_minmax(0,1fr)_auto_112px] lg:items-center lg:gap-2"
+                              >
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="ldst-num text-body text-text">{role.role}</span>
+                                    {role.label !== role.role && (
+                                      <span className="text-caption text-text-muted">{role.label}</span>
+                                    )}
+                                    {dirty && <Badge tone="warn">未保存</Badge>}
+                                  </div>
+                                  {role.description && (
+                                    <span className="text-caption text-text-muted">{role.description}</span>
+                                  )}
+                                </div>
+
+                                <Select
+                                  id={`senate-${role.role}-provider`}
+                                  aria-label={`${role.label} provider`}
+                                  value={draft.provider}
+                                  onChange={(event) => changeProvider(role.role, event.target.value)}
+                                >
+                                  <option value="">{role.configured ? '未选择' : '继承全局'}</option>
+                                  {providers.map((item) => (
+                                    <option key={item.name} value={item.name}>
+                                      {item.label || item.name}
+                                    </option>
+                                  ))}
+                                  {draft.provider !== '' &&
+                                    !providers.some((item) => item.name === draft.provider) && (
+                                      <option value={draft.provider}>{draft.provider}（后端未列出）</option>
+                                    )}
+                                </Select>
+
+                                <div className="flex items-center">
+                                  <Input
+                                    id={`senate-${role.role}-model`}
+                                    list={`senate-${role.role}-models`}
+                                    aria-label={`${role.label} 模型`}
+                                    spellCheck={false}
+                                    placeholder={role.configured ? '模型标识' : '继承全局模型'}
+                                    value={draft.model}
+                                    onChange={(event) => updateDraft(role.role, { model: event.target.value })}
+                                  />
+                                  <datalist id={`senate-${role.role}-models`}>
+                                    {models.map((model) => (
+                                      <option key={model} value={model} />
+                                    ))}
+                                  </datalist>
+                                </div>
+
+                                <Badge tone={source.tone}>{source.label}</Badge>
+
+                                <Button
+                                  size="md"
+                                  variant="ghost"
+                                  className="whitespace-nowrap"
+                                  leadingIcon={<FlaskConical className="size-3.5" aria-hidden="true" />}
+                                  disabled={!controlReady || rowBusy !== undefined}
+                                  loading={rowBusy === 'test'}
+                                  onClick={() => testRow(role)}
+                                  data-testid={`senate-test-${role.role}`}
+                                >
+                                  测试
+                                </Button>
+
+                                <div className="flex flex-col gap-1 lg:col-span-5">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-caption text-text-muted">接入</span>
+                                    <Input
+                                      aria-label={`${role.label} 角色地址`}
+                                      spellCheck={false}
+                                      placeholder="留空 = 全局反代"
+                                      value={draft.backendUrl}
+                                      onChange={(event) =>
+                                        updateDraft(role.role, { backendUrl: event.target.value })
+                                      }
+                                      data-testid={`senate-url-${role.role}`}
+                                    />
+                                    <Input
+                                      type="password"
+                                      aria-label={`${role.label} 角色密钥`}
+                                      spellCheck={false}
+                                      autoComplete="off"
+                                      placeholder={
+                                        role.api_key_set ? '已配私有 key（留空不改）' : '留空 = 用全局 key'
+                                      }
+                                      value={draft.apiKey}
+                                      onChange={(event) => updateDraft(role.role, { apiKey: event.target.value })}
+                                      data-testid={`senate-key-${role.role}`}
+                                    />
+                                    <span className="text-caption text-text-subtle">
+                                      {role.api_key_set ? '已配私有 key' : '当前用全局 key'}
+                                    </span>
+                                    <Button
+                                      variant="ghost"
+                                      disabled={!controlReady}
+                                      onClick={() => void openPrompt(role.role)}
+                                      data-testid={`senate-prompt-${role.role}`}
+                                    >
+                                      {promptEditing === role.role ? '收起提示词' : '提示词'}
+                                    </Button>
+                                  </div>
+                                  {promptEditing === role.role && (
+                                    <div className="flex flex-col gap-2 rounded border border-border p-2">
+                                      <span className="text-caption text-text-muted">
+                                        {promptMeta.path ?? '未找到提示词文件'}
+                                        {promptMeta.exists ? '' : '（新文件）'}
+                                      </span>
+                                      <textarea
+                                        aria-label={`${role.label} 提示词`}
+                                        className="min-h-48 w-full rounded border border-border bg-surface p-2 font-mono text-caption"
+                                        value={promptText}
+                                        onChange={(event) => setPromptText(event.target.value)}
+                                        spellCheck={false}
+                                      />
+                                      <div className="flex items-center gap-2">
+                                        <Button
+                                          variant="secondary"
+                                          loading={promptBusy}
+                                          onClick={() => void savePrompt(role.role)}
+                                        >
+                                          保存提示词
+                                        </Button>
+                                        <span className="text-caption text-text-subtle">
+                                          {promptText.length} 字符
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="flex flex-col gap-1 lg:col-span-5">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-caption text-text-muted">技能</span>
+                                    {(role.skills ?? []).length === 0 ? (
+                                      <span className="text-caption text-text-subtle">未挂载</span>
+                                    ) : (
+                                      (role.skills ?? []).map((name) => (
+                                        <span
+                                          key={name}
+                                          className="rounded border border-border px-1.5 text-caption text-text-muted"
+                                        >
+                                          {name}
+                                        </span>
+                                      ))
+                                    )}
+                                    <Button
+                                      variant="ghost"
+                                      disabled={!controlReady}
+                                      onClick={() => {
+                                        setSkillEditing(skillEditing === role.role ? null : role.role)
+                                        setSkillDrafts((current) => ({
+                                          ...current,
+                                          [role.role]: current[role.role] ?? role.skills ?? [],
+                                        }))
+                                      }}
+                                      data-testid={`senate-skills-${role.role}`}
+                                    >
+                                      {skillEditing === role.role ? '收起' : '配置技能'}
+                                    </Button>
+                                  </div>
+                                  {skillEditing === role.role && (
+                                    <div className="flex flex-col gap-2 rounded border border-border p-2">
+                                      <div className="flex max-h-48 flex-wrap gap-x-3 gap-y-1 overflow-auto">
+                                        {(payload?.skill_library ?? []).map((item) => {
+                                          const picked = (
+                                            skillDrafts[role.role] ??
+                                            role.skills ??
+                                            []
+                                          ).includes(item.name)
+                                          return (
+                                            <label
+                                              key={item.name}
+                                              title={item.description}
+                                              className="flex items-center gap-1 text-caption text-text"
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={picked}
+                                                onChange={() => toggleSkill(role.role, item.name)}
+                                              />
+                                              <span>{item.name}</span>
+                                            </label>
+                                          )
+                                        })}
+                                        {(payload?.skill_library ?? []).length === 0 && (
+                                          <span className="text-caption text-text-subtle">
+                                            技能库为空：检查 Senate 目录下的 skills/
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Button
+                                          variant="secondary"
+                                          loading={skillBusy === role.role}
+                                          onClick={() =>
+                                            void saveSkills(
+                                              role.role,
+                                              skillDrafts[role.role] ?? role.skills ?? [],
+                                            )
+                                          }
+                                          data-testid={`senate-skills-save-${role.role}`}
+                                        >
+                                          保存技能
+                                        </Button>
+                                        <span className="text-caption text-text-muted">
+                                          本次勾选 {(skillDrafts[role.role] ?? role.skills ?? []).length} 个
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {rowError && (
+                                  <p role="alert" className="text-caption text-danger lg:col-span-5">
+                                    {rowError}
+                                  </p>
+                                )}
+                                {tests[role.role] && (
+                                  <div className="text-caption text-text-muted lg:col-span-5">
+                                    <TestOutcome result={tests[role.role]} />
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
                         </div>
-                      </div>
-
-                      <div className="grid gap-2 lg:grid-cols-[150px_minmax(0,1.3fr)_minmax(0,1fr)]">
-                        <Field label="Provider" htmlFor={`senate-${role.role}-provider`}>
-                          <Select
-                            id={`senate-${role.role}-provider`}
-                            value={draft.provider}
-                            onChange={(event) => changeProvider(role.role, event.target.value)}
-                          >
-                            <option value="">{role.configured ? '未选择' : '继承全局'}</option>
-                            {providers.map((item) => (
-                              <option key={item.name} value={item.name}>
-                                {item.label || item.name}
-                              </option>
-                            ))}
-                            {draft.provider !== '' &&
-                              !providers.some((item) => item.name === draft.provider) && (
-                                <option value={draft.provider}>{draft.provider}（后端未列出）</option>
-                              )}
-                          </Select>
-                        </Field>
-
-                        <Field
-                          label="Model"
-                          htmlFor={`senate-${role.role}-model`}
-                          hint={models.length > 0 ? '候选来自该 provider，可自由填写' : '先选 provider 才有候选；可自由填写'}
-                        >
-                          <Input
-                            id={`senate-${role.role}-model`}
-                            list={`senate-${role.role}-models`}
-                            spellCheck={false}
-                            placeholder={role.configured ? '模型标识' : '继承全局模型'}
-                            value={draft.model}
-                            onChange={(event) => updateDraft(role.role, { model: event.target.value })}
-                          />
-                          <datalist id={`senate-${role.role}-models`}>
-                            {models.map((model) => (
-                              <option key={model} value={model} />
-                            ))}
-                          </datalist>
-                        </Field>
-
-                        <Field label="api_key_env（变量名）" htmlFor={`senate-${role.role}-key`}>
-                          <Input
-                            id={`senate-${role.role}-key`}
-                            spellCheck={false}
-                            placeholder={suggestion || '例如 MINIMAX_API_KEY'}
-                            value={keyEnv}
-                            onChange={(event) => {
-                              setKeyEnv(event.target.value)
-                              setRowErrors((current) => ({ ...current, __key_env: '' }))
-                            }}
-                          />
-                        </Field>
-                      </div>
-
-                      <p className="text-caption text-text-muted">
-                        只存变量名；写入全局 <span className="ldst-num">[llm].api_key_env</span>，所有角色共用。密钥本身留在
-                        .env / 环境变量，不进 TOML、不进页面。
-                        {suggestion && keyEnv.trim() === '' && (
-                          <>
-                            {' '}
-                            {draft.provider} 推荐 <span className="ldst-num">{suggestion}</span>。
-                          </>
-                        )}
-                      </p>
-                      {rowError && (
-                        <p role="alert" className="text-caption text-danger">
-                          {rowError}
-                        </p>
                       )}
-                      <TestOutcome result={tests[role.role]} />
-                    </li>
+                    </section>
                   )
                 })}
-              </ul>
+              </div>
               {rowErrors.__key_env && (
                 <p role="alert" className="text-caption text-danger">
                   {rowErrors.__key_env}

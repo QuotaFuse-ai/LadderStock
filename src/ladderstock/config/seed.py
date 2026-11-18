@@ -96,16 +96,24 @@ def seed_config(
 
 
 def seed_if_needed() -> SeedReport | None:
-    """仅当解析到的是**用户数据目录**（安装态）且缺文件时 seed。
+    """仅当解析到的是**用户配置目录**（安装态）且缺文件时 seed。
 
-    源码开发态（`cwd/config` 命中）与 `LDST_CONFIG_DIR` 显式指定的目录都不 seed：
-    前者本来就指向仓库模板，后者是用户自己的目录，程序不往里塞文件。
-    返回 `None` 表示无需 seed（已完整或不在安装态）。
+    安装态有两种落点（DEC-071 / QUOT-592），此前只认了 platformdirs 那一种：
+    - 非便携安装态：`<user_data_root>/config`；
+    - 便携安装态（**冻结包恒便携**）：`<install_root>/config`。
+
+    只认前者会让「装到任意目录」的冻结包首跑一个 yaml 都没有——`sources.yaml`
+    缺了首页自选直接 500（实机装完就是这样）。所以冻结态一律算安装态。
+    `LDST_CONFIG_DIR` 显式指定时仍不 seed：那是用户自己的目录，程序不往里塞文件。
     """
-    from ladderstock.cli.paths import user_data_root
+    from ladderstock.core import runtime
+    from ladderstock.cli.paths import _env_with_legacy, user_data_root
+
+    if _env_with_legacy("LDST_CONFIG_DIR"):
+        return None
 
     target = config_dir()
-    installed = target == user_data_root() / "config"
+    installed = target == user_data_root() / "config" or runtime.is_frozen()
     if not installed:
         return None
 

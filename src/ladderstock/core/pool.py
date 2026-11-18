@@ -220,6 +220,24 @@ def membership_index(
     return index
 
 
+def membership_all_index(records: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """代码 → 该股在归属表里挂的**全部**板块名（不按当日榜单过滤）。
+
+    只用来回答「这只到底有没有归属」：`membership_index()` 会把没进当日概念榜的
+    板块全丢掉，光看它分不出「有归属但板块当日都在跌」和「压根没取到归属」。
+    """
+    index: dict[str, list[str]] = {}
+    for record in records:
+        code = str(pick(record, MEMBERSHIP_CODE_KEYS) or "").strip()
+        name = str(pick(record, BOARD_NAME_KEYS) or "").strip()
+        if not code or not name:
+            continue
+        names = index.setdefault(code, [])
+        if name not in names:
+            names.append(name)
+    return index
+
+
 def fund_inflow_map(records: list[dict[str, Any]]) -> dict[str, float]:
     """代码 → 当日资金净额。同一代码重复出现保留首条（与天梯 D-04 去重口径一致）。"""
     flows: dict[str, float] = {}
@@ -346,6 +364,8 @@ def compute_pool(
     member_records, member_backend = dataset_snapshot("concept_membership", day, root)
     boards = theme_board_index(concept_records)
     members = membership_index(member_records, boards)
+    # 「同一只票挂过哪些板块」另存一份不过滤的，只为把题材分项的空说清（见下方 theme_note）
+    owned_blocks = membership_all_index(member_records)
     # 「落库了几只」与「几只挂在当日概念榜上」是两件事：前者是同步覆盖面，后者才是题材分能用的。
     landed_codes = {
         str(pick(record, MEMBERSHIP_CODE_KEYS) or "").strip() for record in member_records
@@ -381,6 +401,23 @@ def compute_pool(
         # 命中多个板块取最大涨幅（SPEC §3 既有口径：题材分回答「最强那条题材有多强」，
         # 求和会让挂在概念多的股票天然占便宜，见 DEC-049）
         theme_change = max((change for _, change in matched), default=None)
+        # 题材分为空时把「哪一种空」说清：有归属但当日板块全在跌、没进概念涨幅榜，
+        # 和「这只根本没取到归属」是两回事，页面上不能都只留一个「—」。
+        if theme_change is not None:
+            theme_note: str | None = None
+        elif owned_blocks.get(code):
+            blocks = owned_blocks[code]
+            note = "、".join(blocks[:3]) + ("…" if len(blocks) > 3 else "")
+            theme_note = (
+                f"归属板块（{note}）当日都不在概念涨幅榜；没进榜就没有当日涨幅可比，题材分不打"
+            )
+        elif tokens:
+            note = "、".join(tokens[:3]) + ("…" if len(tokens) > 3 else "")
+            theme_note = f"所属题材（{note}）当日均未进概念涨幅榜"
+        elif theme_source is None:
+            theme_note = "没有题材归属记录（本次未取到，未核实）"
+        else:
+            theme_note = "涨停原因里的题材词当日未进概念涨幅榜"
 
         parts = {
             "strength": (
@@ -413,6 +450,7 @@ def compute_pool(
                     "theme_tags": tokens,
                     "theme_board_change_pct": theme_change,
                     "theme_source": theme_source,
+                    "theme_note": theme_note,
                 },
             }
         )

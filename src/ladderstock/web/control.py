@@ -60,6 +60,7 @@ from ladderstock.core.boundary import (
     BoundaryViolation,
     ComponentControl,
     PeerControl,
+    peer_directory,
     port_offset,
     resolve_components,
     resolve_peer_control,
@@ -78,6 +79,7 @@ from ladderstock.core.peer_versions import (
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.supervisor import MODULE_ORDER, SupervisorEngine
+from ladderstock.supervisor.modules import panel_port
 from ladderstock.supervisor.ledger import ModuleRecord
 from ladderstock.supervisor.proctree import default_process_ops
 from ladderstock.web import chat as chat_channel
@@ -151,7 +153,9 @@ STATUS_STOPPED = "stopped"
 STATUS_FAILED = "failed"
 
 STATUS_LABELS: dict[str, str] = {
-    STATUS_UNCONFIGURED: "未配置",
+    # 「未配置」曾被用来指「目录不存在 / 未登记」，但同页还有「编辑配置」，
+    # 用户会读成「配置项没填」。改成「未接入」，与「未安装（目录在但包不可用）」区分。
+    STATUS_UNCONFIGURED: "未接入",
     STATUS_NOT_INSTALLED: "未安装",
     STATUS_INSTALLED: "已安装",
     STATUS_STARTING: "启动中",
@@ -162,6 +166,62 @@ STATUS_LABELS: dict[str, str] = {
 
 #: 任务日志里向前端暴露的尾部行数（PRD §4）
 JOB_TAIL_LINES = 20
+
+#: 「一键接入」模板：compose 形态的 peer 目录还不存在时，由控制面生成的部署文件。
+#: 只生成 compose 与 .env，不下载镜像、不建卷、不拉数据——接入 = 让这台机器具备可部署
+#: 形态，真正的启动仍走 `docker compose up -d`（幂等，已有容器原地保留）。
+#: 模板里的端口必须与 PEER_CONTROL 的口径一致（qdrant 是外部托管，不参与 +offset 平移）。
+PEER_SCAFFOLDS: dict[str, dict[str, str]] = {
+    "qdrant": {
+        "docker-compose.yml": """\
+# 由 LadderStock 控制面生成（一键接入）。改端口请同时对齐 PEER_CONTROL 的 6333/9300。
+name: qf-qdrant
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    container_name: qf-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qf_qdrant_storage:/qdrant/storage
+
+  # MCP 面默认不启用：官方没有现成镜像，需要按 mcp-server-qdrant==0.8.1 自行 build
+  # 成本机镜像后才能用。`docker compose up -d` 不会碰它；要用加 --profile mcp。
+  mcp:
+    profiles: ["mcp"]
+    image: qf-qdrant/mcp-server-qdrant:latest
+    container_name: qf-qdrant-mcp
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    ports:
+      - "127.0.0.1:9300:9300"
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      COLLECTION_NAME: ladderstock_memories
+      EMBEDDING_MODEL: BAAI/bge-small-zh-v1.5
+      FASTMCP_SERVER_HOST: 0.0.0.0
+      FASTMCP_SERVER_PORT: "9300"
+      HF_ENDPOINT: https://hf-mirror.com
+      QDRANT_READ_ONLY: "true"
+
+volumes:
+  # 不写 name：compose 默认命名 <project>_<卷>，正好等于既有部署的
+  # qf-qdrant_qf_qdrant_storage。写死名字会另开一个新空库，让已有记忆「消失」。
+  qf_qdrant_storage:
+""",
+        ".env": """\
+# 由 LadderStock 控制面生成（一键接入）。
+QDRANT_URL=http://127.0.0.1:6333
+COLLECTION_NAME=ladderstock_memories
+EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+# 模板默认不开鉴权（仅绑 127.0.0.1）。要让别的机器访问，先在这里设 QDRANT_API_KEY。
+# QDRANT_API_KEY=
+""",
+    },
+}
 
 #: AI 生成 / 重试任务（QUOT-236）：复用同一套 Job 模型，不新增 peer
 AI_JOB_PEER = "ldst"
@@ -1735,6 +1795,11 @@ class ControlPlane:
                 # 未托管的服务（如 WSL 里的 FinanceCoffer，QUOT-403）一律不出
                 # 安装/启停按钮：Windows 侧没有它的进程归属证据，也不能杀。
                 "can_install": ctl.managed and dir_exists and registered and not installed,
+                # 目录还没有、但这是容器化模块且有接入模板：给「一键接入」，
+                # 由控制面生成 compose + .env，之后才有安装/启动按钮。
+                "can_scaffold": (
+                    bool(ctl.compose_file) and key in PEER_SCAFFOLDS and not dir_exists
+                ),
                 # 按面判定（QUOT-481 缺陷 3）：只要存在未监听的服务面就允许补跑
                 # 启动（如 Wire 的 web 面挂了、mcp 面还活着），不再要求全部端口
                 # 先停下来；启动也只补跑那些面（见 _start）。
@@ -1751,7 +1816,8 @@ class ControlPlane:
                 "can_open": open_url is not None,
                 #  config_keys 为空 = 没有可写键（未配白名单的模块）：页面据此置灰
                 # 「编辑配置」，不给空抽屉与「保存后创建」的假承诺（QUOT-480）。
-                "can_config": bool(ctl.config_keys) and env_parent.is_dir(),
+                # 未安装（.venv 不在，如 WSL 里的 FinanceCoffer）同样置灰：写了没人读。
+                "can_config": bool(ctl.config_keys) and env_parent.is_dir() and installed,
             },
         }
 
@@ -1823,6 +1889,11 @@ class ControlPlane:
                     f"端口 {ports} 被其他进程占用（不是本控制面启动的），且健康检查失败："
                     f"{health_detail or '未知'}；不会终止占用者",
                 )
+            # 端口在监听、HTTP 也有响应，只是服务自报未就绪（ProxyFleet 的 /readyz
+            # 在 biz_ok=0 时回 503）：这是「在跑但没准备好」，不是控制面故障。把它
+            # 报成「异常」会和旁边「端口正在监听」自相矛盾。
+            if "HTTP " in (health_detail or ""):
+                return STATUS_RUNNING, f"端口已监听，就绪检查未通过（{health_detail}）"
             return STATUS_FAILED, f"端口已监听但健康检查失败（{health_detail or '未知'}）"
         if active_job and last is not None and last.action == "start":
             return STATUS_STARTING, f"启动中：{last.step or '准备中'}"
@@ -2226,6 +2297,7 @@ class ControlPlane:
             "open_url": None,
             "actions": {
                 "can_install": False,
+                "can_scaffold": False,
                 "can_start": False,
                 "can_stop": False,
                 "can_open": False,
@@ -2307,8 +2379,10 @@ class ControlPlane:
             "components": [self.component_snapshot(key) for key in self.components],
             "port_conflicts": conflicts,
             "ports": {
-                "board": 5950,
-                "mcp": 5951,
+                # 看板端口按当前实例解析（prod=5950 / test=5951），不能写死，
+                # 否则测试服页面会把正式服端口当成自己的。
+                "board": panel_port(),
+                "mcp": panel_port() + 1,
                 **{
                     key: {"mcp": self.peers[key].mcp_port, "web": self.peers[key].web_port}
                     for key in keys
@@ -3204,6 +3278,56 @@ class ControlPlane:
             "saved": len(conditions),
         }
 
+    # ---------------------------------------------------------------- 一键接入
+
+    def scaffold(self, key: str) -> dict[str, Any]:
+        """为 compose 形态的 peer 生成部署目录（一键接入）。
+
+        只写**不存在**的文件：目录里已经有 compose / .env 时一律保留原样、不覆盖——
+        覆盖一次就可能毁掉对方手工调过的端口或密钥。生成完成后 `installed` 变真，
+        卡片才会出现「安装 / 启动」按钮，真正的 `up -d` 仍由用户那一步触发。
+        """
+        ctl = self.peers[key]
+        template = PEER_SCAFFOLDS.get(key)
+        if not template:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{self._product_name(key)} 没有可用的接入模板（只支持容器化模块）",
+            )
+        # 未解析的占位符（`[modules-path]\Qdrant`）只是「该放这」的提示，不是路径：
+        # 真要写文件时先算成真实目录，否则会在进程 CWD 下建出一个叫 [modules-path] 的目录。
+        raw = ctl.directory
+        directory = (
+            Path(peer_directory(key))
+            if "[modules-path]" in raw or "[local-path]" in raw
+            else Path(raw)
+        )
+        if "[" in directory.name or "]" in directory.name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{self._product_name(key)} 的目录仍是占位符（{directory}），拒绝按占位符建目录",
+            )
+        if directory.exists() and not directory.is_dir():
+            raise HTTPException(
+                status_code=400, detail=f"{directory} 已存在且不是目录，拒绝写入"
+            )
+        directory.mkdir(parents=True, exist_ok=True)
+        created: list[str] = []
+        kept: list[str] = []
+        for name, content in template.items():
+            target = directory / name
+            if target.exists():
+                kept.append(name)
+                continue
+            target.write_text(content, encoding="utf-8")
+            created.append(name)
+        return {
+            "peer": key,
+            "directory": str(directory),
+            "created": created,
+            "kept": kept,
+        }
+
     # ---------------------------------------------------------------- 配置读写
 
     def read_config(self, key: str) -> dict[str, Any]:
@@ -3218,6 +3342,15 @@ class ControlPlane:
                 status_code=500,
                 detail=f"{exc}；为避免误报「未配置」并覆盖现有密钥，已中止（fail closed）",
             ) from None
+        # 「可编辑」不能只看目录在不在：FinanceCoffer 目录在、但跑在 WSL 里没有
+        # .venv，写了 deploy/.env 还得进容器重建才生效——这种情况不给写入入口。
+        venv_ready = self._venv_python(ctl).exists()
+        # compose / 计划任务形态本来就没有 .venv，它们的「已安装」另有判据（与快照
+        # installed 同源）：compose 文件在位、目录在位。否则 Qdrant 这类刚一键接入
+        # 的模块会被判成「没装」，配置抽屉与写入接口一起失效。
+        compose_ready = bool(ctl.compose_file) and (path.parent / ctl.compose_file).is_file()
+        task_ready = bool(ctl.task_name) and path.parent.is_dir()
+        installed_ready = venv_ready or compose_ready or task_ready
         rows: dict[str, Any] = {}
         for name in ctl.config_keys:
             raw = values.get(name, "")
@@ -3249,12 +3382,52 @@ class ControlPlane:
             "env_file": str(path),
             "env_layers": layers,
             "exists": path.is_file(),
+            "installed": installed_ready,
+            # 保存后怎么才算生效：写文件 ≠ 生效（进程不重读 env、容器要重建）。
+            # 由后端给准确动作，前端只显示，不在两处各猜一遍。
+            "apply": self._apply_hint(key, ctl, venv_ready),
             # 与快照 actions.can_config / update_config 的写入条件同源，前端只按它渲染，
-            # 不在两边各判一次（QUOT-480）：白名单为空或 env 父目录缺失就是不可编辑。
-            "editable": bool(ctl.config_keys) and path.parent.is_dir(),
+            # 不在两边各判一次（QUOT-480）：白名单为空、env 父目录缺失、或模块根本没装
+            # 就是不可编辑——compose / 计划任务形态按各自判据算「已安装」。
+            "editable": bool(ctl.config_keys) and path.parent.is_dir() and installed_ready,
             "keys": list(ctl.config_keys),
             "values": rows,
             "notes": list(ctl.config_notes),
+        }
+
+    def _apply_hint(self, key: str, ctl: PeerControl, venv_ready: bool) -> dict[str, Any]:
+        """配置写入后的生效方式（三态）：重启进程 / 部署侧重启 / 无法生效。"""
+        name = self._product_name(key)
+        if ctl.task_name:
+            return {
+                "mode": "task",
+                "text": (
+                    f"{name} 由 Windows 计划任务托管：保存只改文件，"
+                    f"要重启「{ctl.task_name}」任务后新值才生效（控制面不代执行）。"
+                ),
+            }
+        if ctl.compose_file or not ctl.managed:
+            return {
+                "mode": "external",
+                "text": (
+                    f"{name} 由外部部署（容器 / WSL）托管：保存只改文件，"
+                    "需要在其部署侧重启或重建后才生效，控制面不代执行。"
+                ),
+            }
+        if not venv_ready:
+            return {
+                "mode": "unavailable",
+                "text": (
+                    f"{name} 本机没有可用的 .venv，控制面不给写入入口："
+                    "即使写进配置文件也不会被读取。需要时先装模块，或到它自己的部署里改。"
+                ),
+            }
+        return {
+            "mode": "restart",
+            "text": (
+                f"保存后需重启 {name} 才生效（运行中的进程不会重读配置文件）；"
+                "若这张卡显示「外部接管」，请到它的启动方重启。"
+            ),
         }
 
     def update_config(
@@ -3284,6 +3457,16 @@ class ControlPlane:
         path = Path(ctl.directory) / ctl.env_filename
         if not path.parent.is_dir():
             raise HTTPException(status_code=400, detail=f"peer 目录不存在：{path.parent}")
+        # 与 read_config.editable 同一判据（本轮补）：模块没装就别写——写了没人读，
+        # 还会让人以为「配置成功」。PUT 直连也不能绕过。
+        if not self._venv_python(ctl).exists():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{self._product_name(key)} 未安装（{ctl.directory} 下没有可用 .venv），"
+                    "拒绝写入配置：该文件不会被此模块读取"
+                ),
+            )
         # 分层 peer（QUOT-481 缺陷 2）：clear 只能删生效层的行，底稿（如 Wire 的
         # .env）只读不重写——删不掉，必须改写成空值压掉，否则合并值回落到底稿、
         # 接口表面成功实际没清。先读底稿判断哪些 removal 需要「空值覆盖」；
@@ -4113,26 +4296,35 @@ class AiModulesTestRequest(BaseModel):
 
 
 class SenateRoleEntry(BaseModel):
-    """`PUT /peers/senate/role-models` 的单个角色：只允许 provider / model / 变量名。"""
+    """`PUT /peers/senate/role-models` 的单个角色。
+
+    除 provider / model 外，StockSenate 1.0.4 起每个角色可各自配一套
+    `backend_url` 与 `api_key`（当前只用一套反代时留空即可、回落全局），
+    也可以只给 `api_key_env` 变量名。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     provider: str
     model: str
     api_key_env: str | None = None
+    backend_url: str | None = None
+    api_key: str | None = None
 
 
 class SenateRoleModelsUpdate(BaseModel):
     """`PUT /peers/senate/role-models`：写 `config/llm_config.toml` 的 `[llm.role_llms]`。
 
-    `expected_revision` 来自 GET；与磁盘指纹不一致判 `SENATE_STALE`。请求模型
-    层就用 `extra="forbid"` 挡住 `api_key` 之类的字段（密钥只进 dotenv / 环境变量）。
+    `expected_revision` 来自 GET；与磁盘指纹不一致判 `SENATE_STALE`。
+    `global_key_env` 是页面顶部「所有角色共用」的那个变量名，落到 `[llm].api_key_env`；
+    角色自己的 `api_key` / `backend_url` / `api_key_env` 写在角色条目里。
     """
 
     model_config = ConfigDict(extra="forbid")
 
     roles: dict[str, SenateRoleEntry]
     expected_revision: str | None = None
+    global_key_env: str | None = None
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -4344,7 +4536,9 @@ def build_router(plane: ControlPlane) -> APIRouter:
         """校验后原子写 llm_config.toml 的 `[llm.role_llms]`；冲突回 `SENATE_STALE`。"""
         body: SenateRoleModelsUpdate = await _senate_body(request, SenateRoleModelsUpdate)
         try:
-            return _senate_role_models().update(body.payload(), body.expected_revision)
+            return _senate_role_models().update(
+                body.payload(), body.expected_revision, body.global_key_env
+            )
         except senate_roles.SenateError as exc:
             raise _senate_error(exc) from None
 
@@ -4361,6 +4555,59 @@ def build_router(plane: ControlPlane) -> APIRouter:
             )
         except senate_roles.SenateError as exc:
             raise _senate_error(exc) from None
+
+    @router.put("/peers/senate/role-skills")
+    async def senate_role_skills_update(request: Request) -> dict[str, Any]:
+        """把某角色勾选的技能写回 `agent_roles.toml`（只校验已知技能名）。"""
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            raise senate_roles.SenateError(
+                "SENATE_INVALID_VALUE", "请求体不是合法 JSON"
+            ) from None
+        role = str((body or {}).get("role") or "").strip()
+        skills = (body or {}).get("skills")
+        if not role or not isinstance(skills, list):
+            raise senate_roles.SenateError(
+                "SENATE_INVALID_VALUE", "role 与 skills 必填，skills 必须是数组"
+            )
+        try:
+            return _senate_role_models().save_role_skills(role, [str(item) for item in skills])
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.get("/peers/senate/role-prompt")
+    def senate_role_prompt(role: str) -> dict[str, Any]:
+        """某角色当前的系统提示词正文（来自 Senate `prompts/` 下对应 md）。"""
+        try:
+            return _senate_role_models().role_prompt(role)
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.put("/peers/senate/role-prompt")
+    async def senate_role_prompt_save(request: Request) -> dict[str, Any]:
+        """写回角色提示词；只允许落在 `prompts/` 内，写前自动留 `.bak`。"""
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            raise senate_roles.SenateError(
+                "SENATE_INVALID_VALUE", "请求体不是合法 JSON"
+            ) from None
+        role = str((body or {}).get("role") or "").strip()
+        text = (body or {}).get("text")
+        if not role or not isinstance(text, str):
+            raise senate_roles.SenateError(
+                "SENATE_INVALID_VALUE", "role 与 text 必填，text 必须是字符串"
+            )
+        try:
+            return _senate_role_models().save_prompt(role, text)
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.post("/peers/{peer_id}/scaffold")
+    def scaffold(peer_id: str) -> dict[str, Any]:
+        """一键接入：目录还不存在时生成部署文件（已有文件一律不覆盖）。"""
+        return plane.scaffold(_peer_or_404(peer_id))
 
     @router.post("/peers/{peer_id}/install")
     def install(peer_id: str, body: InstallRequest | None = None) -> dict[str, Any]:

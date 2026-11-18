@@ -85,6 +85,12 @@ def peer_dirs(tmp_path: Path) -> dict[str, Path]:
     alpha.mkdir(parents=True)
     beta.mkdir(parents=True)
     gamma.mkdir(parents=True)
+    # 「配置可编辑」现在以「模块已安装」为前提（.venv 里有解释器）：测试里显式造占位，
+    # 与真实机器形态一致；不造就等于「未安装」，配置入口本应关闭（本轮修掉的误放行）。
+    for directory in (alpha, beta, gamma):
+        bin_dir = directory / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        bin_dir.mkdir(parents=True)
+        (bin_dir / ("python.exe" if os.name == "nt" else "python")).touch()
     return {"alpha": alpha, "beta": beta, "gamma": gamma}
 
 
@@ -193,6 +199,11 @@ def _venv(peer_dir: Path) -> Path:
     return peer_dir / ".venv"
 
 
+def _unvenv(peer_dir: Path) -> None:
+    """撤掉 fixture 默认给的「已安装」形态：本用例要验证未安装 / 首次安装路径。"""
+    shutil.rmtree(peer_dir / ".venv", ignore_errors=True)
+
+
 def _venv_script(peer_dir: Path, name: str) -> Path:
     return _venv_bin(peer_dir) / f"{name}{'.exe' if os.name == 'nt' else ''}"
 
@@ -214,6 +225,7 @@ def _wait(plane: ControlPlane, job_id: str, timeout: float = 5.0) -> Job:
 def test_status_unconfigured_when_directory_missing(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
+    _unvenv(peer_dirs["alpha"])
     plane = _plane(tmp_path, peer_dirs)
     # alpha 目录存在且未装 venv → 未安装
     assert plane.snapshot("alpha")["status"] == control.STATUS_NOT_INSTALLED
@@ -234,6 +246,7 @@ def test_status_unconfigured_when_not_registered(
 
 
 def test_status_not_installed_without_venv(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    _unvenv(peer_dirs["alpha"])
     plane = _plane(tmp_path, peer_dirs)
     snapshot = plane.snapshot("alpha")
     assert snapshot["status"] == control.STATUS_NOT_INSTALLED
@@ -359,6 +372,7 @@ def test_foreign_occupier_marks_failed_without_killing(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
     """未安装的 peer 端口被别人听着：如实说「被占用」，状态失败，绝不杀占用者。"""
+    _unvenv(peer_dirs["alpha"])
     runtime = FakeRuntime()
     plane = _plane(
         tmp_path,
@@ -402,6 +416,7 @@ def test_stop_refuses_to_kill_foreign_process(
 def test_install_job_success_uses_local_wheel(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
+    _unvenv(peer_dirs["alpha"])
     (peer_dirs["alpha"] / "dist").mkdir()
     wheel = peer_dirs["alpha"] / "dist" / "alpha-1.0.0-py3-none-any.whl"
     wheel.write_text("", encoding="utf-8")
@@ -2334,3 +2349,95 @@ def test_stop_skips_dead_pids_and_stops_live_one(
     entry = plane._peer_state("gamma")
     assert entry["pids"] == []
     assert entry["last_stop_at"]
+
+
+# --------------------------------------------------------------------------- #
+# 一键接入（容器化模块：目录不存在时生成 compose + .env）
+# --------------------------------------------------------------------------- #
+
+
+def _qdrant_plane(tmp_path: Path, directory: Path) -> ControlPlane:
+    from dataclasses import replace
+
+    ctl = replace(PEER_CONTROL["qdrant"], directory=str(directory))
+    runtime = FakeRuntime()
+    return ControlPlane(
+        data_root=tmp_path,
+        peers={"qdrant": ctl},
+        components={},
+        sources_loader=lambda: {"qdrant": {"product": "Qdrant"}},
+        run=runtime.run,
+        port_probe=lambda port: [],
+        health_probe=lambda url, timeout: (True, "HTTP 200"),
+        spawn=lambda args, *, cwd, log_path: SimpleNamespace(pid=4242),
+        http_post=lambda url, payload, headers, timeout: (200, "{}"),
+        process_info=lambda pid, cwd: (None, None),
+        process_started=lambda pid: RECORDED_AT_DT,
+        resolve=lambda host: ["127.0.0.1"],
+    )
+
+
+def test_scaffold_creates_qdrant_compose_and_env(tmp_path: Path) -> None:
+    """目录不存在时生成部署文件，并让该模块从「未接入」变成可安装。"""
+    qdrant_dir = tmp_path / "Qdrant"
+    plane = _qdrant_plane(tmp_path, qdrant_dir)
+
+    result = plane.scaffold("qdrant")
+
+    assert result["directory"] == str(qdrant_dir)
+    assert result["created"] == ["docker-compose.yml", ".env"]
+    assert result["kept"] == []
+    compose = (qdrant_dir / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "qdrant/qdrant:v1.20.0" in compose
+    assert "127.0.0.1:6333:6333" in compose
+    assert "name: qf-qdrant" in compose
+    # 生成的 .env 必须是这个模块真会读的那个文件（env_filename=.env）
+    assert (qdrant_dir / ".env").is_file()
+
+    config = plane.read_config("qdrant")
+    assert config["exists"] is True
+    # compose 形态没有 .venv，但「已装」按 compose 文件在位判定（否则配置入口死掉）
+    assert config["installed"] is True
+    assert config["editable"] is True
+
+
+def test_scaffold_never_overwrites_existing_files(tmp_path: Path) -> None:
+    """已有 compose / .env 一律保留：覆盖一次就可能毁掉手工调过的端口或密钥。"""
+    qdrant_dir = tmp_path / "Qdrant"
+    qdrant_dir.mkdir(parents=True)
+    compose = qdrant_dir / "docker-compose.yml"
+    env = qdrant_dir / ".env"
+    compose.write_text("name: my-own\n", encoding="utf-8")
+    env.write_text("QDRANT_URL=http://127.0.0.1:7333\n", encoding="utf-8")
+    plane = _qdrant_plane(tmp_path, qdrant_dir)
+
+    result = plane.scaffold("qdrant")
+
+    assert result["created"] == []
+    assert result["kept"] == ["docker-compose.yml", ".env"]
+    assert compose.read_text(encoding="utf-8") == "name: my-own\n"
+    assert env.read_text(encoding="utf-8") == "QDRANT_URL=http://127.0.0.1:7333\n"
+
+
+def test_scaffold_resolves_placeholder_directory(tmp_path: Path, monkeypatch) -> None:
+    """占位符不能当目录名：`[modules-path]\\Qdrant` 会建到进程 CWD 下的字面目录里。"""
+    real = tmp_path / "Qdrant-real"
+    monkeypatch.setenv("LDST_PEER_DIR_QDRANT", str(real))
+    plane = _qdrant_plane(tmp_path, Path("[modules-path]") / "Qdrant")
+
+    result = plane.scaffold("qdrant")
+
+    assert result["directory"] == str(real)
+    assert (real / "docker-compose.yml").is_file()
+    # 关键：不能在进程 CWD 下建出一个叫 [modules-path] 的目录（占位符不是路径）
+    assert not (Path.cwd() / "[modules-path]").exists()
+
+
+def test_scaffold_rejects_peer_without_template(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    """只有登记了模板的容器化模块能一键接入；venv 形态没有部署物可生成。"""
+    plane = _plane(tmp_path, peer_dirs)
+
+    with pytest.raises(HTTPException) as exc:
+        plane.scaffold("alpha")
+
+    assert exc.value.status_code == 400

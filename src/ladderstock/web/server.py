@@ -57,6 +57,7 @@ from ladderstock.core.models import LadderEnvelope
 #: 隐私字段集合与剥离实现现在只有一份（`core/privacy.py`），web / MCP / export 共用；
 #: 这里 re-export 保持既有导入路径不变（audit R-2 / F-2）。
 from ladderstock.core.privacy import PRIVATE_KEYS, strip_private
+from ladderstock.data import archive
 from ladderstock.core.sentiment import compute_sentiment
 from ladderstock.core.validation import load_validation, validation_path
 from ladderstock.core.validation import session_days as cached_session_days
@@ -88,11 +89,15 @@ from ladderstock.web.control import (
 )
 from ladderstock.web.inbox import build_router as build_inbox_router
 from ladderstock.web.industry import IndustryPlane
+from ladderstock.web.senate_actions import build_senate_actions_router
 from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.knowledge import KnowledgePlane
 from ladderstock.web.knowledge import build_router as build_knowledge_router
 from ladderstock.web.platform import build_platform_router, request_bound_port
+
+
+from ladderstock.web.financecoffer_api import build_financecoffer_router
 from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
@@ -234,6 +239,8 @@ THEME_LEADER_KEYS: tuple[str, ...] = ("leader", "leader_name", "龙头", "龙头
 THEME_LEADER_CODE_KEYS: tuple[str, ...] = ("leader_code", "code", "龙头代码")
 THEME_LEADER_NAME_KEYS: tuple[str, ...] = ("leader_sec_name", "sec_name", "龙头名称")
 THEME_DELTA_KEYS: tuple[str, ...] = ("delta", "strength_delta", "score_delta", "change", "变化")
+#: 本机涨停池的行业字段：Wire 只给文字简报时，题材轮动退到「涨停池按行业聚合」
+THEME_INDUSTRY_KEYS: tuple[str, ...] = ("industry", "行业", "板块", "所属行业", "concept")
 
 #: 题材面额外递归剔除的字段：资讯正文与地址。白名单已经不含它们，这里是兜底——
 #: 将来有人往 `MARKET_THEME_FIELDS` 加字段，正文不会跟着漏出去（同 DEC-015 §3.4 的做法）。
@@ -566,11 +573,11 @@ def _history_reason(
 ) -> str:
     """空态的一句话：三种「为什么画不出折线」分开说，排障路径不一样。"""
     if not window:
-        return f"本机没有近 {days} 个交易日的涨停池缓存（先运行 ldst sync）"
+        return f"本机没有近 {days} 个交易日的涨停池缓存（交易日 15:35 收盘后自动同步，缺的历史日期打开页面会自动补取）"
     if not points:
         return (
             f"近 {len(window)} 个交易日的情绪指标都算不出来"
-            f"（缺数据: {', '.join(missing)}），先运行 ldst sync"
+            f"（缺数据: {', '.join(missing)}），收盘后会自动补取"
         )
     return (
         f"近 {len(window)} 个交易日里只有 {len(points)} 个可用点"
@@ -589,7 +596,7 @@ def _history_detail(window: list[date], days: int, payload: dict[str, Any]) -> s
     if missing:
         parts.append("缺失交易日: " + ", ".join(missing))
     if len(window) < days:
-        parts.append("本机没有更早的交易日缓存（先运行 ldst sync）")
+        parts.append("本机没有更早的交易日缓存（历史日期打开页面会自动补取）")
     return "; ".join(parts)
 
 
@@ -663,6 +670,190 @@ def _theme_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return _drop_theme_text(projected[:MARKET_THEME_MAX_ROWS])
 
 
+def _previous_partition_day(
+    dataset: str, target: date, root: Any, *, span: int = 12
+) -> date | None:
+    """`target` 之前最近一个有分区的交易日（跳过周末与缺数据的日期）。"""
+    cursor = target - timedelta(days=1)
+    for _ in range(span):
+        try:
+            if archive.has_partition(dataset, cursor, root=root):
+                return cursor
+        except Exception:  # noqa: BLE001 - 分区探测失败按「没有」处理，不拖垮接口
+            return None
+        cursor -= timedelta(days=1)
+    return None
+
+
+def _live_ladder(day: date, root: Any) -> dict[str, Any] | None:
+    """盘中梯队。两级口径：
+
+    1. **当日实时涨停池全集**（`data/live/limit_pool/<date>.json`）在时，直接算
+       完整梯队——每一档家数、高度、断层都是真的，页面照常画柱图（`partial=False`）；
+    2. 只有 `market_sentiment` 的龙头名单时，退成「只有龙头前 N 只」的部分梯队
+       （`partial=True` / `leader_only=True`），每一档家数不算，理由写进 `reason`。
+
+    绝不把部分数据当全量：两种口径都在 `source_detail` 里写明出处。
+    """
+    from ladderstock.core import live_limit_pool
+    from ladderstock.core import live_sentiment
+
+    pool = live_limit_pool.read_snapshot(day, root)
+    pool_rows = live_limit_pool.rows_of(pool)
+    if pool_rows:
+        result = compute_ladder(day, records=pool_rows, root=None)
+        result["partial"] = False
+        result["leader_only"] = False
+        result["count"] = len(pool_rows)
+        result["leader_candidates"] = sorted(
+            (
+                {
+                    "code": str(row.get("code") or ""),
+                    "name": str(row.get("name") or ""),
+                    "boards": row.get("streak")
+                    if isinstance(row.get("streak"), int)
+                    else row.get("boards"),
+                }
+                for row in pool_rows
+                if str(row.get("code") or "").strip()
+            ),
+            key=lambda row: (-(row["boards"] or 0), row["code"]),
+        )[:10]
+        pool_at = str((pool or {}).get("fetched_at") or "")
+        result["source_detail"] = (
+            f"盘中实时涨停池 {(pool or {}).get('source') or 'limit_up_pool'} @ {pool_at}"
+            f"（{len(pool_rows)} 只，当日全量）"
+        )
+        result["reason"] = "盘中按当日实时涨停池全量算；15:35 收盘同步后按归档重算。"
+        return result
+
+    body = live_sentiment.read_snapshot(day, root)
+    if body is None:
+        return None
+    records = body.get("records") or {}
+    leaders = records.get("leaders")
+    if not isinstance(leaders, list) or not leaders:
+        return None
+    rows = []
+    for item in leaders:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        streak = item.get("streak")
+        if not code or not isinstance(streak, int) or streak < 1:
+            continue
+        rows.append({"code": code, "name": str(item.get("name") or ""), "boards": streak})
+    if not rows:
+        return None
+    result = compute_ladder(day, records=rows, root=root)
+    result["partial"] = True
+    result["leader_only"] = True
+    result["count"] = len(rows)
+    # `leader_candidates` 在 `compute_ladder` 里只留最高板前 3 只；盘中榜单要的是全部
+    # 龙头，按板数降序全给（家数口径仍标 partial，不当全量用）。
+    result["leader_candidates"] = sorted(rows, key=lambda row: (-row["boards"], row["code"]))
+    result["source_detail"] = (
+        f"实时快照 {body.get('source') or 'market_sentiment'} @ {body.get('fetched_at') or ''}"
+        f"（只有龙头前 {len(rows)} 只，家数不是当日全量；完整梯队 15:35 收盘同步后出）"
+    )
+    result["reason"] = (
+        f"盘中只能取到龙头前 {len(rows)} 只（涨停共 {records.get('limit_up')} 家）："
+        "个股与最高板是真的，每一档的家数要等当日涨停全集，15:35 收盘同步后出。"
+    )
+    return result
+
+
+def _industry_theme_rows(
+    target: date, root: Any
+) -> tuple[list[dict[str, Any]], str, date | None]:
+    """涨停池按行业聚合的「板块热度」：Wire 只给文字简报时，用它兜住题材轮动这张卡。
+
+    `strength` 是**同日相对分**（该行业涨停家数 / 当日最大行业家数 × 100），只同日可比；
+    `delta` 是与上一交易日同行业涨停家数的差，上一日没有分区时给 `null`（不拿 0 顶）。
+    数据全部来自本机 `limit_pool`，可复算、可标注来源，不依赖 Wire 有没有强度字段。
+
+    当日还没归档（盘中、15:35 之前）时退到**最近一个有分区的交易日**，并把真实数据日
+    作为第三个返回值交出去——页面上写的是那天的日期，不是把昨天的行业分布挂在今天名下。
+    """
+    records, backend = dataset_snapshot("limit_pool", target, root)
+    data_day: date = target
+    if not records:
+        # 盘中优先用当日实时涨停池（含 industry）：那样这张卡就是**今天**的行业分布，
+        # 而不是「用最近一个已收盘交易日」。
+        from ladderstock.core import live_limit_pool
+
+        pool = live_limit_pool.read_snapshot(target, root)
+        live_rows = live_limit_pool.rows_of(pool)
+        if live_rows:
+            records = live_rows
+            backend = (
+                f"盘中实时涨停池 {(pool or {}).get('source') or 'limit_up_pool'}"
+                f" @ {(pool or {}).get('fetched_at') or ''}"
+            )
+    if not records:
+        latest = _previous_partition_day("limit_pool", target, root, span=20)
+        if latest is not None:
+            fallback, fallback_backend = dataset_snapshot("limit_pool", latest, root)
+            if fallback:
+                records, backend, data_day = fallback, fallback_backend, latest
+    buckets: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        industry = _text_or_none(pick(record, THEME_INDUSTRY_KEYS))
+        if not industry:
+            continue
+        bucket = buckets.setdefault(industry, {"count": 0, "boards": 0, "leader": None})
+        bucket["count"] += 1
+        boards = _int_or_none(pick(record, ("streak", "boards", "连板数", "limit_up_days"))) or 0
+        if boards >= bucket["boards"]:
+            bucket["boards"] = boards
+            code = _text_or_none(pick(record, ("code", "代码")))
+            name = _text_or_none(pick(record, ("name", "名称")))
+            bucket["leader"] = " ".join(part for part in (code, name) if part) or None
+
+    if not buckets:
+        return [], f"limit_pool: {backend}（{len(records)} 条，没有行业字段）", None
+
+    prev_day = _previous_partition_day("limit_pool", data_day, root)
+    prev_counts: dict[str, int] = {}
+    if prev_day is not None:
+        prev_records, _ = dataset_snapshot("limit_pool", prev_day, root)
+        for record in prev_records:
+            if not isinstance(record, dict):
+                continue
+            industry = _text_or_none(pick(record, THEME_INDUSTRY_KEYS))
+            if industry:
+                prev_counts[industry] = prev_counts.get(industry, 0) + 1
+
+    top = max(bucket["count"] for bucket in buckets.values())
+    rows: list[dict[str, Any]] = []
+    for industry, bucket in buckets.items():
+        count = bucket["count"]
+        rows.append(
+            {
+                "theme": industry,
+                "strength": round(count / top * 100.0, 1) if top else None,
+                "limit_up_count": count,
+                "leader": bucket["leader"],
+                "delta": float(count - prev_counts.get(industry, 0)) if prev_counts else None,
+            }
+        )
+    rows.sort(key=lambda row: (-(row["limit_up_count"] or 0), row["theme"]))
+    stale = "" if data_day == target else f"（{target.isoformat()} 尚未收盘同步，用最近一个已收盘交易日的涨停池）"
+    detail = (
+        f"limit_pool 行业聚合: {backend}（{len(records)} 条 → {len(rows)} 个行业，"
+        f"{data_day.isoformat()}"
+        + (f"，环比基准 {prev_day.isoformat()}" if prev_day else "，无上一交易日分区")
+        + f"；强度为同日相对分{stale}"
+    )
+    return (
+        [{key: row[key] for key in MARKET_THEME_FIELDS} for row in rows[:MARKET_THEME_MAX_ROWS]],
+        detail,
+        data_day,
+    )
+
+
 def _drop_theme_text(value: Any) -> Any:
     """递归剔除资讯正文类字段（`summary` / `content` / `url` / 正文 / 链接 …）。"""
     if isinstance(value, Mapping):
@@ -676,23 +867,53 @@ def _drop_theme_text(value: Any) -> Any:
     return value
 
 
-def _theme_status(target: date, backend: str, total: int, themes: int) -> tuple[str, str | None]:
+def _trading_lag(target: date, data_day: date) -> int:
+    """`data_day` 到 `target` 之间隔了几个工作日（周末口径，节假日会略多算）。"""
+    if data_day >= target:
+        return 0
+    days = 0
+    cursor = data_day + timedelta(days=1)
+    while cursor <= target:
+        if cursor.weekday() < 5:
+            days += 1
+        cursor += timedelta(days=1)
+    return days
+
+
+def _theme_status(
+    target: date,
+    backend: str,
+    total: int,
+    themes: int,
+    *,
+    data_day: date | None = None,
+) -> tuple[str, str | None]:
     """返回 `(source_detail, reason)`：可用时 `reason=None`。
 
     空态分三种，排障路径不同，文案要能区分：没接入 Wire / 接入了但当日没数据 /
-    有记录却没有题材名。前两种的下一步都是「配置 qfw 再 sync」。
+    有记录却没有题材名。前两种的下一步都是「配置 qfw 再 sync」，第三种是数据侧缺字段。
+
+    **`data_day` 落后于 `target` 的情形单独说**：Wire 的 `wire_get_digest` 按自己
+    最后一次生成简报的日期落库，这个日期常常落后于交易日；此时数据是有的，只是不新。
+    把它说成「未接入」会把排障方向指反（qfw 配好了、sync 也跑过），所以这里既给出
+    「哪天的数据」，也给出「滞后几个交易日」。
     """
     if themes:
-        return f"theme_news: {backend}（{total} 条 → {themes} 个题材，{target}）", None
+        if data_day is not None and data_day < target:
+            lag = _trading_lag(target, data_day)
+            stamp = f"数据日期 {data_day.isoformat()}，滞后 {lag} 个交易日"
+        else:
+            stamp = f"{data_day.isoformat() if data_day else target}"
+        return f"theme_news: {backend}（{total} 条 → {themes} 个题材，{stamp}）", None
     if total:
         return (
             f"theme_news: {backend}（{total} 条，但没有题材字段，{target}）",
             "theme_news 的记录里没有可用的题材名，出不了题材强度",
         )
     reason = (
-        "theme_news 未接入（QuotaFuse Wire），先配置 qfw："
+        "theme_news 未接入（QuotaFuse Wire）："
         f"缓存后端 {backend}，{target} 没有 theme_news 记录"
-        "（配置后运行 ldst sync --dataset theme_news）"
+        "（配置后收盘同步会自动带上这个数据集）"
     )
     return reason, reason
 
@@ -776,11 +997,15 @@ def _status_trade_date(document: Mapping[str, Any]) -> date | None:
         return None
 
 
-def _watch_rows(document: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _watch_rows(
+    document: Mapping[str, Any], streaks: Mapping[str, int] | None = None
+) -> list[dict[str, Any]]:
     """把 `recent_events` 归并成「每股一行」的快照行。
 
-    状态文件里只有 `ts / code / kind / value / source_detail`：`name` /
-    `limit_up_count` 没有来源，一律给 `null`，**不借别的数据源补造**；
+    `name` 先取事件里的（新事件会带），没有再退回状态文件的 `names`
+    （当天样本里已知的代码→名称）——持续封板的票不会刷新事件，只靠事件就永远是 `—`。
+    `limit_up_count` 同理：事件里没有时用 `streaks`（当日盘中情绪快照的龙头表里的
+    连板数，只覆盖涨停龙头那几只），两处都没有才给 `null`，**不拿别的数据源凑数**；
     `change_pct` 只从越阈信号（`threshold_up` / `threshold_down`）的 `value` 取。
     """
     events = document.get("recent_events")
@@ -797,6 +1022,13 @@ def _watch_rows(document: Mapping[str, Any]) -> list[dict[str, Any]]:
         # 事件按时间升序落盘：同一 code 后出现的覆盖先出现的
         latest[code.strip()] = event
 
+    raw_names = document.get("names")
+    names: dict[str, str] = (
+        {key: val for key, val in raw_names.items() if isinstance(val, str)}
+        if isinstance(raw_names, Mapping)
+        else {}
+    )
+
     rows: list[dict[str, Any]] = []
     for code, event in latest.items():
         kind = event.get("kind")
@@ -811,18 +1043,101 @@ def _watch_rows(document: Mapping[str, Any]) -> list[dict[str, Any]]:
         )
         name = event.get("name")
         count = event.get("limit_up_count")
+        # 事件里没名称时用状态文件的 `names`（当天样本里已知的代码→名称）兜底：
+        # 持续封板的票不会再出新事件，只看事件名称列会一直是 `—`。
+        if not (isinstance(name, str) and name.strip()):
+            fallback = names.get(code)
+            name = fallback if isinstance(fallback, str) and fallback.strip() else None
+        streak = None
+        if isinstance(count, int) and not isinstance(count, bool):
+            streak = count
+        elif streaks:
+            candidate = streaks.get(code)
+            if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate > 0:
+                streak = candidate
         rows.append(
             {
                 "code": code,
                 "name": name.strip() if isinstance(name, str) and name.strip() else None,
-                "limit_up_count": (
-                    count if isinstance(count, int) and not isinstance(count, bool) else None
-                ),
+                "limit_up_count": streak,
                 "change_pct": change_pct,
                 "status": KIND_LABELS.get(kind_text, kind_text) if kind_text else None,
             }
         )
     return rows
+
+
+def _one_to_two_from_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    """用**该时点快照自己的读数**重算 1进2（昨日首板 ∩ 今日封板）。
+
+    只在原载荷里 1进2 不可用时才走这里。重算的全部输入（`yesterday_streak`、
+    `at_limit_up`、`fresh`）都是那个时点当场抓下来的原始读数，只是把当时没算出来的
+    比值补上——不引入任何事后数据，与「用今天的价格回填过去的时点」是两件事。
+    """
+    limit_up = snapshot.get("yesterday_limit_up")
+    if not isinstance(limit_up, Mapping):
+        return None
+    stocks = limit_up.get("stocks")
+    if not isinstance(stocks, list) or not stocks:
+        return None
+    first: set[str] = set()
+    hits: set[str] = set()
+    for row in stocks:
+        if not isinstance(row, Mapping) or row.get("fresh") is False:
+            continue
+        streak = row.get("yesterday_streak")
+        if not isinstance(streak, int) or isinstance(streak, bool) or streak != 1:
+            continue
+        code = str(row.get("code") or "").strip()
+        if not code:
+            continue
+        first.add(code)
+        if row.get("at_limit_up") is True:
+            hits.add(code)
+    if not first:
+        return None
+    return {
+        "available": True,
+        "recomputed": True,
+        "yesterday_first_board": len(first),
+        "today_second_board": len(hits),
+        "promoted": len(hits),
+        "rate_pct": round(len(hits) / len(first) * 100, 1),
+        "reason": (
+            "该时点写入时 limit_pool 取数失败（health 日志并发写冲突，已修复）；"
+            "这里的 1进2 由该时点快照内的昨日首板与「今日是否封板」重算，未引入事后数据。"
+        ),
+    }
+
+
+def _watch_streaks(day: date | None, root: Any) -> dict[str, int]:
+    """当日盘中情绪快照里龙头表的「连板数」：`{code: streak}`。
+
+    只覆盖涨停龙头那几只（快照 `leaders` 有 code/name/streak），因此是**兜底来源**：
+    某只在龙头名单里才填，不在就留 `null`，页面显示 `—`。
+    快照缺失或不是当天一律返回空表（不拿昨天/别天的连板数冒充今天）。
+    """
+    if day is None:
+        return {}
+    from ladderstock.core import live_sentiment
+
+    body = live_sentiment.read_snapshot(day, root)
+    if body is None:
+        return {}
+    records = body.get("records") or {}
+    leaders = records.get("leaders")
+    if not isinstance(leaders, list):
+        return {}
+    out: dict[str, int] = {}
+    for item in leaders:
+        if not isinstance(item, Mapping):
+            continue
+        code = item.get("code")
+        streak = item.get("streak")
+        if isinstance(code, str) and code.strip() and isinstance(streak, int):
+            if not isinstance(streak, bool) and streak > 0:
+                out[code.strip()] = streak
+    return out
 
 
 def _validation_conditions(document: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -1188,6 +1503,8 @@ def create_app(
     ) -> dict[str, Any]:
         target = _parse_day(date_str)
         result = compute_ladder(target, root=root)
+        if not result.get("available"):
+            result = _live_ladder(target, root) or result
         available = bool(result.get("available"))
         return _envelope(
             "sentiment",
@@ -1342,7 +1659,19 @@ def create_app(
 
         payload["available"] = True
         payload["reason"] = None
-        payload["snapshot"] = dict(clean)
+        body = dict(clean)
+        # 老快照里的 1进2 可能因为当时写日志撞车而缺失；读数本身都在文件里，
+        # 用同一份读数把比值补出来，别让一格「未取到」把整张卡读成系统故障。
+        sentiment_block = body.get("sentiment")
+        if isinstance(sentiment_block, Mapping):
+            current = sentiment_block.get("one_to_two")
+            if not (isinstance(current, Mapping) and current.get("available") is True):
+                rebuilt = _one_to_two_from_snapshot(body)
+                if rebuilt is not None:
+                    replacement = dict(sentiment_block)
+                    replacement["one_to_two"] = rebuilt
+                    body["sentiment"] = replacement
+        payload["snapshot"] = body
         source = clean.get("source")
         detail = _as_text(source.get("source_detail")) if isinstance(source, Mapping) else None
         return _envelope(
@@ -1405,7 +1734,7 @@ def create_app(
         trade_date = _status_trade_date(document)
         payload: dict[str, Any] = {
             "trade_date": trade_date.isoformat() if trade_date is not None else None,
-            "rows": _watch_rows(document),
+            "rows": _watch_rows(document, _watch_streaks(trade_date, root)),
         }
         return _envelope(
             "sentiment",
@@ -1416,6 +1745,54 @@ def create_app(
             source_detail=watch_status.status_detail(document),
             fetched_at=fetched_at,
         )
+
+    @app.post("/api/watch/refresh")
+    def watch_refresh(request: Request) -> dict[str, Any]:
+        """跑一次盘中取数：现取自选实时价 → 落 `minute_bars` → 扫描守护下一轮出信号。
+
+        这个接口存在的唯一理由：`/watch` 页上的「立即取数」按钮此前只是把 GET
+        重发一遍，后端什么都没做，按钮名与行为不符。现在它真的取一次数。
+
+        三条边界：
+        1. **只在交易时段取**：盘后 spot_quote 是收盘价，写进分钟样本就是拿收盘价冒充
+           盘中信号——`_run_watch_live` 自带时段判断，盘后如实回 `skipped`；
+        2. **写请求要来源证据**：与雷达写面同一套判据（本机页面 Origin 或显式
+           `X-LDST-Client`），不新增第二种鉴权；
+        3. **不在这里强制扫描**：watch 守护每轮自己扫（≤30s），采集与扫描职责不混。
+        """
+        from ladderstock.web import control as control_plane
+
+        _journal_guard(request)
+        if not control_plane.write_source_allowed(request):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "写请求缺少来源证据：需要本机页面 Origin，或显式头 "
+                    f"{control_plane.CLIENT_HEADER}: {control_plane.CLIENT_HEADER_VALUE}"
+                ),
+            )
+
+        from ladderstock.cli.schedule import _run_watch_live
+
+        job: dict[str, Any] = {
+            "id": "manual-refresh",
+            "name": "手动取数",
+            "alert_pct": 3.0,
+            "move_pct": 1.0,
+            "min_gap_min": 30.0,
+            # `console` 是 notifier 支持的渠道：手动取数不该弹桌面通知，但也必须有合法值
+            # （`none` 会抛 UnknownNotifierChannel，把整次取数打成 500）
+            "channel": "console",
+            "auto_research": False,
+        }
+        result = _run_watch_live(job, root=root)
+        return {
+            "ok": True,
+            "status": result.get("status"),
+            "detail": result.get("detail"),
+            "minute_bars": result.get("minute_bars"),
+            "alerted": result.get("alerted"),
+        }
 
     @app.get("/api/validation")
     def validation(
@@ -1564,9 +1941,30 @@ def create_app(
         if open_ensure is not None:
             note = open_ensure.ensure("theme", day=target).note()
         records, backend = dataset_snapshot("theme_news", target, root)
+        # 当日没落库时退到「最近一次同步那天」：Wire 的 `wire_get_digest` 按自己最后
+        # 一次生成简报的日期落库，这个日期常常落后于交易日。有数据却按当日查不到，
+        # 会被误判成「未接入」——qfw 配好了、sync 也跑过，排障方向被指反。
+        data_day: date | None = target if records else None
+        if not records:
+            latest = archive.latest_day("theme_news", root=root)
+            if latest is not None and latest <= target:
+                fallback, fallback_backend = dataset_snapshot("theme_news", latest, root)
+                if fallback:
+                    records, backend, data_day = fallback, fallback_backend, latest
         themes = _theme_rows(records)
+        detail, reason = _theme_status(
+            target, backend, len(records), len(themes), data_day=data_day
+        )
+        # Wire 的 digest 只有文字简报、没有强度分：与其出一排 null 让前端判「未同步」，
+        # 不如退到本机涨停池按行业聚合（可复算、有环比基准），并把口径写进 detail。
+        if not any(row.get("strength") is not None for row in themes):
+            pool_rows, pool_detail, pool_day = _industry_theme_rows(target, root)
+            if pool_rows:
+                themes = pool_rows
+                data_day, detail, reason = pool_day or target, pool_detail, None
+            else:
+                detail = f"{detail}；{pool_detail}"
         available = bool(themes)
-        detail, reason = _theme_status(target, backend, len(records), len(themes))
         if note:
             detail = f"{detail}；{note}" if detail else note
         raw: dict[str, Any] = {
@@ -1578,7 +1976,7 @@ def create_app(
         return JSONResponse(
             _market_envelope(
                 "theme_rotation",
-                target if available else None,
+                data_day if available else None,
                 {key: raw[key] for key in MARKET_THEME_PAYLOAD_FIELDS},
                 available=available,
                 source_detail=detail,
@@ -1647,6 +2045,14 @@ def create_app(
     # `POST /api/skills/assistant`：/skills 页没有 code，复用同一个 ask() 但换成
     # 不含个股深挖预设的 system prompt；闸门与上面同一条。
     app.include_router(build_skills_router(root))
+
+    # ------------------------------------------- StockSenate 动作面
+    #
+    # `POST /api/senate/analysis|backtest` + `GET /api/senate/analysis|backtest/{id}`：
+    # 真正发起一次合议 / 回测（走 MCP 的 stock_senate_analysis / _backtest），
+    # 不再只是「读已存报告」。任务跑在后台线程、接口立刻回 task_id，前端轮询进度；
+    # `GET /api/senate/capability` 供页面判断这条链路当前通不通。
+    app.include_router(build_senate_actions_router())
 
     # ------------------------------------------- 页面级助手（QUOT-493）
     #
@@ -1729,6 +2135,22 @@ def create_app(
     knowledge = knowledge_plane if knowledge_plane is not None else KnowledgePlane(data_root=root)
     app.include_router(build_knowledge_router(knowledge))
 
+    # -------------------------------------------- 定时任务面（第④步前端入口）
+    #
+    # 在此之前「定时研究 / 盯盘提醒」只活在 `config/schedule.yaml` 里，页面上没有入口，
+    # 用户根本不知道它在跑。四条接口（jobs / plan / run / toggle）让这两类任务能在
+    # 对话输入框底部的「任务」按钮里直接开关、立即跑一次。闸门同收件箱面：
+    # 读 = 回环 + Host，写 = 再加同源来源证据。
+    from ladderstock.web.schedule_api import build_router as build_schedule_router
+
+    app.include_router(build_schedule_router(data_root=root))
+
+    # 偏好面（`/api/preferences`）：助手会按偏好回答，用户得能改能删——否则
+    # 「我记得你别推 ST 股」只能靠手改 JSON 才能撤销。闸门同上（回环 + 同源）。
+    from ladderstock.web.preferences_api import build_router as build_preferences_router
+
+    app.include_router(build_preferences_router(data_root=root))
+
     # ------------------------------------- 平台健康/重启同源面（QUOT-589 重修）
     #
     # 用户裁决：全机只留 5950 / 5951 两个端口，独立看门狗不再监听 5952/5953。
@@ -1747,6 +2169,13 @@ def create_app(
     # SPA 兜底之前**：兜底是 `@app.get`，POST 落到它身上就是生产态那 7 条 405。
     # 闸门同控制面（回环 + `Host`），同样**不受 `LDST_CONTROL_ENABLED` 影响**。
     app.include_router(build_state_index_router(StateIndexPlane(data_root=root)))
+
+    # --------------------------------------- 增强包向导面（DEC-086 决策 1/3/4/5）
+    #
+    # `/api/financecoffer/*`：体积明细（两档、按解压后实测）、embedding 勾选、
+    # 安装（后台任务 + 进度轮询）、启停、卸载。闸门同控制面：安装/卸载/启停
+    # 都是真命令真落盘，来源证据（回环 Origin 或 X-LDST-Client）必不可少。
+    app.include_router(build_financecoffer_router())
 
     # ------------------------------------------- 自愈状态面（QUOT-491 / 482-C）
     #

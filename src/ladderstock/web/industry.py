@@ -124,13 +124,23 @@ def _primary_day(payload: dict[str, Any], probe: dict[str, Any]) -> str | None:
     """信封 `data_as_of`：载荷自己声明的时点优先，否则沿用 `ldst industry show` 的规则。
 
     - 信号载荷自己给了 `as_of`（该条判定用到字段时点的最大值）→ 就是它；
-    - 清单 / 详情没有这种标量声明，取归属表（`sw_industry_map`）自己的数据日，与 CLI 同一个口径。
+    - 清单载荷的 `as_of` 是**每个维度各自的最新时点**字典（景气/资金/估值/动量/拥挤度），
+      取其中最晚的一个当数据时间；
+    - 都没有时退回归属表自己的数据日，与 CLI 同一个口径。
+
+    **不要把归属表 `sw_industry_map` 的 as_of 当数据时间**：那一列记的是「行业分类变更
+    生效日」（实测 max 是 2024-07-30），拿它当数据时间会让整页看着像停在两年前，
+    而五个维度的时点其实都是 2026 年的。
 
     不用请求日期顶替（METRICS.md §4.3）；不可用时由调用方置 `None`。
     """
     declared = payload.get("as_of")
     if isinstance(declared, str) and declared:
         return declared
+    if isinstance(declared, dict):
+        days = [str(value) for value in declared.values() if value]
+        if days:
+            return max(days)
     datasets = probe.get("datasets") or {}
     block = datasets.get(snapshot.META_PRIMARY_DATASET) or {}
     day = block.get("as_of")

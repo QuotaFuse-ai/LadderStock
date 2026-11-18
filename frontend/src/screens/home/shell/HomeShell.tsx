@@ -49,8 +49,10 @@ export default function HomeShell() {
   const [sessionsDirty, setSessionsDirty] = useState(0)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  // 空态两段式（QUOT-587）：冷启动只有居中输入框；首问发出（或选中一条会话）后列表才出现
-  const [chatStarted, setChatStarted] = useState(false)
+  // 会话列表常驻（2026-11-16）：不再「首问后才出现」。`chatStarted` 原本是 QUOT-587 的
+  // 空态两段式开关，但它是组件内 state：换页再回来 / 刷新后一律重置为 false，表现成
+  // 「回到首页只剩起始输入框、历史不见了」；点「新对话」又把它打回 false，列表当场消失。
+  // 左侧列表改为始终渲染，右侧 `ChatPane` 在 `activeSessionId === null` 时仍是空态起始框。
   // 研究台要接着用的那一问：切过去时填进研究面板输入框，`HomeSearch` 取走即回写 `null`（F4）
   const [deskQuestion, setDeskQuestion] = useState<string | null>(null)
   // QUOT-588：待办异动数据由 `HomeScreen` 回调上行（context 只向下流动），供给全局入口
@@ -79,15 +81,12 @@ export default function HomeShell() {
   const refreshSessions = useCallback(() => setSessionsDirty((count) => count + 1), [])
   const selectSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId)
-    setChatStarted(true)
     setDrawerOpen(false)
   }, [])
   const newSession = useCallback(() => {
     setActiveSessionId(null)
-    setChatStarted(false)
     setDrawerOpen(false)
   }, [])
-  const startChat = useCallback(() => setChatStarted(true), [])
   // 列表菜单改名（QUOT-602）：标题以服务端返回为准，列表原地重取；右侧标题行靠广播同步
   const renameSession = useCallback(
     async (sessionId: string, title: string) => {
@@ -105,7 +104,6 @@ export default function HomeShell() {
       await httpConversation.deleteSession(sessionId)
       if (sessionId === activeSessionId) {
         setActiveSessionId(null)
-        setChatStarted(false)
       }
       refreshSessions()
     },
@@ -114,7 +112,6 @@ export default function HomeShell() {
   // QUOT-588：首问落地，服务端建了新会话——activeSessionId 落到新 id，第二问续同一会话
   const onSessionCreated = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId)
-    setChatStarted(true)
   }, [])
 
   const openResearch = useCallback(
@@ -189,22 +186,19 @@ export default function HomeShell() {
         <div
           hidden={mode !== 'chat'}
           className={cn(
-            'min-h-0 basis-0 grow flex-col gap-3 px-3 lg:flex-row lg:px-2',
+            'min-h-0 basis-0 grow flex-col gap-3 px-3 sm:flex-row lg:px-2',
             mode === 'chat' ? 'flex' : 'hidden',
           )}
         >
-          {chatStarted && (
-            <SessionList
-              {...listProps}
-              className="hidden lg:flex lg:w-sidebar lg:shrink-0 lg:border-r lg:border-border lg:pr-2"
-            />
-          )}
+          <SessionList
+            {...listProps}
+            className="hidden w-sidebar shrink-0 border-r border-border pr-2 sm:flex"
+          />
           <ChatPane
             activeSessionId={activeSessionId}
             onOpenResearch={openResearch}
             onAskDesk={askDesk}
             onRoundComplete={refreshSessions}
-            onFirstRoundStarted={startChat}
             onSessionCreated={onSessionCreated}
             focusRequest={chatFocusRequest}
           />

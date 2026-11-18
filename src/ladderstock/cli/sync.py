@@ -877,6 +877,58 @@ def _clip(text: str, limit: int = 240) -> str:
     return text if len(text) <= limit else f"{text[:limit]}…"
 
 
+#: 涨停池的「原因」只有同花顺源给得到：主源 `limit_up_pool` 的返回里根本没有这类
+#: 字段（实测 payload 只有 code/name/price/seal_amount/industry 等）。主源成功就
+#: 不会走备源，所以这里在主源写库前补调一次同花顺，按代码把原因并进来（QUOT-621）。
+LIMIT_POOL_REASON_TOOL = "ths_limit_up_pool"
+LIMIT_POOL_REASON_TIMEOUT_SEC = 30.0
+
+
+def borrow_limit_pool_reason(
+    registry: ProviderRegistry, records: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], str | None]:
+    """给涨停池记录补「涨停原因」；补不到只留一句说明，主源数据照常落库。
+
+    只填主源留空的 `reason`，不覆盖主源已有值。同花顺的 `high_days`（「2天2板」）
+    和 `board_type`（「换手板」）是另一套口径的字符串，**不往主源的 streak 里塞**——
+    两种口径混成一条，就成了看着有数、其实对不上的假数据。
+    """
+    if not records:
+        return records, None
+    peer = registry.peers.get("tickhub")
+    transport = getattr(registry, "transport", None)
+    if peer is None or transport is None:
+        return records, None
+    try:
+        payload = transport.call(
+            peer, LIMIT_POOL_REASON_TOOL, {}, timeout=LIMIT_POOL_REASON_TIMEOUT_SEC
+        )
+    except Exception as exc:  # noqa: BLE001 - 补字段失败不是同步失败
+        return records, f"同花顺涨停池补原因未取到：{_one_line(exc)}"
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return records, "同花顺涨停池返回空，原因列仍为空"
+    reason_by_code: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("code") or "").strip()
+        reason = row.get("reason")
+        if code and isinstance(reason, str) and reason.strip():
+            reason_by_code[code] = reason.strip()
+    if not reason_by_code:
+        return records, "同花顺涨停池没带原因字段"
+    filled = 0
+    for record in records:
+        if not isinstance(record, dict) or record.get("reason"):
+            continue
+        reason = reason_by_code.get(str(record.get("code") or "").strip())
+        if reason:
+            record["reason"] = reason
+            filled += 1
+    return records, f"同花顺补涨停原因 {filled}/{len(records)} 只"
+
+
 def sync_one(
     registry: ProviderRegistry,
     store: watermark.WatermarkStore,
@@ -1011,6 +1063,9 @@ def sync_one(
         )
 
     records = envelope_records(envelope)
+    borrow_note: str | None = None
+    if dataset == "limit_pool":
+        records, borrow_note = borrow_limit_pool_reason(registry, records)
     result = duckdb_store.write_dataset(
         dataset,
         records,
@@ -1033,6 +1088,8 @@ def sync_one(
         detail = f"{result.rows} 行 / {len(result.days)} 天，分区 {len(result.partitions)} 个"
         if outcome.used_fallback:
             detail += "（主源不可用，已切同 peer 备源）"
+        if borrow_note:
+            detail += f"；{borrow_note}"
 
     _log(f"  {dataset} {status}：{detail}，水位 {before or '-'} → {after or '-'}")
     store.record_run(

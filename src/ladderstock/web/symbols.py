@@ -3,9 +3,11 @@
 参考库（vibe-astock `symbolSearch`）用专门的标的字典工具出代码 + 名称；本仓生态里
 TickHub-CN 盘点后**没有**代码表 / 标的检索类工具（`stock_profile` /
 `baostock_stock_basic` 都要传具体代码且走活源，`iwencai_search` 是需要 API key 的
-外部自然语言检索），所以数据源落在本机缓存反查：把带名称字段的几个数据集
-（`fund_flow` / `limit_pool` / `hot_rank` / `broken_board` / `yesterday_limit_up` /
-`dragon_tiger`）里出现过的 `code → name` 并起来。
+外部自然语言检索），所以数据源落在本机缓存反查：优先读 `symbol_basic`（全市场
+字典，由 `data/symbol_universe.py` 用代码段穷举 + 批量报价刷出来，约 6000 只），
+再并上带名称字段的几个榜单数据集（`fund_flow` / `limit_pool` / `hot_rank` /
+`broken_board` / `yesterday_limit_up` / `dragon_tiger`）里出现过的 `code → name`
+——字典在先、榜单在后，后者只补前者没有的代码，且不覆盖字典里的名称。
 
 三条硬口径：
 
@@ -38,6 +40,8 @@ SYMBOLS_PREFIX = "/api/symbols"
 #: 带名称字段的数据集（本机缓存反查的唯一来源）。都在 `DATASET_CATALOG` 登记，
 #: 读取走 `duckdb_store.query_dataset`，不自拼 SQL、不碰未登记的表。
 #: 表内无名称的数据集（如 `daily_k`）不进这一列。
+#: `symbol_basic` 排在**最后**：它是全市场权威字典（约 6000 只），后写覆盖先写，
+#: 让它的名称盖掉榜单里可能出现的旧名 / 简称。
 NAME_DATASETS: tuple[str, ...] = (
     "fund_flow",
     "limit_pool",
@@ -45,6 +49,7 @@ NAME_DATASETS: tuple[str, ...] = (
     "broken_board",
     "yesterday_limit_up",
     "dragon_tiger",
+    "symbol_basic",
 )
 
 #: 单个数据集反查的行数上限：本机缓存体量远小于它，只是给失控增长上一道闸
@@ -61,6 +66,8 @@ _MARKET_ALIASES = frozenset({"SH", "SZ", "BJ"})
 _CODE_PUNCTUATION = re.compile(r"[\s._\-/]+")
 _MARKET_PREFIX = re.compile(r"^(SH|SZ|BJ)", re.IGNORECASE)
 _MARKET_SUFFIX = re.compile(r"(SH|SZ|BJ)$", re.IGNORECASE)
+#: 名称内嵌空白（含全角空格）：上游把「万科Ａ」写成「万  科Ａ」，匹配前先折叠掉。
+_NAME_SPACES = re.compile(r"[\s\u3000]+")
 
 
 def _now() -> datetime:
@@ -131,9 +138,24 @@ class SymbolPlane:
             for dataset in NAME_DATASETS:
                 if not duckdb_store.table_exists(conn, dataset):
                     continue
+                day_filter: date | None = None
+                if dataset == "symbol_basic":
+                    # 字典是「一天一份整表」：只读最新那一天。全读会让行数随天数线性增长，
+                    # 还会把 MAX_DATASET_ROWS 的额度耗在历史快照上，把最新字典挤出窗口。
+                    latest = conn.execute('select max(trade_date) from "symbol_basic"').fetchone()
+                    if not latest or latest[0] is None:
+                        continue
+                    try:
+                        day_filter = date.fromisoformat(str(latest[0])[:10])
+                    except ValueError:
+                        continue
                 try:
                     records = duckdb_store.query_dataset(
-                        dataset, None, limit=MAX_DATASET_ROWS, conn=conn, root=self.data_root
+                        dataset,
+                        day_filter,
+                        limit=MAX_DATASET_ROWS,
+                        conn=conn,
+                        root=self.data_root,
                     )
                 except Exception:  # noqa: BLE001 - 单个坏表不拖垮整个字典
                     continue
@@ -163,6 +185,9 @@ class SymbolPlane:
         known = {code: row for code, row in symbols.items() if row.get("name")}
         for row in known.values():
             row["pinyin"] = _pinyin_of(str(row["name"]))
+            # 名称里可能带全角空格（"万  科Ａ"）：检索侧把内嵌空白也折叠掉，
+            # 否则用户敲「万科」匹配不到带空格的上游名称。
+            row["key"] = _NAME_SPACES.sub("", str(row["name"])).lower()
         return known, as_of
 
     @staticmethod
@@ -243,7 +268,7 @@ class SymbolPlane:
             return 100
         if term.isdigit() and len(term) < 6 and code.startswith(term):
             return 70
-        lowered = name.lower()
+        lowered = str(row.get("key") or name.lower())
         if term and lowered == term:
             return 90
         if term and lowered.startswith(term):

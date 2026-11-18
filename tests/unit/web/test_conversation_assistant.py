@@ -30,6 +30,13 @@ class _NullControlPlane:
 
 
 class _FakeClient:
+    """假通道：不再是「一个能 `complete()` 的客户端」，而是 `ask_agent` 的替身。
+
+    路由改走 agent 之后，一轮的模型决策在 `ask_agent` 里（模型自己选工具、定轮次）；
+    这里只保留回复正文与注入异常两条缝，够验证「本会话历史进了上下文」「失败可读」
+    「取消落 aborted」这些适配层语义。
+    """
+
     def __init__(
         self,
         reply: str = "中短期以震荡为主，量能没有明显放大。",
@@ -37,14 +44,26 @@ class _FakeClient:
     ) -> None:
         self.reply = reply
         self.exc = exc
-        self.calls: list[tuple[str, str, str, bool]] = []
-        self.timeout = 0.0
+        self.calls: list[dict[str, Any]] = []
 
-    def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
-        self.calls.append((model, system, user, json_mode))
-        if self.exc is not None:
-            raise self.exc
-        return self.reply
+
+def _patch_agent(monkeypatch: pytest.MonkeyPatch, fake: _FakeClient) -> None:
+    async def _ask_agent(**kwargs: Any) -> dict[str, Any]:
+        fake.calls.append(kwargs)
+        if fake.exc is not None:
+            raise fake.exc
+        return {
+            "reply": fake.reply,
+            "model": "openai:test-model",
+            "ai": {"model": "openai:test-model", "source": "config"},
+            "fetched_at": "2026-11-07T09:49:31+00:00",
+            "metrics": {},
+            "sources": [],
+            "used_tools": False,
+        }
+
+    monkeypatch.setattr(assistant_module, "ask_agent", _ask_agent)
+
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -59,9 +78,7 @@ def _client(tmp_path: Path) -> TestClient:
 @pytest.fixture()
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeClient:
     fake = _FakeClient()
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:test-model")
-    )
+    _patch_agent(monkeypatch, fake)
     return fake
 
 
@@ -94,11 +111,26 @@ def _blocks(
     )
 
 
-def test_blocks_are_conclusion_first_and_capped() -> None:
-    blocks = _blocks("中短期以震荡为主，量能没有明显放大。")
-    assert blocks[0]["type"] == answer_blocks.BLOCK_CONCLUSION
+def test_plain_narrative_is_one_complete_block() -> None:
+    reply = "中短期以震荡为主，量能没有明显放大。"
+    blocks = _blocks(reply)
+    # 纯叙述（没调工具、没指标、没来源）不再被压成「结论 · 中性 + 补充说明 4 行折叠」：
+    # 整段原样给正文块，用户能看到全文（这也是「回答问题闪一下变骨架」的修复点）。
+    assert blocks[0]["type"] == answer_blocks.BLOCK_NARRATIVE
+    assert blocks[0]["payload"]["text"] == reply
+    assert len(blocks) == 1
     assert len(blocks) <= assistant_module.MAX_ANSWER_BLOCKS
     assert assistant_module.MAX_ANSWER_BLOCKS == 6
+    answer_blocks.validate_blocks(blocks)
+
+
+def test_answer_with_sources_still_uses_conclusion_chain() -> None:
+    """有来源（真去查过数）的轮次仍走结论先行——正文块只兜住「不需要取数」的回答。"""
+    blocks = _blocks(
+        "中短期以震荡为主，量能没有明显放大。",
+        sources=[assistant_module.ChatSource(**_source())],
+    )
+    assert blocks[0]["type"] != answer_blocks.BLOCK_NARRATIVE
     answer_blocks.validate_blocks(blocks)
 
 
@@ -220,12 +252,12 @@ def test_three_turns_then_read_back_after_reopen(tmp_path: Path, fake_client: _F
         assert body["reply"].startswith(conclusion)
     assert seqs == [1, 2, 3]
 
-    # 第二轮起，提示词里带上了本会话的历史（只取结论句，不塞整串 blocks），
+    # 第二轮起，交给 agent 的上下文里带上了本会话的历史（只取结论句，不塞整串 blocks），
     # 且走现役 `AsyncStructuredContext.history` 的分段与渲染
-    _model, _system, user, _json = fake_client.calls[-1]
-    assert "【上一轮已生成内容】" in user
-    assert "用户：第一个问题" in user
-    assert "助手：第一轮的结论。" in user
+    user_context = fake_client.calls[-1]["context"]
+    assert "【上一轮已生成内容】" in user_context
+    assert "用户：第一个问题" in user_context
+    assert "助手：第一轮的结论。" in user_context
 
     # 「重启服务」= 换一个全新的 app 实例，仍指向同一个 data_root
     reopened = _client(tmp_path)
@@ -409,10 +441,12 @@ def test_empty_message_rejected_without_touching_store(
 def test_ai_failure_uses_chat_failure_shape_and_writes_failed_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake = _FakeClient(exc=OSError("connection reset"))
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:test-model")
+    fake = _FakeClient(
+        exc=assistant_module.AssistantFailure(
+            502, "ai_network", "AI 请求未送达（网络/代理）：connection reset"
+        )
     )
+    _patch_agent(monkeypatch, fake)
     client = _client(tmp_path)
     response = _post_turn(client, message="会失败的提问", session_id="sess-fail")
     assert response.status_code == 502
@@ -528,14 +562,8 @@ def test_aborted_turn_keeps_arrived_blocks_after_client_disconnect(
     端点里会被转成 500/`No response returned`，那层不是本单要测的语义。
     """
 
-    class _AbortingClient(_FakeClient):
-        def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
-            raise asyncio.CancelledError("client disconnected")
-
-    fake = _AbortingClient()
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:test-model")
-    )
+    fake = _FakeClient(exc=asyncio.CancelledError("client disconnected"))
+    _patch_agent(monkeypatch, fake)
     with pytest.raises(asyncio.CancelledError):
         assistant_module.run_turn(
             message="用户会停的一问", session_id="sess-aborted", data_root=tmp_path
@@ -558,32 +586,25 @@ def test_aborted_turn_keeps_arrived_blocks_after_client_disconnect(
 def test_aborted_and_failed_are_both_distinguishable_over_http(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _Abort(_FakeClient):
-        def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
-            raise asyncio.CancelledError("client disconnected")
-
-    class _Fail(_FakeClient):
-        def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
-            raise OSError("connection reset")
-
     client = _client(tmp_path)
 
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (_FakeClient(), "openai:test-model")
-    )
+    _patch_agent(monkeypatch, _FakeClient())
     ok = _post_turn(client, message="正常一问", session_id="sess-four-ok")
     assert ok.status_code == 200 and ok.json()["status"] == chat_store.DONE
 
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (_Abort(), "openai:test-model")
-    )
+    _patch_agent(monkeypatch, _FakeClient(exc=asyncio.CancelledError("client disconnected")))
     with pytest.raises(asyncio.CancelledError):
         assistant_module.run_turn(
             message="停止一问", session_id="sess-four-abort", data_root=tmp_path
         )
 
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (_Fail(), "openai:test-model")
+    _patch_agent(
+        monkeypatch,
+        _FakeClient(
+            exc=assistant_module.AssistantFailure(
+                502, "ai_network", "AI 请求未送达（网络/代理）：connection reset"
+            )
+        ),
     )
     failed = _post_turn(client, message="失败一问", session_id="sess-four-fail")
     assert failed.status_code == 502
@@ -603,7 +624,12 @@ def test_no_new_notice_kinds_from_status(tmp_path: Path, fake_client: _FakeClien
         if block["type"] == answer_blocks.BLOCK_NOTICE
     }
     assert "aborted" not in kinds and "stopped" not in kinds
-    assert kinds <= set(answer_blocks.NOTICE_KINDS) | {answer_blocks.NOTICE_MISSING_DATA}
+    # `note` 与 `missing_data` 一样是块协议里已批准的独立档（notice 的白名单见
+    # `answer_blocks.validate_blocks` 的 allowed），不属于「为 status 新造 kind」
+    assert kinds <= set(answer_blocks.NOTICE_KINDS) | {
+        answer_blocks.NOTICE_MISSING_DATA,
+        answer_blocks.NOTICE_NOTE,
+    }
 
 
 def test_streaming_row_persists_after_hard_stop(tmp_path: Path) -> None:

@@ -163,6 +163,72 @@ export function parseKnowledgeDossier(payload: unknown): KnowledgeDossier {
   }
 }
 
+// ---------------------------------------------------------------- 清单
+
+/**
+ * `GET /api/knowledge`：已经攒下哪些档案。
+ *
+ * `has_profile: false` 表示 manifest 里有索引、但正文还没成档案（只有 run 归档）。
+ * 页面要把它与「完全没有这只票」分开显示，否则用户会以为数据丢了。
+ */
+export interface KnowledgeIndexItem {
+  market: KnowledgeMarket
+  symbol: string
+  name: string
+  as_of: string
+  status: KnowledgeStatus | null
+  valid_days: number | null
+  has_profile: boolean
+  sources: number
+  body_chars: number
+}
+
+export interface KnowledgeIndex {
+  ok: boolean
+  today: string
+  count: number
+  items: KnowledgeIndexItem[]
+}
+
+function parseIndexItem(value: unknown): KnowledgeIndexItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const root = value as Record<string, unknown>
+  const market = normalizeKnowledgeMarket(asText(root.market))
+  const symbol = normalizeKnowledgeSymbol(asText(root.symbol))
+  if (!market || !symbol) return null
+  const rawStatus = asText(root.status)
+  const status: KnowledgeStatus | null =
+    rawStatus === 'fresh' || rawStatus === 'stale' || rawStatus === 'refuted' ? rawStatus : null
+  return {
+    market,
+    symbol,
+    name: asText(root.name) ?? '',
+    as_of: asText(root.as_of) ?? '',
+    status,
+    valid_days: asNumberOrNull(root.valid_days),
+    has_profile: root.has_profile === true,
+    sources: typeof root.sources === 'number' ? root.sources : 0,
+    body_chars: typeof root.body_chars === 'number' ? root.body_chars : 0,
+  }
+}
+
+export function parseKnowledgeIndex(payload: unknown): KnowledgeIndex {
+  const root = asRecord(payload, '清单')
+  const rawItems = Array.isArray(root.items) ? root.items : []
+  const items = rawItems
+    .map(parseIndexItem)
+    .filter((item): item is KnowledgeIndexItem => item !== null)
+  return {
+    ok: root.ok === true,
+    today: asText(root.today) ?? '',
+    count: typeof root.count === 'number' ? root.count : items.length,
+    items,
+  }
+}
+
+export const loadKnowledgeIndex = async (signal?: AbortSignal): Promise<KnowledgeIndex> =>
+  parseKnowledgeIndex(await request<unknown>('/api/knowledge', signal))
+
 // ---------------------------------------------------------------- 传输
 
 const TIMEOUT_MS = 12000

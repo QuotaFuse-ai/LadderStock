@@ -72,16 +72,26 @@ function fundStampLabel(payload: CandidatePoolPayload): string {
   return MISSING
 }
 
-function PartCell({ value, compact = false }: { value: number | null; compact?: boolean }) {
+/** 分项单元格：缺项写 `—` 并带上「为什么缺」，缺项不是零（UI-SPEC §8）。 */
+function PartCell({
+  value,
+  compact = false,
+  hint = null,
+}: {
+  value: number | null
+  compact?: boolean
+  hint?: string | null
+}) {
   if (value === null) {
+    const label = hint ?? '无数据（未核实）'
     if (compact) {
       return (
-        <span className="text-text-muted" title="无数据（未核实）：该分项没有数据，不补 0">
-          —<span className="sr-only">无数据（未核实）</span>
+        <span className="text-text-muted" title={`${label}：该分项没有数据，不补 0`}>
+          —<span className="sr-only">{label}</span>
         </span>
       )
     }
-    return <span className="text-caption text-text-muted">无数据（未核实）</span>
+    return <span className="text-caption text-text-muted">{label}</span>
   }
   return <span className="ldst-num text-body text-text">{formatOneDecimal(value)}</span>
 }
@@ -102,8 +112,11 @@ function rawFor(part: PoolPart, candidate: PoolCandidate, height: number | null)
   }
   if (part === 'theme') {
     const tags = raw.theme_tags.length > 0 ? raw.theme_tags.join(' / ') : '无题材标签'
-    const change = raw.theme_board_change_pct === null ? MISSING : `${formatOneDecimal(raw.theme_board_change_pct)}%`
-    return `${tags} · 板块涨幅 ${change}`
+    if (raw.theme_board_change_pct === null) {
+      // 题材分为空不是「没数」一句话能盖住的：先把原因说清，再保留归属标签
+      return raw.theme_note ? `${tags} · ${raw.theme_note}` : `${tags} · 板块涨幅 ${MISSING}`
+    }
+    return `${tags} · 板块涨幅 ${formatOneDecimal(raw.theme_board_change_pct)}%`
   }
   return raw.turnover_rate === null ? MISSING : `换手率 ${formatOneDecimal(raw.turnover_rate)}%`
 }
@@ -230,6 +243,7 @@ function BreakdownDrawer({
             <Banner tone="warn" title="有分项没有数据">
               {candidate.absent_parts.map((part) => POOL_PART_LABEL[part] ?? part).join('、')}
               缺少数据，按口径不计入分母；页面不补 0，也不重新算总分。
+              {candidate.raw.theme_note ? `题材原因：${candidate.raw.theme_note}。` : ''}
             </Banner>
           )}
 
@@ -275,7 +289,13 @@ export default function PoolScreen() {
       align: 'right',
       width: '96px',
       sort: (a, b) => compareNumber(a.parts[part], b.parts[part]),
-      render: (row) => <PartCell value={row.parts[part]} compact />,
+      render: (row) => (
+        <PartCell
+          value={row.parts[part]}
+          compact
+          hint={part === 'theme' && row.raw.theme_note ? '未进当日概念榜' : null}
+        />
+      ),
     }))
     return [
       {
@@ -308,12 +328,18 @@ export default function PoolScreen() {
         header: '缺失分项',
         align: 'center',
         width: '120px',
-        render: (row) =>
-          row.absent_parts.length === 0 ? (
-            <span className="text-caption text-text-muted">齐全</span>
-          ) : (
-            <Badge tone="warn">{row.absent_parts.map((part) => POOL_PART_LABEL[part] ?? part).join('、')}</Badge>
-          ),
+        render: (row) => {
+          if (row.absent_parts.length === 0) {
+            return <span className="text-caption text-text-muted">齐全</span>
+          }
+          const onlyThemeExplained =
+            row.raw.theme_note !== null && row.absent_parts.every((part) => part === 'theme')
+          const labels = row.absent_parts.map((part) =>
+            part === 'theme' && row.raw.theme_note ? '题材·未进榜' : POOL_PART_LABEL[part] ?? part,
+          )
+          // 题材是「所属板块当日没进概念涨幅榜」，不是本机没取到 → 中性色，不报错
+          return <Badge tone={onlyThemeExplained ? 'neutral' : 'warn'}>{labels.join('、')}</Badge>
+        },
       },
       {
         key: 'action',

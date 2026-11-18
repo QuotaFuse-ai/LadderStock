@@ -44,7 +44,11 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "tickhub_us": (18002,),
         "wire": (18790, 18791),
         "senate": (18765, 18786),
-        "financecoffer": (18100,),
+        # 例外（与 boundary 的 `_external_hosted` 同口径）：FinanceCoffer 由 WSL 里的
+        # compose 托管，端口归它自己决定、不随环境平移，boundary 解析出来一直是 8100。
+        # 这张表若照「正式 + 10000」写成 18100，探针会永远探一个没人监听的端口 →
+        # 恒判 failed / 触发无效重拉 → needs_human 红条。
+        "financecoffer": (8100,),
         "proxyfleet": (18788, 18789),
         # QUOT-589 重修：同样无端口化，不占 15952。
         "watch": (),

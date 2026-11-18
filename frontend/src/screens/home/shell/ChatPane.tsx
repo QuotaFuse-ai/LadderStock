@@ -15,6 +15,7 @@ import { normalizeQuery } from '../../../lib/searchIntent'
 import { useIsMobile } from '../../../lib/mediaQuery'
 import { useAsync } from '../../../lib/useAsync'
 import { BlockRenderer } from '../../../components/answer-blocks'
+import { ScheduleDock } from '../../../components/ScheduleDock'
 import { Badge, Button, ErrorBlock, IconButton, Textarea } from '../../../components/ui'
 import { ActivityFeed } from './ActivityFeed'
 import { createLiveStatusFeed } from './liveStatusFeed'
@@ -189,9 +190,14 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   }, [activeSessionId])
 
   // 「新对话」：首问还没发出去前先算作一条排队中的会话（不发请求、不建空会话）；
-  // 等 `activeSessionId` 真的变成 null 才清，避免首问的回跳把临时条目弄丢
+  // 等 `activeSessionId` 真的变成 null 才清，避免首问的回跳把临时条目弄丢。
+  // 2026-11-18：同时清掉输入框里的草稿，否则「新对话」回到空态后仍留着上一问的文字。
   useEffect(() => {
-    if (activeSessionId === null) setLocalSession(null)
+    if (activeSessionId === null) {
+      setLocalSession(null)
+      setDraft('')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId])
 
   useEffect(() => () => abortRef.current?.abort(), [])
@@ -494,7 +500,8 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         onKeyDown={onKeyDown}
         className="min-w-0 resize-none !border-0 bg-transparent px-1.5 pt-0.5 focus-visible:!border-transparent focus-visible:!shadow-none"
       />
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <ScheduleDock />
         {busy ? (
           <IconButton
             label="停止"

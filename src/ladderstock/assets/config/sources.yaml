@@ -225,6 +225,23 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 全市场标的字典（QUOT-6xx）：与 `spot_quote` 同一个批量报价工具，但**要落库**——
+  # 名称 ↔ 代码检索靠这份整表回答（生态里没有「按名称查代码」的工具，
+  # `stock_profile` / `baostock_stock_basic` 都要先给代码，`iwencai_search` 要 key）。
+  # 候选号码由本机代码段生成（`data/symbol_universe.py`），按 50 只一批问 peer，
+  # 有效代码才进表。**不进 sync.yaml**：3.5 万个号码 ≈ 700 次往返，按需刷新
+  # （`ldst symbol refresh`），不是每日增量。
+  - id: tickhub_symbol_basic
+    dataset: symbol_basic
+    via: tickhub
+    tool: tencent_quote_batch
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   # 首页指数条（QUOT-380）：与 `spot_quote` 同构的实时报价——**不进 sync.yaml / 不进台账**，
   # 非交易时段 peer 照旧回上一交易日收盘（`as_of` 如实带出），不需要日更。
   # 无备源：同 peer 的 `index_list` 是「按涨幅排序的 100 条榜」（实测不含这四个指数、

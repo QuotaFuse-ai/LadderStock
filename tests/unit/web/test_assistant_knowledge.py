@@ -322,12 +322,50 @@ def test_recall_error_degrades_silently(
     assert fake.calls  # 模型照常被调用
 
 
+def _patch_endpoint(
+    monkeypatch: pytest.MonkeyPatch, *, reply: str = "按档案口径，三季度营收同比转正。"
+) -> list[dict[str, Any]]:
+    """三条路由接 agent 后桩位在 `ask_agent`。
+
+    档案段是在 `ask_agent` 内部由 `_prepare_call` 拼进 system 的，所以桩必须把
+    `_prepare_call` 真跑一遍，才能断言「档案进入了本轮 system」——直接读入参的
+    `system_prompt` 只会拿到路由给的基础 prompt。
+    """
+    calls: list[dict[str, Any]] = []
+
+    async def _ask_agent(**kwargs: Any) -> dict[str, Any]:
+        prepared = assistant_module._prepare_call(
+            question=kwargs.get("question", ""),
+            context=kwargs.get("context", ""),
+            day=kwargs.get("day"),
+            tab=kwargs.get("tab"),
+            page_label=kwargs.get("page_label", "个股深挖"),
+            system_prompt=kwargs.get("system_prompt", assistant_module.SYSTEM_PROMPT),
+            module=kwargs.get("module", assistant_module.DEFAULT_MODULE),
+            symbol=kwargs.get("symbol"),
+            data_root=kwargs.get("data_root"),
+        )
+        calls.append({"system_prompt": prepared.system, "user": prepared.user})
+        return {
+            "reply": reply,
+            "model": "openai:model-a",
+            "ai": {"model": "openai:model-a", "source": "global"},
+            "fetched_at": "2026-11-12T10:00:00+00:00",
+            "metrics": {},
+            "sources": [],
+            "used_tools": False,
+        }
+
+    monkeypatch.setattr(assistant_module, "ask_agent", _ask_agent)
+    return calls
+
+
 def test_endpoint_degrades_when_knowledge_broken(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """走真 HTTP 端点：档案层抛错 → 仍 200 + 正常回复。"""
     seed(tmp_path)
-    monkeypatch.setattr(assistant_module, "_load_client", lambda *_a, **_k: (_FakeClient(), "m"))
+    calls = _patch_endpoint(monkeypatch, reply="按档案口径，三季度营收同比转正。")
     monkeypatch.setattr(assistant_module.memory, "shared_client", lambda _s: None)
     monkeypatch.setattr(
         assistant_module, "recall_wrapped", lambda *_a, **_k: (_ for _ in ()).throw(OSError("x"))
@@ -344,6 +382,7 @@ def test_endpoint_degrades_when_knowledge_broken(
     )
     assert response.status_code == 200
     assert response.json()["reply"] == "按档案口径，三季度营收同比转正。"
+    assert calls and calls[0]["system_prompt"] == assistant_module.SYSTEM_PROMPT
 
 
 def test_endpoint_injects_seeded_dossier(
@@ -351,8 +390,7 @@ def test_endpoint_injects_seeded_dossier(
 ) -> None:
     """端到端（进程内）：真视图 + 真档案盘，问题里只提公司名也能召回。"""
     seed(tmp_path)
-    fake = _FakeClient()
-    monkeypatch.setattr(assistant_module, "_load_client", lambda *_a, **_k: (fake, "m"))
+    calls = _patch_endpoint(monkeypatch)
     monkeypatch.setattr(assistant_module.memory, "shared_client", lambda _s: None)
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "no-dist", control_plane=_NullControlPlane()
@@ -365,6 +403,6 @@ def test_endpoint_injects_seeded_dossier(
         headers={"X-LDST-Client": "1"},
     )
     assert response.status_code == 200
-    system = fake.calls[0][1]
+    system = calls[0]["system_prompt"]
     assert KNOWLEDGE_BEGIN in system
     assert "as_of=2026-11-09" in system

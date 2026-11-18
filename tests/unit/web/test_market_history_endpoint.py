@@ -128,8 +128,9 @@ def test_empty_cache_returns_available_false_with_stable_shape(tmp_path: Path) -
     assert body["source_status"] == "partial"
     assert body["confidence"] == "low"
     assert body["data_as_of"] is None  # 没数据不拿请求日期顶替（D-02）
-    # 空态也要说清「为什么没有」，前端才有得显示
-    assert "ldst sync" in body["source_detail"]
+    # 空态也要说清「为什么没有」，前端才有得显示；文案已不再让用户自己跑 sync
+    assert "自动补取" in body["source_detail"]
+    assert "ldst sync" not in body["source_detail"]
 
 
 # --------------------------------------------------------------------------- #

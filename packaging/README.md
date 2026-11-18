@@ -88,6 +88,92 @@ exe 以子命令拉起（不再依赖 `.py` 文件与 `-m`）：
 | `proxypool_forwarder` | 按需代理池单映射转发器 |
 | `__runtime-info` | 打包自检（冻结态 / 资源 / 安装根） |
 
+## 安装器（Windows，QUOT-525 的「装」这一步）
+
+产物是「解压就能用」，但普通人拿到 zip 仍然不知道该把 `LadderStock\` 放哪、
+快捷方式怎么建。`packaging/installer/` 补上这一步：
+
+| 文件 | 作用 |
+|---|---|
+| `Install-LadderStock.cmd` | 双击入口（自举 PowerShell，带 `-ExecutionPolicy Bypass`） |
+| `install.ps1` | 拷贝程序、建开始菜单/桌面快捷方式、写卸载注册项、写 `install.json` |
+| `Uninstall-LadderStock.cmd` / `uninstall.ps1` | 卸载；默认保留 `data\` 与 `config\`，`-PurgeData` 才一起删 |
+
+安装根默认 `%LOCALAPPDATA%\LadderStock`（`-Root` 可改），冻结态是 **portable 布局**，
+所以 data/config 与程序目录同级：
+
+```text
+%LOCALAPPDATA%\LadderStock\
+├── LadderStock\       程序（升级时整体替换，旧的改名为 LadderStock.old-<时间戳>）
+├── data\              用户数据（永不动）
+├── config\            用户配置（含 ai.yaml，永不动）
+├── install.json       安装记录（含版本）
+└── TickHub-CN\ ...    peer 数据服务（installer 不代管）
+```
+
+**升级不丢数据**：升级只替换 `LadderStock\`，`data\` 与 `config\` 原地保留——
+`research_plans.json`（跟过的任务）、`preferences.json`（偏好）都还在。实机验证过：
+装 → 写入 `data/keep-me.json` → 再装一次 → 文件仍在、旧程序目录留下 `*.old-*`。
+
+`release_win.ps1` 会把 bundle 与安装器打进同一个 zip，并生成 `version.txt`
+（`__runtime-info` 不报版本，installer 靠它显示版本）与两份说明
+（`安装说明.txt` 面向用户、`README-dist.txt` 面向开发）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/release_win.ps1
+# dist/release/LadderStock-<version>-win-x64.zip
+```
+
+**还差的一步由页面承担**：AI Key 不写进安装器，装完启动后在页面点「接入 AI」填一次
+（走 `PUT /control/ai/modules` 写 `ai.yaml` 的 `modules:` 段）。安装器只负责提示，
+不伪造配置——否则用户会以为已经在用某个模型。
+
+### 实机验证（2026-11-16）
+
+```powershell
+# 1. 装到临时根（不碰真实 LOCALAPPDATA）
+powershell -ExecutionPolicy Bypass -File installer/install.ps1 -Root D:\Temp\x -NoDesktop
+# 2. 冻结态自检
+D:\Temp\x\LadderStock\LadderStock.exe __runtime-info --output json
+#    frozen=true / frontend_dist_ready=true / bundle_config_ready=true
+#    install_root 正确反推为 D:\Temp\x
+# 3. 卸载
+powershell -ExecutionPolicy Bypass -File installer/uninstall.ps1 -Root D:\Temp\x -PurgeData
+#    开始菜单项 / 注册表项 / 程序目录 / data / config 全部清掉
+```
+
+**打包曾缺件（已修）**：首版 onedir 里没有 `_internal\agents\`，双击启动直接崩在
+`memory_consolidation_prompt.md` 的 `FileNotFoundError`——`LadderStock.spec` 里的
+`collect_data_files("agents")` 是后加的，旧产物没重建。凡是改 spec 后必须重建再验，
+烟测脚本（`smoke_win.ps1`）只查 `/api/health` 与首页，查不到这类「启动即崩」。
+
+## 便携包的端口：启动器自动选，不让用户配
+
+开发机上是 5950（正式）/ 5951（测试）两套并行，peer 端口按 `LDST_PORT_OFFSET`
+整体平移（测试服 +10000 → 18000 系）。**这套是开发约定，不是给终端用户的。**
+
+便携包只跑一个实例，端口冲突时应当自动避让。`packaging/port_probe.py` 提供：
+
+- `pick_base_port(preferred=5950, step=10, attempts=60)`：从 5950 起每 10 个探测一次，
+  返回第一个能 bind 的端口；候选全被占时直接抛错，不静默乱选。
+- `offset_for(base_port)`：基端口 → `LDST_PORT_OFFSET`，与
+  `boundary.port_offset()` 同一语义（5950 → 0，后移两档 5970 → 20）。
+
+启动器接入就三行：
+
+```python
+base = pick_base_port()
+os.environ["LDST_PORT_OFFSET"] = str(offset_for(base))
+argv += ["--port", str(base)]
+```
+
+派生链已全链路吃这个变量：控制面端口展示、peer `--port` 启动命令、
+`sources.yaml` 的数据源地址（`provider_registry._offset_url`）。用户不需要知道
+任何端口号，也不需要改任何配置文件。
+
+尚未接入：`installer/install.ps1` 与 `ladderstock_entry.py` 仍是固定 `--port 5950`，
+接线放在便携包启动器改造那一单里做；本轮只交付探测函数与 5 条单测。
+
 ## 已知边界
 
 - 本仓代码不签名。Windows SmartScreen 与 macOS Gatekeeper 会提示「未知开发者」；

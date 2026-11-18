@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -849,9 +850,23 @@ def build_stop_router(processes: Any) -> APIRouter:
 def build_supervisor_router(heal: Any) -> APIRouter:
     router = APIRouter(prefix=SUPERVISOR_PREFIX, tags=["supervisor"])
 
+    #: `/state` 屏蔽重复计算：现场扫连接表 + 逐 pid 取 cmdline + WSL 侧归属证据，
+    #: 一次 15~20s（实测 17.4s）。页面每几秒轮询一次，不缓存就永远打不满超时，
+    #: 前端把全部模块标成「归属未知（supervisor 未接入）」——这是观测层性能问题，
+    #: 不是真的没接线。8s 内的重复请求直接回上一份快照。
+    _state_cache_sec = 8.0
+    _state_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+
     @router.get("/state")
     def state() -> dict[str, Any]:
-        return heal.snapshot()
+        now = time.monotonic()
+        cached = _state_cache["payload"]
+        if cached is not None and now - float(_state_cache["at"]) < _state_cache_sec:
+            return cached
+        payload = heal.snapshot()
+        _state_cache["payload"] = payload
+        _state_cache["at"] = time.monotonic()
+        return payload
 
     @router.get("/events", dependencies=[Depends(_supervisor_write_guard)])
     def events(

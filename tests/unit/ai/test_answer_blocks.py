@@ -484,6 +484,7 @@ SAMPLE_NAMES = (
     "citation",
     "notice",
     "action",
+    "narrative",
 )
 
 

@@ -147,7 +147,8 @@ def _flow_metrics(day: date | str, root: Any) -> dict[str, Any]:
     if not records:
         return {
             "available": False,
-            "reason": "本地缓存没有资金流向数据集（先运行 ldst sync）",
+            "reason": "本机今天还没有资金流向产物：后台会在收盘后自动补取，"
+            "也可以点本页「数据同步」立即补",
             "source_detail": f"fund_flow: {backend}",
         }
     return {
@@ -159,6 +160,10 @@ def _flow_metrics(day: date | str, root: Any) -> dict[str, Any]:
 
 def _theme_metrics(day: date | str, root: Any) -> dict[str, Any]:
     industry, industry_backend = _records("industry_board", day, root)
+    if not industry:
+        # 今天没有 `industry_board` 分区时退到行业板块资金流：同一行业维度、收盘同步
+        # 会一起落盘。不让「行业板块行数 —」被读成没取到——那两列是同一件事的两种来源。
+        industry, industry_backend = _records("industry_fund_flow", day, root)
     concept, concept_backend = _records("concept_board", day, root)
     news, news_backend = _records("theme_news", day, root)
     available = bool(industry or concept or news)
@@ -173,7 +178,10 @@ def _theme_metrics(day: date | str, root: Any) -> dict[str, Any]:
         ),
     }
     if not available:
-        snapshot["reason"] = "本地缓存没有板块/题材数据（先运行 ldst sync）"
+        snapshot["reason"] = (
+            "本机今天还没有板块/题材产物：后台会在收盘后自动补取，"
+            "也可以点本页「数据同步」立即补"
+        )
     return snapshot
 
 
@@ -190,8 +198,38 @@ def _dragon_tiger_metrics(day: date | str, root: Any) -> dict[str, Any]:
         ),
     }
     if not available:
-        snapshot["reason"] = "本地缓存没有龙虎榜数据（先运行 ldst sync）"
+        snapshot["reason"] = _dragon_tiger_gap_reason(day)
+        # 「还没到公布时间」不是「缺数」：标成 pending，页面把它显示为「待公布」，
+        # 且不计入「五段中 N 段缺数」——否则一整天都在报错，用户会以为本机坏了。
+        snapshot["pending"] = _dragon_tiger_is_pending(day)
     return snapshot
+
+
+def _dragon_tiger_is_pending(day: date | str) -> bool:
+    """今天的龙虎榜是否只是「还没到公布时间」（18:00 之前）。"""
+    try:
+        target = day if isinstance(day, date) else date.fromisoformat(str(day))
+    except ValueError:
+        return False
+    now = datetime.now()
+    return target == now.date() and now.hour < 18
+
+
+
+def _dragon_tiger_gap_reason(day: date | str) -> str:
+    """龙虎榜为空时说清是「还没到公布时间」还是「本机真没有」——别让用户去跑 sync。"""
+    try:
+        target = day if isinstance(day, date) else date.fromisoformat(str(day))
+    except ValueError:
+        target = None
+    now = datetime.now()
+    if target == now.date() and now.hour < 18:
+        return (
+            "今日龙虎榜按交易所规则收盘后才公布（通常 18:00 之后），本机 18:30 会自动补取；"
+            "此刻为空是正常时序，不是本机缺数"
+        )
+    return "本机还没有这一天的龙虎榜产物：后台会在收盘后自动补取，也可以点本页「数据同步」立即补"
+
 
 
 # --------------------------------------------------------------------------- #

@@ -64,6 +64,7 @@ import {
   type ToastItem,
 } from '../components/ui'
 import AiConnectDialog from '../components/AiConnectDialog'
+import FinanceCofferPanel from './financecoffer/FinanceCofferPanel'
 import DiscoveryPanel from '../components/DiscoveryPanel'
 import { SenateRoleModels } from '../components/SenateRoleModels'
 import { StopListDialog } from '../components/supervisor/StopListDialog'
@@ -101,7 +102,7 @@ import { cn } from '../lib/cn'
  * 不编造「已安装 / 运行中」。安装/启动/停止只经后端任务，前端 1s 轮询 job，不执行任何命令。
  */
 
-type Section = 'peers' | 'ai' | 'ports' | 'about'
+type Section = 'peers' | 'financecoffer' | 'ai' | 'ports' | 'about'
 
 interface SectionMeta {
   value: Section
@@ -111,17 +112,22 @@ interface SectionMeta {
 
 const SECTIONS: readonly SectionMeta[] = [
   { value: 'peers', label: '子模块', hint: '模块清单来自 config/sources.yaml 的 peers: 块' },
+  // DEC-086：增强包（FinanceCoffer）的体积明细 / embedding 勾选 / 安装 / 启停 / 卸载
+  { value: 'financecoffer', label: '增强包', hint: '投研数据：PG · Redis · MinIO（+ 可选 embedding）' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
   { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
 ]
 
 function isSection(value: string | null): value is Section {
-  return value === 'peers' || value === 'ai' || value === 'ports' || value === 'about'
+  return (
+    value === 'peers' || value === 'financecoffer' || value === 'ai' || value === 'ports' || value === 'about'
+  )
 }
 
 const PEER_STATUS_LABEL: Record<PeerStatus, string> = {
-  unconfigured: '未配置',
+  // 与后端 STATUS_LABELS 同词：「未接入」= 目录不存在/未登记，「未安装」= 目录在但包不可用
+  unconfigured: '未接入',
   not_installed: '未安装',
   installed: '已安装',
   starting: '启动中',
@@ -292,6 +298,7 @@ function PeerCard({
   stoppedExternal,
   acting,
   onInstall,
+  onScaffold,
   onStart,
   onStop,
   onLogs,
@@ -308,6 +315,8 @@ function PeerCard({
   stoppedExternal: boolean
   acting: string | null
   onInstall: () => void
+  /** 一键接入：容器化模块目录还不存在时，由控制面生成 compose + .env */
+  onScaffold: () => void
   onStart: () => void
   onStop: () => void
   onLogs: () => void
@@ -400,8 +409,7 @@ function PeerCard({
 
         <p className="text-caption text-text-secondary">
           MCP <span className="ldst-num">{peer.ports.mcp}</span> · {peer.ports.web_label}{' '}
-          <span className="ldst-num">{peer.ports.web ?? MISSING}</span> ·{' '}
-          {peer.installed ? '已安装' : '未安装'} · {statusLabel}
+          <span className="ldst-num">{peer.ports.web ?? MISSING}</span> · {statusLabel}
           {uptime && (
             <>
               {' · 运行 '}
@@ -471,6 +479,17 @@ function PeerCard({
         {!controlReady && <p className="text-caption text-text-muted">{CONTROL_ABSENT_NOTE}</p>}
 
         <div className="flex flex-wrap items-center gap-2">
+          {peer.actions.can_scaffold && (
+            <Button
+              variant="primary"
+              disabled={!controlReady || acting === `${peer.id}:scaffold`}
+              loading={acting === `${peer.id}:scaffold`}
+              onClick={onScaffold}
+              leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+            >
+              一键接入
+            </Button>
+          )}
           {peer.actions.can_install && (
             <Button
               variant="secondary"
@@ -751,10 +770,11 @@ const REGISTRY_COLUMNS: Array<Column<RegistryEntry>> = [
     header: '安装状态',
     width: '96px',
     render: (row) => {
-      // 「已安装」只看后端 install 探测；WSL 托管（只读观测）等服务可能未装 venv 却在运行，
-      // 如实写「运行中」，不冒充已安装。
+      // 与卡片同源：「未接入」（目录不存在/未登记）≠「未安装」（目录在但包不可用），
+      // 三态各自成词，避免同一模块一处说未安装、一处说未配置。
       if (row.installed) return <Badge tone="ok">已安装</Badge>
       if (row.status === 'running') return <Badge tone="ok">运行中</Badge>
+      if (row.status === 'unconfigured') return <Badge tone="flat">未接入</Badge>
       return <Badge tone="warn">未安装</Badge>
     },
   },
@@ -983,6 +1003,19 @@ function ConfigDrawer({
                 <li key={note}>{note}</li>
               ))}
             </ul>
+          )}
+          {data.apply && (
+            <p
+              className={cn(
+                'rounded border px-2 py-2 text-caption',
+                data.apply.mode === 'unavailable'
+                  ? 'border-warn text-warn'
+                  : 'border-border bg-surface-2 text-text-secondary',
+              )}
+              data-testid="config-apply-hint"
+            >
+              {data.apply.text}
+            </p>
           )}
           {!data.editable ? (
             // QUOT-480：白名单为空（或 env 目录不存在）= 本机无可写配置。
@@ -1841,6 +1874,21 @@ export default function SettingsScreen() {
     }
   }
 
+  const runScaffold = async (peer: PeerSnapshot): Promise<void> => {
+    setActing(`${peer.id}:scaffold`)
+    try {
+      const result = await api.control.scaffold(peer.id)
+      const created = result.created.length > 0 ? result.created.join('、') : '无新增文件'
+      const kept = result.kept.length > 0 ? `；保留已有：${result.kept.join('、')}` : ''
+      push(`已生成部署文件：${created}${kept}`, 'ok')
+      board.reload()
+    } catch (error) {
+      push(`接入失败：${describeApiError(error).detail}`, 'danger')
+    } finally {
+      setActing(null)
+    }
+  }
+
   const stopFailureText = (error: unknown): string => {
     if (isApiError(error) && error.kind === 'http' && error.status === 404) {
       return '后端未提供停止接口（POST /api/supervisor/stop，482-B 尚未接入）；本次没有停止任何进程。'
@@ -2031,6 +2079,7 @@ export default function SettingsScreen() {
             supervisorState={supervisor.data}
           />
         )}
+        {section === 'financecoffer' && <FinanceCofferPanel />}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
     )
@@ -2062,6 +2111,7 @@ export default function SettingsScreen() {
             supervisorState={supervisor.data}
           />
         )}
+        {section === 'financecoffer' && <FinanceCofferPanel />}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
     )
@@ -2082,6 +2132,8 @@ export default function SettingsScreen() {
               : '其余分区仍可正常查看。'}
           </Banner>
         )}
+
+        {section === 'financecoffer' && <FinanceCofferPanel />}
 
         {section === 'peers' && (
           <>
@@ -2198,6 +2250,7 @@ export default function SettingsScreen() {
                         setInstallError(null)
                         setInstallPeer(peer)
                       }}
+                      onScaffold={() => void runScaffold(peer)}
                       onStart={() => void runAction(peer, 'start')}
                       onStop={() => {
                         if (supervisorReady && supervised) {

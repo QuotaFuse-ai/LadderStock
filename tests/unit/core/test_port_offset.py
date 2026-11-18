@@ -61,14 +61,18 @@ def test_test_ports_shifted_by_offset(monkeypatch, tmp_path) -> None:
     assert resolved["wire"].web_port == 18790
     assert resolved["senate"].mcp_port == 18765
     assert resolved["senate"].web_port == 18786
-    assert resolved["financecoffer"].mcp_port == 18100
+    # 外部托管（WSL 容器 / Windows 计划任务）的模块不参与平移：那份服务全机器只有
+    # 一份，正式服与测试服共用同一实例，平移只会让面板去探一个没人监听的端口。
+    assert resolved["financecoffer"].mcp_port == 8100
     # QUOT-611 把 mem0 从 Docker peer 下线为进程内 SDK，PEERS/PEER_CONTROL 里不再有
     # 这个 key。这条断言因此不能硬绑「mem0 必须存在」——存在才校验它的偏移，
     # 否则跳过，两个单子才能同时合并进去。
     if "mem0" in resolved:
         assert resolved["mem0"].mcp_port == 19100
-    assert resolved["proxyfleet"].extra_ports == (18789,)
-    assert resolved["qdrant"].web_port == 16333
+    assert resolved["proxyfleet"].web_port == 8788
+    assert resolved["proxyfleet"].extra_ports == (8789,)
+    assert resolved["qdrant"].web_port == 6333
+    assert resolved["qdrant"].mcp_port == 9300
 
 
 def test_start_commands_shift_with_offset(monkeypatch, tmp_path) -> None:
@@ -87,13 +91,28 @@ def test_start_commands_shift_with_offset(monkeypatch, tmp_path) -> None:
 
 
 def test_start_command_without_port_is_untouched(monkeypatch, tmp_path) -> None:
-    # Wire 的入口不带 --port（端口在其自身 .env），偏移不得改动命令本身
+    # 不带 --port 的命令（TickHub-US 的 collector）偏移不得改动命令本身
     monkeypatch.setattr(boundary, "_install_root", lambda: tmp_path)
     (tmp_path / "LadderStock").mkdir()
 
     resolved = resolve_peer_control({"LDST_PORT_OFFSET": str(TEST_OFFSET)})
 
-    assert resolved["wire"].start_commands == PEER_CONTROL["wire"].start_commands
+    assert resolved["tickhub_us"].start_commands[1] == PEER_CONTROL["tickhub_us"].start_commands[1]
+    assert resolved["tickhub_us"].start_commands[1] == ("th-us-collector",)
+
+
+def test_external_hosted_peers_keep_their_own_port(monkeypatch, tmp_path) -> None:
+    """外部托管的模块端口与启动命令都不平移（WSL 容器 / 计划任务各一份）。"""
+    monkeypatch.setattr(boundary, "_install_root", lambda: tmp_path)
+    (tmp_path / "LadderStock").mkdir()
+
+    resolved = resolve_peer_control({"LDST_PORT_OFFSET": str(TEST_OFFSET)})
+    base = resolve_peer_control({"LDST_PORT_OFFSET": "0"})
+
+    for key in ("financecoffer", "proxyfleet", "qdrant"):
+        assert resolved[key].mcp_port == base[key].mcp_port
+        assert resolved[key].web_port == base[key].web_port
+        assert resolved[key].start_commands == base[key].start_commands
 
 
 def test_offset_is_positive_int_only(monkeypatch) -> None:

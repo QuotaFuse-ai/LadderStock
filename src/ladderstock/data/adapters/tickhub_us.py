@@ -79,21 +79,37 @@ def from_us_tool_response(
             f"TickHub-US {actual} 返回失败：{_failure_text(body)}", EXIT_SOURCE
         )
 
-    payload = body.get("payload")
-    if not isinstance(payload, dict):
-        raise LadderStockError(
-            f"TickHub-US {actual} 返回缺 payload 对象"
-            f"（收到 {type(payload).__name__}）",
-            EXIT_SOURCE,
-        )
-
     upstream = str(body.get("source") or "unknown")
     tier = str(body.get("compliance_tier") or "").strip().upper()
     warnings = _warnings(body)
     confidence = COMPLIANCE_CONFIDENCE.get(tier, "medium")
     freshness: Freshness = "cached" if body.get("cache_hit") else "realtime"
     fetched_at = _parse_dt(body.get("fetched_at"))
-    as_of = data_as_of or _parse_date(payload.get("as_of")) or fetched_at.date()
+
+    payload = body.get("payload")
+    if isinstance(payload, dict):
+        # 单标的快照（quote / fundamentals / filings …）：整包一条记录。
+        rows = [_record(body, payload)]
+        symbol = _text(body.get("symbol")) or _text(payload.get("symbol"))
+        as_of = data_as_of or _parse_date(payload.get("as_of")) or fetched_at.date()
+    elif isinstance(payload, list) and all(isinstance(item, dict) for item in payload):
+        # 表级回包（美债收益率曲线 / 全球政策利率 / 做空持仓 / COT）：上游给的是数组，
+        # 每一项自带 `date` / `area` / `settlement_date` 等标识，本身就是一行。
+        # 原样保留全部键（不做二次换算，DEC-028）——之前的实现只收 `payload` 为 dict，
+        # 这三类数据集一律抛「缺 payload 对象」，在页面表现为「源不可用」。
+        rows = [dict(item) for item in payload]
+        symbol = _text(body.get("symbol"))
+        as_of = data_as_of or fetched_at.date()
+    elif isinstance(payload, list) and not payload:
+        # 上游明确回了空数组：不是解析失败，是「这次没有记录」，照实落空表。
+        rows = []
+        symbol = _text(body.get("symbol"))
+        as_of = data_as_of or fetched_at.date()
+    else:
+        raise LadderStockError(
+            f"TickHub-US {actual} 返回缺 payload（收到 {type(payload).__name__}）",
+            EXIT_SOURCE,
+        )
 
     return LadderEnvelope(
         domain="review",
@@ -105,8 +121,8 @@ def from_us_tool_response(
         payload={
             "dataset": dataset,
             "tool": actual,
-            "symbol": _text(body.get("symbol")) or _text(payload.get("symbol")),
-            "records": [_record(body, payload)],
+            "symbol": symbol,
+            "records": rows,
             "compliance_tier": tier or None,
             "warnings": warnings,
             "batch_requests": None,

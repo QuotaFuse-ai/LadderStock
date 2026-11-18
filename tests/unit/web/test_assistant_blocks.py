@@ -64,9 +64,37 @@ def _client(tmp_path: Path) -> TestClient:
 
 
 def _patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: _FakeClient) -> TestClient:
-    monkeypatch.setattr(
-        assistant_module, "_load_client", lambda *_a, **_k: (fake, "openai:model-a")
-    )
+    """桩打在 `ask_agent` 上：三条路由接入 agent 后不再自己调 `_load_client`。
+
+    `fake.calls` 保留原来的四元组形状 `(model, system, user, json_mode)`，让既有断言
+    仍然在「模型收到了什么」这一层生效；`user` 由 question + context 拼出来，与
+    `_prepare_call` 的口径一致（历史文本就是从 context 进来的）。
+    """
+
+    async def _ask_agent(**kwargs: Any) -> dict[str, Any]:
+        user = f"{kwargs.get('context') or ''}\n{kwargs.get('question') or ''}"
+        fake.calls.append(
+            ("openai:model-a", str(kwargs.get("system_prompt") or ""), user, False)
+        )
+        if fake.exc is not None:
+            # agent 路径把上游异常统一收敛成 `AssistantFailure`；这里按同一映射抛，
+            # 让失败态用例测的还是路由的降级逻辑，而不是 httpx 的异常类型。
+            if isinstance(fake.exc, httpx.TimeoutException):
+                raise assistant_module.AssistantFailure(
+                    504, "ai_timeout", "模型调用超时：timed out", retryable=True
+                )
+            raise fake.exc
+        return {
+            "reply": fake.reply,
+            "model": "openai:model-a",
+            "ai": {"model": "openai:model-a", "source": "global"},
+            "fetched_at": "2026-11-06T10:00:00+00:00",
+            "metrics": {},
+            "sources": [],
+            "used_tools": False,
+        }
+
+    monkeypatch.setattr(assistant_module, "ask_agent", _ask_agent)
     # 记忆通道不可达：本组只测响应形状，不测记忆（另有 test_assistant_memory.py 覆盖）
     monkeypatch.setattr(assistant_module, "memory_scope_for", lambda _m: None)
     return _client(tmp_path)
@@ -128,8 +156,18 @@ def test_string_context_reply_is_verbatim_and_blocks_appended(
     assert isinstance(body["model"], str) and body["model"]
     assert isinstance(body["ai"], dict) and set(body["ai"]) == {"model", "source"}
     assert isinstance(body["fetched_at"], str) and body["fetched_at"]
-    # 新增只允许这两键：blocks + ai_structured；既有四键一个不少
-    assert set(body) == {"reply", "model", "ai", "fetched_at", "blocks", "ai_structured"}
+    # agent 路径在既有四键之外多三键：`sources` / `metrics` / `used_tools`（本轮的取数事实）
+    assert set(body) == {
+        "reply",
+        "model",
+        "ai",
+        "fetched_at",
+        "blocks",
+        "ai_structured",
+        "sources",
+        "metrics",
+        "used_tools",
+    }
     assert isinstance(body["blocks"], list) and body["blocks"]
     assert body["blocks"][0]["type"] == "conclusion"
 
@@ -426,11 +464,11 @@ def test_adapter_makes_zero_model_calls(monkeypatch: pytest.MonkeyPatch) -> None
     """适配函数纯本地：不构造客户端、不发起任何模型调用（调用次数为 0）。"""
     built: list[str] = []
 
-    def _forbidden(module: str = "x") -> Any:
-        built.append(module)
-        raise AssertionError("适配函数不得构造 AI 客户端")
+    async def _forbidden(**kwargs: Any) -> Any:
+        built.append("agent")
+        raise AssertionError("适配函数不得构造 AI 客户端或跑 agent")
 
-    monkeypatch.setattr(assistant_module, "_load_client", _forbidden)
+    monkeypatch.setattr(assistant_module, "ask_agent", _forbidden)
 
     adapted = assistant_module.reply_to_structured(_long_mixed_reply())
 
@@ -448,11 +486,11 @@ def test_adapter_does_not_replace_reply_or_ai_echo(
     body = _post(client, "/api/page/assistant", {"question": "今天表现？", "context": "x"}).json()
 
     assert body["reply"] == SNAPSHOT_PAGE  # 改造前 ask() 的返回就是这个字符串
-    # 改造前 `ai` = `_ai_echo(module, model)`；这里是同一函数在同等入参下的回显
-    assert body["ai"] == assistant_module._ai_echo(
-        assistant_module.DEFAULT_MODULE, "openai:model-a"
-    )
+    # 改造前 `ai` = `_ai_echo(module, model)`。模型值受 `LDST_LLM_MODEL` 覆盖影响
+    # （开发机上可能与 ai.yaml 不同），这里只守回显语义：两键、model 与顶层一致。
     assert set(body["ai"]) == {"model", "source"}
+    assert body["ai"]["model"] == body["model"]
+    assert body["ai"]["source"] == "global"
     # 结构化叙述不顶替，只旁挂
     assert body["ai_structured"]["narrative"][0] in body["reply"]
     assert "".join(body["ai_structured"]["narrative"]) == SNAPSHOT_PAGE

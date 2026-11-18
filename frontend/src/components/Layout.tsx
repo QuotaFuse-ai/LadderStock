@@ -5,6 +5,7 @@ import { ChevronDown, Menu, Sparkles } from 'lucide-react'
 import AiConnectDialog from './AiConnectDialog'
 import MobileNavDrawer from './MobileNavDrawer'
 import PageCommandBar from './PageCommandBar'
+import { PageSubNav } from './PageSubNav'
 import PersistenceBanner from './PersistenceBanner'
 import TopbarTools from './TopbarTools'
 import PeerHealthAlert from './supervisor/PeerHealthDialog'
@@ -381,6 +382,9 @@ export default function Layout() {
             {/* `sm` 以下只留栏目名：面包屑在手机上把标题挤没了（DEC-062 §2 断点表） */}
             <span className="hidden text-text-muted sm:inline">工作空间 /</span>
             <strong className="truncate font-semibold">{navTitleFor(location.pathname)}</strong>
+            {/* 栏目内子导航（2026-11-16）：与面包屑同一行，替掉原来内容区第一行那排重复胶囊。
+                组内只有一页时组件返回 null，这里不会留下空分隔。 */}
+            <PageSubNav className="ml-3 hidden min-w-0 max-w-measure shrink border-l border-border pl-3 sm:flex" />
           </div>
 
           {/* 首页「对话 / 研究台」切换落点（QUOT-582）：无页挂载时是空节点 */}

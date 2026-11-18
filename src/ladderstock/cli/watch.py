@@ -179,6 +179,12 @@ def watch_start(
 
     total = known + fresh
     now = _now_iso()
+    # 代码→名称：事件只在首次出现时落盘，持续封板的票不会再刷新事件，
+    # 页面只看 `recent_events` 时名称列会一直是 `—`。把当天样本里已知的名称一并写上。
+    names: dict[str, str] = {}
+    for bar in bars:
+        if bar.name:
+            names[bar.code] = bar.name
     document: dict[str, Any] = {
         "running": True,
         "mode": MODE_SINGLE_PASS,
@@ -190,6 +196,7 @@ def watch_start(
         "source": str(path),
         "source_detail": bars[0].source_detail if bars else "-",
         "event_count": len(total),
+        "names": names,
         "recent_events": [event.as_dict() for event in total[-STATUS_RECENT_EVENTS:]],
         "events_file": str(events_path(day_text)),
     }

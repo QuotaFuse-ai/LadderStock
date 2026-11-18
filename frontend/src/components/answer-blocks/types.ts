@@ -92,6 +92,15 @@ export interface ActionBlockPayload {
   items: ActionItem[]
 }
 
+/**
+ * `narrative`：对话正文块。没调工具的那一轮（问候 / 能力说明 / 概念解释）整段
+ * 回答原样展示，不切句、不折叠、不剥数字——与服务端 `ai/answer_blocks.py`
+ * 的 `BLOCK_NARRATIVE` 同源。
+ */
+export interface NarrativeBlockPayload {
+  text: string
+}
+
 interface BlockBase {
   /** 服务端给块 id 时用作 React key；没有则按位置 */
   id?: string
@@ -106,6 +115,7 @@ export type AnswerBlock = BlockBase &
     | { type: 'citation'; payload: CitationBlockPayload }
     | { type: 'notice'; payload: NoticeBlockPayload }
     | { type: 'action'; payload: ActionBlockPayload }
+    | { type: 'narrative'; payload: NarrativeBlockPayload }
   )
 
 /** 载荷结构不合法时的兜底：块照样占位，但明确说「这块没画出来」，不静默消失。 */
@@ -116,7 +126,16 @@ export interface InvalidBlock {
 
 export type RenderedBlock = AnswerBlock | InvalidBlock
 
-export const BLOCK_TYPES = ['conclusion', 'metric', 'chart', 'table', 'citation', 'notice', 'action'] as const
+export const BLOCK_TYPES = [
+  'conclusion',
+  'metric',
+  'chart',
+  'table',
+  'citation',
+  'notice',
+  'action',
+  'narrative',
+] as const
 
 export type BlockType = (typeof BLOCK_TYPES)[number]
 
@@ -298,6 +317,13 @@ function actionPayload(raw: unknown): ActionBlockPayload | InvalidBlock {
   return { items }
 }
 
+function narrativePayload(raw: unknown): NarrativeBlockPayload | InvalidBlock {
+  const record = asRecord(raw)
+  const body = record && text(record.text)
+  if (!body) return { type: 'invalid', reason: '正文块缺少 text' }
+  return { text: body }
+}
+
 const PARSERS = {
   conclusion: conclusionPayload,
   metric: metricPayload,
@@ -306,6 +332,7 @@ const PARSERS = {
   citation: citationPayload,
   notice: noticePayload,
   action: actionPayload,
+  narrative: narrativePayload,
 } as const
 
 /** 单个块的「类型 → 载荷」校验；`type` 不认识时返回 `invalid`，页面据此显示未识别块。 */

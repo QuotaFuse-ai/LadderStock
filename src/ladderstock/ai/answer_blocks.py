@@ -49,6 +49,12 @@ BLOCK_TABLE = "table"
 BLOCK_CITATION = "citation"
 BLOCK_NOTICE = "notice"
 BLOCK_ACTION = "action"
+#: 第 8 种（QUOT-6xx）：**对话正文块**。本轮没调任何工具（纯问答 / 能力说明 /
+#: 概念解释）时整轮只出这一块，正文原样、按句不切、不折叠。
+#: 为什么必须独立：`conclusion` 的语义是「只取首句当结论、剥数字、正文 4 行折叠」，
+#: 拿它承载闲聊会把「你好，我是研究助手。我能做的事：- 查行情 - 查涨停池 …」
+#: 切成「结论·中性」+「补充说明（4 行截断）」，同一段话被劈成两处还丢内容。
+BLOCK_NARRATIVE = "narrative"
 
 BLOCK_TYPES: tuple[str, ...] = (
     BLOCK_CONCLUSION,
@@ -58,6 +64,7 @@ BLOCK_TYPES: tuple[str, ...] = (
     BLOCK_CITATION,
     BLOCK_NOTICE,
     BLOCK_ACTION,
+    BLOCK_NARRATIVE,
 )
 
 #: D2 拍板取 6（QUOT-581 收口）。超限时由 `_enforce_limit` 瘦身 / 丢中段可省块。
@@ -110,6 +117,23 @@ CAPABILITY_NOTE = (
     "我可以：查当前页面的行情与指标数据、解释概念术语、做多标的对比、"
     "读页面上下文回答页内问题。我不做单只股票的深度研究，"
     "需要深挖时请到个股研究页提问。"
+)
+
+#: 「你会什么 / 你用哪些工具」的**能力边界清单**，注入首页与页面抽屉的提示词。
+#: 只固定「能做 / 不能做」的范围，措辞交给模型自由组织：同一个问题问两次允许说得不一样
+#: （用户明确要「每次稍有变动」），但不许超出这份范围，也不许把能力问题答成「这项没取到」。
+#: 清单里刻意不写具体代码与点位（红线：固定文案不带数字）。
+CAPABILITY_BRIEF = (
+    "个股实时行情、最近若干交易日的日线走势；"
+    "大盘主要指数的点位与涨跌；"
+    "涨停池、炸板名单、连板梯队、板块与概念强弱；"
+    "资金流向、龙虎榜、人气热股榜；"
+    "快讯与题材纪要、财务指标与业绩预告；"
+    "用户自己的自选股与持仓。"
+    "还能接长期盯盘：用户说盯哪几只、什么节奏（每天盘后 / 盘中间隔 / 有异动）、"
+    "比哪几项变化，就按节奏推进，结论进「提醒」。"
+    "不做的事：不给买卖建议、不预测价格；除实时报价与大盘指数外，其余读本机缓存的"
+    "最新交易日数据，要带上日期，不冒充实时；查不到的数据直接说没取到，不拿记忆补。"
 )
 
 #: `action.target` 只能指向既有页路由（frontend/src/routes.ts 的 `ROUTE_PATHS`，
@@ -542,6 +566,18 @@ def validate_notice(payload: Any) -> dict[str, Any]:
     return cleaned
 
 
+def validate_narrative(payload: Any) -> dict[str, Any]:
+    """对话正文块：整段回答原样展示（不按句切、不折叠、不剥数字）。
+
+    与研究卡的 `conclusion` 刻意分开：没调工具的轮次没有「首句即结论」这种结构，
+    压成结论 + 补充说明只会把正文切碎，还丢掉超 4 行的那部分。正文是模型原话；
+    数字可信度由 `sources` / `metrics` 决定——走到本块的轮次 `metrics` 恒为空。
+    """
+    body = _require_mapping(payload, "narrative")
+    _require_keys(body, ("text",), ("text",), "narrative")
+    return {"text": _require_str(body["text"], "narrative.text")}
+
+
 def validate_action(payload: Any) -> dict[str, Any]:
     body = _require_mapping(payload, "action")
     _require_keys(body, ("items",), ("items",), "action")
@@ -581,6 +617,7 @@ VALIDATORS = {
     BLOCK_CITATION: validate_citation,
     BLOCK_NOTICE: validate_notice,
     BLOCK_ACTION: validate_action,
+    BLOCK_NARRATIVE: validate_narrative,
 }
 
 
@@ -611,7 +648,9 @@ def check_ordering(blocks: Sequence[Mapping[str, Any]]) -> None:
         raise AnswerBlockError(f"块数 {len(blocks)} 超过上限 {MAX_BLOCKS}（§6.4-4）")
     types = [block.get("type") for block in blocks]
     failure_only = len(types) == 1 and types[0] == BLOCK_NOTICE
-    if not failure_only:
+    # 对话正文块同理：整轮没有取数时正文就是答案本身，没有「结论」可放首位。
+    narrative_only = len(types) == 1 and types[0] == BLOCK_NARRATIVE
+    if not failure_only and not narrative_only:
         if types[0] != BLOCK_CONCLUSION:
             raise AnswerBlockError(f"blocks[0] 必须是 conclusion（§6.4-1），收到 {types[0]!r}")
         for index, block_type in enumerate(types):

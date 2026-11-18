@@ -61,7 +61,9 @@ def test_missing_limit_pool_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> N
     assert result["available"] is False
     assert result["temperature"] is None
     assert "limit_pool" in result["missing"]
-    assert "sync" in result["reason"]
+    # 页面红线：缺数理由不许把「去跑 ldst sync」甩给用户，只说会自动补
+    assert "自动" in result["reason"]
+    assert "ldst sync" not in result["reason"]
 
 
 def test_empty_limit_pool_reports_every_missing_pool(
@@ -148,3 +150,77 @@ def test_narrative_metrics_is_flat_read_only_snapshot(monkeypatch: pytest.Monkey
         isinstance(value, list) and value and isinstance(value[0], dict)
         for value in snapshot.values()
     )
+
+
+def test_intraday_live_snapshot_fills_temperature_without_archive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """盘中（当日 archive 未生成）走实时快照：温度=封板率×0.35 + 高度×0.20 重归一。
+
+    实时接口不给当日涨停全集，晋级率算不出来 → 必须留 None 并写进 missing，
+    不能拿 0 或上一交易日的值顶。
+    """
+    from ladderstock.core import live_sentiment
+
+    monkeypatch.setattr(sentiment_module, "dataset_snapshot", lambda *a, **k: ([], "none"))
+    live_sentiment.write_snapshot(
+        DAY,
+        {
+            "date": "20261027",
+            "limit_up": 20,
+            "broken": 20,
+            "limit_down": 7,
+            "seal_rate": 0.5,
+            "max_streak": 3,
+            "leaders": [{"code": "002685", "name": "华东重机", "streak": 3}],
+        },
+        fetched_at=__import__("datetime").datetime(2026, 10, 27, 10, 30),
+        root=tmp_path,
+    )
+
+    result = sentiment_module.compute_sentiment(DAY, root=tmp_path)
+
+    assert result["available"] is True
+    assert result["mode"] == "live"
+    assert result["limit_up_count"] == 20
+    assert result["broken_count"] == 20
+    assert result["seal_rate"] == 50.0
+    assert result["max_board"] == 3
+    assert result["promotion_rate"] is None
+    # 0.35×50 + 0.20×(3/6)×100 除以可用权重之和
+    expected = (0.35 * 50.0 + 0.20 * 50.0) / (0.35 + 0.20)
+    assert result["temperature"] == pytest.approx(round(expected, 1), abs=0.1)
+    assert set(result["missing"]) == {"promotion_rate", "ladder_gap"}
+    assert result["leaders"][0]["name"] == "华东重机"
+
+
+def test_intraday_snapshot_of_another_day_is_not_used(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """实时快照必须与目标日同一天；拿别的日子的读数顶今天就是造假。"""
+    from ladderstock.core import live_sentiment
+
+    monkeypatch.setattr(sentiment_module, "dataset_snapshot", lambda *a, **k: ([], "none"))
+    live_sentiment.write_snapshot(
+        "2026-10-28",
+        {"date": "20261028", "limit_up": 3, "broken": 1},
+        fetched_at=__import__("datetime").datetime(2026, 10, 28, 10, 0),
+        root=tmp_path,
+    )
+
+    result = sentiment_module.compute_sentiment(DAY, root=tmp_path)
+
+    assert result["available"] is False
+    assert result["temperature"] is None
+    assert result["mode"] if "mode" in result else True
+
+
+def test_live_snapshot_rejects_unreadable_file(tmp_path: Any) -> None:
+    from ladderstock.core import live_sentiment
+
+    path = live_sentiment.live_path(DAY, tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+
+    assert live_sentiment.read_snapshot(DAY, tmp_path) is None
+

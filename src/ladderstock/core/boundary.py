@@ -118,9 +118,11 @@ _PEER_FALLBACKS: dict[str, Peer] = {
         product="FinanceCoffer",
         package="financecoffer",
         cli="fc",
-        mcp_name=None,
-        default_port=8100,
-        role="数据存储：结构化宽表 / 公告检索 / 风险",
+        # 2026-11-18：FC 确实有 MCP 面（`fcoffer mcp http`），此前的 None 是登记遗漏。
+        # 8100 是 REST API（本机 /v1/* 回 500，未修），8101 是 MCP（容器 fc-mcp）。
+        mcp_name="financecoffer",
+        default_port=8101,
+        role="数据存储：结构化财报 / 公告语义检索 / 风险事件",
         consumption="只消费",
         health_path="/health",
         repo="QuotaFuse-ai/FinanceCoffer",
@@ -155,6 +157,50 @@ _PEER_FALLBACKS: dict[str, Peer] = {
 }
 
 
+def _early_port_offset() -> int:
+    """模块加载期也能算端口偏移（`PEERS` 注册表在 import 阶段就构建）。
+
+    与 `port_offset()` 同语义，但不引用它——那个函数定义在本文件后半段，
+    import 时尚未绑定。
+    """
+    raw = (os.environ.get("LDST_PORT_OFFSET") or "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        return 0
+    return value if value > 0 else 0
+
+
+def _external_hosted(key: str) -> bool:
+    """外部托管的模块（WSL 容器 / Windows 计划任务）不参与端口平移。
+
+    这类服务全机器只有一份，正式服与测试服共用同一个实例：容器端口由 compose
+    映射、计划任务端口写在任务命令行里，控制面改了也没人听。对它们平移只会让
+    面板去探一个空端口，把「正在跑」显示成「未安装」（FinanceCoffer 8100 被探成
+    18100 就是这么来的）。
+    """
+    ctl = PEER_CONTROL.get(key)
+    if ctl is None:
+        return False
+    return (not ctl.managed) or ctl.compose_file is not None or ctl.task_name is not None
+
+
+def _shift_peers(peers: Mapping[str, Peer], offset: int) -> dict[str, Peer]:
+    """把整张注册表的 default_port 按偏移平移（offset=0 或外部托管时原样）。"""
+    if offset == 0:
+        return dict(peers)
+    from dataclasses import replace
+
+    return {
+        key: replace(
+            peer, default_port=peer.default_port + (0 if _external_hosted(key) else offset)
+        )
+        for key, peer in peers.items()
+    }
+
+
 def build_peers(
     peers_block: Any,
     *,
@@ -170,9 +216,12 @@ def build_peers(
     从内置默认按 key 回填；未知 key 的 role 缺省为空串、consumption 缺省「只消费」。
     """
     base = _PEER_FALLBACKS if fallbacks is None else fallbacks
+    offset = _early_port_offset()
     warnings: list[str] = []
     if not isinstance(peers_block, Mapping) or not peers_block:
-        return dict(base), ["config/sources.yaml 的 peers 块缺失或为空，回退内置默认注册表"]
+        return _shift_peers(base, offset), [
+            "config/sources.yaml 的 peers 块缺失或为空，回退内置默认注册表"
+        ]
 
     peers: dict[str, Peer] = {}
     for key, item in peers_block.items():
@@ -200,6 +249,9 @@ def build_peers(
         except (TypeError, ValueError):
             warnings.append(f"peers.{key}.default_port 不是整数，回退默认值")
             default_port = fallback.default_port if fallback else 0
+        # 外部托管的模块不参与平移（见 _external_hosted）：那份服务由它自己的
+        # compose / 计划任务决定端口，控制面改指令也指挥不动，平移只会探空端口。
+        default_port += 0 if _external_hosted(key) else offset
         role = str(item.get("role") or "").strip() or (fallback.role if fallback else "")
         health_path = str(item.get("health_path") or "").strip() or (
             fallback.health_path if fallback else "/healthz"
@@ -218,7 +270,10 @@ def build_peers(
             repo=str(repo) if repo else None,
         )
     if not peers:
-        return dict(base), [*warnings, "peers 块没有任何合法条目，回退内置默认注册表"]
+        return _shift_peers(base, offset), [
+            *warnings,
+            "peers 块没有任何合法条目，回退内置默认注册表",
+        ]
     return peers, warnings
 
 
@@ -341,14 +396,18 @@ PEER_CONTROL: dict[str, PeerControl] = {
         web_port=8787,
         web_port_label="管理端",
         health_path="/healthz",
-        start_commands=(("th-cn", "start-all"),),
-        config_keys=("MCP_HTTP_PORT", "ADMIN_PORT", "TICKHUB_CN_LOG_LEVEL"),
+        # QUOT-618 补齐：命令必须自带 `--port`，否则 `_shift_start_command` 无处可改，
+        # 测试服（offset=10000）仍会起 8000 并跟正式服抢端口。
+        start_commands=(("th-cn", "start-all", "--port", "8000"),),
+        # 只留源码真读的键：MCP_HTTP_PORT / TICKHUB_CN_LOG_LEVEL 写了不生效，
+        # 放在可写位等于让用户白填一次（2026-11-16 按用户决定移除）。
+        config_keys=("ADMIN_PORT",),
         env_filename=".env",
         config_notes=(
             "TickHub-CN 的 admin 健康检查在 /healthz（admin_api/app.py:291）。",
-            "CN 源码只读 ADMIN_PORT / LOG_LEVEL 等环境变量：MCP 端口走 CLI --port（默认 8000），"
-            "日志键实际是 LOG_LEVEL；MCP_HTTP_PORT、TICKHUB_CN_LOG_LEVEL 按 PRD §5 保留"
-            "但当前不生效。",
+            "CN 源码只认 ADMIN_PORT 这一个可写项（日志键实际名是 LOG_LEVEL，不是 TICKHUB_CN_LOG_LEVEL）。",
+            "MCP_HTTP_PORT、TICKHUB_CN_LOG_LEVEL 源码不读、写了不生效，已从可写位移除；"
+            "MCP 端口在启动时用 CLI --port 指定（默认 8000，测试服由控制面按 offset 平移）。",
         ),
     ),
     "tickhub_us": PeerControl(
@@ -393,7 +452,9 @@ PEER_CONTROL: dict[str, PeerControl] = {
         web_port=8790,
         web_port_label="HTTP 服务",
         health_path="/api/health",
-        start_commands=(("qfw", "serve"), ("qfw", "mcp", "http")),
+        # QUOT-618 补齐：两面各自带 `--port`（实测 `qfw serve --port` 与
+        # `qfw mcp http --port` 都支持），否则 offset 只改展示、进程仍起 8790/8791。
+        start_commands=(("qfw", "serve", "--port", "8790"), ("qfw", "mcp", "http", "--port", "8791")),
         # `qfw serve` 只起 Web/HTTP 面（8790），`qfw mcp http` 只起 MCP 面（8791）：
         # 分面后 web 挂了可以只补跑 serve，不要求 MCP 也停下来（QUOT-481 缺陷 3）
         start_command_faces=("web", "mcp"),
@@ -452,10 +513,12 @@ PEER_CONTROL: dict[str, PeerControl] = {
         import_package="financecoffer",
         repo="QuotaFuse-ai/FinanceCoffer",
         dist_name="financecoffer",
-        mcp_port=8100,
-        # FC 没有 MCP 面，8100 就是唯一的 HTTP 服务端口；健康检查打 /health
-        web_port=None,
-        web_port_label="HTTP 服务（WSL）",
+        mcp_port=8101,
+        # 8100 是 REST API（/v1/*），8101 是 MCP（`fcoffer mcp http`）。两者都由
+        # `modules/financecoffer/services.py` 按 `base + port_offset()` 管理，
+        # 测试服即 18100 / 18101，正式服 8100 / 8101。
+        web_port=8100,
+        web_port_label="REST API",
         health_path="/health",
         # 服务跑在 WSL 里，Windows 侧的 .venv/Scripts 里没有可拉起的入口：
         # 控制面只做只读观测与健康探测，绝不接管启停（QUOT-403）。
@@ -509,10 +572,11 @@ PEER_CONTROL: dict[str, PeerControl] = {
         # 挂载仓库、CWD（/app）下也没有 .env，而 process env 优先级高于 .env——
         # 写仓库根 .env 等于没写，故按实测路径落盘到这个子目录文件。
         env_filename="deploy/.env",
-        managed=False,
+        managed=True,
         config_notes=(
-            "FinanceCoffer 服务跑在 WSL（127.0.0.1:8100），控制面不接管安装/启停；"
-            "启停与治理见 QUOT-404。",
+            "FinanceCoffer 现在是 LadderStock 的本地增益包（`file/modules/financecoffer`），"
+            "由 `modules/financecoffer/services.py` 按端口偏移启停：测试服 18100(REST)/18101(MCP)，"
+            "正式服 8100/8101。原 WSL 容器形态已停用。",
             "/health 回 status=degraded（如 embedding unreachable）时面板如实显示，"
             "不是本单要修的故障。",
             "白名单 26 键 = core/config.py 的 Config.model_fields 全量 34 键，扣除 8 个"
@@ -769,7 +833,10 @@ def _shift_control(ctl: PeerControl, offset: int, directory: str) -> PeerControl
     changed: dict[str, Any] = {}
     if directory != ctl.directory:
         changed["directory"] = directory
-    if offset:
+    # 外部托管（WSL 容器 / 计划任务）保持原端口：它们不是本实例拉起的一份副本，
+    # 平移后连「它在不在跑」都判断不出来。
+    external = (not ctl.managed) or ctl.compose_file is not None or ctl.task_name is not None
+    if offset and not external:
         changed["mcp_port"] = ctl.mcp_port + offset
         if ctl.web_port is not None:
             changed["web_port"] = ctl.web_port + offset
@@ -779,6 +846,21 @@ def _shift_control(ctl: PeerControl, offset: int, directory: str) -> PeerControl
             _shift_start_command(command, offset) for command in ctl.start_commands
         )
     return ctl if not changed else replace(ctl, **changed)
+
+
+def peer_directory(key: str, env: Mapping[str, str] | None = None) -> str:
+    """该 peer 应当落在的目录（不管它现在存不存在）。
+
+    `resolve_peer_control` 在目录不存在时会保留占位符（那是给人看的「放这里」提示），
+    所以真正要**写文件**的路径（一键接入）必须先算成真实目录——否则
+    `Path("[modules-path]\\Qdrant").mkdir()` 会在进程 CWD 下建出一个叫
+    `[modules-path]` 的目录。
+    """
+    values = os.environ if env is None else env
+    directory = (values.get(PEER_DIR_ENV[key]) or "").strip()
+    if directory:
+        return directory
+    return str(_install_root() / PEER_SIBLING_DIRS[key])
 
 
 def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, PeerControl]:
@@ -864,6 +946,15 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # 一条」的水位，硬套 `trade_date` 会让它看起来像可按日增量同步的数据集。
         _b("spot_quote", "tickhub", "tencent_quote_batch", "replace", "timestamp",
            note="实时批量报价（盘中快照用）；不进 sync 台账，timestamp 不作交易日水位"),
+        # 全市场标的字典（QUOT-6xx）：生态里没有「名称 → 代码」的检索工具——
+        # `stock_profile` / `baostock_stock_basic` 都要先给代码，`iwencai_search` 要 API key。
+        # 所以用**唯一可批量出名称的工具** `tencent_quote_batch` 按代码段穷举，把
+        # 「代码 + 名称 + 市场」整表落成一天一份的字典。与 `spot_quote` 同工具同形状，
+        # 但**进本机字典库**（检索要能回答「茅台是 600519」），因此单独登记一条。
+        # 不进 sync.yaml：常年 3.5 万个候选号码、700 批往返，是「按需刷新」而不是每日增量，
+        # 由 `ldst symbol refresh` 驱动（`data/symbol_universe.py`）。
+        _b("symbol_basic", "tickhub", "tencent_quote_batch", "replace", "trade_date",
+           note="全市场标的字典（代码+名称）：按代码段穷举批量报价得到；按需刷新，不按日增量"),
         # 指数实时报价（QUOT-380 / QUOT-379 盘点 A-1）：与 `spot_quote` **同构**——
         # 行内没有 `trade_date`，行情时间是 `timestamp`（`YYYYMMDDHHMMSS`），硬套
         # `trade_date` 会让它看起来像可按日增量同步的数据集，所以同样**不进 sync.yaml**。
@@ -887,6 +978,56 @@ DATASET_CATALOG: dict[str, DatasetBinding] = {
         # 现取现显、不进 sync.yaml / 不落库，`timestamp` 不作交易日水位。
         _b("index_quote_hk", "tickhub_us", "th_us_get_quote", "replace", "timestamp",
            note="港股指数实时报价（首页指数条港股格）；逐 symbol 取，不进 sync 台账"),
+        # ---- TickHub-US：美股个股与宏观（QUOT-471 后半段）----
+        # us-dossier 的 6 步、cross-market 与 macro-crossasset 的美股侧一步，都点名了
+        # th_us_* 工具。此前的登记只有上面 2 个"首页指数格"，所以那些方向的工具白名单
+        # 在数据层没有落地（页面据此如实显示「未接通」）。下面逐条把工具登记成数据集：
+        # 全部 `replace` + `timestamp` 水位（逐 symbol 的实时快照，没有"一天一条"水位，
+        # 与 index_quote_us 同口径），全部不进 sync.yaml / 不落库。
+        _b("us_cik_lookup", "tickhub_us", "th_us_lookup_cik", "replace", "timestamp",
+           note="公司名/代码 → SEC CIK；us-dossier 第 1 步的口径对齐"),
+        _b("us_stock_quote", "tickhub_us", "th_us_get_quote", "replace", "timestamp",
+           note="美股个股实时报价（逐 symbol）"),
+        _b("us_fundamentals", "tickhub_us", "th_us_get_fundamentals", "replace", "timestamp",
+           note="美股个股基本面快照（估值/利润率等）"),
+        _b("us_financials", "tickhub_us", "th_us_get_financial_statements", "replace", "timestamp",
+           note="美股三表（利润/资产负债表/现金流）"),
+        _b("us_key_indicators", "tickhub_us", "th_us_get_key_indicators", "replace", "timestamp",
+           note="美股关键财务指标"),
+        _b("us_xbrl_facts", "tickhub_us", "th_us_get_xbrl_facts", "replace", "timestamp",
+           note="XBRL 原始事实（逐科目）"),
+        _b("us_insider_trades", "tickhub_us", "th_us_get_insider_trades", "replace", "timestamp",
+           note="内部人交易（Form 4）"),
+        _b("us_13f", "tickhub_us", "th_us_get_13f_holdings", "replace", "timestamp",
+           note="13F 机构持仓"),
+        _b("us_filings_search", "tickhub_us", "th_us_search_filings", "replace", "timestamp",
+           note="SEC 文件检索"),
+        _b("us_filing_feed", "tickhub_us", "th_us_get_filing_feed", "replace", "timestamp",
+           note="SEC 最新文件流"),
+        _b("us_fulltext_search", "tickhub_us", "th_us_fulltext_search", "replace", "timestamp",
+           note="SEC 全文检索"),
+        _b("us_options_flow", "tickhub_us", "th_us_get_options_flow", "replace", "timestamp",
+           note="期权异动（逐 symbol）"),
+        _b("us_options_chain", "tickhub_us", "th_us_get_options_chain", "replace", "timestamp",
+           note="期权链（逐 symbol / 到期日）"),
+        _b("us_short_interest", "tickhub_us", "th_us_get_short_interest", "replace", "timestamp",
+           note="做空持仓（Short Interest）"),
+        _b("us_short_volume", "tickhub_us", "th_us_get_short_volume", "replace", "timestamp",
+           note="做空成交（Short Volume）"),
+        _b("us_volatility", "tickhub_us", "th_us_get_volatility", "replace", "timestamp",
+           note="波动率（VIX 及期限结构）"),
+        _b("us_analyst_estimates", "tickhub_us", "th_us_get_analyst_estimates", "replace", "timestamp",
+           note="分析师预期（目标价/评级）"),
+        _b("us_market_list", "tickhub_us", "th_us_get_market_list", "replace", "timestamp",
+           note="市场列表 / 中概股与 ETF 清单"),
+        _b("us_market_data", "tickhub_us", "th_us_get_market_data", "replace", "timestamp",
+           note="指数/市场行情（隔夜映射用）"),
+        _b("us_treasury_curve", "tickhub_us", "th_us_get_treasury_yield_curve", "replace", "timestamp",
+           note="美债收益率曲线（10Y 等全期限）"),
+        _b("us_policy_rates", "tickhub_us", "th_us_get_policy_rates", "replace", "timestamp",
+           note="全球央行政策利率"),
+        _b("us_cot", "tickhub_us", "th_us_get_cot", "replace", "timestamp",
+           note="CFTC 持仓报告（期货持仓排名）"),
         _b("dragon_tiger", "tickhub", "dragon_tiger", "replace", "trade_date",
            ("dragon_tiger_backup",), "备源为交易所官方榜"),
         _b("dragon_tiger_seats", "tickhub", "dragon_tiger_seats", "replace", "trade_date",
