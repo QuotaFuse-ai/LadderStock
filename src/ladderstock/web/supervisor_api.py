@@ -96,6 +96,9 @@ if TYPE_CHECKING:
 
 SUPERVISOR_PREFIX = "/api/supervisor"
 
+#: 退出时等后台 `start_all` 收尾的上限（秒）；超时就取消，不拖住关停。
+START_ALL_JOIN_TIMEOUT_SEC = 20.0
+
 SUPERVISOR_DENIED = "自愈状态面只对本机回环开放（127.0.0.1 / localhost / ::1）"
 SUPERVISOR_WRITE_DENIED = "自愈写面只接受同源来源（Origin 或 X-LDST-Client: 1）"
 
@@ -940,13 +943,28 @@ def mount_supervisor(
     if processes is not None:
         app.include_router(build_stop_router(processes))
 
+    # 启动全起挪到后台任务：`start_all` 要逐个等模块端口 ready，放在 startup
+    # 壮手里会把「打开看板」绑在一分多钟上（2026-11-18 用户实测卡住的主因之一）。
+    # 看板先可用，模块在后台陆续就位；退出时按超时 join，拿不到就取消。
+    startup_task: asyncio.Task[Any] | None = None
+
     async def startup() -> None:
+        nonlocal startup_task
         if processes is not None and own_processes_on_lifecycle:
-            await _in_thread(processes.start_all)
+            startup_task = asyncio.create_task(
+                _in_thread(processes.start_all), name="supervisor-start-all"
+            )
         await _in_thread(heal.start)
 
     async def shutdown() -> None:
         if processes is not None and own_processes_on_lifecycle:
+            if startup_task is not None and not startup_task.done():
+                try:
+                    await asyncio.wait_for(startup_task, timeout=START_ALL_JOIN_TIMEOUT_SEC)
+                except TimeoutError:
+                    startup_task.cancel()
+                except Exception:  # noqa: BLE001 - 后台起停失败不拦退出
+                    pass
             # QUOT-527：应用退出 = 只停本控制面 spawn 的子进程；adopted peer 保留
             await _in_thread(processes.stop_owned)
         await _in_thread(lambda: heal.stop(timeout=2.0))

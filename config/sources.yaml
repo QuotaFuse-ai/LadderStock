@@ -117,6 +117,15 @@ peers:
     health_path: /collections
     default_port: 6333
     role: 知识库向量层：档案向量存储 / 语义检索（REST 6333 · MCP 9300）
+  # LS 自身记忆（QUOT-611）：库态子模块，随包分发、进程内 import。
+  # 没有服务、没有端口、不进 sources 取数通道（sources 不允许 via 它）；
+  # 这里登记只为让控制面出一张只读卡，与 Multica 独立部署的 mem0 无关。
+  memory:
+    product: Mem0（LS 自身记忆）
+    package: mem0
+    role: 助手长期记忆：进程内 mem0 SDK（qdrant local + fastembed，512 维）
+    # 库态：没有可执行入口、没有端口、没有健康路径（schema 走 library_only 分支）
+    library_only: true
 
 sources:
   # ---------------- 行情与短线数据：TickHub-CN ----------------

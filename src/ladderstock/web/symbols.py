@@ -37,6 +37,17 @@ from ladderstock.web import control as control_plane
 
 SYMBOLS_PREFIX = "/api/symbols"
 
+#: pypinyin 只在装了就用来算首字母；import 放模块级，避免每次检索都在
+#: `sys.modules` 里重走一遍 import 机制（5000+ 标的 × 每只一次 = 秒级开销）。
+try:
+    from pypinyin import Style as _PinyinStyle  # type: ignore[import-not-found]
+    from pypinyin import lazy_pinyin as _LAZY_PINYIN
+
+    _PINYIN_STYLE: Any = _PinyinStyle.FIRST_LETTER
+except ImportError:  # pragma: no cover - 未装依赖时如实降级
+    _LAZY_PINYIN = None
+    _PINYIN_STYLE = None
+
 #: 带名称字段的数据集（本机缓存反查的唯一来源）。都在 `DATASET_CATALOG` 登记，
 #: 读取走 `duckdb_store.query_dataset`，不自拼 SQL、不碰未登记的表。
 #: 表内无名称的数据集（如 `daily_k`）不进这一列。
@@ -102,14 +113,9 @@ def market_of(code: str) -> str:
 
 def _pinyin_of(name: str) -> str | None:
     """名称 → 首字母拼音（gzmt）；pypinyin 不在依赖里就 `None`，不手写映射表。"""
-    try:
-        from pypinyin import (  # type: ignore[import-not-found]  # noqa: PLC0415
-            Style,
-            lazy_pinyin,
-        )
-    except ImportError:
+    if _LAZY_PINYIN is None:
         return None
-    letters = lazy_pinyin(name, style=Style.FIRST_LETTER, errors="ignore")
+    letters = _LAZY_PINYIN(name, style=_PINYIN_STYLE, errors="ignore")
     return "".join(letters).lower() or None
 
 
@@ -118,6 +124,29 @@ class SymbolPlane:
 
     def __init__(self, *, data_root: Path) -> None:
         self.data_root = Path(data_root)
+        # 字典快照缓存：键 = duckdb 文件的 (路径, mtime, size)，写入后自动失效。
+        self._cache: tuple[dict[str, dict[str, Any]], date | None] | None = None
+        self._cache_key: tuple[str, float, int] | None = None
+
+    def _collect_cached(self) -> tuple[dict[str, dict[str, Any]], date | None]:
+        """缓存版 `_collect`：字典文件没变就复用上次结果。
+
+        冷路径要读全部数据集、并对 5000+ 标的逐个算首字母拼音；每次搜索都重算
+        会把 `/symbols/search` 拖过 5 秒（2026-11-18 实测 5000ms 超时）。
+        """
+        path = duckdb_store.db_path(self.data_root)
+        try:
+            stat = path.stat()
+            key: tuple[str, float, int] | None = (str(path), stat.st_mtime, stat.st_size)
+        except OSError:
+            key = None
+        if key is not None and self._cache is not None and self._cache_key == key:
+            return self._cache
+        result = self._collect()
+        if key is not None:
+            self._cache = result
+            self._cache_key = key
+        return result
 
     # ---------------------------------------------------------------- 读取
 
@@ -212,7 +241,7 @@ class SymbolPlane:
 
         query = normalize_query(text)
         term = query.lower()
-        symbols, as_of = self._collect()
+        symbols, as_of = self._collect_cached()
         has_source = bool(symbols)
 
         matches: list[dict[str, Any]] = []

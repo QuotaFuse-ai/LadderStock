@@ -31,6 +31,9 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "senate": (8765, 8786),
         "financecoffer": (8100,),
         "proxyfleet": (8788, 8789),
+        # Qdrant（2026-11-18 用户裁决）：本地单体二进制，不再用 Docker。
+        # (REST/Dashboard, gRPC) —— gRPC 面探测得到，但并作一个进程托管。
+        "qdrant": (6333, 6334),
         # QUOT-589 重修：看门狗无端口化（用户裁决全机只留 5950/5951），
         # 不再监听 5952——空元组 = 无端口模块，probe 靠 cmdline 扫描
         # （WatchdogAdapter）。
@@ -50,6 +53,8 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         # 恒判 failed / 触发无效重拉 → needs_human 红条。
         "financecoffer": (8100,),
         "proxyfleet": (18788, 18789),
+        # Qdrant（2026-11-18 用户裁决）：本地单体二进制，测试段 = 基准 + 10000。
+        "qdrant": (16333, 16334),
         # QUOT-589 重修：同样无端口化，不占 15952。
         "watch": (),
         "proxypool": (),

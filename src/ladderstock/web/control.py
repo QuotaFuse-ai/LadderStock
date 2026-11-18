@@ -1635,6 +1635,20 @@ class ControlPlane:
         return peers if isinstance(peers, Mapping) else {}
 
     @staticmethod
+    def _runtime_binary(directory: Path) -> Path | None:
+        """便携单体二进制的实际可执行文件（Win 带 .exe，其余不带）。
+
+        目录名 `runtime` 是约定：组件自带的原生二进制都放这里，不落系统 PATH、
+        不依赖外部解释器或容器。返回第一个命中的候选，全部缺失返回 None。
+        """
+        runtime = directory / "runtime"
+        for name in ("qdrant.exe", "qdrant"):
+            candidate = runtime / name
+            if candidate.is_file():
+                return candidate
+        return None
+
+    @staticmethod
     def _venv_dir(ctl: PeerControl) -> Path:
         return Path(ctl.directory) / ".venv"
 
@@ -1697,11 +1711,26 @@ class ControlPlane:
             # pip 分发，目录在位即视为已安装（与 compose 分支同构）；版本无单一
             # 真源（服务由 SYSTEM 垫片拉起），如实回 None。
             installed = dir_exists
+        elif getattr(ctl, "library_only", False):
+            # 库态子模块（LS 自身记忆，QUOT-611）：没有 .venv、没有服务面，
+            # 包体在 site-packages 随包分发；目录在位即视为已安装。
+            installed = dir_exists
+        elif (directory / "runtime").is_dir() and self._runtime_binary(directory) is not None:
+            # 便携二进制形态（2026-11-18 Qdrant 去 Docker 化）：既没有 compose、没有
+            # 计划任务、没有 .venv、也没有 install_state.json，判据只能是「单体可执行
+            # 文件在不在位」。三平台同一口径：runtime/qdrant.exe（Win）或 runtime/qdrant。
+            installed = True
+        elif (directory / "install_state.json").is_file():
+            # bundle 形态（FinanceCoffer 本地增益包）：没有 .venv 也没有 pip 分发，
+            # 安装状态真源是 `<directory>/install_state.json` 的 state——目录好几 GB
+            # 也可能只是 pgdata/redisdata 堆出来的，装没装全只能看这个标记。
+            installed = self._bundle_ready(directory)
         elif dir_exists and self._venv_python(ctl).exists():
             version = self.import_version(ctl)
             installed = version is not None
 
-        mcp_owners = self._port_probe(ctl.mcp_port)
+        library_only = bool(getattr(ctl, "library_only", False))
+        mcp_owners = [] if library_only else self._port_probe(ctl.mcp_port)
         web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
         # QUOT-485：额外端口（ProxyFleet 的 8789 出口网关）也探归属并计入「是否
         # 监听」，但不出「打开」按钮——网关不是能点的站点。
@@ -1709,7 +1738,11 @@ class ControlPlane:
             port: self._port_probe(port) for port in ctl.extra_ports
         }
         listening = bool(mcp_owners or web_owners or any(extra_owners.values()))
-        conflicts = self._port_conflicts(key, ctl, mcp_owners, web_owners, extra_owners)
+        conflicts = (
+            []
+            if library_only
+            else self._port_conflicts(key, ctl, mcp_owners, web_owners, extra_owners)
+        )
 
         health: dict[str, Any] = {"ok": None, "detail": ""}
         if listening:  # 有监听就探一次：占用者到底是不是本方 peer，靠健康检查说话
@@ -1724,6 +1757,7 @@ class ControlPlane:
             health_ok=health["ok"],
             health_detail=health["detail"],
             foreign_ports=[c["port"] for c in conflicts if c.get("foreign")],
+            library_only=library_only,
         )
 
         # 模块已在正常服务、占用的又是它自己的声明端口：这不是冲突，只是「控制面没
@@ -1867,6 +1901,7 @@ class ControlPlane:
         health_ok: bool | None,
         health_detail: str,
         foreign_ports: list[int] | None = None,
+        library_only: bool = False,
     ) -> tuple[str, str]:
         if not dir_exists:
             hint = PEER_DIR_ENV.get(key)
@@ -1874,6 +1909,17 @@ class ControlPlane:
             return STATUS_UNCONFIGURED, f"目录不存在：{self.peers[key].directory}{suffix}"
         if not registered:
             return STATUS_UNCONFIGURED, "未在 config/sources.yaml 的 peers 登记"
+        if library_only:
+            # 库态子模块（LS 自身记忆，QUOT-611）：没有服务与端口，「已安装/未启动」
+            # 的语义不适用；如实说清它是随包分发、进程内 import 的包体。
+            ctl = self.peers[key]
+            if not installed:
+                return STATUS_NOT_INSTALLED, f"包体缺失：{ctl.directory}"
+            return (
+                STATUS_INSTALLED,
+                "库形态：包体随应用分发（file/modules/memory/site-packages），"
+                "进程内 import，无独立服务与端口",
+            )
 
         last = self._last_job.get(key)
         active_job = last is not None and last.status in {"queued", "running"}
@@ -1909,6 +1955,20 @@ class ControlPlane:
         if self._peer_state(key).get("last_stop_at"):
             return STATUS_STOPPED, "已按控制面停止"
         return STATUS_INSTALLED, "已安装，未启动"
+
+    @staticmethod
+    def _bundle_ready(directory: Path) -> bool:
+        """bundle 安装态：`install_state.json` 的 `state == "ready"` 才算装好。
+
+        读不到 / 解析失败时退回「文件在位」——既不误报未安装，也不假装就绪；
+        真正的组件明细在 `components` 里，面板展示时另行读取。
+        """
+        marker = directory / "install_state.json"
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return marker.is_file()
+        return str(data.get("state") or "").strip().lower() == "ready"
 
     def _not_installed_detail(self, key: str) -> str:
         ctl = self.peers[key]
@@ -2773,12 +2833,29 @@ class ControlPlane:
         while time.monotonic() < deadline:
             if any(self._port_probe(port) for port in wait_ports):
                 job.log(f"  端口已监听（{time.monotonic() - (deadline - START_GRACE_SEC):.1f}s）")
+                self._mark_supervisor_spawned(job.peer, records)
                 return
             time.sleep(0.5)
         raise JobFailure(
             f"启动后 {START_GRACE_SEC:.0f} 秒内端口无监听（进程 PID {pids} 仍在，"
             f"日志见 {log_path}）"
         )
+
+    def _mark_supervisor_spawned(self, peer: str, records: list[dict[str, Any]]) -> None:
+        """启动成功后把归属回写 supervisor 账本（QUOT-XXX）。
+
+        控制面自己 spawn 的进程不进账本时，页面会一直显示「外部接管」和
+        「端口由控制面之外的进程监听（手动启动）」，且账本 pid 指向另一条
+        进程（如正式服 8000 上的实例）。记账是附属动作，失败不影响启动结果。
+        """
+        marker = getattr(getattr(self, "supervisor", None), "mark_spawned", None)
+        if not callable(marker):
+            return
+        for record in records:
+            try:
+                marker(peer, pid=int(record["pid"]))
+            except Exception:  # noqa: BLE001 - 记账失败不阻断启动
+                continue
 
     def _wsl_compose_argv(self, distro: str, compose_path: str, *action: str) -> list[str]:
         """wsl 内 docker compose 的参数数组形态（不拼 shell，DEC-014 硬约束 2）。"""

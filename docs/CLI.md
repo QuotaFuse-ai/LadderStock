@@ -473,6 +473,29 @@ ldst position list --output json                         # realized.total_pnl（
 `stop_owned()` 再优雅关闭 uvicorn。它无结构化 stdout，不进 argv 矩阵，生命周期由
 `tests/unit/cli/test_service.py` 与 `tests/unit/service/test_tray.py` 覆盖。
 
+## Q. 标的字典（2026-11-18 增量，3）
+
+> 与本机缓存同源：`symbol_basic`（全市场字典，代码段穷举 + 批量报价，约 6000 只）
+> 并上带名称字段的榜单数据集。只读、不触发 sync、不写库。看板侧的
+> `GET /api/symbols/search` 复用同一套口径（`src/ladderstock/web/symbols.py`）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 61 | `ldst symbol refresh` | 刷新全市场标的字典（代码段穷举 + 批量报价），写回 `symbol_basic` | `--output` | 成功 0 + 行数报告；数据源不可用 **4** |
+| 62 | `ldst symbol status` | 看字典现状：行数、最近刷新日 | `--output` | 成功 0；无字典 0 + `available=false` |
+| 63 | `ldst symbol lookup` | 按检索口径查一次字典（代码精确 + 名称包含 + 拼音首字母） | `q`（位置参数）、`--limit`、`--output` | 成功 0；查无此标的 **6** |
+
+## R. 知识库投影（2026-11-18 增量，2）
+
+> qdrant 侧投影：把 `dwd` 公告正文写进集合 `ladderstock_knowledge`，
+> 向量名 `fast-bge-small-zh-v1.5`（512 维 Cosine）。投影是幂等的，
+> 重跑覆盖同 `event_id` 的点。检索面由 Qdrant 模块的 MCP（`qdrant-find`）提供。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 64 | `ldst knowledge sync-announcements` | 把 dwd 公告正文投影进 qdrant（幂等重跑覆盖） | `--since` / `--limit` / `--output` | 成功 0；qdrant 不可用 **4** |
+| 65 | `ldst knowledge status` | 投影现状：qdrant 点数 vs dwd 行数 | `--output` | 始终 0 + `{points, rows, lag}` |
+
 ## F. 全局约定
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。

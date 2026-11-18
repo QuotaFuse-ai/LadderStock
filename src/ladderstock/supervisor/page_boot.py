@@ -575,6 +575,20 @@ class PageBoot:
     def _adopt_peer(self, name: str) -> ChildReport:
         adapter = self.adapters.get(name)
         ports = list(getattr(adapter, "ports", ()) or ())
+        # 本程序自己拉起且仍在运行：保持 spawned 归属，不降级成「外部接管」。
+        # 启动引导在 start_all 之后跑，若不先判这一条，刚 spawn 的进程会被
+        # 当成外部 peer 认领，页面从此一直显示「外部接管」（QUOT-XXX）。
+        record = self.ledger.record(name)
+        if record is not None and record.origin == "spawned" and record.pid is not None:
+            if self.host.snapshot(int(record.pid)) is not None:
+                return ChildReport(
+                    name,
+                    STATE_SPAWNED,
+                    pid=int(record.pid),
+                    origin="spawned",
+                    ports=ports,
+                    detail="已由本程序拉起且仍在运行，保持托管",
+                )
         listening = [port for port in ports if self.host.listening(port)]
         matched = self._identify(adapter, listening)
         if matched is not None:

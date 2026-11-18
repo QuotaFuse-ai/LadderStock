@@ -76,6 +76,9 @@ DOCUMENTED_GROUPS = {
     "config",
     "schedule",
     "doctor",
+    # 2026-11-18 增量：标的字典与知识库投影，见 docs/CLI.md §Q / §R
+    "symbol",
+    "knowledge",
 }
 
 #: 文档承诺「只打印迁移提示」的旧端口（DEC-004）。

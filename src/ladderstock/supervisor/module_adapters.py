@@ -541,11 +541,17 @@ class PsutilHostPivot(WindowsHostPivot):
         return None
 
     def _snapshot_of(self, proc: Any) -> ProcessSnapshot | None:  # pragma: no cover
+        # cmdline 单独读并单独兜：Windows 上读系统进程的命令行会抛
+        # ERROR_PARTIAL_COPY，psutil 在 _pswindows 里对此有重试装饰器，
+        # 全量扫描时会被放大成分钟级阻塞（2026-11-18 定位到 5951 卡 startup 的真因）。
         try:
-            info = proc.as_dict(attrs=["pid", "ppid", "name", "cmdline"])
+            info = proc.as_dict(attrs=["pid", "ppid", "name"])
         except psutil.Error:
             return None
-        raw = info.get("cmdline") or []
+        try:
+            raw = proc.cmdline()
+        except (psutil.Error, OSError, PermissionError):
+            return None
         return ProcessSnapshot(
             pid=int(info["pid"]),
             parent_pid=int(info["ppid"]) if info.get("ppid") is not None else None,
@@ -586,7 +592,19 @@ class PsutilHostPivot(WindowsHostPivot):
         if not needle:
             return ()
         found: list[ProcessSnapshot] = []
-        for proc in psutil.process_iter(["pid"]):
+        # 只对「名字已经和 needle 沾边」或「解释器/运行时」读命令行：读全量 cmdline
+        # 在 Windows 上会被 ERROR_PARTIAL_COPY 重试拖死（见 _snapshot_of 注释）。
+        runtime_names = {
+            "python.exe", "python", "pythonw.exe", "pythonw", "py.exe",
+            "node.exe", "node", "qdrant.exe", "qdrant",
+        }
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                name = str(proc.info.get("name") or "").lower()
+            except (psutil.Error, OSError):
+                continue
+            if name not in runtime_names and name not in needle:
+                continue
             snap = self._snapshot_of(proc)
             if snap is None:
                 continue
@@ -1161,6 +1179,19 @@ def _command_adapters(
     tickhub_us = default_peer_dir("tickhub_us", env)
     wire = default_peer_dir("wire", env)
     senate = default_peer_dir("senate", env)
+    # ProxyFleet 改为 venv 服务（用户裁决 2026-11-18）：容器内 .venv 的
+    # `proxyfleet.exe serve`，端口由 PF_API_PORT / PF_GATEWAY_PORT 环境变量指定，
+    # 跟随 MODULE_PORTS 的环境表（prod 8788/8789，test 18788/18789），不再走计划任务。
+    proxyfleet_dir = default_peer_dir("proxyfleet", env)
+    pf_ports = tuple(MODULE_PORTS["proxyfleet"])
+    pf_api_port = pf_ports[0] if pf_ports else 8788
+    pf_gateway_port = pf_ports[1] if len(pf_ports) > 1 else 8789
+    # Qdrant（2026-11-18 用户裁决）：本地单体二进制 runtime\qdrant.exe，不用 Docker。
+    # 端口由 QDRANT__SERVICE__* 环境变量给定，跟随 MODULE_PORTS 环境表。
+    qdrant_dir = default_peer_dir("qdrant", env)
+    qdrant_ports = tuple(MODULE_PORTS["qdrant"])
+    qdrant_api_port = qdrant_ports[0] if qdrant_ports else 6333
+    qdrant_grpc_port = qdrant_ports[1] if len(qdrant_ports) > 1 else 6334
 
     tickhub_env_files = _tickhub_env_files(env)
     return {
@@ -1316,6 +1347,32 @@ def _command_adapters(
                 ),
             ),
             host=host,
+            log_dir=log_dir,
+            evidence_cache_sec=evidence_cache_sec,
+            clock=clock,
+            sleep=sleep,
+        ),
+        "proxyfleet": BaseAdapter(
+            "proxyfleet",
+            pf_ports,
+            (
+                StartFace(
+                    face="api",
+                    argv=(
+                        str(_venv_exe(proxyfleet_dir, "proxyfleet.exe")),
+                        "serve",
+                    ),
+                    cwd=proxyfleet_dir,
+                    port=pf_api_port,
+                    match=("proxyfleet", "serve"),
+                    log_name="proxyfleet-serve.log",
+                ),
+            ),
+            host=host,
+            env_overrides={
+                "PF_API_PORT": str(pf_api_port),
+                "PF_GATEWAY_PORT": str(pf_gateway_port),
+            },
             log_dir=log_dir,
             evidence_cache_sec=evidence_cache_sec,
             clock=clock,
@@ -2596,6 +2653,13 @@ def build_default_adapters(
 
     if current_env() != "prod":
         for name, adapter in adapters.items():
+            # ProxyFleet 是单进程双端口（serve 同时起 api 与 gateway），端口由
+            # PF_API_PORT / PF_GATEWAY_PORT 注入、构造时已按环境表算好，faces 数
+            # 与端口数天然不等，不能走「逐面重建 --port」那套（会误报数量不符）。
+            # ProxyFleet / Qdrant 都是单进程多端口，端口由 env 注入、构造时已按
+            # 环境表算好，faces 数与端口数天然不等，不走「逐面重建 --port」那套。
+            if name in ("proxyfleet", "qdrant"):
+                continue
             if isinstance(adapter, BaseAdapter) and tuple(adapter.ports) != tuple(
                 face.port for face in adapter.faces
             ):
@@ -2609,13 +2673,9 @@ def build_default_adapters(
         clock=clock,
         sleep=sleep,
     )
-    adapters["proxyfleet"] = ProxyFleetAdapter(
-        host=pivot,
-        task_name=(values.get(PROXYFLEET_TASK_ENV) or DEFAULT_PROXYFLEET_TASK).strip(),
-        evidence_cache_sec=evidence_cache_sec,
-        clock=clock,
-        sleep=sleep,
-    )
+    # ProxyFleet 不再由 ProxyFleetAdapter（SYSTEM 计划任务垫片）接管：
+    # 已在 `_command_adapters` 里按 venv 服务装配（端口跟随 MODULE_PORTS 环境表）。
+    # 原 SYSTEM 计划任务（正式服 8788/8789）保留不动，与本适配器互不干扰。
     adapters["proxypool"] = ProxyPoolAdapter(
         config=load_proxypool_config(host=pivot, path=_host_config_path(values)),
         host=pivot,

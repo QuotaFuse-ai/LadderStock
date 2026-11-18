@@ -186,9 +186,16 @@ class SupervisorEngine:
 
         if adapter.probe():
             if self._verify_pid(record) == "alive":
-                # 幂等：已经在跑且账本对得上，直接续 running
+                # 幂等：已经在跑且账本对得上，直接续 running。
+                # 但「用户显式点启动」本身就是要托管：把上一任留下的外部认领
+                # 升级为本程序托管，否则页面永远停在「外部接管 / 端口由控制面
+                # 之外的进程监听」，而账本 pid 还指着另一个进程（QUOT-XXX）。
                 record.state = "running"
                 record.health = HEALTH_OK
+                if record.origin == "adopted":
+                    record.origin = "spawned"
+                    record.adopted_peer = False
+                    self._spawned_here.add(name)
                 self._ledger.update(record)
                 return record
             # 基准端口被 foreign 占用：优先避让（QUOT-594），未配避让器时
@@ -229,6 +236,48 @@ class SupervisorEngine:
         raise SupervisorError(
             f"{name} 拉起后 {self._start_grace:.0f}s 内端口无监听，已整树终止（failed）"
         )
+
+    def mark_spawned(
+        self,
+        name: str,
+        *,
+        pid: int,
+        cmdline: Sequence[str] = (),
+        parent_pid: int | None = None,
+    ) -> bool:
+        """控制面（venv 形态）自己拉起子进程后回写账本。
+
+        QUOT-XXX：控制面的 `POST /api/control/peers/{id}/start` 走自己的 spawn
+        路径，不经过本引擎，账本因此停留在上一任的 `adopted` 记录上——页面把
+        新进程读成「外部接管 / 端口由控制面之外进程监听」，而 pid 指向的却是
+        另一个已不在本端口上的旧进程（8000 正式服实例）。
+        由控制面在端口监听成功后回调本方法，把归属改写为本程序托管。
+        """
+        if not pid:
+            return False
+        with self._lock:
+            record = self._ledger.record(name) or ModuleRecord(
+                module=name, ports=list(MODULE_PORTS.get(name, ()))
+            )
+            record.ports = list(MODULE_PORTS.get(name, record.ports or ()))
+            record.pid = int(pid)
+            if parent_pid is not None:
+                record.parent_pid = int(parent_pid)
+            record.started_at = now_iso()
+            record.origin = "spawned"
+            record.adopted_peer = False
+            record.state = "running"
+            record.health = HEALTH_OK
+            record.stop_reason = None
+            record.stopped_at = None
+            record.stopping_by_user = False
+            if cmdline:
+                record.cmdline_hash = cmdline_hash(cmdline)
+            self._spawned_here.add(name)
+            if cmdline:
+                self._spawned_pids[int(pid)] = record.cmdline_hash
+            self._ledger.update(record)
+            return True
 
     # ------------------------------------------------------------------ 停止
 

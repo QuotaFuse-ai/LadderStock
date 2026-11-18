@@ -184,6 +184,11 @@ def _external_hosted(key: str) -> bool:
     ctl = PEER_CONTROL.get(key)
     if ctl is None:
         return False
+    # 声明式优先（2026-11-18 用户裁决）：模块显式列出「哪些环境仍由外部实例托管」。
+    # qdrant 声明 ("prod",) → 测试段按自有实例处理，端口跟随 offset（16333/19300）。
+    if ctl.external_hosted is not None:
+        from ladderstock.supervisor.modules import current_env
+        return current_env() in ctl.external_hosted
     return (not ctl.managed) or ctl.compose_file is not None or ctl.task_name is not None
 
 
@@ -366,6 +371,14 @@ class PeerControl:
     #: 控制面是否接管安装/启停（QUOT-403）：False = 只读观测（面板出卡、探健康，
     #: 不给安装/启动/停止按钮）。WSL 里的服务（FinanceCoffer）归此列。
     managed: bool = True
+    #: 库态子模块（QUOT-611 起 LS 自身记忆走这条）：随包分发、进程内 import，
+    #: 没有独立服务、端口与启停动作。True 时 `installed` 判定 = 目录在位，
+    #: 端口探测全部跳过，状态如实报「库形态」，不报「未启动」。
+    library_only: bool = False
+    #: 声明式「外部托管」口径：列出该模块仍由既有外部实例托管的环境（如 ("prod",)）。
+    #: 当前环境命中 → 不参与端口平移；未命中 → 视为本环境自有实例，端口跟随 offset。
+    #: 为 None 时退回旧推断（compose_file / task_name / 非 managed），保持向后兼容。
+    external_hosted: tuple[str, ...] | None = None
     #: Docker compose 生命周期（QUOT-486 mem0）：启停不走 `.venv/Scripts/` 入口，
     #: 改走 `wsl -d <发行版> -- docker compose -f <directory>/<该文件名> up -d / stop`。
     #: 存 compose 文件名（相对 directory）；None = venv 脚本形态。
@@ -610,17 +623,18 @@ PEER_CONTROL: dict[str, PeerControl] = {
     # 不再纳管启停。本条留作变更注释，PEERS/PEER_CONTROL 均无 mem0 键。
     # QUOT-485：ProxyFleet 从「只读观测的组件」升级为「纳管 peer」——控制面出卡、
     # 起停走 SYSTEM 计划任务垫片（task 形态），见 PEER_CONTROL 的 task_name 分支。
+    # ProxyFleet（2026-11-18 用户裁决）：由「SYSTEM 计划任务垫片」改为 venv 服务。
+    # 入口 = 容器内 .venv/Scripts/proxyfleet.exe（PyPI 包 ldst-proxyfleet），
+    # 端口由 PF_API_PORT / PF_GATEWAY_PORT 环境变量给定，跟随 MODULE_PORTS 环境表。
     "proxyfleet": PeerControl(
         key="proxyfleet",
         directory=r"[local-path]\ProxyFleet",
-        # 生命周期走 Windows 计划任务垫片：控制面不查 import、不装 wheel，
-        # 目录在位即视为已安装（与 compose 分支同构，QUOT-485）。
-        import_package="",
+        import_package="proxyfleet",
         repo=None,
-        dist_name=None,
+        dist_name="ldst-proxyfleet",
         # 8788 同时是 REST API 与浏览器控制台（api.py："/" 挂控制台 HTML、/v1/* 是 API），
         # 8789 是常驻出口网关（config.py gateway.port）。8788 给 web_port 以出「打开」按钮，
-        # 8789 只探测归属、不打开（进 extra_ports）。
+        # 8789 只探测归属、不打开（进 extra_ports）。两者都随 LDST_PORT_OFFSET 平移。
         mcp_port=8788,
         web_port=8788,
         web_port_label="控制台 / REST",
@@ -628,23 +642,22 @@ PEER_CONTROL: dict[str, PeerControl] = {
         # 实测（curl 127.0.0.1:8788/readyz）：ready = biz_ok >= 1，未就绪回 503，
         # 免鉴权；/healthz /health 均 404。控制面探针据此判「活着」。
         health_path="/readyz",
-        start_commands=(),
+        start_commands=(("proxyfleet", "serve"),),
         # 配置真源是 config.json + PF_<SECTION>_<KEY> 环境变量覆盖（proxyfleet/config.py:184-186），
         # 没有 dotenv 加载链，控制面的 env 白名单模型套不上 → 按 PRD §5「核实不了就空白名单」
         # 置空；键名→文件:行 对照见 config_notes。配置编辑在本 peer 的控制台完成。
         config_keys=(),
         secret_keys=(),
-        has_wheel_dist=False,
+        has_wheel_dist=True,
         env_filename="config.json",
-        task_name="ProxyFleet",
         config_notes=(
-            "启停形态（QUOT-485）：Windows 计划任务 ProxyFleet（SYSTEM，开机自启 +"
-            " 1 分钟自愈重复触发）。起 = schtasks /change /tn ProxyFleet /enable"
-            " 再 /run；停 = /change /disable 再 /end——先 disable 压住自愈触发再 end，"
-            "否则纯 /end 会在 1 分钟内被自动拉起。enable/disable 不动任务账户、"
-            "触发器与权限，不触碰它的运行身份。",
-            "账本口径：由垫片拉起的服务在启停账本里记 origin=\"spawned-via-task\"——"
-            "控制面只是打了一下计划任务，进程归属属于 SYSTEM 垫片，不冒充直接子进程。",
+            "启停形态（2026-11-18 起）：venv 服务，supervisor 直接 spawn "
+            "容器内 .venv/Scripts/proxyfleet.exe serve，账本记 origin=spawned。",
+            "端口由环境变量给定：PF_API_PORT（REST/控制台）与 PF_GATEWAY_PORT（出口网关），"
+            "取值 = MODULE_PORTS 的当前环境表（prod 8788/8789，test 18788/18789），"
+            "proxyfleet serve 本身没有 --port 参数。",
+            "原 SYSTEM 计划任务 ProxyFleet（D:\\workplace\\ProxyFleet\\pfctl.py，8788/8789）"
+            "保留不动，与测试服实例并存；控制面不再调用 schtasks。",
             "config_keys 白名单置空的原因：ProxyFleet 不读任何 dotenv，配置真源是"
             " config.json（proxyfleet/config.py DEFAULTS）叠加 PF_<SECTION>_<KEY>"
             " 环境变量覆盖（config.py:184-186），控制面的 env 白名单模型不适用；"
@@ -654,9 +667,17 @@ PEER_CONTROL: dict[str, PeerControl] = {
     "qdrant": PeerControl(
         key="qdrant",
         directory=r"[modules-path]\Qdrant",
-        # 容器化服务（qdrant/qdrant:v1.20.0 + mcp-server-qdrant==0.8.1 docker build）：
-        # 没有 pip 分发，compose 分支不查 import（见 control.py），字段留空。
-        import_package="",
+        # 用户裁决 2026-11-18（第二次）：正式段也彻底去 Docker。两段都由
+        # 本地单体二进制承载，端口 = 基准 + LDST_PORT_OFFSET（prod 6333/6334/9300，
+        # test 16333/16334/19300），因此不再需要 external_hosted 这个「prod 不平移」
+        # 的例外声明——基准本身就是 prod 口径，平移后自然落到 test 口径。
+        #
+        # 启停形态（2026-11-18 起）：venv 服务。一个入口 run_stack.py 把
+        # 「向量库 qdrant.exe」与「MCP 面 mcp-server-qdrant」绑在同一个父进程下，
+        # 父进程即 peer 的 PID，退出时一并收子进程。解释器取本模块 .venv
+        # （复用 mcp/.venv，不重复装一套依赖）。
+        managed=True,
+        import_package="mcp_server_qdrant",
         repo=None,
         dist_name=None,
         # mcp-server-qdrant 的 streamable-http 面（FASTMCP_SERVER_PORT 默认 9300）
@@ -667,7 +688,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         # 实测：/ 回版本号、/collections 回集合列表 JSON（轻量只读）；
         # mem0 那种没有专用 /healthz 的情形同理，用 /collections 当健康探针。
         health_path="/collections",
-        start_commands=(),
+        # 一个入口拉起两个进程：向量库 + MCP 面。端口经 env 注入，见 run_stack.py。
+        start_commands=(("python", "run_stack.py"),),
         config_keys=(
             "QDRANT_URL",
             "QDRANT_API_KEY",
@@ -682,14 +704,18 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "QDRANT_READ_ONLY",
         ),
         secret_keys=("QDRANT_API_KEY",),
-        has_wheel_dist=False,
+        has_wheel_dist=True,
         env_filename=".env",
-        compose_file="docker-compose.yml",
+        # 2026-11-18 用户裁决：不再用 Docker。改为本地单体二进制
+        # `runtime/qdrant.exe`，由 supervisor 以 venv 同构的 BaseAdapter 直接 spawn，
+        # 端口由 QDRANT__SERVICE__HTTP_PORT / GRPC_PORT 环境变量给定。
+        # 正式段暂时仍观测既有 WSL 容器（见 external_hosted），迁移完成后再去掉。
         config_notes=(
-            "启停形态：`wsl -d <默认发行版> -- docker compose -f "
-            "<directory>/docker-compose.yml up -d / stop`，compose project 名 qf-qdrant"
-            "（与 mem0 的 qf-mem0 物理隔离：独立卷 qf_qdrant_storage / qf_qdrant_hf_cache，"
-            "不复用 mem0 的 pgvector）。发行版名不写死：LDST_WSL_DISTRO > wsl -l -v 默认。",
+            "启停形态（2026-11-18 起）：本地二进制 runtime/qdrant.exe，由 supervisor "
+            "spawn 并回写账本（origin=spawned）。数据目录 file/modules/qdrant/storage。",
+            "端口：正式段 6333 REST / 6334 gRPC，测试段 16333 / 16334（基准 + LDST_PORT_OFFSET）。",
+            "正式段仍观测既有 WSL 容器（qf-qdrant）：docker 只在开发机保留，便携包形态"
+            "一律走本地二进制，普通用户不需要安装 Docker。",
             "集合契约（实测自 mcp-server-qdrant 0.8.1 源码）：①集合必须用具名向量 "
             "fast-bge-small-zh-v1.5（server 按 fast-<模型名> 查询；匿名集合报 "
             "Not existing vector name 400）；②payload 必须是 document/metadata 结构"
@@ -701,6 +727,37 @@ PEER_CONTROL: dict[str, PeerControl] = {
             "本机 WSL docker 实测容器内嵌 DNS 故障（bridge 网络解析 Temporary "
             "failure in name resolution）：docker build / 临时容器跑 fastembed 需加 "
             "--network host 与 HF_ENDPOINT=https://hf-mirror.com；compose 常规启停不受影响。",
+        ),
+    ),
+    # LS 自身记忆（QUOT-611）：库态子模块——随包分发、进程内 import。
+    # 与 qdrant 的 qf-qdrant / Multica 独立部署的 mem0 都不是同一件事，
+    # 不要混淆（Multica 那套跟本平台无关，代码里从不引用）。
+    "memory": PeerControl(
+        key="memory",
+        directory=r"[modules-path]\memory",
+        import_package="mem0",
+        repo=None,
+        dist_name=None,
+        # 没有独立服务：不监听任何端口，mcp_port 只是 dataclass 必填位的 0 占位，
+        # snapshot 在 library_only=True 时不探它。
+        mcp_port=0,
+        web_port=None,
+        web_port_label="",
+        health_path="",
+        start_commands=(),
+        config_keys=(),
+        secret_keys=(),
+        has_wheel_dist=False,
+        # 只读观测：不出安装 / 启动 / 停止按钮，也不进 supervisor 账本与 MODULE_ORDER。
+        managed=False,
+        library_only=True,
+        config_notes=(
+            "LS 自身记忆 = 进程内 mem0 SDK（src/ladderstock/ai/memory.py），"
+            "向量层 qdrant local + fastembed（BAAI/bge-small-zh-v1.5，512 维，离线）。",
+            "本目录只承载随包分发的包体（site-packages 下的 mem0 / torch 等），"
+            "启动时由 runtime.install_memory_path() 注入 sys.path，"
+            "没有 9100 服务、没有端口、没有启停动作。",
+            "Multica 那套 mem0 是独立部署，与本模块无关：这里既不读它、也不管它。",
         ),
     ),
 }
@@ -715,6 +772,7 @@ PEER_DIR_ENV: dict[str, str] = {
     "financecoffer": "LDST_PEER_DIR_FINANCECOFFER",
     "proxyfleet": "LDST_PEER_DIR_PROXYFLEET",
     "qdrant": "LDST_PEER_DIR_QDRANT",
+    "memory": "LDST_PEER_DIR_MEMORY",
 }
 
 #: 默认按同级目录探测：把 peer 仓库 clone 到 LadderStock 旁边即可直接安装。
@@ -728,6 +786,8 @@ PEER_SIBLING_DIRS: dict[str, str] = {
     # ProxyFleet 与 LadderStock 同级：D:\workplace\ProxyFleet
     "proxyfleet": "ProxyFleet",
     "qdrant": "Qdrant",
+    # LS 自身记忆（进程内 mem0 SDK）随包分发的容器目录，开发态同容器。
+    "memory": "memory",
 }
 
 #: 便携包容器内的规范目录名（`<安装根>/file/modules/` 下）。
@@ -741,6 +801,7 @@ PEER_CONTAINER_DIRS: dict[str, str] = {
     "financecoffer": "financecoffer",
     "proxyfleet": "proxyfleet",
     "qdrant": "qdrant",
+    "memory": "memory",
 }
 
 #: 子模块容器根整体覆盖入口（想把数据放外置盘时用）。
@@ -893,7 +954,13 @@ def _shift_control(ctl: PeerControl, offset: int, directory: str) -> PeerControl
         changed["directory"] = directory
     # 外部托管（WSL 容器 / 计划任务）保持原端口：它们不是本实例拉起的一份副本，
     # 平移后连「它在不在跑」都判断不出来。
-    external = (not ctl.managed) or ctl.compose_file is not None or ctl.task_name is not None
+    # 声明式优先（2026-11-18 用户裁决）：qdrant 声明 ("prod",)，测试段不再按外部
+    # 托管处理，端口与启动命令一并平移到 16333/19300。
+    if ctl.external_hosted is not None:
+        from ladderstock.supervisor.modules import current_env
+        external = current_env() in ctl.external_hosted
+    else:
+        external = (not ctl.managed) or ctl.compose_file is not None or ctl.task_name is not None
     if offset and not external:
         changed["mcp_port"] = ctl.mcp_port + offset
         if ctl.web_port is not None:

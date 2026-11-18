@@ -47,10 +47,6 @@ MODULE_ORDER: tuple[str, ...] = (
     "watch",
 )
 
-#: 按需模块（QUOT-506）：在册、实现同一 `ModuleAdapter` 协议，但**不在** `MODULE_ORDER`。
-#: `start_all` / `stop_all` 不碰它们——只能经单模块入口（`start_module`）显式拉起，
-#: 这是「默认不启动」的结构保证，不是某个开关的默认值。
-#: 按需模块的端口由配置决定（`MODULE_PORTS` 登记为空元组），registry 不做等值校验。
 ON_DEMAND_MODULES: frozenset[str] = frozenset({"proxypool"})
 
 

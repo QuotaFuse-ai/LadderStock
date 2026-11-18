@@ -354,6 +354,12 @@ class Ledger:
                     if record.module in spawned_this_session:
                         record.origin = "spawned"
                         summary[record.module] = "alive:spawned_this_session"
+                    elif record.origin == "spawned" and not record.adopted_peer:
+                        # 上一任本程序拉起、仍存活、账本从未标记外部认领：崩溃恢复
+                        # 不等于换主人。这里的 `_spawned_here` 只是内存集合，重启后
+                        # 必然为空；只认它会把自有进程整批降级成 adopted，页面每次
+                        # 重启都退回「外部接管」，而 pid 还指着本进程。
+                        summary[record.module] = "alive:spawned_prev_session"
                     else:
                         record.origin = "adopted"
                         summary[record.module] = "adopted:still_running"
