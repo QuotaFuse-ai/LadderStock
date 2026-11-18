@@ -61,7 +61,8 @@ def test_summary_reports_two_sizes_and_doctor(client: TestClient) -> None:
     payload = client.get("/api/financecoffer", headers=HEADER).json()
 
     assert payload["ok"] is True
-    # 磁盘实际占用：核心 ≈1.0GB（PG 848 + MinIO 108 + Redis 38 + API 含依赖 40），加 embedding ≈3.8GB
+    # 磁盘实际占用：核心 ≈1.0GB（PG 848 + MinIO 108 + Redis 38 + API 含依赖 40），
+    # 加 embedding ≈3.8GB
     assert 950 <= payload["sizes"]["core_mb"] <= 1150
     assert 3600 <= payload["sizes"]["full_mb"] <= 4200
     assert payload["sizes"]["embedding_mb"] >= 2500

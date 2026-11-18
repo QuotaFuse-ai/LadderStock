@@ -3353,7 +3353,9 @@ class ControlPlane:
         if "[" in directory.name or "]" in directory.name:
             raise HTTPException(
                 status_code=400,
-                detail=f"{self._product_name(key)} 的目录仍是占位符（{directory}），拒绝按占位符建目录",
+                detail=(
+                    f"{self._product_name(key)} 的目录仍是占位符（{directory}），拒绝按占位符建目录"
+                ),
             )
         if directory.exists() and not directory.is_dir():
             raise HTTPException(status_code=400, detail=f"{directory} 已存在且不是目录，拒绝写入")

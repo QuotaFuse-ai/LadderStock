@@ -454,7 +454,10 @@ def stop_minio(root: Path | None = None, *, timeout: float = 8.0) -> dict[str, A
         return {
             "ok": False,
             "state": "running",
-            "detail": f"缺 {pid_file}，也没能从端口 {minio_api_port()} 反查到 pid；请在任务管理器里结束 minio",
+            "detail": (
+                f"缺 {pid_file}，也没能从端口 {minio_api_port()} 反查到 pid；"
+                "请在任务管理器里结束 minio"
+            ),
         }
     try:
         if sys.platform.startswith("win"):
@@ -521,7 +524,10 @@ def api_status(root: Path | None = None, *, timeout: float = 3.0) -> dict[str, A
         "port": api_port(),
         "status": data.get("status"),
         "checks": checks,
-        "detail": f"状态 {data.get('status')}；database={checks.get('database')} embedding={checks.get('embedding')}",
+        "detail": (
+            f"状态 {data.get('status')}；database={checks.get('database')} "
+            f"embedding={checks.get('embedding')}"
+        ),
     }
 
 

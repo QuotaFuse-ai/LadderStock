@@ -97,7 +97,9 @@ def compute_sentiment(day: date | str, *, root: Any = None) -> dict[str, Any]:
         return {
             "date": str(day),
             "available": False,
-            "reason": "这一天的涨停池还没有归档：交易日 15:35 收盘后自动同步，历史日期打开页面会自动补取",
+            "reason": (
+                "这一天的涨停池还没有归档：交易日 15:35 收盘后自动同步，历史日期打开页面会自动补取"
+            ),
             "temperature": None,
             "promotion_rate": None,
             "seal_rate": None,

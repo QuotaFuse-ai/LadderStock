@@ -326,7 +326,8 @@ def fetch_embedding(target: Path, *, root: Path | None = None) -> dict[str, Any]
     src: Path | None = Path(models_env) if models_env else _first_existing(_PROBE_EMBED)
     if src is None or not src.is_dir():
         raise FetchError(
-            "找不到 embedding 模型目录：设置 LDST_FC_EMBED_MODELS 指向 bge-m3（含 pytorch_model.bin）"
+            "找不到 embedding 模型目录：设置 LDST_FC_EMBED_MODELS 指向 bge-m3"
+            "（含 pytorch_model.bin）"
         )
     target.parent.mkdir(parents=True, exist_ok=True)
     # 目录复制在 NTFS 上走硬链接更快更省盘；跨盘会自动退化成复制

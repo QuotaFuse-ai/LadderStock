@@ -157,8 +157,8 @@ def build_router(root: Path | None = None) -> APIRouter:
 
     @router.post("/install")
     def install(
-        peers: list[str] | None = Body(None, embed=True),
-        only_missing: bool = Body(True, embed=True),
+        peers: list[str] | None = Body(None, embed=True),  # noqa: B008
+        only_missing: bool = Body(True, embed=True),  # noqa: B008
     ) -> dict[str, Any]:
         if peers is None:
             peers = [item.key for item in manifest.PEERS]

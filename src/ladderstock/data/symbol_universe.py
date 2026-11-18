@@ -236,7 +236,7 @@ def refresh(
             }
 
     payload: list[dict[str, Any]] = []
-    for code, row in merged.items():
+    for _code, row in merged.items():
         payload.append({**row, "trade_date": today.isoformat()})
     write = duckdb_store.write_dataset(
         DATASET,

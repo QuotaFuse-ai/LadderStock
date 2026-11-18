@@ -264,8 +264,9 @@ def install(
             current = state.read_state(root).get("state")
             if current != "failed":
                 state.write_state(root, "failed", detail=str(exc), step="install")
-        finally:
-            return {"ok": False, "status": "failed", "detail": str(exc), "target": str(root_path)}
+        except Exception:  # noqa: BLE001 - 写状态失败不能盖掉原始错误
+            pass
+        return {"ok": False, "status": "failed", "detail": str(exc), "target": str(root_path)}
 
 
 def _install_deps(root: Path | None, with_embedding: bool) -> dict[str, Any]:
@@ -364,7 +365,10 @@ def uninstall(root: Path | None = None, *, confirm: bool) -> dict[str, Any]:
             # 数据目录按 env 分份（`pgdata` 与 `pgdata-prod` 并存）：这里必须用
             # layout.data_dir() 算真路径，否则提示里列的是另一份目录，用户
             # 以为「只删了测试服那份」而实际整根都删了。
-            "detail": "卸载会删除整个目录，包括 pgdata / miniodata / redisdata 及其 -prod 分份，删除后不可恢复",
+            "detail": (
+                "卸载会删除整个目录，包括 pgdata / miniodata / redisdata 及其 -prod 分份，"
+                "删除后不可恢复"
+            ),
             "target": str(target),
             "data_dirs": [str(layout.data_dir(root, name)) for name in layout.DATA_DIRNAMES],
         }
@@ -382,7 +386,10 @@ def uninstall(root: Path | None = None, *, confirm: bool) -> dict[str, Any]:
         return {
             "ok": False,
             "status": "refused",
-            "detail": f"拒绝删除越界目录：{resolved}（只允许删 {allowed_parent} 下的 {layout.MODULE_NAME}）",
+            "detail": (
+                f"拒绝删除越界目录：{resolved}"
+                f"（只允许删 {allowed_parent} 下的 {layout.MODULE_NAME}）"
+            ),
             "target": str(resolved),
             "data_destroyed": False,
         }

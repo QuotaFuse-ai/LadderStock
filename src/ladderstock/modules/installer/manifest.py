@@ -141,7 +141,10 @@ PEERS: tuple[PeerManifest, ...] = (
         version="",
         size_mb=1034,
         required=True,
-        note="PostgreSQL + Redis + MinIO + API 四件套，约 1GB，安装较慢。不装则公告语义检索与结构化落库不可用。",
+        note=(
+            "PostgreSQL + Redis + MinIO + API 四件套，约 1GB，安装较慢。"
+            "不装则公告语义检索与结构化落库不可用。"
+        ),
         entry="",
     ),
 )

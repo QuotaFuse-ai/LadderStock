@@ -481,7 +481,8 @@ def template_narrative(name: str, pack: dict[str, Any]) -> list[str]:
                 (
                     "入榜题材",
                     "、".join(
-                        f"{item['name']}（{item['streak_days']} 天连续 / {item['days_on_top']} 天入窗）"
+                        f"{item['name']}（{item['streak_days']} 天连续 / "
+                        f"{item['days_on_top']} 天入窗）"
                         for item in themes["themes"][:3]
                     ),
                 ),

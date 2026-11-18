@@ -612,7 +612,10 @@ def build_facts(week_tag: Any, *, root: Any = None) -> dict[str, Any]:
                 f"{week} 还没有交易日：本周从 {weekdays[0].isoformat()} 开始，"
                 f"今天 {today.isoformat()} 还没走到"
                 if all(day > today for day in weekdays)
-                else f"{week} 已过的交易日还没有涨停池产物（交易日收盘后自动同步，打开页面也会自动补取）"
+                else (
+                    f"{week} 已过的交易日还没有涨停池产物"
+                    "（交易日收盘后自动同步，打开页面也会自动补取）"
+                )
             )
         ),
         "sentiment": {

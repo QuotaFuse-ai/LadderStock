@@ -371,7 +371,7 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             return ToolResult(text="缺少 symbol 参数，请给出股票代码（如 600000）")
-        code = symbol.partition(".")[0].lstrip("shSHzszjbjBJ")[-6:]
+        code = symbol.partition(".")[0].lstrip("shSHzszjbjBJ")[-6:]  # noqa: B005
         try:
             days = int(args.get("days") or 10)
         except (TypeError, ValueError):
@@ -734,7 +734,10 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             # 模型没加载，还是这条数据还没投影。
             fallback = _fc_call("search_announcements_semantically", params)
             return ToolResult(
-                text=f"{fallback.text}\n（本地知识库本次没检索：{type(exc).__name__}: {str(exc)[:160]}）"
+                text=(
+                    f"{fallback.text}\n（本地知识库本次没检索："
+                    f"{type(exc).__name__}: {str(exc)[:160]}）"
+                )
             )
         if not hits:
             return _fc_call("search_announcements_semantically", params)
@@ -890,7 +893,9 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                     "year_range": {"type": "string", "description": "财年区间，如 2022-2026"},
                     "metric": {
                         "type": "string",
-                        "description": "可选。只取某一指标（如 revenue / net_profit）；留空返回全指标",
+                        "description": (
+                            "可选。只取某一指标（如 revenue / net_profit）；留空返回全指标"
+                        ),
                     },
                     "valuation_basis": {
                         "type": "string",

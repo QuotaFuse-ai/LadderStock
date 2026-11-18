@@ -1641,7 +1641,7 @@ def _run_watch_live(
     limit_prices = _limit_price_map()
 
     def _bare(code: str) -> str:
-        return code.partition(".")[0].lstrip("shSHzsbj")[-6:]
+        return code.partition(".")[0].lstrip("shSHzsbj")[-6:]  # noqa: B005
 
     for row in rows:
         code = _bare(str(row.get("code") or ""))
@@ -1715,7 +1715,8 @@ def _run_watch_live(
         bars_result = {"written": 0, "detail": f"分钟样本落盘失败：{exc}"}
     bars_note = f"；分钟样本 {bars_result.get('written', 0)} 条"
     pool_note = (
-        f"（自选与持仓为空，用 {pool_day} 的涨停池 {len(sample_only)} 只兜底采集，只落样本、不逐票提醒）"
+        f"（自选与持仓为空，用 {pool_day} 的涨停池 {len(sample_only)} 只兜底采集，"
+        "只落样本、不逐票提醒）"
         if sample_only
         else ""
     )
@@ -1759,7 +1760,10 @@ def _run_watch_live(
             root=root,
             moment=moment,
         )
-    detail = f"{len(hits)} 只触发；收件箱 {item_id['id']}；通知[{delivery.channel}]：{delivery.detail}{bars_note}"
+    detail = (
+        f"{len(hits)} 只触发；收件箱 {item_id['id']}；通知[{delivery.channel}]："
+        f"{delivery.detail}{bars_note}"
+    )
     if research is not None:
         detail += f"；异动研究[{research.get('status')}]：{str(research.get('detail') or '')[:120]}"
     payload: dict[str, Any] = {
