@@ -163,9 +163,7 @@ def main() -> int:
     os.environ["LDST_DATA_DIR"] = str(home)
     transport = StubTransport()
     waits: list[float] = []
-    registry = ProviderRegistry(
-        transport=transport, root=home, sleeper=waits.append, ttl_sec=0.0
-    )
+    registry = ProviderRegistry(transport=transport, root=home, sleeper=waits.append, ttl_sec=0.0)
     store = watermark.WatermarkStore(root=home)
     report = Report()
 
@@ -225,8 +223,7 @@ def main() -> int:
         "降级不推进水位、不重写数据",
         unchanged,
         "、".join(
-            f"{d}: {before or '-'} → {after[d] or '-'}"
-            for d, before in store_doc_before.items()
+            f"{d}: {before or '-'} → {after[d] or '-'}" for d, before in store_doc_before.items()
         ),
     )
 

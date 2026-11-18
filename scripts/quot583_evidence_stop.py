@@ -1,6 +1,6 @@
 """QUOT-583 真服务器验收补充：stop 端点 → aborted，与断开区分。
 
-    python scripts/quot583_evidence_stop.py
+python scripts/quot583_evidence_stop.py
 """
 
 from __future__ import annotations
@@ -19,8 +19,21 @@ URL = "http://127.0.0.1:5973/ai/chat"
 def main() -> int:
     body = json.dumps({"message": "停止测试", "session_id": "sess-evidence-stop"})
     proc = subprocess.Popen(
-        ["curl", "-sN", "-X", "POST", URL, "-H", "Content-Type: application/json",
-         "-H", "Accept: text/event-stream", "--data-raw", body, "--max-time", "30"],
+        [
+            "curl",
+            "-sN",
+            "-X",
+            "POST",
+            URL,
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "Accept: text/event-stream",
+            "--data-raw",
+            body,
+            "--max-time",
+            "30",
+        ],
         stdout=subprocess.PIPE,
     )
     # 读到第一块就调 stop
@@ -32,9 +45,22 @@ def main() -> int:
             break
     stop_body = json.dumps({"session_id": "sess-evidence-stop"})
     out = subprocess.run(
-        ["curl", "-s", "-X", "POST", f"{URL}/stop", "-H", "Content-Type: application/json",
-         "--data-raw", stop_body, "--max-time", "10"],
-        capture_output=True, text=True, timeout=15,
+        [
+            "curl",
+            "-s",
+            "-X",
+            "POST",
+            f"{URL}/stop",
+            "-H",
+            "Content-Type: application/json",
+            "--data-raw",
+            stop_body,
+            "--max-time",
+            "10",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     print("stop endpoint:", out.stdout.strip(), flush=True)
     # 读完剩余帧（done 帧应标 reason=aborted / completed=False）
@@ -56,10 +82,13 @@ def main() -> int:
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     try:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT session_id, status, length(blocks_json) AS blocks_len"
-            " FROM chat_turn WHERE session_id='sess-evidence-stop'"
-        )]
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT session_id, status, length(blocks_json) AS blocks_len"
+                " FROM chat_turn WHERE session_id='sess-evidence-stop'"
+            )
+        ]
     finally:
         conn.close()
     for r in rows:

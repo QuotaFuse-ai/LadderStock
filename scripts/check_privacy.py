@@ -52,9 +52,7 @@ SECRET_NAME = re.compile(
 )
 
 #: 配置里出现即视为「真实密钥」的形态
-TOKEN_VALUE = re.compile(
-    r"(?:sk-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})"
-)
+TOKEN_VALUE = re.compile(r"(?:sk-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})")
 
 #: 配置键名里的凭据词
 SECRET_KEY = re.compile(
@@ -68,6 +66,7 @@ ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 # --------------------------------------------------------------------------- #
 # 1. 配置：不得出现真实密钥
 # --------------------------------------------------------------------------- #
+
 
 def check_config_secrets() -> list[str]:
     problems: list[str] = []
@@ -98,14 +97,10 @@ def _walk_config(name: str, node: object, trail: str) -> list[str]:
                 if ENV_KEY.search(key_text):
                     # `*_env` 只允许写环境变量名，不许写值
                     if value.strip() and not ENV_NAME.match(value.strip()):
-                        problems.append(
-                            f"{name}: {label}={value!r} 不是环境变量名"
-                        )
+                        problems.append(f"{name}: {label}={value!r} 不是环境变量名")
                     continue
                 if SECRET_KEY.search(key_text) and value.strip():
-                    problems.append(
-                        f"{name}: {label} 写入了字面值（应改用 * _env 指向环境变量）"
-                    )
+                    problems.append(f"{name}: {label} 写入了字面值（应改用 * _env 指向环境变量）")
                     continue
             problems.extend(_walk_config(name, value, label))
     elif isinstance(node, list):
@@ -117,6 +112,7 @@ def _walk_config(name: str, node: object, trail: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # 2. 凭据不得进日志 / 报错
 # --------------------------------------------------------------------------- #
+
 
 def _scrub(line: str) -> str:
     """去掉「安全引用」后再判断：`*_env`、环境变量名、os.environ 取值。"""
@@ -243,9 +239,7 @@ def _journal_import_problems(rel: str, text: str) -> list[str]:
             continue
         absent = [piece for piece in required if piece not in text]
         if absent:
-            problems.append(
-                f"{rel} 引用了 {module}，但缺少 DEC-015 要求的闸门：{absent}"
-            )
+            problems.append(f"{rel} 引用了 {module}，但缺少 DEC-015 要求的闸门：{absent}")
     for match in CARRIER_IMPORT.finditer(text):
         module = match.group(1) or match.group(2)
         problems.append(
@@ -270,85 +264,135 @@ def _journal_rule_selftest() -> list[str]:
             problems.append(f"journal 规则误报正例 {label}：{_journal_import_problems(rel, text)}")
 
     # 反例 1：越界子模块（白名单之外的 journal 子模块）
-    caught("from-journal-store", "src/ladderstock/web/server.py",
-           "from ladderstock.journal.store import JournalStore\n")
+    caught(
+        "from-journal-store",
+        "src/ladderstock/web/server.py",
+        "from ladderstock.journal.store import JournalStore\n",
+    )
     # 反例 2：包级 import
-    caught("import-journal-package", "src/ladderstock/web/server.py",
-           "import ladderstock.journal\n")
+    caught(
+        "import-journal-package", "src/ladderstock/web/server.py", "import ladderstock.journal\n"
+    )
     # 反例 3：白名单模块挪到别的文件（mcp / ai）
-    caught("stats-in-mcp", "src/ladderstock/mcp/server.py",
-           "from ladderstock.journal.stats import compute_stats\n")
+    caught(
+        "stats-in-mcp",
+        "src/ladderstock/mcp/server.py",
+        "from ladderstock.journal.stats import compute_stats\n",
+    )
     # 反例 4：白名单文件里出现白名单外的 journal 子模块
-    caught("mixed-in-web", "src/ladderstock/web/server.py",
-           "from ladderstock.journal.stats import compute_stats\n"
-           "from ladderstock.journal.ledger import Ledger\n")
+    caught(
+        "mixed-in-web",
+        "src/ladderstock/web/server.py",
+        "from ladderstock.journal.stats import compute_stats\n"
+        "from ladderstock.journal.ledger import Ledger\n",
+    )
     # 反例 5：白名单模块在册，但闸门 / 顶层键白名单缺一不可
-    caught("no-loopback-guard", "src/ladderstock/web/server.py",
-           "from ladderstock.journal.stats import compute_stats\n"
-           "JOURNAL_STATS_FIELDS = ()\n"
-           "is_loopback_host(x)\n"
-           "host_header_allowed(r)\n")
+    caught(
+        "no-loopback-guard",
+        "src/ladderstock/web/server.py",
+        "from ladderstock.journal.stats import compute_stats\n"
+        "JOURNAL_STATS_FIELDS = ()\n"
+        "is_loopback_host(x)\n"
+        "host_header_allowed(r)\n",
+    )
     # 反例 6：持仓模块出现在白名单之外的文件
-    caught("position-in-mcp", "src/ladderstock/mcp/server.py",
-           "from ladderstock.journal.position import list_positions\n")
+    caught(
+        "position-in-mcp",
+        "src/ladderstock/mcp/server.py",
+        "from ladderstock.journal.position import list_positions\n",
+    )
     # 反例 7：持仓白名单在册，但少了 `no-store`（隐私响应不许被任何缓存留住）
-    caught("radar-without-no-store", "src/ladderstock/web/radar.py",
-           "from ladderstock.journal.position import list_positions\n"
-           "def _positions_guard(request) -> None:\n"
-           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
-           "    if not host_header_allowed(request): raise ...\n")
+    caught(
+        "radar-without-no-store",
+        "src/ladderstock/web/radar.py",
+        "from ladderstock.journal.position import list_positions\n"
+        "def _positions_guard(request) -> None:\n"
+        "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+        "    if not host_header_allowed(request): raise ...\n",
+    )
     # 反例 8：绕过白名单——经 CLI 载体模块传递引用隐私库
-    caught("carrier-import", "src/ladderstock/web/radar.py",
-           "from ladderstock.cli.position import price_map\n")
-    caught("carrier-import-mcp", "src/ladderstock/mcp/server.py",
-           "import ladderstock.cli.position\n")
+    caught(
+        "carrier-import",
+        "src/ladderstock/web/radar.py",
+        "from ladderstock.cli.position import price_map\n",
+    )
+    caught(
+        "carrier-import-mcp", "src/ladderstock/mcp/server.py", "import ladderstock.cli.position\n"
+    )
 
     # 反例 9（DEC-052）：自选模块出现在 MCP 出口里 → 必须判 FAIL
-    caught("watchlist-in-mcp", "src/ladderstock/mcp/server.py",
-           "from ladderstock.journal.watchlist import list_watch\n")
+    caught(
+        "watchlist-in-mcp",
+        "src/ladderstock/mcp/server.py",
+        "from ladderstock.journal.watchlist import list_watch\n",
+    )
     # 反例 10：自选模块出现在 AI 出口里 → 必须判 FAIL
-    caught("watchlist-in-ai", "src/ladderstock/ai/context.py",
-           "from ladderstock.journal.watchlist import list_watch\n")
+    caught(
+        "watchlist-in-ai",
+        "src/ladderstock/ai/context.py",
+        "from ladderstock.journal.watchlist import list_watch\n",
+    )
     # 反例 10b（QUOT-430）：持仓账本出现在 MCP 出口里 → 必须判 FAIL
-    caught("portfolio-in-mcp", "src/ladderstock/mcp/server.py",
-           "from ladderstock.journal.portfolio import list_trades\n")
+    caught(
+        "portfolio-in-mcp",
+        "src/ladderstock/mcp/server.py",
+        "from ladderstock.journal.portfolio import list_trades\n",
+    )
     # 反例 11：白名单在册但少了 `_watchlist_guard`（引用不等于授权）
-    caught("radar-watchlist-without-guard", "src/ladderstock/web/radar.py",
-           "from ladderstock.journal.watchlist import list_watch\n"
-           "def _positions_guard(request) -> None:\n"
-           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
-           "    if not host_header_allowed(request): raise ...\n"
-           '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n')
+    caught(
+        "radar-watchlist-without-guard",
+        "src/ladderstock/web/radar.py",
+        "from ladderstock.journal.watchlist import list_watch\n"
+        "def _positions_guard(request) -> None:\n"
+        "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+        "    if not host_header_allowed(request): raise ...\n"
+        '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n',
+    )
     # 反例 12：自选闸门在册，但少了 `no-store`
-    caught("radar-watchlist-without-no-store", "src/ladderstock/web/radar.py",
-           "from ladderstock.journal.watchlist import list_watch\n"
-           "def _watchlist_guard(request) -> None:\n"
-           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
-           "    if not host_header_allowed(request): raise ...\n")
+    caught(
+        "radar-watchlist-without-no-store",
+        "src/ladderstock/web/radar.py",
+        "from ladderstock.journal.watchlist import list_watch\n"
+        "def _watchlist_guard(request) -> None:\n"
+        "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+        "    if not host_header_allowed(request): raise ...\n",
+    )
 
     # 正例：白名单文件 + 白名单模块 + 闸门齐全
-    passed("web-server-stats", "src/ladderstock/web/server.py",
-           "from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats\n"
-           "JOURNAL_STATS_FIELDS: tuple[str, ...] = ()\n"
-           "def _journal_guard(request) -> None:\n"
-           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
-           "    if not host_header_allowed(request): raise ...\n")
-    passed("web-radar-positions", "src/ladderstock/web/radar.py",
-           "from ladderstock.journal.position import compute_metrics, list_positions\n"
-           "def _positions_guard(request) -> None:\n"
-           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
-           "    if not host_header_allowed(request): raise ...\n"
-           '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n')
+    passed(
+        "web-server-stats",
+        "src/ladderstock/web/server.py",
+        "from ladderstock.journal.stats import DEFAULT_DEVIATION_THRESHOLD, compute_stats\n"
+        "JOURNAL_STATS_FIELDS: tuple[str, ...] = ()\n"
+        "def _journal_guard(request) -> None:\n"
+        "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+        "    if not host_header_allowed(request): raise ...\n",
+    )
+    passed(
+        "web-radar-positions",
+        "src/ladderstock/web/radar.py",
+        "from ladderstock.journal.position import compute_metrics, list_positions\n"
+        "def _positions_guard(request) -> None:\n"
+        "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+        "    if not host_header_allowed(request): raise ...\n"
+        '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n',
+    )
     # 正例（DEC-052）：自选只读面 —— 闸门 + Host 白名单 + no-store 齐备
-    passed("web-radar-watchlist", "src/ladderstock/web/radar.py",
-           "from ladderstock.journal.watchlist import list_watch\n"
-           "def _watchlist_guard(request) -> None:\n"
-           "    if not is_loopback_host(client_host(request.client)): raise ...\n"
-           "    if not host_header_allowed(request): raise ...\n"
-           '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n')
+    passed(
+        "web-radar-watchlist",
+        "src/ladderstock/web/radar.py",
+        "from ladderstock.journal.watchlist import list_watch\n"
+        "def _watchlist_guard(request) -> None:\n"
+        "    if not is_loopback_host(client_host(request.client)): raise ...\n"
+        "    if not host_header_allowed(request): raise ...\n"
+        '    return JSONResponse(payload, headers={"Cache-Control": "no-store"})\n',
+    )
     # 正例：`cli.paths` 不是载体（它不碰隐私库），不能被这条规则误伤
-    passed("cli-paths-is-fine", "src/ladderstock/web/control.py",
-           "from ladderstock.cli.paths import config_dir, project_root\n")
+    passed(
+        "cli-paths-is-fine",
+        "src/ladderstock/web/control.py",
+        "from ladderstock.cli.paths import config_dir, project_root\n",
+    )
     return problems
 
 
@@ -375,9 +419,7 @@ def check_privacy_surfaces() -> list[str]:
                 continue
             rel = path.relative_to(ROOT).as_posix()
             problems.extend(
-                _journal_import_problems(
-                    rel, path.read_text(encoding="utf-8", errors="ignore")
-                )
+                _journal_import_problems(rel, path.read_text(encoding="utf-8", errors="ignore"))
             )
     problems.extend(_journal_rule_selftest())
     return problems
@@ -386,6 +428,7 @@ def check_privacy_surfaces() -> list[str]:
 # --------------------------------------------------------------------------- #
 # 4. 边界闸门：反例必须拦得住
 # --------------------------------------------------------------------------- #
+
 
 def _audit(sources: dict, sync: dict | None = None) -> list[str]:
     from ladderstock.core.boundary import audit_sources
@@ -447,9 +490,7 @@ def check_boundary_guards() -> list[str]:
             },
         ]
     }
-    problems.extend(
-        _expect(_audit(cross_peer), "跨 peer", "audit_sources 未拦住跨 peer 备源")
-    )
+    problems.extend(_expect(_audit(cross_peer), "跨 peer", "audit_sources 未拦住跨 peer 备源"))
 
     # 反例：未登记数据集
     unknown = {"sources": [{"id": "x", "dataset": "my_scraper", "via": "tickhub", "tool": "x"}]}
@@ -519,6 +560,7 @@ def _expect(items: list[str], needle: str, message: str) -> list[str]:
 # 5. 监听：默认回环，非回环必须显式 + 鉴权
 # --------------------------------------------------------------------------- #
 
+
 def check_listener_defaults() -> list[str]:
     problems: list[str] = []
 
@@ -556,8 +598,12 @@ def check_listener_defaults() -> list[str]:
     )
     saved = {
         name: os.environ.pop(name, None)
-        for name in (web.REMOTE_ALLOW_ENV, web.REMOTE_TOKEN_ENV,
-                     mcp_cli.REMOTE_ALLOW_ENV, mcp_cli.REMOTE_TOKEN_ENV)
+        for name in (
+            web.REMOTE_ALLOW_ENV,
+            web.REMOTE_TOKEN_ENV,
+            mcp_cli.REMOTE_ALLOW_ENV,
+            mcp_cli.REMOTE_TOKEN_ENV,
+        )
     }
     try:
         for label, allow_env, token_env, policy in surfaces:
@@ -589,8 +635,12 @@ def check_listener_defaults() -> list[str]:
         if token_matches("", ""):
             problems.append("空 Token 被判为匹配（token_matches）")
     finally:
-        for name in (web.REMOTE_ALLOW_ENV, web.REMOTE_TOKEN_ENV,
-                     mcp_cli.REMOTE_ALLOW_ENV, mcp_cli.REMOTE_TOKEN_ENV):
+        for name in (
+            web.REMOTE_ALLOW_ENV,
+            web.REMOTE_TOKEN_ENV,
+            mcp_cli.REMOTE_ALLOW_ENV,
+            mcp_cli.REMOTE_TOKEN_ENV,
+        ):
             os.environ.pop(name, None)
         for name, value in saved.items():
             if value is not None:
@@ -601,6 +651,7 @@ def check_listener_defaults() -> list[str]:
 # --------------------------------------------------------------------------- #
 # WARN：已知缺口（需要跨模块改动，见 audit.md）
 # --------------------------------------------------------------------------- #
+
 
 def warnings() -> list[str]:
     notices: list[str] = []

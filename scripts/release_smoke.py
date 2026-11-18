@@ -50,9 +50,7 @@ class Report:
             self.warned += 1
         print(f"[{status}] {self._index:02d} {name}（{elapsed_ms:.0f} ms）— {detail}")
 
-    def check(
-        self, name: str, condition: bool, detail: str, elapsed_ms: float
-    ) -> bool:
+    def check(self, name: str, condition: bool, detail: str, elapsed_ms: float) -> bool:
         self.record(name, "PASS" if condition else "FAIL", detail, elapsed_ms)
         return condition
 
@@ -210,10 +208,7 @@ def main() -> int:
 
         result, ms = _invoke(["schedule", "run", "--once", "--output", "json"], base_env)
         payload = _payload(result)
-        statuses = {
-            str(row.get("id")): row.get("status")
-            for row in payload.get("results") or []
-        }
+        statuses = {str(row.get("id")): row.get("status") for row in payload.get("results") or []}
         acceptable = {"ok", "degraded", "skipped", "partial"}
         report.check(
             "schedule run --once 跑完一轮",
@@ -227,11 +222,7 @@ def main() -> int:
         # --------------------------------------------------------- config
         result, ms = _invoke(["config", "validate", "--output", "json"], base_env)
         payload = _payload(result)
-        bad = [
-            item.get("file")
-            for item in payload.get("files") or []
-            if not item.get("ok")
-        ]
+        bad = [item.get("file") for item in payload.get("files") or [] if not item.get("ok")]
         report.check(
             "config validate 全通过",
             result.exit_code == 0 and not bad,

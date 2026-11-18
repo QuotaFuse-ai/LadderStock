@@ -15,6 +15,7 @@
 
 用法：仓库根目录 `python scripts/audit-nav-citations.py`（CI 里加 `--quiet`）。退出码非 0 = 不一致。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -226,8 +227,7 @@ def main() -> int:
             )
         print("  [pinned] 底部固定：", " / ".join(f"{lab}({to})" for _, to, lab in pinned))
     print(
-        f"§0 登记 {len(documented)} 条路由，"
-        f"侧栏 {len(all_entries(sections)) + len(pinned)} 条入口"
+        f"§0 登记 {len(documented)} 条路由，侧栏 {len(all_entries(sections)) + len(pinned)} 条入口"
     )
     if problems:
         print(f"\n发现 {len(problems)} 处文档 ↔ 侧栏不一致：")

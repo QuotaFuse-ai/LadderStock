@@ -155,7 +155,9 @@ def main() -> int:
                         events = None
                         if isinstance(seed, dict):
                             data = seed.get("data")
-                            events = data.get("events") if isinstance(data, dict) else seed.get("events")
+                            events = (
+                                data.get("events") if isinstance(data, dict) else seed.get("events")
+                            )
                         if events:
                             params["event_id"] = events[0].get("event_id") or events[0].get("id")
                         else:
@@ -192,9 +194,7 @@ def main() -> int:
                                 message = str(getattr(retry_exc, "message", None) or retry_exc)
                         if recovered:
                             size = len(json.dumps(payload, default=str))
-                            row.update(
-                                status="ok", detail=f"返回 {size} 字节（重试后成功）"
-                            )
+                            row.update(status="ok", detail=f"返回 {size} 字节（重试后成功）")
                             print(f"[ok* ] {peer_key}/{tool} ({size}B 重试)", flush=True)
                             with lock:
                                 report[tool] = row

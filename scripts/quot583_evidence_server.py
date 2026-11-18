@@ -27,9 +27,7 @@ def _install_fake_ai() -> None:
     """把通道与模型调用打桩成慢速假流（与单测同一注入点：模块级函数）。"""
 
     def fake_load_channel(_root=None):
-        return chat_channel.Channel(
-            kind="http", label="fake:sentences", config=None, target=None
-        )
+        return chat_channel.Channel(kind="http", label="fake:sentences", config=None, target=None)
 
     async def fake_complete_iter(channel, system, user, *, timeout):
         for sentence in [

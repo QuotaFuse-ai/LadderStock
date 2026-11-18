@@ -65,12 +65,28 @@ def _sources_doc() -> dict:
     sources = copy.deepcopy(SOURCES_DOC)
     sources["sources"].extend(
         [
-            {"id": "tickhub_index_quote", "dataset": "index_quote", "via": "tickhub",
-             "tool": "index_quote", "primary": True, "fallback": [], "timeout_sec": 1,
-             "retries": 0, "cooldown_sec": 60},
-            {"id": "tickhub_us_index_quote", "dataset": "index_quote_us", "via": "tickhub_us",
-             "tool": "th_us_get_quote", "primary": True, "fallback": [], "timeout_sec": 1,
-             "retries": 0, "cooldown_sec": 60},
+            {
+                "id": "tickhub_index_quote",
+                "dataset": "index_quote",
+                "via": "tickhub",
+                "tool": "index_quote",
+                "primary": True,
+                "fallback": [],
+                "timeout_sec": 1,
+                "retries": 0,
+                "cooldown_sec": 60,
+            },
+            {
+                "id": "tickhub_us_index_quote",
+                "dataset": "index_quote_us",
+                "via": "tickhub_us",
+                "tool": "th_us_get_quote",
+                "primary": True,
+                "fallback": [],
+                "timeout_sec": 1,
+                "retries": 0,
+                "cooldown_sec": 60,
+            },
         ]
     )
     return sources
@@ -83,8 +99,9 @@ def _build() -> tuple[object, FakeTransport, Path]:
     def us_handler(params: dict) -> dict:
         symbol = str(params.get("symbol") or "")
         price = US_PRICES.get(symbol, 100.0)
-        return us_quote_payload(symbol, price=price, prev_close=price - 10.0,
-                                change=10.0, change_pct=0.1)
+        return us_quote_payload(
+            symbol, price=price, prev_close=price - 10.0, change=10.0, change_pct=0.1
+        )
 
     transport = FakeTransport(
         handlers={
@@ -97,9 +114,7 @@ def _build() -> tuple[object, FakeTransport, Path]:
     )
     root = ROOT / ".quot471-evidence"
     root.mkdir(exist_ok=True)
-    registry = make_registry(
-        transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC)
-    )
+    registry = make_registry(transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC))
     plane = RadarPlane(data_root=root, registry=registry)
     app = create_app(data_root=root, dist_dir=ROOT / "frontend" / "dist", radar_plane=plane)
     return app, transport, root
@@ -131,8 +146,7 @@ def api_evidence(live: bool = False) -> None:
         print("=== 上游调用预算（本次首页取数） ===")
         for call in transport.calls:
             print(
-                f"  {call.peer}/{call.tool}  "
-                f"params={json.dumps(call.params, ensure_ascii=False)}"
+                f"  {call.peer}/{call.tool}  params={json.dumps(call.params, ensure_ascii=False)}"
             )
         us_calls = [c for c in transport.calls if c.tool == "th_us_get_quote"]
         print(f"  th_us_get_quote 次数 = {len(us_calls)}（预期 2：DJI 1 + IXIC 1，无按格扇出）")
@@ -140,16 +154,16 @@ def api_evidence(live: bool = False) -> None:
     cells = body["payload"]["cells"]
     print(f"=== 八格摘要（{len(cells)} 格） ===")
     for c in cells:
-        print(f"  {c['code']:<8} {c['market']:<3} {c['name']:<8} "
-              f"price={c['price']} available={c['available']} reason={c['reason']}")
+        print(
+            f"  {c['code']:<8} {c['market']:<3} {c['name']:<8} "
+            f"price={c['price']} available={c['available']} reason={c['reason']}"
+        )
 
 
 def _serve(app: object, port: int) -> object:
     import uvicorn
 
-    server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    )
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
     deadline = time.monotonic() + 30
     while not server.started:
@@ -171,9 +185,7 @@ def _build_live() -> object:
     sync = yaml.safe_load((ROOT / "config" / "sync.yaml").read_text(encoding="utf-8"))
     registry = ProviderRegistry(sources=sources, sync=sync, root=root)
     plane = RadarPlane(data_root=root, registry=registry)
-    return create_app(
-        data_root=root, dist_dir=ROOT / "frontend" / "dist", radar_plane=plane
-    )
+    return create_app(data_root=root, dist_dir=ROOT / "frontend" / "dist", radar_plane=plane)
 
 
 def shots(live: bool = False) -> None:
@@ -206,9 +218,7 @@ def shots(live: bool = False) -> None:
             for variant, query in states:
                 for theme in ("dark", "light"):
                     page = browser.new_page(viewport=SHOT_SIZE)
-                    page.add_init_script(
-                        f"localStorage.setItem('ldst.theme', {theme!r})"
-                    )
+                    page.add_init_script(f"localStorage.setItem('ldst.theme', {theme!r})")
                     url = base if not query else f"{base}?{query}"
                     page.goto(url, wait_until="load")
                     page.wait_for_timeout(1500)

@@ -62,9 +62,7 @@ def pick_base_port(
     for port in range(preferred, last + 1, step):
         if check(port):
             return port
-    raise RuntimeError(
-        f"端口 {preferred}–{last}（每 {step} 一个）全部被占用，无法为便携包选基端口"
-    )
+    raise RuntimeError(f"端口 {preferred}–{last}（每 {step} 一个）全部被占用，无法为便携包选基端口")
 
 
 def offset_for(base_port: int, *, reference: int = REFERENCE_PORT) -> int:

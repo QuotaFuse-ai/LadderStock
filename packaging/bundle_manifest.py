@@ -56,6 +56,17 @@ HIDDEN_IMPORTS: tuple[str, ...] = (
     "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan.on",
     "yaml",
+    # `agents.mcp._compat` 用 importlib.import_module("mcp.shared.exceptions") 取异常
+    # 类型，静态分析抓不到；漏了它，冻结后第一次 import agents 就失败。
+    "mcp.shared.exceptions",
+    # mcp.server.request_state → cryptography.exceptions → _rust 绑定；py2app 不会
+    # 自动收顶层 C 扩展 `_cffi_backend`，CI macos smoke 实测报 ModuleNotFoundError。
+    "cryptography",
+    "_cffi_backend",
+    # typer 的异常钩子用 rich 渲染 traceback，rich.Syntax 按名字加载 lexer；
+    # 缺了它，真正的异常会被渲染失败盖掉，日志里只剩 lexer 的报错。
+    "pygments",
+    "pygments.lexers.python",
 )
 
 #: 三平台都不需要、且会显著增大产物的包（本仓是独立应用，不 import 这些 peer）。
@@ -104,10 +115,5 @@ def assert_relative_destinations(datas: Iterable[tuple[str, str]]) -> None:
     for _src, dest in datas:
         path = Path(dest)
         windows_drive = bool(re.match(r"^[A-Za-z]:", dest))
-        if (
-            path.is_absolute()
-            or path.drive
-            or windows_drive
-            or dest.startswith(("/", "\\"))
-        ):
+        if path.is_absolute() or path.drive or windows_drive or dest.startswith(("/", "\\")):
             raise ValueError(f"随包目标必须是相对路径，实际为 {dest!r}")

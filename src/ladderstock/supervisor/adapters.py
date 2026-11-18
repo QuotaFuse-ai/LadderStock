@@ -23,18 +23,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
-from ladderstock.supervisor.modules import module_ports
+from ladderstock.supervisor.modules import MODULE_PORTS, module_ports
 
 # 端口白名单唯一来源是 `supervisor.modules`（QUOT-491 / 482-C 落地）；QUOT-593
-# 起按环境分表，`MODULE_PORTS` 不再是静态常量：模块级 `__getattr__` 按当前
-# 环境解析成端口表快照（`from adapters import MODULE_PORTS` 兼容旧引用），
-# registry 校验一律走 `module_ports()` 的实时值。
-
-
-def __getattr__(name: str):
-    if name == "MODULE_PORTS":
-        return module_ports()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# 起按环境分表。`MODULE_PORTS` 是 `modules` 里的动态代理对象（按当前环境实时
+# 解析），这里**直接绑定它**，不要再用模块级 `__getattr__` 现算：
+# 动态 `__getattr__` 会骗过 `hasattr`，`monkeypatch.setattr(adapters,
+# "MODULE_PORTS", ports)` 撤销时会把当次解析的快照**固化成真实属性**，
+# 于是之后所有 registry 校验都按那一次的环境走（全量顺序下
+# `test_env_ports` 的 test 环境断言全线红）。
+# 真实属性则由 monkeypatch 原样还原成同一个代理对象。
 
 #: 启动顺序（QUOT-482 派单正文 + QUOT-523 追加 watch）；`stop_all` 严格取反向。
 MODULE_ORDER: tuple[str, ...] = (
