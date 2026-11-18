@@ -731,10 +731,14 @@ def test_financecoffer_whitelist_matches_config_model_and_compose() -> None:
         "FC_MINIO_CONSOLE_ENDPOINT",
     ):
         assert dead not in fc.config_keys
-    # 部署形态：WSL 内 docker compose 的 environment_file 实测路径、不接管启停
+    # 部署形态：2026-11-18 用户裁决——FinanceCoffer 从 WSL compose 收敛为本地增益包，
+    # 启停归 LS 托管（managed=True）；env 文件仍是 deploy/.env。
     assert fc.env_filename == "deploy/.env"
-    assert fc.managed is False
-    assert fc.start_commands == () and fc.web_port is None
+    assert fc.managed is True
+    # 本地增益包自己监听 REST 8100 / MCP 8101，但起停命令由层装配（start_command_faces），
+    # 不走 boundary 的 start_commands 字段。
+    assert fc.web_port == 8100
+    assert fc.start_commands == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -966,12 +970,14 @@ def _legacy_component(directory: Path) -> Any:
     )
 
 
-def test_proxyfleet_is_a_managed_task_peer() -> None:
-    """QUOT-485：ProxyFleet 升级为纳管 peer（Windows 计划任务生命周期），不再是组件。"""
+def test_proxyfleet_is_a_managed_service_peer() -> None:
+    """QUOT-485 + 2026-11-18 用户裁决：ProxyFleet 仍是纳管 peer，但生命周期已从
+    Windows 计划任务改成 venv 服务（`.venv/Scripts/proxyfleet.exe serve`），
+    所以不再有 task_name。"""
     from ladderstock.core.boundary import COMPONENTS, PEER_SIBLING_DIRS, PEERS, resolve_peer_control
 
     ctl = PEER_CONTROL["proxyfleet"]
-    assert ctl.task_name == "ProxyFleet"
+    assert ctl.task_name is None
     assert ctl.mcp_port == 8788
     assert ctl.web_port == 8788
     assert ctl.extra_ports == (8789,)
@@ -2377,45 +2383,54 @@ def _qdrant_plane(tmp_path: Path, directory: Path) -> ControlPlane:
     )
 
 
-def test_scaffold_creates_qdrant_compose_and_env(tmp_path: Path) -> None:
-    """目录不存在时生成部署文件，并让该模块从「未接入」变成可安装。"""
+def test_scaffold_creates_qdrant_config_and_env(tmp_path: Path) -> None:
+    """目录不存在时生成部署文件，并让该模块从「未接入」变成可配置。
+
+    2026-11-18 用户裁决：Qdrant 彻底去 Docker（不再有 qf-qdrant 容器），
+    接入产物从 docker-compose.yml 改成单体二进制读的原生 config.yaml。
+    """
     qdrant_dir = tmp_path / "Qdrant"
     plane = _qdrant_plane(tmp_path, qdrant_dir)
 
     result = plane.scaffold("qdrant")
 
     assert result["directory"] == str(qdrant_dir)
-    assert result["created"] == ["docker-compose.yml", ".env"]
+    assert result["created"] == ["config.yaml", ".env"]
     assert result["kept"] == []
-    compose = (qdrant_dir / "docker-compose.yml").read_text(encoding="utf-8")
-    assert "qdrant/qdrant:v1.20.0" in compose
-    assert "127.0.0.1:6333:6333" in compose
-    assert "name: qf-qdrant" in compose
+    cfg = (qdrant_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "http_port: 6333" in cfg
+    assert "grpc_port: 6334" in cfg
+    assert "host: 127.0.0.1" in cfg
+    assert "storage_path: ./storage" in cfg
+    # 不再有容器部署结构（注释里说明「不走 docker」不算，只查真正的 compose 键）
+    assert "services:" not in cfg
+    assert "image:" not in cfg
+    assert "qf-qdrant" not in cfg
     # 生成的 .env 必须是这个模块真会读的那个文件（env_filename=.env）
     assert (qdrant_dir / ".env").is_file()
 
     config = plane.read_config("qdrant")
     assert config["exists"] is True
-    # compose 形态没有 .venv，但「已装」按 compose 文件在位判定（否则配置入口死掉）
+    # 没有 .venv 也没有 compose：按接入产物在位判定「已装」（否则配置入口死掉）
     assert config["installed"] is True
     assert config["editable"] is True
 
 
 def test_scaffold_never_overwrites_existing_files(tmp_path: Path) -> None:
-    """已有 compose / .env 一律保留：覆盖一次就可能毁掉手工调过的端口或密钥。"""
+    """已有 config.yaml / .env 一律保留：覆盖一次就可能毁掉手工调过的端口或密钥。"""
     qdrant_dir = tmp_path / "Qdrant"
     qdrant_dir.mkdir(parents=True)
-    compose = qdrant_dir / "docker-compose.yml"
+    cfg = qdrant_dir / "config.yaml"
     env = qdrant_dir / ".env"
-    compose.write_text("name: my-own\n", encoding="utf-8")
+    cfg.write_text("http_port: 7333\n", encoding="utf-8")
     env.write_text("QDRANT_URL=http://127.0.0.1:7333\n", encoding="utf-8")
     plane = _qdrant_plane(tmp_path, qdrant_dir)
 
     result = plane.scaffold("qdrant")
 
     assert result["created"] == []
-    assert result["kept"] == ["docker-compose.yml", ".env"]
-    assert compose.read_text(encoding="utf-8") == "name: my-own\n"
+    assert result["kept"] == ["config.yaml", ".env"]
+    assert cfg.read_text(encoding="utf-8") == "http_port: 7333\n"
     assert env.read_text(encoding="utf-8") == "QDRANT_URL=http://127.0.0.1:7333\n"
 
 
@@ -2428,7 +2443,7 @@ def test_scaffold_resolves_placeholder_directory(tmp_path: Path, monkeypatch) ->
     result = plane.scaffold("qdrant")
 
     assert result["directory"] == str(real)
-    assert (real / "docker-compose.yml").is_file()
+    assert (real / "config.yaml").is_file()
     # 关键：不能在进程 CWD 下建出一个叫 [modules-path] 的目录（占位符不是路径）
     assert not (Path.cwd() / "[modules-path]").exists()
 

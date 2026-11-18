@@ -34,6 +34,12 @@ EXPECTED_TOOLS = {
     "hot_rank",
     "news_flash",
     "finance_fundamentals",
+    # 研究链路扩展：公告检索 / 财报三表 / 风险史 / 下院辩论 / 通用取数
+    "announcement_search",
+    "finance_statements",
+    "risk_history",
+    "senate_debate",
+    "query_tool",
 }
 
 

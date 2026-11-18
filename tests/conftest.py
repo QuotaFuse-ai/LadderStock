@@ -34,3 +34,18 @@ def _isolate_memory_channel(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     memory_module.reset_runtime_state()
     yield
     memory_module.reset_runtime_state()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_active_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """每个用例从「未指定环境」开始：`modules.select_env()` 是模块级全局，
+    一旦有测试切到 prod 又不复原，后面所有 `current_env()` 都会读错表。
+    这也顺带把 `LDST_ENV` 从进程环境里摘掉，避免本机 shell 的导出污染断言。
+    """
+    from ladderstock.supervisor import modules as modules_module
+
+    saved = modules_module._active_env
+    modules_module._active_env = ""
+    monkeypatch.delenv("LDST_ENV", raising=False)
+    yield
+    modules_module._active_env = saved

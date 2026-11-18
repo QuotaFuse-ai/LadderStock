@@ -546,13 +546,13 @@ def _run_sync_close(
             break
         except LadderStockError as exc:
             last_error = exc
-            if exc.exit_code != EXIT_DB_BUSY or attempt == 1:
+            if exc.code != EXIT_DB_BUSY or attempt == 1:
                 break
             _log_schedule(f"收盘同步等待写锁超时，{CLOSE_SYNC_RETRY_SEC:.0f}s 后重试一次")
             time.sleep(CLOSE_SYNC_RETRY_SEC)
     if payload is None:
         detail = f"收盘同步中止：{last_error.message if last_error else '未知错误'}"
-        if last_error is not None and last_error.exit_code == EXIT_DB_BUSY:
+        if last_error is not None and last_error.code == EXIT_DB_BUSY:
             detail += "（锁被另一轮同步占着，等满两轮仍未拿到；下一轮调度会再跑）"
         return {**base, "status": "failed", "detail": detail}
 

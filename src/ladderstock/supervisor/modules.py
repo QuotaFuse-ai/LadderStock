@@ -29,7 +29,11 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "tickhub_us": (8002,),
         "wire": (8790, 8791),
         "senate": (8765, 8786),
-        "financecoffer": (8100,),
+        # 2026-11-18 用户裁决：FinanceCoffer 已是 LadderStock 的本地增益包
+        # （`file/modules/financecoffer`，由 modules/financecoffer/services.py 起），
+        # 不再由 WSL compose 托管 → 与其它模块同口径，正式段铺在基准端口。
+        # 8100 = REST API，8101 = MCP 面（`fcoffer mcp http`）。
+        "financecoffer": (8100, 8101),
         "proxyfleet": (8788, 8789),
         # Qdrant（2026-11-18 用户裁决）：本地单体二进制，不再用 Docker。
         # (REST/Dashboard, gRPC) —— gRPC 面探测得到，但并作一个进程托管。
@@ -47,11 +51,9 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "tickhub_us": (18002,),
         "wire": (18790, 18791),
         "senate": (18765, 18786),
-        # 例外（与 boundary 的 `_external_hosted` 同口径）：FinanceCoffer 由 WSL 里的
-        # compose 托管，端口归它自己决定、不随环境平移，boundary 解析出来一直是 8100。
-        # 这张表若照「正式 + 10000」写成 18100，探针会永远探一个没人监听的端口 →
-        # 恒判 failed / 触发无效重拉 → needs_human 红条。
-        "financecoffer": (8100,),
+        # 与 prod 同口径 +10000：FC 不再是「归 compose 自己决定端口」的例外，
+        # 测试段就是 18100(REST) / 18101(MCP)。
+        "financecoffer": (18100, 18101),
         "proxyfleet": (18788, 18789),
         # Qdrant（2026-11-18 用户裁决）：本地单体二进制，测试段 = 基准 + 10000。
         "qdrant": (16333, 16334),

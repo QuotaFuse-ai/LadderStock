@@ -109,6 +109,12 @@ WEB_PRIVILEGED_IMPORTS: dict[str, tuple[str, ...]] = {
         "privacy_write_guard(",
         '"Cache-Control": "no-store"',
     ),
+    # AI 助手本机取数工具读自选列表：只走进程内的 `list_watch(root=...)`，
+    # 不经 MCP 清单、不经 HTTP 面，也不进信封；结果只回给本机模型。
+    "ai/agent_runtime.py": (
+        "def lookup_watchlist(",
+        "list_watch(root=",
+    ),
 }
 
 

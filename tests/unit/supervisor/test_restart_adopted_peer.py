@@ -92,7 +92,8 @@ def test_alive_listening_peer_restart_is_idempotent_noop(tmp_path: Path) -> None
     assert adapters["wire"].start_calls == []
     assert adapters["wire"].stop_calls == 0
     assert pid in procs.processes
-    assert engine._ledger.record("wire").adopted_peer is True
+    # 显式 restart 本身就是「要托管」：活着的 adopted peer 不再被当成外部接管
+    assert engine._ledger.record("wire").adopted_peer is False
 
 
 def test_alive_hung_peer_restart_fails_closed_without_kill(tmp_path: Path) -> None:

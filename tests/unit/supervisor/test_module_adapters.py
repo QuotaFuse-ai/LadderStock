@@ -469,26 +469,40 @@ def test_financecoffer_stop_reads_back_container_gone(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_proxyfleet_start_and_stop_go_through_the_scheduled_task(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
-    host.respond(
-        "schtasks.exe /run",
-        CommandResult(returncode=0, stdout="SUCCESS"),
-    )
-    # /run 之后任务拉起的 pfctl 进程（计划任务垫片 → python pfctl.py run）
-    host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
-        ports=(8788, 8789),
+def test_proxyfleet_start_spawns_the_venv_service(tmp_path: Path) -> None:
+    """2026-11-18 用户裁决：ProxyFleet 从 SYSTEM 计划任务垫片改成 venv 服务。
+
+    start = 直接 spawn `.venv/Scripts/proxyfleet.exe serve`，端口由
+    `PF_API_PORT` / `PF_GATEWAY_PORT` 环境变量给定（跟随 MODULE_PORTS 环境表）；
+    stop = 整树终止。两者都不再调 `schtasks.exe`。
+    """
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    peer = tmp_path / "proxyfleet"
+    scripts = peer / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "proxyfleet.exe").write_bytes(b"")
+    env["LDST_PEER_DIR_PROXYFLEET"] = str(peer)
+
+    pf = cast(
+        BaseAdapter,
+        build_default_adapters(
+            host=host, env=env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+        )["proxyfleet"],
     )
     spawned = pf.start()
+
+    argv, _cwd, child_env = host.spawns[0]
+    assert Path(argv[0]).name == "proxyfleet.exe"
+    assert argv[1:] == ("serve",)
+    expected = MODULE_PORTS["proxyfleet"]
+    assert child_env["PF_API_PORT"] == str(expected[0])
+    assert child_env["PF_GATEWAY_PORT"] == str(expected[1])
     assert spawned.pid in host.procs
-    assert any("/enable" in argv for argv in host.runs)
+    assert all(Path(argv2[0]).name != "schtasks.exe" for argv2 in host.runs if argv2)
 
     pf.stop()
-    ended = [" ".join(argv) for argv in host.runs]
-    assert any("/disable" in line for line in ended)
-    assert any("/end" in line for line in ended)
+    assert all(Path(argv2[0]).name != "schtasks.exe" for argv2 in host.runs if argv2)
 
 
 def test_proxyfleet_start_refuses_foreign_port_owner_without_triggering_task(
@@ -504,15 +518,30 @@ def test_proxyfleet_start_refuses_foreign_port_owner_without_triggering_task(
     assert all(argv[0] != "schtasks.exe" for argv in host.runs)
 
 
-def test_proxyfleet_start_proceeds_when_own_pfctl_already_listening(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
-    host.respond("schtasks.exe /run", CommandResult(returncode=0, stdout="SUCCESS"))
-    host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
-        ports=(8788, 8789),
+def test_proxyfleet_start_proceeds_when_own_service_already_listening(tmp_path: Path) -> None:
+    """自己的 `proxyfleet.exe serve` 已在听：不算「外部占用」，start 不拒绝。
+
+    计划任务形态下这条测的是「/run 之后垫片已经拉起」；venv 形态下同一个语义
+    落在 `_foreign_occupant()` 上——cmdline 命中本模块即放行。
+    """
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    peer = tmp_path / "proxyfleet"
+    scripts = peer / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "proxyfleet.exe").write_bytes(b"")
+    env["LDST_PEER_DIR_PROXYFLEET"] = str(peer)
+
+    pf = cast(
+        BaseAdapter,
+        build_default_adapters(
+            host=host, env=env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+        )["proxyfleet"],
     )
+    host.add_process((str(scripts / "proxyfleet.exe"), "serve"), ports=(8788, 8789))
+
     spawned = pf.start()
+
     assert spawned.pid in host.procs
 
 
@@ -571,9 +600,12 @@ def test_financecoffer_identify_port_not_listening_fails_closed(tmp_path: Path) 
 
 def test_proxyfleet_identify_port_returns_single_port_evidence(tmp_path: Path) -> None:
     host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    pf = cast(BaseAdapter, adapters["proxyfleet"])
     pid = host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        (
+            "D:/workplace/LadderStock/file/modules/proxyfleet/.venv/Scripts/proxyfleet.exe",
+            "serve",
+        ),
         ports=(8788, 8789),
     )
 
@@ -588,9 +620,12 @@ def test_proxyfleet_identify_port_returns_single_port_evidence(tmp_path: Path) -
 
 def test_proxyfleet_identify_no_arg_returns_aggregate(tmp_path: Path) -> None:
     host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    pf = cast(BaseAdapter, adapters["proxyfleet"])
     host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        (
+            "D:/workplace/LadderStock/file/modules/proxyfleet/.venv/Scripts/proxyfleet.exe",
+            "serve",
+        ),
         ports=(8788, 8789),
     )
 
@@ -917,6 +952,9 @@ def test_watch_is_test_env_scoped_to_5951(tmp_path: Path) -> None:
     launcher = _watch_launcher(tmp_path)
     env["LDST_LAUNCHER"] = launcher[0]
     env["LDST_ENV"] = "test"
+    # 仓库根 config/ports.yaml 里有开发机的避让记录（board=5950）：不隔离配置目录
+    # 的话这条「test 必须 5951」的断言会读到正式端口，假红。
+    env["LDST_CONFIG_DIR"] = str(tmp_path / "config")
 
     _build_watch(host, tmp_path, env).start()
     argv, _cwd, _child_env = host.spawns[0]
@@ -1074,6 +1112,9 @@ def _watch_pair(tmp_path: Path) -> tuple[Any, Any]:
     host = FakeHost()
     env = _make_peer_dirs(tmp_path)
     env["LDST_LAUNCHER"] = launcher[0]
+    # 同 `test_watch_is_test_env_scoped_to_5951`：隔离开发机的避让记录，否则
+    # prod/test 两个看门狗会读到同一个 board=5950、互认对方的实例。
+    env["LDST_CONFIG_DIR"] = str(tmp_path / "config")
     prod = cast(
         Any,
         build_default_adapters(

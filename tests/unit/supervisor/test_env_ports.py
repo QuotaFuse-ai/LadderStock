@@ -29,8 +29,11 @@ _PROD_EXPECTED = {
     "tickhub_us": (8002,),
     "wire": (8790, 8791),
     "senate": (8765, 8786),
-    "financecoffer": (8100,),
+    # FC 现在是本地增益包（不再由 WSL compose 托管）：8100 REST / 8101 MCP 两个面都探测。
+    "financecoffer": (8100, 8101),
     "proxyfleet": (8788, 8789),
+    # Qdrant 本地单体二进制：6333 REST/Dashboard + 6334 gRPC。
+    "qdrant": (6333, 6334),
     # QUOT-589 重修：看门狗无端口化（全机只留 5950/5951），不占 5952。
     "watch": (),
     "proxypool": (),
@@ -40,8 +43,10 @@ _TEST_EXPECTED = {
     "tickhub_us": (18002,),
     "wire": (18790, 18791),
     "senate": (18765, 18786),
-    "financecoffer": (18100,),
+    # 与 prod 同口径 +10000：18100 REST / 18101 MCP。
+    "financecoffer": (18100, 18101),
     "proxyfleet": (18788, 18789),
+    "qdrant": (16333, 16334),
     # 同上：测试环境亦无端口，不占 15952。
     "watch": (),
     "proxypool": (),

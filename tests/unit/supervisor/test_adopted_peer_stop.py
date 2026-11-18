@@ -149,8 +149,8 @@ def test_previous_supervisor_spawned_process_is_still_stopped(tmp_path: Path) ->
     engine_b = _second_session_engine(tmp_path, adapters, procs, clock)
     summary = engine_b.reconcile()
     record = engine_b._ledger.record("wire")
-    assert summary["wire"] == "adopted:still_running"
-    assert record.origin == "adopted" and record.adopted_peer is False
+    assert summary["wire"] == "alive:spawned_prev_session"
+    assert record.origin == "spawned" and record.adopted_peer is False
 
     report = engine_b.stop_all()
 

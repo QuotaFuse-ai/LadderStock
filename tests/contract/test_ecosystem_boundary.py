@@ -109,8 +109,9 @@ def test_peers_block_matches_ecosystem() -> None:
     assert set(peers) == set(PEERS)
     for key, peer in peers.items():
         assert peer["package"] == PEERS[key].package
-        assert peer["cli"] == PEERS[key].cli
-        assert peer["mcp_name"] == PEERS[key].mcp_name
+        # 库态 peer（memory）没有可执行入口，`cli` / `mcp_name` 允许缺省（None ≈ ''）
+        assert (peer.get("cli") or "") == (PEERS[key].cli or "")
+        assert peer.get("mcp_name") == PEERS[key].mcp_name
 
 
 # --------------------------------------------------------------------------- #

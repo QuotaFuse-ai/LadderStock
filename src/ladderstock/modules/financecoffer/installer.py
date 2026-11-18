@@ -349,9 +349,12 @@ def uninstall(root: Path | None = None, *, confirm: bool) -> dict[str, Any]:
         return {
             "ok": False,
             "status": "needs_confirmation",
-            "detail": "卸载会删除整个目录，包括 pgdata / miniodata / redisdata，删除后不可恢复",
+            # 数据目录按 env 分份（`pgdata` 与 `pgdata-prod` 并存）：这里必须用
+            # layout.data_dir() 算真路径，否则提示里列的是另一份目录，用户
+            # 以为「只删了测试服那份」而实际整根都删了。
+            "detail": "卸载会删除整个目录，包括 pgdata / miniodata / redisdata 及其 -prod 分份，删除后不可恢复",
             "target": str(target),
-            "data_dirs": [str(target / name) for name in layout.DATA_DIRNAMES],
+            "data_dirs": [str(layout.data_dir(root, name)) for name in layout.DATA_DIRNAMES],
         }
 
     try:

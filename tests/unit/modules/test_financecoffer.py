@@ -219,7 +219,11 @@ def test_uninstall_removes_whole_directory(tmp_path: Path) -> None:
         tmp_path, with_embedding=False, confirm=True, allow_system_drive=True,
         fetch=lambda key, target: 1,
     )
-    (layout.data_dir(tmp_path, "pgdata") / "PG_VERSION").write_text("17\n", encoding="utf-8")
+    # 数据目录按 env 分份：测试环境（或未设 env 的 CI）落到的名字由 layout 决定，
+    # 这里不能硬写 pgdata，也不能假设 install 已经建好目录。
+    data = layout.data_dir(tmp_path, "pgdata")
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "PG_VERSION").write_text("17\n", encoding="utf-8")
 
     result = installer.uninstall(tmp_path, confirm=True)
 
@@ -286,9 +290,9 @@ def test_redis_platform_matrix_covers_three_ends(tmp_path: Path) -> None:
 
 
 def test_redis_conf_shared_across_platforms(tmp_path: Path) -> None:
-    """三端共用一份 conf：任何平台上 conf 路径都一样。"""
+    """三端共用同一份 conf 模板；文件名按 env 分份（正式服 -prod），路径规则一致。"""
     conf = redis_service.conf_path(tmp_path)
-    assert conf == tmp_path / "file" / "modules" / "financecoffer" / "conf" / "redis.conf"
+    assert conf == tmp_path / "file" / "modules" / "financecoffer" / "conf" / f"redis{layout.env_suffix()}.conf"
     assert conf.parent.parent == layout.module_root(tmp_path)
 
 
@@ -312,10 +316,20 @@ def test_start_api_does_not_relaunch_when_already_running(monkeypatch, tmp_path:
 
 
 def test_doctor_treats_embedding_as_optional(monkeypatch, tmp_path: Path) -> None:
-    """五件体检里只有 embedding 可选：它没起不算「不能用」，别的缺一件就算。"""
+    """七件体检里只有 embedding / etl 可选：它们没起不算「不能用」。
+
+    pg / redis / minio / api / mcp 五件缺一件就算不可用；pgvector 扩展缺位
+    单独报（PG 起着但查询全表不存在是真实踩过的坑）。
+    """
     monkeypatch.setattr(services, "pg_status", lambda root=None: {"ok": True, "state": "running"})
     monkeypatch.setattr(services, "minio_status", lambda root=None: {"ok": True, "state": "running"})
     monkeypatch.setattr(services.redis_service, "status", lambda root=None: {"ok": True, "state": "running"})
+    monkeypatch.setattr(services, "mcp_status", lambda root=None: {"ok": True, "state": "running"})
+    monkeypatch.setattr(services, "etl_status", lambda root=None: {"ok": True, "state": "running"})
+    monkeypatch.setattr(
+        "ladderstock.modules.financecoffer.pg_runtime.pgvector_status",
+        lambda root=None: {"ok": True, "extension": "vector"},
+    )
     monkeypatch.setattr(services, "api_status", lambda root=None, **_k: {"ok": False, "state": "stopped"})
     monkeypatch.setattr(
         services, "embedding_status", lambda root=None, **_k: {"ok": False, "state": "missing_deps"}
@@ -323,24 +337,28 @@ def test_doctor_treats_embedding_as_optional(monkeypatch, tmp_path: Path) -> Non
 
     result = services.doctor(tmp_path)
 
-    assert result["total"] == 5
-    assert result["ready"] == 3
-    assert result["optional"] == ["embedding"]
+    assert result["total"] == 7
+    assert result["ready"] == 5
+    assert result["optional"] == ["embedding", "etl"]
     # API 是必需件，缺了就是「不可用」；embedding 缺了只影响向量检索
     assert result["missing_required"] == ["api"]
     assert result["usable"] is False
 
 
 def test_doctor_usable_when_only_embedding_missing(monkeypatch, tmp_path: Path) -> None:
-    for name in ("pg_status", "minio_status", "api_status"):
+    for name in ("pg_status", "minio_status", "api_status", "mcp_status", "etl_status"):
         monkeypatch.setattr(services, name, lambda root=None, **_k: {"ok": True, "state": "running"})
     monkeypatch.setattr(services.redis_service, "status", lambda root=None: {"ok": True, "state": "running"})
+    monkeypatch.setattr(
+        "ladderstock.modules.financecoffer.pg_runtime.pgvector_status",
+        lambda root=None: {"ok": True, "extension": "vector"},
+    )
     monkeypatch.setattr(
         services, "embedding_status", lambda root=None, **_k: {"ok": False, "state": "missing_deps"}
     )
 
     result = services.doctor(tmp_path)
 
-    assert result["ready"] == 4
+    assert result["ready"] == 6
     assert result["missing_required"] == []
     assert result["usable"] is True  # 不勾 embedding 的机器也算装了、能用

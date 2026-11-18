@@ -154,6 +154,21 @@ _PEER_FALLBACKS: dict[str, Peer] = {
         health_path="/collections",
         repo=None,
     ),
+    # QUOT-611：LS 自身记忆是库态 peer（进程内 mem0 SDK）。没有服务、没有端口，
+    # default_port 的 0 只是占位；登记它是为了让控制面始终亮出这张只读卡——
+    # 兜底表跟着 yaml 一起列全，配置读坏时也不会少一张卡。
+    "memory": Peer(
+        key="memory",
+        product="Mem0（LS 自身记忆）",
+        package="mem0",
+        cli="",
+        mcp_name=None,
+        default_port=0,
+        role="助手长期记忆：进程内 mem0 SDK（qdrant local + fastembed，512 维）",
+        consumption="只消费",
+        health_path="",
+        repo=None,
+    ),
 }
 
 
@@ -310,7 +325,11 @@ def _load_module_peers() -> tuple[dict[str, Peer], tuple[str, ...]]:
     return peers, tuple(warnings)
 
 
-PEERS, PEER_LOAD_WARNINGS = _load_module_peers()
+#: 注册表不在这里构建——`build_peers` 要用 `_external_hosted` 决定是否平移端口，
+#: 而那份判定读的是 `PEER_CONTROL`（本文件更靠后）。早于它赋值会让 import 期
+#: 撞 `NameError`，被 `_load_module_peers` 的兜底静默吞掉、整表退回内置默认，
+#: yaml 里新增的 peer 就永远进不来（memory 一直缺卡就是这么来的）。
+#: 真正的赋值语句见 `PEER_CONTAINER_DIRS` 之后。
 
 
 # --------------------------------------------------------------------------- #
@@ -804,6 +823,13 @@ PEER_CONTAINER_DIRS: dict[str, str] = {
     "memory": "memory",
 }
 
+
+# 注册表在这里构建（不放在文件前部）：`build_peers` → `_external_hosted` → 读
+# `PEER_CONTROL`，而 `PEER_CONTROL` / `PEER_DIR_ENV` / `PEER_SIBLING_DIRS` 都已在
+# 上方定义完毕。顺序反了就是 import 期 NameError + 静默退回内置默认。
+PEERS, PEER_LOAD_WARNINGS = _load_module_peers()
+
+
 #: 子模块容器根整体覆盖入口（想把数据放外置盘时用）。
 MODULES_ROOT_ENV = "LDST_MODULES_ROOT"
 
@@ -840,6 +866,11 @@ def resolved_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path | 
     override = (values.get(PEER_DIR_ENV[key]) or "").strip()
     if override:
         return Path(override)
+    root_env = (values.get("LDST_PEER_ROOT") or "").strip()
+    if root_env:
+        # 显式给了 peer 根：只认这个根下的同级目录，别拿容器去顶掉调用方的选择。
+        sibling = Path(root_env) / PEER_SIBLING_DIRS[key]
+        return sibling if sibling.is_dir() else None
     container = modules_root(values) / PEER_CONTAINER_DIRS[key]
     if container.is_dir():
         return container

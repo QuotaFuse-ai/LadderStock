@@ -235,7 +235,7 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
 
     assert result.exit_code == 0, result.stderr
     payload = _json(result)
-    assert payload["job_count"] == 19
+    assert payload["job_count"] == 21
     assert payload["timezone"] == "Asia/Shanghai"
     assert [job["trigger"] for job in payload["jobs"]] == [
         "07:30",
@@ -254,8 +254,10 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "16:30",
         "16:40",
         "16:55",
+        "18:30",
         "30s",
         "30s",
+        "60s",
         "60s",
     ]
     assert [job["kind"] for job in payload["jobs"]] == [
@@ -275,9 +277,11 @@ def test_schedule_list_shows_default_jobs(repo: Path) -> None:
         "knowledge_refresh",
         "agent_research",
         "plan_tick",
+        "sync_evening",
         "snapshot_fast",
         "watch_live",
         "sync_batch",
+        "sentiment_live",
     ]
     _assert_knowledge_refresh(payload["jobs"])
 

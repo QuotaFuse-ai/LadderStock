@@ -291,10 +291,17 @@ def test_bundle_templates_inside_package() -> None:
 
 
 def test_packaged_templates_match_repo_config() -> None:
-    """包内副本与仓库 `config/` 同步：两处各改一份就会让开发态与安装态漂移。"""
+    """包内副本与仓库 `config/` 同步：两处各改一份就会让开发态与安装态漂移。
+
+    `ports.yaml` 不在模板里——它由 `ldst run` 在启动成功后写入（端口避让记录），
+    属于运行时状态而非随包模板，比较时排除。
+    """
     _needs_repo_config()
     packaged = Path(paths.__file__).resolve().parents[1] / "assets" / "config"
-    repo_files = {p.relative_to(REPO_CONFIG) for p in REPO_CONFIG.rglob("*") if p.is_file()}
+    runtime_only = {Path("ports.yaml")}
+    repo_files = {
+        p.relative_to(REPO_CONFIG) for p in REPO_CONFIG.rglob("*") if p.is_file()
+    } - runtime_only
     pkg_files = {p.relative_to(packaged) for p in packaged.rglob("*") if p.is_file()}
     assert repo_files == pkg_files
     for rel in sorted(repo_files):

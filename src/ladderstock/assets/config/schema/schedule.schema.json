@@ -62,7 +62,9 @@
               "agent_research",
               "watch_alert",
               "watch_live",
-              "plan_tick"
+              "sentiment_live",
+              "plan_tick",
+              "sync_evening"
             ]
           },
           "trigger": {
@@ -91,6 +93,11 @@
           "dataset": {
             "type": "string",
             "minLength": 1
+          },
+          "datasets": {
+            "type": "string",
+            "minLength": 1,
+            "description": "sync_evening：逗号分隔的数据集清单（缺省 dragon_tiger,dragon_tiger_seats）"
           },
           "daily_limit": {
             "type": "integer",

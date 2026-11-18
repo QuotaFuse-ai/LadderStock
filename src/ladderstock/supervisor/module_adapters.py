@@ -671,6 +671,11 @@ class StartFace:
     alt_match: tuple[str, ...] = ()
     #: 额外备用关键字组（打包后 `LadderStock.exe <子命令>` 等第三形态，QUOT-525）
     alt_matches: tuple[tuple[str, ...], ...] = ()
+    #: 同一个进程还监听的其它端口（proxyfleet 的出口网关、qdrant 的 gRPC 面）。
+    #: 这些端口没有单独的启动命令，但归属同一个 cmdline：不登记进来的话，
+    #: `_match_tokens()` 会在这些端口上返回空组，把自家进程判成「外部占用」，
+    #: start() 直接拒绝启动（QUOT-597 实测）。
+    extra_ports: tuple[int, ...] = ()
 
 
 def _norm_tokens(tokens: Sequence[str]) -> tuple[str, ...]:
@@ -887,7 +892,15 @@ def preflight(
             )
             continue
 
-        peer = default_peer_dir(name, values)
+        # preflight 只报「按安装根该在哪」：`preflight(env=...)` 是脱离进程状态的
+        # 自检，此时不能让 peer 目录跟着当前进程的源码/容器位置漂移。
+        peer_override = (values.get(PEER_DIR_ENV[name]) or "").strip()
+        if peer_override:
+            peer = Path(peer_override)
+        else:
+            peer_root_env = (values.get(DEFAULT_PEER_ROOT_ENV) or "").strip()
+            peer_root = Path(peer_root_env) if peer_root_env else _install_root_from(values)
+            peer = peer_root / PEER_SIBLING_DIRS[name]
         if name == "financecoffer":
             deploy = peer / "deploy"
             ok = deploy.is_dir()
@@ -1076,7 +1089,7 @@ class BaseAdapter:
 
     def _match_tokens(self, port: int) -> tuple[tuple[str, ...], ...]:
         for face in self.faces:
-            if face.port == port:
+            if face.port == port or port in face.extra_ports:
                 groups = [_norm_tokens(face.match)]
                 if face.alt_match:
                     groups.append(_norm_tokens(face.alt_match))
@@ -1085,7 +1098,10 @@ class BaseAdapter:
         return ()
 
     def _inherit_chain(self, port: int) -> bool:
-        return any(face.port == port and face.inherit_chain for face in self.faces)
+        return any(
+            (face.port == port or port in face.extra_ports) and face.inherit_chain
+            for face in self.faces
+        )
 
     @classmethod
     def _match_chain(
@@ -1366,6 +1382,9 @@ def _command_adapters(
                     port=pf_api_port,
                     match=("proxyfleet", "serve"),
                     log_name="proxyfleet-serve.log",
+                    # 同一个 serve 进程还常驻出口网关：登记归属，否则 8789 上的
+                    # 自家实例会被 `_foreign_occupant()` 判成外部占用。
+                    extra_ports=(pf_gateway_port,),
                 ),
             ),
             host=host,
@@ -1491,7 +1510,12 @@ def resolve_panel_port(env: Mapping[str, str]) -> int:
         from ladderstock.cli.paths import config_dir
         from ladderstock.supervisor.port_allocator import load_board_override
 
-        remembered = load_board_override(config_dir())
+        # 避让记录按**传入的**环境解析：显式给了 `LDST_CONFIG_DIR` 就用它，不再
+        # 退回 cwd 敏感的 `config_dir()`。两者混读的后果实测过：cwd 恰好是仓库根
+        # 时，test 环境会读到开发机那份 config/ports.yaml（board=5950），把面板
+        # 端口算成 5950、与正式服撞车（QUOT-597 的环境隔离就是被这条打穿的）。
+        cfg_env = (env.get("LDST_CONFIG_DIR") or "").strip()
+        remembered = load_board_override(Path(cfg_env) if cfg_env else config_dir())
     except Exception:  # noqa: BLE001 - 读配置失败回落环境默认
         remembered = None
     if remembered:

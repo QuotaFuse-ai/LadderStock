@@ -95,6 +95,16 @@ jobs:
     kind: sync_close
     trigger: "15:35"
     enabled: true
+  # 18:30 晚间补取（龙虎榜）：交易所按规则**收盘后**才公布龙虎榜（通常 18:00 之后），
+  # 15:35 的收盘同步必然拿不到。这条在 18:30 再来一趟，取到就落当日分区；取不到只记
+  # degraded 并说清原因，不补造、不拿上一天顶替。没有它，复盘页龙虎榜那一段整晚都只能
+  # 显示「还没公布」，得用户自己去跑 sync。
+  - id: dragon_tiger_evening
+    name: 18:30 龙虎榜晚间补取
+    kind: sync_evening
+    datasets: "dragon_tiger,dragon_tiger_seats"
+    trigger: "18:30"
+    enabled: true
   # 15:40 收盘摘要（QUOT-432 / DEC-058）：持仓当日盈亏（close(T) − close(T−1) 口径）、
   # 自选涨跌榜、当日已实现 / 分红。只读本机 daily_k 与 portfolio_trades，不联网。
   - id: close_digest
@@ -178,3 +188,14 @@ jobs:
     trigger: "30s"
     enabled: true
     channel: desktop
+
+  # 盘中实时情绪快照（60s）：`limit_up_pool` 只给最近一个已收盘交易日，15:35 之前
+  # 当天没有涨停池归档，情绪温度页只能靠这一刻的实时读数。`market_sentiment` 在盘中
+  # 给的是当日涨停 / 炸板 / 跌停家数与最高连板、龙头名单，这条任务把它钉到
+  # `data/live/sentiment/<date>.json`（只写 live 目录，不碰 archive、不推水位）。
+  # 收盘 15:35 的 `close_sync` 落了当日归档后，页面自动切回归档口径。
+  - id: sentiment_live
+    name: 盘中实时情绪快照
+    kind: sentiment_live
+    trigger: "60s"
+    enabled: true

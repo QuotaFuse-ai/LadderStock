@@ -173,44 +173,24 @@ JOB_TAIL_LINES = 20
 #: 模板里的端口必须与 PEER_CONTROL 的口径一致（qdrant 是外部托管，不参与 +offset 平移）。
 PEER_SCAFFOLDS: dict[str, dict[str, str]] = {
     "qdrant": {
-        "docker-compose.yml": """\
-# 由 LadderStock 控制面生成（一键接入）。改端口请同时对齐 PEER_CONTROL 的 6333/9300。
-name: qf-qdrant
-services:
-  qdrant:
-    image: qdrant/qdrant:v1.20.0
-    container_name: qf-qdrant
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:6333:6333"
-      - "127.0.0.1:6334:6334"
-    volumes:
-      - qf_qdrant_storage:/qdrant/storage
+        "config.yaml": """\
+# 由 LadderStock 控制面生成（一键接入）。
+# 2026-11-18 起 Qdrant 不再走 Docker：由 LS 直接拉本机单体二进制
+# `runtime/qdrant.exe`（Windows）跑，本文件是它读的原生配置。
+# 端口随环境平移：测试服由 QDRANT__SERVICE__HTTP_PORT / __GRPC_PORT 覆盖为
+# 16333 / 16334，这里的 6333 / 6334 是正式服默认值。
+log_level: INFO
 
-  # MCP 面默认不启用：官方没有现成镜像，需要按 mcp-server-qdrant==0.8.1 自行 build
-  # 成本机镜像后才能用。`docker compose up -d` 不会碰它；要用加 --profile mcp。
-  mcp:
-    profiles: ["mcp"]
-    image: qf-qdrant/mcp-server-qdrant:latest
-    container_name: qf-qdrant-mcp
-    restart: unless-stopped
-    depends_on:
-      - qdrant
-    ports:
-      - "127.0.0.1:9300:9300"
-    environment:
-      QDRANT_URL: http://qdrant:6333
-      COLLECTION_NAME: ladderstock_memories
-      EMBEDDING_MODEL: BAAI/bge-small-zh-v1.5
-      FASTMCP_SERVER_HOST: 0.0.0.0
-      FASTMCP_SERVER_PORT: "9300"
-      HF_ENDPOINT: https://hf-mirror.com
-      QDRANT_READ_ONLY: "true"
+storage:
+  # 与各子模块同构：数据留在模块目录内，不散落到系统盘。
+  storage_path: ./storage
 
-volumes:
-  # 不写 name：compose 默认命名 <project>_<卷>，正好等于既有部署的
-  # qf-qdrant_qf_qdrant_storage。写死名字会另开一个新空库，让已有记忆「消失」。
-  qf_qdrant_storage:
+service:
+  host: 127.0.0.1
+  http_port: 6333
+  grpc_port: 6334
+
+telemetry_disabled: true
 """,
         ".env": """\
 # 由 LadderStock 控制面生成（一键接入）。
@@ -1715,6 +1695,13 @@ class ControlPlane:
             # 库态子模块（LS 自身记忆，QUOT-611）：没有 .venv、没有服务面，
             # 包体在 site-packages 随包分发；目录在位即视为已安装。
             installed = dir_exists
+        elif key in PEER_SCAFFOLDS and all(
+            (directory / name).is_file() for name in PEER_SCAFFOLDS[key]
+        ):
+            # 便携二进制形态的接入产物（2026-11-18 Qdrant 去 Docker 化）：scaffold
+            # 已把 config.yaml 与 .env 落位，配置入口应当可用；二进制本身单独下载，
+            # 在不在位由启动阶段的入口检查报出来，不在这里冒充「装好了」。
+            installed = True
         elif (directory / "runtime").is_dir() and self._runtime_binary(directory) is not None:
             # 便携二进制形态（2026-11-18 Qdrant 去 Docker 化）：既没有 compose、没有
             # 计划任务、没有 .venv、也没有 install_state.json，判据只能是「单体可执行
@@ -1829,11 +1816,9 @@ class ControlPlane:
                 # 未托管的服务（如 WSL 里的 FinanceCoffer，QUOT-403）一律不出
                 # 安装/启停按钮：Windows 侧没有它的进程归属证据，也不能杀。
                 "can_install": ctl.managed and dir_exists and registered and not installed,
-                # 目录还没有、但这是容器化模块且有接入模板：给「一键接入」，
-                # 由控制面生成 compose + .env，之后才有安装/启动按钮。
-                "can_scaffold": (
-                    bool(ctl.compose_file) and key in PEER_SCAFFOLDS and not dir_exists
-                ),
+                # 目录还没有、但这是有接入模板的模块：给「一键接入」，由控制面
+                # 生成部署文件（qdrant 已从 compose 改成 config.yaml + .env）。
+                "can_scaffold": key in PEER_SCAFFOLDS and not dir_exists,
                 # 按面判定（QUOT-481 缺陷 3）：只要存在未监听的服务面就允许补跑
                 # 启动（如 Wire 的 web 面挂了、mcp 面还活着），不再要求全部端口
                 # 先停下来；启动也只补跑那些面（见 _start）。
@@ -3427,7 +3412,12 @@ class ControlPlane:
         # 的模块会被判成「没装」，配置抽屉与写入接口一起失效。
         compose_ready = bool(ctl.compose_file) and (path.parent / ctl.compose_file).is_file()
         task_ready = bool(ctl.task_name) and path.parent.is_dir()
-        installed_ready = venv_ready or compose_ready or task_ready
+        # 便携二进制形态（2026-11-18 Qdrant 去 Docker 化）：没有 .venv、没有 compose、
+        # 也没有计划任务，判据是 scaffold 落下的 config.yaml + .env 在位。
+        scaffold_ready = key in PEER_SCAFFOLDS and all(
+            (path.parent / name).is_file() for name in PEER_SCAFFOLDS[key]
+        )
+        installed_ready = venv_ready or compose_ready or task_ready or scaffold_ready
         rows: dict[str, Any] = {}
         for name in ctl.config_keys:
             raw = values.get(name, "")

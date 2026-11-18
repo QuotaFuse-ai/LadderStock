@@ -115,6 +115,11 @@ _CLOSE_SOURCES: dict[str, Any] = {
                 "cooldown_sec": 60,
             }
             for dataset, tool in (
+                # 复盘情绪段直接依赖的两份池子（QUOT-347 起随 15:35 一起落）
+                ("broken_board", "broken_board_pool"),
+                ("yesterday_limit_up", "yesterday_limit_up_pool"),
+                # 行业维度退路：题材段没有 industry_board 时读它
+                ("industry_fund_flow", "board_fund_flow"),
                 ("consensus_forecast", "ths_eps_forecast"),
                 ("holder_trades", "holder_trades"),
                 ("institution_survey", "institution_survey"),
@@ -136,6 +141,26 @@ _CLOSE_SYNC: dict[str, Any] = {
             },
             "concept_board": {
                 "primary": "tickhub_concept",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+            },
+            # 复盘情绪段的两份池子
+            "broken_board": {
+                "primary": "tickhub_broken_board",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+            },
+            "yesterday_limit_up": {
+                "primary": "tickhub_yesterday_limit_up",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+            },
+            # 行业维度退路：题材段优先 industry_board，缺了读板块资金流
+            "industry_fund_flow": {
+                "primary": "tickhub_industry_fund_flow",
                 "fallback": [],
                 "watermark_field": "trade_date",
                 "mode": "replace",
@@ -226,6 +251,11 @@ def _close_transport(day: str, fund_flow_rows: dict[str, int] | None = None) -> 
         handlers={
             "limit_up_pool": lambda _params: tickhub_payload(_limit_rows(day)),
             "concept_boards": lambda _params: tickhub_payload(_concept_rows(day)),
+            # 复盘情绪段的两份池子（形状与涨停池同构）
+            "broken_board_pool": lambda _params: tickhub_payload(_limit_rows(day)),
+            "yesterday_limit_up_pool": lambda _params: tickhub_payload(_limit_rows(day)),
+            # 行业维度退路（板块行，require_code=False）
+            "board_fund_flow": lambda _params: tickhub_payload(_concept_rows(day)),
             "stock_fund_flow": fund_handler,
             # QUOT-446：事件类工具的返回形状（对象快照 / 行列表 / 包一层 klines）。
             "ths_eps_forecast": lambda params: tickhub_payload(
@@ -431,7 +461,9 @@ def test_run_job_detail_quotes_real_row_counts(
         SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
     )
 
-    assert "concept_board=ok(+30/300)" in result["detail"], result
+    # 每个数据集的计数都来自 run_sync 的真实字段（顺序按 CLOSE_SYNC_DATASETS）
+    for i, dataset in enumerate(CLOSE_SYNC_DATASETS, start=1):
+        assert f"{dataset}=ok(+{10 * i}/{100 * i})" in result["detail"], result
     assert "交易日 1 个" in result["detail"], result
     assert "分区 0" not in result["detail"], result
 
@@ -512,7 +544,7 @@ def test_sync_close_writes_daily_partitions_and_idempotent(
     first = run_job(
         SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
     )
-    assert first["status"] == "ok", first
+    assert first["status"] == "ok", first["detail"]
 
     from ladderstock.data import duckdb_store
 
@@ -532,7 +564,7 @@ def test_sync_close_writes_daily_partitions_and_idempotent(
     again = run_job(
         SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
     )
-    assert again["status"] == "ok", again
+    assert again["status"] == "ok", again["detail"]
     assert duckdb_store.dataset_rows("fund_flow") == before_total
     partitions = list((duckdb_store.archive_root() / "2026" / "11" / "04").glob("*.parquet"))
     assert {p.name for p in partitions} == {f"{d}.parquet" for d in CLOSE_SYNC_DATASETS}
@@ -563,6 +595,6 @@ def test_sync_close_fund_flow_count_grows_on_refresh(
     )
     after = duckdb_store.dataset_rows("fund_flow")
 
-    assert result["status"] == "ok", result
+    assert result["status"] == "ok", result["detail"]
     assert before == 2
     assert after > before

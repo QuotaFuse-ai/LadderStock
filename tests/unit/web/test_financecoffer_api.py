@@ -75,10 +75,13 @@ def test_summary_reports_two_sizes_and_doctor(client: TestClient) -> None:
     assert embedding["required"] is False
     assert "向量检索" in embedding["note"]
 
-    assert payload["doctor"]["total"] == 5
-    assert set(payload["doctor"]["services"]) == {"pg", "redis", "minio", "api", "embedding"}
-    # embedding 是可选件：没装时它不就绪，但不算「不可用」
-    assert payload["doctor"]["optional"] == ["embedding"]
+    # 七件体检（pg / redis / minio / api / embedding / mcp / etl）
+    assert payload["doctor"]["total"] == 7
+    assert set(payload["doctor"]["services"]) == {
+        "pg", "redis", "minio", "api", "embedding", "mcp", "etl"
+    }
+    # embedding / etl 是可选件：没装时它不就绪，但不算「不可用」
+    assert payload["doctor"]["optional"] == ["embedding", "etl"]
     assert set(payload["redis"]["platforms"]) == {"win-x64", "linux-x64", "linux-arm64", "macos-arm64"}
 
 

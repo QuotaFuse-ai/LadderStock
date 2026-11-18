@@ -326,6 +326,13 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("service", "uninstall"),
     ("service", "status"),
     ("service", "tray"),
+    # QUOT-597 符号检索与知识库运维：名称搜索交给本地符号索引（600202 直达）、
+    # 公告知识库按需增量刷新。五条叶子都实现了全局 `--output`，故登记进基线。
+    ("symbol", "lookup"),
+    ("symbol", "refresh"),
+    ("symbol", "status"),
+    ("knowledge", "status"),
+    ("knowledge", "sync-announcements"),
 )
 
 def _with_output_json(entry: Any) -> Any:

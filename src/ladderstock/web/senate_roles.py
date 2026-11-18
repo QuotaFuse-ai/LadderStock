@@ -164,12 +164,16 @@ MODEL_SUGGESTIONS: dict[str, list[str]] = {
 GLOBAL_WRITABLE_KEYS: tuple[str, ...] = ("llm_provider", "deep_think_llm", "quick_think_llm")
 
 #: `[llm.role_llms.<role>]` 的合法字段。StockSenate 1.0.4 起
-#: `schema._LLM_ROLE_ENTRY` 为 {provider, model, api_key, api_key_env, backend_url}：
-#: 每个角色可以各自挂一套网关地址与密钥，也可以继续共用全局 `[llm].api_key_env`。
-ROLE_ENTRY_FIELDS = frozenset({"provider", "model", "api_key", "api_key_env", "backend_url"})
+#: `schema._LLM_ROLE_ENTRY` 为 {provider, model, api_key, api_key_env, backend_url}，
+#: 但 **明文密钥永不落盘**：LS 这一侧只写环境变量名（`api_key_env`）与网关地址
+#: （`backend_url`），`api_key` 一律拒收（`SENATE_SECRET_REJECTED`）。
+ROLE_ENTRY_FIELDS = frozenset({"provider", "model", "api_key_env", "backend_url"})
 
 #: 逐角色可选字段（允许不写；写了才落 TOML）
-ROLE_OPTIONAL_FIELDS = ("api_key", "api_key_env", "backend_url")
+ROLE_OPTIONAL_FIELDS = ("api_key_env", "backend_url")
+
+#: 允许出现在请求里、但绝不允许写进 TOML 的字段（明文密钥）。
+SECRET_FIELDS = frozenset({"api_key"})
 
 
 # --------------------------------------------------------------------------- #
@@ -594,11 +598,17 @@ class SenateRoleModels:
         override = os.environ.get("LDST_SENATE_CONFIG_DIR", "").strip()
         if override:
             return Path(override)
+        explicit = Path(self.ctl.directory)
+        # 调用方给的 Senate 目录存在（默认就是 LS 自带的 file/modules/senate）：
+        # 配置就落在它自己的 config/ 下。只有目录不存在时，才回落到仓库里那份
+        # 已内置的 config，避免把一份配置写到与部署无关的地方。
+        if explicit.is_dir():
+            return explicit / "config"
         module = Path(__file__).resolve().parents[3] / "file" / "modules" / "senate" / "config"
         for name in (LLM_CONFIG_FILE, "agent_roles.toml"):
             if (module / name).is_file():
                 return module
-        return Path(self.ctl.directory) / "config"
+        return explicit / "config"
 
     @property
     def config_path(self) -> Path:
@@ -950,6 +960,13 @@ class SenateRoleModels:
                 raise SenateError("SENATE_INVALID_VALUE", f"角色 {role} 的值必须是对象")
             for field_name, value in instruction.items():
                 canonical_field = str(field_name)
+                if canonical_field in SECRET_FIELDS:
+                    # 明文密钥是硬红线：不校验长度、不截断，直接拒收并说清替代做法。
+                    raise SenateError(
+                        "SENATE_SECRET_REJECTED",
+                        f"角色 {role}.{canonical_field} 不接受明文密钥；"
+                        f"请改用 api_key_env（只写环境变量名，如 OPENAI_API_KEY）",
+                    )
                 if canonical_field not in ROLE_ENTRY_FIELDS:
                     raise SenateError(
                         "SENATE_INVALID_VALUE",
@@ -980,9 +997,13 @@ class SenateRoleModels:
                 if not text:
                     continue
                 if field_name == "api_key_env" and not _is_variable_name(text):
+                    # 「NAME=真实密钥」这种把值塞进变量名槽的写法按密钥违规报，
+                    # 别混成普通格式错误——调用方要能一眼看出这是红线。
+                    code = "SENATE_SECRET_REJECTED" if "=" in text else "SENATE_INVALID_VALUE"
                     raise SenateError(
-                        "SENATE_INVALID_VALUE",
-                        f"角色 {role}.api_key_env 只接受环境变量名（例如 OPENAI_API_KEY）",
+                        code,
+                        f"角色 {role}.api_key_env 只接受环境变量名（例如 OPENAI_API_KEY），"
+                        "不接受「变量名=值」的赋值写法",
                     )
                 if field_name == "backend_url":
                     if not text.lower().startswith(("http://", "https://")):
@@ -990,11 +1011,6 @@ class SenateRoleModels:
                             "SENATE_INVALID_VALUE",
                             f"角色 {role}.backend_url 必须以 http:// 或 https:// 开头",
                         )
-                if field_name == "api_key" and len(text) > 512:
-                    raise SenateError(
-                        "SENATE_INVALID_VALUE",
-                        f"角色 {role}.api_key 过长（上限 512 字符）",
-                    )
                 entry[field_name] = text
             clean[role] = entry
 

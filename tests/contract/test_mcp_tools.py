@@ -234,7 +234,7 @@ def test_sentiment_tool_envelope_marks_missing_data(tmp_path: Any) -> None:
     assert envelope["confidence"] == "low"
     sentiment = envelope["payload"]["sentiment"]
     assert sentiment["available"] is False
-    assert "涨停池为空" in sentiment["reason"]
+    assert "还没有归档" in sentiment["reason"]
 
 
 def test_validation_tool_partial_before_reconcile(tmp_path: Any) -> None:

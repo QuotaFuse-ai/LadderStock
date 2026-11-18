@@ -117,15 +117,33 @@ def test_reconcile_dead_process_marks_stopped(tmp_path: Path) -> None:
     assert record.stopped_at is not None
 
 
-def test_reconcile_alive_process_gets_adopted(tmp_path: Path) -> None:
+def test_reconcile_keeps_prev_session_origin_for_spawned_record(tmp_path: Path) -> None:
+    """上一任本程序拉起的活进程：崩溃恢复不换主人，origin 仍是 spawned。
+
+    这条护栏是防「重启后整批自有进程被降级成 adopted」：`_spawned_here` 只是
+    内存集合，重启后必然为空，只认它会把 pid 还指着本进程的模块也标成外部接管。
+    """
     ledger = Ledger(tmp_path / "supervisor" / "ledger.json")
     ledger.update(make_record())
     summary = ledger.reconcile(lambda record: "alive")
-    assert summary == {"wire": "adopted:still_running"}
+    assert summary == {"wire": "alive:spawned_prev_session"}
     record = ledger.record("wire")
     assert record is not None
     assert record.state == "running"
-    assert record.origin == "adopted"
+    assert record.origin == "spawned"
+    assert record.adopted_peer is False
+
+
+def test_reconcile_adopts_only_explicitly_adopted_records(tmp_path: Path) -> None:
+    """账本已标外部认领（adopted_peer）的活进程才对账成 adopted。"""
+    ledger = Ledger(tmp_path / "supervisor" / "ledger.json")
+    record = make_record()
+    record.adopted_peer = True
+    record.origin = "adopted"
+    ledger.update(record)
+    summary = ledger.reconcile(lambda record: "alive")
+    assert summary == {"wire": "adopted:still_running"}
+    assert ledger.record("wire").origin == "adopted"
 
 
 def test_reconcile_keeps_spawned_origin_for_this_session(tmp_path: Path) -> None:
