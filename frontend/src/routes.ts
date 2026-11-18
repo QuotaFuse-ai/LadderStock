@@ -43,6 +43,9 @@ export const ROUTE_PATHS = [
   '/industry/:name',
   '/signals',
   '/settings',
+  // 首次配置 / 子模块安装向导：便携包首次启动缺模块时由 App 引导跳转，
+  // 也可从设置页手动进入。普通用户的主要入口，但不在侧栏常驻。
+  '/setup',
   '/research',
   '/research/:code',
   '/research/:code/report',
@@ -66,6 +69,8 @@ export type RoutePath = (typeof ROUTE_PATHS)[number]
 export const NON_PAGE_ROUTES: readonly RoutePath[] = [
   '*',
   '/index.html',
+  // 首次配置向导：由首次启动拦截或设置页链入，不进侧栏
+  '/setup',
   // QUOT-431：旧深链保留可用，但落点是 `/my-stocks?tab=watch|hold`，不再单独挂屏
   '/watchlist',
   '/positions',
