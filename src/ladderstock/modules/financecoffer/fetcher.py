@@ -183,7 +183,8 @@ def fetch_pg(target: Path, *, root: Path | None = None) -> dict[str, Any]:
             shutil.copytree(src, target, dirs_exist_ok=True)
             if not _pgvector_present(target):
                 raise FetchError(
-                    f"从 {src} 复制后目标里没有 pgvector（vector.dll / vector.control），目录结构不匹配"
+                    f"从 {src} 复制后目标里没有 pgvector（vector.dll / vector.control）"
+                    f"，目录结构不匹配"
                 )
             return {
                 "bytes": _tree_size(target),

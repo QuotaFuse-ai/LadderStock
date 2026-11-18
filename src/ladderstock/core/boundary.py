@@ -437,7 +437,8 @@ PEER_CONTROL: dict[str, PeerControl] = {
         env_filename=".env",
         config_notes=(
             "TickHub-CN 的 admin 健康检查在 /healthz（admin_api/app.py:291）。",
-            "CN 源码只认 ADMIN_PORT 这一个可写项（日志键实际名是 LOG_LEVEL，不是 TICKHUB_CN_LOG_LEVEL）。",
+            "CN 源码只认 ADMIN_PORT 这一个可写项（日志键实际名是 LOG_LEVEL，"
+            "不是 TICKHUB_CN_LOG_LEVEL）。",
             "MCP_HTTP_PORT、TICKHUB_CN_LOG_LEVEL 源码不读、写了不生效，已从可写位移除；"
             "MCP 端口在启动时用 CLI --port 指定（默认 8000，测试服由控制面按 offset 平移）。",
         ),

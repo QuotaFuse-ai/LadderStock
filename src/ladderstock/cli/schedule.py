@@ -1382,7 +1382,8 @@ def _run_watch_alert(
             arrow = "↑" if change > 0 else "↓"
             hits.append(
                 f"- {row.get('name') or code}（{code}）{price_f:.2f} 元，"
-                f"{arrow} {change:+.2f}%（阈值 {threshold:.0f}%；数据日期 {snapshot_day.isoformat()}）"
+                f"{arrow} {change:+.2f}%（阈值 {threshold:.0f}%；"
+                f"数据日期 {snapshot_day.isoformat()}）"
             )
 
     if not hits:
