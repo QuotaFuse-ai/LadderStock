@@ -36,6 +36,27 @@ DEFAULT_MINIO_URL = "https://dl.min.io/server/minio/release/windows-amd64/minio.
 _PROBE_REDIS_ZIPS = (r"D:\workplace\ruanjian\dl\Redis-8.10.2-cygwin.zip",)
 _PROBE_MINIO = (r"D:\workplace\ruanjian\minio\minio.exe",)
 _PROBE_FC_SRC = (r"D:\workplace\FinanceCoffer",)
+#: 已装好的 conda PG 运行时（含 pgvector）。便携包随包带一份即可，不必每次走网络。
+_PROBE_PG_DIRS = (r"D:\workplace\LadderStock\file\modules\financecoffer\runtime\pg",)
+
+
+def _pgvector_present(directory: Path) -> bool:
+    """目录内是否自带 pgvector（看产物，不看全局 root）。
+
+    `pg_runtime.pgvector_status(root)` 是从 `<root>/runtime/pg` 推导的，复制到任意位置
+    时推不出来；校验复制结果只能直接看文件。
+    """
+    if not (directory / "Library" / "lib" / "vector.dll").is_file() and not (
+        directory / "lib" / "vector.dll"
+    ).is_file():
+        return False
+    for candidate in (
+        directory / "Library" / "share" / "extension" / "vector.control",
+        directory / "share" / "extension" / "vector.control",
+    ):
+        if candidate.is_file():
+            return True
+    return False
 _PROBE_EMBED = (
     r"D:\workplace\ruanjian\embedding\models\bge-m3",
     r"D:\workplace\LadderStock\file\models\bge-small-zh-v1.5",
@@ -144,6 +165,25 @@ def fetch_pg(target: Path, *, root: Path | None = None) -> dict[str, Any]:
                 "bytes": _tree_size(target),
                 "source": "already-present",
                 "detail": "conda 环境与 pgvector 均已就位，跳过",
+            }
+        # 复用：本机/随包已经有一份 conda PG（含 pgvector）时直接复制，
+        # 不再重跑 conda 解析与下载。pgvector 必须同链编译，所以只认 conda-meta 结构的源。
+        dir_env = _first_env("LDST_FC_PG_DIR")
+        candidates = [Path(dir_env)] if dir_env else [Path(p) for p in _PROBE_PG_DIRS]
+        for src in candidates:
+            if not (src / "conda-meta").is_dir():
+                continue
+            if src.resolve() == Path(target).resolve():
+                continue
+            if dir_env and not src.is_dir():
+                raise FetchError(f"LDST_FC_PG_DIR 指向的目录不存在：{src}")
+            shutil.copytree(src, target, dirs_exist_ok=True)
+            if not _pgvector_present(target):
+                raise FetchError(f"从 {src} 复制后目标里没有 pgvector（vector.dll / vector.control），目录结构不匹配")
+            return {
+                "bytes": _tree_size(target),
+                "source": f"local-dir:{src}",
+                "detail": "从既有 conda PG 运行时复制（含 pgvector），未走网络",
             }
         result = pg_runtime.install(root, target=target)
         return {
