@@ -98,6 +98,7 @@ from ladderstock.web.platform import build_platform_router, request_bound_port
 
 
 from ladderstock.web.financecoffer_api import build_financecoffer_router
+from ladderstock.web.setup_api import build_router as build_setup_router
 from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
@@ -2176,6 +2177,13 @@ def create_app(
     # 安装（后台任务 + 进度轮询）、启停、卸载。闸门同控制面：安装/卸载/启停
     # 都是真命令真落盘，来源证据（回环 Origin 或 X-LDST-Client）必不可少。
     app.include_router(build_financecoffer_router())
+
+    # ------------------------------------- 首次配置 / 子模块安装向导面
+    #
+    # `/api/setup/*`：六个子模块（TickHub-CN/US、Wire、Senate、ProxyFleet、
+    # FinanceCoffer 增强包）的检测、安装、进度、卸载。便携包首次启动缺模块
+    # 时前端切到向导页，普通用户点一次「开始安装」即可，不需要指导。
+    app.include_router(build_setup_router())
 
     # ------------------------------------------- 自愈状态面（QUOT-491 / 482-C）
     #

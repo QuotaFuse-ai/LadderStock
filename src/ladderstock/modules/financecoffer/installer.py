@@ -27,6 +27,9 @@ from ladderstock.modules.financecoffer import layout, manifest, state
 #: 取件回调签名：(组件 key, 目标目录) -> 数量的字节；抛异常即视为该组件失败
 Fetcher = Callable[[str, Path], int]
 
+#: 进度回调签名：(0.0–1.0, 一句人话)。向导页靠它画进度条；回调抛异常不影响安装。
+Progress = Callable[[float, str], None]
+
 #: FinanceCoffer API 的运行依赖。只装源码不装这些，`/health` 都起不来，
 #: 「结构化查询照常可用」就是句空话——所以它们属于安装的一部分，不是用户自己 pip。
 API_DEPS: tuple[str, ...] = (
@@ -131,10 +134,12 @@ def install(
     confirm: bool,
     fetch: Fetcher | None = None,
     allow_system_drive: bool = False,
+    on_progress: Progress | None = None,
 ) -> dict[str, Any]:
     """按完整包一条路径安装，返回每步结果。
 
     `confirm` 必须是 True：组件是 GB 级的，没有「默默开始下载」这种选项。
+    `on_progress` 按组件体积加权上报（PG 848MB 和 API 40MB 不能各占一半进度）。
     """
     preflight = plan(root, with_embedding=with_embedding, allow_system_drive=allow_system_drive)
     if not confirm:
@@ -164,6 +169,16 @@ def install(
         }
 
     root_path = preflight.target
+
+    def _emit(fraction: float, message: str) -> None:
+        """进度上报：回调异常一律吞掉，不能因为页面断了就中断安装。"""
+        if on_progress is None:
+            return
+        try:
+            on_progress(min(max(fraction, 0.0), 1.0), message)
+        except Exception:  # noqa: BLE001
+            pass
+
     try:
         state.write_state(root, "planning", detail="已确认体积与落盘位置", step="plan")
         # 重装 / 补齐组件时先把服务停掉：postgres.exe、minio.exe 在跑，文件被占用复制会失败
@@ -178,9 +193,18 @@ def install(
             (root_path / "runtime" / "redis" / name).mkdir(parents=True, exist_ok=True)
 
         state.write_state(root, "fetching", detail="开始取件", step="fetch")
+        _emit(0.05, "开始安装组件")
         fetcher = fetch or _default_fetch
         fetched: list[dict[str, Any]] = []
-        for component in preflight.plan.components:
+        # 进度按体积加权：PG 848MB 与 API 40MB 不能各占同样一格
+        total_mb = max(preflight.plan.total_mb, 1)
+        done_mb = 0
+        total_count = len(preflight.plan.components)
+        for position, component in enumerate(preflight.plan.components, start=1):
+            _emit(
+                0.05 + 0.70 * done_mb / total_mb,
+                f"正在安装 {component.label}（{position}/{total_count}，{component.size_mb}MB）",
+            )
             target = _component_target(root, component.key)
             target.mkdir(parents=True, exist_ok=True)
             try:
@@ -190,11 +214,18 @@ def install(
             except Exception as exc:  # noqa: BLE001 - 取件失败要能落到状态文件
                 raise BundleError(f"组件 {component.key} 取件失败：{exc}") from exc
             fetched.append({"key": component.key, "bytes": size, "target": str(target)})
+            done_mb += component.size_mb
+            _emit(
+                0.05 + 0.70 * done_mb / total_mb,
+                f"{component.label} 完成（{component.size_mb}MB）",
+            )
 
         state.write_state(root, "initializing", detail="初始化数据库与数据目录", step="initdb")
+        _emit(0.78, "初始化数据库与数据目录")
         _write_conf(root)
 
         state.write_state(root, "configuring", detail="写入配置", step="configure")
+        _emit(0.85, "写入配置并安装 API 依赖（这一步较慢）")
         deps = _install_deps(root, with_embedding)
         detail = "增强包已就绪" if deps.get("ok") else f"增强包已就绪，但依赖未装齐：{deps.get('detail')}"
         state.write_state(
@@ -205,6 +236,7 @@ def install(
             with_embedding=with_embedding,
             components=[item["key"] for item in fetched],
         )
+        _emit(1.0, "增强包安装完成")
         return {
             "ok": True,
             "status": "ready",
