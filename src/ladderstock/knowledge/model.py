@@ -60,9 +60,7 @@ def normalize_market(raw: Any) -> str:
     """market 只接受 SH | SZ | BJ（大小写宽容），其余一律拒绝。"""
     text = str(raw or "").strip().upper()
     if text not in MARKETS:
-        raise KnowledgeError(
-            f"market 非法：{raw!r}（只接受 {' | '.join(MARKETS)}）"
-        )
+        raise KnowledgeError(f"market 非法：{raw!r}（只接受 {' | '.join(MARKETS)}）")
     return text
 
 
@@ -178,8 +176,11 @@ class Dossier:
 
     def render(self) -> str:
         """整份档案文本：frontmatter + 正文（`sources` 为空时渲染 `[]`）。"""
-        return self.render_frontmatter() + "\n" + (self.body or "") + (
-            "" if (self.body or "").endswith("\n") else "\n"
+        return (
+            self.render_frontmatter()
+            + "\n"
+            + (self.body or "")
+            + ("" if (self.body or "").endswith("\n") else "\n")
         )
 
 
@@ -189,9 +190,7 @@ def _flow_list(items: list[dict[str, Any]]) -> str:
         return "[]"
     parts = []
     for item in items:
-        inner = ", ".join(
-            f'{key}: "{value}"' for key, value in sorted(item.items())
-        )
+        inner = ", ".join(f'{key}: "{value}"' for key, value in sorted(item.items()))
         parts.append("{" + inner + "}")
     return "[" + ", ".join(parts) + "]"
 

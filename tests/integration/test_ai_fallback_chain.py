@@ -26,6 +26,7 @@ KEY_ENV = "TEST_CHAIN_API_KEY"
 # 假上游
 # --------------------------------------------------------------------------- #
 
+
 def make_config(**overrides: Any) -> fallback.AiConfig:
     sections = {
         name: fallback.SectionConfig(prompt_file=f"prompts/{name}.md", output_schema="")
@@ -79,6 +80,7 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> None:
 # 用例
 # --------------------------------------------------------------------------- #
 
+
 def test_network_then_quota_then_success(tmp_path: Any, configured: None) -> None:
     """m1 网络失败 → m2 额度受限 → m3 成功：只在 network/quota 时沿链前进。"""
     calls: list[str] = []
@@ -92,9 +94,7 @@ def test_network_then_quota_then_success(tmp_path: Any, configured: None) -> Non
             return _reply("", status=429)
         return _reply(_json_ok(_section_of(body)))
 
-    run = _orchestrator(handler, make_config(), tmp_path).run(
-        DAY, _metrics(), only="sentiment"
-    )
+    run = _orchestrator(handler, make_config(), tmp_path).run(DAY, _metrics(), only="sentiment")
 
     assert calls == ["m1", "m2", "m3"]
     assert run.exit_code == EXIT_OK
@@ -123,17 +123,18 @@ def test_format_error_retries_same_model_once(tmp_path: Any, configured: None) -
             return _reply(_json_ok(_section_of(body)))
         return _reply("纯文本不该被用到")
 
-    run = _orchestrator(handler, make_config(), tmp_path).run(
-        DAY, _metrics(), only="sentiment"
-    )
+    run = _orchestrator(handler, make_config(), tmp_path).run(DAY, _metrics(), only="sentiment")
 
     assert calls == [("m1", True), ("m1", True)]
     assert run.exit_code == EXIT_OK
     assert run.sections[0]["status"] == "ok"
     assert run.sections[0]["mode"] == "structured"
-    modes = [item["mode"] for item in checkpoint.section_state(
-        checkpoint.load(DAY, tmp_path), "sentiment"
-    )["attempts"]]
+    modes = [
+        item["mode"]
+        for item in checkpoint.section_state(checkpoint.load(DAY, tmp_path), "sentiment")[
+            "attempts"
+        ]
+    ]
     assert modes == ["structured", "structured"]
 
 
@@ -149,9 +150,7 @@ def test_all_fail_degrades_to_plain_text(tmp_path: Any, configured: None) -> Non
             return _reply("{}")  # 两次都不可解析，格式错误不换模型
         return _reply("情绪回暖，高位股有分歧。")
 
-    run = _orchestrator(handler, make_config(), tmp_path).run(
-        DAY, _metrics(), only="sentiment"
-    )
+    run = _orchestrator(handler, make_config(), tmp_path).run(DAY, _metrics(), only="sentiment")
 
     assert calls == [True, True, False]
     assert run.exit_code == EXIT_AI_DEGRADED
@@ -212,9 +211,7 @@ def test_retry_failed_only_fills_missing_sections(tmp_path: Any, configured: Non
         asked.append(_section_of(body))
         return _reply(_json_ok(_section_of(body)))
 
-    second = _orchestrator(recording, config, tmp_path).run(
-        DAY, _metrics(), retry_failed=True
-    )
+    second = _orchestrator(recording, config, tmp_path).run(DAY, _metrics(), retry_failed=True)
 
     assert asked == ["theme"]
     assert second.generated == ["theme"]

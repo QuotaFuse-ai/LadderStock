@@ -280,8 +280,7 @@ class SymbolPlane:
             payload=payload,
             source="ladderstock",
             source_detail=(
-                f"local symbol cache: {'、'.join(NAME_DATASETS)}"
-                f"（{len(symbols)} 只带名称的标的）"
+                f"local symbol cache: {'、'.join(NAME_DATASETS)}（{len(symbols)} 只带名称的标的）"
             ),
             fetched_at=_now(),
             freshness="cached",
@@ -317,6 +316,7 @@ class SymbolPlane:
 # --------------------------------------------------------------------------- #
 # 闸门与路由
 # --------------------------------------------------------------------------- #
+
 
 async def _guard(request: Request) -> None:
     """回环来源 + `Host` 白名单（照 `/api/research/*` 的形状，只读面不看写证据）。"""

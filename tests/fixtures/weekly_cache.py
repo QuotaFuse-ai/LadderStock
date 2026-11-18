@@ -187,9 +187,7 @@ def seed_week(root: Path) -> Path:
         TUE: {name: "ok" for name in ("sentiment", "capital", "theme", "dragon_tiger", "leader")},
     }
     for day, statuses in checkpoints.items():
-        sections: dict[str, Any] = {
-            name: {"status": status} for name, status in statuses.items()
-        }
+        sections: dict[str, Any] = {name: {"status": status} for name, status in statuses.items()}
         sections["sentiment"]["narrative"] = [CHECKPOINT_NARRATIVE]
         atomic_write(
             root / "state" / "ai_checkpoint" / f"{day}.json",
@@ -204,12 +202,30 @@ def seed_week(root: Path) -> Path:
 
 #: 逐日情绪指标（core/sentiment.py 同一口径）：温度 / 晋级率 / 封板率 / 涨停 / 炸板
 DAY_METRICS: dict[str, dict[str, Any]] = {
-    MON: {"temperature": 52.5, "promotion_rate": 50.0, "seal_rate": 66.7, "limit_up_count": 2,
-          "broken_count": 1, "max_board": 2},
-    TUE: {"temperature": 90.0, "promotion_rate": 100.0, "seal_rate": 100.0, "limit_up_count": 4,
-          "broken_count": 0, "max_board": 3},
-    WED: {"temperature": 45.8, "promotion_rate": 33.3, "seal_rate": 50.0, "limit_up_count": 2,
-          "broken_count": 2, "max_board": 4},
+    MON: {
+        "temperature": 52.5,
+        "promotion_rate": 50.0,
+        "seal_rate": 66.7,
+        "limit_up_count": 2,
+        "broken_count": 1,
+        "max_board": 2,
+    },
+    TUE: {
+        "temperature": 90.0,
+        "promotion_rate": 100.0,
+        "seal_rate": 100.0,
+        "limit_up_count": 4,
+        "broken_count": 0,
+        "max_board": 3,
+    },
+    WED: {
+        "temperature": 45.8,
+        "promotion_rate": 33.3,
+        "seal_rate": 50.0,
+        "limit_up_count": 2,
+        "broken_count": 2,
+        "max_board": 4,
+    },
 }
 
 #: 涨跌分布九箱（合计 11 个样本：涨 6 / 跌 4 / 平 1）

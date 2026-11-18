@@ -24,14 +24,15 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 RUNNER_ENV = "LDST_SCHEDULE_IN_WEB"
 KINDS_ENV = "LDST_SCHEDULE_KINDS"
 
-_RUNNER: "ScheduleRunner | None" = None
+_RUNNER: ScheduleRunner | None = None
 _RUNNER_LOCK = threading.Lock()
 
 
@@ -46,7 +47,7 @@ def _all_kinds() -> tuple[str, ...]:
 DEFAULT_KINDS: tuple[str, ...] = _all_kinds()
 
 
-_RUNNER: "ScheduleRunner | None" = None
+_RUNNER: ScheduleRunner | None = None
 _RUNNER_LOCK = threading.Lock()
 
 
@@ -72,7 +73,6 @@ class ScheduleRunner:
             return _all_kinds()
         wanted = {part.strip() for part in raw.split(",") if part.strip()}
         return tuple(kind for kind in _all_kinds() if kind in wanted)
-
 
     def enabled_by_env(self) -> bool:
         return os.environ.get(RUNNER_ENV, "1").strip().lower() not in ("0", "false", "no", "off")

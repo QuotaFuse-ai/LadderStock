@@ -20,10 +20,11 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,18 @@ _WEEKS_RE = re.compile(r"(?<![\d.])(\d{1,2}|一|两|二|三|四|五|六|七|十|
 _MONTHS_RE = re.compile(r"(?<![\d.])(\d{1,2}|一|两|二|三|四|五|六|七|十)\s*(个月|月)")
 
 _CN_NUM = {
-    "一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7,
-    "八": 8, "九": 9, "十": 10, "半个": 0.5,
+    "一": 1,
+    "两": 2,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+    "半个": 0.5,
 }
 
 #: 频率判定词（先匹配者优先）
@@ -246,9 +257,7 @@ def parse_frequency(text: str) -> str | None:
     return None
 
 
-def parse_symbols(
-    text: str, resolver: Callable[[str], str | None] | None = None
-) -> list[str]:
+def parse_symbols(text: str, resolver: Callable[[str], str | None] | None = None) -> list[str]:
     """抽标的：先 6 位代码，再交给 `resolver` 把中文名换成代码（调用方注入，便于测试）。"""
     codes = _CODE_RE.findall(text or "")
     if codes:
@@ -311,7 +320,9 @@ def _topic_of(text: str) -> str:
     if not match:
         return ""
     tail = text[match.end() :]
-    topic = re.split(r"[，,。；;！!？?]|每天|盘后|盘中|一周|两周|一个月|有异动", tail)[0].strip(" 　")
+    topic = re.split(r"[，,。；;！!？?]|每天|盘后|盘中|一周|两周|一个月|有异动", tail)[0].strip(
+        " 　"
+    )
     return topic[:20]
 
 
@@ -380,7 +391,7 @@ def set_status(
 def question_for(plan: Plan) -> str:
     """推进时的提问：把三步写死进 prompt，避免每轮跑成「泛泛聊两句」。"""
     target = plan.symbol_label()
-        # 有标的就逐只问；没标的按整体主题问
+    # 有标的就逐只问；没标的按整体主题问
     return (
         f"持续跟踪：{target}。\n"
         "1) 先用工具取数：行情、资金流、板块位置；\n"
@@ -476,7 +487,9 @@ def tick(
             now=moment,
             data_root=data_root,
         )
-        results.append({"id": plan.id, "status": outcome.get("status") or "ok", "path": outcome.get("path")})
+        results.append(
+            {"id": plan.id, "status": outcome.get("status") or "ok", "path": outcome.get("path")}
+        )
     return results
 
 
@@ -487,7 +500,9 @@ def tick(
 
 def render(plans: Iterable[Plan] | None = None, *, limit: int = MAX_ACTIVE) -> str:
     """注入段：让模型知道手上还有哪些长期目标。空表返回空串。"""
-    listed = [plan for plan in (plans if plans is not None else active()) if plan.status == STATUS_ACTIVE]
+    listed = [
+        plan for plan in (plans if plans is not None else active()) if plan.status == STATUS_ACTIVE
+    ]
     if not listed:
         return ""
     lines = [SECTION_HEADER]
@@ -508,7 +523,9 @@ def as_dict(plans: Iterable[Plan] | None = None) -> dict[str, Any]:
     return {
         "count": len(listed),
         "active": len([plan for plan in listed if plan.status == STATUS_ACTIVE]),
-        "items": [plan.to_dict() for plan in sorted(listed, key=lambda p: p.created_at, reverse=True)],
+        "items": [
+            plan.to_dict() for plan in sorted(listed, key=lambda p: p.created_at, reverse=True)
+        ],
     }
 
 

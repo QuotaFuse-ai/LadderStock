@@ -73,9 +73,7 @@ def _patch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake: _FakeClient) -
 
     async def _ask_agent(**kwargs: Any) -> dict[str, Any]:
         user = f"{kwargs.get('context') or ''}\n{kwargs.get('question') or ''}"
-        fake.calls.append(
-            ("openai:model-a", str(kwargs.get("system_prompt") or ""), user, False)
-        )
+        fake.calls.append(("openai:model-a", str(kwargs.get("system_prompt") or ""), user, False))
         if fake.exc is not None:
             # agent 路径把上游异常统一收敛成 `AssistantFailure`；这里按同一映射抛，
             # 让失败态用例测的还是路由的降级逻辑，而不是 httpx 的异常类型。
@@ -315,9 +313,7 @@ def test_source_notice_text_matches_chat_source_note_when_fetch_attempted() -> N
     result = {"reply": "现价没取到。", "model": "model-a", "channel": "http", "sources": []}
     out = assistant_module._success_response(result, [], plan=plan)
     source_notices = [
-        b
-        for b in out["blocks"]
-        if b["type"] == "notice" and b["payload"].get("section") == "来源"
+        b for b in out["blocks"] if b["type"] == "notice" and b["payload"].get("section") == "来源"
     ]
     assert len(source_notices) == 1
     expected = chat_module._source_note(has_data=False, sources=[])

@@ -67,9 +67,7 @@ def _connect() -> Any:
     try:
         import psycopg
     except ImportError as exc:  # pragma: no cover - 缺依赖时退回 FC MCP
-        raise AnnouncementsUnavailable(
-            f"psycopg 未安装，无法直读 FC 的结构化库：{exc}"
-        ) from exc
+        raise AnnouncementsUnavailable(f"psycopg 未安装，无法直读 FC 的结构化库：{exc}") from exc
     try:
         return psycopg.connect(pg_dsn(), connect_timeout=5)
     except Exception as exc:  # noqa: BLE001 - 网络/信任配置失败都按不可用
@@ -86,7 +84,9 @@ class AnnouncementRow:
     event_id: str
 
 
-def fetch_announcements(symbol: str | None = None, *, limit: int = DEFAULT_LIMIT) -> list[AnnouncementRow]:
+def fetch_announcements(
+    symbol: str | None = None, *, limit: int = DEFAULT_LIMIT
+) -> list[AnnouncementRow]:
     """从 ``dwd.stock_announcement`` 读公告；只要正文非空的。"""
 
     bounded = max(1, min(int(limit), MAX_LIMIT))
@@ -184,7 +184,9 @@ def symbols() -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def chunk_body(text: str, *, size: int = DEFAULT_CHUNK_CHARS, overlap: int = OVERLAP_CHARS) -> list[str]:
+def chunk_body(
+    text: str, *, size: int = DEFAULT_CHUNK_CHARS, overlap: int = OVERLAP_CHARS
+) -> list[str]:
     """按字符窗口切块，尽量在句号/分号/换行处收口，保留原始换行结构。"""
 
     body = (text or "").replace("\r", "")
@@ -256,11 +258,11 @@ def sync_symbol(symbol: str, *, limit: int = DEFAULT_LIMIT, purge: bool = True) 
 
     from ladderstock.knowledge.vectors import (
         VectorsUnavailable,
+        _request,
         collection_name,
         embed,
         ensure_collection,
         point_id,
-        _request,
     )
 
     rows = fetch_announcements(symbol, limit=limit)
@@ -279,7 +281,7 @@ def sync_symbol(symbol: str, *, limit: int = DEFAULT_LIMIT, purge: bool = True) 
         named = ensure_collection(len(vectors[0]))
         deleted = _delete_symbol(symbol) if purge else 0
         points = []
-        for (row, index, chunk), vector in zip(pieces, vectors):
+        for (row, index, chunk), vector in zip(pieces, vectors, strict=False):
             section = f"公告:{row.event_id or row.id}"
             points.append(
                 {
@@ -355,7 +357,13 @@ def search(
 ) -> list[AnnouncementHit]:
     """语义检索公告切片；向量层不可用抛 AnnouncementsUnavailable。"""
 
-    from ladderstock.knowledge.vectors import VectorsUnavailable, _request, collection_name, embed_one, ensure_collection
+    from ladderstock.knowledge.vectors import (
+        VectorsUnavailable,
+        _request,
+        collection_name,
+        embed_one,
+        ensure_collection,
+    )
 
     text = (query or "").strip()
     if not text:
@@ -371,7 +379,11 @@ def search(
             "filter": {
                 "must": [
                     {"key": "source", "match": {"value": SOURCE}},
-                    *([{"key": "symbol", "match": {"value": str(symbol).strip()}}] if symbol else []),
+                    *(
+                        [{"key": "symbol", "match": {"value": str(symbol).strip()}}]
+                        if symbol
+                        else []
+                    ),
                 ]
             },
         }
@@ -380,7 +392,7 @@ def search(
         raise AnnouncementsUnavailable(str(exc)) from exc
 
     hits: list[AnnouncementHit] = []
-    for item in ((result or {}).get("result") or []):
+    for item in (result or {}).get("result") or []:
         payload = item.get("payload") or {}
         hits.append(
             AnnouncementHit(
@@ -406,7 +418,10 @@ def available() -> dict[str, Any]:
         result = _request(
             "POST",
             f"/collections/{collection_name()}/points/count",
-            json_body={"filter": {"must": [{"key": "source", "match": {"value": SOURCE}}]}, "exact": True},
+            json_body={
+                "filter": {"must": [{"key": "source", "match": {"value": SOURCE}}]},
+                "exact": True,
+            },
         )
         info["points"] = int(((result or {}).get("result") or {}).get("count") or 0)
         info["ok"] = True

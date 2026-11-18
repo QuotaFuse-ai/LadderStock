@@ -21,6 +21,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Any
 
 from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, Runner
@@ -30,9 +31,9 @@ from openai import AsyncOpenAI
 DEFAULT_MAX_TURNS = 6
 
 #: 事件名（装配层按这几个分支处理）
-EVENT_TEXT = "text"      # (名称, {"text": 累积全文})
-EVENT_TOOL = "tool"      # (名称, {"name", "label", "state"})
-EVENT_FINAL = "final"    # (名称, {"text": 全文, "metrics": {...}, "sources": [...]})
+EVENT_TEXT = "text"  # (名称, {"text": 累积全文})
+EVENT_TOOL = "tool"  # (名称, {"name", "label", "state"})
+EVENT_FINAL = "final"  # (名称, {"text": 全文, "metrics": {...}, "sources": [...]})
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ class ToolSpec:
     label: str
     description: str
     params_schema: dict[str, Any]
-    invoke: Callable[[dict[str, Any]], "ToolResult"]
+    invoke: Callable[[dict[str, Any]], ToolResult]
 
 
 @dataclass
@@ -94,9 +95,9 @@ def _fnum(value: Any) -> float | None:
 
 
 def _now_iso() -> str:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
 
 
 def build_tools(data_root: Any) -> list[ToolSpec]:
@@ -131,7 +132,10 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
 
         code = str(args.get("code") or "").strip()
         codes = [c.strip() for c in code.split(",") if c.strip()] or [
-            "sh000001", "sh000300", "sz399001", "sz399006"
+            "sh000001",
+            "sh000300",
+            "sz399001",
+            "sz399006",
         ]
         try:
             registry = ProviderRegistry(root=data_root)
@@ -246,7 +250,9 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
 
         return Path(data_root) if data_root else None
 
-    def _read(dataset: str, *, code: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    def _read(
+        dataset: str, *, code: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
         from ladderstock.data import duckdb_store
 
         try:
@@ -424,7 +430,11 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         }
         sources = [{"name": source_name, "fetched_at": _now_iso(), "as_of": latest}]
         return ToolResult(
-            text=json.dumps({"code": code, "days": len(table_rows), "rows": rows}, ensure_ascii=False, default=str),
+            text=json.dumps(
+                {"code": code, "days": len(table_rows), "rows": rows},
+                ensure_ascii=False,
+                default=str,
+            ),
             metrics=metrics,
             sources=sources,
         )
@@ -442,7 +452,10 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 "type": "object",
                 "properties": {
                     "symbol": {"type": "string", "description": "股票代码，如 600519"},
-                    "days": {"type": "integer", "description": "最近多少个交易日，默认 10，上限 40"},
+                    "days": {
+                        "type": "integer",
+                        "description": "最近多少个交易日，默认 10，上限 40",
+                    },
                 },
                 "required": ["symbol"],
                 "additionalProperties": False,
@@ -478,7 +491,13 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 "用户问「今天什么板块强」「哪个概念在涨」时调用。"
             ),
             datasets={"industry": "industry_board", "concept": "concept_board"},
-            fields=["board_name", "change_pct", "main_net_inflow", "leader_name", "leader_change_pct"],
+            fields=[
+                "board_name",
+                "change_pct",
+                "main_net_inflow",
+                "leader_name",
+                "leader_change_pct",
+            ],
             columns=["板块", "涨跌幅(%)", "主力净流入(元)", "领涨股", "领涨股涨幅(%)"],
             default_limit=15,
             caption="板块与概念排行",
@@ -750,7 +769,10 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             params_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "股票名称、简称、拼音首字母或代码片段"},
+                    "query": {
+                        "type": "string",
+                        "description": "股票名称、简称、拼音首字母或代码片段",
+                    },
                     "limit": {"type": "integer", "description": "返回条数上限，默认 8"},
                 },
                 "required": ["query"],
@@ -819,7 +841,7 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 "按工具名或数据集名从现役链路取一次真实数据，覆盖所有已登记数据集"
                 "（A股行情/K线/财务/资金/公告/研报、美股、宏观、资讯等）。"
                 "用户问到具体数据时必须用它取，不得凭记忆回答；取不到就如实说未取到。\n"
-                "params 传上游工具自己的入参（如 {\"symbol\": \"600000\"} / {\"symbol\": \"AAPL\"}）；"
+                'params 传上游工具自己的入参（如 {"symbol": "600000"} / {"symbol": "AAPL"}）；'
                 "美股工具会自动补 commercial_use=false。\n"
                 "可用数据集（peer：数据集名）：\n" + _catalog_hint()
             ),
@@ -893,7 +915,10 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 "properties": {
                     "symbol": {"type": "string", "description": "6 位 A 股代码，如 600519"},
                     "query_text": {"type": "string", "description": "要检索的语义问题或关键词"},
-                    "year_range": {"type": "string", "description": "可选。公告年份区间，如 2024-2026"},
+                    "year_range": {
+                        "type": "string",
+                        "description": "可选。公告年份区间，如 2024-2026",
+                    },
                 },
                 "required": ["symbol", "query_text"],
                 "additionalProperties": False,
@@ -1047,25 +1072,34 @@ async def run_agent_stream(
                 call_id = getattr(raw, "call_id", "") or ""
                 tool_name = getattr(raw, "name", "") or ""
                 by_call_id[call_id] = tool_name
-                yield EVENT_TOOL, {
-                    "name": tool_name,
-                    "label": label_of.get(tool_name, tool_name),
-                    "state": "running",
-                }
+                yield (
+                    EVENT_TOOL,
+                    {
+                        "name": tool_name,
+                        "label": label_of.get(tool_name, tool_name),
+                        "state": "running",
+                    },
+                )
             elif name == "tool_output":
                 call_id = str(raw.get("call_id") or "") if isinstance(raw, dict) else ""
                 tool_name = by_call_id.get(call_id, "")
-                yield EVENT_TOOL, {
-                    "name": tool_name,
-                    "label": label_of.get(tool_name, tool_name),
-                    "state": "done",
-                }
+                yield (
+                    EVENT_TOOL,
+                    {
+                        "name": tool_name,
+                        "label": label_of.get(tool_name, tool_name),
+                        "state": "done",
+                    },
+                )
             continue
 
     final = getattr(result, "final_output", None)
     final_text = str(final) if final is not None else text
-    yield EVENT_FINAL, {
-        "text": final_text,
-        "metrics": dict(sink.get("metrics") or {}),
-        "sources": list(sink.get("sources") or []),
-    }
+    yield (
+        EVENT_FINAL,
+        {
+            "text": final_text,
+            "metrics": dict(sink.get("metrics") or {}),
+            "sources": list(sink.get("sources") or []),
+        },
+    )

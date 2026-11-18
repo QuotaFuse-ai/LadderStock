@@ -190,9 +190,7 @@ def test_user_stop_persists_aborted_and_disconnect_is_done(
         "complete",
         _slow_complete(chat_channel._ACTIVE_TURNS),
     )
-    monkeypatch.setattr(
-        chat_channel, "load_channel", lambda _root=None: _ok_channel()
-    )
+    monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _ok_channel())
 
     async def never_disconnected() -> bool:
         return False
@@ -219,9 +217,7 @@ def test_user_stop_persists_aborted_and_disconnect_is_done(
     assert rows[0]["status"] == chat_store.ABORTED
 
 
-async def _collect(
-    session_id: str, probe: Any, tmp_path: Path
-) -> list[str]:
+async def _collect(session_id: str, probe: Any, tmp_path: Path) -> list[str]:
     return [
         frame
         async for frame in chat_channel.stream_turn(

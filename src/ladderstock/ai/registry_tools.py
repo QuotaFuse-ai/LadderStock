@@ -241,9 +241,7 @@ class RegistryTools:
 
     # ---------------------------------------------------------------- 执行
 
-    def execute(
-        self, ctx: tools.ToolContext, name: str, arguments: Mapping[str, Any]
-    ) -> str:
+    def execute(self, ctx: tools.ToolContext, name: str, arguments: Mapping[str, Any]) -> str:
         """跑一次真实调用；抛 `ToolRefusal` 表示被拒（拒因回喂模型），其余异常上抛。
 
         第二道闸：名字必须是本执行器条目里的（即 read_only 且非取数类），即便上游
@@ -265,9 +263,7 @@ class RegistryTools:
             return _textify(result)
         peer = self.peers.get(entry.source)
         if peer is None:
-            raise tools.ToolRefusal(
-                "source_unavailable", f"工具来源 {entry.source} 当前不可达"
-            )
+            raise tools.ToolRefusal("source_unavailable", f"工具来源 {entry.source} 当前不可达")
         try:
             result = self.transport.call(peer, entry.name, dict(arguments), timeout=self.timeout)
         except Exception as exc:  # noqa: BLE001 - 传输层失败按拒绝回喂，不炸整段
@@ -346,9 +342,7 @@ def build_for_stage(
     )
 
 
-def load_snapshot(
-    registry: ToolRegistry, namespace: ToolNamespace
-) -> ToolSnapshot | None:
+def load_snapshot(registry: ToolRegistry, namespace: ToolNamespace) -> ToolSnapshot | None:
     """读本命名空间快照；没有快照就现发现一次（与 `ToolRegistry.query` 同一口径）。"""
     try:
         return registry.load(namespace) or registry.discover(namespace)

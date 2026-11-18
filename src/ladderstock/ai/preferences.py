@@ -21,10 +21,11 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -58,22 +59,88 @@ SECTION_HEADER = "【用户长期偏好】（自动沉淀自历史对话；与�
 
 #: 已覆盖的市场 / 板块 / 赛道词表。只认这张表里的词，避免把任意名词当偏好
 _TRACK_WORDS = (
-    "A股", "港股", "美股", "创业板", "科创板", "北交所", "主板", "沪深300", "中证500",
-    "半导体", "芯片", "白酒", "医药", "医疗", "新能源", "光伏", "储能", "军工", "券商",
-    "银行", "保险", "有色", "煤炭", "钢铁", "化工", "建材", "地产", "房地产", "消费",
-    "家电", "汽车", "机器人", "算力", "人工智能", "AI", "通信", "传媒", "游戏", "农业",
-    "稀土", "电力", "机场", "航运", "港口", "军工电子", "低空经济", "创新药", "中药",
+    "A股",
+    "港股",
+    "美股",
+    "创业板",
+    "科创板",
+    "北交所",
+    "主板",
+    "沪深300",
+    "中证500",
+    "半导体",
+    "芯片",
+    "白酒",
+    "医药",
+    "医疗",
+    "新能源",
+    "光伏",
+    "储能",
+    "军工",
+    "券商",
+    "银行",
+    "保险",
+    "有色",
+    "煤炭",
+    "钢铁",
+    "化工",
+    "建材",
+    "地产",
+    "房地产",
+    "消费",
+    "家电",
+    "汽车",
+    "机器人",
+    "算力",
+    "人工智能",
+    "AI",
+    "通信",
+    "传媒",
+    "游戏",
+    "农业",
+    "稀土",
+    "电力",
+    "机场",
+    "航运",
+    "港口",
+    "军工电子",
+    "低空经济",
+    "创新药",
+    "中药",
 )
 
 #: 表达方式词表
 _STYLE_WORDS = (
-    "短句", "简短", "简洁", "精简", "详细", "详尽", "表格", "图表", "中文", "英文",
-    "大白话", "少术语", "别太长", "不要长篇", "分点", "结论先行", "直接说结论",
+    "短句",
+    "简短",
+    "简洁",
+    "精简",
+    "详细",
+    "详尽",
+    "表格",
+    "图表",
+    "中文",
+    "英文",
+    "大白话",
+    "少术语",
+    "别太长",
+    "不要长篇",
+    "分点",
+    "结论先行",
+    "直接说结论",
 )
 
 #: 用户明确不想要的（合规与体验约束都归这里）
 _CONSTRAINT_WORDS = (
-    "买卖建议", "推荐", "荐股", "预测", "涨跌预测", "目标价", "止损", "仓位", "仓位建议",
+    "买卖建议",
+    "推荐",
+    "荐股",
+    "预测",
+    "涨跌预测",
+    "目标价",
+    "止损",
+    "仓位",
+    "仓位建议",
 )
 
 #: 「不要 X」里 X 属于表达要求时，归到表达方式而不是约束（同一件事只留一条）
@@ -319,7 +386,9 @@ def remember(question: str, *, data_root: Path | str | None = None) -> list[Pref
     if not pairs:
         return []
     items = load(data_root)
-    index: dict[tuple[str, str], Preference] = {(item.kind, _norm(item.text)): item for item in items}
+    index: dict[tuple[str, str], Preference] = {
+        (item.kind, _norm(item.text)): item for item in items
+    }
     changed: list[Preference] = []
     now = _now()
     for kind, text in pairs:
@@ -344,7 +413,9 @@ def _trim(items: list[Preference]) -> list[Preference]:
     """超上限时先淘汰 hits 最低、再淘汰最旧的。"""
     if len(items) <= MAX_ITEMS:
         return items
-    ordered = sorted(items, key=lambda item: (item.hits, item.updated_at or item.created_at), reverse=True)
+    ordered = sorted(
+        items, key=lambda item: (item.hits, item.updated_at or item.created_at), reverse=True
+    )
     return ordered[:MAX_ITEMS]
 
 

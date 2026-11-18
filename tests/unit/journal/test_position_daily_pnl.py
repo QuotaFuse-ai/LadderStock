@@ -123,9 +123,7 @@ def test_missing_entry_without_a_reason_still_says_why() -> None:
 
 
 def test_code_absent_from_the_map_is_missing_not_not_computed() -> None:
-    metrics = position_module.compute_metrics(
-        ROWS, {}, daily={"600000": _ok(12.0, 11.5)}
-    )
+    metrics = position_module.compute_metrics(ROWS, {}, daily={"600000": _ok(12.0, 11.5)})
 
     by_code = {item["code"]: item for item in metrics["items"]}
     assert by_code["600000"]["daily_pnl_status"] == "ok"

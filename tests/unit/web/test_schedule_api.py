@@ -19,7 +19,6 @@ from fastapi import HTTPException
 from ladderstock.cli import schedule as sched
 from ladderstock.web import schedule_api
 
-
 SAMPLE = """\
 scheduler:
   timezone: Asia/Shanghai
@@ -109,7 +108,9 @@ def paylaod_kinds(payload: dict[str, Any]) -> set[str]:
     return {job["kind"] for job in payload["jobs"]}
 
 
-def test_jobs_payload_reports_digest_absence(cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_jobs_payload_reports_digest_absence(
+    cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(sched, "schedule_config_path", lambda: cfg)
     payload = schedule_api.jobs_payload(data_root=tmp_path)
     research = next(job for job in payload["jobs"] if job["id"] == "agent_research_close")
@@ -156,21 +157,27 @@ def test_unknown_kind_is_still_rejected(
     """既不是 UI_KINDS 也不是 BACKGROUND_KINDS 的，仍然不许手动跑。"""
     monkeypatch.setattr(sched, "schedule_config_path", lambda: cfg)
     monkeypatch.setattr(
-        sched, "load_schedule", lambda *a, **k: ({"jobs": [{"id": "weird", "kind": "nope"}]}, [], "x")
+        sched,
+        "load_schedule",
+        lambda *a, **k: ({"jobs": [{"id": "weird", "kind": "nope"}]}, [], "x"),
     )
     with pytest.raises(HTTPException) as excinfo:
         schedule_api.run_once("weird", data_root=tmp_path)
     assert excinfo.value.status_code == 400
 
 
-def test_run_once_unknown_job_is_404(cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_once_unknown_job_is_404(
+    cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(sched, "schedule_config_path", lambda: cfg)
     with pytest.raises(HTTPException) as excinfo:
         schedule_api.run_once("nope", data_root=tmp_path)
     assert excinfo.value.status_code == 404
 
 
-def test_run_once_starts_in_background(cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_once_starts_in_background(
+    cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """接口本身必须立刻返回；真正的耗时在后台线程里。"""
     monkeypatch.setattr(sched, "schedule_config_path", lambda: cfg)
     monkeypatch.setattr(sched, "run_job", lambda job, **kwargs: {"status": "ok", "detail": "stub"})
@@ -224,7 +231,9 @@ def test_run_once_refuses_while_previous_still_running(
         {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")},
     )
     called: list[str] = []
-    monkeypatch.setattr(sched, "run_job", lambda job, **kwargs: called.append("ran") or {"status": "ok"})
+    monkeypatch.setattr(
+        sched, "run_job", lambda job, **kwargs: called.append("ran") or {"status": "ok"}
+    )
     out = schedule_api.run_once("agent_research_close", data_root=tmp_path)
     assert out["started"] is False
     assert "还在跑" in str(out["detail"])
@@ -285,7 +294,7 @@ def test_plan_status_route_resumes_and_clears_failures(tmp_path: Path) -> None:
 
 
 def test_plan_status_rejects_unknown_state(tmp_path: Path) -> None:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     app = FastAPI()
@@ -332,7 +341,7 @@ def test_set_allow_plan_create_inserts_field_when_absent(tmp_path: Path) -> None
     path.write_text(
         "scheduler:\n  timezone: Asia/Shanghai\n  misfire_grace_seconds: 300\n"
         "jobs:\n  - id: plan_tick_close\n    name: 16:55 跨轮任务推进\n"
-        "    kind: plan_tick\n    trigger: \"16:55\"\n    enabled: true\n    channel: desktop\n",
+        '    kind: plan_tick\n    trigger: "16:55"\n    enabled: true\n    channel: desktop\n',
         encoding="utf-8",
     )
     out = schedule_api.set_allow_plan_create("plan_tick_close", False, path=path)

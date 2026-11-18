@@ -80,8 +80,7 @@ INDEX_MOMENTUM_REASON = (
 FORMULAS: dict[str, str] = {
     "prosperity": "成分股最近一期报表的 revenue_yoy / profit_yoy / roe 中位数（%）",
     "capital": (
-        "近 N 个交易日成分股 main_net 合计（申万口径）"
-        "+ 同名板块资金流（板块口径，独立标注）"
+        "近 N 个交易日成分股 main_net 合计（申万口径）+ 同名板块资金流（板块口径，独立标注）"
     ),
     "valuation": "成分股每日中位数 PE/PB → 窗口内经验分位（<= 当前值的占比）",
     "momentum": "成分股等权涨跌幅（%）+ 成交额占本地缓存代码池比（%）",
@@ -188,6 +187,7 @@ class _Reader:
 # 行级小工具（缓存行的日期/代码键名在不同数据集里有别名）
 # --------------------------------------------------------------------------- #
 
+
 def _day(row: dict[str, Any]) -> str:
     """行里的「计入日期」文本，缺日期当空串（空串不参与任何聚合）。"""
     return str(pick(row, TRADE_DATE_KEYS) or "")
@@ -228,6 +228,7 @@ def _on_day(rows: list[dict[str, Any]], day: str) -> dict[str, Any] | None:
 # --------------------------------------------------------------------------- #
 # 归属（成分表）
 # --------------------------------------------------------------------------- #
+
 
 def current_membership(records: list[dict[str, Any]]) -> dict[str, str]:
     """每个代码当前（计入日期最晚一条）的申万一级代码。
@@ -295,12 +296,10 @@ NO_FINANCE_CACHE = (
 )
 FINANCE_EMPTY = "缓存里的财务指标行三个字段全为空，不估算"
 FINANCE_BASIS = (
-    "东财财务指标原值：营收同比 / 净利润同比为单季或累计口径以字段名为准，"
-    "ROE 为累计值非年化"
+    "东财财务指标原值：营收同比 / 净利润同比为单季或累计口径以字段名为准，ROE 为累计值非年化"
 )
 NO_CAPITAL_CACHE = (
-    "主力净流入两路口径都无本地缓存：个股侧需同步 fund_flow，"
-    "板块侧需同步 industry_fund_flow"
+    "主力净流入两路口径都无本地缓存：个股侧需同步 fund_flow，板块侧需同步 industry_fund_flow"
 )
 NO_BOARD_CACHE = "本地无板块资金流缓存（industry_fund_flow）"
 NO_BOARD_BINDING = (
@@ -312,9 +311,7 @@ PARTIAL_COVERAGE = (
     "已取到部分的和放在 main_net_inflow_nd_sampled"
 )
 NO_FUND_CACHE = "本地无成分股资金流缓存（fund_flow）"
-PERCENTILE_DEFINITION = (
-    "窗口内每日中位数序列中 <= 当前值的天数 / 窗口天数（经验分位，不插值）"
-)
+PERCENTILE_DEFINITION = "窗口内每日中位数序列中 <= 当前值的天数 / 窗口天数（经验分位，不插值）"
 NO_VALUATION_CACHE = "本地无成分股估值历史缓存（valuation_history；北交所标的上游无源，实测缺）"
 NO_KLINE_CACHE = "本地无成分股日 K 缓存（daily_k），等权涨跌幅与成交额占比都不估算"
 NO_AMOUNT_DATA = (
@@ -726,6 +723,7 @@ def _provenance(
 # 对外
 # --------------------------------------------------------------------------- #
 
+
 def build_snapshot(
     entry: IndustryEntry,
     sources: dict[str, _Source],
@@ -869,9 +867,7 @@ def _finalize(
     payload["data_source_status"] = (
         "ok" if not unavailable else ("partial" if present else "missing")
     )
-    payload["reason"] = reason or (
-        None if present else _missing_reason(sources)
-    )
+    payload["reason"] = reason or (None if present else _missing_reason(sources))
     payload["source_detail"] = _source_detail(sources)
     return payload
 
@@ -1044,9 +1040,7 @@ def industry_list(
         "labels": DIMENSION_LABELS,
         "datasets": _dataset_status(sources),
         "source_detail": _source_detail(sources),
-        "reason": None
-        if any(row["available"] for row in rows)
-        else _missing_reason(sources),
+        "reason": None if any(row["available"] for row in rows) else _missing_reason(sources),
     }
     if with_metrics:
         # 顶层时点 = 所有行业该维度时点里最新的一个（不是缓存全局最大值，也不是请求日期）

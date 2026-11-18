@@ -394,8 +394,7 @@ def _insert_turn(
         else:
             title = str(row["title"])
             last = conn.execute(
-                "SELECT MAX(seq) AS seq, MAX(created_at) AS at FROM chat_turn "
-                "WHERE session_id = ?",
+                "SELECT MAX(seq) AS seq, MAX(created_at) AS at FROM chat_turn WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
             seq = int(last["seq"] or 0) + 1
@@ -520,8 +519,7 @@ def list_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def get_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT session_id, title, created_at, updated_at FROM chat_session "
-        "WHERE session_id = ?",
+        "SELECT session_id, title, created_at, updated_at FROM chat_session WHERE session_id = ?",
         (session_id,),
     ).fetchone()
     if row is None:

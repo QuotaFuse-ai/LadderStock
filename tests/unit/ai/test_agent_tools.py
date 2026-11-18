@@ -63,7 +63,14 @@ def test_kline_reads_local_cache_without_network(
     duckdb_store.write_dataset(
         "daily_k",
         [
-            {"code": "600000", "open": 10.1, "close": 10.2, "high": 10.3, "low": 10.0, "volume": 1000},
+            {
+                "code": "600000",
+                "open": 10.1,
+                "close": 10.2,
+                "high": 10.3,
+                "low": 10.0,
+                "volume": 1000,
+            },
         ],
         source="test:tencent_kline",
         default_trade_date=date(2026, 11, 13),
@@ -72,7 +79,14 @@ def test_kline_reads_local_cache_without_network(
     duckdb_store.write_dataset(
         "daily_k",
         [
-            {"code": "600000", "open": 10.2, "close": 10.4, "high": 10.5, "low": 10.1, "volume": 1200},
+            {
+                "code": "600000",
+                "open": 10.2,
+                "close": 10.4,
+                "high": 10.5,
+                "low": 10.1,
+                "volume": 1200,
+            },
         ],
         source="test:tencent_kline",
         default_trade_date=date(2026, 11, 16),
@@ -101,8 +115,16 @@ def test_kline_falls_back_to_live_fetch_when_cache_misses(
             calls.append({"dataset": dataset, "params": params})
             payload = {
                 "records": [
-                    {"code": "688111", "date": "2026-11-16", "trade_date": "2026-11-16",
-                     "open": 217.0, "close": 216.53, "high": 218.0, "low": 216.0, "volume": 1.0}
+                    {
+                        "code": "688111",
+                        "date": "2026-11-16",
+                        "trade_date": "2026-11-16",
+                        "open": 217.0,
+                        "close": 216.53,
+                        "high": 218.0,
+                        "low": 216.0,
+                        "volume": 1.0,
+                    }
                 ]
             }
             return SimpleNamespace(envelope=SimpleNamespace(payload=payload))
@@ -135,14 +157,26 @@ def test_cached_tool_explains_empty_cache(tmp_path: Path, tools: dict[str, Any])
     assert "hot_rank" in result.text
 
 
-def test_cached_tool_marks_as_of_and_caption(
-    tmp_path: Path, tools: dict[str, Any]
-) -> None:
+def test_cached_tool_marks_as_of_and_caption(tmp_path: Path, tools: dict[str, Any]) -> None:
     duckdb_store.write_dataset(
         "hot_rank",
         [
-            {"code": "600000", "name": "浦发银行", "rank": 1, "heat": 9000, "change_pct": 2.7, "tag": "银行"},
-            {"code": "000001", "name": "平安银行", "rank": 2, "heat": 8000, "change_pct": 1.1, "tag": "银行"},
+            {
+                "code": "600000",
+                "name": "浦发银行",
+                "rank": 1,
+                "heat": 9000,
+                "change_pct": 2.7,
+                "tag": "银行",
+            },
+            {
+                "code": "000001",
+                "name": "平安银行",
+                "rank": 2,
+                "heat": 8000,
+                "change_pct": 1.1,
+                "tag": "银行",
+            },
         ],
         source="test:hot_rank",
         default_trade_date=date(2026, 11, 13),
@@ -178,7 +212,9 @@ def test_lookup_symbols_asks_instead_of_guessing(
 ) -> None:
     from ladderstock.web.symbols import SymbolPlane
 
-    monkeypatch.setattr(SymbolPlane, "search", lambda self, query, limit=8: {"payload": {"matches": []}})
+    monkeypatch.setattr(
+        SymbolPlane, "search", lambda self, query, limit=8: {"payload": {"matches": []}}
+    )
     tools = {spec.name: spec for spec in build_tools(tmp_path)}
     result = tools["lookup_symbols"].invoke({"query": "不存在的公司"})
     assert "没有匹配" in result.text

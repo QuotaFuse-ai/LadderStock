@@ -73,6 +73,7 @@ class ToolCatalogTransport(Protocol):
 # 命名空间
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class ToolNamespace:
     """一次查询/落盘的命名空间：`agent_id` 与 `kb_scope` 必须成对给出。
@@ -111,6 +112,7 @@ class ToolNamespace:
 # --------------------------------------------------------------------------- #
 # 条目与快照
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class ToolEntry:
@@ -206,6 +208,7 @@ class ToolSnapshot:
 # --------------------------------------------------------------------------- #
 # 注册表
 # --------------------------------------------------------------------------- #
+
 
 def local_entries() -> list[ToolEntry]:
     """本仓 MCP 工具：名字与 schema 都来自 `TOOL_SPECS`，不在这里重抄一份。"""
@@ -306,9 +309,7 @@ class ToolRegistry:
 
         local = local_entries()
         entries.extend(local)
-        statuses.append(
-            SourceStatus(LOCAL_SOURCE, LOCAL_PRODUCT, STATUS_OK, len(local))
-        )
+        statuses.append(SourceStatus(LOCAL_SOURCE, LOCAL_PRODUCT, STATUS_OK, len(local)))
 
         for peer in self.mcp_peers():
             try:
@@ -326,9 +327,7 @@ class ToolRegistry:
                 continue
             discovered = _peer_entries(peer, tools)
             entries.extend(discovered)
-            statuses.append(
-                SourceStatus(peer.key, peer.product, STATUS_OK, len(discovered))
-            )
+            statuses.append(SourceStatus(peer.key, peer.product, STATUS_OK, len(discovered)))
 
         entries.sort(key=lambda entry: (entry.source, entry.name))
         snapshot = ToolSnapshot(
@@ -369,10 +368,7 @@ class ToolRegistry:
                 f"工具注册表快照版本不匹配（{doc.get('version')!r}）：{path}；可用 --refresh 重建",
                 EXIT_CONFIG,
             )
-        if (
-            doc.get("agent_id") != namespace.agent_id
-            or doc.get("kb_scope") != namespace.kb_scope
-        ):
+        if doc.get("agent_id") != namespace.agent_id or doc.get("kb_scope") != namespace.kb_scope:
             # 文件路径已经按命名空间分开，这里再校验一次文档内容：
             # 文件被换掉/拷错位置时宁可报错，也不把别人的工具表交出去
             raise ToolRegistryError(
@@ -421,9 +417,7 @@ class ToolRegistry:
 
         if source and source not in {status.source for status in snapshot.sources}:
             known = "、".join(self.source_names()) or "无"
-            raise ToolRegistryError(
-                f"未知工具来源 {source!r}（已知：{known}）", EXIT_USAGE
-            )
+            raise ToolRegistryError(f"未知工具来源 {source!r}（已知：{known}）", EXIT_USAGE)
 
         tools = snapshot.tools
         if source:

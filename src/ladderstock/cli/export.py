@@ -119,9 +119,7 @@ def export(
                 report["sections"] = sections
             sections.append(_journal_section(stats))
             journal_included = True
-            sys.stderr.write(
-                "ldst: 导出包含本机交易日志纪律统计（隐私数据，请自行保管，勿上传）\n"
-            )
+            sys.stderr.write("ldst: 导出包含本机交易日志纪律统计（隐私数据，请自行保管，勿上传）\n")
             sys.stderr.flush()
         else:
             sys.stderr.write("ldst: --with-journal 已指定，但本机没有交易日志，未附加\n")

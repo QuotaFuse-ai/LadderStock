@@ -69,6 +69,7 @@ def _payload(result: Any) -> dict[str, Any]:
 # 主路径：六段顺序跑通 + 产物落盘
 # --------------------------------------------------------------------------- #
 
+
 def test_first_run_walks_six_stages_and_lands_artifacts(data_dir: Path) -> None:
     result = _run(["research", CODE, "--date", DAY, "--output", "json"])
     payload = _payload(result)
@@ -102,6 +103,7 @@ def test_date_is_always_normalized_to_iso(data_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 断点续跑：只补缺失段
 # --------------------------------------------------------------------------- #
+
 
 def test_resume_only_fills_missing_stages(data_dir: Path) -> None:
     first = _payload(
@@ -150,10 +152,10 @@ def test_retry_failed_reruns_only_failed_stages(data_dir: Path) -> None:
     assert payload["failed"] == [], "重跑后 financial 变成就绪"
 
 
-
 # --------------------------------------------------------------------------- #
 # 用法与配置错误
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "args",
@@ -184,6 +186,7 @@ def test_missing_ai_config_exits_3(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 # --------------------------------------------------------------------------- #
 # 全局 --output 三档（docs/CLI.md §F）
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("fmt", ["json", "table", "csv"])
 def test_every_output_format_emits_a_result(data_dir: Path, fmt: str) -> None:

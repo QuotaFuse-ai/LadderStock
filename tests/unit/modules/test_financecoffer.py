@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -149,7 +148,9 @@ def test_default_fetch_does_not_fake_a_download(
     assert not (layout.pg_dir(tmp_path) / "bin").exists()
 
 
-def test_install_pulls_api_deps_into_module_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_install_pulls_api_deps_into_module_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """装完包要能直接起 API：依赖必须装进模块目录，不能指望用户自己去 pip。"""
     seen: list[list[str]] = []
 
@@ -165,7 +166,10 @@ def test_install_pulls_api_deps_into_module_dir(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(installer.subprocess, "run", _fake_run)
 
     result = installer.install(
-        tmp_path, with_embedding=False, confirm=True, allow_system_drive=True,
+        tmp_path,
+        with_embedding=False,
+        confirm=True,
+        allow_system_drive=True,
         fetch=lambda key, target: 1,
     )
 
@@ -180,7 +184,9 @@ def test_install_pulls_api_deps_into_module_dir(monkeypatch: pytest.MonkeyPatch,
     assert not any("torch" in part for cmd in seen for part in cmd)
 
 
-def test_install_deps_failure_is_reported_not_fatal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_install_deps_failure_is_reported_not_fatal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """依赖装不上时，装机本身仍算 ready，但 detail 必须写明，否则用户以为能直接用。"""
 
     class _Fail:
@@ -191,7 +197,10 @@ def test_install_deps_failure_is_reported_not_fatal(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(installer.subprocess, "run", lambda *args, **kwargs: _Fail())
 
     result = installer.install(
-        tmp_path, with_embedding=False, confirm=True, allow_system_drive=True,
+        tmp_path,
+        with_embedding=False,
+        confirm=True,
+        allow_system_drive=True,
         fetch=lambda key, target: 1,
     )
 
@@ -202,7 +211,10 @@ def test_install_deps_failure_is_reported_not_fatal(monkeypatch: pytest.MonkeyPa
 
 def test_uninstall_demands_confirmation_and_states_data_loss(tmp_path: Path) -> None:
     installer.install(
-        tmp_path, with_embedding=False, confirm=True, allow_system_drive=True,
+        tmp_path,
+        with_embedding=False,
+        confirm=True,
+        allow_system_drive=True,
         fetch=lambda key, target: 1,
     )
 
@@ -216,7 +228,10 @@ def test_uninstall_demands_confirmation_and_states_data_loss(tmp_path: Path) -> 
 
 def test_uninstall_removes_whole_directory(tmp_path: Path) -> None:
     installer.install(
-        tmp_path, with_embedding=False, confirm=True, allow_system_drive=True,
+        tmp_path,
+        with_embedding=False,
+        confirm=True,
+        allow_system_drive=True,
         fetch=lambda key, target: 1,
     )
     # 数据目录按 env 分份：测试环境（或未设 env 的 CI）落到的名字由 layout 决定，
@@ -233,7 +248,9 @@ def test_uninstall_removes_whole_directory(tmp_path: Path) -> None:
     assert not layout.module_root(tmp_path).exists()
 
 
-def test_uninstall_refuses_out_of_bounds_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_uninstall_refuses_out_of_bounds_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """删除必须落在 <安装根>/file/modules 之内：路径被算歪就拒绝，绝不删别的目录。"""
     evil = tmp_path / "evil"
     evil.mkdir()
@@ -292,7 +309,15 @@ def test_redis_platform_matrix_covers_three_ends(tmp_path: Path) -> None:
 def test_redis_conf_shared_across_platforms(tmp_path: Path) -> None:
     """三端共用同一份 conf 模板；文件名按 env 分份（正式服 -prod），路径规则一致。"""
     conf = redis_service.conf_path(tmp_path)
-    assert conf == tmp_path / "file" / "modules" / "financecoffer" / "conf" / f"redis{layout.env_suffix()}.conf"
+    assert (
+        conf
+        == tmp_path
+        / "file"
+        / "modules"
+        / "financecoffer"
+        / "conf"
+        / f"redis{layout.env_suffix()}.conf"
+    )
     assert conf.parent.parent == layout.module_root(tmp_path)
 
 
@@ -322,15 +347,21 @@ def test_doctor_treats_embedding_as_optional(monkeypatch, tmp_path: Path) -> Non
     单独报（PG 起着但查询全表不存在是真实踩过的坑）。
     """
     monkeypatch.setattr(services, "pg_status", lambda root=None: {"ok": True, "state": "running"})
-    monkeypatch.setattr(services, "minio_status", lambda root=None: {"ok": True, "state": "running"})
-    monkeypatch.setattr(services.redis_service, "status", lambda root=None: {"ok": True, "state": "running"})
+    monkeypatch.setattr(
+        services, "minio_status", lambda root=None: {"ok": True, "state": "running"}
+    )
+    monkeypatch.setattr(
+        services.redis_service, "status", lambda root=None: {"ok": True, "state": "running"}
+    )
     monkeypatch.setattr(services, "mcp_status", lambda root=None: {"ok": True, "state": "running"})
     monkeypatch.setattr(services, "etl_status", lambda root=None: {"ok": True, "state": "running"})
     monkeypatch.setattr(
         "ladderstock.modules.financecoffer.pg_runtime.pgvector_status",
         lambda root=None: {"ok": True, "extension": "vector"},
     )
-    monkeypatch.setattr(services, "api_status", lambda root=None, **_k: {"ok": False, "state": "stopped"})
+    monkeypatch.setattr(
+        services, "api_status", lambda root=None, **_k: {"ok": False, "state": "stopped"}
+    )
     monkeypatch.setattr(
         services, "embedding_status", lambda root=None, **_k: {"ok": False, "state": "missing_deps"}
     )
@@ -347,8 +378,12 @@ def test_doctor_treats_embedding_as_optional(monkeypatch, tmp_path: Path) -> Non
 
 def test_doctor_usable_when_only_embedding_missing(monkeypatch, tmp_path: Path) -> None:
     for name in ("pg_status", "minio_status", "api_status", "mcp_status", "etl_status"):
-        monkeypatch.setattr(services, name, lambda root=None, **_k: {"ok": True, "state": "running"})
-    monkeypatch.setattr(services.redis_service, "status", lambda root=None: {"ok": True, "state": "running"})
+        monkeypatch.setattr(
+            services, name, lambda root=None, **_k: {"ok": True, "state": "running"}
+        )
+    monkeypatch.setattr(
+        services.redis_service, "status", lambda root=None: {"ok": True, "state": "running"}
+    )
     monkeypatch.setattr(
         "ladderstock.modules.financecoffer.pg_runtime.pgvector_status",
         lambda root=None: {"ok": True, "extension": "vector"},

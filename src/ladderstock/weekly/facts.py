@@ -80,6 +80,7 @@ CALIBER: dict[str, str] = {
 # 小工具
 # --------------------------------------------------------------------------- #
 
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
@@ -153,6 +154,7 @@ def _band(change_pct: float) -> str:
 # 单日快照：优先复用当日复盘产物，缺的段落用同一批函数补算
 # --------------------------------------------------------------------------- #
 
+
 def day_snapshots(day: date, *, root: Any = None) -> dict[str, Any]:
     """某交易日的五段指标快照 + 来源标记（`artifact` / `recomputed`）。
 
@@ -214,6 +216,7 @@ def checkpoint_status(day: date, root: Any = None) -> dict[str, Any] | None:
 # --------------------------------------------------------------------------- #
 # 分项聚合
 # --------------------------------------------------------------------------- #
+
 
 def breadth_metrics(days: list[date], root: Any = None) -> dict[str, Any]:
     """涨跌分布：本周逐日 `daily_k` 个股涨跌幅分箱计数。"""
@@ -315,9 +318,7 @@ def theme_metrics(days: list[date], root: Any = None) -> dict[str, Any]:
     if not any(windows):
         return {
             "available": False,
-            "reason": (
-                f"本周没有 {THEME_DATASET} 数据（收盘后本机会自动补取）"
-            ),
+            "reason": (f"本周没有 {THEME_DATASET} 数据（收盘后本机会自动补取）"),
             "window": THEME_WINDOW,
             "days": rows,
             "themes": [],
@@ -367,9 +368,7 @@ def theme_metrics(days: list[date], root: Any = None) -> dict[str, Any]:
     }
 
 
-def _condition_rows(
-    document: dict[str, Any], generated_date: str
-) -> list[dict[str, Any]]:
+def _condition_rows(document: dict[str, Any], generated_date: str) -> list[dict[str, Any]]:
     """一份验证文档 → 逐条结算行（`settled` 只认 `reconcile.results`）。"""
     reconcile = document.get("reconcile")
     reconcile = reconcile if isinstance(reconcile, dict) else None
@@ -443,8 +442,7 @@ def validation_metrics(week: str, weekdays: list[date], root: Any = None) -> dic
         "reason": (
             None
             if available
-            else "本周没有待验证项落盘（先运行 ldst review --date <交易日>，"
-            "条件随复盘生成）"
+            else "本周没有待验证项落盘（先运行 ldst review --date <交易日>，条件随复盘生成）"
         ),
         "conditions": len(items),
         "settled": len(settled_rows),
@@ -469,6 +467,7 @@ def _settled_inside(week: str, row: dict[str, Any]) -> bool:
 # --------------------------------------------------------------------------- #
 # 事实包
 # --------------------------------------------------------------------------- #
+
 
 def build_facts(week_tag: Any, *, root: Any = None) -> dict[str, Any]:
     """聚合某一周的**确定性事实包**（不含模型输出、不含 `now()`）。"""
@@ -559,9 +558,7 @@ def build_facts(week_tag: Any, *, root: Any = None) -> dict[str, Any]:
                 continue
             code = str(stock["code"])
             current = peak_stocks.get(code)
-            if current is None or int(stock.get("boards") or 0) > int(
-                current.get("boards") or 0
-            ):
+            if current is None or int(stock.get("boards") or 0) > int(current.get("boards") or 0):
                 peak_stocks[code] = {**stock, "date": day.isoformat()}
     leaders = [
         {

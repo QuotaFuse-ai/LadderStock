@@ -87,9 +87,7 @@ def platform_label(platform: Platform | None) -> str:
 def assert_no_secrets(env: Mapping[str, str]) -> None:
     """服务定义只允许非密钥环境变量；命中密钥特征词直接拒绝（失败关闭）。"""
     hits = sorted(
-        name
-        for name in env
-        if any(marker in name.upper() for marker in SECRET_NAME_MARKERS)
+        name for name in env if any(marker in name.upper() for marker in SECRET_NAME_MARKERS)
     )
     if hits:
         raise ServiceError(

@@ -385,9 +385,7 @@ def _latest_card(plane: BacktestPlane) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-def build_router(
-    data_root: Path | None = None, plane: BacktestPlane | None = None
-) -> APIRouter:
+def build_router(data_root: Path | None = None, plane: BacktestPlane | None = None) -> APIRouter:
     """构造回测端点组（只读运行卡 + strategies/run/jobs 触发面）。"""
     from ladderstock.cli.paths import data_dir
 

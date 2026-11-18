@@ -70,9 +70,7 @@ def journal_add(
 
 
 def journal_list(
-    day_from: Annotated[
-        str | None, typer.Option("--from", help="起始日 YYYY-MM-DD")
-    ] = None,
+    day_from: Annotated[str | None, typer.Option("--from", help="起始日 YYYY-MM-DD")] = None,
     day_to: Annotated[str | None, typer.Option("--to", help="结束日 YYYY-MM-DD")] = None,
     code: Annotated[str | None, typer.Option(help="只看某只证券")] = None,
     limit: Annotated[int, typer.Option(help="最多返回条数")] = DEFAULT_LIST_LIMIT,
@@ -93,9 +91,7 @@ def journal_list(
 
 
 def journal_stats(
-    day_from: Annotated[
-        str | None, typer.Option("--from", help="起始日 YYYY-MM-DD")
-    ] = None,
+    day_from: Annotated[str | None, typer.Option("--from", help="起始日 YYYY-MM-DD")] = None,
     day_to: Annotated[str | None, typer.Option("--to", help="结束日 YYYY-MM-DD")] = None,
     deviation: Annotated[
         float,

@@ -139,9 +139,7 @@ def test_stop_owned_only_force_calls_stop_owned(engine: FakeEngine) -> None:
 
 
 def test_stop_owned_only_conflicts_with_only(engine: FakeEngine) -> None:
-    code, _ = _run(
-        ["stop", "--owned-only", "--force", "--only", "tickhub", "--output", "json"]
-    )
+    code, _ = _run(["stop", "--owned-only", "--force", "--only", "tickhub", "--output", "json"])
 
     assert code == EXIT_CONFIG
     assert engine.calls == []

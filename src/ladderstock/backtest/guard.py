@@ -354,9 +354,7 @@ def evaluate(
             f"{[_fmt_rate(r) for r in config.cost_tiers]} 内，三档对不上主回测"
         )
     if config.min_trades <= baseline.trade_count < config.min_trades * 1.5:
-        warnings.append(
-            f"交易次数 {baseline.trade_count} 刚过阈值 {config.min_trades}，样本仍偏小"
-        )
+        warnings.append(f"交易次数 {baseline.trade_count} 刚过阈值 {config.min_trades}，样本仍偏小")
 
     return GateVerdict(
         passed=all(c.ok for c in checks),

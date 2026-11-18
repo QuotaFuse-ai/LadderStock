@@ -64,6 +64,7 @@ TOP_LEVEL_KEYS = {
     "totals_cny",
 }
 
+
 #: 请求体用 `trade_date`；响应里的流水行投影成 `date`（与参考实现一致）
 def _buy(**overrides: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -447,9 +448,7 @@ def test_read_requires_loopback(tmp_path: Path) -> None:
 
 
 def test_read_rejects_bad_host_header(tmp_path: Path) -> None:
-    response = _client(tmp_path).get(
-        "/api/portfolio", headers={"host": "evil.example.com"}
-    )
+    response = _client(tmp_path).get("/api/portfolio", headers={"host": "evil.example.com"})
     assert response.status_code == 403
     assert "Host" in response.json()["detail"]
 
@@ -588,9 +587,7 @@ def test_conflict_adopt_replaces_in_place(tmp_path: Path) -> None:
     assert conflicted["migration_pending"] == 0
     assert len(conflicted["ledger"]) == 1
 
-    adopted = client.post(
-        f"/api/portfolio/legacy/{pid}/adopt", headers=BROWSER_HEADERS
-    )
+    adopted = client.post(f"/api/portfolio/legacy/{pid}/adopt", headers=BROWSER_HEADERS)
     assert adopted.status_code == 200, adopted.text
     assert adopted.json()["migration"]["migrated"][0]["trade_id"] == trade_id
 
@@ -606,9 +603,7 @@ def test_dismiss_marks_only_and_blocks_auto_migration(tmp_path: Path) -> None:
     pid = _seed_position(tmp_path)
     client = _client(tmp_path)
 
-    response = client.post(
-        f"/api/portfolio/legacy/{pid}/dismiss", headers=BROWSER_HEADERS
-    )
+    response = client.post(f"/api/portfolio/legacy/{pid}/dismiss", headers=BROWSER_HEADERS)
     assert response.status_code == 200, response.text
     assert response.json()["mark"]["position_id"] == pid
     assert _position_count(tmp_path) == 1, "dismiss 不删旧行"

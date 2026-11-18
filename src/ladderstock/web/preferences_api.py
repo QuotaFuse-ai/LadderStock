@@ -79,7 +79,9 @@ def build_router(*, data_root: Path | None = None) -> APIRouter:
         removed = preferences.remove(text, data_root=data_root)
         if not removed:
             raise HTTPException(status_code=404, detail=f"没有这条偏好：{text}")
-        return JSONResponse({"ok": True, "removed": text, **payload(data_root=data_root)}, headers=_NO_STORE)
+        return JSONResponse(
+            {"ok": True, "removed": text, **payload(data_root=data_root)}, headers=_NO_STORE
+        )
 
     @router.post("/clear", dependencies=[Depends(_write_guard)])
     def clear_preferences() -> JSONResponse:

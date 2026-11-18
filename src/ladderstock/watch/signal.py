@@ -67,6 +67,7 @@ class SignalInputError(ValueError):
 # 数据结构
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True, slots=True)
 class MinuteBar:
     """一根分钟 bar：价格 + 可选的涨停价（用于封板判定）+ 可选的名称（显示用）。"""
@@ -167,6 +168,7 @@ def _parse_ts(value: Any, *, field: str) -> datetime:
 # 样本装载
 # --------------------------------------------------------------------------- #
 
+
 def _as_float(value: Any, *, field: str, index: int) -> float:
     if isinstance(value, bool) or value is None:
         raise SignalInputError(f"第 {index} 行 {field} 缺失或类型不对：{value!r}")
@@ -228,6 +230,7 @@ def load_bars(path: Path, *, source_detail: str | None = None) -> list[MinuteBar
 # --------------------------------------------------------------------------- #
 # 检测
 # --------------------------------------------------------------------------- #
+
 
 def _event(bar: MinuteBar, kind: str, value: float) -> WatchEvent:
     return WatchEvent(

@@ -102,9 +102,7 @@ def test_rejects_bad_price_and_missing_code(tmp_path: Path) -> None:
 
     assert result["written"] == 0
     assert result["rejected"] == 3
-    assert not bars.bars_path(DAY, tmp_path).exists() or not _rows(
-        bars.bars_path(DAY, tmp_path)
-    )
+    assert not bars.bars_path(DAY, tmp_path).exists() or not _rows(bars.bars_path(DAY, tmp_path))
 
 
 def test_limit_price_optional(tmp_path: Path) -> None:
@@ -160,4 +158,3 @@ def test_name_flows_to_signal_events(tmp_path: Path) -> None:
     bare = next(event for event in events if event.code == "600001")
     assert "name" not in bare.as_dict()
     assert WatchEvent.from_dict(bare.as_dict()).name == ""
-

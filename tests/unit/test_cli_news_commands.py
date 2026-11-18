@@ -55,6 +55,7 @@ def _json(result) -> dict:
 # `ldst news`
 # --------------------------------------------------------------------------- #
 
+
 def test_news_default_writes_and_reports_zero(repo) -> None:
     result = runner.invoke(app, ["news", *DATE_ARGS, "--code", "600519", "--output", "json"])
     payload = _json(result)
@@ -100,9 +101,7 @@ def test_news_until_makes_a_window(repo) -> None:
 
 
 def test_news_source_filter_only_fetches_the_named_columns(repo) -> None:
-    result = runner.invoke(
-        app, ["news", *DATE_ARGS, "--source", "flash_cls", "--output", "json"]
-    )
+    result = runner.invoke(app, ["news", *DATE_ARGS, "--source", "flash_cls", "--output", "json"])
     payload = _json(result)
     assert payload["sources"] == ["flash_cls"]
     assert [row["dataset"] for row in payload["sources_status"]] == ["flash_cls"]
@@ -156,14 +155,19 @@ def test_news_humans_get_a_table_and_json_gets_the_contract(repo) -> None:
     text = runner.invoke(app, ["news", *DATE_ARGS, "--code", "600519"])
     assert text.exit_code == EXIT_OK
     assert WINDOW_DAY in text.stdout
-    payload = _json(runner.invoke(app, [
-        "news",
-        *DATE_ARGS,
-        "--code",
-        "600519",
-        "--output",
-        "json",
-    ]))
+    payload = _json(
+        runner.invoke(
+            app,
+            [
+                "news",
+                *DATE_ARGS,
+                "--code",
+                "600519",
+                "--output",
+                "json",
+            ],
+        )
+    )
     assert set(payload) >= {
         "ok",
         "window",
@@ -178,6 +182,7 @@ def test_news_humans_get_a_table_and_json_gets_the_contract(repo) -> None:
 # --------------------------------------------------------------------------- #
 # 模型开关（默认关闭）
 # --------------------------------------------------------------------------- #
+
 
 def test_news_ai_is_off_by_default(repo, monkeypatch: pytest.MonkeyPatch) -> None:
     """不加 `--ai` 时，模型这条路的账本必须写着「没请求」，且真的没构造客户端。"""
@@ -221,6 +226,7 @@ def test_news_ai_requested_without_config_degrades_to_exit_9(
 # --------------------------------------------------------------------------- #
 # `ldst events`
 # --------------------------------------------------------------------------- #
+
 
 def test_events_requires_a_month(repo) -> None:
     result = runner.invoke(app, ["events"])
@@ -300,6 +306,7 @@ def test_events_code_list_is_normalised(repo) -> None:
 # --------------------------------------------------------------------------- #
 # 隐私：两个命令的出口都不带隐私面
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "argv",

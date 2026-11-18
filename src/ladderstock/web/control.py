@@ -79,8 +79,8 @@ from ladderstock.core.peer_versions import (
 from ladderstock.core.validation import load_validation, validation_path, write_document
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.supervisor import MODULE_ORDER, SupervisorEngine
-from ladderstock.supervisor.modules import panel_port
 from ladderstock.supervisor.ledger import ModuleRecord
+from ladderstock.supervisor.modules import panel_port
 from ladderstock.supervisor.proctree import default_process_ops
 from ladderstock.web import chat as chat_channel
 from ladderstock.web import peer_registry, senate_roles
@@ -286,15 +286,14 @@ CONTROL_STATE_FILE = "peer_state.json"
 
 #: 历史默认端口里**已经确认踩过坑**的那些：只报告占用者，不改端口（DEC-013 / DEC-014 §3）
 KNOWN_AVOIDED_PORTS: dict[str, tuple[tuple[int, str], ...]] = {
-    "tickhub_us": (
-        (8001, "TickHub-US 默认 MCP 端口：被 WSL 转发服务占用，改用 8002"),
-    ),
+    "tickhub_us": ((8001, "TickHub-US 默认 MCP 端口：被 WSL 转发服务占用，改用 8002"),),
 }
 
 
 # --------------------------------------------------------------------------- #
 # 开关与来源判定
 # --------------------------------------------------------------------------- #
+
 
 def control_enabled() -> bool:
     """`LDST_CONTROL_ENABLED` 默认开启；显式写 `0/false/no/off` 才关闭。"""
@@ -319,9 +318,7 @@ def is_loopback_host(host: str) -> bool:
 
 
 #: 除 stdlib 自带判定外，额外拒绝的网段（QUOT-123 C10）
-_EXTRA_BLOCKED_NETWORKS: tuple[
-    ipaddress.IPv4Network | ipaddress.IPv6Network, ...
-] = (
+_EXTRA_BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.ip_network("100.64.0.0/10"),  # CGNAT / 运营商级 NAT
     ipaddress.ip_network("fc00::/7"),  # IPv6 唯一本地地址
     ipaddress.ip_network("fe80::/10"),  # IPv6 链路本地（stdlib 也判，双保险）
@@ -536,10 +533,7 @@ async def _guard(request: Request) -> None:
         if site is not None and site.strip().lower() not in SAME_ORIGIN_SITES:
             raise HTTPException(
                 status_code=403,
-                detail=(
-                    f"跨站来源被拒绝：Sec-Fetch-Site={site}"
-                    "（只接受 same-origin / none）"
-                ),
+                detail=(f"跨站来源被拒绝：Sec-Fetch-Site={site}（只接受 same-origin / none）"),
             )
 
 
@@ -674,13 +668,9 @@ def parse_validation_request(
     if not isinstance(raw_conditions, list):
         raise _invalid("conditions 必须是数组")
     if len(raw_conditions) > MAX_CONDITIONS:
-        raise _invalid(
-            f"conditions 超过 {MAX_CONDITIONS} 条（{len(raw_conditions)}）"
-        )
+        raise _invalid(f"conditions 超过 {MAX_CONDITIONS} 条（{len(raw_conditions)}）")
 
-    conditions = [
-        _parse_condition(raw, index) for index, raw in enumerate(raw_conditions)
-    ]
+    conditions = [_parse_condition(raw, index) for index, raw in enumerate(raw_conditions)]
     return trade_date, conditions, mode
 
 
@@ -730,15 +720,14 @@ def mask_secrets(text: str, extra: Iterable[str] = ()) -> str:
         if len(candidate) >= 6:
             masked = masked.replace(candidate, secret_preview(candidate))
     masked = _SK_TOKEN.sub(lambda m: secret_preview(m.group(0)), masked)
-    masked = _KV_SECRET.sub(
-        lambda m: f"{m.group(1)}{m.group(2)}{m.group(3) or ''}***", masked
-    )
+    masked = _KV_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3) or ''}***", masked)
     return masked
 
 
 # --------------------------------------------------------------------------- #
 # 探测原语
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class StepResult:
@@ -828,8 +817,10 @@ def _wsl_listing() -> str:
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
-    text = raw.decode("utf-16-le", errors="ignore") if b"\x00" in raw else raw.decode(
-        "utf-8", errors="ignore"
+    text = (
+        raw.decode("utf-16-le", errors="ignore")
+        if b"\x00" in raw
+        else raw.decode("utf-8", errors="ignore")
     )
     return text.replace("\x00", "").replace("\r\n", "\n")
 
@@ -1122,6 +1113,7 @@ def read_env_layered(ctl: PeerControl) -> tuple[dict[str, str], dict[str, str]]:
 # 任务
 # --------------------------------------------------------------------------- #
 
+
 class JobFailure(RuntimeError):
     """任务在某个步骤上失败（带步骤名，直接进入 `error` 字段）。"""
 
@@ -1189,6 +1181,7 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 # 进程归属（QUOT-123 P0-2：终止前必须证明「这个 PID 是本 peer 的」）
 # --------------------------------------------------------------------------- #
+
 
 def _abs_path(path: Path | str) -> str:
     """绝对路径（`resolve()` 失败时退回 `absolute()`）。"""
@@ -1303,7 +1296,7 @@ def process_image(pid: int, cwd: Path) -> tuple[str | None, str | None]:
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            f"(Get-CimInstance Win32_Process -Filter \"ProcessId={number}\").ExecutablePath",
+            f'(Get-CimInstance Win32_Process -Filter "ProcessId={number}").ExecutablePath',
         ],
         [
             "wmic",
@@ -1440,7 +1433,7 @@ def process_created_at(pid: int) -> datetime | None:
             "-NonInteractive",
             "-Command",
             (
-                f"$p = Get-CimInstance Win32_Process -Filter \"ProcessId={number}\"; "
+                f'$p = Get-CimInstance Win32_Process -Filter "ProcessId={number}"; '
                 'if ($p) { $p.CreationDate.ToUniversalTime().ToString("o") }'
             ),
         ],
@@ -1467,6 +1460,7 @@ def process_created_at(pid: int) -> datetime | None:
 # --------------------------------------------------------------------------- #
 # 控制面
 # --------------------------------------------------------------------------- #
+
 
 class ControlPlane:
     """控制面的全部实现；依赖全部可注入，测试用 mock 顶掉子进程/端口/HTTP。"""
@@ -1503,9 +1497,7 @@ class ControlPlane:
         )
         # 启动即校验 peer 目录（QUOT-194 P1-3）：共享盘上的 peer 等于把执行权
         # 交给别人，命中即抛 SharedPeerDirectoryError，不进入任何动作。
-        require_local_peer_directories(
-            {key: ctl.directory for key, ctl in self.peers.items()}
-        )
+        require_local_peer_directories({key: ctl.directory for key, ctl in self.peers.items()})
         self._sources_loader = sources_loader or load_sources_peers
         self._run = run or run_step
         self._port_probe = port_probe or probe_port
@@ -1572,9 +1564,7 @@ class ControlPlane:
         tmp = self._state_path.with_name(f"{self._state_path.name}.tmp")
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(
-                json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            tmp.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
             self._harden_acl(tmp)
             os.replace(tmp, self._state_path)
         except AclError as exc:
@@ -1634,8 +1624,10 @@ class ControlPlane:
 
     def _venv_python(self, ctl: PeerControl) -> Path:
         venv = self._venv_dir(ctl)
-        return venv / ("Scripts" if os.name == "nt" else "bin") / (
-            "python.exe" if os.name == "nt" else "python"
+        return (
+            venv
+            / ("Scripts" if os.name == "nt" else "bin")
+            / ("python.exe" if os.name == "nt" else "python")
         )
 
     def _venv_script(self, ctl: PeerControl, name: str) -> Path:
@@ -1756,8 +1748,7 @@ class ControlPlane:
                 if conflict.get("foreign") and conflict["port"] in own_ports:
                     conflict["severity"] = "info"
                     conflict["note"] = (
-                        "端口由控制面之外的进程监听（手动启动）；"
-                        "控制面不接管启停，也不会终止它"
+                        "端口由控制面之外的进程监听（手动启动）；控制面不接管启停，也不会终止它"
                     )
 
         last_job = self._last_job.get(key)
@@ -2109,9 +2100,7 @@ class ControlPlane:
                         "pid": owner.pid,
                         "process": owner.process,
                         "cmdline": (
-                            [mask_secrets(part) for part in live_cmdline]
-                            if live_cmdline
-                            else None
+                            [mask_secrets(part) for part in live_cmdline] if live_cmdline else None
                         ),
                         "listening": True,
                         "reason": reason,
@@ -2227,9 +2216,7 @@ class ControlPlane:
         directory = Path(ctl.directory)
         dir_exists = directory.is_dir()
         console_owners = self._port_probe(ctl.console_port)
-        gateway_owners = (
-            self._port_probe(ctl.gateway_port) if ctl.gateway_port else []
-        )
+        gateway_owners = self._port_probe(ctl.gateway_port) if ctl.gateway_port else []
         listening = bool(console_owners or gateway_owners)
 
         health: dict[str, Any] = {"ok": None, "detail": ""}
@@ -2512,8 +2499,7 @@ class ControlPlane:
                 "route": route,
                 "label": label,
                 "argv": _page_argv(argv),
-                "running": last is not None
-                and last.status in {"queued", "running"},
+                "running": last is not None and last.status in {"queued", "running"},
                 "last_job": last.view() if last is not None else None,
             }
             note = PAGE_COMMAND_NOTES.get(key)
@@ -2845,17 +2831,22 @@ class ControlPlane:
     def _wsl_compose_argv(self, distro: str, compose_path: str, *action: str) -> list[str]:
         """wsl 内 docker compose 的参数数组形态（不拼 shell，DEC-014 硬约束 2）。"""
         return [
-            "wsl.exe", "-d", distro, "--",
-            "docker", "compose", "-f", compose_path, *action,
+            "wsl.exe",
+            "-d",
+            distro,
+            "--",
+            "docker",
+            "compose",
+            "-f",
+            compose_path,
+            *action,
         ]
 
     def _compose_linux_path(self, distro: str, ctl: PeerControl) -> str:
         """compose 文件的 Windows 路径 → WSL 内路径（`wslpath`，失败用 /mnt/<盘> 兜底）。"""
         compose_file = ctl.compose_file
         if not compose_file:
-            raise JobFailure(
-                f"{ctl.key} 未配置 compose_file（venv 形态），不走 compose 路径换算"
-            )
+            raise JobFailure(f"{ctl.key} 未配置 compose_file（venv 形态），不走 compose 路径换算")
         windows = Path(ctl.directory) / compose_file
         result = self._run(
             ["wsl.exe", "-d", distro, "--", "wslpath", "-a", str(windows)],
@@ -3011,7 +3002,7 @@ class ControlPlane:
             raise JobFailure(f"目录不存在：{directory}（先完成部署）")
 
         # 端口预检：与 venv 形态同口径（DEC-004 不换端口）；已在监听说明服务在跑
-        #（手动启动很常见），直接记账返回——Start 对运行中的任务没有意义
+        # （手动启动很常见），直接记账返回——Start 对运行中的任务没有意义
         if self._occupied_ports(ctl):
             job.log("  声明端口已有监听，跳过 Start（服务可能已在运行）")
             entry = self._peer_state(job.peer)
@@ -3146,9 +3137,7 @@ class ControlPlane:
             )
         label = (name or os.path.basename(exe)).strip().lower()
         if label in DENY_PROCESS_NAMES:
-            return (
-                f"拒绝终止 PID {pid}：{name or exe} 属于受保护的系统/关键进程"
-            )
+            return f"拒绝终止 PID {pid}：{name or exe} 属于受保护的系统/关键进程"
         if not _is_under(exe, ctl.directory):
             return (
                 f"拒绝终止 PID {pid}：可执行文件不在本 peer 目录内"
@@ -3303,8 +3292,7 @@ class ControlPlane:
                     raise HTTPException(
                         status_code=500,
                         detail=(
-                            f"已有验证文件不可读，未覆盖：{path}"
-                            "（请先人工修复或移走该文件后重试）"
+                            f"已有验证文件不可读，未覆盖：{path}（请先人工修复或移走该文件后重试）"
                         ),
                     )
                 document = {
@@ -3329,9 +3317,7 @@ class ControlPlane:
                     shutil.copy2(path, path.with_name(path.name + ".bak"))
                 write_document(path, document)
             except OSError as exc:
-                raise HTTPException(
-                    status_code=500, detail=f"写入验证条件失败：{exc}"
-                ) from None
+                raise HTTPException(status_code=500, detail=f"写入验证条件失败：{exc}") from None
 
         return {
             "trade_date": trade_date.isoformat(),
@@ -3370,9 +3356,7 @@ class ControlPlane:
                 detail=f"{self._product_name(key)} 的目录仍是占位符（{directory}），拒绝按占位符建目录",
             )
         if directory.exists() and not directory.is_dir():
-            raise HTTPException(
-                status_code=400, detail=f"{directory} 已存在且不是目录，拒绝写入"
-            )
+            raise HTTPException(status_code=400, detail=f"{directory} 已存在且不是目录，拒绝写入")
         directory.mkdir(parents=True, exist_ok=True)
         created: list[str] = []
         kept: list[str] = []
@@ -3586,9 +3570,7 @@ class ControlPlane:
                     status_code=500,
                     detail=f"{exc}；无法确认是否已存密钥，为避免退化成无鉴权请求，已中止",
                 ) from None
-            stored_key = next(
-                (stored[name] for name in ctl.secret_keys if stored.get(name)), ""
-            )
+            stored_key = next((stored[name] for name in ctl.secret_keys if stored.get(name)), "")
             if stored_key:
                 parsed = urllib.parse.urlsplit((base_url or "").strip())
                 target_host = (parsed.hostname or "").strip()
@@ -3841,9 +3823,7 @@ class ControlPlane:
 
     def _discovery_candidates(self, env_file: Any) -> list[discovery.Candidate]:
         include = discovery.reuse_cli_logins_enabled(env_file)
-        candidates: list[discovery.Candidate] = [
-            discovery.candidate_workbuddy_gateway()
-        ]
+        candidates: list[discovery.Candidate] = [discovery.candidate_workbuddy_gateway()]
         first_ok = candidates[0].ok
         if not first_ok:
             env = discovery.candidate_env(env_file)
@@ -3856,9 +3836,7 @@ class ControlPlane:
                         candidates.append(found)
         return candidates
 
-    def self_ai_update(
-        self, values: Mapping[str, str], clear: Iterable[str]
-    ) -> dict[str, Any]:
+    def self_ai_update(self, values: Mapping[str, str], clear: Iterable[str]) -> dict[str, Any]:
         allowed = set(fallback.AI_ENV_KEYS)
         unknown = sorted(set(values) - allowed)
         unknown += sorted(set(clear) - allowed)
@@ -3887,9 +3865,7 @@ class ControlPlane:
             if name.endswith("_URL"):
                 parsed = urllib.parse.urlsplit(text)
                 if parsed.scheme not in {"http", "https"} or not (parsed.hostname or "").strip():
-                    raise HTTPException(
-                        status_code=400, detail=f"{name} 必须是 http(s) 地址"
-                    )
+                    raise HTTPException(status_code=400, detail=f"{name} 必须是 http(s) 地址")
             updates[name] = text
         removals = [name for name in clear if name not in updates]
 
@@ -4047,9 +4023,7 @@ class ControlPlane:
                 except BoundaryViolation as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from None
                 if not isinstance(body, Mapping):
-                    raise HTTPException(
-                        status_code=400, detail=f"roles.{role} 必须是对象"
-                    )
+                    raise HTTPException(status_code=400, detail=f"roles.{role} 必须是对象")
                 stray = sorted(set(body) - fallback.ROLE_FIELDS)
                 if stray:
                     raise HTTPException(
@@ -4142,10 +4116,9 @@ class ControlPlane:
                 stored.get("LDST_LLM_API_KEY", "").strip()
                 or os.environ.get("LDST_LLM_API_KEY", "").strip()
             )
-            same_endpoint = (
-                stored_base
-                and stored_base.rstrip("/") == (base_url or "").strip().rstrip("/")
-            )
+            same_endpoint = stored_base and stored_base.rstrip("/") == (
+                base_url or ""
+            ).strip().rstrip("/")
             if stored_key and same_endpoint:
                 key = stored_key
         return self._probe_chat(base_url=base_url, model=model, api_key=key)
@@ -4206,9 +4179,7 @@ def _pid_alive(pid: Any) -> bool:
     return "No tasks" not in (proc.stdout or "")
 
 
-def _spawn_process(
-    args: list[str], *, cwd: Path, log_path: Path
-) -> subprocess.Popen[bytes]:
+def _spawn_process(args: list[str], *, cwd: Path, log_path: Path) -> subprocess.Popen[bytes]:
     """在独立控制台里拉起 peer 进程，stdout/stderr 落到日志文件（不拼 shell）。"""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(log_path, "a", encoding="utf-8")  # noqa: SIM115 - 生命周期跟随子进程
@@ -4283,6 +4254,7 @@ def load_sources_peers() -> Mapping[str, Any]:
 # --------------------------------------------------------------------------- #
 # 路由
 # --------------------------------------------------------------------------- #
+
 
 class InstallRequest(BaseModel):
     dev: bool = False
@@ -4449,9 +4421,7 @@ def _ai_override_text(where: str, value: Any) -> str:
     return text
 
 
-def _require_declared_ref(
-    where: str, ref: str, declared: list[str], models: set[str]
-) -> str:
+def _require_declared_ref(where: str, ref: str, declared: list[str], models: set[str]) -> str:
     """`backend:model` 的后端与模型都必须是 `backends[]` 已声明的组合。"""
     if not ref:
         return ""
@@ -4554,9 +4524,7 @@ def build_router(plane: ControlPlane) -> APIRouter:
                     "message": "请求体必须是 JSON 对象（不回显提交值）",
                 },
             )
-        known = {
-            name: data.pop(name) for name in list(data) if name in model.model_fields
-        }
+        known = {name: data.pop(name) for name in list(data) if name in model.model_fields}
         extra = sorted(set(data) - set(known))
         if extra:
             raise HTTPException(
@@ -4577,15 +4545,11 @@ def build_router(plane: ControlPlane) -> APIRouter:
                 and _secret_name_heuristic(str(error["loc"][-1]))
                 for error in errors
             )
-            fields = [
-                ".".join(str(part) for part in error["loc"]) or "(body)" for error in errors
-            ]
+            fields = [".".join(str(part) for part in error["loc"]) or "(body)" for error in errors]
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "code": "SENATE_SECRET_REJECTED"
-                    if rejected
-                    else "SENATE_INVALID_VALUE",
+                    "code": "SENATE_SECRET_REJECTED" if rejected else "SENATE_INVALID_VALUE",
                     "message": "请求字段不合法（不回显提交值）：" + ", ".join(fields),
                 },
             ) from None
@@ -4629,9 +4593,7 @@ def build_router(plane: ControlPlane) -> APIRouter:
         try:
             body = await request.json()
         except (ValueError, TypeError):
-            raise senate_roles.SenateError(
-                "SENATE_INVALID_VALUE", "请求体不是合法 JSON"
-            ) from None
+            raise senate_roles.SenateError("SENATE_INVALID_VALUE", "请求体不是合法 JSON") from None
         role = str((body or {}).get("role") or "").strip()
         skills = (body or {}).get("skills")
         if not role or not isinstance(skills, list):
@@ -4657,9 +4619,7 @@ def build_router(plane: ControlPlane) -> APIRouter:
         try:
             body = await request.json()
         except (ValueError, TypeError):
-            raise senate_roles.SenateError(
-                "SENATE_INVALID_VALUE", "请求体不是合法 JSON"
-            ) from None
+            raise senate_roles.SenateError("SENATE_INVALID_VALUE", "请求体不是合法 JSON") from None
         role = str((body or {}).get("role") or "").strip()
         text = (body or {}).get("text")
         if not role or not isinstance(text, str):
@@ -4800,9 +4760,7 @@ def build_router(plane: ControlPlane) -> APIRouter:
         本次问答的只读注册表执行器与自愈引擎的总线；开关关掉 / 非流式时两者都是
         None，行为与接入前逐字节一致。
         """
-        registry = (
-            _chat_registry_tools(plane) if chat_channel.wants_stream(request) else None
-        )
+        registry = _chat_registry_tools(plane) if chat_channel.wants_stream(request) else None
         return await chat_channel.dispatch(
             body,
             request,

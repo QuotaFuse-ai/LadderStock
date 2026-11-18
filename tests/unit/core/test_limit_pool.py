@@ -76,8 +76,16 @@ def test_missing_fields_stay_null_not_defaulted() -> None:
 def test_seal_time_passes_through_verbatim() -> None:
     """HHMMSS 原样透传，不做时区换算、不补冒号。"""
     row = _payload(
-        [{"code": "600002", "name": "乙", "boards": 1, "first_seal_time": "092500",
-          "seal_time": "150000", "trade_date": "2026-10-29"}]
+        [
+            {
+                "code": "600002",
+                "name": "乙",
+                "boards": 1,
+                "first_seal_time": "092500",
+                "seal_time": "150000",
+                "trade_date": "2026-10-29",
+            }
+        ]
     )["rows"][0]
 
     assert row["first_seal_time"] == "092500"

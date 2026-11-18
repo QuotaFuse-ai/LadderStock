@@ -335,6 +335,7 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("knowledge", "sync-announcements"),
 )
 
+
 def _with_output_json(entry: Any) -> Any:
     """同一条 argv 带上 `--output json`：退出码期望不变，且**绝不能是 2**
     （2 只会来自「No such option: --output」这种契约违约）。

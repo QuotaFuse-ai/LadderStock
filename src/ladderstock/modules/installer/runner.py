@@ -20,9 +20,9 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
 
 from ladderstock.modules.installer import manifest, state
 
@@ -224,7 +224,9 @@ def _ensure_venv(target: Path, interpreter: Path, *, progress: _Progress, log: l
     return py
 
 
-def _verify_entry(target: Path, item: manifest.PeerManifest, *, progress: _Progress, log: list[str]) -> None:
+def _verify_entry(
+    target: Path, item: manifest.PeerManifest, *, progress: _Progress, log: list[str]
+) -> None:
     """跑一次入口命令，确认装完真能起。"""
     if not item.entry:
         progress.emit(1.0, "无需入口验证")
@@ -265,7 +267,11 @@ def install_peer(
 
     from ladderstock.core import boundary
 
-    target = boundary.modules_root(root) / item.target if root is None else Path(root) / "file" / "modules" / item.target
+    target = (
+        boundary.modules_root(root) / item.target
+        if root is None
+        else Path(root) / "file" / "modules" / item.target
+    )
     progress = _Progress(on_progress)
     log: list[str] = []
 
@@ -324,14 +330,18 @@ def install_peer(
             state.write_state(key, "failed", root, detail=detail)
         except Exception:
             pass
-        return InstallResult(False, key, target, "failed", detail=detail, log_tail="\n".join(log[-12:]))
+        return InstallResult(
+            False, key, target, "failed", detail=detail, log_tail="\n".join(log[-12:])
+        )
     except Exception as exc:  # 未预期异常也要落 failed，不留「装了一半没人知道」
         detail = f"{type(exc).__name__}: {exc}"
         try:
             state.write_state(key, "failed", root, detail=detail)
         except Exception:
             pass
-        return InstallResult(False, key, target, "failed", detail=detail, log_tail="\n".join(log[-12:]))
+        return InstallResult(
+            False, key, target, "failed", detail=detail, log_tail="\n".join(log[-12:])
+        )
 
 
 def uninstall_peer(key: str, *, root: Path | None = None, confirm: bool = False) -> InstallResult:

@@ -186,6 +186,7 @@ def stateless_server() -> Iterator[tuple[PeerEndpoint, _State]]:
 # 握手与会话续用
 # --------------------------------------------------------------------------- #
 
+
 def test_probe_initializes_once_and_reuses_session(
     peer_server: tuple[PeerEndpoint, _State],
 ) -> None:
@@ -242,6 +243,7 @@ def test_expired_session_rehandshakes_and_retries_once(
 # --------------------------------------------------------------------------- #
 # SSE 解析
 # --------------------------------------------------------------------------- #
+
 
 def test_call_parses_sse_frames_and_skips_keepalive(
     peer_server: tuple[PeerEndpoint, _State],

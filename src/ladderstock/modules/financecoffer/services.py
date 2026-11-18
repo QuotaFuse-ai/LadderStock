@@ -380,7 +380,9 @@ def start_minio(root: Path | None = None, *, wait_seconds: float = 10.0) -> dict
     creationflags = 0x00000008 if sys.platform.startswith("win") else 0  # DETACHED_PROCESS
     try:
         with log.open("ab") as out:
-            proc = subprocess.Popen(cmd, stdout=out, stderr=out, creationflags=creationflags, close_fds=True)
+            proc = subprocess.Popen(
+                cmd, stdout=out, stderr=out, creationflags=creationflags, close_fds=True
+            )
         (layout.run_dir(root) / "minio.pid").write_text(str(proc.pid), encoding="utf-8")
     except OSError as exc:
         return {"ok": False, "state": "error", "detail": str(exc)}
@@ -414,7 +416,11 @@ def _pid_of_port(port: int) -> int | None:
             ).stdout
             for line in out.splitlines():
                 parts = line.split()
-                if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[3].upper() == "LISTENING":
+                if (
+                    len(parts) >= 5
+                    and parts[0].upper() == "TCP"
+                    and parts[3].upper() == "LISTENING"
+                ):
                     if parts[1].endswith(f":{port}"):
                         return int(parts[4])
             return None
@@ -570,7 +576,16 @@ def start_api(root: Path | None = None, *, wait_seconds: float = 25.0) -> dict[s
     if createdb is not None:
         try:
             subprocess.run(
-                [str(createdb), "-h", "127.0.0.1", "-p", str(pg_port()), "-U", "fc", "financecoffer"],
+                [
+                    str(createdb),
+                    "-h",
+                    "127.0.0.1",
+                    "-p",
+                    str(pg_port()),
+                    "-U",
+                    "fc",
+                    "financecoffer",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -615,7 +630,11 @@ def start_api(root: Path | None = None, *, wait_seconds: float = 25.0) -> dict[s
         if probe.get("state") == "running":
             return {**probe, "ok": True, "detail": f"已启动：{probe.get('detail')}"}
         time.sleep(0.8)
-    return {"ok": False, "state": "starting", "detail": f"{wait_seconds:.0f}s 内 /health 未就绪，日志 {log}"}
+    return {
+        "ok": False,
+        "state": "starting",
+        "detail": f"{wait_seconds:.0f}s 内 /health 未就绪，日志 {log}",
+    }
 
 
 # ------------------------------------------------------------------ embedding 服务
@@ -714,7 +733,11 @@ def _stop_by_name(root: Path | None, name: str, port: int, probe) -> dict[str, A
     if pid is None:
         pid = listening
     if pid is None:
-        return {"ok": False, "state": "running", "detail": f"拿不到 pid（既没有 pid 文件，也无法从端口 {port} 反查）"}
+        return {
+            "ok": False,
+            "state": "running",
+            "detail": f"拿不到 pid（既没有 pid 文件，也无法从端口 {port} 反查）",
+        }
     try:
         if sys.platform.startswith("win"):
             subprocess.run(
@@ -900,7 +923,11 @@ def start_mcp(root: Path | None = None, *, wait_seconds: float = 20.0) -> dict[s
         if probe.get("state") == "running":
             return {**probe, "ok": True, "detail": f"已启动：{probe.get('detail')}"}
         time.sleep(0.8)
-    return {"ok": False, "state": "starting", "detail": f"{wait_seconds:.0f}s 内 MCP 未就绪，日志 {log}"}
+    return {
+        "ok": False,
+        "state": "starting",
+        "detail": f"{wait_seconds:.0f}s 内 MCP 未就绪，日志 {log}",
+    }
 
 
 def stop_mcp(root: Path | None = None) -> dict[str, Any]:
@@ -1006,7 +1033,11 @@ def start_etl(root: Path | None = None, *, wait_seconds: float = 8.0) -> dict[st
         if probe.get("state") == "running":
             return {**probe, "ok": True, "detail": f"已启动（pid {probe.get('pid')}），日志 {log}"}
         time.sleep(0.5)
-    return {"ok": False, "state": "starting", "detail": f"{wait_seconds:.0f}s 内 ETL 进程没起来，日志 {log}"}
+    return {
+        "ok": False,
+        "state": "starting",
+        "detail": f"{wait_seconds:.0f}s 内 ETL 进程没起来，日志 {log}",
+    }
 
 
 def stop_etl(root: Path | None = None) -> dict[str, Any]:

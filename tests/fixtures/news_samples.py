@@ -369,14 +369,10 @@ def news_tools() -> list[str]:
 
 #: 语料里属于资讯流的工具（备源 / 日历结构化源不算：它们各有专门的用例）
 CORPUS_TOOLS: tuple[str, ...] = tuple(
-    tool
-    for dataset, tool in NEWS_TOOL_BY_DATASET.items()
-    if dataset in NEWS_STREAM_DATASETS
+    tool for dataset, tool in NEWS_TOOL_BY_DATASET.items() if dataset in NEWS_STREAM_DATASETS
 )
 
-_TOOL_TO_DATASET: dict[str, str] = {
-    tool: dataset for dataset, tool in NEWS_TOOL_BY_DATASET.items()
-}
+_TOOL_TO_DATASET: dict[str, str] = {tool: dataset for dataset, tool in NEWS_TOOL_BY_DATASET.items()}
 
 
 def corpus_items() -> list[NewsItem]:

@@ -56,9 +56,7 @@ def _resolve_source(day: str, source: str | None) -> tuple[Path | None, list[Pat
     """定位分钟样本：显式 `--source` 优先，否则找本机缓存；返回 (命中, 找过的路径)。"""
     if source:
         given = Path(source)
-        candidates = (
-            [given / f"{day}.jsonl", given / f"{day}.json"] if given.is_dir() else [given]
-        )
+        candidates = [given / f"{day}.jsonl", given / f"{day}.json"] if given.is_dir() else [given]
     else:
         candidates = _default_bars_candidates(day)
     for candidate in candidates:
@@ -124,12 +122,8 @@ def _append_events(day: str, fresh: list[WatchEvent]) -> Path:
 
 
 def watch_start(
-    threshold: Annotated[
-        float, typer.Option(help="3 分钟涨跌幅阈值（%，必须大于 0）")
-    ] = 3.0,
-    day: Annotated[
-        str | None, typer.Option("--date", help="交易日 YYYY-MM-DD（缺省今天）")
-    ] = None,
+    threshold: Annotated[float, typer.Option(help="3 分钟涨跌幅阈值（%，必须大于 0）")] = 3.0,
+    day: Annotated[str | None, typer.Option("--date", help="交易日 YYYY-MM-DD（缺省今天）")] = None,
     source: Annotated[
         str | None,
         typer.Option(
@@ -283,9 +277,9 @@ def watch_stop(output: OutputOption = None) -> None:
 
 def register(watch_app: typer.Typer) -> None:
     """把 `watch` 子命令挂到 main.py 已建好的 Typer 组上。"""
-    watch_app.command(
-        "start", help="盘中盯盘：3 分钟涨跌幅阈值、封板/开板检测（离线单轮扫描）"
-    )(watch_start)
+    watch_app.command("start", help="盘中盯盘：3 分钟涨跌幅阈值、封板/开板检测（离线单轮扫描）")(
+        watch_start
+    )
     watch_app.command("status", help="盯盘运行状态与最近信号")(watch_status)
     watch_app.command("stop", help="停止盯盘（幂等）")(watch_stop)
 

@@ -41,6 +41,7 @@ def _types_for(corpus, fragment: str) -> set[str]:
 # 逐行抽查
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize(
     ("tool", "fragment", "expected", "_note"),
     SPOT_CHECK,
@@ -115,6 +116,7 @@ def test_excluded_dataset_has_a_reason() -> None:
 # 事件的硬约束
 # --------------------------------------------------------------------------- #
 
+
 def test_every_event_carries_evidence(corpus) -> None:
     _items, report = corpus
     assert report.events, "语料应该至少抽出几条事件"
@@ -165,13 +167,25 @@ def test_missing_evidence_is_rejected_at_construction() -> None:
     """`NewsEvent` 自己拦：无 url / 无片段的事件根本构造不出来。"""
     with pytest.raises(ValueError, match="evidence.url"):
         NewsEvent(
-            id="x", type="policy", label="政策", rule_id="policy", event_date=None,
-            title="t", codes=(), evidence={"snippet": "片段"},
+            id="x",
+            type="policy",
+            label="政策",
+            rule_id="policy",
+            event_date=None,
+            title="t",
+            codes=(),
+            evidence={"snippet": "片段"},
         )
     with pytest.raises(ValueError, match="evidence.snippet"):
         NewsEvent(
-            id="x", type="policy", label="政策", rule_id="policy", event_date=None,
-            title="t", codes=(), evidence={"url": "https://x"},
+            id="x",
+            type="policy",
+            label="政策",
+            rule_id="policy",
+            event_date=None,
+            title="t",
+            codes=(),
+            evidence={"url": "https://x"},
         )
 
 
@@ -184,6 +198,7 @@ def test_empty_corpus_extracts_nothing() -> None:
 # --------------------------------------------------------------------------- #
 # 规则的复合口径
 # --------------------------------------------------------------------------- #
+
 
 def test_policy_needs_subject_and_action_together() -> None:
     """只出现「通知」的普通公告不算政策事件：这是 policy 规则拆成两组的原因。"""

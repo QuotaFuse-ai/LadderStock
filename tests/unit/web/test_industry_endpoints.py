@@ -113,6 +113,7 @@ DETAIL_EXTRA_KEYS = {
 # 造盘
 # --------------------------------------------------------------------------- #
 
+
 def build_client(
     tmp_path: Path,
     case: str = FULL,
@@ -144,6 +145,7 @@ def payload_of(response: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # GET /api/industry（缺口 #1）
 # --------------------------------------------------------------------------- #
+
 
 def test_list_envelope_and_payload_contract(client: TestClient) -> None:
     """外壳 = `LadderEnvelope`；载荷 = R5 清单 + 每行 `metrics` / `as_of` + 顶层 `as_of`。"""
@@ -181,9 +183,7 @@ def test_list_values_equal_cli_snapshot(client: TestClient, tmp_path: Path) -> N
     listing = payload_of(client.get("/api/industry"))
 
     for row in listing["industries"]:
-        shown = snapshot_module.industry_snapshot(
-            str(row["name"]), root=data, config_root=config
-        )
+        shown = snapshot_module.industry_snapshot(str(row["name"]), root=data, config_root=config)
         for path, value in row["metrics"].items():
             assert value == snapshot_module._leaf_value(shown["dimensions"], path), path
 
@@ -254,6 +254,7 @@ def test_industry_read_survives_control_switch(
 # --------------------------------------------------------------------------- #
 # GET /api/industry/{name}（缺口 #2 / #3 / #4 / #5 / #7）
 # --------------------------------------------------------------------------- #
+
 
 def test_detail_keeps_r5_payload_and_adds_spec_blocks(client: TestClient, tmp_path: Path) -> None:
     """R5 `show` 的键一个不改，只补 SPEC §2.2 的四块 + 里层 `data_as_of`。"""
@@ -388,6 +389,7 @@ def test_detail_empty_cache_still_renders(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # GET /api/signals（缺口 #6）
 # --------------------------------------------------------------------------- #
+
 
 def test_signals_payload_contract(client: TestClient) -> None:
     """载荷 = SPEC §2.3 六键；`rules[]` 四条且 id 与后端规则表一致。"""

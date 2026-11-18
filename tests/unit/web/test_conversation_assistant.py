@@ -65,7 +65,6 @@ def _patch_agent(monkeypatch: pytest.MonkeyPatch, fake: _FakeClient) -> None:
     monkeypatch.setattr(assistant_module, "ask_agent", _ask_agent)
 
 
-
 def _client(tmp_path: Path) -> TestClient:
     app = create_app(
         data_root=tmp_path,
@@ -315,9 +314,7 @@ def test_long_first_question_title_follows_documented_rule(
     assert len(session["title"]) == 40
 
 
-def test_rename_endpoint_and_unknown_session_404(
-    tmp_path: Path, fake_client: _FakeClient
-) -> None:
+def test_rename_endpoint_and_unknown_session_404(tmp_path: Path, fake_client: _FakeClient) -> None:
     client = _client(tmp_path)
     _post_turn(client, message="首问", session_id="sess-rename")
 
@@ -333,9 +330,7 @@ def test_rename_endpoint_and_unknown_session_404(
     assert missing.status_code == 404
     assert missing.json()["code"] == "not_found"
 
-    unknown_turns = client.get(
-        "/api/conversation/sessions/sess-missing/turns", headers=HEADERS
-    )
+    unknown_turns = client.get("/api/conversation/sessions/sess-missing/turns", headers=HEADERS)
     assert unknown_turns.status_code == 404
 
 
@@ -356,8 +351,7 @@ def test_delete_session_removes_turns_and_is_idempotent(
     sessions = client.get("/api/conversation/sessions", headers=HEADERS).json()["sessions"]
     assert [item["session_id"] for item in sessions] == ["sess-keep"]
     assert (
-        client.get("/api/conversation/sessions/sess-drop/turns", headers=HEADERS).status_code
-        == 404
+        client.get("/api/conversation/sessions/sess-drop/turns", headers=HEADERS).status_code == 404
     )
 
     conn = chat_store.connect(tmp_path, create=False)
@@ -497,9 +491,7 @@ def test_http_response_carries_status_and_read_api_exposes_it(
     assert response.status_code == 200
     assert response.json()["status"] == chat_store.DONE
 
-    payload = client.get(
-        "/api/conversation/sessions/sess-status/turns", headers=HEADERS
-    ).json()
+    payload = client.get("/api/conversation/sessions/sess-status/turns", headers=HEADERS).json()
     assert payload["turns"][0]["status"] == chat_store.DONE
     assert payload["turns"][0]["updated_at"]
 
@@ -577,9 +569,7 @@ def test_aborted_turn_keeps_arrived_blocks_after_client_disconnect(
 
     # 「重启服务」再读：aborted 不因进程退出丢失
     reopened = _client(tmp_path)
-    payload = reopened.get(
-        "/api/conversation/sessions/sess-aborted/turns", headers=HEADERS
-    ).json()
+    payload = reopened.get("/api/conversation/sessions/sess-aborted/turns", headers=HEADERS).json()
     assert payload["turns"][0]["status"] == chat_store.ABORTED
 
 

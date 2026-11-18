@@ -59,9 +59,7 @@ def position_add(
 ) -> None:
     """新增一条持仓：只写本机 `data/journal.sqlite`，不上传、不通知。"""
     try:
-        row = add_position(
-            code, cost, qty, entry_date=position_date, note=note, industry=industry
-        )
+        row = add_position(code, cost, qty, entry_date=position_date, note=note, industry=industry)
     except LadderStockError as exc:
         _fail(exc)
     emit(
@@ -97,9 +95,7 @@ def position_list(
         prices, status = price_map(codes, price_date)
         trades = list_journal_trades()
         daily, daily_status = daily_change_map(codes, status["date"])
-        payload = compute_metrics(
-            rows, prices, as_of=status["date"], trades=trades, daily=daily
-        )
+        payload = compute_metrics(rows, prices, as_of=status["date"], trades=trades, daily=daily)
     except LadderStockError as exc:
         _fail(exc)
 
@@ -128,9 +124,7 @@ def _write_export(payload: dict[str, Any], target: Path) -> None:
     except OSError as exc:
         error(f"导出失败：{target}（{exc}）")
         raise typer.Exit(EXIT_CONFIG) from None
-    sys.stderr.write(
-        f"ldst: 已导出本机持仓明细（隐私数据，请自行保管，勿上传）：{target}\n"
-    )
+    sys.stderr.write(f"ldst: 已导出本机持仓明细（隐私数据，请自行保管，勿上传）：{target}\n")
     sys.stderr.flush()
 
 
@@ -138,9 +132,7 @@ def position_update(
     code: Annotated[str, typer.Option(help="证券代码")],
     cost: Annotated[float | None, typer.Option(help="新成本价")] = None,
     qty: Annotated[float | None, typer.Option(help="新数量（股）")] = None,
-    position_date: Annotated[
-        str | None, typer.Option("--date", help="新建仓日 YYYY-MM-DD")
-    ] = None,
+    position_date: Annotated[str | None, typer.Option("--date", help="新建仓日 YYYY-MM-DD")] = None,
     industry: Annotated[str | None, typer.Option(help="新行业标注")] = None,
     note: Annotated[str | None, typer.Option(help="新备注")] = None,
     output: OutputOption = None,

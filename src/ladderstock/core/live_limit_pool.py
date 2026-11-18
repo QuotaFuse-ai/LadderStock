@@ -17,9 +17,10 @@ r"""盘中实时涨停池快照（`data/live/limit_pool/<date>.json`）。
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 #: 一条记录保留的字段（页面与计算只用到这些）
 RECORD_FIELDS: tuple[str, ...] = (

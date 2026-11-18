@@ -25,10 +25,10 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from ladderstock.modules.financecoffer import layout
-
 #: PG Windows 二进制（EDB 官方 zip，含 initdb / pg_ctl / postgres）
-DEFAULT_PG_URL = "https://get.enterprisedb.com/postgresql/postgresql-17.6-1-windows-x64-binaries.zip"
+DEFAULT_PG_URL = (
+    "https://get.enterprisedb.com/postgresql/postgresql-17.6-1-windows-x64-binaries.zip"
+)
 #: MinIO 官方 Windows 二进制
 DEFAULT_MINIO_URL = "https://dl.min.io/server/minio/release/windows-amd64/minio.exe"
 
@@ -46,9 +46,10 @@ def _pgvector_present(directory: Path) -> bool:
     `pg_runtime.pgvector_status(root)` 是从 `<root>/runtime/pg` 推导的，复制到任意位置
     时推不出来；校验复制结果只能直接看文件。
     """
-    if not (directory / "Library" / "lib" / "vector.dll").is_file() and not (
-        directory / "lib" / "vector.dll"
-    ).is_file():
+    if (
+        not (directory / "Library" / "lib" / "vector.dll").is_file()
+        and not (directory / "lib" / "vector.dll").is_file()
+    ):
         return False
     for candidate in (
         directory / "Library" / "share" / "extension" / "vector.control",
@@ -57,6 +58,8 @@ def _pgvector_present(directory: Path) -> bool:
         if candidate.is_file():
             return True
     return False
+
+
 _PROBE_EMBED = (
     r"D:\workplace\ruanjian\embedding\models\bge-m3",
     r"D:\workplace\LadderStock\file\models\bge-small-zh-v1.5",
@@ -179,7 +182,9 @@ def fetch_pg(target: Path, *, root: Path | None = None) -> dict[str, Any]:
                 raise FetchError(f"LDST_FC_PG_DIR 指向的目录不存在：{src}")
             shutil.copytree(src, target, dirs_exist_ok=True)
             if not _pgvector_present(target):
-                raise FetchError(f"从 {src} 复制后目标里没有 pgvector（vector.dll / vector.control），目录结构不匹配")
+                raise FetchError(
+                    f"从 {src} 复制后目标里没有 pgvector（vector.dll / vector.control），目录结构不匹配"
+                )
             return {
                 "bytes": _tree_size(target),
                 "source": f"local-dir:{src}",
@@ -194,7 +199,11 @@ def fetch_pg(target: Path, *, root: Path | None = None) -> dict[str, Any]:
         }
 
     if (target / "bin" / "pg_ctl.exe").is_file() or (target / "bin" / "pg_ctl").is_file():
-        return {"bytes": _tree_size(target), "source": "already-present", "detail": "已有 pg_ctl，跳过"}
+        return {
+            "bytes": _tree_size(target),
+            "source": "already-present",
+            "detail": "已有 pg_ctl，跳过",
+        }
 
     local_zip = _first_env("LDST_FC_PG_ZIP")
     if local_zip:
@@ -222,7 +231,11 @@ def fetch_pg(target: Path, *, root: Path | None = None) -> dict[str, Any]:
 
 def fetch_redis(target: Path, *, root: Path | None = None) -> dict[str, Any]:
     if any((target / name).is_file() for name in ("redis-server.exe", "redis-server")):
-        return {"bytes": _tree_size(target), "source": "already-present", "detail": "已有 redis-server，跳过"}
+        return {
+            "bytes": _tree_size(target),
+            "source": "already-present",
+            "detail": "已有 redis-server，跳过",
+        }
 
     zip_env = _first_env("LDST_FC_REDIS_ZIP")
     dir_env = _first_env("LDST_FC_REDIS_DIR")
@@ -251,13 +264,21 @@ def fetch_redis(target: Path, *, root: Path | None = None) -> dict[str, Any]:
         _copy_tree(extracted, target)
     if not any((target / name).is_file() for name in ("redis-server.exe", "redis-server")):
         raise FetchError(f"{zip_path.name} 里没有 redis-server，移植版包结构不符合预期")
-    return {"bytes": _tree_size(target), "source": str(zip_path), "detail": "从移植版 zip 解压 Redis"}
+    return {
+        "bytes": _tree_size(target),
+        "source": str(zip_path),
+        "detail": "从移植版 zip 解压 Redis",
+    }
 
 
 def fetch_minio(target: Path, *, root: Path | None = None) -> dict[str, Any]:
     name = "minio.exe" if os.name == "nt" else "minio"
     if (target / name).is_file():
-        return {"bytes": (target / name).stat().st_size, "source": "already-present", "detail": "已有 minio，跳过"}
+        return {
+            "bytes": (target / name).stat().st_size,
+            "source": "already-present",
+            "detail": "已有 minio，跳过",
+        }
 
     exe_env = _first_env("LDST_FC_MINIO_EXE")
     src: Path | None = Path(exe_env) if exe_env else _first_existing(_PROBE_MINIO)
@@ -294,7 +315,11 @@ def fetch_api(target: Path, *, root: Path | None = None) -> dict[str, Any]:
 def fetch_embedding(target: Path, *, root: Path | None = None) -> dict[str, Any]:
     """复制模型权重目录（bge-m3）。权重不做自动下载：2GB 级，来源必须显式。"""
     if target.exists() and any(target.iterdir()):
-        return {"bytes": _tree_size(target), "source": "already-present", "detail": "已有模型，跳过"}
+        return {
+            "bytes": _tree_size(target),
+            "source": "already-present",
+            "detail": "已有模型，跳过",
+        }
 
     models_env = _first_env("LDST_FC_EMBED_MODELS")
     src: Path | None = Path(models_env) if models_env else _first_existing(_PROBE_EMBED)
@@ -336,7 +361,12 @@ def describe(component: str, target: Path, *, root: Path | None = None) -> dict[
         raise FetchError(f"未知组件：{component!r}")
     started = time.time()
     result = handler(target, root=root)
-    return {**result, "component": component, "target": str(target), "elapsed_s": round(time.time() - started, 1)}
+    return {
+        **result,
+        "component": component,
+        "target": str(target),
+        "elapsed_s": round(time.time() - started, 1),
+    }
 
 
 __all__ = [

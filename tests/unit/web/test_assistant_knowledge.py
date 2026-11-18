@@ -418,9 +418,7 @@ def test_endpoint_degrades_when_knowledge_broken(
     assert calls and calls[0]["system_prompt"] == assistant_module.SYSTEM_PROMPT
 
 
-def test_endpoint_injects_seeded_dossier(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_endpoint_injects_seeded_dossier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """端到端（进程内）：真视图 + 真档案盘，问题里只提公司名也能召回。"""
     seed(tmp_path)
     calls = _patch_endpoint(monkeypatch)

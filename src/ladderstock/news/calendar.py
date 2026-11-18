@@ -40,8 +40,7 @@ NO_SOURCE_SECTIONS: tuple[dict[str, str], ...] = (
         "key": "earnings_disclosure",
         "label": "财报预约披露日",
         "reason": (
-            "TickHub-CN 没有「预约披露时间表」工具；"
-            "业绩预告的 notice_date 不是预约披露日，不能替代"
+            "TickHub-CN 没有「预约披露时间表」工具；业绩预告的 notice_date 不是预约披露日，不能替代"
         ),
         "ask": (
             "上游需求：th-cn 增加 em_income_summary / "
@@ -245,6 +244,7 @@ def _section_label(key: str) -> str:
 # 有源小节
 # --------------------------------------------------------------------------- #
 
+
 def _fill_section(
     section: CalendarSection,
     registry: ProviderRegistry,
@@ -433,6 +433,7 @@ def _text(row: Mapping[str, Any], *keys: str) -> str:
 # --------------------------------------------------------------------------- #
 # 带证据的抽取事件
 # --------------------------------------------------------------------------- #
+
 
 def _extracted_events(root: Path | None, *, month: str, codes: list[str]) -> list[dict[str, Any]]:
     conn = news_store.connect(root, create=False)

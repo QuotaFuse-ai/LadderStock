@@ -47,6 +47,7 @@ def _by_title(result, fragment: str):
 # 去重
 # --------------------------------------------------------------------------- #
 
+
 def test_cross_source_story_keeps_one_row_with_all_origins(stream_of) -> None:
     """同一条稿子在三个栏目出现：留一条，`origins` 记下全部来源（不静默丢弃）。"""
     result, _transport = stream_of()
@@ -70,19 +71,24 @@ def test_same_title_different_day_is_not_merged() -> None:
 def test_same_url_different_layout_is_merged() -> None:
     """同一地址被两个栏目以不同排版引用：规范化 url 先赢，只留一条。"""
     left = normalize.decode(
-        "flash_cls", [{
-            "title": "【快讯】央行降准",
-            "url": "https://www.cls.cn/detail/9",
-            "publish_time": 1_793_323_800,
-        }]
+        "flash_cls",
+        [
+            {
+                "title": "【快讯】央行降准",
+                "url": "https://www.cls.cn/detail/9",
+                "publish_time": 1_793_323_800,
+            }
+        ],
     )
     right = normalize.decode(
         "flash_wallstreetcn",
-        [{
-            "title": "央行 降准",
-            "uri": "https://www.cls.cn/detail/9/?utm_source=x",
-            "publish_time": 1_793_323_800,
-        }],
+        [
+            {
+                "title": "央行 降准",
+                "uri": "https://www.cls.cn/detail/9/?utm_source=x",
+                "publish_time": 1_793_323_800,
+            }
+        ],
     )
     merged, dropped = dedupe([*left, *right])
     assert len(merged) == 1 and dropped == 1
@@ -94,16 +100,26 @@ def test_same_url_different_layout_is_merged() -> None:
 
 def test_transitive_duplicates_collapse_into_one_group() -> None:
     """A 与 B 同标题、B 与 C 同地址 → 三条收成一条（字典式去重会留两条，所以用并查集）。"""
-    a = normalize.decode("flash_cls", [{
-        "title": "铼金镍锆",
-        "url": "https://a/1",
-        "publish_time": 1_793_323_800,
-    }])[0]
-    b = normalize.decode("flash_wallstreetcn", [{
-        "title": "铼金镍锆",
-        "uri": "https://b/2",
-        "publish_time": 1_793_323_800,
-    }])[0]
+    a = normalize.decode(
+        "flash_cls",
+        [
+            {
+                "title": "铼金镍锆",
+                "url": "https://a/1",
+                "publish_time": 1_793_323_800,
+            }
+        ],
+    )[0]
+    b = normalize.decode(
+        "flash_wallstreetcn",
+        [
+            {
+                "title": "铼金镍锆",
+                "uri": "https://b/2",
+                "publish_time": 1_793_323_800,
+            }
+        ],
+    )[0]
     c = normalize.decode("news_cctv", [{"title": "另一个标题", "url": "https://b/2"}])[0]
     merged, dropped = dedupe([a, b, c])
     assert len(merged) == 1 and dropped == 2
@@ -112,21 +128,29 @@ def test_transitive_duplicates_collapse_into_one_group() -> None:
 
 def test_merged_item_keeps_the_longest_summary_and_union_of_codes() -> None:
     left = normalize.decode(
-        "flash_cls", [{
-            "title": "同一件事",
-            "url": "https://a/1",
-            "content": "短",
-            "publish_time": 1_793_323_800,
-        }]
+        "flash_cls",
+        [
+            {
+                "title": "同一件事",
+                "url": "https://a/1",
+                "content": "短",
+                "publish_time": 1_793_323_800,
+            }
+        ],
     )[0]
     right = normalize.decode(
         "news_eastmoney_stock",
-        {"code": "600000", "news": [{
-            "title": "同一件事",
-            "url": "https://b/2",
-            "summary": "长得多的一段摘要",
-            "date": "2026-10-30T09:30:00",
-        }]},
+        {
+            "code": "600000",
+            "news": [
+                {
+                    "title": "同一件事",
+                    "url": "https://b/2",
+                    "summary": "长得多的一段摘要",
+                    "date": "2026-10-30T09:30:00",
+                }
+            ],
+        },
     )[0]
     merged, _dropped = dedupe([left, right])
     assert len(merged) == 1
@@ -141,6 +165,7 @@ def test_dedupe_on_empty_list() -> None:
 # --------------------------------------------------------------------------- #
 # 幂等重跑（验收项 1）
 # --------------------------------------------------------------------------- #
+
 
 def test_rerun_is_idempotent(tmp_path: Path, news_registry) -> None:
     """同一 fixture 跑两遍：id 集合、行数、事件数都不变，第二遍「新增 0 条」。"""
@@ -189,6 +214,7 @@ def test_ids_are_stable_across_runs_and_processes(tmp_path: Path, news_registry)
 # 时间窗
 # --------------------------------------------------------------------------- #
 
+
 def test_window_filter_drops_undated_and_out_of_range(stream_of) -> None:
     result, _transport = stream_of(start=WINDOW_DAY, end=WINDOW_DAY)
     assert result.items, "窗口内应该有稿子"
@@ -231,6 +257,7 @@ def test_window_at_the_limit_is_allowed(stream_of) -> None:
 # --------------------------------------------------------------------------- #
 # 栏目选择与 code
 # --------------------------------------------------------------------------- #
+
 
 def test_resolve_datasets_follows_registry_order_not_input_order() -> None:
     picked = resolve_datasets(["flash_cls", "announcement_cninfo"])
@@ -281,17 +308,14 @@ def test_code_scoped_columns_are_not_called_once_per_code(stream_of) -> None:
 
 def test_cctv_is_fetched_day_by_day(stream_of) -> None:
     _result, transport = stream_of(start="2026-10-29", end="2026-10-31")
-    days = [
-        call.params["date"]
-        for call in transport.calls
-        if call.tool == "cctv_news"
-    ]
+    days = [call.params["date"] for call in transport.calls if call.tool == "cctv_news"]
     assert days == ["2026-10-29", "2026-10-30", "2026-10-31"]
 
 
 # --------------------------------------------------------------------------- #
 # 降级与退出码
 # --------------------------------------------------------------------------- #
+
 
 def test_all_columns_ok(stream_of) -> None:
     result, _transport = stream_of()
@@ -356,6 +380,7 @@ def test_empty_payload_is_distinguished(tmp_path: Path, news_registry) -> None:
 # --------------------------------------------------------------------------- #
 # 输出契约与隐私
 # --------------------------------------------------------------------------- #
+
 
 def test_undated_items_are_counted_not_silently_shown(tmp_path: Path, news_registry) -> None:
     """上游没给时间：条目不进视图，但要计入 `dropped_undated`——「少了」必须能对上账。"""

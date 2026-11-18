@@ -42,6 +42,7 @@ FOOTER = (
 # 路径与读写
 # --------------------------------------------------------------------------- #
 
+
 def _data_dir(root: Any = None) -> Path:
     from ladderstock.cli.paths import data_dir
 
@@ -88,6 +89,7 @@ def latest_report(root: Any = None) -> tuple[str, dict[str, Any]] | None:
 # --------------------------------------------------------------------------- #
 # 指标快照
 # --------------------------------------------------------------------------- #
+
 
 def _records(dataset: str, day: date | str, root: Any) -> tuple[list[dict[str, Any]], str]:
     return ladder_module.dataset_snapshot(dataset, day, root)
@@ -179,8 +181,7 @@ def _theme_metrics(day: date | str, root: Any) -> dict[str, Any]:
     }
     if not available:
         snapshot["reason"] = (
-            "本机今天还没有板块/题材产物：后台会在收盘后自动补取，"
-            "也可以点本页「数据同步」立即补"
+            "本机今天还没有板块/题材产物：后台会在收盘后自动补取，也可以点本页「数据同步」立即补"
         )
     return snapshot
 
@@ -193,9 +194,7 @@ def _dragon_tiger_metrics(day: date | str, root: Any) -> dict[str, Any]:
         "available": available,
         "board_rows": _row_count(board, board_backend),
         "seat_rows": _row_count(seats, seats_backend),
-        "source_detail": (
-            f"dragon_tiger: {board_backend}; dragon_tiger_seats: {seats_backend}"
-        ),
+        "source_detail": (f"dragon_tiger: {board_backend}; dragon_tiger_seats: {seats_backend}"),
     }
     if not available:
         snapshot["reason"] = _dragon_tiger_gap_reason(day)
@@ -215,7 +214,6 @@ def _dragon_tiger_is_pending(day: date | str) -> bool:
     return target == now.date() and now.hour < 18
 
 
-
 def _dragon_tiger_gap_reason(day: date | str) -> str:
     """龙虎榜为空时说清是「还没到公布时间」还是「本机真没有」——别让用户去跑 sync。"""
     try:
@@ -231,10 +229,10 @@ def _dragon_tiger_gap_reason(day: date | str) -> str:
     return "本机还没有这一天的龙虎榜产物：后台会在收盘后自动补取，也可以点本页「数据同步」立即补"
 
 
-
 # --------------------------------------------------------------------------- #
 # 生成本地复盘
 # --------------------------------------------------------------------------- #
+
 
 def generate(
     day: date | str,
@@ -249,9 +247,7 @@ def generate(
 ) -> tuple[dict[str, Any], RunResult]:
     """跑一遍复盘流水线并落盘；返回 `(report, run_result)`。"""
     metrics = collect_metrics(day, root=root)
-    orchestrator = Orchestrator(
-        config=config, client=client, root=root, config_root=config_root
-    )
+    orchestrator = Orchestrator(config=config, client=client, root=root, config_root=config_root)
     run = orchestrator.run(day, metrics, force=force, retry_failed=retry_failed, only=only)
 
     sentiment = sentiment_module.compute_sentiment(day, root=root)
@@ -302,8 +298,7 @@ def build_report(
         "validation": {
             "date": _condition_day(day, root),
             "conditions": [
-                item["text"]
-                for item in validation_module.build_conditions(day, sentiment, ladder)
+                item["text"] for item in validation_module.build_conditions(day, sentiment, ladder)
             ],
         },
         "footer": FOOTER,
@@ -346,6 +341,7 @@ def _write_conditions(
 # --------------------------------------------------------------------------- #
 # 杂项
 # --------------------------------------------------------------------------- #
+
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")

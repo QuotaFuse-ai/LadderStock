@@ -51,6 +51,7 @@ def _load(name: str) -> dict[str, Any]:
 # 1. 数据集归属：没有归属就不许同步
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("name", sorted(DATASET_CATALOG))
 def test_catalog_entry_has_peer_and_tool(name: str) -> None:
     binding = DATASET_CATALOG[name]
@@ -82,6 +83,7 @@ def test_config_contains_no_vendor_hosts_or_collectors() -> None:
 # --------------------------------------------------------------------------- #
 # 2. 配置与目录必须一致：主备同 peer
 # --------------------------------------------------------------------------- #
+
 
 def test_sync_datasets_are_registered_and_match_catalog() -> None:
     datasets = _load("sync")["sync"]["datasets"]

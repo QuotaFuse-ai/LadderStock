@@ -18,10 +18,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-import threading
 import os
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -420,7 +419,9 @@ def delete_dossier(market: str, symbol: str) -> int:
     return int(((result or {}).get("result") or {}).get("deleted") or 0)
 
 
-def sync_dossier(data_root: Any, market: str, symbol: str, *, purge: bool = True) -> SyncResult | None:
+def sync_dossier(
+    data_root: Any, market: str, symbol: str, *, purge: bool = True
+) -> SyncResult | None:
     """把一份档案切块写入 Qdrant。档案缺失 / refuted / 向量层不可用 → None（调用方降级）。"""
     payload = _dossier_text(data_root, market, symbol)
     if payload is None:
@@ -436,7 +437,7 @@ def sync_dossier(data_root: Any, market: str, symbol: str, *, purge: bool = True
     deleted = delete_dossier(market, symbol) if purge else 0
 
     points = []
-    for index, ((section, chunk), vector) in enumerate(zip(pieces, vectors)):
+    for index, ((section, chunk), vector) in enumerate(zip(pieces, vectors, strict=False)):
         points.append(
             {
                 "id": point_id(market, symbol, as_of, section, index),
@@ -465,7 +466,9 @@ def sync_dossier(data_root: Any, market: str, symbol: str, *, purge: bool = True
         len(points),
         deleted,
     )
-    return SyncResult(market=market, symbol=symbol, as_of=as_of, chunks=len(points), deleted=deleted)
+    return SyncResult(
+        market=market, symbol=symbol, as_of=as_of, chunks=len(points), deleted=deleted
+    )
 
 
 def sync_all(data_root: Any) -> list[SyncResult]:
@@ -474,7 +477,7 @@ def sync_all(data_root: Any) -> list[SyncResult]:
 
     manifest = load_manifest(data_root)
     results: list[SyncResult] = []
-    for key in (manifest.get("companies") or {}):
+    for key in manifest.get("companies") or {}:
         market, _, symbol = str(key).partition(":")
         if not market or not symbol:
             continue
@@ -553,7 +556,7 @@ def search(
         json_body=body,
     )
     hits: list[VectorHit] = []
-    for item in ((result or {}).get("result") or []):
+    for item in (result or {}).get("result") or []:
         payload = item.get("payload") or {}
         hits.append(
             VectorHit(
@@ -578,7 +581,9 @@ def render_block(hits: list[VectorHit], *, budget: int = 4000) -> str | None:
     lines: list[str] = []
     used = 0
     for hit in hits:
-        head = f"· {hit.market}:{hit.symbol} · {hit.section} · as_of={hit.as_of} · status={hit.status}"
+        head = (
+            f"· {hit.market}:{hit.symbol} · {hit.section} · as_of={hit.as_of} · status={hit.status}"
+        )
         if used + len(head) > budget:
             break
         lines.append(head)

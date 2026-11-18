@@ -83,11 +83,7 @@ class PriceStrip:
 
     @property
     def as_of(self) -> str | None:
-        stamps = [
-            item["price_as_of"]
-            for item in self.prices.values()
-            if item.get("price_as_of")
-        ]
+        stamps = [item["price_as_of"] for item in self.prices.values() if item.get("price_as_of")]
         return max(stamps) if stamps else None
 
 
@@ -223,9 +219,7 @@ def fetch_prices(registry: Any, codes: list[str]) -> PriceStrip:
 
     missing = len(ok_codes) == 0
     status: Status = "missing" if missing else ("ok" if len(ok_codes) == len(wanted) else "partial")
-    return PriceStrip(
-        prices=prices, status=status, source_detail=detail, cache_replay=cache_replay
-    )
+    return PriceStrip(prices=prices, status=status, source_detail=detail, cache_replay=cache_replay)
 
 
 def _rows(envelope: Any) -> list[dict[str, Any]]:

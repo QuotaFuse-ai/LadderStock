@@ -96,6 +96,7 @@ class ToolError(Exception):
 # 小工具
 # --------------------------------------------------------------------------- #
 
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -173,6 +174,7 @@ def _records(dataset: str, day: date, root: Any) -> tuple[list[dict[str, Any]], 
 # 工具实现（同步）
 # --------------------------------------------------------------------------- #
 
+
 def _tool_review(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
     from ladderstock.review import pipeline
 
@@ -187,8 +189,7 @@ def _tool_review(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
             payload={"date": day.isoformat(), "review": None, "data_source_status": "missing"},
             available=False,
             source_detail=(
-                f"local review cache 不存在：{path.name}"
-                f"（先运行 ldst review --date {day}）"
+                f"local review cache 不存在：{path.name}（先运行 ldst review --date {day}）"
             ),
         )
 
@@ -232,8 +233,7 @@ def _tool_validation(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
             },
             available=False,
             source_detail=(
-                f"local validation cache 不存在：{path.name}"
-                f"（先运行 ldst review --date {day}）"
+                f"local validation cache 不存在：{path.name}（先运行 ldst review --date {day}）"
             ),
         )
 
@@ -369,9 +369,7 @@ def _news_int_arg(arguments: dict[str, Any], key: str, default: int) -> int:
         raise ToolError(f"非法 {key}：需要整数，收到 {raw!r}") from None
 
 
-def _news_envelope_fields(
-    statuses: list[Any], exit_code: int
-) -> dict[str, Any]:
+def _news_envelope_fields(statuses: list[Any], exit_code: int) -> dict[str, Any]:
     """把资讯流的取数账本折算成信封的四个字段——降级必须显式可见。"""
     from ladderstock.errors import EXIT_PARTIAL, EXIT_SOURCE
     from ladderstock.news.stream import STATUS_EMPTY, STATUS_OK
@@ -871,8 +869,10 @@ def _tool_proxyfleet_status(arguments: dict[str, Any], root: Any) -> dict[str, A
         if ready is not None
         else None
     )
-    source_status = "ok" if (available and ready_ok and not problems) else (
-        "degraded" if available else "partial"
+    source_status = (
+        "ok"
+        if (available and ready_ok and not problems)
+        else ("degraded" if available else "partial")
     )
     return _envelope(
         domain="review",
@@ -890,16 +890,15 @@ def _tool_proxyfleet_status(arguments: dict[str, Any], root: Any) -> dict[str, A
                 "recent_failures": failures,
                 "problems": problems,
             },
-            "data_source_status": "ok" if available and ready_ok else (
-                "degraded" if available else "missing"
-            ),
+            "data_source_status": "ok"
+            if available and ready_ok
+            else ("degraded" if available else "missing"),
         },
         available=available,
         source_status=source_status,
         freshness="realtime",
         source_detail=(
-            f"ProxyFleet REST {_proxyfleet_base()}"
-            "（/readyz + /v1/stats/summary + /v1/nodes）"
+            f"ProxyFleet REST {_proxyfleet_base()}（/readyz + /v1/stats/summary + /v1/nodes）"
         ),
     )
 
@@ -1003,8 +1002,7 @@ def _tool_watch(arguments: dict[str, Any], root: Any) -> dict[str, Any]:
             reason = f"尚未执行 ldst watch start：盯盘状态文件不存在（{path}）"
         elif result.state == status_file.STATE_CORRUPT:
             reason = (
-                f"盯盘状态文件损坏、无法解析：{path}（{result.error}）；"
-                "请重新执行 ldst watch start"
+                f"盯盘状态文件损坏、无法解析：{path}（{result.error}）；请重新执行 ldst watch start"
             )
         else:
             reason = (
@@ -1114,6 +1112,7 @@ def _tool_start_research(arguments: dict[str, Any], root: Any) -> dict[str, Any]
 # 研究任务（后台线程）
 # --------------------------------------------------------------------------- #
 
+
 def _section_names() -> tuple[str, ...]:
     from ladderstock.ai.checkpoint import SECTIONS
 
@@ -1188,6 +1187,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 # 路径（延迟导入，避免 mcp → review → ai 的循环）
 # --------------------------------------------------------------------------- #
 
+
 def _data_dir() -> Path:
     from ladderstock.cli.paths import data_dir
 
@@ -1256,9 +1256,7 @@ def build_server(*, data_root: Any = None) -> Server[Any]:
     ) -> types.ListToolsResult:
         return types.ListToolsResult(tools=tool_definitions())
 
-    async def on_call_tool(
-        _ctx: Any, params: types.CallToolRequestParams
-    ) -> types.CallToolResult:
+    async def on_call_tool(_ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
         name = params.name
         arguments = dict(params.arguments or {})
         try:
@@ -1299,6 +1297,7 @@ def build_server(*, data_root: Any = None) -> Server[Any]:
 # --------------------------------------------------------------------------- #
 # 传输层
 # --------------------------------------------------------------------------- #
+
 
 def serve_stdio(*, data_root: Any = None) -> None:
     """stdio 传输：stdout 只写协议，日志全部 stderr。"""

@@ -41,6 +41,7 @@ def _set_meipass(monkeypatch: pytest.MonkeyPatch, path: Path) -> Path:
 # 源码态
 # --------------------------------------------------------------------------- #
 
+
 def test_source_tree_roots_are_repo_relative() -> None:
     repo = Path(__file__).resolve().parents[3]
     assert runtime.bundle_root() == repo
@@ -57,6 +58,7 @@ def test_source_tree_roots_are_repo_relative() -> None:
 # --------------------------------------------------------------------------- #
 # Windows onedir / onefile
 # --------------------------------------------------------------------------- #
+
 
 def test_windows_onedir_layout(
     frozen: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -88,10 +90,9 @@ def test_windows_onefile_layout(
 # macOS .app
 # --------------------------------------------------------------------------- #
 
+
 def test_macos_app_layout(frozen: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    exe = _set_exe(
-        monkeypatch, tmp_path / "LadderStock.app" / "Contents" / "MacOS" / "LadderStock"
-    )
+    exe = _set_exe(monkeypatch, tmp_path / "LadderStock.app" / "Contents" / "MacOS" / "LadderStock")
     app = exe.parent.parent.parent
     resources = exe.parent.parent / "Resources"
     resources.mkdir(parents=True)
@@ -113,6 +114,7 @@ def test_macos_without_resources_falls_back_to_exe_dir(
 # Linux AppImage
 # --------------------------------------------------------------------------- #
 
+
 def test_appimage_install_root_is_original_file_dir(
     frozen: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -129,6 +131,7 @@ def test_appimage_install_root_is_original_file_dir(
 # 显式覆盖
 # --------------------------------------------------------------------------- #
 
+
 def test_install_root_env_override_wins(
     frozen: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -143,6 +146,7 @@ def test_install_root_env_override_wins(
 # --------------------------------------------------------------------------- #
 # 用户目录：冻结态绝不把 cwd 当配置目录
 # --------------------------------------------------------------------------- #
+
 
 def test_frozen_config_dir_never_uses_cwd(
     frozen: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -180,6 +184,7 @@ def test_source_config_dir_still_prefers_cwd(
 # --------------------------------------------------------------------------- #
 # 子进程入口：冻结态不能出现 `-m`
 # --------------------------------------------------------------------------- #
+
 
 def test_launcher_entry_frozen_is_bare_exe(
     frozen: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

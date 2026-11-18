@@ -57,7 +57,6 @@ from ladderstock.core.models import LadderEnvelope
 #: 隐私字段集合与剥离实现现在只有一份（`core/privacy.py`），web / MCP / export 共用；
 #: 这里 re-export 保持既有导入路径不变（audit R-2 / F-2）。
 from ladderstock.core.privacy import PRIVATE_KEYS, strip_private
-from ladderstock.data import archive
 from ladderstock.core.sentiment import compute_sentiment
 from ladderstock.core.validation import load_validation, validation_path
 from ladderstock.core.validation import session_days as cached_session_days
@@ -87,22 +86,20 @@ from ladderstock.web.control import (
     is_control_path,
     is_loopback_host,
 )
+from ladderstock.web.financecoffer_api import build_financecoffer_router
 from ladderstock.web.inbox import build_router as build_inbox_router
 from ladderstock.web.industry import IndustryPlane
-from ladderstock.web.senate_actions import build_senate_actions_router
 from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.knowledge import KnowledgePlane
 from ladderstock.web.knowledge import build_router as build_knowledge_router
 from ladderstock.web.platform import build_platform_router, request_bound_port
-
-
-from ladderstock.web.financecoffer_api import build_financecoffer_router
-from ladderstock.web.setup_api import build_router as build_setup_router
 from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
+from ladderstock.web.senate_actions import build_senate_actions_router
+from ladderstock.web.setup_api import build_router as build_setup_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
 from ladderstock.web.supervisor_api import (
@@ -696,8 +693,7 @@ def _live_ladder(day: date, root: Any) -> dict[str, Any] | None:
 
     绝不把部分数据当全量：两种口径都在 `source_detail` 里写明出处。
     """
-    from ladderstock.core import live_limit_pool
-    from ladderstock.core import live_sentiment
+    from ladderstock.core import live_limit_pool, live_sentiment
 
     pool = live_limit_pool.read_snapshot(day, root)
     pool_rows = live_limit_pool.rows_of(pool)
@@ -764,9 +760,7 @@ def _live_ladder(day: date, root: Any) -> dict[str, Any] | None:
     return result
 
 
-def _industry_theme_rows(
-    target: date, root: Any
-) -> tuple[list[dict[str, Any]], str, date | None]:
+def _industry_theme_rows(target: date, root: Any) -> tuple[list[dict[str, Any]], str, date | None]:
     """涨停池按行业聚合的「板块热度」：Wire 只给文字简报时，用它兜住题材轮动这张卡。
 
     `strength` 是**同日相对分**（该行业涨停家数 / 当日最大行业家数 × 100），只同日可比；
@@ -841,7 +835,11 @@ def _industry_theme_rows(
             }
         )
     rows.sort(key=lambda row: (-(row["limit_up_count"] or 0), row["theme"]))
-    stale = "" if data_day == target else f"（{target.isoformat()} 尚未收盘同步，用最近一个已收盘交易日的涨停池）"
+    stale = (
+        ""
+        if data_day == target
+        else f"（{target.isoformat()} 尚未收盘同步，用最近一个已收盘交易日的涨停池）"
+    )
     detail = (
         f"limit_pool 行业聚合: {backend}（{len(records)} 条 → {len(rows)} 个行业，"
         f"{data_day.isoformat()}"

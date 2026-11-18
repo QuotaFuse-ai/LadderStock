@@ -61,9 +61,7 @@ def test_upgrade_command_is_text_only() -> None:
 
 def _write_cache(path: Path, repos: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"schema": 1, "repos": repos}, ensure_ascii=False), encoding="utf-8"
-    )
+    path.write_text(json.dumps({"schema": 1, "repos": repos}, ensure_ascii=False), encoding="utf-8")
 
 
 def test_release_cache_roundtrip(tmp_path: Path) -> None:
@@ -88,9 +86,7 @@ def test_release_cache_bad_schema_ignored(tmp_path: Path) -> None:
     assert cache.expected("a") is None
 
 
-def test_release_cache_refresh_keeps_old_value_on_http_error(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_release_cache_refresh_keeps_old_value_on_http_error(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "c.json"
     _write_cache(path, {"r": {"tag": "1.0.0", "etag": "W/e", "fetched_at": 1.0}})
     cache = ReleaseCache(path)

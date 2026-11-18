@@ -297,9 +297,7 @@ def fund_flow_snapshot(
     """
     when = _request_day(day)
     if when is not None:
-        realtime, rt_backend, rt_as_of = dataset_snapshot_as_of(
-            "fund_flow_realtime", when, root
-        )
+        realtime, rt_backend, rt_as_of = dataset_snapshot_as_of("fund_flow_realtime", when, root)
         if realtime:
             return realtime, rt_backend, rt_as_of or when, False
     if when is None:
@@ -334,9 +332,7 @@ def rank_percentiles(values: dict[str, float]) -> dict[str, float]:
 
 def _weighted_total(parts: dict[str, float | None]) -> float | None:
     """按剩余可用权重重归一后加权求和，只在最后舍入一次（D-07 的舍入顺序）。"""
-    usable = [
-        (WEIGHTS[key], value) for key, value in parts.items() if value is not None
-    ]
+    usable = [(WEIGHTS[key], value) for key, value in parts.items() if value is not None]
     if not usable:
         return None
     weight = sum(weight for weight, _ in usable)

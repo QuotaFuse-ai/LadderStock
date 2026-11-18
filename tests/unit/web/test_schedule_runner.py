@@ -108,7 +108,9 @@ def test_reload_reflects_toggle(cfg: Path, tmp_path: Path) -> None:
         runner.shutdown()
 
 
-def test_execute_persists_outcome(cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_persists_outcome(
+    cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         sched, "run_job", lambda job, **kwargs: {"status": "ok", "detail": "3 只越阈"}
     )
@@ -123,7 +125,9 @@ def test_execute_persists_outcome(cfg: Path, tmp_path: Path, monkeypatch: pytest
     assert state["detail"] == "3 只越阈"
 
 
-def test_execute_records_failure(cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_records_failure(
+    cfg: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def boom(job: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         raise RuntimeError("上游全挂")
 

@@ -82,7 +82,11 @@ def _install_job(peers: list[str], root: Path | None) -> dict[str, Any]:
     with _lock:
         running = _jobs.get("current")
         if running and running.get("status") == "running":
-            return {"ok": False, "status": "busy", "detail": f"已有安装任务在跑：{running.get('current_peer')}"}
+            return {
+                "ok": False,
+                "status": "busy",
+                "detail": f"已有安装任务在跑：{running.get('current_peer')}",
+            }
 
         weights = {key: max(manifest.BY_KEY[key].size_mb, 1) for key in peers}
         total_weight = max(sum(weights.values()), 1)
@@ -122,7 +126,9 @@ def _install_job(peers: list[str], root: Path | None) -> dict[str, Any]:
                     job["peers"][key]["ok"] = result.ok
                     job["peers"][key]["detail"] = result.detail
                     job["peers"][key]["pct"] = 1.0 if result.ok else job["peers"][key]["pct"]
-                    job["peers"][key]["message"] = "完成" if result.ok else f"失败：{result.detail[:80]}"
+                    job["peers"][key]["message"] = (
+                        "完成" if result.ok else f"失败：{result.detail[:80]}"
+                    )
                     job["done_weight"] += weights[key]
                     job["overall"] = round(min(job["done_weight"] / job["total_weight"], 1.0), 3)
                 if not result.ok:
@@ -157,7 +163,11 @@ def build_router(root: Path | None = None) -> APIRouter:
         if peers is None:
             peers = [item.key for item in manifest.PEERS]
             if only_missing:
-                peers = [key for key in peers if not runner.boundary_modules_target(manifest.BY_KEY[key], root).exists()]
+                peers = [
+                    key
+                    for key in peers
+                    if not runner.boundary_modules_target(manifest.BY_KEY[key], root).exists()
+                ]
         unknown = [key for key in peers if key not in manifest.BY_KEY]
         if unknown:
             return {"ok": False, "detail": f"未知子模块：{unknown}"}
@@ -178,7 +188,11 @@ def build_router(root: Path | None = None) -> APIRouter:
         if peer not in manifest.BY_KEY:
             return {"ok": False, "detail": f"未知子模块：{peer}"}
         if not confirm:
-            return {"ok": False, "status": "needs_confirmation", "detail": "卸载会删除整个目录（含数据），需要 confirm=true"}
+            return {
+                "ok": False,
+                "status": "needs_confirmation",
+                "detail": "卸载会删除整个目录（含数据），需要 confirm=true",
+            }
         result = runner.uninstall_peer(peer, root=root, confirm=True)
         return result.as_dict()
 

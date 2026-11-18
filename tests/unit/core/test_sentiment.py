@@ -223,4 +223,3 @@ def test_live_snapshot_rejects_unreadable_file(tmp_path: Any) -> None:
     path.write_text("{not json", encoding="utf-8")
 
     assert live_sentiment.read_snapshot(DAY, tmp_path) is None
-

@@ -241,6 +241,7 @@ def _conf_port(conf: Path) -> int | None:
 
 def platform_matrix(root: Path | None = None) -> dict[str, Any]:
     """三端清单（给页面展示「打哪个包、缺哪份」）。"""
+
     def _has_binary(name: str) -> bool:
         base = layout.redis_dir(root, platform=name)
         return any((base / exe).is_file() for exe in ("redis-server", "redis-server.exe")) or any(
@@ -251,7 +252,10 @@ def platform_matrix(root: Path | None = None) -> dict[str, Any]:
         "current": layout.current_redis_platform(),
         "host": f"{platform.system()} {platform.machine()}",
         "platforms": {
-            name: {"dir": str(layout.redis_dir(root, platform=name)), "installed": _has_binary(name)}
+            name: {
+                "dir": str(layout.redis_dir(root, platform=name)),
+                "installed": _has_binary(name),
+            }
             for name in layout.REDIS_PLATFORMS
         },
     }

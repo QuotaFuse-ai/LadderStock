@@ -38,10 +38,20 @@ def document(**overrides: Any) -> dict[str, Any]:
         "source_detail": "file:2026-10-22.jsonl",
         "event_count": 2,
         "recent_events": [
-            {"ts": "2026-10-22T09:33:00", "code": "600000", "kind": "threshold_up", "value": 4.5,
-             "source_detail": "file:2026-10-22.jsonl"},
-            {"ts": "2026-10-22T09:34:00", "code": "600000", "kind": "seal", "value": 11.0,
-             "source_detail": "file:2026-10-22.jsonl"},
+            {
+                "ts": "2026-10-22T09:33:00",
+                "code": "600000",
+                "kind": "threshold_up",
+                "value": 4.5,
+                "source_detail": "file:2026-10-22.jsonl",
+            },
+            {
+                "ts": "2026-10-22T09:34:00",
+                "code": "600000",
+                "kind": "seal",
+                "value": 11.0,
+                "source_detail": "file:2026-10-22.jsonl",
+            },
         ],
         "events_file": "data/watch/events-2026-10-22.jsonl",
     }
@@ -62,6 +72,7 @@ def write(path: Path, payload: Any) -> Path:
 # 路径
 # --------------------------------------------------------------------------- #
 
+
 def test_status_path_is_watch_status_json(tmp_path: Path) -> None:
     assert status_path(tmp_path) == tmp_path / "watch" / "status.json"
     assert status_file.watch_dir(tmp_path) == tmp_path / "watch"
@@ -70,6 +81,7 @@ def test_status_path_is_watch_status_json(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 四态
 # --------------------------------------------------------------------------- #
+
 
 def test_missing_file_is_missing(tmp_path: Path) -> None:
     result = read_status_document(status_path(tmp_path))
@@ -140,13 +152,14 @@ def test_bool_is_not_accepted_as_event_count() -> None:
 # 截断与摘要
 # --------------------------------------------------------------------------- #
 
+
 def test_recent_events_keeps_last_n() -> None:
     events = [{"n": index} for index in range(status_file.STATUS_RECENT_EVENTS + 10)]
 
     kept = recent_events(document(recent_events=events))
 
     assert len(kept) == status_file.STATUS_RECENT_EVENTS
-    assert kept == events[-status_file.STATUS_RECENT_EVENTS:]
+    assert kept == events[-status_file.STATUS_RECENT_EVENTS :]
     assert kept[-1] == {"n": status_file.STATUS_RECENT_EVENTS + 9}
 
 

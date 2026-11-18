@@ -84,9 +84,7 @@ def schema_problems(document: Mapping[str, Any]) -> list[str]:
         problems.append(f"event_count 需要非负整数，收到 {_type_name(count)}")
 
     if not isinstance(document.get("recent_events"), list):
-        problems.append(
-            f"recent_events 需要数组，收到 {_type_name(document.get('recent_events'))}"
-        )
+        problems.append(f"recent_events 需要数组，收到 {_type_name(document.get('recent_events'))}")
 
     return problems
 
@@ -107,9 +105,7 @@ def read_status_document(path: Path) -> StatusRead:
     try:
         text = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return StatusRead(
-            STATE_CORRUPT, target, error=f"读取失败（{_type_name(exc)}）：{exc}"
-        )
+        return StatusRead(STATE_CORRUPT, target, error=f"读取失败（{_type_name(exc)}）：{exc}")
 
     if not text.strip():
         return StatusRead(STATE_CORRUPT, target, error="文件为空（0 字节），没有可读的状态")
@@ -117,9 +113,7 @@ def read_status_document(path: Path) -> StatusRead:
     try:
         raw: Any = json.loads(text)
     except ValueError as exc:
-        return StatusRead(
-            STATE_CORRUPT, target, error=f"JSON 解析失败（{_type_name(exc)}）：{exc}"
-        )
+        return StatusRead(STATE_CORRUPT, target, error=f"JSON 解析失败（{_type_name(exc)}）：{exc}")
 
     if not isinstance(raw, dict):
         return StatusRead(
@@ -133,9 +127,7 @@ def read_status_document(path: Path) -> StatusRead:
     return StatusRead(STATE_OK, target, document=raw)
 
 
-def recent_events(
-    document: Mapping[str, Any], *, limit: int = STATUS_RECENT_EVENTS
-) -> list[Any]:
+def recent_events(document: Mapping[str, Any], *, limit: int = STATUS_RECENT_EVENTS) -> list[Any]:
     """取状态文件里的近期事件，只保留最后 `limit` 条（与 CLI 落盘口径一致）。"""
     events = document.get("recent_events")
     if not isinstance(events, list) or limit <= 0:

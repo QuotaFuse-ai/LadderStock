@@ -337,6 +337,7 @@ def _close_transport(day: str, fund_flow_rows: dict[str, int] | None = None) -> 
 # 1. 注册面
 # --------------------------------------------------------------------------- #
 
+
 def test_schema_accepts_sync_close_kind() -> None:
     table = _default_table()
     validate_table(table)  # 不抛即通过（新 kind 已进 enum）
@@ -382,6 +383,7 @@ def test_structural_fallback_knows_sync_close() -> None:
 # --------------------------------------------------------------------------- #
 # 2 / 3. 分发面与边界（run_sync、generate 用桩替换，只验接线）
 # --------------------------------------------------------------------------- #
+
 
 def _patch_sync(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) -> list[list[str]]:
     """替换 `run_sync`，记录它收到的数据集顺序；返回调用记录。"""
@@ -441,9 +443,7 @@ def test_run_job_maps_sync_exit_code(
     calls = _patch_sync(monkeypatch, _sync_payload(exit_code))
     _patch_generate_ok(monkeypatch)
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
     assert result["status"] == expected, result
     assert calls == [list(CLOSE_SYNC_DATASETS)]
@@ -457,9 +457,7 @@ def test_run_job_detail_quotes_real_row_counts(
     _patch_sync(monkeypatch, _sync_payload(EXIT_OK))
     _patch_generate_ok(monkeypatch)
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
     # 每个数据集的计数都来自 run_sync 的真实字段（顺序按 CLOSE_SYNC_DATASETS）
     for i, dataset in enumerate(CLOSE_SYNC_DATASETS, start=1):
@@ -477,9 +475,7 @@ def test_run_job_review_failure_degrades_but_keeps_sync_ok(
         lambda day, root=None: ({}, SimpleNamespace(failed=True, degraded=False)),
     )
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
     assert result["status"] == "degraded"
     assert "复盘" in result["detail"]
@@ -498,9 +494,7 @@ def test_run_job_config_error_folds_to_failed_without_raising(
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该跑到复盘")),
     )
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
     assert result["status"] == "failed"
     assert "收盘同步中止" in result["detail"]
@@ -509,6 +503,7 @@ def test_run_job_config_error_folds_to_failed_without_raising(
 # --------------------------------------------------------------------------- #
 # 4. 落库面：真 run_sync + 离线桩，验证日分区、幂等、fund_flow 增长
 # --------------------------------------------------------------------------- #
+
 
 @pytest.fixture()
 def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -541,9 +536,7 @@ def test_sync_close_writes_daily_partitions_and_idempotent(
     transport = _close_transport(TRADING_DAY)
     _wire(monkeypatch, transport, data_home)
 
-    first = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
-    )
+    first = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home)
     assert first["status"] == "ok", first["detail"]
 
     from ladderstock.data import duckdb_store
@@ -561,9 +554,7 @@ def test_sync_close_writes_daily_partitions_and_idempotent(
         data_home,
     )
 
-    again = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
-    )
+    again = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home)
     assert again["status"] == "ok", again["detail"]
     assert duckdb_store.dataset_rows("fund_flow") == before_total
     partitions = list((duckdb_store.archive_root() / "2026" / "11" / "04").glob("*.parquet"))
@@ -590,9 +581,7 @@ def test_sync_close_fund_flow_count_grows_on_refresh(
         _close_transport(TRADING_DAY, fund_flow_rows={"600000": 3, "000001": 2}),
         data_home,
     )
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home)
     after = duckdb_store.dataset_rows("fund_flow")
 
     assert result["status"] == "ok", result["detail"]

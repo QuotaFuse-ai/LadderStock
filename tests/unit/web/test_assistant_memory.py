@@ -106,9 +106,7 @@ class _FakeEngine:
         self.calls.append("search")
         if self.exc is not None:
             raise self.exc
-        self.searched.append(
-            {"query": query, "top_k": top_k, "filters": dict(filters or {})}
-        )
+        self.searched.append({"query": query, "top_k": top_k, "filters": dict(filters or {})})
         return {"results": self.hits}
 
     def get_all(self, *, filters: dict[str, Any] | None = None, top_k: int = 100) -> dict[str, Any]:
@@ -381,9 +379,7 @@ def test_preference_stored_with_namespace_and_metadata(monkeypatch: pytest.Monke
         "source": memory.SOURCE,
         "kb_scope": scope["kb_scope"],
     }
-    assert payload["messages"] == [
-        {"role": "user", "content": "我只看周线，日线太碎"}
-    ]
+    assert payload["messages"] == [{"role": "user", "content": "我只看周线，日线太碎"}]
     assert payload["run_id"]
 
 

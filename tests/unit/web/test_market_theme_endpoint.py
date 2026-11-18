@@ -60,6 +60,7 @@ def _body(root: Path, params: dict[str, str] | None = None) -> dict[str, Any]:
 # 1. 空态：未接入 Wire 是预期状态，不是 bug
 # --------------------------------------------------------------------------- #
 
+
 def test_without_theme_news_returns_available_false(tmp_path: Path) -> None:
     body = _body(tmp_path)
 
@@ -113,9 +114,27 @@ def test_falls_back_to_limit_pool_industry_when_wire_has_no_strength(tmp_path: P
     duckdb_store.write_dataset(
         "limit_pool",
         [
-            {"code": "000001", "name": "某某银行", "industry": "银行", "streak": 2, "trade_date": STAMP},
-            {"code": "000002", "name": "某某地产甲", "industry": "房地产", "streak": 1, "trade_date": STAMP},
-            {"code": "000003", "name": "某某地产乙", "industry": "房地产", "streak": 3, "trade_date": STAMP},
+            {
+                "code": "000001",
+                "name": "某某银行",
+                "industry": "银行",
+                "streak": 2,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000002",
+                "name": "某某地产甲",
+                "industry": "房地产",
+                "streak": 1,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000003",
+                "name": "某某地产乙",
+                "industry": "房地产",
+                "streak": 3,
+                "trade_date": STAMP,
+            },
         ],
         root=tmp_path,
     )
@@ -145,8 +164,20 @@ def test_industry_falls_back_to_previous_partition_when_today_is_not_archived(
     duckdb_store.write_dataset(
         "limit_pool",
         [
-            {"code": "000001", "name": "某某银行甲", "industry": "银行", "streak": 1, "trade_date": prev},
-            {"code": "000003", "name": "某某地产乙", "industry": "房地产", "streak": 3, "trade_date": prev},
+            {
+                "code": "000001",
+                "name": "某某银行甲",
+                "industry": "银行",
+                "streak": 1,
+                "trade_date": prev,
+            },
+            {
+                "code": "000003",
+                "name": "某某地产乙",
+                "industry": "房地产",
+                "streak": 3,
+                "trade_date": prev,
+            },
         ],
         root=tmp_path,
     )
@@ -166,15 +197,41 @@ def test_industry_delta_uses_previous_partition_and_missing_industry_counts_as_z
     prev = date(2026, 10, 22).isoformat()
     duckdb_store.write_dataset(
         "limit_pool",
-        [{"code": "000009", "name": "某某银行乙", "industry": "银行", "streak": 1, "trade_date": prev}],
+        [
+            {
+                "code": "000009",
+                "name": "某某银行乙",
+                "industry": "银行",
+                "streak": 1,
+                "trade_date": prev,
+            }
+        ],
         root=tmp_path,
     )
     duckdb_store.write_dataset(
         "limit_pool",
         [
-            {"code": "000002", "name": "某某地产甲", "industry": "房地产", "streak": 1, "trade_date": STAMP},
-            {"code": "000003", "name": "某某地产乙", "industry": "房地产", "streak": 2, "trade_date": STAMP},
-            {"code": "000001", "name": "某某银行甲", "industry": "银行", "streak": 1, "trade_date": STAMP},
+            {
+                "code": "000002",
+                "name": "某某地产甲",
+                "industry": "房地产",
+                "streak": 1,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000003",
+                "name": "某某地产乙",
+                "industry": "房地产",
+                "streak": 2,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000001",
+                "name": "某某银行甲",
+                "industry": "银行",
+                "streak": 1,
+                "trade_date": STAMP,
+            },
         ],
         root=tmp_path,
     )
@@ -200,6 +257,7 @@ def test_records_without_theme_field_are_not_invented(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 有数据：白名单字段、强度降序、缺值给 null
 # --------------------------------------------------------------------------- #
+
 
 def test_seeded_themes_project_whitelist_and_sort_by_strength(tmp_path: Path) -> None:
     _seed_theme_news(
@@ -342,6 +400,7 @@ def test_rows_are_capped_at_twenty(tmp_path: Path) -> None:
 # 3. 隐私：资讯正文与链接绝不进响应
 # --------------------------------------------------------------------------- #
 
+
 def test_news_body_and_url_never_leave_the_box(tmp_path: Path) -> None:
     _seed_theme_news(
         tmp_path,
@@ -408,6 +467,7 @@ def test_projection_is_strip_private_identity_even_when_upstream_leaks(
 # 4. 参数：date 可选，格式严格
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("raw", ["20261029", "2026-13-01", "2026-10-29T00:00", "昨天", "2026-10"])
 def test_invalid_date_is_400(tmp_path: Path, raw: str) -> None:
     response = _client(tmp_path).get("/api/market/theme", params={"date": raw})
@@ -429,6 +489,7 @@ def test_date_defaults_to_today(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 5. 回环独占 + 只 GET
 # --------------------------------------------------------------------------- #
+
 
 def test_non_loopback_source_is_403(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed_theme_news(tmp_path, [{"theme": "算力硬件", "strength": 88.5, "trade_date": STAMP}])

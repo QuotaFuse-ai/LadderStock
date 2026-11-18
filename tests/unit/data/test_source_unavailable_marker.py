@@ -49,9 +49,7 @@ def _registry(tmp_path: Path, error: Exception) -> Any:
     )
 
 
-@pytest.mark.parametrize(
-    "nested", [httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout]
-)
+@pytest.mark.parametrize("nested", [httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout])
 def test_aggregated_transport_failure_keeps_peer_marker(
     tmp_path: Path, nested: type[BaseException]
 ) -> None:

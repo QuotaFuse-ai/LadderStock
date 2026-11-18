@@ -10,14 +10,14 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from ladderstock.cli import schedule as sched
 from ladderstock.data import duckdb_store
-from ladderstock.journal import inbox, watchlist as watchlist_store
+from ladderstock.journal import inbox
+from ladderstock.journal import watchlist as watchlist_store
 from ladderstock.web import assistant as assistant_module
 
 
@@ -29,13 +29,23 @@ class _Delivery:
         self.degraded = not ok
 
     def as_dict(self) -> dict[str, Any]:
-        return {"channel": self.channel, "ok": self.ok, "detail": self.detail, "degraded": self.degraded}
+        return {
+            "channel": self.channel,
+            "ok": self.ok,
+            "detail": self.detail,
+            "degraded": self.degraded,
+        }
 
 
 @pytest.fixture()
 def patched(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """把 agent 与通知换成桩，返回可改写的开关。"""
-    state: dict[str, Any] = {"reply": "600000 最近在 10.5–10.9 区间震荡。", "used_tools": True, "bar": 0, "delivery_ok": True}
+    state: dict[str, Any] = {
+        "reply": "600000 最近在 10.5–10.9 区间震荡。",
+        "used_tools": True,
+        "bar": 0,
+        "delivery_ok": True,
+    }
 
     async def _ask_agent(**kwargs: Any) -> dict[str, Any]:
         state["bar"] += 1
@@ -45,7 +55,13 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             "ai": {"model": "openai:model-a", "source": "global"},
             "fetched_at": "2026-11-16T15:40:00+08:00",
             "metrics": {},
-            "sources": [{"name": "本机 daily_k", "fetched_at": "2026-11-16T15:40:00+08:00", "as_of": "2026-11-16"}],
+            "sources": [
+                {
+                    "name": "本机 daily_k",
+                    "fetched_at": "2026-11-16T15:40:00+08:00",
+                    "as_of": "2026-11-16",
+                }
+            ],
             "used_tools": state["used_tools"],
         }
 
@@ -66,7 +82,12 @@ def patched(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 def test_agent_research_requires_question(tmp_path: Path, patched: dict[str, Any]) -> None:
     outcome = sched.run_job(
-        {"id": "agent_research_close", "name": "定时研究", "kind": "agent_research", "question": "  "},
+        {
+            "id": "agent_research_close",
+            "name": "定时研究",
+            "kind": "agent_research",
+            "question": "  ",
+        },
         root=tmp_path,
     )
     assert outcome["status"] == "failed"
@@ -144,7 +165,9 @@ def test_watch_alert_skips_without_watchlist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(watchlist_store, "list_watch", lambda root=None: [])
-    outcome = sched.run_job({"id": "watch_alert_morning", "name": "盯盘", "kind": "watch_alert"}, root=tmp_path)
+    outcome = sched.run_job(
+        {"id": "watch_alert_morning", "name": "盯盘", "kind": "watch_alert"}, root=tmp_path
+    )
     assert outcome["status"] == "skipped"
 
 
@@ -152,7 +175,9 @@ def test_watch_alert_skips_without_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(watchlist_store, "list_watch", lambda root=None: [{"code": "600000"}])
-    outcome = sched.run_job({"id": "watch_alert_morning", "name": "盯盘", "kind": "watch_alert"}, root=tmp_path)
+    outcome = sched.run_job(
+        {"id": "watch_alert_morning", "name": "盯盘", "kind": "watch_alert"}, root=tmp_path
+    )
     assert outcome["status"] == "skipped"
     assert "symbol_basic" in outcome["detail"]
 
@@ -164,7 +189,14 @@ def test_watch_alert_hits_threshold_and_labels_snapshot_date(
     duckdb_store.write_dataset(
         "symbol_basic",
         [
-            {"name": "浦发银行", "market": "SH", "price": 10.68, "prev_close": 10.4, "volume": 1, "active": True},
+            {
+                "name": "浦发银行",
+                "market": "SH",
+                "price": 10.68,
+                "prev_close": 10.4,
+                "volume": 1,
+                "active": True,
+            },
         ],
         source="test:tencent_quote_batch",
         default_trade_date=day,
@@ -193,7 +225,13 @@ def test_watch_alert_hits_threshold_and_labels_snapshot_date(
     monkeypatch.setattr(watchlist_store, "list_watch", lambda root=None: [{"code": "600000"}])
 
     outcome = sched.run_job(
-        {"id": "watch_alert_morning", "name": "盯盘提醒", "kind": "watch_alert", "alert_pct": 1, "channel": "console"},
+        {
+            "id": "watch_alert_morning",
+            "name": "盯盘提醒",
+            "kind": "watch_alert",
+            "alert_pct": 1,
+            "channel": "console",
+        },
         root=tmp_path,
     )
     assert outcome["status"] == "ok"

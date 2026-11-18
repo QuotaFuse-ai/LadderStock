@@ -165,15 +165,14 @@ def build_timeline(
         "overdue": overdue,
         "gaps": gaps,
         "data_source_status": status,
-        "notice": (
-            "只列来源给出的日期；没查到的写进 gaps，时间轴没有不代表真的没有（DEC-018 R6）"
-        ),
+        "notice": ("只列来源给出的日期；没查到的写进 gaps，时间轴没有不代表真的没有（DEC-018 R6）"),
     }
 
 
 # --------------------------------------------------------------------------- #
 # 标的集合：自选 + 持仓（账本重放后数量 > 0）
 # --------------------------------------------------------------------------- #
+
 
 def _collect_symbols(root: Path | None) -> list[SymbolRef]:
     refs: dict[str, SymbolRef] = {}
@@ -204,6 +203,7 @@ def _collect_symbols(root: Path | None) -> list[SymbolRef]:
 # --------------------------------------------------------------------------- #
 # 解禁 / 业绩预告（结构化源）
 # --------------------------------------------------------------------------- #
+
 
 def _lockup_events(
     refs: Sequence[SymbolRef],
@@ -334,6 +334,7 @@ def _earnings_events(
 # 公告抽取：只收原文写了日期的条目
 # --------------------------------------------------------------------------- #
 
+
 def _disclosure_events(
     refs: Sequence[SymbolRef],
     root: Path | None,
@@ -360,9 +361,7 @@ def _disclosure_events(
             False,
         )
     try:
-        rows = news_store.list_events(
-            conn, start=lookback, end=end, limit=EVENT_READ_MAX
-        )
+        rows = news_store.list_events(conn, start=lookback, end=end, limit=EVENT_READ_MAX)
     except sqlite3.Error as exc:
         return (
             [],
@@ -384,9 +383,7 @@ def _disclosure_events(
         day = _day_of(row.get("event_date"))
         if day is None or not (lookback <= day <= end):
             continue
-        matched = next(
-            (code for code in row.get("codes") or [] if code in by_code), None
-        )
+        matched = next((code for code in row.get("codes") or [] if code in by_code), None)
         if matched is None:
             continue
 
@@ -414,6 +411,7 @@ def _disclosure_events(
 # --------------------------------------------------------------------------- #
 # 小工具
 # --------------------------------------------------------------------------- #
+
 
 def _event(
     *,

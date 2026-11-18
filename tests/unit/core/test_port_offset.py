@@ -126,9 +126,7 @@ def test_every_peer_shifts_with_offset(monkeypatch, tmp_path) -> None:
         assert resolved[key].mcp_port == base[key].mcp_port + TEST_OFFSET
         if ctl.web_port is not None:
             assert resolved[key].web_port == base[key].web_port + TEST_OFFSET
-        assert resolved[key].extra_ports == tuple(
-            port + TEST_OFFSET for port in ctl.extra_ports
-        )
+        assert resolved[key].extra_ports == tuple(port + TEST_OFFSET for port in ctl.extra_ports)
 
 
 def test_offset_is_positive_int_only(monkeypatch) -> None:

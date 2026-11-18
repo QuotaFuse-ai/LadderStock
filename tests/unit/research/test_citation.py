@@ -120,16 +120,25 @@ def test_citation_line_format() -> None:
     assert index_from_slot(slot(entry(value=18.4))).sources[0].citation_line() == (
         "[1] tickhub-cn · valuation_pe · 2026-09-30 · http://127.0.0.1:8000/mcp"
     )
-    loose = index_from_slot(
-        slot(entry(verified=False, endpoint=None, as_of="", url=None))
-    ).sources[0]
+    loose = index_from_slot(slot(entry(verified=False, endpoint=None, as_of="", url=None))).sources[
+        0
+    ]
     assert loose.citation_line() == f"[1] tickhub-cn · - · - · - · {UNVERIFIED_MARK}"
 
 
 def test_source_dataclass_roundtrip() -> None:
     source = Source(
-        index=1, id="S1", dataset="wire", endpoint=None, as_of="2026-09-30", url=None,
-        value=37.2, unit="%", verified=False, metric="revenue_yoy", stage="financial",
+        index=1,
+        id="S1",
+        dataset="wire",
+        endpoint=None,
+        as_of="2026-09-30",
+        url=None,
+        value=37.2,
+        unit="%",
+        verified=False,
+        metric="revenue_yoy",
+        stage="financial",
     )
     assert source.as_dict()["id"] == "S1"
     assert UNVERIFIED_MARK in source.citation_line()

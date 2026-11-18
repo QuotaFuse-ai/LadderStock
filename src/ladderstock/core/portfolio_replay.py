@@ -221,11 +221,7 @@ def _scenario_view(
         )
 
     calendar = sorted(
-        {
-            day
-            for item in held
-            for day in item.window_days(scenario.start, scenario.end)
-        }
+        {day for item in held for day in item.window_days(scenario.start, scenario.end)}
     )
     if len(calendar) < 2:
         return _unavailable(
@@ -247,8 +243,7 @@ def _scenario_view(
                     "symbol": item.symbol,
                     "name": item.name,
                     "reason": (
-                        f"窗口内没有本机日线（最早可用 {item.days[0]}，"
-                        f"最晚可用 {item.days[-1]}）"
+                        f"窗口内没有本机日线（最早可用 {item.days[0]}，最晚可用 {item.days[-1]}）"
                     ),
                 }
             )
@@ -277,10 +272,7 @@ def _scenario_view(
                 {
                     "symbol": item.symbol,
                     "name": item.name,
-                    "reason": (
-                        f"窗口内 {halted}/{len(calendar)} 个交易日没有价格，"
-                        "可能长期停牌"
-                    ),
+                    "reason": (f"窗口内 {halted}/{len(calendar)} 个交易日没有价格，可能长期停牌"),
                 }
             )
             continue
@@ -312,8 +304,7 @@ def _scenario_view(
         return _unavailable(
             scenario,
             reason=(
-                f"有完整窗口价格的持仓只占当前市值 {coverage:.2%}，"
-                f"低于 {MIN_COVERAGE:.0%} 下限"
+                f"有完整窗口价格的持仓只占当前市值 {coverage:.2%}，低于 {MIN_COVERAGE:.0%} 下限"
             )
             if coverage is not None
             else "当前持仓都没有可用的本地收盘价，无法计算覆盖率",
@@ -327,9 +318,7 @@ def _scenario_view(
     navs: list[float] = []
     for day in calendar:
         nav = 0.0
-        for weight, (item, first_close, _, _) in zip(
-            weights, included_rows, strict=True
-        ):
+        for weight, (item, first_close, _, _) in zip(weights, included_rows, strict=True):
             nav += weight * item.close_on(day) / first_close
         navs.append(nav)
 
@@ -393,9 +382,7 @@ def _selected(raw: str) -> tuple[Scenario, ...]:
     for scenario in SCENARIOS:
         if scenario.id == raw:
             return (scenario,)
-    raise ValueError(
-        f"仅支持 {', '.join(SCENARIO_IDS)} 或 all，收到 {raw!r}"
-    )
+    raise ValueError(f"仅支持 {', '.join(SCENARIO_IDS)} 或 all，收到 {raw!r}")
 
 
 def compute_replay(
@@ -421,9 +408,7 @@ def compute_replay(
                 "label": LABEL,
                 "total_value": round4(total_value) if total_value > 0 else None,
                 "input": len(holdings),
-                "scenarios": [
-                    _scenario_view(item, held, gaps, total_value) for item in selected
-                ],
+                "scenarios": [_scenario_view(item, held, gaps, total_value) for item in selected],
             }
         ],
         "notes": list(TOP_NOTES),

@@ -18,9 +18,7 @@ def _records(day: str, code: str = "600000") -> list[dict[str, object]]:
 
 def test_write_batch_slot_creates_and_refuses_same_minute_overwrite(tmp_path: Path) -> None:
     now = datetime(2026, 11, 4, 10, 30, 0)
-    first = intraday.write_batch_slot(
-        DATASET, _records("2026-11-04"), root=tmp_path, now=now
-    )
+    first = intraday.write_batch_slot(DATASET, _records("2026-11-04"), root=tmp_path, now=now)
     assert first["written"] is True
     assert first["slot"] == "10:30"
     assert first["path"] == tmp_path / "intraday" / "2026-11-04" / DATASET / "1030.json"

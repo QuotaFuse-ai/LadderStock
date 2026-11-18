@@ -113,9 +113,7 @@ def test_show_seeded_cache_exits_0_and_is_idempotent(
     assert first.exit_code == 0, first.stderr
     assert second.exit_code == 0, second.stderr
     # 幂等验收落在命令面：除取值时刻外两次运行逐字段一致
-    assert _envelope_without_fetched_at(first.stdout) == _envelope_without_fetched_at(
-        second.stdout
-    )
+    assert _envelope_without_fetched_at(first.stdout) == _envelope_without_fetched_at(second.stdout)
 
     envelope = json.loads(first.stdout)
     assert envelope["data_as_of"] == "2026-01-05"
@@ -141,9 +139,7 @@ def test_show_unknown_industry_exits_6_and_lists_candidates(
     assert "食品饮料" in payload["candidates"]
 
 
-def test_missing_config_exits_3_without_inventing_a_list(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_missing_config_exits_3_without_inventing_a_list(tmp_path: Path, monkeypatch: Any) -> None:
     """没有清单就没有行业：按 3 退出，不能退化成「空清单 + 0」。"""
     monkeypatch.setenv("LDST_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("LDST_DATA_DIR", str(tmp_path / "data"))

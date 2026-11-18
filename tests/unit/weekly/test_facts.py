@@ -44,6 +44,7 @@ def _days(*texts: str) -> list[date]:
 # 1. 骨架：周期、session_days、missing_days
 # --------------------------------------------------------------------------- #
 
+
 def test_week_shape(pack: dict[str, Any]) -> None:
     expected = cache.EXPECTED
     assert pack["week"] == expected["week"]
@@ -98,6 +99,7 @@ def test_daily_artifact_wins_over_recompute(tmp_path: Path) -> None:
 # 2. 情绪与天梯聚合
 # --------------------------------------------------------------------------- #
 
+
 def test_sentiment_series_and_aggregates(pack: dict[str, Any]) -> None:
     expected = cache.EXPECTED["sentiment"]
     series = {row["date"]: row for row in pack["sentiment"]["series"]}
@@ -142,14 +144,15 @@ def test_ladder_height_and_leaders(pack: dict[str, Any]) -> None:
     assert ladder["gap_days"] == expected["gap_days"]
     assert ladder["unknown_board_total"] == expected["unknown_board_total"]
     # 龙头：逐日最高板个股合并，同一代码只留连板数最高的那一天（600010 只在周二进过榜）
-    assert [
-        (item["code"], item["boards"], item["date"]) for item in ladder["leaders"]
-    ] == list(cache.EXPECTED["leaders"])
+    assert [(item["code"], item["boards"], item["date"]) for item in ladder["leaders"]] == list(
+        cache.EXPECTED["leaders"]
+    )
 
 
 # --------------------------------------------------------------------------- #
 # 3. 涨跌分布 / 主线题材
 # --------------------------------------------------------------------------- #
+
 
 def test_breadth_distribution_is_hand_checkable(pack: dict[str, Any]) -> None:
     breadth = pack["breadth"]
@@ -195,15 +198,16 @@ def test_theme_streak_and_days_on_top(pack: dict[str, Any]) -> None:
 # 4. 待验证项结算（含跨周带入）
 # --------------------------------------------------------------------------- #
 
+
 def test_validation_settlement(pack: dict[str, Any]) -> None:
     validation = pack["validation"]
     assert validation["available"] is True
     for key, value in cache.VALIDATION_TOTALS.items():
         assert validation[key] == value, key
     assert validation["pass_rate"] == pytest.approx(cache.EXPECTED["validation"]["pass_rate"])
-    assert [
-        (item["generated_date"], item["id"]) for item in validation["items"]
-    ] == list(cache.VALIDATION_ITEMS)
+    assert [(item["generated_date"], item["id"]) for item in validation["items"]] == list(
+        cache.VALIDATION_ITEMS
+    )
     # 上周尾「未结算」的那条不算本周的账
     assert "w43-pending" not in {item["id"] for item in validation["items"]}
 
@@ -224,6 +228,7 @@ def test_validation_reports_missing_when_nothing_generated(tmp_path: Path) -> No
 # 5. AI 完成度：只读状态，不读叙述
 # --------------------------------------------------------------------------- #
 
+
 def test_ai_coverage_counts_statuses_only(pack: dict[str, Any]) -> None:
     coverage = pack["ai_coverage"]
     for key, value in cache.AI_COVERAGE_TOTALS.items():
@@ -243,6 +248,7 @@ def test_fact_pack_contains_no_model_output(pack: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 # 6. 可复算 / 非法输入
 # --------------------------------------------------------------------------- #
+
 
 def test_build_facts_is_byte_identical_across_runs(tmp_path: Path) -> None:
     cache.seed_week(tmp_path)

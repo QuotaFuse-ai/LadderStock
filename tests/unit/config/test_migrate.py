@@ -134,9 +134,7 @@ def test_mapping_form_stores_are_normalised() -> None:
 
     assert state["schema_version"] == SUPPORTED_SCHEMA_VERSION
     assert state["backend"] == "indexeddb"
-    assert [store["name"] for store in state["stores"]] == list(
-        migrate_module.CANONICAL_STORES
-    )
+    assert [store["name"] for store in state["stores"]] == list(migrate_module.CANONICAL_STORES)
     assert state["stores"][0]["ttl_sec"] == 300
 
 

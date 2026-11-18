@@ -94,9 +94,7 @@ def reminder_jobs() -> list[dict[str, Any]]:
     return out
 
 
-def inbox_view(
-    *, data_root: Path | None = None, limit: int = DEFAULT_LIMIT
-) -> dict[str, Any]:
+def inbox_view(*, data_root: Path | None = None, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
     """收件箱读面的载荷（平面 JSON，无信封）。"""
     items = list_items(limit, root=data_root)
     return {
@@ -114,9 +112,7 @@ def build_router(*, data_root: Path | None = None) -> APIRouter:
 
     @router.get("", dependencies=[Depends(_inbox_guard)])
     def inbox_list(
-        limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = (
-            DEFAULT_LIMIT
-        ),
+        limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = (DEFAULT_LIMIT),
     ) -> JSONResponse:
         """提醒列表：平面 JSON、`no-store`、只 GET。"""
         return JSONResponse(inbox_view(data_root=data_root, limit=limit), headers=_NO_STORE)

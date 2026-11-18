@@ -66,10 +66,7 @@ def _stock_rows() -> list[dict[str, Any]]:
 
 def _bench_rows() -> list[dict[str, Any]]:
     """基准恒为 4000：基准收益 0，超额 = 个股收益，方便断言。"""
-    return [
-        {"code": BENCHMARK_CODE, "trade_date": day, "close": 4000.0}
-        for day in CALENDAR
-    ]
+    return [{"code": BENCHMARK_CODE, "trade_date": day, "close": 4000.0} for day in CALENDAR]
 
 
 def _seed_full(root: Path) -> None:
@@ -148,6 +145,7 @@ def _expected_return(index: int) -> float:
 # --------------------------------------------------------------------------- #
 # 1. 有数：六类事件 + 窗口收益 + 样本够 8 才算均值
 # --------------------------------------------------------------------------- #
+
 
 def test_event_study_counts_windows_and_means(tmp_path: Path) -> None:
     _seed_full(tmp_path)
@@ -255,10 +253,14 @@ def test_event_study_window_edges_are_explained(tmp_path: Path) -> None:
 def test_event_study_window_params_are_used(tmp_path: Path) -> None:
     _seed_full(tmp_path)
 
-    payload = _client(tmp_path).get(
-        f"/api/research/{CODE}/event-study",
-        params={"sources": "holder_trades", "window_before": 0, "window_after": 0},
-    ).json()["payload"]
+    payload = (
+        _client(tmp_path)
+        .get(
+            f"/api/research/{CODE}/event-study",
+            params={"sources": "holder_trades", "window_before": 0, "window_after": 0},
+        )
+        .json()["payload"]
+    )
 
     assert payload["window_before"] == 0 and payload["window_after"] == 0
     holders = _type(payload, "holder_trades")
@@ -272,10 +274,14 @@ def test_event_study_window_params_are_used(tmp_path: Path) -> None:
 def test_event_study_sources_filter(tmp_path: Path) -> None:
     _seed_full(tmp_path)
 
-    payload = _client(tmp_path).get(
-        f"/api/research/{CODE}/event-study",
-        params={"sources": "holder_trades,dragon_tiger"},
-    ).json()["payload"]
+    payload = (
+        _client(tmp_path)
+        .get(
+            f"/api/research/{CODE}/event-study",
+            params={"sources": "holder_trades,dragon_tiger"},
+        )
+        .json()["payload"]
+    )
 
     assert [item["dataset"] for item in payload["event_types"]] == [
         "holder_trades",
@@ -287,6 +293,7 @@ def test_event_study_sources_filter(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 空态：未同步 / 真实空 / 没有基准日历
 # --------------------------------------------------------------------------- #
+
 
 def test_event_study_empty_types_explain_unsynced(tmp_path: Path) -> None:
     _seed_full(tmp_path)
@@ -305,13 +312,13 @@ def test_event_study_empty_types_explain_unsynced(tmp_path: Path) -> None:
 
 def test_event_study_empty_type_uses_last_sync_status(tmp_path: Path) -> None:
     _seed_full(tmp_path)
-    WatermarkStore(root=tmp_path).record_run(
-        "institution_survey", mode="full", status="empty"
-    )
+    WatermarkStore(root=tmp_path).record_run("institution_survey", mode="full", status="empty")
 
-    payload = _client(tmp_path).get(
-        f"/api/research/{CODE}/event-study", params={"sources": "institution_survey"}
-    ).json()["payload"]
+    payload = (
+        _client(tmp_path)
+        .get(f"/api/research/{CODE}/event-study", params={"sources": "institution_survey"})
+        .json()["payload"]
+    )
 
     survey = _type(payload, "institution_survey")
     assert "上游真实为空" in survey["sample"]["reason"]
@@ -348,6 +355,7 @@ def test_event_study_without_benchmark_is_missing(tmp_path: Path) -> None:
 # 3. 参数与代码校验
 # --------------------------------------------------------------------------- #
 
+
 def test_event_study_unknown_code_is_404(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/api/research/999999/event-study")
 
@@ -367,20 +375,14 @@ def test_event_study_bad_sources_is_422(tmp_path: Path) -> None:
 def test_event_study_bad_windows_is_422(tmp_path: Path) -> None:
     client = _client(tmp_path)
     assert (
-        client.get(
-            f"/api/research/{CODE}/event-study", params={"window_before": 61}
-        ).status_code
+        client.get(f"/api/research/{CODE}/event-study", params={"window_before": 61}).status_code
         == 422
     )
     assert (
-        client.get(
-            f"/api/research/{CODE}/event-study", params={"window_after": -1}
-        ).status_code
+        client.get(f"/api/research/{CODE}/event-study", params={"window_after": -1}).status_code
         == 422
     )
     assert (
-        client.get(
-            f"/api/research/{CODE}/event-study", params={"window_before": "abc"}
-        ).status_code
+        client.get(f"/api/research/{CODE}/event-study", params={"window_before": "abc"}).status_code
         == 422
     )

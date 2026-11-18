@@ -67,9 +67,7 @@ def test_writes_today_snapshot_inside_trading_window(
     assert body["fetched_at"].startswith("2026-11-17T10:30")
 
 
-def test_refuses_snapshot_from_another_day(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_refuses_snapshot_from_another_day(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """接口给的是昨天的读数就不许落盘——拿昨天的数当今天就是造假。"""
     monkeypatch.setattr(
         "ladderstock.data.provider_registry.ProviderRegistry",
@@ -86,9 +84,7 @@ def test_refuses_snapshot_from_another_day(
     assert not (tmp_path / "live" / "sentiment" / "2026-11-17.json").exists()
 
 
-def test_skips_outside_trading_window(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_skips_outside_trading_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "ladderstock.data.provider_registry.ProviderRegistry",
         _registry({"date": "20261117", "limit_up": 24, "broken": 10}),

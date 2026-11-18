@@ -121,9 +121,7 @@ def events_command(
         list[str] | None,
         typer.Option("--code", help="按代码过滤（可重复 / 逗号分隔）；解禁栏目必需"),
     ] = None,
-    limit: Annotated[
-        int, typer.Option("--limit", help="每节条数上限（默认 200）")
-    ] = 200,
+    limit: Annotated[int, typer.Option("--limit", help="每节条数上限（默认 200）")] = 200,
     fetch: Annotated[
         bool,
         typer.Option(
@@ -135,9 +133,7 @@ def events_command(
 ) -> None:
     """事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口。"""
     try:
-        result = build_calendar(
-            month, codes=list(code or []), fetch=fetch, limit=limit
-        )
+        result = build_calendar(month, codes=list(code or []), fetch=fetch, limit=limit)
     except LadderStockError as exc:
         error(str(exc))
         raise typer.Exit(exc.code) from None

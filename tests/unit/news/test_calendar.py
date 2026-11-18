@@ -40,6 +40,7 @@ def _section(result, key: str):
 # 月份解析
 # --------------------------------------------------------------------------- #
 
+
 def test_parse_month_boundaries() -> None:
     assert parse_month("2026-10") == (date(2026, 10, 1), date(2026, 10, 31))
     assert parse_month("2026-02") == (date(2026, 2, 1), date(2026, 2, 28))
@@ -51,16 +52,19 @@ def test_parse_month_handles_year_rollover() -> None:
     assert parse_month("2027-01") == (date(2027, 1, 1), date(2027, 1, 31))
 
 
-@pytest.mark.parametrize("junk", [
-    "2026",
-    "202610",
-    "2026-13",
-    "2026-00",
-    "abc",
-    "",
-    None,
-    "2026/10",
-])
+@pytest.mark.parametrize(
+    "junk",
+    [
+        "2026",
+        "202610",
+        "2026-13",
+        "2026-00",
+        "abc",
+        "",
+        None,
+        "2026/10",
+    ],
+)
 def test_parse_month_rejects_loose_formats(junk) -> None:
     """日历的月份会进产物目录名和 JSON 的 `month` 值：只允许一种写法。"""
     with pytest.raises(LadderStockError) as exc:
@@ -78,6 +82,7 @@ def test_month_window_is_echoed_in_the_payload(news_registry) -> None:
 # --------------------------------------------------------------------------- #
 # 三个「暂无数据源」的小节
 # --------------------------------------------------------------------------- #
+
 
 def test_three_gaps_are_declared_as_no_source(news_registry) -> None:
     _transport, registry = news_registry()
@@ -146,6 +151,7 @@ def test_earnings_preview_is_not_labelled_as_disclosure_date(news_registry) -> N
 # --------------------------------------------------------------------------- #
 # 有源小节
 # --------------------------------------------------------------------------- #
+
 
 def test_lockup_entries_come_from_upstream_dates_only(news_registry) -> None:
     _transport, registry = news_registry()
@@ -253,6 +259,7 @@ def test_no_fetch_does_not_touch_the_peer(news_registry) -> None:
 # 抽取事件：带证据，独立成块
 # --------------------------------------------------------------------------- #
 
+
 def _seed_store(tmp_path: Path, stream_of) -> None:
     result, _transport = stream_of(persist=True, root=tmp_path)
     assert result.events > 0
@@ -274,9 +281,7 @@ def test_extracted_events_appear_only_with_evidence(
         assert str(row["date"]).startswith("2026-10")
 
 
-def test_extracted_events_are_scoped_to_the_month(
-    tmp_path: Path, stream_of, news_registry
-) -> None:
+def test_extracted_events_are_scoped_to_the_month(tmp_path: Path, stream_of, news_registry) -> None:
     _seed_store(tmp_path, stream_of)
     _transport, registry = news_registry()
     november = build_calendar("2026-11", codes=["600519"], registry=registry, root=tmp_path)
@@ -318,6 +323,7 @@ def test_calendar_does_not_read_the_private_watchlist(
 # --------------------------------------------------------------------------- #
 # 输出契约
 # --------------------------------------------------------------------------- #
+
 
 def test_payload_carries_the_notice_and_summary(news_registry) -> None:
     _transport, registry = news_registry()

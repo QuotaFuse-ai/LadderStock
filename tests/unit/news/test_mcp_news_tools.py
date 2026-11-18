@@ -29,9 +29,7 @@ def failing_tools() -> dict[str, tuple[str, ...]]:
 
 
 @pytest.fixture(autouse=True)
-def _offline_transport(
-    repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_tools
-):
+def _offline_transport(repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_tools):
     monkeypatch.setenv("LDST_DATA_DIR", str(tmp_path))
 
     def _build(_peers):
@@ -60,10 +58,9 @@ def _envelope(name: str, arguments: dict, root: Path) -> dict:
 # news_stream
 # --------------------------------------------------------------------------- #
 
+
 def test_news_stream_returns_the_envelope_contract(tmp_path: Path) -> None:
-    result = _envelope(
-        "news_stream", {"date": WINDOW_DAY, "codes": ["600519"]}, tmp_path
-    )
+    result = _envelope("news_stream", {"date": WINDOW_DAY, "codes": ["600519"]}, tmp_path)
     assert set(result) >= set(ENVELOPE_OUTPUT_SCHEMA["required"])
     assert result["domain"] == "news"
     assert result["topic"] == "news_stream"
@@ -143,6 +140,7 @@ def test_news_stream_output_has_no_private_keys(tmp_path: Path) -> None:
 # event_calendar
 # --------------------------------------------------------------------------- #
 
+
 def test_event_calendar_returns_the_envelope(tmp_path: Path) -> None:
     result = _envelope("event_calendar", {"month": "2026-11", "codes": ["600519"]}, tmp_path)
     assert result["domain"] == "news" and result["topic"] == "event_calendar"
@@ -199,6 +197,7 @@ def test_event_calendar_output_has_no_private_keys(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 分发面
 # --------------------------------------------------------------------------- #
+
 
 def test_both_tools_are_dispatchable() -> None:
     from ladderstock.mcp.server import TOOL_HANDLERS

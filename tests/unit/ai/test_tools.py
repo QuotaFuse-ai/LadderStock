@@ -275,9 +275,7 @@ def test_list_artifacts_hides_the_audit_log(tmp_path: Path) -> None:
         ("pct_change", 10, 12, "20.000000"),
     ],
 )
-def test_compute_is_deterministic(
-    tmp_path: Path, op: str, a: float, b: float, result: str
-) -> None:
+def test_compute_is_deterministic(tmp_path: Path, op: str, a: float, b: float, result: str) -> None:
     ctx = make_ctx(tmp_path, allowed=(tools.COMPUTE,))
     outcome = tools.execute(ctx, tools.COMPUTE, {"op": op, "a": a, "b": b})
     assert json.loads(outcome["content"])["result"] == result
@@ -464,9 +462,7 @@ def test_search_web_rejects_unlabelled_and_offlist_results(
     )
 
 
-def test_search_web_rate_limited_per_stage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_search_web_rate_limited_per_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(tools.WEB_SEARCH_ENV, "1")
     monkeypatch.setenv(tools.WEB_SEARCH_HOSTS_ENV, "example.com")
 

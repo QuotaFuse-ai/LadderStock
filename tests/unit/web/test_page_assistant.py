@@ -121,9 +121,7 @@ def test_page_assistant_without_optional_labels_keeps_plain_label(
     assert calls["page_label"] == "页面助手 · industries"
 
 
-def test_page_prompt_keeps_page_red_lines(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_page_prompt_keeps_page_red_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """prompt 的唯一组装点仍是 `_prepare_call`：页面预设不越界到个股深挖。"""
     monkeypatch.setattr(
         assistant_module, "_load_client", lambda *_a, **_k: (_FakeClient(), "openai:model-a")

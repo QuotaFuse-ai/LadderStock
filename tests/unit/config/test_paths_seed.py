@@ -59,6 +59,7 @@ def _needs_repo_config() -> None:
 # 路径解析
 # --------------------------------------------------------------------------- #
 
+
 def test_installed_config_dir_under_user_data_root(clean_home: Path, tmp_path: Path) -> None:
     # 不含 cwd/config 的干净目录 → 落到用户数据目录
     tmp_cwd = tmp_path / "elsewhere"
@@ -101,6 +102,7 @@ def test_user_data_root_has_no_hardcoded_production_path() -> None:
 # --------------------------------------------------------------------------- #
 # 首跑 seed
 # --------------------------------------------------------------------------- #
+
 
 def test_seed_fills_clean_dir(clean_home: Path) -> None:
     _needs_repo_config()
@@ -251,6 +253,7 @@ def test_seed_if_needed_covers_portable_frozen_layout(
 # --------------------------------------------------------------------------- #
 # 红线：无硬编码路径 / 密钥不进模板
 # --------------------------------------------------------------------------- #
+
 
 def test_bundle_config_has_no_absolute_drive_paths() -> None:
     _needs_repo_config()

@@ -65,6 +65,7 @@ DOC_INFLOW_KEYS = (
 # 夹具与视图
 # --------------------------------------------------------------------------- #
 
+
 def load_case(path: Path) -> dict[str, Any]:
     case: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     # `concept_membership` 是可选第四路（QUOT-362）：缺它就走关键词降级，不判缓存缺失
@@ -136,6 +137,7 @@ def assert_matches(expected: dict[str, Any], actual: dict[str, Any], label: str)
 # 独立复算（SPEC §4 的直译，不调用被测实现）
 # --------------------------------------------------------------------------- #
 
+
 def _pct(fraction: float) -> float:
     return round(fraction * 100.0, 1)
 
@@ -177,23 +179,17 @@ def documented_parts(
         capital = _pct(sum(1 for other in values if other < inflow) / (len(values) - 1))
     return {
         "strength": (
-            _pct(min(1.0, boards / DOC_TOP_BOARD))
-            if boards is not None and boards > 0
-            else None
+            _pct(min(1.0, boards / DOC_TOP_BOARD)) if boards is not None and boards > 0 else None
         ),
         "turnover": _clamped(raw["turnover_rate"], DOC_TURNOVER_NORM),
-        "standing": (
-            _pct(min(1.0, boards / height)) if boards is not None and height else None
-        ),
+        "standing": (_pct(min(1.0, boards / height)) if boards is not None and height else None),
         "capital": capital,
         "theme": _clamped(raw["theme_board_change_pct"], DOC_THEME_NORM),
     }
 
 
 def documented_score(parts: dict[str, float | None]) -> float | None:
-    usable = [
-        (DOC_WEIGHTS[key], value) for key, value in parts.items() if value is not None
-    ]
+    usable = [(DOC_WEIGHTS[key], value) for key, value in parts.items() if value is not None]
     if not usable:
         return None
     weight = sum(item[0] for item in usable)
@@ -203,6 +199,7 @@ def documented_score(parts: dict[str, float | None]) -> float | None:
 # --------------------------------------------------------------------------- #
 # 1. core：手算值 ↔ 程序输出
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("path", CASES, ids=IDS)
 def test_pool_matches_hand_calculation(path: Path, tmp_path: Path) -> None:
@@ -221,6 +218,7 @@ def test_pool_matches_hand_calculation(path: Path, tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 独立复算：分项与总分都能从报告的原始输入重算
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("path", CASES, ids=IDS)
 def test_parts_and_score_recompute_from_reported_inputs(path: Path, tmp_path: Path) -> None:
@@ -247,6 +245,7 @@ def test_parts_and_score_recompute_from_reported_inputs(path: Path, tmp_path: Pa
 # 3. 确定性：同输入两次输出完全一致（ROADMAP R7「diff 为空」）
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("path", CASES, ids=IDS)
 def test_scoring_is_deterministic(path: Path, tmp_path: Path) -> None:
     case = load_case(path)
@@ -262,6 +261,7 @@ def test_scoring_is_deterministic(path: Path, tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 4. CLI 对拍：`ldst pool --date --output json`
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("path", CASES, ids=IDS)
 def test_cli_matches_golden(path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -336,6 +336,7 @@ def test_cli_rejects_bad_date(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 # --------------------------------------------------------------------------- #
 # 5. 边界：权重和为 1，分项固定五个且「地位」叫 standing
 # --------------------------------------------------------------------------- #
+
 
 def test_weights_sum_to_one_and_sub_scores_are_fixed() -> None:
     assert pool_module.SUB_SCORES == ("strength", "turnover", "standing", "capital", "theme")

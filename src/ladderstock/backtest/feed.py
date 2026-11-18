@@ -172,9 +172,7 @@ def load_series(
         span = ""
         if start and end:
             span = f"（{start.isoformat()} ~ {end.isoformat()}）"
-        raise FeedError(
-            f"本机 {PRICE_DATASET} 里没有 {code}{span} 的行；缺就报缺，不补数，不猜"
-        )
+        raise FeedError(f"本机 {PRICE_DATASET} 里没有 {code}{span} 的行；缺就报缺，不补数，不猜")
 
     adjusts = _read_adjust(raw_rows)
     if len(adjusts) != 1 or next(iter(adjusts), "") not in SUPPORTED_ADJUST:
@@ -266,9 +264,7 @@ def index_series(
     rows = [b.to_dict() for b in bars]
     from ladderstock.calc.fingerprint import data_fingerprint
 
-    return BarSeries(
-        symbol=code, adjust="index", bars=tuple(bars), data_fp=data_fingerprint(rows)
-    )
+    return BarSeries(symbol=code, adjust="index", bars=tuple(bars), data_fp=data_fingerprint(rows))
 
 
 __all__ = [

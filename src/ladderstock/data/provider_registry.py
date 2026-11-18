@@ -135,6 +135,7 @@ _PEER_FAULT_ERRORS = (
 # 配置读取
 # --------------------------------------------------------------------------- #
 
+
 def load_sources_config(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml(Path(path) if path is not None else config_dir() / "sources.yaml")
 
@@ -158,6 +159,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 规格对象
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class PeerEndpoint:
@@ -250,6 +252,7 @@ def build_specs(sources_doc: dict[str, Any]) -> dict[str, SourceSpec]:
 # 传输层
 # --------------------------------------------------------------------------- #
 
+
 class Transport(Protocol):
     """peer 工具调用接口；测试注入假 transport 即可完全离线。"""
 
@@ -320,9 +323,7 @@ class HttpMcpTransport:
 
     def probe(self, peer: PeerEndpoint, *, timeout: float) -> dict[str, Any]:
         names = [
-            str(tool["name"])
-            for tool in self.list_tools(peer, timeout=timeout)
-            if tool.get("name")
+            str(tool["name"]) for tool in self.list_tools(peer, timeout=timeout) if tool.get("name")
         ]
         return {"peer": peer.key, "tools": names}
 
@@ -597,7 +598,6 @@ def _unwrap_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-
 def _content_text(result: dict[str, Any]) -> str:
     """`tools/call` 失败时 `content[].text` 里的一句话（真实 peer 把校验错误放这里）。"""
     content = result.get("content")
@@ -660,9 +660,7 @@ def provisional_tool_warnings(
         try:
             info = probe.probe(peer, timeout=timeout)
         except Exception:  # noqa: BLE001 - 探活失败只影响这条 warning 的措辞
-            warnings.append(
-                f"{dataset}: 未联调：peer 不可达（{mask_url(peer.url)}）"
-            )
+            warnings.append(f"{dataset}: 未联调：peer 不可达（{mask_url(peer.url)}）")
             continue
         names = [str(name) for name in (info.get("tools") or []) if name]
         if binding.tool in names:
@@ -677,6 +675,7 @@ def provisional_tool_warnings(
 # --------------------------------------------------------------------------- #
 # 健康与冷却日志
 # --------------------------------------------------------------------------- #
+
 
 def health_path(root: Path | None = None) -> Path:
     base = Path(root) if root is not None else data_dir()
@@ -768,9 +767,7 @@ class HealthLog:
             return None
         return item if isinstance(item, dict) else None
 
-    def set_cooldown(
-        self, source_id: str, seconds: float, *, reason: str, tool: str = ""
-    ) -> None:
+    def set_cooldown(self, source_id: str, seconds: float, *, reason: str, tool: str = "") -> None:
         if seconds <= 0:
             return
         until = _now() + timedelta(seconds=seconds)
@@ -857,6 +854,7 @@ class HealthLog:
 # --------------------------------------------------------------------------- #
 # 注册表
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class _Pending:
@@ -947,9 +945,7 @@ class ProviderRegistry:
         configured_ttl = cold_hot.get("intraday_cache_ttl_sec") or DEFAULT_TTL_SEC
         self.ttl_sec = float(ttl_sec) if ttl_sec is not None else float(configured_ttl)
         rate_limit = (self.sync_doc.get("sync") or {}).get("rate_limit") or {}
-        self.rate_limit_retries = int(
-            rate_limit.get("max_retries", DEFAULT_RATE_LIMIT_RETRIES)
-        )
+        self.rate_limit_retries = int(rate_limit.get("max_retries", DEFAULT_RATE_LIMIT_RETRIES))
         self.rate_limit_max_wait_sec = float(
             rate_limit.get("max_wait_sec", DEFAULT_RATE_LIMIT_MAX_WAIT_SEC)
         )
@@ -1004,9 +1000,7 @@ class ProviderRegistry:
             None,
         )
         if primary is None:
-            raise LadderStockError(
-                f"{dataset} 在 sources.yaml 里没有 primary 记录", EXIT_CONFIG
-            )
+            raise LadderStockError(f"{dataset} 在 sources.yaml 里没有 primary 记录", EXIT_CONFIG)
         return self._validated_chain(dataset, [primary.id, *primary.fallback])
 
     def _validated_chain(self, dataset: str, ids: list[str]) -> list[SourceSpec]:
@@ -1241,9 +1235,7 @@ class ProviderRegistry:
             )
 
         if allow_cache:
-            outcome = self._replay(
-                dataset, trade_date, trail, failures, rate_limited=backoff.hit
-            )
+            outcome = self._replay(dataset, trade_date, trail, failures, rate_limited=backoff.hit)
             if outcome is not None:
                 return outcome
         # failures 为空说明链路里的工具都在冷却期，一次调用都没发出去——
@@ -1266,9 +1258,7 @@ class ProviderRegistry:
         """
         if not isinstance(exc, RateLimited) or exc.retry_after_s is None:
             return spec.cooldown_sec
-        return min(
-            max(exc.retry_after_s, spec.cooldown_sec), self.rate_limit_max_cooldown_sec
-        )
+        return min(max(exc.retry_after_s, spec.cooldown_sec), self.rate_limit_max_cooldown_sec)
 
     def _call_source(
         self,
@@ -1482,6 +1472,7 @@ class ProviderRegistry:
 # --------------------------------------------------------------------------- #
 # 工具函数
 # --------------------------------------------------------------------------- #
+
 
 def _catalog() -> dict[str, Any]:
     from ladderstock.core.boundary import DATASET_CATALOG

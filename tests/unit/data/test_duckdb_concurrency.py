@@ -44,6 +44,7 @@ POSIX_LOCK_MESSAGE = (
 # 子进程脚手架
 # --------------------------------------------------------------------------- #
 
+
 @pytest.fixture(autouse=True)
 def _data_home(tmp_path, monkeypatch):
     """把**父进程**的数据目录也钉在 tmp：否则 `connect()` 会去开仓库里的 `data/`，
@@ -100,7 +101,7 @@ def _write_child(dataset: str, prefix: str, rows: int) -> str:
     子进程源码用占位符替换而不是嵌套 f-string——`{i}` 留在字符串里会被父层的
     f-string 吃掉，结果 60 条记录全折叠成 1 行（幂等键相同），测了个寂寞。
     """
-    template = '''
+    template = """
 import sys
 from ladderstock.data import duckdb_store
 from ladderstock.errors import LadderStockError
@@ -118,7 +119,7 @@ except BaseException as exc:  # noqa: BLE001 - 未捕获异常就是本单要修
     sys.stderr.write("UNCAUGHT " + type(exc).__name__ + ": " + str(exc))
     sys.exit(1)
 sys.stdout.write(str(result.rows))
-'''
+"""
     return (
         template.replace("__PREFIX__", prefix)
         .replace("__ROWS__", str(rows))
@@ -193,10 +194,9 @@ def test_held_db_reports_busy_instead_of_raw_ioerror(tmp_path) -> None:
 # 有界重试的判据本身
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("message", [WIN_LOCK_MESSAGE, POSIX_LOCK_MESSAGE])
-def test_lock_conflict_retries_with_capped_exponential_backoff(
-    monkeypatch, message: str
-) -> None:
+def test_lock_conflict_retries_with_capped_exponential_backoff(monkeypatch, message: str) -> None:
     calls: list[int] = []
     slept: list[float] = []
 
@@ -254,6 +254,7 @@ def test_read_only_open_wraps_conflict_too(monkeypatch) -> None:
 # --------------------------------------------------------------------------- #
 # 验收②：sync 入口的进程级文件锁
 # --------------------------------------------------------------------------- #
+
 
 def test_writer_lock_blocks_other_process_and_names_holder(tmp_path) -> None:
     with db_lock.writer_lock(root=tmp_path, holder="ldst sync"):

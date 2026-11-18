@@ -151,9 +151,7 @@ def test_no_data_inside_the_window_stays_missing(tmp_path: Path) -> None:
         "capital": None,
         "theme": 80.0,
     }
-    assert top["score"] == round(
-        (0.30 * 66.7 + 0.10 * 50.0 + 0.25 * 100.0 + 0.15 * 80.0) / 0.80, 1
-    )
+    assert top["score"] == round((0.30 * 66.7 + 0.10 * 50.0 + 0.25 * 100.0 + 0.15 * 80.0) / 0.80, 1)
 
 
 # --------------------------------------------------------------------------- #

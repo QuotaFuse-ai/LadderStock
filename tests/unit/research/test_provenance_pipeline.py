@@ -96,9 +96,7 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_provenance_backed_metric_lands_in_both_artifacts(
-    tmp_path: Path, configured: None
-) -> None:
+def test_provenance_backed_metric_lands_in_both_artifacts(tmp_path: Path, configured: None) -> None:
     root = tmp_path / "backed"
     client = FakeClient({"valuation": "市盈率 18.4 倍，市净率 2.1 倍。"})
     run = pipeline(root, client).run(
@@ -231,9 +229,7 @@ def test_report_stage_unifies_upstream_sources(tmp_path: Path, configured: None)
     assert slot["values"] == {}, "数值只有一份，落在各段 facts（DEC-024）"
     assert set(report["facts"]) == {"upstream", "ai"}, "报告段不复制上游指标"
     assert len(slot["sources"]) == 2
-    origins = {
-        (item["params"]["stage"], item["params"]["upstream_id"]) for item in slot["sources"]
-    }
+    origins = {(item["params"]["stage"], item["params"]["upstream_id"]) for item in slot["sources"]}
     assert origins == {("financial", "S1"), ("valuation", "S1")}
 
     text = markdown(root, "report")

@@ -92,9 +92,7 @@ def detached_spawn(
     handle, path = tempfile.mkstemp(prefix="ldst-restart-", suffix=".log", dir=log_dir)
     kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
-        kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
+        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
     try:

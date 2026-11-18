@@ -122,6 +122,7 @@ WEB_PRIVILEGED_IMPORTS: dict[str, tuple[str, ...]] = {
 # 1. MCP 工具清单：没有持仓工具
 # --------------------------------------------------------------------------- #
 
+
 def test_mcp_listing_has_no_position_tool() -> None:
     names = [spec.name for spec in TOOL_SPECS]
     assert names == sorted(names, key=names.index)  # 清单非空且顺序稳定
@@ -155,7 +156,8 @@ def test_position_module_is_not_reachable_from_mcp_surface() -> None:
             rel = path.relative_to(SRC).as_posix()
             modules = _imports(rel)
             private = [
-                m for m in modules
+                m
+                for m in modules
                 if m.startswith(("ladderstock.journal", "ladderstock.cli.position"))
             ]
             if not private:
@@ -172,6 +174,7 @@ def test_position_module_is_not_reachable_from_mcp_surface() -> None:
 # --------------------------------------------------------------------------- #
 # 2. MCP 工具结果：哨兵不出现在任何信封里
 # --------------------------------------------------------------------------- #
+
 
 def test_dispatched_envelopes_are_position_free(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -224,6 +227,7 @@ def test_candidate_pool_envelope_carries_no_position_fields(
 # --------------------------------------------------------------------------- #
 # 3. AI 上下文：序列化结果不含持仓字段名
 # --------------------------------------------------------------------------- #
+
 
 def test_ai_context_serialization_excludes_position_fields(tmp_path: Path) -> None:
     rows = position_module.list_positions(root=tmp_path)
@@ -281,6 +285,7 @@ def test_pool_stdout_free_of_positions_when_codes_overlap(
 # 4. 互不引用（AST）
 # --------------------------------------------------------------------------- #
 
+
 def test_pool_does_not_import_privacy_store() -> None:
     for rel in ("core/pool.py", "cli/pool.py"):
         modules = _imports(rel)
@@ -317,10 +322,9 @@ def test_position_does_not_import_market_or_ai() -> None:
 # 5. 磁盘：不显式 --export 就不落文件
 # --------------------------------------------------------------------------- #
 
+
 def _json_artifacts(root: Path) -> list[str]:
-    return sorted(
-        str(p.relative_to(root)) for p in root.rglob("*.json")
-    )
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*.json"))
 
 
 def test_no_export_file_without_flag(tmp_path: Path) -> None:
@@ -342,9 +346,7 @@ def test_no_export_file_without_flag(tmp_path: Path) -> None:
 
 def test_explicit_export_writes_file_and_warns(tmp_path: Path) -> None:
     target = tmp_path / "out" / "my_positions.json"
-    result = runner.invoke(
-        app, ["position", "list", "--output", "json", "--export", str(target)]
-    )
+    result = runner.invoke(app, ["position", "list", "--output", "json", "--export", str(target)])
     assert result.exit_code == 0, result.stderr
     assert target.is_file()
     assert _json_artifacts(tmp_path) == [str(Path("out") / "my_positions.json")]
@@ -369,6 +371,7 @@ def test_export_failure_keeps_exit_code_3(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 6. 自选（QUOT-380 / DEC-052）：同族断言，只多一条只读回环口
 # --------------------------------------------------------------------------- #
+
 
 def test_watchlist_reaches_no_dispatched_envelope(tmp_path: Path) -> None:
     """自选代码不出现在任何 MCP 工具信封里——那条口是平面 JSON，结构上到不了这里。"""

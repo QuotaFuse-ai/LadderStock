@@ -112,6 +112,7 @@ class ExportOutcome:
 # 字体注册
 # --------------------------------------------------------------------------- #
 
+
 def register_cjk_font() -> tuple[FontSpec | None, str]:
     """探测并注册 CJK 字体。返回 `(spec, reason)`；失败时 spec 为 None。
 
@@ -176,6 +177,7 @@ def _bold_candidates(regular: Path) -> list[Path]:
 # --------------------------------------------------------------------------- #
 # Markdown 渲染（--format md 与 PDF 降级共用）
 # --------------------------------------------------------------------------- #
+
 
 def render_markdown(
     report: dict[str, Any],
@@ -344,6 +346,7 @@ def _string_list(value: Any) -> list[str]:
 # PDF 渲染
 # --------------------------------------------------------------------------- #
 
+
 def _build_pdf(report: dict[str, Any], out_path: Path, font: FontSpec) -> None:
     """用 Platypus 渲染 PDF；中文字体已在 `register_cjk_font` 中注册。"""
     from reportlab.lib import colors  # type: ignore[import-untyped]
@@ -360,9 +363,7 @@ def _build_pdf(report: dict[str, Any], out_path: Path, font: FontSpec) -> None:
     )
 
     bold_name = _BOLD_NAME if font.bold_path else _REGULAR_NAME
-    h1 = ParagraphStyle(
-        "LadderH1", fontName=bold_name, fontSize=20, leading=28, spaceAfter=6
-    )
+    h1 = ParagraphStyle("LadderH1", fontName=bold_name, fontSize=20, leading=28, spaceAfter=6)
     h2 = ParagraphStyle(
         "LadderH2", fontName=bold_name, fontSize=14, leading=20, spaceBefore=12, spaceAfter=6
     )
@@ -394,9 +395,7 @@ def _build_pdf(report: dict[str, Any], out_path: Path, font: FontSpec) -> None:
     story: list[Any] = []
     title = str(report.get("title") or _default_title(report))
     story.append(Paragraph(_escape(title), h1))
-    story.append(
-        Paragraph(_escape(f"导出格式：PDF（中文字体：{font.path.name}）"), badge)
-    )
+    story.append(Paragraph(_escape(f"导出格式：PDF（中文字体：{font.path.name}）"), badge))
     meta_text = _meta_line(report).lstrip("> ").strip()
     if meta_text:
         story.append(Paragraph(_escape(meta_text), meta))
@@ -499,16 +498,14 @@ def _build_pdf(report: dict[str, Any], out_path: Path, font: FontSpec) -> None:
 def _escape(text: str) -> str:
     """Paragraph 只认 XML 转义；不给它喂原始 markdown。"""
     return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\n", "<br/>")
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
     )
 
 
 # --------------------------------------------------------------------------- #
 # 导出入口
 # --------------------------------------------------------------------------- #
+
 
 def export_review(
     report: dict[str, Any],

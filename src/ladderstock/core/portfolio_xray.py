@@ -183,8 +183,7 @@ def build_view(
                     "name": row.name,
                     "affects": "weight",
                     "reason": (
-                        "本机 daily_k 缓存里没有这只的收盘价（停牌或未同步），"
-                        "没算进权重分母"
+                        "本机 daily_k 缓存里没有这只的收盘价（停牌或未同步），没算进权重分母"
                     ),
                 }
             )
@@ -211,9 +210,7 @@ def build_view(
             "industry": label,
             "labeled": label != UNLABELED,
             "market_value": round4(sum(h["market_value"] for h in rows)),
-            "weight": _weight(
-                sum(h["market_value"] for h in rows), total_value or 0.0
-            ),
+            "weight": _weight(sum(h["market_value"] for h in rows), total_value or 0.0),
             "symbols": [h["symbol"] for h in sorted(rows, key=lambda r: r["symbol"])],
         }
         for label, rows in buckets.items()
@@ -228,13 +225,10 @@ def build_view(
                 gaps.append(
                     {
                         "symbol": symbol,
-                        "name": next(
-                            (row.name for row in holdings if row.symbol == symbol), ""
-                        ),
+                        "name": next((row.name for row in holdings if row.symbol == symbol), ""),
                         "affects": "correlation",
                         "reason": (
-                            f"本地日线不足 {MIN_CORR_DAYS} 个交易日，算不出相关系数；"
-                            "权重不受影响"
+                            f"本地日线不足 {MIN_CORR_DAYS} 个交易日，算不出相关系数；权重不受影响"
                         ),
                     }
                 )

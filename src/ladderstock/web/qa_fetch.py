@@ -28,9 +28,7 @@ TOTAL_FETCH_BUDGET_SEC = 15.0
 #: 行情类问题的默认日线根数
 DEFAULT_KLINE_LIMIT = 60
 
-_CODE_WITH_PREFIX_RE = re.compile(
-    r"(?:SH|SZ|BJ)[:. ]?\s*(\d{6})", re.IGNORECASE
-)
+_CODE_WITH_PREFIX_RE = re.compile(r"(?:SH|SZ|BJ)[:. ]?\s*(\d{6})", re.IGNORECASE)
 _BARE_CODE_RE = re.compile(r"\b(\d{6})\b")
 
 #: 意图 → dataset 选择。key 是数据需求关键词组；标的行情感（涨跌/涨停/炸板/情绪）
@@ -110,9 +108,7 @@ def select_dataset(
         return "sentiment", {}, None
     if symbol is None:
         return None, {}, None
-    field_key = next(
-        (key for word, key in _KLINE_FIELD_WORDS if word in text), None
-    )
+    field_key = next((key for word, key in _KLINE_FIELD_WORDS if word in text), None)
     if any(word in text for word in _KLINE_WORDS):
         params: dict[str, Any] = {
             "code": symbol.partition(".")[0],
@@ -253,7 +249,8 @@ def metrics_from_outcome(outcome: Any, dataset: str, symbol: str | None) -> dict
             (
                 r
                 for r in rows
-                if str(r.get("code") or "").partition(".")[0]
+                if str(r.get("code") or "")
+                .partition(".")[0]
                 .removeprefix("sh")
                 .removeprefix("sz")
                 .removeprefix("bj")
@@ -379,7 +376,5 @@ def run_fetch(
     if metrics:
         sources.append(source_from_outcome(outcome, plan.dataset, plan.symbol))
     else:
-        plan.source_failures.append(
-            f"{plan.dataset}: 上游没有返回可用的记录行"
-        )
+        plan.source_failures.append(f"{plan.dataset}: 上游没有返回可用的记录行")
     return metrics, sources

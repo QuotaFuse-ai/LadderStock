@@ -181,9 +181,7 @@ def compute_view(
     """流水 + 收盘价序列 → `perfView.ts` 的 `PerfView` 形状（纯函数）。"""
     today = as_of or date.today()
     replayed = replay(list(trades), "average")
-    skipped = [
-        {"id": row.id, "symbol": row.symbol, "why": row.why} for row in replayed.issues
-    ]
+    skipped = [{"id": row.id, "symbol": row.symbol, "why": row.why} for row in replayed.issues]
     bad_ids = {row.id for row in replayed.issues}
     valid = sorted((trade for trade in trades if trade.id not in bad_ids), key=replay_order_key)
 
@@ -270,9 +268,11 @@ def compute_view(
         view["as_of"] = data_end.isoformat()
         return view
 
-    trade_start = min(_trade_day(trade) for trade in within if trade.symbol.strip().upper() in {
-        book.symbol for book in included
-    })
+    trade_start = min(
+        _trade_day(trade)
+        for trade in within
+        if trade.symbol.strip().upper() in {book.symbol for book in included}
+    )
     calendar = sorted(
         {
             day
@@ -338,16 +338,13 @@ def compute_view(
     if span_days >= 365 and index > 0:
         twr_annualized = index ** (365.0 / span_days) - 1.0
 
-    warnings = [
-        f"{row['name'] or row['symbol']} 没算进收益率：{row['reason']}" for row in excluded
-    ]
+    warnings = [f"{row['name'] or row['symbol']} 没算进收益率：{row['reason']}" for row in excluded]
     if span_days < 1:
         warnings.append("本地日线只覆盖 1 个交易日，没给净值走势与年化")
     late = len(valid) - len(within)
     if late:
         warnings.append(
-            f"{late} 笔流水晚于本地日线最后一根 K 线（{data_end.isoformat()}），"
-            "没算进本次收益率"
+            f"{late} 笔流水晚于本地日线最后一根 K 线（{data_end.isoformat()}），没算进本次收益率"
         )
 
     series_dates, series_index = _trim(dates, indexes, days)
@@ -532,6 +529,7 @@ def _empty_group(
 # --------------------------------------------------------------------------- #
 # 只读缓存：本机 daily_k 收盘价序列
 # --------------------------------------------------------------------------- #
+
 
 def load_close_series(
     symbols: Sequence[str], *, root: Path | None = None, as_of: date | None = None

@@ -75,9 +75,7 @@ def from_us_tool_response(
 
     body = _unwrap(response)
     if body.get("error"):
-        raise LadderStockError(
-            f"TickHub-US {actual} 返回失败：{_failure_text(body)}", EXIT_SOURCE
-        )
+        raise LadderStockError(f"TickHub-US {actual} 返回失败：{_failure_text(body)}", EXIT_SOURCE)
 
     upstream = str(body.get("source") or "unknown")
     tier = str(body.get("compliance_tier") or "").strip().upper()
@@ -142,8 +140,16 @@ def _record(body: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         "symbol": _text(body.get("symbol")) or _text(payload.get("symbol")),
         "market": _text(body.get("market")) or _text(payload.get("market")) or "US",
     }
-    for key in ("price", "prev_close", "change", "change_pct", "currency", "as_of",
-                "timestamp", "name"):
+    for key in (
+        "price",
+        "prev_close",
+        "change",
+        "change_pct",
+        "currency",
+        "as_of",
+        "timestamp",
+        "name",
+    ):
         if key in payload:
             row[key] = payload.get(key)
     return row

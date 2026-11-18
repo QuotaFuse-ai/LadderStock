@@ -17,8 +17,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from ladderstock.data import duckdb_store, symbol_universe
 from ladderstock.data.provider_registry import SourceUnavailable
 
@@ -55,7 +53,9 @@ class _StubRegistry:
 
 
 def _names(root: Path) -> dict[str, str]:
-    return {row["code"]: row["name"] for row in duckdb_store.query_dataset("symbol_basic", root=root)}
+    return {
+        row["code"]: row["name"] for row in duckdb_store.query_dataset("symbol_basic", root=root)
+    }
 
 
 def test_candidate_codes_are_six_digit_and_deduped() -> None:

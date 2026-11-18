@@ -674,9 +674,7 @@ def capture(
         # 有今天的数据时 degraded=null、pool_as_of 就是今天——两者都不缺，不靠消费方猜。
         "meta": {
             "degraded": DEGRADED_STALE_CACHE if pool_stale is not None else None,
-            "pool_as_of": (
-                pool_stale["as_of"] if pool_stale is not None else day.isoformat()
-            ),
+            "pool_as_of": (pool_stale["as_of"] if pool_stale is not None else day.isoformat()),
         },
         "price_field": "open" if slot == AUCTION_SLOT else "price",
         "source": {
@@ -840,9 +838,7 @@ def fast_snapshot_dir(day: date, root: Path | None = None) -> Path:
     return base / SNAPSHOT_DIR / day.isoformat() / FAST_DIR
 
 
-def fast_snapshot_path(
-    moment: datetime, day: date, root: Path | None = None
-) -> Path:
+def fast_snapshot_path(moment: datetime, day: date, root: Path | None = None) -> Path:
     return fast_snapshot_dir(day, root) / f"{moment.strftime('%H%M%S')}.json"
 
 
@@ -1028,9 +1024,7 @@ def write_batch_slot(
     return {"slot": slot, "path": path, "written": written, "rows": len(records)}
 
 
-def latest_batch_slot(
-    dataset: str, day: date, root: Path | None = None
-) -> dict[str, Any] | None:
+def latest_batch_slot(dataset: str, day: date, root: Path | None = None) -> dict[str, Any] | None:
     """读某天最新一条槽；没有该数据集的槽目录或全读不了时回 None。"""
     directory = batch_slot_dir(dataset, day, root)
     if not directory.is_dir():

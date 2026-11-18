@@ -235,7 +235,11 @@ def install(
         state.write_state(root, "configuring", detail="写入配置", step="configure")
         _emit(0.85, "写入配置并安装 API 依赖（这一步较慢）")
         deps = _install_deps(root, with_embedding)
-        detail = "增强包已就绪" if deps.get("ok") else f"增强包已就绪，但依赖未装齐：{deps.get('detail')}"
+        detail = (
+            "增强包已就绪"
+            if deps.get("ok")
+            else f"增强包已就绪，但依赖未装齐：{deps.get('detail')}"
+        )
         state.write_state(
             root,
             "ready",
@@ -327,7 +331,7 @@ def _write_conf(root: Path | None) -> None:
     conf = layout.conf_dir(root) / "redis.conf"
     if conf.is_file():
         return  # 已有配置不覆盖（可能是用户改过的）
-    data = layout.data_dir(root, "redisdata")
+    layout.data_dir(root, "redisdata")
     conf.parent.mkdir(parents=True, exist_ok=True)
     conf.write_text(
         "# FinanceCoffer 增强包自带 Redis（三端共用一份配置，DEC-086）\n"
@@ -337,7 +341,7 @@ def _write_conf(root: Path | None) -> None:
         # /cygdrive/c/.../D:\... 然后报「配置文件不存在」（实测踩到）。启动时 cwd=模块根。
         "dir redisdata\n"
         "appendonly yes\n"
-        "save \"\"\n",
+        'save ""\n',
         encoding="utf-8",
     )
 

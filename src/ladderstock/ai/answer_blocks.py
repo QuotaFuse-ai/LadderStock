@@ -1020,10 +1020,14 @@ def build_blocks(
     # chitchat 连「来源」notice 也不出（问候语挂数据告警即答非所问）。
     # needs_symbol 同理：用户还没说是哪家公司，这时报「没取到数据」是答错问题——
     # 该反问标的，不是罗列缺失项。
-    skip_metric_notice = intent in (
-        INTENT_CHITCHAT,
-        INTENT_CONCEPT,
-    ) or not fetch_attempted
+    skip_metric_notice = (
+        intent
+        in (
+            INTENT_CHITCHAT,
+            INTENT_CONCEPT,
+        )
+        or not fetch_attempted
+    )
     skip_source_notice = intent in (INTENT_CHITCHAT,) or not fetch_attempted
     emit_evidence = intent == INTENT_CONCEPT and bool(narrative["evidence"])
 

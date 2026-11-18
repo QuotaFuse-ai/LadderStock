@@ -132,6 +132,7 @@ def has_partition(dataset: str, day: date | str, *, root: Path | None = None) ->
 # 内部
 # --------------------------------------------------------------------------- #
 
+
 def _read_parquet(path: Path, *, limit: int | None) -> list[dict[str, Any]]:
     sql_path = str(path).replace("\\", "/").replace("'", "''")
     tail = f" LIMIT {int(limit)}" if limit else ""

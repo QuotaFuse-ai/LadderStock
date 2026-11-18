@@ -50,6 +50,7 @@ WEEKLY_PROMPT = "prompts/weekly.md"
 # 路径与读写
 # --------------------------------------------------------------------------- #
 
+
 def _data_dir(root: Any = None) -> Path:
     from ladderstock.cli.paths import data_dir
 
@@ -80,9 +81,7 @@ def latest_week(root: Any = None) -> str | None:
     """本机已有周报里最新的周标签（按文件名倒序，`YYYY-Www` 字典序即时间序）。"""
     base = _data_dir(root) / WEEKLY_SUBDIR
     names = (
-        sorted((path.stem for path in base.glob("*.json")), reverse=True)
-        if base.is_dir()
-        else []
+        sorted((path.stem for path in base.glob("*.json")), reverse=True) if base.is_dir() else []
     )
     for name in names:
         try:
@@ -96,6 +95,7 @@ def latest_week(root: Any = None) -> str | None:
 # --------------------------------------------------------------------------- #
 # 事实包 → 五段指标快照（喂给 AI 的只读快照）
 # --------------------------------------------------------------------------- #
+
 
 def section_snapshots(facts: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """把事实包切成五段各自的快照（与每日复盘 `collect_metrics()` 同形：只读、扁平）。
@@ -216,6 +216,7 @@ def section_snapshots(facts: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # 编排：复用五段状态机，只换落盘布局与提示词
 # --------------------------------------------------------------------------- #
 
+
 class WeeklyOrchestrator(Orchestrator):
     """周度五段编排：模型链、三级降级、`merge_narrative` 闸门全部沿用父类。
 
@@ -299,6 +300,7 @@ def build_messages(
 # 生成与落盘
 # --------------------------------------------------------------------------- #
 
+
 def generate(
     week: Any,
     *,
@@ -322,9 +324,7 @@ def generate(
         orchestrator = WeeklyOrchestrator(
             config=config, client=client, root=root, config_root=config_root
         )
-        run = orchestrator.run(
-            tag, metrics, force=force, retry_failed=retry_failed, only=only
-        )
+        run = orchestrator.run(tag, metrics, force=force, retry_failed=retry_failed, only=only)
     else:
         run = RunResult(
             date=tag,
@@ -411,11 +411,7 @@ def _now() -> str:
 
 def _line(lead: str, *pairs: tuple[str, Any]) -> str:
     """模板行：`要点：a=1；b=2`，值为 `None` 的分项直接不写（不冒充读数）。"""
-    parts = [
-        f"{label}={value}"
-        for label, value in pairs
-        if value is not None and value != ""
-    ]
+    parts = [f"{label}={value}" for label, value in pairs if value is not None and value != ""]
     return f"{lead}：{'；'.join(parts)}" if parts else f"{lead}：本周没有可用读数"
 
 
@@ -482,10 +478,13 @@ def template_narrative(name: str, pack: dict[str, Any]) -> list[str]:
             _line(
                 f"主线题材（每日涨幅前 {themes['window']} 名为一个窗口）",
                 ("观察题材数", themes["observed"]),
-                ("入榜题材", "、".join(
-                    f"{item['name']}（{item['streak_days']} 天连续 / {item['days_on_top']} 天入窗）"
-                    for item in themes["themes"][:3]
-                )),
+                (
+                    "入榜题材",
+                    "、".join(
+                        f"{item['name']}（{item['streak_days']} 天连续 / {item['days_on_top']} 天入窗）"
+                        for item in themes["themes"][:3]
+                    ),
+                ),
             )
         ]
         return lines
@@ -551,6 +550,7 @@ def headline(pack: dict[str, Any]) -> list[str]:
 # Markdown
 # --------------------------------------------------------------------------- #
 
+
 def render_markdown(report: dict[str, Any]) -> str:
     """人读件：版式与每日复盘同一条（抬头 → 事实包 → 五段叙述 → 口径 → 来源）。"""
     pack = report.get("facts") or {}
@@ -571,8 +571,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     if pack.get("missing_days"):
         lines += ["", "## 缺数据的日子", ""]
         lines += [
-            f"- {item['date']}：{item['reason']}（复盘产物"
-            f"{'在' if item['has_report'] else '缺'}）"
+            f"- {item['date']}：{item['reason']}（复盘产物{'在' if item['has_report'] else '缺'}）"
             for item in pack["missing_days"]
         ]
 
@@ -723,6 +722,7 @@ def _cell(value: Any, suffix: str = "", join: str = "") -> str:
 # --------------------------------------------------------------------------- #
 # 落盘
 # --------------------------------------------------------------------------- #
+
 
 def write_report(report: dict[str, Any], week: str, root: Any = None) -> list[Path]:
     """原子写出 `<week>.json` + `<week>.md`；任一失败不影响另一件。"""

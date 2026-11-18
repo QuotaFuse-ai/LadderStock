@@ -122,9 +122,7 @@ class HttpChatClient:
             raise NotImplementedError("CLI 通道没有 token 级增量")
         provider = providers.provider_for(target.backend.kind)
         effective = self.timeout if timeout is None else timeout
-        async for chunk in provider.aiter_text(
-            target, system, user, timeout=effective
-        ):
+        async for chunk in provider.aiter_text(target, system, user, timeout=effective):
             yield chunk
 
     def complete_with_tools(
@@ -280,10 +278,7 @@ class Orchestrator:
     def _generate(self, name: str, day: date | str, metrics: dict[str, Any]) -> dict[str, Any]:
         if not fallback.is_configured(self.config):
             missing = "、".join(fallback.missing_env(self.config))
-            text = (
-                f"AI 未配置（缺少环境变量 {missing}），本段未生成叙事，"
-                "仅保留程序计算的指标。"
-            )
+            text = f"AI 未配置（缺少环境变量 {missing}），本段未生成叙事，仅保留程序计算的指标。"
             return {
                 "status": "degraded",
                 "mode": "text",
@@ -300,10 +295,7 @@ class Orchestrator:
             name, fallback.section_config(self.config, name).output_schema
         )
         role = SECTION_ROLES.get(name)
-        models = [
-            target.label
-            for target in self.config.chain_for(REVIEW_MODULE, role)
-        ]
+        models = [target.label for target in self.config.chain_for(REVIEW_MODULE, role)]
         attempts: list[dict[str, Any]] = []
         last_failure: AiFailure | None = None
 
@@ -431,9 +423,7 @@ class Orchestrator:
     # 杂项
     # ------------------------------------------------------------------ #
 
-    def _messages(
-        self, name: str, day: date | str, metrics: dict[str, Any]
-    ) -> tuple[str, str]:
+    def _messages(self, name: str, day: date | str, metrics: dict[str, Any]) -> tuple[str, str]:
         prompt = self._prompt(name)
         return structured_output.build_messages(name, str(day), metrics, prompt)
 
@@ -500,11 +490,7 @@ class Orchestrator:
                 )
         failed = [item["section"] for item in failures]
         generated = [name for name in targets if name not in failed]
-        reused = [
-            name
-            for name in checkpoint.done_sections(document)
-            if name not in generated
-        ]
+        reused = [name for name in checkpoint.done_sections(document) if name not in generated]
         return RunResult(
             date=str(day),
             sections=sections,

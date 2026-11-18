@@ -72,6 +72,7 @@ READ_FAILURE = "行业数据读取失败"
 # 参数校验
 # --------------------------------------------------------------------------- #
 
+
 def _invalid(detail: str) -> HTTPException:
     """参数非法：SPEC 钉的是 422（控制面用 400，这里不能跟着改，前端按 422 写死）。"""
     return HTTPException(status_code=422, detail=detail)
@@ -119,6 +120,7 @@ def parse_rule_id(raw: Any) -> str | None:
 # --------------------------------------------------------------------------- #
 # 载荷组装
 # --------------------------------------------------------------------------- #
+
 
 def _primary_day(payload: dict[str, Any], probe: dict[str, Any]) -> str | None:
     """信封 `data_as_of`：载荷自己声明的时点优先，否则沿用 `ldst industry show` 的规则。
@@ -199,6 +201,7 @@ def _envelope(payload: dict[str, Any], origin: dict[str, Any] | None = None) -> 
 # 读取面
 # --------------------------------------------------------------------------- #
 
+
 class IndustryPlane:
     """三个只读接口的取数：一次请求读一次清单 / 一次缓存，不跨请求缓存。
 
@@ -261,9 +264,7 @@ class IndustryPlane:
         note = self._ensure_note()
         listing = self._listing()
         self._apply_note(listing, note)
-        verdict = self._read(
-            lambda: evaluate_signals(listing, industry=industry, rule_id=rule_id)
-        )
+        verdict = self._read(lambda: evaluate_signals(listing, industry=industry, rule_id=rule_id))
         return _envelope(verdict, listing)
 
     def _ensure_note(self) -> str:
@@ -335,6 +336,7 @@ def _project(projection: CacheProjection, codes: list[str]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 闸门与路由
 # --------------------------------------------------------------------------- #
+
 
 async def _guard(request: Request) -> None:
     """产业读取的来源闸门：回环 + `Host` 白名单，判据与控制面 / 研究面同一套函数。

@@ -171,6 +171,7 @@ def test_code_scoped_tools_require_code_and_keep_date_optional() -> None:
 # 输出 schema 与信封
 # --------------------------------------------------------------------------- #
 
+
 def test_new_tools_carry_input_and_output_schema() -> None:
     by_name = {spec.name: spec for spec in TOOL_SPECS}
     for name in NEW_TOOLS:
@@ -201,6 +202,7 @@ def test_tool_listing_json_includes_schemas() -> None:
 # --------------------------------------------------------------------------- #
 # 分发：信封形状、降级状态、隐私
 # --------------------------------------------------------------------------- #
+
 
 def _assert_envelope(envelope: dict[str, Any]) -> None:
     assert set(envelope) == ENVELOPE_KEYS
@@ -458,6 +460,7 @@ def test_dispatch_rejects_bad_usage(tmp_path: Any) -> None:
 # QUOT-485：ProxyFleet 薄封装
 # --------------------------------------------------------------------------- #
 
+
 def test_proxyfleet_status_unreachable_is_partial_and_honest(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -564,7 +567,7 @@ def test_proxyfleet_status_reports_pool_gateway_and_failures(
                     }
                 ),
             ),
-        )
+        ),
     )
 
     envelope = dispatch("proxyfleet_status", {}, root=tmp_path)

@@ -159,6 +159,7 @@ def _as_date(value: Any) -> date | None:
 # 记录与水位
 # --------------------------------------------------------------------------- #
 
+
 def envelope_records(envelope: LadderEnvelope) -> list[dict[str, Any]]:
     """从信封取待落库记录。
 
@@ -203,6 +204,7 @@ def watermark_value(
 # --------------------------------------------------------------------------- #
 # 代码池（QUOT-233：`code` 必填的工具必须有池子可填）
 # --------------------------------------------------------------------------- #
+
 
 def clean_codes(values: Any) -> list[str]:
     """把 `--codes 600000,000001` 与 yaml 列表统一成去重保序的代码列表。"""
@@ -330,6 +332,7 @@ def industry_request_budget(codes: int) -> int:
 # 单个数据集
 # --------------------------------------------------------------------------- #
 
+
 def _skip_row(
     dataset: str,
     *,
@@ -404,9 +407,7 @@ def sync_code_pool(
         items=codes,
         pool_desc=f"代码池 {len(codes)} 只（{pool_source}）",
         unit="只",
-        params_for=lambda code: tool_params(
-            dataset, code=code, since=None if full else before
-        ),
+        params_for=lambda code: tool_params(dataset, code=code, since=None if full else before),
         empty_detail=(
             f"代码池为空（本次来源：{pool_source}）：`--codes` / config/sync.yaml 的 "
             f"sync.datasets.{dataset}.codes / codes_from / 本机自选均为空，未发起调用"
@@ -560,8 +561,7 @@ def sync_batch_pool(
             detail += "；本分钟槽已存在，按先到先得未覆盖"
         if outcome.from_cache:
             detail += (
-                f"；{envelope.source_detail}"
-                "（上游不可用，已按当日盘中槽回放，槽内数据非本轮实测）"
+                f"；{envelope.source_detail}（上游不可用，已按当日盘中槽回放，槽内数据非本轮实测）"
             )
         elif degraded:
             detail += f"；{envelope.source_detail}（部分批次未取到，已按降级落槽）"
@@ -606,6 +606,7 @@ def _batch_request_count(envelope: LadderEnvelope) -> int | None:
 # --------------------------------------------------------------------------- #
 # 赛道池（QUOT-328：`topic` 必填的 Wire 数据集）
 # --------------------------------------------------------------------------- #
+
 
 def resolve_topic_pool(declared: dict[str, Any]) -> list[str]:
     """`config/sync.yaml` 里该数据集的 `topics`：Wire 认的是**赛道 slug**。
@@ -814,9 +815,7 @@ def sync_per_item(
         source=",".join(dict.fromkeys(sources)),
         default_trade_date=_as_date(last_envelope.data_as_of) if last_envelope else None,
     )
-    value = (
-        watermark_value(dataset, rows, last_envelope) if last_envelope is not None else None
-    )
+    value = watermark_value(dataset, rows, last_envelope) if last_envelope is not None else None
     if result.empty or not value:
         status = "empty"
         after = before
@@ -862,7 +861,6 @@ def sync_per_item(
         "detail": detail,
         "trail": trail,
     }
-
 
 
 def result_source(sources: list[str]) -> str:
@@ -1171,6 +1169,7 @@ def run_sync(
 # 命令
 # --------------------------------------------------------------------------- #
 
+
 def _targets(registry: ProviderRegistry, dataset: str | None) -> list[str]:
     declared = list(registry.datasets)
     if not declared:
@@ -1262,9 +1261,7 @@ def sync_industry_command(
     registry = ProviderRegistry()
     store = watermark.WatermarkStore(root=registry.root)
     with writer_lock(holder="ldst sync industry"):
-        payload = run_sync(
-            registry, store, list(INDUSTRY_SYNC_DATASETS), full=full, codes=pool
-        )
+        payload = run_sync(registry, store, list(INDUSTRY_SYNC_DATASETS), full=full, codes=pool)
     payload["industry_scope"] = {
         "datasets": list(INDUSTRY_SYNC_DATASETS),
         "code_pool": {

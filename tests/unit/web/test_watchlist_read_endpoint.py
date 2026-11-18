@@ -53,8 +53,13 @@ def _quote_data(codes: list[str]) -> dict[str, Any]:
         row["code"] = code
         row["name"] = f"自选{code}"
         quotes[code] = row
-    return {"total": len(codes), "succeeded": len(quotes), "failed": 0,
-            "quotes": quotes, "failures": failures}
+    return {
+        "total": len(codes),
+        "succeeded": len(quotes),
+        "failed": 0,
+        "quotes": quotes,
+        "failures": failures,
+    }
 
 
 def _sources_doc() -> dict[str, Any]:
@@ -87,12 +92,8 @@ def _client(
             raise RuntimeError("QFSD-7001 rate limited")
         return tickhub_payload(_quote_data(asked), source="tencent")
 
-    transport = FakeTransport(
-        handlers={"tencent_quote_batch": spot}, tools=["tencent_quote_batch"]
-    )
-    registry = make_registry(
-        transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC)
-    )
+    transport = FakeTransport(handlers={"tencent_quote_batch": spot}, tools=["tencent_quote_batch"])
+    registry = make_registry(transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC))
     plane = RadarPlane(data_root=root, registry=registry)
     app = create_app(data_root=root, dist_dir=root / "no-dist", radar_plane=plane)
     return TestClient(app, client=client)
@@ -135,12 +136,8 @@ def _client_with_quotes(root: Path, quotes: dict[str, dict[str, Any]]) -> TestCl
             source="tencent",
         )
 
-    transport = FakeTransport(
-        handlers={"tencent_quote_batch": spot}, tools=["tencent_quote_batch"]
-    )
-    registry = make_registry(
-        transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC)
-    )
+    transport = FakeTransport(handlers={"tencent_quote_batch": spot}, tools=["tencent_quote_batch"])
+    registry = make_registry(transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC))
     plane = RadarPlane(data_root=root, registry=registry)
     app = create_app(data_root=root, dist_dir=root / "no-dist", radar_plane=plane)
     return TestClient(app, client=LOOPBACK)

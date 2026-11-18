@@ -206,9 +206,7 @@ def test_seal_time_passed_through_tolerantly() -> None:
     assert leaders["A"]["first_seal_time"] == "093512"
     assert leaders["A"]["seal_time"] == "142101"
 
-    stocks = {
-        row["code"]: row for group in ladder["ladder"] for row in group["stocks"]
-    }
+    stocks = {row["code"]: row for group in ladder["ladder"] for row in group["stocks"]}
     assert stocks["B"]["first_seal_time"] == "095000"
     assert stocks["B"]["seal_time"] == "101500"
     # 上游没给时间 -> null（不填 0、不填 "--"、不猜）

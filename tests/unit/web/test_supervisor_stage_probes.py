@@ -107,9 +107,7 @@ def _write_watermark(
         }
     state_dir = root / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "watermark.json").write_text(
-        json.dumps(doc, ensure_ascii=False), encoding="utf-8"
-    )
+    (state_dir / "watermark.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
 
 
 def _run(status: str, *, finished_at: str | None = None, detail: str = "") -> dict[str, Any]:
@@ -182,9 +180,7 @@ def test_collect_process_ok_warn_down_by_peer_liveness(tmp_path: Path) -> None:
 
     dead_root = _root(tmp_path, "process-dead")
     ledger = _ledger_with_pids(dead_root, {peer: None for peer in PEERS})
-    sample = _probes(dead_root, ledger=ledger, is_pid_alive=lambda pid: False)[
-        "collect_process"
-    ]()
+    sample = _probes(dead_root, ledger=ledger, is_pid_alive=lambda pid: False)["collect_process"]()
     assert sample.health == HEALTH_DOWN
     assert "行情" in sample.reason
 
@@ -227,9 +223,7 @@ def test_collect_success_reads_latest_sync_run(tmp_path: Path) -> None:
     fresh = probe_with([_run("ok")])
     assert fresh.health == HEALTH_OK
 
-    two_days_ago = (
-        datetime.now().astimezone() - timedelta(days=2)
-    ).isoformat(timespec="seconds")
+    two_days_ago = (datetime.now().astimezone() - timedelta(days=2)).isoformat(timespec="seconds")
     stale = probe_with([_run("ok", finished_at=two_days_ago)])
     assert stale.health == HEALTH_WARN
     assert "成功" in stale.reason

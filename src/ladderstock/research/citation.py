@@ -93,8 +93,12 @@ class Source:
 
     def citation_line(self) -> str:
         """来源清单一行：`[n] 来源名 · endpoint · as_of · url`（未核实如实标出）。"""
-        parts = [f"[{self.index}] {self.dataset}", self.endpoint or "-", self.as_of or "-",
-                 self.url or "-"]
+        parts = [
+            f"[{self.index}] {self.dataset}",
+            self.endpoint or "-",
+            self.as_of or "-",
+            self.url or "-",
+        ]
         line = " · ".join(parts)
         return line if self.verified else f"{line} · {UNVERIFIED_MARK}"
 
@@ -152,6 +156,7 @@ def index_from_slot(slot: Mapping[str, Any] | None) -> CitationIndex:
 # token 扫描
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class Token:
     """文本里的一段数字：`exempt` 非空表示它在豁免名单里，不要求角标。"""
@@ -203,7 +208,7 @@ def _markers(line: str) -> dict[int, str]:
     """每个 token 结束位置后面紧跟的标记（`[n]` / 〔未核实〕），用于幂等渲染与审计。"""
     found: dict[int, str] = {}
     for match in _TOKEN_RE.finditer(line):
-        stripped = line[_mark_position(line, match.end()):].lstrip(" ")
+        stripped = line[_mark_position(line, match.end()) :].lstrip(" ")
         citation = _CITATION_RE.match(stripped)
         if citation:
             found[match.end()] = f"[{citation.group(1)}]"
@@ -273,6 +278,7 @@ def _split_sections(text: str) -> tuple[list[str], set[int]]:
 # 渲染
 # --------------------------------------------------------------------------- #
 
+
 def annotate_line(
     line: str, index: CitationIndex, identifiers: frozenset[str] = frozenset()
 ) -> str:
@@ -292,9 +298,7 @@ def annotate_line(
     return out
 
 
-def annotate(
-    text: str, index: CitationIndex, *, identifiers: Iterable[str] = ()
-) -> str:
+def annotate(text: str, index: CitationIndex, *, identifiers: Iterable[str] = ()) -> str:
     """整篇渲染：逐行补标记，`## 来源` 小节原样保留（那是程序生成的清单）。"""
     keys = _identifier_keys(identifiers)
     lines, source_lines = _split_sections(text)
@@ -307,6 +311,7 @@ def annotate(
 # --------------------------------------------------------------------------- #
 # 审计
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class Finding:

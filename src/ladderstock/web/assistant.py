@@ -37,10 +37,10 @@ import socket
 import sqlite3
 import time
 import uuid
-from pathlib import Path
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -60,17 +60,27 @@ from ladderstock.ai import (
 )
 from ladderstock.ai.agent_runtime import (
     EVENT_FINAL as AGENT_FINAL,
+)
+from ladderstock.ai.agent_runtime import (
     EVENT_TEXT as AGENT_TEXT,
+)
+from ladderstock.ai.agent_runtime import (
     EVENT_TOOL as AGENT_TOOL,
+)
+from ladderstock.ai.agent_runtime import (
     build_agent,
     build_tools,
     run_agent_stream,
 )
-from ladderstock.ai.answer_blocks import AnswerBlockError, build_block, normalize_ai
+from ladderstock.ai.answer_blocks import (
+    CAPABILITY_BRIEF,
+    AnswerBlockError,
+    build_block,
+    normalize_ai,
+)
 from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
-from ladderstock.ai.answer_blocks import CAPABILITY_BRIEF
 from ladderstock.ai.intent import INTENT_DATA_QUERY, classify_intent
 from ladderstock.ai.providers import ProviderError, UnconfiguredError
 from ladderstock.cli.paths import data_dir
@@ -531,9 +541,7 @@ def _persist_desk_turn(
             writer.start(blocks)
             writer.finish(chat_store.DONE, blocks)
     except Exception as exc:  # noqa: BLE001 - 回看能力失败不影响本轮回答
-        logger.warning(
-            "desk_turn_persist_failed session=%s detail=%s", session_id, exc
-        )
+        logger.warning("desk_turn_persist_failed session=%s detail=%s", session_id, exc)
 
 
 def _success_response(
@@ -574,10 +582,15 @@ def _success_response(
         fetch_attempted=fetch_attempted,
     )
     if plan is not None and plan.source_failures and not metrics:
-        blocks = [b for b in blocks if not (
-            b.get("type") == "notice" and b.get("payload", {}).get("kind") == "missing_data"
-            and b.get("payload", {}).get("section") == "指标"
-        )]
+        blocks = [
+            b
+            for b in blocks
+            if not (
+                b.get("type") == "notice"
+                and b.get("payload", {}).get("kind") == "missing_data"
+                and b.get("payload", {}).get("section") == "指标"
+            )
+        ]
         blocks.append(
             build_block(
                 "notice",
@@ -587,9 +600,7 @@ def _success_response(
                     # notice.message 不允许出现数字（answer_blocks 红线 4），
                     # 失败细节里往往带数字，只点名具体源，细节进服务端日志。
                     "message": "取数失败，"
-                    + "、".join(
-                        failure.split(":")[0].strip() for failure in plan.source_failures
-                    )
+                    + "、".join(failure.split(":")[0].strip() for failure in plan.source_failures)
                     + " 没有返回可用数据",
                 },
             )
@@ -749,9 +760,9 @@ def _conversation_blocks(
                 retryable=failure.retryable,
             )
         )[:MAX_ANSWER_BLOCKS]
-    return _blocks_for(
-        reply, sources, fetch_attempted=fetch_attempted, metrics=metrics
-    )[:MAX_ANSWER_BLOCKS]
+    return _blocks_for(reply, sources, fetch_attempted=fetch_attempted, metrics=metrics)[
+        :MAX_ANSWER_BLOCKS
+    ]
 
 
 def _arrive_blocks(
@@ -897,6 +908,7 @@ def _session_history(
         turns.append(ContextHistoryTurn(role="user", text=row["question"]))
         turns.append(ContextHistoryTurn(role="assistant", text=row["answer"]))
     return turns
+
 
 class _TurnWriter:
     """一轮问答的落库句柄：同一轮只产生一行 `chat_turn`，`status` 在同一行上流转。
@@ -1199,10 +1211,13 @@ async def _run_agent_turn(
             elif kind == AGENT_FINAL:
                 yield "final", payload.get("text", "")
                 if payload.get("metrics") or payload.get("sources"):
-                    yield "data", {
-                        "metrics": payload.get("metrics") or {},
-                        "sources": payload.get("sources") or [],
-                    }
+                    yield (
+                        "data",
+                        {
+                            "metrics": payload.get("metrics") or {},
+                            "sources": payload.get("sources") or [],
+                        },
+                    )
     finally:
         await client.close()
 
@@ -1374,9 +1389,7 @@ async def run_turn_stream(
     )
     context_text, _ = _normalize_context(structured)
     # 这一轮的页面归属（`_prepare_call` 的 tab 与记忆 page 都取它）
-    turn_page = (
-        context.page if context is not None and context.page else PAGE_PREFIX.strip("/")
-    )
+    turn_page = context.page if context is not None and context.page else PAGE_PREFIX.strip("/")
 
     yield _status("history", "done", item_id="history")
 
@@ -1445,7 +1458,9 @@ async def run_turn_stream(
             )
             if decision.needed:
                 yield _status("reflect", "running", item_id="reflect", action="补查证据")
-                logger.info("self_reflect triggered reason=%s head=%s", decision.reason, message[:40])
+                logger.info(
+                    "self_reflect triggered reason=%s head=%s", decision.reason, message[:40]
+                )
                 followup_text = ""
                 followup_fetched: dict[str, Any] = {}
                 followup_tools = False
@@ -1505,9 +1520,7 @@ async def run_turn_stream(
             # 会直接穿出生成器：SSE 就地断掉，前端等不到 `done` 帧，页面表现就是
             # 「这一轮没答出来」而没有任何原因。这里统一收成 ai_upstream 再落终态。
             logger.exception("run_turn_stream 出现未分类异常，按 ai_upstream 收尾")
-            failure = AssistantFailure(
-                502, "ai_upstream", f"{type(exc).__name__}: {exc}"
-            )
+            failure = AssistantFailure(502, "ai_upstream", f"{type(exc).__name__}: {exc}")
             chat_failure = _as_chat_failure(failure)
             writer.finish(
                 chat_store.FAILED,
@@ -1584,9 +1597,7 @@ def _run_turn_logged(
                 page_label="对话模式",
                 module=RUN_TURN_MODULE,
                 page=(
-                    context.page
-                    if context is not None and context.page
-                    else PAGE_PREFIX.strip("/")
+                    context.page if context is not None and context.page else PAGE_PREFIX.strip("/")
                 ),
                 data_root=data_root,
             )
@@ -1888,14 +1899,20 @@ def _name_resolver(data_root: Any) -> Callable[[str], str | None]:
         try:
             from ladderstock.web.symbols import SymbolPlane
 
-            payload = SymbolPlane(data_root=Path(data_root) if data_root else data_dir()).search(text, 3)
+            payload = SymbolPlane(data_root=Path(data_root) if data_root else data_dir()).search(
+                text, 3
+            )
         except Exception as exc:  # noqa: BLE001 - 检索失败就当解析不出
             logger.warning("symbol_resolver_failed name=%s detail=%s", text, exc)
             return None
         matches = ((payload or {}).get("payload") or {}).get("matches") or []
         for item in matches:
             matched_name = str(item.get("name") or "")
-            if matched_name == text or matched_name.startswith(text) or text.startswith(matched_name):
+            if (
+                matched_name == text
+                or matched_name.startswith(text)
+                or text.startswith(matched_name)
+            ):
                 return str(item.get("symbol") or "") or None
         return None
 
@@ -2055,7 +2072,7 @@ async def ask_stream(
             reply = prepared.client.complete(
                 prepared.model, prepared.system, prepared.user, json_mode=False
             )
-            accumulated = (reply or "")
+            accumulated = reply or ""
             if accumulated:
                 yield ("text", accumulated)
     except NotImplementedError:
@@ -2063,7 +2080,7 @@ async def ask_stream(
         reply = prepared.client.complete(
             prepared.model, prepared.system, prepared.user, json_mode=False
         )
-        accumulated = (reply or "")
+        accumulated = reply or ""
         if accumulated:
             yield ("text", accumulated)
     except Exception as exc:  # noqa: BLE001
@@ -2149,9 +2166,7 @@ def build_router(data_root: Any = None) -> APIRouter:
             # 首页研究台固定会话：刷新 / 重开页面时由 `GET /api/research/desk/history` 读回。
             # 只对首页（code 占位 `home`）落库；个股深挖页的问答属于单页一次性问答，
             # 混进同一个会话会让「首页回看」里冒出别页的问题。
-            persist=(
-                (data_root, DESK_SESSION_ID, question) if code == "home" else None
-            ),
+            persist=((data_root, DESK_SESSION_ID, question) if code == "home" else None),
         )
 
     @router.get("/desk/history")
@@ -2212,9 +2227,7 @@ def _blocks_for_view(row: dict[str, Any]) -> list[Any]:
         return []
 
 
-def build_conversation_router(
-    *, data_root: Any = None, config_root: Any = None
-) -> APIRouter:
+def build_conversation_router(*, data_root: Any = None, config_root: Any = None) -> APIRouter:
     """`/api/conversation/*`（QUOT-580）：会话模式的一轮问答 + 会话列表读取。
 
     阶段 F 的 `SessionList` 只消费这里：`GET /api/conversation/sessions` 列会话，

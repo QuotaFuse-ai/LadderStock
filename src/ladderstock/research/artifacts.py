@@ -182,9 +182,7 @@ def build_markdown(document: dict[str, Any]) -> str:
     narrative = [str(item) for item in document.get("narrative") or []]
     lines += ["", "## 叙述", ""]
     if narrative:
-        lines += [
-            citation.annotate(item, index, identifiers=identifiers) for item in narrative
-        ]
+        lines += [citation.annotate(item, index, identifiers=identifiers) for item in narrative]
     else:
         lines += ["（本段无叙述）", ""]
     metrics = _metric_lines(document, index, identifiers)
@@ -194,9 +192,7 @@ def build_markdown(document: dict[str, Any]) -> str:
     notes = [str(item) for item in document.get("notes") or []]
     if notes:
         lines += ["", "## 备注", ""]
-        lines += [
-            f"- {citation.annotate(note, index, identifiers=identifiers)}" for note in notes
-        ]
+        lines += [f"- {citation.annotate(note, index, identifiers=identifiers)}" for note in notes]
     if document.get("degraded"):
         lines += ["", "> 本段为降级产物（占位/纯文本），未走结构化输出。"]
     lines += ["", citation.SOURCES_HEADING, ""]
@@ -235,9 +231,7 @@ def write_stage(document: dict[str, Any], root: Any = None) -> dict[str, str]:
     day = document["date"]
     stage = str(document["stage"])
     json_path, md_path = stage_paths(code, day, stage, root)
-    atomic_write(
-        json_path, json.dumps(document, ensure_ascii=False, indent=2, default=str) + "\n"
-    )
+    atomic_write(json_path, json.dumps(document, ensure_ascii=False, indent=2, default=str) + "\n")
     atomic_write(md_path, build_markdown(document))
     return {"json": str(json_path), "md": str(md_path)}
 

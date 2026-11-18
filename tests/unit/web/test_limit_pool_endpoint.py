@@ -116,9 +116,7 @@ def test_missing_fields_are_null_not_defaulted(
         lambda *_a, **_k: ([{"code": "600001", "name": "某股", "boards": 3}], "duckdb"),
     )
     row = (
-        _client(tmp_path)
-        .get("/api/limit-pool", params={"date": DAY})
-        .json()["payload"]["rows"][0]
+        _client(tmp_path).get("/api/limit-pool", params={"date": DAY}).json()["payload"]["rows"][0]
     )
 
     assert row["first_seal_time"] is None

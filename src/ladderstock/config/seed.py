@@ -106,8 +106,8 @@ def seed_if_needed() -> SeedReport | None:
     缺了首页自选直接 500（实机装完就是这样）。所以冻结态一律算安装态。
     `LDST_CONFIG_DIR` 显式指定时仍不 seed：那是用户自己的目录，程序不往里塞文件。
     """
-    from ladderstock.core import runtime
     from ladderstock.cli.paths import _env_with_legacy, user_data_root
+    from ladderstock.core import runtime
 
     if _env_with_legacy("LDST_CONFIG_DIR"):
         return None

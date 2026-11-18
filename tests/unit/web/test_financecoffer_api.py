@@ -78,11 +78,22 @@ def test_summary_reports_two_sizes_and_doctor(client: TestClient) -> None:
     # 七件体检（pg / redis / minio / api / embedding / mcp / etl）
     assert payload["doctor"]["total"] == 7
     assert set(payload["doctor"]["services"]) == {
-        "pg", "redis", "minio", "api", "embedding", "mcp", "etl"
+        "pg",
+        "redis",
+        "minio",
+        "api",
+        "embedding",
+        "mcp",
+        "etl",
     }
     # embedding / etl 是可选件：没装时它不就绪，但不算「不可用」
     assert payload["doctor"]["optional"] == ["embedding", "etl"]
-    assert set(payload["redis"]["platforms"]) == {"win-x64", "linux-x64", "linux-arm64", "macos-arm64"}
+    assert set(payload["redis"]["platforms"]) == {
+        "win-x64",
+        "linux-x64",
+        "linux-arm64",
+        "macos-arm64",
+    }
 
 
 def test_install_without_confirm_downloads_nothing(
@@ -96,7 +107,9 @@ def test_install_without_confirm_downloads_nothing(
 
     monkeypatch.setattr("ladderstock.web.financecoffer_api.installer.install", fake_install)
 
-    created = client.post("/api/financecoffer/install", headers=HEADER, json={"confirm": False}).json()
+    created = client.post(
+        "/api/financecoffer/install", headers=HEADER, json={"confirm": False}
+    ).json()
     assert created["kind"] == "install"
 
     job = _wait_job(client)
@@ -121,7 +134,9 @@ def test_install_with_confirm_runs_initdb(
     monkeypatch.setattr("ladderstock.web.financecoffer_api.installer.install", fake_install)
     monkeypatch.setattr("ladderstock.web.financecoffer_api.services.initdb", fake_initdb)
 
-    client.post("/api/financecoffer/install", headers=HEADER, json={"confirm": True, "with_embedding": True})
+    client.post(
+        "/api/financecoffer/install", headers=HEADER, json={"confirm": True, "with_embedding": True}
+    )
     job = _wait_job(client)
 
     assert job["status"] == "done"
@@ -143,21 +158,42 @@ def test_services_action_calls_real_service_functions(
         return _fn
 
     monkeypatch.setattr("ladderstock.web.financecoffer_api.services.initdb", _recorder("initdb"))
-    monkeypatch.setattr("ladderstock.web.financecoffer_api.services.start_pg", _recorder("start_pg"))
-    monkeypatch.setattr("ladderstock.web.financecoffer_api.redis_service.start", _recorder("redis_start"))
-    monkeypatch.setattr("ladderstock.web.financecoffer_api.services.start_minio", _recorder("start_minio"))
-    monkeypatch.setattr("ladderstock.web.financecoffer_api.services.start_api", _recorder("start_api"))
-    monkeypatch.setattr("ladderstock.web.financecoffer_api.services.start_embedding", _recorder("start_embedding"))
+    monkeypatch.setattr(
+        "ladderstock.web.financecoffer_api.services.start_pg", _recorder("start_pg")
+    )
+    monkeypatch.setattr(
+        "ladderstock.web.financecoffer_api.redis_service.start", _recorder("redis_start")
+    )
+    monkeypatch.setattr(
+        "ladderstock.web.financecoffer_api.services.start_minio", _recorder("start_minio")
+    )
+    monkeypatch.setattr(
+        "ladderstock.web.financecoffer_api.services.start_api", _recorder("start_api")
+    )
+    monkeypatch.setattr(
+        "ladderstock.web.financecoffer_api.services.start_embedding", _recorder("start_embedding")
+    )
 
-    payload = client.post("/api/financecoffer/services", headers=HEADER, json={"action": "start"}).json()
+    payload = client.post(
+        "/api/financecoffer/services", headers=HEADER, json={"action": "start"}
+    ).json()
 
     assert payload["ok"] is True
     # 库先就绪，再按依赖顺序起：PG → Redis → MinIO → API → embedding（embedding 最慢放最后）
-    assert calls == ["initdb", "start_pg", "redis_start", "start_minio", "start_api", "start_embedding"]
+    assert calls == [
+        "initdb",
+        "start_pg",
+        "redis_start",
+        "start_minio",
+        "start_api",
+        "start_embedding",
+    ]
 
 
 def test_unknown_service_action_is_rejected(client: TestClient) -> None:
-    payload = client.post("/api/financecoffer/services", headers=HEADER, json={"action": "restart"}).json()
+    payload = client.post(
+        "/api/financecoffer/services", headers=HEADER, json={"action": "restart"}
+    ).json()
     assert payload["ok"] is False
     assert "start" in payload["detail"]
 
@@ -169,7 +205,9 @@ def test_uninstall_without_confirm_keeps_data(
     target.mkdir(parents=True)
     (target / "install_state.json").write_text('{"state": "ready"}', encoding="utf-8")
 
-    payload = client.post("/api/financecoffer/uninstall", headers=HEADER, json={"confirm": False}).json()
+    payload = client.post(
+        "/api/financecoffer/uninstall", headers=HEADER, json={"confirm": False}
+    ).json()
 
     assert payload["status"] == "needs_confirmation"
     assert "不可恢复" in payload["detail"]

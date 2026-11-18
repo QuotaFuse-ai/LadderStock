@@ -29,8 +29,16 @@ class Component:
 #: 向导必须按磁盘实际占用报，不能按下载包大小报——PG 的 zip 只有 315MB，解开是 848MB；
 #: 而「只装源码」的 API 3MB 是假象，它跑起来要 sqlalchemy/psycopg/pgvector 等 37MB 依赖。
 COMPONENTS: tuple[Component, ...] = (
-    Component("pg", "PostgreSQL + pgvector", 848, True, "源代码只接受 postgresql:// DSN，没有 sqlite 退路"),
-    Component("redis", "Redis（社区移植版，三端各一份）", 38, True, "官方无 Windows 版；三端用同一份 redis.conf"),
+    Component(
+        "pg", "PostgreSQL + pgvector", 848, True, "源代码只接受 postgresql:// DSN，没有 sqlite 退路"
+    ),
+    Component(
+        "redis",
+        "Redis（社区移植版，三端各一份）",
+        38,
+        True,
+        "官方无 Windows 版；三端用同一份 redis.conf",
+    ),
     Component("minio", "MinIO 对象存储", 108, True, "报告与导出物料的落点"),
     Component(
         "api",

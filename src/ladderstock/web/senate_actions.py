@@ -139,7 +139,7 @@ def _count_llm_roundtrips(path: Path) -> int:
     return text.count("HTTP Request: POST")
 
 
-def _watch_progress(task: "_Task", log_path: Path, baseline: int) -> None:
+def _watch_progress(task: _Task, log_path: Path, baseline: int) -> None:
     """后台数日志里的模型往返次数：这是 Senate 唯一稳定可读的真实进度信号。"""
     last_stage = ""
     while True:
@@ -169,7 +169,6 @@ def _watch_progress(task: "_Task", log_path: Path, baseline: int) -> None:
                         "at_sec": round(time.time() - task.started_at, 1),
                     }
                 )
-
 
 
 _TASKS: dict[str, _Task] = {}
@@ -209,9 +208,7 @@ async def _call_tool(tool: str, arguments: dict[str, Any], timeout: float) -> An
     async with streamable_http_client(senate_mcp_url()) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await asyncio.wait_for(
-                session.call_tool(tool, arguments), timeout=timeout
-            )
+            result = await asyncio.wait_for(session.call_tool(tool, arguments), timeout=timeout)
             return _decode(_content_text(result))
 
 

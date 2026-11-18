@@ -47,7 +47,11 @@ def state_dir(root: Path | None = None) -> Path:
     """状态落盘目录：`<安装根>/file/modules/_state`。"""
     from ladderstock.core import boundary
 
-    return boundary.modules_root() / "_state" if root is None else Path(root) / "file" / "modules" / "_state"
+    return (
+        boundary.modules_root() / "_state"
+        if root is None
+        else Path(root) / "file" / "modules" / "_state"
+    )
 
 
 def state_path(peer: str, root: Path | None = None) -> Path:
@@ -62,9 +66,19 @@ def read_state(peer: str, root: Path | None = None) -> dict[str, Any]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {"peer": peer, "state": "failed", "detail": f"安装状态文件损坏：{path}", "path": str(path)}
+        return {
+            "peer": peer,
+            "state": "failed",
+            "detail": f"安装状态文件损坏：{path}",
+            "path": str(path),
+        }
     if not isinstance(document, dict) or document.get("state") not in STATES:
-        return {"peer": peer, "state": "failed", "detail": f"安装状态文件结构不合法：{path}", "path": str(path)}
+        return {
+            "peer": peer,
+            "state": "failed",
+            "detail": f"安装状态文件结构不合法：{path}",
+            "path": str(path),
+        }
     document.setdefault("path", str(path))
     return document
 

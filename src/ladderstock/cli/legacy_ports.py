@@ -24,10 +24,7 @@ def legacy_port_hint(port: int) -> str:
     replacement = LEGACY_PORTS.get(int(port))
     if replacement is None:
         return ""
-    return (
-        f"ldst: {port} 是旧端口，v1.0 起固定用 {replacement}；"
-        "本程序不会自动切换端口（DEC-004）"
-    )
+    return f"ldst: {port} 是旧端口，v1.0 起固定用 {replacement}；本程序不会自动切换端口（DEC-004）"
 
 
 def warn_legacy_port(port: int) -> bool:

@@ -30,6 +30,7 @@ runner = CliRunner()
 # 夹具
 # --------------------------------------------------------------------------- #
 
+
 @pytest.fixture()
 def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把 data_dir() 钉在 tmp，避免测试污染真实缓存（DEC-001）。"""
@@ -76,6 +77,7 @@ def _assert_knowledge_refresh(jobs: list[dict]) -> None:
 # watch
 # --------------------------------------------------------------------------- #
 
+
 def test_watch_start_detects_and_persists(data_home: Path, bars_file: Path) -> None:
     result = runner.invoke(
         app,
@@ -108,12 +110,8 @@ def test_watch_start_detects_and_persists(data_home: Path, bars_file: Path) -> N
     assert status["source"] == str(bars_file)
 
 
-def test_watch_start_twice_does_not_repeat_events(
-    data_home: Path, bars_file: Path
-) -> None:
-    args = [
-        "watch", "start", "--source", str(bars_file), "--date", DAY, "--output", "json"
-    ]
+def test_watch_start_twice_does_not_repeat_events(data_home: Path, bars_file: Path) -> None:
+    args = ["watch", "start", "--source", str(bars_file), "--date", DAY, "--output", "json"]
     first = runner.invoke(app, args)
     second = runner.invoke(app, args)
 
@@ -182,6 +180,7 @@ def test_watch_status_and_stop_after_a_run(data_home: Path, bars_file: Path) -> 
 # notify
 # --------------------------------------------------------------------------- #
 
+
 def test_notify_test_console_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(app, ["notify", "test", "--output", "json"])
 
@@ -205,13 +204,9 @@ def test_notify_test_unknown_channel_exits_2() -> None:
 def test_notify_test_unavailable_channel_exits_4(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(
-        DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(7)"'
-    )
+    monkeypatch.setenv(DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(7)"')
 
-    result = runner.invoke(
-        app, ["notify", "test", "--channel", "desktop", "--output", "json"]
-    )
+    result = runner.invoke(app, ["notify", "test", "--channel", "desktop", "--output", "json"])
 
     assert result.exit_code == 4
     payload = _json(result)
@@ -223,6 +218,7 @@ def test_notify_test_unavailable_channel_exits_4(
 # --------------------------------------------------------------------------- #
 # schedule
 # --------------------------------------------------------------------------- #
+
 
 def test_schedule_list_shows_default_jobs(repo: Path) -> None:
     """仓库自带 config/schedule.yaml 的任务快照。
@@ -373,9 +369,7 @@ def test_schedule_run_once_marks_failed_delivery_as_degraded(
     )
     monkeypatch.setenv("LDST_CONFIG_DIR", str(config_home))
     monkeypatch.setenv("LDST_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv(
-        DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(9)"'
-    )
+    monkeypatch.setenv(DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(9)"')
 
     result = runner.invoke(app, ["schedule", "run", "--once", "--output", "json"])
 
@@ -399,9 +393,7 @@ def test_schedule_run_once_with_invalid_config_exits_3(
 ) -> None:
     config_home = tmp_path / "config"
     config_home.mkdir()
-    (config_home / "schedule.yaml").write_text(
-        "jobs:\n  - id: Bad Id\n", encoding="utf-8"
-    )
+    (config_home / "schedule.yaml").write_text("jobs:\n  - id: Bad Id\n", encoding="utf-8")
     monkeypatch.setenv("LDST_CONFIG_DIR", str(config_home))
 
     result = runner.invoke(app, ["schedule", "run", "--once", "--output", "json"])

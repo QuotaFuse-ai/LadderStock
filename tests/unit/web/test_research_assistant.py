@@ -78,9 +78,7 @@ def _patch_agent(
     return calls
 
 
-def test_assistant_returns_text_and_model(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_assistant_returns_text_and_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _patch_agent(monkeypatch)
 
     response = _post(_client(tmp_path), date="2026-11-06", tab="overview")
@@ -136,11 +134,7 @@ def test_assistant_no_tool_turn_does_not_claim_missing(
         and block["payload"].get("kind") == "missing_data"
         and block["payload"].get("section") == "指标"
     ]
-    assert not [
-        block
-        for block in body["blocks"]
-        if block["type"] == "citation"
-    ]
+    assert not [block for block in body["blocks"] if block["type"] == "citation"]
 
 
 def test_assistant_rejects_blank_question(tmp_path: Path) -> None:
@@ -185,9 +179,7 @@ def test_assistant_missing_key_is_readable_503(
     assert "LDST_LLM_API_KEY" in body["detail"]
 
 
-def test_assistant_timeout_is_readable_504(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_assistant_timeout_is_readable_504(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_agent(
         monkeypatch,
         exc=assistant_module.AssistantFailure(504, "ai_timeout", "模型调用超时，请稍后重试。"),

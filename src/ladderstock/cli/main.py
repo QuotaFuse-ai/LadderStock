@@ -549,9 +549,7 @@ def service_entry(
             available, detail = False, str(exc)
         else:
             threading.Thread(
-                target=lambda: backend.run(
-                    TrayController(quit_handler, panel_url=panel_url)
-                ),
+                target=lambda: backend.run(TrayController(quit_handler, panel_url=panel_url)),
                 name="ldst-tray",
                 daemon=True,
             ).start()
@@ -564,9 +562,7 @@ def service_entry(
         own_processes_on_lifecycle=True,
         open_ensure=OpenEnsure(),
     )
-    launch_dashboard(
-        host=host, port=port, open_browser=False, app=app, stop_event=stop_event
-    )
+    launch_dashboard(host=host, port=port, open_browser=False, app=app, stop_event=stop_event)
 
 
 @app.command(

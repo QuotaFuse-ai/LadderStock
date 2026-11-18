@@ -113,6 +113,7 @@ def role_kind(role: str) -> str:
     """返回角色的 `kind`；未知角色回落 "other"（页面按「其他」组展示）。"""
     return ROLE_KINDS.get(role, "other")
 
+
 #: 真实 7 个 provider（`roles/llm.py` 起）；`offline` 另有单独条目（不发网络）
 PROVIDERS: tuple[str, ...] = (
     "minimax",

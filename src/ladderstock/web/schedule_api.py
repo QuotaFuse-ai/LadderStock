@@ -146,7 +146,9 @@ def _plans_view(root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - 状态文件坏了也要把页面撑起来
         return {"ok": False, "detail": f"任务状态读不出来：{exc}", "items": []}
     visible = [plan for plan in listed if plan.status in (plans.STATUS_ACTIVE, plans.STATUS_PAUSED)]
-    visible.sort(key=lambda plan: (plan.status != plans.STATUS_ACTIVE, plan.created_at), reverse=False)
+    visible.sort(
+        key=lambda plan: (plan.status != plans.STATUS_ACTIVE, plan.created_at), reverse=False
+    )
     return {
         "ok": True,
         "max_failures": plans.MAX_FAILURES,
@@ -177,7 +179,7 @@ def jobs_payload(*, data_root: Path | None = None) -> dict[str, Any]:
     把后台高频任务也摆出来，是为了让用户看见「快照 / 同步这些活儿有人在干」；
     它们不带开关按钮，也没有手动执行入口——见 `run_once` 的时段门控。
     """
-    from ladderstock.cli.schedule import load_schedule, jobs_view
+    from ladderstock.cli.schedule import jobs_view, load_schedule
 
     root = _data_root(data_root)
     try:
@@ -259,7 +261,7 @@ def _patch_job_field(
     连同顺序一起丢掉。所以按块定位、单行替换；字段原先没有时，插在 `enabled:`
     那一行后面（缩进沿用该行），改完再让 `validate_table` 复核。
     """
-    from ladderstock.cli.schedule import load_schedule, validate_table, schedule_config_path
+    from ladderstock.cli.schedule import load_schedule, schedule_config_path, validate_table
     from ladderstock.errors import EXIT_CONFIG, LadderStockError
 
     target = path or schedule_config_path()
@@ -304,7 +306,9 @@ def _patch_job_field(
         updated_block = (
             block[:insert_at] + f"\n{match.group(2)}{field}: {value}" + block[insert_at:]
         )
-    candidate = original[: sum(len(line) for line in lines[:start])] + updated_block + "".join(lines[end:])
+    candidate = (
+        original[: sum(len(line) for line in lines[:start])] + updated_block + "".join(lines[end:])
+    )
     import yaml
 
     try:
@@ -322,9 +326,7 @@ def set_enabled(job_id: str, enabled: bool, *, path: Path | None = None) -> dict
     return {**out, "enabled": enabled}
 
 
-def set_allow_plan_create(
-    job_id: str, allow: bool, *, path: Path | None = None
-) -> dict[str, Any]:
+def set_allow_plan_create(job_id: str, allow: bool, *, path: Path | None = None) -> dict[str, Any]:
     """只改一个 `plan_tick` 任务的 `allow_plan_create:` 行。
 
     这是「推进时不建新任务」的显式开关：默认关（推进提问本身常带「持续跟踪…」，
@@ -357,9 +359,7 @@ def set_allow_plan_create(
             f"只有跨轮任务推进（plan_tick）才有这个开关，{job_id} 是 {job.get('kind')}",
             EXIT_CONFIG,
         )
-    out = _patch_job_field(
-        job_id, "allow_plan_create", "true" if allow else "false", path=path
-    )
+    out = _patch_job_field(job_id, "allow_plan_create", "true" if allow else "false", path=path)
     return {**out, "allow_plan_create": allow}
 
 

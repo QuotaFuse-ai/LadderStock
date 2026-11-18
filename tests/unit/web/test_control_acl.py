@@ -67,6 +67,7 @@ WINDOWS_ONLY = pytest.mark.skipif(
 # 夹具：两个临时 peer 目录 + 可注入的 harden_acl
 # --------------------------------------------------------------------------- #
 
+
 @pytest.fixture()
 def peer_dirs(tmp_path: Path) -> dict[str, Path]:
     alpha = tmp_path / "peers" / "alpha"
@@ -148,6 +149,7 @@ def _state_path(tmp_path: Path) -> Path:
 # --------------------------------------------------------------------------- #
 # 1. fsguard：参数构造 / UNC / 共享目录判定
 # --------------------------------------------------------------------------- #
+
 
 def test_acl_harden_argv_disables_inheritance_and_grants_three_sids(tmp_path: Path) -> None:
     """`/inheritance:r` 必须存在（否则父目录的 Users 继承 ACE 还在）；三个主体用 SID。"""
@@ -243,6 +245,7 @@ def test_require_local_peer_directories_passes_on_private_disk(
 # --------------------------------------------------------------------------- #
 # 2. fsguard：harden_file_acl 的成功 / 失败（跨平台 + Windows 真实 icacls）
 # --------------------------------------------------------------------------- #
+
 
 def _fake_nt(monkeypatch: pytest.MonkeyPatch, *, sid: str = "S-1-5-21-1-2-3-1001") -> None:
     """把 fsguard 看成「Windows」：只替换 os.name 与 whoami/icacls 两个外部依赖。"""
@@ -370,6 +373,7 @@ def test_harden_file_acl_windows_leaves_only_three_principals(tmp_path: Path) ->
 # 3. ControlPlane._save_state：先收紧 tmp 再原子替换；失败 fail closed
 # --------------------------------------------------------------------------- #
 
+
 def test_save_state_hardens_tmp_before_replace(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     """收紧动作必须作用在 tmp 上（成品路径上不存在「权限未收口」的窗口）。"""
     observed: list[tuple[str, str]] = []
@@ -439,6 +443,7 @@ def test_state_file_dacl_after_first_create_and_overwrite(
 # 4. 启动校验：peer 目录在共享 / 公共位置 → 拒绝启动
 # --------------------------------------------------------------------------- #
 
+
 def _peer(key: str, directory: str) -> PeerControl:
     return PeerControl(
         key=key,
@@ -490,6 +495,7 @@ def test_control_plane_starts_with_private_directories(
 # --------------------------------------------------------------------------- #
 # 5. dotenv：写失败 fail closed / 读失败 fail closed
 # --------------------------------------------------------------------------- #
+
 
 def _client(tmp_path: Path, plane: ControlPlane) -> TestClient:
     app = create_app(data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=plane)
@@ -581,9 +587,7 @@ def test_ai_test_fails_closed_when_dotenv_unreadable(
     assert "无鉴权" in excinfo.value.detail
 
 
-def test_write_env_file_hardens_after_writing(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_write_env_file_hardens_after_writing(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     path = peer_dirs["alpha"] / ".env.local"
     hardened: list[str] = []
     write_env_file(
@@ -641,6 +645,7 @@ def test_secret_preview_still_masked() -> None:
 # 6. P2-8：漂移文案一位小数 + 容差；停止失败提示不自指
 # --------------------------------------------------------------------------- #
 
+
 def _stop_refusal(
     tmp_path: Path,
     peer_dirs: dict[str, Path],
@@ -653,9 +658,7 @@ def _stop_refusal(
     if monkeypatch is not None:
         # 归属校验先看 PID 是否存活；这里只验后面几条判据，不让「本机恰好有这个 PID」决定结果
         monkeypatch.setattr(control_module, "_pid_alive", lambda pid: True)
-    plane = _plane(
-        tmp_path, peer_dirs, process_info=process_info, process_started=process_started
-    )
+    plane = _plane(tmp_path, peer_dirs, process_info=process_info, process_started=process_started)
     plane._peer_state("alpha")["pids"] = [record]
     return plane._ownership_refusal(plane.peers["alpha"], record) or ""
 

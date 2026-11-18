@@ -55,6 +55,7 @@ def _assert_error(response: Any, status: int, code: str, field: str | None) -> d
 # 1. 算子目录
 # --------------------------------------------------------------------------- #
 
+
 def test_ops_catalog_shape(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/api/calc/ops")
     assert response.status_code == 200, response.text
@@ -82,6 +83,7 @@ def test_ops_catalog_shape(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 成功：value 与算子直算一致，calc_id 可复算
 # --------------------------------------------------------------------------- #
+
 
 def test_pe_ttm_success_matches_operator(tmp_path: Path) -> None:
     args = {"market_cap": 184200000000.0, "net_profit_ttm": 10000000000.0}
@@ -121,11 +123,10 @@ def test_sequence_operator_success(tmp_path: Path) -> None:
 # 3. 无意义域：HTTP 200 + ok:false + not_meaningful
 # --------------------------------------------------------------------------- #
 
+
 def test_pe_ttm_non_positive_profit_is_200_not_meaningful(tmp_path: Path) -> None:
     args = {"market_cap": 100.0, "net_profit_ttm": -5.0}
-    body = _assert_error(
-        _post(tmp_path, "pe_ttm", args), 200, "not_meaningful", None
-    )
+    body = _assert_error(_post(tmp_path, "pe_ttm", args), 200, "not_meaningful", None)
     assert body["op"] == "pe_ttm"
     assert body["calc_id"] == calc_id("pe_ttm", args, data_fp="none")
 
@@ -142,6 +143,7 @@ def test_ttm_missing_quarter_is_200_not_meaningful(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 4. 参数非法：HTTP 400 + bad_argument + field 指名
 # --------------------------------------------------------------------------- #
+
 
 def test_missing_required_arg_names_field(tmp_path: Path) -> None:
     _assert_error(
@@ -208,6 +210,7 @@ def test_non_object_args_and_bad_json_are_400(tmp_path: Path) -> None:
 # 5. 未知算子：404 + 可用算子列表
 # --------------------------------------------------------------------------- #
 
+
 def test_unknown_op_returns_404_with_available_ops(tmp_path: Path) -> None:
     body = _assert_error(_post(tmp_path, "no_such_op", {}), 404, "unknown_op", None)
     assert "pe_ttm" in body["available_ops"]
@@ -218,6 +221,7 @@ def test_unknown_op_returns_404_with_available_ops(tmp_path: Path) -> None:
 # 6. 内部错误：500 + internal_error
 # --------------------------------------------------------------------------- #
 
+
 def test_operator_exception_is_500() -> None:
     def boom(*, market_cap: float, net_profit_ttm: float) -> Any:
         raise RuntimeError("boom")
@@ -225,9 +229,7 @@ def test_operator_exception_is_500() -> None:
     registry = dict(calc_api._REGISTRY)
     registry["pe_ttm"] = calc_api._OpSpec(boom, "valuation", "test")
     plane = calc_api._CalcPlane(registry)
-    response = plane.invoke(
-        "pe_ttm", {"args": {"market_cap": 100.0, "net_profit_ttm": 10.0}}
-    )
+    response = plane.invoke("pe_ttm", {"args": {"market_cap": 100.0, "net_profit_ttm": 10.0}})
     assert response.status_code == 500
     body = json.loads(response.body)
     assert body["ok"] is False
@@ -241,6 +243,7 @@ def test_operator_exception_is_500() -> None:
 # --------------------------------------------------------------------------- #
 # 7. 严格 JSON：响应树任何位置不出现 NaN / Infinity
 # --------------------------------------------------------------------------- #
+
 
 def test_responses_are_strict_json(tmp_path: Path) -> None:
     responses = [
@@ -260,9 +263,8 @@ def test_responses_are_strict_json(tmp_path: Path) -> None:
 # 8. 闸门：非回环 403、Host 白名单 403
 # --------------------------------------------------------------------------- #
 
-def test_non_loopback_and_bad_host_are_403(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+
+def test_non_loopback_and_bad_host_are_403(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LDST_WEB_ALLOW_REMOTE", "1")
     monkeypatch.setenv("LDST_WEB_TOKEN", "0123456789abcdef0123")
 
@@ -279,11 +281,28 @@ def test_registry_covers_all_calc_business_modules() -> None:
 
     expected = {
         "amount",
-        "pe_ttm", "pe_deducted_x4", "pe_forward", "peg", "pe_digestion_years", "forward_cagr",
-        "yoy", "qoq", "gross_margin", "expense_ratio", "debt_ratio",
-        "cumulative_to_single", "ttm", "ttm_yoy",
-        "moving_average", "rsi", "macd", "atr", "bollinger", "chip_concentration",
-        "earnings_reaction", "earnings_surprise",
+        "pe_ttm",
+        "pe_deducted_x4",
+        "pe_forward",
+        "peg",
+        "pe_digestion_years",
+        "forward_cagr",
+        "yoy",
+        "qoq",
+        "gross_margin",
+        "expense_ratio",
+        "debt_ratio",
+        "cumulative_to_single",
+        "ttm",
+        "ttm_yoy",
+        "moving_average",
+        "rsi",
+        "macd",
+        "atr",
+        "bollinger",
+        "chip_concentration",
+        "earnings_reaction",
+        "earnings_surprise",
     }
     assert set(calc_api._REGISTRY) == expected
     for module in (money, valuation, growth, periods, indicators, earnings):

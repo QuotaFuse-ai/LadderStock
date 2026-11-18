@@ -123,7 +123,12 @@ def test_limit_is_clamped(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(sched, "_run_agent_research", fake)
     codes = [f"60000{i}" for i in range(8)]
     sched._auto_research_on_hit(
-        _job(auto_research_max=99), codes=codes, now=None, timezone=None, root=tmp_path, moment=MOMENT
+        _job(auto_research_max=99),
+        codes=codes,
+        now=None,
+        timezone=None,
+        root=tmp_path,
+        moment=MOMENT,
     )
     assert len(seen[0]) == 5  # 上限 clamp 到 5
 

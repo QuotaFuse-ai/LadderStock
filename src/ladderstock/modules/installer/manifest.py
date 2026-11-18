@@ -183,7 +183,9 @@ def requirements_text(key: str) -> str:
         f"# 磁盘占用：约 {item.size_mb} MB",
     ]
     if not item.package:
-        lines.append("# 增强包：PG/Redis/MinIO/API 由 financecoffer installer 装二进制，无 pip 清单")
+        lines.append(
+            "# 增强包：PG/Redis/MinIO/API 由 financecoffer installer 装二进制，无 pip 清单"
+        )
         return "\n".join(lines) + "\n"
     lines.append(f"# 主包：{item.package}{item.version}")
     lines.append("")

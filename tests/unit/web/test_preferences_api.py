@@ -69,12 +69,16 @@ def test_manual_add_keeps_odd_sentence(client: TestClient) -> None:
 
 
 def test_blank_text_is_rejected(client: TestClient) -> None:
-    assert client.post("/api/preferences/add", json={"text": "  "}, headers=HEADERS).status_code == 400
+    assert (
+        client.post("/api/preferences/add", json={"text": "  "}, headers=HEADERS).status_code == 400
+    )
 
 
 def test_delete_removes_from_file(client: TestClient, tmp_path: Path) -> None:
     preferences.add_item("别给我推ST股", data_root=tmp_path)
-    response = client.post("/api/preferences/delete", json={"text": "别给我推ST股"}, headers=HEADERS)
+    response = client.post(
+        "/api/preferences/delete", json={"text": "别给我推ST股"}, headers=HEADERS
+    )
     assert response.status_code == 200
     assert response.json()["count"] == 0
     raw = json.loads((tmp_path / preferences.FILENAME).read_text(encoding="utf-8"))

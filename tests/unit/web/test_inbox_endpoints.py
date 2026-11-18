@@ -61,9 +61,7 @@ def _seed(root: Path, count: int = 1) -> list[dict]:
 # --------------------------------------------------------------------- 闸门
 
 
-def test_read_face_is_loopback_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_face_is_loopback_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed(tmp_path)
     # Token 管「谁连得进来」，不管「隐私数据该不该出去」：开了远程也不能读提醒
     monkeypatch.setenv("LDST_WEB_ALLOW_REMOTE", "1")
@@ -126,9 +124,7 @@ def test_write_surface_is_only_post(tmp_path: Path) -> None:
 # ------------------------------------------------------------------ 平面 JSON
 
 
-def test_read_is_flat_json_no_store_and_carries_no_privacy_keys(
-    tmp_path: Path, repo: Path
-) -> None:
+def test_read_is_flat_json_no_store_and_carries_no_privacy_keys(tmp_path: Path, repo: Path) -> None:
     _seed(tmp_path)
     response = _client(tmp_path).get("/api/inbox")
 
@@ -165,9 +161,7 @@ def test_read_is_flat_json_no_store_and_carries_no_privacy_keys(
     assert private_keys_present(body) == []
 
 
-def test_jobs_lists_only_reminder_jobs_without_fake_last_status(
-    tmp_path: Path, repo: Path
-) -> None:
+def test_jobs_lists_only_reminder_jobs_without_fake_last_status(tmp_path: Path, repo: Path) -> None:
     body = _client(tmp_path).get("/api/inbox").json()
 
     ids = {job["id"] for job in body["jobs"]}
@@ -180,9 +174,7 @@ def test_jobs_lists_only_reminder_jobs_without_fake_last_status(
 # ---------------------------------------------------------------------- 空态
 
 
-def test_empty_inbox_is_200_and_does_not_create_the_database(
-    tmp_path: Path, repo: Path
-) -> None:
+def test_empty_inbox_is_200_and_does_not_create_the_database(tmp_path: Path, repo: Path) -> None:
     response = _client(tmp_path).get("/api/inbox")
 
     assert response.status_code == 200, response.text

@@ -65,9 +65,7 @@ def notify_test(
 
 def register(notify_app: typer.Typer) -> None:
     """把 `notify` 子命令挂到 main.py 已建好的 Typer 组上。"""
-    notify_app.command("test", help="通知链路冒烟（与 09:05 盘前提醒同链路）")(
-        notify_test
-    )
+    notify_app.command("test", help="通知链路冒烟（与 09:05 盘前提醒同链路）")(notify_test)
 
 
 __all__ = ["DEFAULT_MESSAGE", "DEFAULT_TITLE", "notify_test", "register"]

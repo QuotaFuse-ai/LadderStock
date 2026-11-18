@@ -79,19 +79,14 @@ def _client(root: Path, *, client: tuple[str, int] = LOOPBACK) -> TestClient:
 
 
 def _seed_trade(client: TestClient, body: dict[str, Any] | None = None) -> None:
-    response = client.post(
-        "/api/portfolio/ledger", json=body or _buy(), headers=BROWSER_HEADERS
-    )
+    response = client.post("/api/portfolio/ledger", json=body or _buy(), headers=BROWSER_HEADERS)
     assert response.status_code == 200, response.text
 
 
 def _seed_daily_k(root: Path, rows: list[tuple[str, str, float]]) -> None:
     duckdb_store.write_dataset(
         "daily_k",
-        [
-            {"code": code, "trade_date": day, "close": close}
-            for code, day, close in rows
-        ],
+        [{"code": code, "trade_date": day, "close": close} for code, day, close in rows],
         source="test",
         root=root,
     )
@@ -202,9 +197,7 @@ def test_non_loopback_is_forbidden(tmp_path: Path) -> None:
 
 
 def test_bad_host_header_is_forbidden(tmp_path: Path) -> None:
-    response = _client(tmp_path).get(
-        "/api/portfolio/perf", headers={"host": "evil.example.com"}
-    )
+    response = _client(tmp_path).get("/api/portfolio/perf", headers={"host": "evil.example.com"})
 
     assert response.status_code == 403
 

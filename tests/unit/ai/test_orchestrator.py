@@ -157,9 +157,9 @@ def test_illegal_json_falls_back_to_plain_text(tmp_path, configured) -> None:
     def script(model: str, section: str, user: str, json_mode: bool) -> str:
         return "{}"
 
-    run = Orchestrator(
-        config=make_config(), client=ScriptedClient(script), root=tmp_path
-    ).run(DAY, _metrics(), only="sentiment")
+    run = Orchestrator(config=make_config(), client=ScriptedClient(script), root=tmp_path).run(
+        DAY, _metrics(), only="sentiment"
+    )
 
     assert run.degraded is True
     assert run.exit_code == 9
@@ -266,9 +266,9 @@ def test_corrupt_checkpoint_does_not_block_rerun(tmp_path, configured) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("not json", encoding="utf-8")
 
-    run = Orchestrator(
-        config=make_config(), client=ScriptedClient(_all_ok), root=tmp_path
-    ).run(DAY, _metrics())
+    run = Orchestrator(config=make_config(), client=ScriptedClient(_all_ok), root=tmp_path).run(
+        DAY, _metrics()
+    )
 
     assert run.exit_code == 0
     assert checkpoint.is_complete(checkpoint.load(DAY, tmp_path))

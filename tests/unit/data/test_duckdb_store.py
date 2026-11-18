@@ -21,7 +21,8 @@ def _rows(dataset: str, tmp_path) -> list[dict]:
 
 def test_append_mode_upserts_on_code_and_trade_date(tmp_path) -> None:
     first = duckdb_store.write_dataset(
-        "daily_k", [_kline("600000", "2026-10-24", 10.0), _kline("000001", "2026-10-24", 12.0)],
+        "daily_k",
+        [_kline("600000", "2026-10-24", 10.0), _kline("000001", "2026-10-24", 12.0)],
         root=tmp_path,
     )
     assert first.rows == 2
@@ -29,7 +30,8 @@ def test_append_mode_upserts_on_code_and_trade_date(tmp_path) -> None:
 
     # 同一天重跑：按 (code, trade_date) 覆盖，不新增行
     second = duckdb_store.write_dataset(
-        "daily_k", [_kline("600000", "2026-10-24", 10.9), _kline("000001", "2026-10-24", 12.1)],
+        "daily_k",
+        [_kline("600000", "2026-10-24", 10.9), _kline("000001", "2026-10-24", 12.1)],
         root=tmp_path,
     )
     assert second.rows == 2
@@ -99,7 +101,9 @@ def test_invalid_record_leaves_table_untouched(tmp_path) -> None:
 
     with pytest.raises(TypeError):
         duckdb_store.write_dataset(
-            "daily_k", [_kline("600001", "2026-10-25"), "坏行"], root=tmp_path  # type: ignore[list-item]
+            "daily_k",
+            [_kline("600001", "2026-10-25"), "坏行"],
+            root=tmp_path,  # type: ignore[list-item]
         )
     assert duckdb_store.dataset_rows("daily_k", root=tmp_path) == 1
 
@@ -132,9 +136,11 @@ def test_parquet_partition_layout(tmp_path) -> None:
     assert expected.is_file()
     assert not expected.with_suffix(".parquet.tmp").exists()
 
-    count = duckdb.connect().execute(
-        f"SELECT COUNT(*) FROM read_parquet('{str(expected).replace(chr(92), '/')}')"
-    ).fetchone()
+    count = (
+        duckdb.connect()
+        .execute(f"SELECT COUNT(*) FROM read_parquet('{str(expected).replace(chr(92), '/')}')")
+        .fetchone()
+    )
     assert count == (2,)
 
 

@@ -38,10 +38,7 @@ def _holding(symbol: str, shares: float, name: str = "") -> HoldingRow:
 
 
 def _series(days: int, start: float = 10.0, step: float = 0.1) -> dict[str, float]:
-    return {
-        f"2025-01-{index + 1:02d}": round(start + index * step, 4)
-        for index in range(days)
-    }
+    return {f"2025-01-{index + 1:02d}": round(start + index * step, 4) for index in range(days)}
 
 
 # --------------------------------------------------------------------------- #
@@ -211,9 +208,7 @@ def test_short_series_is_a_gap_with_reason() -> None:
 
 
 def test_single_holding_explains_there_is_nothing_to_compare() -> None:
-    view = build_view(
-        [_holding("600000", 100)], {"600000": 10.0}, {}, {}, as_of="2025-01-31"
-    )
+    view = build_view([_holding("600000", 100)], {"600000": 10.0}, {}, {}, as_of="2025-01-31")
 
     corr = view["metrics"]["corr"]
     assert corr["available"] is False

@@ -367,9 +367,7 @@ def build_stage_probes(
         try:
             doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except FileNotFoundError:
-            return _stage_sample(
-                STAGE_COLLECT_SCRIPT, HEALTH_DOWN, "同步配置缺失，采集链路未就绪"
-            )
+            return _stage_sample(STAGE_COLLECT_SCRIPT, HEALTH_DOWN, "同步配置缺失，采集链路未就绪")
         except (OSError, yaml.YAMLError):
             return _stage_sample(
                 STAGE_COLLECT_SCRIPT, HEALTH_DOWN, "同步配置读不出来（文件损坏或不可读）"
@@ -414,9 +412,7 @@ def build_stage_probes(
             if duckdb_store.query_dataset(
                 STAGE_PROBE_DATASET, day=_today(), limit=1, root=data_root
             ):
-                return _stage_sample(
-                    STAGE_COLLECT_STORE, HEALTH_OK, "今天的行情数据已经落到本机库"
-                )
+                return _stage_sample(STAGE_COLLECT_STORE, HEALTH_OK, "今天的行情数据已经落到本机库")
             latest = _latest_trade_date()
         except LadderStockError as exc:
             return _db_error_sample(STAGE_COLLECT_STORE, exc)
@@ -446,9 +442,7 @@ def build_stage_probes(
                 return None
             # 表名与 duckdb_store._table 同规则；数据集名是本模块硬编码字面量，
             # 已被 DATASET_CATALOG 校验域覆盖，无注入面。
-            row = conn.execute(
-                f'SELECT MAX(trade_date) FROM "{STAGE_PROBE_DATASET}"'
-            ).fetchone()
+            row = conn.execute(f'SELECT MAX(trade_date) FROM "{STAGE_PROBE_DATASET}"').fetchone()
         finally:
             duckdb_store.close(conn)
         return row[0] if row and row[0] else None
@@ -468,9 +462,7 @@ def build_stage_probes(
                 STAGE_COLLECT_SUCCESS, HEALTH_DOWN, "同步运行记录损坏，无法判断最近一次采集"
             )
         if not runs:
-            return _stage_sample(
-                STAGE_COLLECT_SUCCESS, HEALTH_DOWN, "还没有运行过任何同步"
-            )
+            return _stage_sample(STAGE_COLLECT_SUCCESS, HEALTH_DOWN, "还没有运行过任何同步")
         run = runs[0]
         status = str(run.get("status") or "")
         detail = str(run.get("detail") or "").strip()[:80]
@@ -483,24 +475,18 @@ def build_stage_probes(
                     HEALTH_WARN,
                     f"最近一次同步成功是在 {str(run.get('finished_at'))[:16]}，之后一直没有再跑",
                 )
-            return _stage_sample(
-                STAGE_COLLECT_SUCCESS, HEALTH_OK, "最近一次同步成功完成"
-            )
+            return _stage_sample(STAGE_COLLECT_SUCCESS, HEALTH_OK, "最近一次同步成功完成")
         if status == "degraded":
             return _stage_sample(
                 STAGE_COLLECT_SUCCESS, HEALTH_WARN, f"最近一次同步降级完成{suffix}"
             )
         if status == "empty":
-            return _stage_sample(
-                STAGE_COLLECT_SUCCESS, HEALTH_WARN, "最近一次同步没有取到新数据"
-            )
+            return _stage_sample(STAGE_COLLECT_SUCCESS, HEALTH_WARN, "最近一次同步没有取到新数据")
         if status == "skipped":
             return _stage_sample(
                 STAGE_COLLECT_SUCCESS, HEALTH_WARN, "最近一次同步被跳过（上游不可用）"
             )
-        return _stage_sample(
-            STAGE_COLLECT_SUCCESS, HEALTH_DOWN, f"最近一次同步失败{suffix}"
-        )
+        return _stage_sample(STAGE_COLLECT_SUCCESS, HEALTH_DOWN, f"最近一次同步失败{suffix}")
 
     def _parse_iso(value: Any) -> datetime:
         try:
@@ -523,9 +509,7 @@ def build_stage_probes(
         today = _today().isoformat()
         stale_line = (_today() - timedelta(days=STAGE_STALE_DAYS)).isoformat()
         if value >= today:
-            return _stage_sample(
-                STAGE_INGEST_WATERMARK, HEALTH_OK, "入库水位已推进到最新"
-            )
+            return _stage_sample(STAGE_INGEST_WATERMARK, HEALTH_OK, "入库水位已推进到最新")
         if value >= stale_line:
             return _stage_sample(
                 STAGE_INGEST_WATERMARK,
@@ -567,7 +551,7 @@ def build_stage_probes(
                         "本机历史库还没有行情表，没有可校验的数据",
                     )
                 row = conn.execute(
-                    f'SELECT COUNT(*) AS total, '
+                    f"SELECT COUNT(*) AS total, "
                     f'(SELECT COUNT(*) FROM (SELECT code FROM "{STAGE_PROBE_DATASET}" '
                     f"WHERE trade_date = ? GROUP BY code HAVING COUNT(*) > 1 LIMIT 1)) AS dupes "
                     f'FROM "{STAGE_PROBE_DATASET}" WHERE trade_date = ?',
@@ -625,9 +609,7 @@ def build_supervisor_engines(
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
     notifier = build_default_notifier(supervisor_dir / "notifications.log", panel_url=panel_url)
-    avoider, rebaser = build_port_avoidance(
-        env=env, spawned_pids=lambda: processes.spawned_pids
-    )
+    avoider, rebaser = build_port_avoidance(env=env, spawned_pids=lambda: processes.spawned_pids)
     processes = SupervisorEngine(
         adapters=build_default_adapters(env=env, log_dir=supervisor_dir / "logs"),
         ledger=ledger,
@@ -841,8 +823,7 @@ def build_stop_router(processes: Any) -> APIRouter:
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    f"全停需要 {CONFIRMATION_FIELD}: true"
-                    "（或给出 modules: [模块名] 只停指定模块）"
+                    f"全停需要 {CONFIRMATION_FIELD}: true（或给出 modules: [模块名] 只停指定模块）"
                 ),
             )
         return _stop_result(processes, modules)
@@ -872,9 +853,7 @@ def build_supervisor_router(heal: Any) -> APIRouter:
         return payload
 
     @router.get("/events", dependencies=[Depends(_supervisor_write_guard)])
-    def events(
-        since: int = 0, module: str | None = None, limit: int = 200
-    ) -> dict[str, Any]:
+    def events(since: int = 0, module: str | None = None, limit: int = 200) -> dict[str, Any]:
         """peer 级健康事件轮询通道（QUOT-556，前端 S5 弹窗订阅源）。
 
         `since` = 上次见过的最大 seq；返回其后事件（升序）与当前 `latest`。

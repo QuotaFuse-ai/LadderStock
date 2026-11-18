@@ -90,6 +90,7 @@ _INSERT_TRADE = (
 # 校验
 # --------------------------------------------------------------------------- #
 
+
 def _usage(message: str) -> LadderStockError:
     return LadderStockError(message, EXIT_USAGE)
 
@@ -130,9 +131,7 @@ def _text(raw: Any, key: str, limit: int) -> str:
 def _clean_type(raw: Any) -> str:
     kind = str(raw or "").strip().lower()
     if kind not in core_portfolio.TRADE_TYPES:
-        raise _usage(
-            f"类型只能是 {' / '.join(core_portfolio.TRADE_TYPES)}，收到 {raw!r}"
-        )
+        raise _usage(f"类型只能是 {' / '.join(core_portfolio.TRADE_TYPES)}，收到 {raw!r}")
     return kind
 
 
@@ -196,6 +195,7 @@ def trade_write_fields(raw: Any) -> dict[str, Any]:
 # 读
 # --------------------------------------------------------------------------- #
 
+
 def _trade_from_row(row: sqlite3.Row) -> Trade:
     return Trade(
         id=int(row["id"]),
@@ -247,9 +247,7 @@ def list_trades(*, root: Path | None = None) -> list[Trade]:
 
 
 def _position_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT id, code, qty, cost, entry_date, note FROM positions ORDER BY id"
-    )
+    rows = conn.execute("SELECT id, code, qty, cost, entry_date, note FROM positions ORDER BY id")
     return [dict(row) for row in rows]
 
 
@@ -258,9 +256,7 @@ def _mark_ids(conn: sqlite3.Connection) -> set[int]:
     return {int(row[0]) for row in rows}
 
 
-def _snapshot(
-    *, root: Path | None = None
-) -> tuple[list[dict[str, Any]], set[int], list[Trade]]:
+def _snapshot(*, root: Path | None = None) -> tuple[list[dict[str, Any]], set[int], list[Trade]]:
     conn = sqlite_store.connect(root=root, create=False)
     if conn is None:
         return [], set(), []
@@ -277,6 +273,7 @@ def _snapshot(
 # --------------------------------------------------------------------------- #
 # 旧仓分类
 # --------------------------------------------------------------------------- #
+
 
 def classify_legacy(
     positions: list[dict[str, Any]],
@@ -342,11 +339,7 @@ def classify_legacy(
 
         done = by_origin.get(pid)
         if done is not None:
-            same = (
-                done.symbol == symbol
-                and done.shares == shares
-                and done.price == cost
-            )
+            same = done.symbol == symbol and done.shares == shares and done.price == cost
             entry["migrated_trade"] = done.id
             if same:
                 entry["state"] = "stale"
@@ -383,15 +376,12 @@ def classify_legacy(
             continue
 
         other_trades = [
-            trade
-            for trade in trades
-            if trade.symbol == symbol and trade.migrated_from != pid
+            trade for trade in trades if trade.symbol == symbol and trade.migrated_from != pid
         ]
         if other_trades:
             entry["state"] = "conflict"
             entry["why"] = (
-                "这个代码已经有交易流水：这条可能是重复录入，"
-                "请确认要不要按它补一笔期初持仓"
+                "这个代码已经有交易流水：这条可能是重复录入，请确认要不要按它补一笔期初持仓"
             )
             out.append(entry)
             continue
@@ -418,6 +408,7 @@ def legacy_rows(*, root: Path | None = None) -> list[dict[str, Any]]:
 # 备份
 # --------------------------------------------------------------------------- #
 
+
 def _backup(conn: sqlite3.Connection, *, root: Path | None = None) -> str:
     """用 SQLite backup API 落一份带时间戳的副本，返回文件名。"""
     target = sqlite_store.db_path(root)
@@ -435,9 +426,7 @@ def _backup(conn: sqlite3.Connection, *, root: Path | None = None) -> str:
         finally:
             dest.close()
     except (OSError, sqlite3.Error) as exc:
-        raise LadderStockError(
-            f"备份本机账本失败，本次没有写入：{exc}", EXIT_CONFIG
-        ) from None
+        raise LadderStockError(f"备份本机账本失败，本次没有写入：{exc}", EXIT_CONFIG) from None
     return candidate.name
 
 
@@ -449,6 +438,7 @@ def backup_now(conn: sqlite3.Connection, *, root: Path | None = None) -> str:
 # --------------------------------------------------------------------------- #
 # 写：单笔流水
 # --------------------------------------------------------------------------- #
+
 
 def _read_trade(conn: sqlite3.Connection, trade_id: int) -> sqlite3.Row | None:
     return conn.execute(
@@ -509,9 +499,8 @@ def delete_trade(trade_id: int, *, root: Path | None = None) -> dict[str, Any]:
 # 旧仓迁移
 # --------------------------------------------------------------------------- #
 
-def _opening_values(
-    position: dict[str, Any], *, day: str
-) -> tuple[list[Any], bool]:
+
+def _opening_values(position: dict[str, Any], *, day: str) -> tuple[list[Any], bool]:
     """旧记录 → 期初流水的插入值；返回 (参数, 是否没有建仓日)。"""
     opened = str(position.get("entry_date") or "").strip()
     undated = not opened
@@ -542,9 +531,7 @@ def _empty_migration() -> dict[str, Any]:
     return {"backup": None, "migrated": [], "removed_stale": [], "failed": []}
 
 
-def migrate_legacy(
-    *, root: Path | None = None, now: datetime | None = None
-) -> dict[str, Any]:
+def migrate_legacy(*, root: Path | None = None, now: datetime | None = None) -> dict[str, Any]:
     """自动迁移：`pending` 的旧记录转成期初流水。
 
     没有任何 `pending` 时什么都不写（也不备份）。`stale` 已经在账本里，
@@ -553,9 +540,7 @@ def migrate_legacy(
     """
     positions, marks, trades = _snapshot(root=root)
     todo = [
-        item
-        for item in classify_legacy(positions, marks, trades)
-        if item["state"] == "pending"
+        item for item in classify_legacy(positions, marks, trades) if item["state"] == "pending"
     ]
     if not todo:
         return _empty_migration()
@@ -599,9 +584,7 @@ def _require_position(position_id: int, *, root: Path | None = None) -> dict[str
     for position in positions:
         if int(position["id"]) == position_id:
             return position
-    raise LadderStockError(
-        f"没有这条旧持有记录（id={position_id}，可能已删除）", EXIT_NOT_FOUND
-    )
+    raise LadderStockError(f"没有这条旧持有记录（id={position_id}，可能已删除）", EXIT_NOT_FOUND)
 
 
 def adopt_legacy(
@@ -648,9 +631,7 @@ def adopt_legacy(
                     ),
                 )
                 for extra in previous[1:]:
-                    conn.execute(
-                        "DELETE FROM portfolio_trades WHERE id = ?", (extra.id,)
-                    )
+                    conn.execute("DELETE FROM portfolio_trades WHERE id = ?", (extra.id,))
             else:
                 cursor = conn.execute(_INSERT_TRADE, values)
                 trade_id = int(cursor.lastrowid or 0)

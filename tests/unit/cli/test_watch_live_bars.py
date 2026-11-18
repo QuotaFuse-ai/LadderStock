@@ -37,7 +37,9 @@ def fake_quote(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Outcome:
         envelope = SimpleNamespace(
             payload={
-                "records": [{"code": "600000", "name": "浦发银行", "price": 10.0, "prev_close": 10.0}]
+                "records": [
+                    {"code": "600000", "name": "浦发银行", "price": 10.0, "prev_close": 10.0}
+                ]
             }
         )
 
@@ -90,9 +92,7 @@ def test_out_of_session_run_writes_nothing(tmp_path: Path, fake_quote: None) -> 
     assert not (tmp_path / "minute_bars" / "2026-11-17.jsonl").exists()
 
 
-def test_limit_price_from_today_limit_pool(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_limit_price_from_today_limit_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """涨停池只提供「涨停价」：样本里补上 limit_price 供封板判定，不额外产行。"""
     from types import SimpleNamespace
 
@@ -314,10 +314,7 @@ def test_no_watchlist_and_no_pool_stays_skipped(
         ("600001", "ST某某", 5.0),
     ],
 )
-def test_board_limit_pct_matches_board(
-    code: str, name: str, expected: float
-) -> None:
+def test_board_limit_pct_matches_board(code: str, name: str, expected: float) -> None:
     from ladderstock.cli.schedule import _board_limit_pct
 
     assert _board_limit_pct(code, name) == expected
-

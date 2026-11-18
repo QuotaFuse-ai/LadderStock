@@ -315,8 +315,10 @@ def from_tool_response(
         # `ok=false` + `meta.partial=true`，但 `data.flows` 里仍然有另一批的结果。
         # 一律按整体失败抛，等于把取到的那半也丢了（QUOT-371 第 4 条）。
         # 只在「明确标了 partial 且确实带回了记录」时放行，其余仍然抛，不吞真失败。
-        recoverable = meta_probe.get("partial") is True and isinstance(data_probe, dict) and any(
-            data_probe.get(key) for key in ("records", "flows", "items", "quotes")
+        recoverable = (
+            meta_probe.get("partial") is True
+            and isinstance(data_probe, dict)
+            and any(data_probe.get(key) for key in ("records", "flows", "items", "quotes"))
         )
         if not recoverable:
             raise classify_failure(actual, response)
@@ -333,9 +335,7 @@ def from_tool_response(
     freshness: Freshness = "cached" if meta.get("cache_hit") else "realtime"
     partial = meta.get("partial") is True
     failed_codes = meta.get("failed") or (data.get("failed") if isinstance(data, dict) else None)
-    partial_note = (
-        f"partial@{failed_codes}只未取到" if partial else ""
-    )
+    partial_note = f"partial@{failed_codes}只未取到" if partial else ""
     # 批量工具的「这一轮上游往返了几次」由工具自报（`data.batches` 成功 +
     # `data.failures` 失败），是老板验收「一次刷新 ≤2 个请求」唯一的取数口。
     # 不是所有工具都有这批键，没有就留 None，不猜（QUOT-371 / QUOT-374）。
@@ -360,8 +360,12 @@ def from_tool_response(
         topic=topic or binding.dataset,
         event_id=meta.get("trace_id"),
         data_as_of=as_of,
-        payload={"dataset": dataset, "tool": actual, "records": records,
-                 "batch_requests": batch_requests},
+        payload={
+            "dataset": dataset,
+            "tool": actual,
+            "records": records,
+            "batch_requests": batch_requests,
+        },
         source="tickhub_cn",
         source_detail=f"{actual}@{upstream}{'/' + partial_note if partial_note else ''}",
         fetched_at=fetched_at,
@@ -372,9 +376,7 @@ def from_tool_response(
     )
 
 
-def normalize_records(
-    dataset: str, tool: str, data: Any
-) -> tuple[Any, date | None]:
+def normalize_records(dataset: str, tool: str, data: Any) -> tuple[Any, date | None]:
     """真实 `data` → 待落库记录（列表或快照对象）+ payload 自己声明的日期。
 
     - 列表：**登记了形状**的按形状处理（行内日期归一、代码必填、标记字段），
@@ -426,7 +428,11 @@ def normalize_records(
             continue
         rows.extend(
             _shape_rows(
-                shape, extra, defaults, header_date, header_date,
+                shape,
+                extra,
+                defaults,
+                header_date,
+                header_date,
                 tag=(field, value),
             )
         )
@@ -465,6 +471,7 @@ def _shape_rows(
 # --------------------------------------------------------------------------- #
 # 内部
 # --------------------------------------------------------------------------- #
+
 
 def classify_failure(tool: str, response: dict[str, Any]) -> LadderStockError:
     """`ok: false` → 异常类型。

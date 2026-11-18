@@ -90,7 +90,7 @@ def connect(root: Path | None = None, *, create: bool = True) -> sqlite3.Connect
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA journal_mode = WAL")   # WAL：读写互不阻塞
+        conn.execute("PRAGMA journal_mode = WAL")  # WAL：读写互不阻塞
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
         migrate(conn)
@@ -112,6 +112,7 @@ def close(conn: sqlite3.Connection | None) -> None:
 # --------------------------------------------------------------------------- #
 # 迁移
 # --------------------------------------------------------------------------- #
+
 
 def migrate(conn: sqlite3.Connection, *, backup: bool = True) -> int:
     """幂等迁移到 `SCHEMA_VERSION`；返回迁移后的版本号。
@@ -197,9 +198,7 @@ def _apply(conn: sqlite3.Connection, from_version: int) -> None:
 
 def _split_statements(script: str) -> list[str]:
     """把 DDL 脚本切成单条语句（DDL 里没有字符串含分号，去掉行注释后按 `;` 切）。"""
-    body = "\n".join(
-        line.split("--", 1)[0] for line in script.splitlines()
-    )
+    body = "\n".join(line.split("--", 1)[0] for line in script.splitlines())
     return [chunk.strip() for chunk in body.split(";") if chunk.strip()]
 
 
@@ -313,6 +312,7 @@ CREATE INDEX IF NOT EXISTS idx_inbox_created ON inbox (created_at DESC);
 # --------------------------------------------------------------------------- #
 # 小工具（journal.log / journal.stats 共用）
 # --------------------------------------------------------------------------- #
+
 
 def parse_day(value: str | date | None) -> date | None:
     """把 `YYYY-MM-DD` / `date` 归一成 `date`；空值返回 None，非法值抛用法错误。"""

@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import os
 import platform as platform_mod
-import shutil
 import subprocess
 import sys
 import tarfile

@@ -20,7 +20,14 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends
 
-from ladderstock.modules.financecoffer import installer, layout, manifest, redis_service, services, state
+from ladderstock.modules.financecoffer import (
+    installer,
+    layout,
+    manifest,
+    redis_service,
+    services,
+    state,
+)
 from ladderstock.web.control import _guard
 
 FINANCECOFFER_PREFIX = "/api/financecoffer"
@@ -117,7 +124,9 @@ def build_financecoffer_router(root: Path | None = None) -> APIRouter:
 
     @router.get("/plan")
     def get_plan(with_embedding: bool = True, allow_system_drive: bool = False) -> dict[str, Any]:
-        preflight = installer.plan(root, with_embedding=with_embedding, allow_system_drive=allow_system_drive)
+        preflight = installer.plan(
+            root, with_embedding=with_embedding, allow_system_drive=allow_system_drive
+        )
         return {
             "ok": preflight.ok,
             "target": str(preflight.target),
@@ -143,7 +152,10 @@ def build_financecoffer_router(root: Path | None = None) -> APIRouter:
 
             report("开始取件")
             result = installer.install(
-                root, with_embedding=with_embedding, confirm=confirm, allow_system_drive=allow_system_drive
+                root,
+                with_embedding=with_embedding,
+                confirm=confirm,
+                allow_system_drive=allow_system_drive,
             )
             if result.get("status") == "needs_confirmation":
                 return result  # 没确认就不动盘，直接回给页面

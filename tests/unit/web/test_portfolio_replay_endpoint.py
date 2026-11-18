@@ -81,19 +81,14 @@ def _client(root: Path, *, client: tuple[str, int] = LOOPBACK) -> TestClient:
 
 
 def _seed_trade(client: TestClient, body: dict[str, Any] | None = None) -> None:
-    response = client.post(
-        "/api/portfolio/ledger", json=body or _buy(), headers=BROWSER_HEADERS
-    )
+    response = client.post("/api/portfolio/ledger", json=body or _buy(), headers=BROWSER_HEADERS)
     assert response.status_code == 200, response.text
 
 
 def _seed_daily_k(root: Path, rows: list[tuple[str, str, float]]) -> None:
     duckdb_store.write_dataset(
         "daily_k",
-        [
-            {"code": code, "trade_date": day, "close": close}
-            for code, day, close in rows
-        ],
+        [{"code": code, "trade_date": day, "close": close} for code, day, close in rows],
         source="test",
         root=root,
     )
@@ -230,9 +225,7 @@ def test_single_scenario_returns_only_that_one(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("scenario", ["", "nope", "2015", "2015-crash "])
 def test_invalid_scenario_is_rejected(tmp_path: Path, scenario: str) -> None:
-    response = _client(tmp_path).get(
-        "/api/portfolio/replay", params={"scenario": scenario}
-    )
+    response = _client(tmp_path).get("/api/portfolio/replay", params={"scenario": scenario})
 
     assert response.status_code == 422
     detail = response.json()["detail"]
@@ -252,8 +245,6 @@ def test_non_loopback_is_forbidden(tmp_path: Path) -> None:
 
 
 def test_bad_host_header_is_forbidden(tmp_path: Path) -> None:
-    response = _client(tmp_path).get(
-        "/api/portfolio/replay", headers={"host": "evil.example.com"}
-    )
+    response = _client(tmp_path).get("/api/portfolio/replay", headers={"host": "evil.example.com"})
 
     assert response.status_code == 403

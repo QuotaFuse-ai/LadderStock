@@ -143,10 +143,20 @@ def ensure_transport(day: str = "2026-10-24", *, failing: tuple[str, ...] = ()) 
     def limit_pool(_params: dict[str, Any]) -> dict[str, Any]:
         return tickhub_payload(
             [
-                {"code": "600519", "name": "贵州茅台", "boards": 3,
-                 "trade_date": day, "turnover_rate": 8.0},
-                {"code": "000858", "name": "五粮液", "boards": 1,
-                 "trade_date": day, "turnover_rate": 3.0},
+                {
+                    "code": "600519",
+                    "name": "贵州茅台",
+                    "boards": 3,
+                    "trade_date": day,
+                    "turnover_rate": 8.0,
+                },
+                {
+                    "code": "000858",
+                    "name": "五粮液",
+                    "boards": 1,
+                    "trade_date": day,
+                    "turnover_rate": 3.0,
+                },
             ]
         )
 
@@ -178,8 +188,12 @@ def ensure_transport(day: str = "2026-10-24", *, failing: tuple[str, ...] = ()) 
                 "as_of": None,
                 "current": {"l1_code": L1_BY_CODE.get(code, "340000")},
                 "history": [
-                    {"code": code, "start_date": "2026-01-05",
-                     "l1_code": L1_BY_CODE.get(code, "340000"), "l1_name": "食品饮料"}
+                    {
+                        "code": code,
+                        "start_date": "2026-01-05",
+                        "l1_code": L1_BY_CODE.get(code, "340000"),
+                        "l1_name": "食品饮料",
+                    }
                 ],
             }
         )
@@ -189,8 +203,12 @@ def ensure_transport(day: str = "2026-10-24", *, failing: tuple[str, ...] = ()) 
             {
                 "code": str(params["code"]),
                 "indicators": [
-                    {"report_date": "2026-09-30 00:00:00",
-                     "revenue_yoy": 10.0, "profit_yoy": 12.0, "roe": 15.0}
+                    {
+                        "report_date": "2026-09-30 00:00:00",
+                        "revenue_yoy": 10.0,
+                        "profit_yoy": 12.0,
+                        "roe": 15.0,
+                    }
                 ],
             }
         )
@@ -199,8 +217,9 @@ def ensure_transport(day: str = "2026-10-24", *, failing: tuple[str, ...] = ()) 
         return tickhub_payload(
             {
                 "code": str(params["code"]),
-                "rows": [{"date": day, "close": 10.0, "pe_ttm": 12.0, "pb": 1.5,
-                          "turnover_rate": 1.2}],
+                "rows": [
+                    {"date": day, "close": 10.0, "pe_ttm": 12.0, "pb": 1.5, "turnover_rate": 1.2}
+                ],
             }
         )
 
@@ -219,8 +238,15 @@ def ensure_transport(day: str = "2026-10-24", *, failing: tuple[str, ...] = ()) 
                 "total": 1,
                 "page": 1,
                 "page_size": 300,
-                "items": [{"code": "BK0477", "name": "食品饮料", "main_net": 1e8,
-                           "main_net_pct": 2.0, "change_pct": 1.0}],
+                "items": [
+                    {
+                        "code": "BK0477",
+                        "name": "食品饮料",
+                        "main_net": 1e8,
+                        "main_net_pct": 2.0,
+                        "change_pct": 1.0,
+                    }
+                ],
             }
         )
 

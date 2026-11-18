@@ -186,6 +186,7 @@ _CODE_SEPARATORS = re.compile(r"[,;]")
 # 参数校验（一律 422）
 # --------------------------------------------------------------------------- #
 
+
 def _invalid(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
 
@@ -260,9 +261,7 @@ def parse_days(raw: int | None) -> int:
     if raw is None:
         return PERF_DEFAULT_DAYS
     if raw < 0 or raw > PERF_MAX_DAYS:
-        raise _invalid(
-            f"非法 days：{raw}（需要在 0~{PERF_MAX_DAYS} 之间；0 表示全历史）"
-        )
+        raise _invalid(f"非法 days：{raw}（需要在 0~{PERF_MAX_DAYS} 之间；0 表示全历史）")
     return raw
 
 
@@ -278,6 +277,7 @@ def parse_limit(raw: int | None, *, default: int) -> int:
 # --------------------------------------------------------------------------- #
 # 持仓写入体校验（写面用 400，读面的参数非法仍是 422）
 # --------------------------------------------------------------------------- #
+
 
 def _bad_body(detail: str) -> HTTPException:
     return HTTPException(status_code=400, detail=detail)
@@ -332,7 +332,8 @@ def position_write_fields(raw: Any) -> dict[str, Any]:
     extra = sorted(set(raw) - set(POSITIONS_WRITE_FIELDS))
     if extra:
         raise _bad_body(
-            "不接受的字段：" + ", ".join(extra)
+            "不接受的字段："
+            + ", ".join(extra)
             + "（持仓只认 code / cost / qty / entry_date / industry / note）"
         )
     missing = [key for key in POSITIONS_REQUIRED_FIELDS if key not in raw]
@@ -393,9 +394,7 @@ def replay_scenario(raw: str | None) -> str:
         return "all"
     if raw == "all" or raw in SCENARIO_IDS:
         return raw
-    raise _invalid(
-        f"非法 scenario：{raw!r}（合法值：{', '.join(SCENARIO_IDS)}, all）"
-    )
+    raise _invalid(f"非法 scenario：{raw!r}（合法值：{', '.join(SCENARIO_IDS)}, all）")
 
 
 def portfolio_id(raw: Any, name: str) -> int:
@@ -419,9 +418,7 @@ def _empty_migration() -> dict[str, Any]:
     }
 
 
-def _price_reason(
-    symbol: str, price_lookup: Mapping[str, Any]
-) -> str:
+def _price_reason(symbol: str, price_lookup: Mapping[str, Any]) -> str:
     day = price_lookup.get("date")
     if day:
         return f"{PRICE_DATASET} 在 {day} 没有 {symbol} 的收盘价（停牌或未同步）"
@@ -545,9 +542,7 @@ def stream_status(statuses: Sequence[Mapping[str, Any]], items: int) -> Status:
     判据与前端 `radar.ts` 的 `newsStatus()` 同一条（全挂 missing、任一路降级 partial），
     两侧不会读出两个状态。
     """
-    usable = [
-        row for row in statuses if row.get("status") == STATUS_OK and not row.get("degraded")
-    ]
+    usable = [row for row in statuses if row.get("status") == STATUS_OK and not row.get("degraded")]
     if not items:
         return "missing"
     if not statuses:
@@ -561,9 +556,7 @@ def calendar_status(sections: Sequence[Any]) -> Status:
     """日历：有源小节全挂 = missing；任一降级 = partial；其余 ok。"""
     sourced = [section for section in sections if section.status == STATUS_SOURCED]
     failed = [
-        section
-        for section in sections
-        if section.status == STATUS_NO_SOURCE and section.degraded
+        section for section in sections if section.status == STATUS_NO_SOURCE and section.degraded
     ]
     if not sourced:
         return "missing"
@@ -580,6 +573,7 @@ def _envelope_source_status(status: Status) -> SourceStatus:
 # --------------------------------------------------------------------------- #
 # 读取面
 # --------------------------------------------------------------------------- #
+
 
 class RadarPlane:
     """四个只读接口的取数与投影。
@@ -674,9 +668,7 @@ class RadarPlane:
 
         dated = [item for item in rows if item.day is not None]
         dropped_undated = len(rows) - len(dated)
-        matched = [
-            item for item in dated if not codes or set(codes) & set(item.related_codes)
-        ]
+        matched = [item for item in dated if not codes or set(codes) & set(item.related_codes)]
         shown = matched[:limit]
         statuses = _news_statuses(datasets, counts, run)
         report = extract_events(shown)
@@ -704,8 +696,7 @@ class RadarPlane:
             "sources_status": statuses,
             "extraction": report.as_dict(),
             "items": [
-                {**item.as_dict(), "industries": list(INDUSTRIES_PLACEHOLDER)}
-                for item in shown
+                {**item.as_dict(), "industries": list(INDUSTRIES_PLACEHOLDER)} for item in shown
             ],
             "events": events,
             "exit_code": _ledger_exit_code(statuses),
@@ -792,9 +783,7 @@ class RadarPlane:
         registry = self._active_registry()
         active = registry if registry is not None else ProviderRegistry()
         peer_down = indices_module.peer_down_signals(self._health_bus)
-        result = self._read(
-            lambda: indices_module.fetch_indices(active, peer_down=peer_down)
-        )
+        result = self._read(lambda: indices_module.fetch_indices(active, peer_down=peer_down))
         return _envelope(
             domain=INDICES_DOMAIN,
             topic=INDICES_TOPIC,
@@ -811,9 +800,7 @@ class RadarPlane:
         day = parse_day(raw_date)
         limit = parse_limit(raw_limit, default=POOL_DEFAULT_LIMIT)
         note = self._ensure_note("pool", day=day)
-        result = self._read(
-            lambda: pool_module.compute_pool(day, root=self.data_root, limit=limit)
-        )
+        result = self._read(lambda: pool_module.compute_pool(day, root=self.data_root, limit=limit))
         available = bool(result.get("available"))
         fund_freshness, fund_fetched_at, fund_pcts = _pool_fund_provenance(
             day, result, self.data_root
@@ -871,9 +858,7 @@ class RadarPlane:
         daily, daily_lookup = self._read(
             lambda: daily_change_map(codes, lookup["date"], root=self.data_root)
         )
-        payload = compute_metrics(
-            rows, prices, as_of=lookup["date"], trades=trades, daily=daily
-        )
+        payload = compute_metrics(rows, prices, as_of=lookup["date"], trades=trades, daily=daily)
         payload["price_lookup"] = lookup
         payload["daily_lookup"] = daily_lookup
         return payload
@@ -898,9 +883,7 @@ class RadarPlane:
         result = replay_portfolio(trades, method)
 
         codes = [row.symbol for row in result.holdings]
-        prices, price_lookup = self._read(
-            lambda: price_map(codes, None, root=self.data_root)
-        )
+        prices, price_lookup = self._read(lambda: price_map(codes, None, root=self.data_root))
         daily, daily_lookup = self._read(
             lambda: daily_change_map(codes, price_lookup["date"], root=self.data_root)
         )
@@ -911,9 +894,7 @@ class RadarPlane:
             price_lookup = {
                 **price_lookup,
                 "reason": (
-                    f"{price_lookup['reason']}；{note}"
-                    if price_lookup.get("reason")
-                    else note
+                    f"{price_lookup['reason']}；{note}" if price_lookup.get("reason") else note
                 ),
             }
 
@@ -922,10 +903,7 @@ class RadarPlane:
             "store": "local_sqlite",
             "method": method,
             "method_label": PORTFOLIO_METHODS[method],
-            "methods": [
-                {"id": key, "label": label}
-                for key, label in PORTFOLIO_METHODS.items()
-            ],
+            "methods": [{"id": key, "label": label} for key, label in PORTFOLIO_METHODS.items()],
             "today": date.today().isoformat(),
             "price_lookup": price_lookup,
             "daily_lookup": daily_lookup,
@@ -1011,20 +989,14 @@ class RadarPlane:
         trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
         holdings = replay_portfolio(trades, "average").holdings
         codes = [row.symbol for row in holdings]
-        prices, price_lookup = self._read(
-            lambda: price_map(codes, None, root=self.data_root)
-        )
+        prices, price_lookup = self._read(lambda: price_map(codes, None, root=self.data_root))
         positions = self._read(lambda: list_positions(root=self.data_root))
         industries = {
             str(row.get("code") or "").strip().upper(): str(row.get("industry") or "")
             for row in positions
         }
-        closes = self._read(
-            lambda: load_close_series(codes, root=self.data_root)
-        )
-        view = build_xray_view(
-            holdings, prices, industries, closes, as_of=price_lookup["date"]
-        )
+        closes = self._read(lambda: load_close_series(codes, root=self.data_root))
+        view = build_xray_view(holdings, prices, industries, closes, as_of=price_lookup["date"])
         return {
             "ok": True,
             "local_only": True,
@@ -1040,9 +1012,7 @@ class RadarPlane:
         用法类错误（行不合法 / 超限）一律 422（SPEC §7），`_read` 已经按这条映射；
         预览连备份都不落，所以复用读面的错误映射。
         """
-        view = self._read(
-            lambda: preview_portfolio_import(body, root=self.data_root)
-        )
+        view = self._read(lambda: preview_portfolio_import(body, root=self.data_root))
         return {"local_only": True, "store": "local_sqlite", **view}
 
     def portfolio_import(self, body: Any) -> dict[str, Any]:
@@ -1051,10 +1021,9 @@ class RadarPlane:
         任何一行不合法 / 重复 / 会让某笔卖出超过持有，整批 422、一行都不写；
         用法类错误按 SPEC §7 用 422（单笔写入沿用 400，这里不改它）。
         """
-        result = self._import_write(
-            lambda: import_portfolio_rows(body, root=self.data_root)
-        )
+        result = self._import_write(lambda: import_portfolio_rows(body, root=self.data_root))
         return {"local_only": True, "store": "local_sqlite", **result}
+
     # --------------------------------------------- 情景回放（QUOT-466）
 
     def portfolio_replay_view(self, raw_scenario: str | None) -> dict[str, Any]:
@@ -1066,9 +1035,7 @@ class RadarPlane:
         """
         scenario = replay_scenario(raw_scenario)
         trades = self._read(lambda: list_portfolio_trades(root=self.data_root))
-        return self._read(
-            lambda: build_replay(trades, root=self.data_root, scenario=scenario)
-        )
+        return self._read(lambda: build_replay(trades, root=self.data_root, scenario=scenario))
 
     def _auto_migrate(self) -> dict[str, Any]:
         """自动迁移旧记录；失败不拖垮读面，原因写进 `migration.error`。"""
@@ -1093,9 +1060,7 @@ class RadarPlane:
     def portfolio_delete_ledger(self, raw_id: Any) -> dict[str, Any]:
         """`POST /api/portfolio/ledger/{id}/delete`：硬删一笔流水，删前先备份。"""
         trade_id = portfolio_id(raw_id, "流水 id")
-        removed = self._write(
-            lambda: delete_portfolio_trade(trade_id, root=self.data_root)
-        )
+        removed = self._write(lambda: delete_portfolio_trade(trade_id, root=self.data_root))
         return {
             "ok": True,
             "local_only": True,
@@ -1109,9 +1074,7 @@ class RadarPlane:
         已经按它转过一笔的**原地替换**那一笔，不新增第二笔。
         """
         position_id = portfolio_id(raw_id, "旧记录 id")
-        migration = self._write(
-            lambda: adopt_portfolio_legacy(position_id, root=self.data_root)
-        )
+        migration = self._write(lambda: adopt_portfolio_legacy(position_id, root=self.data_root))
         return {
             "ok": True,
             "local_only": True,
@@ -1122,9 +1085,7 @@ class RadarPlane:
     def portfolio_dismiss(self, raw_id: Any) -> dict[str, Any]:
         """`POST /api/portfolio/legacy/{position_id}/dismiss`：只写 mark，不删旧行。"""
         position_id = portfolio_id(raw_id, "旧记录 id")
-        mark = self._write(
-            lambda: dismiss_portfolio_legacy(position_id, root=self.data_root)
-        )
+        mark = self._write(lambda: dismiss_portfolio_legacy(position_id, root=self.data_root))
         return {
             "ok": True,
             "local_only": True,
@@ -1305,9 +1266,7 @@ class RadarPlane:
                 raise HTTPException(status_code=404, detail=exc.message) from None
             if exc.code == EXIT_USAGE:
                 raise _bad_body(exc.message) from None
-            raise HTTPException(
-                status_code=500, detail=f"{WRITE_FAILURE}：{exc.message}"
-            ) from None
+            raise HTTPException(status_code=500, detail=f"{WRITE_FAILURE}：{exc.message}") from None
         except (OSError, sqlite3.Error) as exc:
             raise HTTPException(status_code=500, detail=f"{WRITE_FAILURE}：{exc}") from None
 
@@ -1320,9 +1279,7 @@ class RadarPlane:
                 raise _invalid(exc.message) from None
             if exc.code == EXIT_CONFIG:
                 raise HTTPException(status_code=503, detail=exc.message) from None
-            raise HTTPException(
-                status_code=500, detail=f"{WRITE_FAILURE}：{exc.message}"
-            ) from None
+            raise HTTPException(status_code=500, detail=f"{WRITE_FAILURE}：{exc.message}") from None
         except (OSError, sqlite3.Error) as exc:
             raise HTTPException(status_code=500, detail=f"{WRITE_FAILURE}：{exc}") from None
 
@@ -1457,9 +1414,7 @@ def _run_number(run: Mapping[str, Any] | None, key: str) -> int | None:
 def _ledger_exit_code(statuses: Sequence[Mapping[str, Any]]) -> int:
     """沿用 R6 的退出码口径：部分栏目挂 8、一个都没成 4、其余 0。"""
     failed = sum(1 for row in statuses if row.get("status") == STATUS_FAILED)
-    succeeded = sum(
-        1 for row in statuses if row.get("status") in {STATUS_OK, STATUS_EMPTY}
-    )
+    succeeded = sum(1 for row in statuses if row.get("status") in {STATUS_OK, STATUS_EMPTY})
     if failed and succeeded:
         return EXIT_PARTIAL
     if failed:
@@ -1628,6 +1583,7 @@ def _envelope(
 # 闸门与路由
 # --------------------------------------------------------------------------- #
 
+
 async def privacy_read_guard(request: Request, *, denied: str, subject: str) -> None:
     """本机隐私读面的回环独占闸门（持仓 / 自选 / 收件箱共用这一份实现）。
 
@@ -1664,10 +1620,7 @@ async def privacy_write_guard(
     if site is not None and site.strip().lower() not in control_plane.SAME_ORIGIN_SITES:
         raise HTTPException(
             status_code=403,
-            detail=(
-                f"跨站来源被拒绝：Sec-Fetch-Site={site}"
-                "（只接受 same-origin / none）"
-            ),
+            detail=(f"跨站来源被拒绝：Sec-Fetch-Site={site}（只接受 same-origin / none）"),
         )
 
 
@@ -1714,9 +1667,7 @@ def build_router(plane: RadarPlane) -> APIRouter:
     def news(
         date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
         until: Annotated[str | None, Query(description="区间右端 YYYY-MM-DD（≤31 天）")] = None,
-        source: Annotated[
-            list[str] | None, Query(description="栏目名，可重复 / 逗号分隔")
-        ] = None,
+        source: Annotated[list[str] | None, Query(description="栏目名，可重复 / 逗号分隔")] = None,
         code: Annotated[list[str] | None, Query(description="证券代码，可重复 / 逗号分隔")] = None,
         limit: Annotated[
             int | None, Query(description=f"每栏上限（默认 {NEWS_DEFAULT_LIMIT}）")
@@ -1743,9 +1694,7 @@ def build_router(plane: RadarPlane) -> APIRouter:
         ] = None,
     ) -> JSONResponse:
         """自选 + 持仓的事件时间轴：隐私面，平面 JSON、`no-store`。"""
-        return JSONResponse(
-            plane.timeline_view(days), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.timeline_view(days), headers={"Cache-Control": "no-store"})
 
     @router.get("/indices")
     def indices() -> dict[str, Any]:
@@ -1768,9 +1717,7 @@ def build_router(plane: RadarPlane) -> APIRouter:
         ] = None,
     ) -> JSONResponse:
         """隐私数据：平面 JSON、`no-store`、只 GET。"""
-        return JSONResponse(
-            plane.positions_view(date_str), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.positions_view(date_str), headers={"Cache-Control": "no-store"})
 
     @router.post("/positions", dependencies=[Depends(_positions_write_guard)])
     def positions_upsert(
@@ -1779,14 +1726,10 @@ def build_router(plane: RadarPlane) -> APIRouter:
         """按 `code` upsert 一条持仓：平面 JSON、`no-store`、不进信封。"""
         return JSONResponse(plane.position_upsert(body), headers={"Cache-Control": "no-store"})
 
-    @router.post(
-        "/positions/{code}/delete", dependencies=[Depends(_positions_write_guard)]
-    )
+    @router.post("/positions/{code}/delete", dependencies=[Depends(_positions_write_guard)])
     def positions_delete(code: str) -> JSONResponse:
         """硬删除一条持仓：不留软删除标记、不加审计链。"""
-        return JSONResponse(
-            plane.position_delete(code), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.position_delete(code), headers={"Cache-Control": "no-store"})
 
     @router.get("/portfolio", dependencies=[Depends(_positions_guard)])
     def portfolio(
@@ -1796,9 +1739,7 @@ def build_router(plane: RadarPlane) -> APIRouter:
         ] = None,
     ) -> JSONResponse:
         """持仓账本（隐私数据）：流水重放 + 行情拼接 + 旧仓分类，平面 JSON、`no-store`。"""
-        return JSONResponse(
-            plane.portfolio_view(method), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.portfolio_view(method), headers={"Cache-Control": "no-store"})
 
     @router.get("/portfolio/perf", dependencies=[Depends(_positions_guard)])
     def portfolio_perf(
@@ -1808,9 +1749,7 @@ def build_router(plane: RadarPlane) -> APIRouter:
         ] = None,
     ) -> JSONResponse:
         """持仓收益率（隐私数据）：平面 JSON、`no-store`、只 GET、只读本机日线。"""
-        return JSONResponse(
-            plane.portfolio_perf_view(days), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.portfolio_perf_view(days), headers={"Cache-Control": "no-store"})
 
     @router.get("/portfolio/replay", dependencies=[Depends(_positions_guard)])
     def portfolio_replay(
@@ -1818,8 +1757,7 @@ def build_router(plane: RadarPlane) -> APIRouter:
             str | None,
             Query(
                 description=(
-                    "情景 id（2015-crash / 2018-bear / 2020-covid / 2024-liquidity），"
-                    "缺省 all"
+                    "情景 id（2015-crash / 2018-bear / 2020-covid / 2024-liquidity），缺省 all"
                 )
             ),
         ] = None,
@@ -1832,20 +1770,14 @@ def build_router(plane: RadarPlane) -> APIRouter:
     @router.get("/portfolio/xray", dependencies=[Depends(_positions_guard)])
     def portfolio_xray() -> JSONResponse:
         """持仓 X 光（隐私数据）：权重 / 集中度 / 行业 / 相关系数 / 缺口，平面 JSON、`no-store`。"""
-        return JSONResponse(
-            plane.portfolio_xray_view(), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.portfolio_xray_view(), headers={"Cache-Control": "no-store"})
 
-    @router.post(
-        "/portfolio/ledger", dependencies=[Depends(_positions_write_guard)]
-    )
+    @router.post("/portfolio/ledger", dependencies=[Depends(_positions_write_guard)])
     def portfolio_ledger_add(
         body: Annotated[Any, Body(description="一笔流水；十个字段白名单，多一个就 400")],
     ) -> JSONResponse:
         """新增一笔流水：平面 JSON、`no-store`、不进信封。"""
-        return JSONResponse(
-            plane.portfolio_add_ledger(body), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.portfolio_add_ledger(body), headers={"Cache-Control": "no-store"})
 
     @router.post(
         "/portfolio/ledger/import/preview",
@@ -1867,9 +1799,7 @@ def build_router(plane: RadarPlane) -> APIRouter:
         body: Annotated[Any, Body(description="批量流水；任何一行不对整批不写")],
     ) -> JSONResponse:
         """批量导入：再校验 → 备份 → 事务整批写入；用法错误 422。"""
-        return JSONResponse(
-            plane.portfolio_import(body), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.portfolio_import(body), headers={"Cache-Control": "no-store"})
 
     @router.post(
         "/portfolio/ledger/{trade_id}/delete",
@@ -1920,14 +1850,10 @@ def build_router(plane: RadarPlane) -> APIRouter:
         """加一条自选（幂等）：平面 JSON、`no-store`、不进信封。"""
         return JSONResponse(plane.watch_add(body), headers={"Cache-Control": "no-store"})
 
-    @router.post(
-        "/watchlist/{code}/delete", dependencies=[Depends(_watchlist_write_guard)]
-    )
+    @router.post("/watchlist/{code}/delete", dependencies=[Depends(_watchlist_write_guard)])
     def watchlist_delete(code: str) -> JSONResponse:
         """硬删除一条自选：不在本机清单里返回 404，不静默成功。"""
-        return JSONResponse(
-            plane.watch_delete(code), headers={"Cache-Control": "no-store"}
-        )
+        return JSONResponse(plane.watch_delete(code), headers={"Cache-Control": "no-store"})
 
     return router
 

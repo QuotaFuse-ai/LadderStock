@@ -30,6 +30,7 @@ OPERATORS: tuple[str, ...] = (">=", "<=", ">", "<", "==")
 # 路径与读写
 # --------------------------------------------------------------------------- #
 
+
 def validation_path(day: date | str, root: Any = None) -> Path:
     base = Path(root) if root is not None else data_dir()
     return base / "state" / "validation" / f"{day}.json"
@@ -64,6 +65,7 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 # 条件生成
 # --------------------------------------------------------------------------- #
+
 
 def _threshold(value: float, floor: float, step: float = 15.0) -> float:
     return round(max(floor, value - step), 1)
@@ -184,6 +186,7 @@ def evaluate(condition: dict[str, Any], metrics: dict[str, Any]) -> bool | None:
 # --------------------------------------------------------------------------- #
 # 对账
 # --------------------------------------------------------------------------- #
+
 
 def session_days(*, root: Any = None) -> list[date]:
     """本地已有的交易日（以涨停池为准，升序）。"""

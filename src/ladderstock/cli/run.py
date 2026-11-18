@@ -227,11 +227,7 @@ def launch(
     runner = start_runner()
     if runner is not None:
         state = runner.status()
-        _log(
-            "定时调度已随服务启动（"
-            + ("、".join(state["jobs"]) or "没有启用中的任务")
-            + "）"
-        )
+        _log("定时调度已随服务启动（" + ("、".join(state["jobs"]) or "没有启用中的任务") + "）")
     # 增益包守护：模块监控线程。为什么挂这里而不是系统服务——便携包要
     # win/mac/linux 同一套行为，daemon 线程随主进程生死，不需要计划任务、
     # `.vbs` 或管理员权限。`LDST_MODULES_MONITOR=0` 可整体关掉。

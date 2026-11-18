@@ -23,7 +23,6 @@ import tomllib
 import unittest
 import urllib.error
 from dataclasses import replace
-from unittest import mock
 from pathlib import Path
 
 from fastapi.testclient import TestClient

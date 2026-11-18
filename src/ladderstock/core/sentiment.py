@@ -121,9 +121,7 @@ def compute_sentiment(day: date | str, *, root: Any = None) -> dict[str, Any]:
     yesterday_codes = _codes(yesterday_rows)
     broken_codes = _codes(broken_rows)
     promoted = today_codes & yesterday_codes
-    promotion = (
-        _percent(len(promoted) / len(yesterday_codes)) if yesterday_codes else None
-    )
+    promotion = _percent(len(promoted) / len(yesterday_codes)) if yesterday_codes else None
 
     # D-06：保留「一条 code 都解析不出时按行数兜底」——此时计数是行数代理而非
     # 去重股票数，`unknown` 把这些无 code 行显式标出来，读者不会被兜底数字误导。
@@ -184,8 +182,7 @@ def _live_metrics(day: date | str, root: Any = None) -> dict[str, Any] | None:
        算不出来（要当日涨停全集），缺的那几项写进 `missing`，绝不拿 0 或上一交易日
        的值顶替。
     """
-    from ladderstock.core import live_limit_pool
-    from ladderstock.core import live_sentiment
+    from ladderstock.core import live_limit_pool, live_sentiment
 
     body = live_sentiment.read_snapshot(day, root)
     if body is None:
@@ -307,9 +304,7 @@ def _live_full_metrics(
             yesterday_codes = _codes(yesterday_rows)
             yesterday_from = f"前一交易日 {prev_day} 的 limit_pool（{yesterday_backend}）"
     promoted = today_codes & yesterday_codes
-    promotion = (
-        _percent(len(promoted) / len(yesterday_codes)) if yesterday_codes else None
-    )
+    promotion = _percent(len(promoted) / len(yesterday_codes)) if yesterday_codes else None
 
     missing: list[str] = []
     if promotion is None:

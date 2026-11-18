@@ -37,9 +37,7 @@ def test_all_resource_destinations_are_relative(manifest: ModuleType) -> None:
         assert ".." not in Path(dest).parts
 
 
-def test_collect_datas_keeps_relative_destinations(
-    manifest: ModuleType, tmp_path: Path
-) -> None:
+def test_collect_datas_keeps_relative_destinations(manifest: ModuleType, tmp_path: Path) -> None:
     for src_rel, _dest in manifest.RESOURCE_DIRS:
         (tmp_path / src_rel).mkdir(parents=True)
 
@@ -49,9 +47,7 @@ def test_collect_datas_keeps_relative_destinations(
     manifest.assert_relative_destinations(datas)
 
 
-def test_collect_datas_fails_on_missing_resource(
-    manifest: ModuleType, tmp_path: Path
-) -> None:
+def test_collect_datas_fails_on_missing_resource(manifest: ModuleType, tmp_path: Path) -> None:
     missing_rel, _dest = manifest.RESOURCE_DIRS[-1]
     for src_rel, _dest in manifest.RESOURCE_DIRS[:-1]:
         (tmp_path / src_rel).mkdir(parents=True)

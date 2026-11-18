@@ -136,8 +136,8 @@ def test_due_daily_once_per_day(tmp_path: Path) -> None:
     assert plan is not None
     assert plan.due(NOW) is True
     plans.record_run(plan, status="ok", summary="首次", now=NOW, data_root=tmp_path)
-    assert plan.due(NOW + timedelta(hours=2)) is False      # 同一天不重复
-    assert plan.due(NOW + timedelta(days=1)) is True        # 次日再跑
+    assert plan.due(NOW + timedelta(hours=2)) is False  # 同一天不重复
+    assert plan.due(NOW + timedelta(days=1)) is True  # 次日再跑
 
 
 def test_due_intraday_respects_gap(tmp_path: Path) -> None:
