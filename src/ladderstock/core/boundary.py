@@ -748,16 +748,24 @@ MODULES_ROOT_ENV = "LDST_MODULES_ROOT"
 
 
 def modules_root(env: Mapping[str, str] | None = None) -> Path:
-    """便携包内的子模块容器：`<安装根>/file/modules`。
+    """子模块容器：源码态在 `<LadderStock 仓库>/file/modules`，冻结态在
+    `<安装根>/file/modules`。
 
     与 `layout.py` 的 `file/modules/financecoffer` 是同一处——peer、增强包、
     模型共用这一个容器，不再散落到安装根下的同级目录。
+
+    源码态特意用 `runtime.app_dir()`（仓库根）而不是 `install_root()`（仓库
+    父目录）：容器必须长在产品 A 自己的目录里，不能和 B/C 的开发仓库平级。
     """
     values = os.environ if env is None else env
     override = (values.get(MODULES_ROOT_ENV) or "").strip()
     if override:
         return Path(override)
-    return _install_root() / "file" / "modules"
+    from ladderstock.core import runtime
+
+    if runtime.is_frozen():
+        return _install_root() / "file" / "modules"
+    return runtime.app_dir() / "file" / "modules"
 
 
 def resolved_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path | None:
