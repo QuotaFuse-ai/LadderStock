@@ -357,6 +357,39 @@ def _patch_endpoint(
         }
 
     monkeypatch.setattr(assistant_module, "ask_agent", _ask_agent)
+
+    # 路由在进 ask_agent 之前会校验 AI 通道（fallback.load_config -> resolve_for）。
+    # 这些用例钉的是「档案段有没有进 system」和「档案坏了是否降级」，与真实通道
+    # 无关；不桩掉通道的话，CI（没有 ai 配置）会先 503 而不是走到被桩的分支。
+    class _Backend:
+        kind = "openai"
+        base_url = "http://127.0.0.1:9/v1"
+        api_key = "test-key"
+        configured = True
+        label = "openai:model-a"
+
+    class _Target:
+        backend = _Backend()
+        label = "openai:model-a"
+
+    class _Scope:
+        agent_id = "global"
+        kb_scope = "global"
+
+    class _Config:
+        targets = (_Target(),)
+        declared_backends = (_Backend(),)
+
+        def resolve_for(self, module: str) -> _Target:  # noqa: ARG002
+            return _Target()
+
+        def source_for(self, module: str) -> str:  # noqa: ARG002
+            return "global"
+
+        def memory_scope(self, module: str) -> _Scope:  # noqa: ARG002
+            return _Scope()
+
+    monkeypatch.setattr(assistant_module.fallback, "load_config", lambda: _Config())
     return calls
 
 

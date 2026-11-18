@@ -41,16 +41,7 @@ from ladderstock.web.server import create_app  # noqa: E402
 LOOPBACK = ("127.0.0.1", 54321)
 WRITE_HEADERS = {"X-LDST-Client": "1"}
 SENTINEL_KEY = "sk-quot518-SENTINEL-do-not-print"
-REAL_PROVIDERS = (
-    "minimax",
-    "deepseek",
-    "openai",
-    "dashscope",
-    "qwen",
-    "moonshot",
-    "zhipu",
-    "ollama",
-)
+REAL_PROVIDERS = ("minimax", "deepseek", "openai", "dashscope", "qwen", "moonshot", "zhipu")
 
 REAL_LLM_CONFIG = """# StockSenate 模型配置
 # 这段注释必须原样保留

@@ -74,9 +74,17 @@ class Preflight:
 
 def _drive_of(path: Path) -> str:
     try:
-        return path.resolve().drive.upper()
+        drive = path.resolve().drive.upper()
     except OSError:  # pragma: no cover - 解析失败按空盘符处理
-        return ""
+        drive = ""
+    if drive:
+        return drive
+    # 非 Windows 上 `Path("C:/x").drive` 是空串。盘符规则属于「目标在哪块盘」，
+    # 不该随运行平台失效：这里按文本前缀补认一次，让 C 盘拦截跨平台生效。
+    head = str(path)[:2]
+    if len(head) == 2 and head[0].isalpha() and head[1] == ":":
+        return head.upper()
+    return ""
 
 
 def plan(
