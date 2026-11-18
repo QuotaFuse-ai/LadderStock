@@ -59,18 +59,29 @@ class InstallResult:
 
 
 def portable_python(root: Path | None = None) -> Path | None:
-    """随包解释器：`<安装根>/python/python.exe`（Windows）或 `.../bin/python3`。"""
+    """随包解释器：`<程序目录>/python/python.exe`（Windows）或 `.../bin/python3`。
+
+    **必须以程序目录为基准**：`runtime.install_root()` 在开发态会向上跑到 workspace 根
+    （`D:\\workplace`），随包运行时却跟 `LadderStock.exe` 同级（`D:\\workplace\\LadderStock`）。
+    早期版本只探 `install_root()`，于是目录建好了、状态里 `portable_python` 仍为空。
+    打包后两者通常重合，所以 `install_root()` 保留为第二顺位兜底。
+    """
     from ladderstock.core import runtime
 
-    base = runtime.install_root() if root is None else Path(root)
-    candidates = (
-        base / "python" / "python.exe",
-        base / "python" / "bin" / "python3",
-        base / "bin" / "python" / "python.exe",
-    )
-    for path in candidates:
-        if path.is_file():
-            return path
+    if root is not None:
+        bases = [Path(root)]
+    else:
+        bases = [runtime.app_dir(), runtime.install_root()]
+
+    for base in bases:
+        candidates = (
+            base / "python" / "python.exe",
+            base / "python" / "bin" / "python3",
+            base / "bin" / "python" / "python.exe",
+        )
+        for path in candidates:
+            if path.is_file():
+                return path
     return None
 
 
@@ -282,12 +293,15 @@ def install_peer(
 
         state.write_state(key, "fetching", root, step="pip")
         packages = item.package or item.key
-        constraint = f"{packages}{',' if item.version else ''}{item.version}"
+        # 版本约束直接后缀在主包后：`tickhub-cn[sources]>=1.1,<2`。
+        # 早期版本在这里插过一个逗号，pip 会当成两个包（`tickhub-cn[sources]` 和 `>=1.1`）而报错。
+        constraint = f"{packages}{item.version}"
+        targets = [constraint, *item.extra_requirements]
         progress.stage(0.2, 0.92, f"安装 {constraint}")
         last_error = ""
         for index_args in _pip_index_args(list(mirrors or manifest.PYPI_MIRRORS)):
             try:
-                _run_pip(py, ["install", constraint, *index_args], progress=progress, log=log)
+                _run_pip(py, ["install", *targets, *index_args], progress=progress, log=log)
                 last_error = ""
                 break
             except InstallError as exc:

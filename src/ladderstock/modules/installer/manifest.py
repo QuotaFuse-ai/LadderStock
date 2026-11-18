@@ -58,6 +58,12 @@ class PeerManifest:
 
     requires_python: str = ">=3.11"
 
+    extra_requirements: tuple[str, ...] = ()
+    """主包 extras 之外的补充依赖（pip 会再装一遍，已装则跳过）。
+
+    只在实测发现缺口时才加：extras 覆盖不到的运行期缺包，会让某个工具静默不可用。
+    """
+
 
 #: 六个子模块。体积按本机容器实测（tickhub-cn 155MB / tickhub-us 60MB / wire 71MB /
 #: stock-senate 137MB / proxyfleet 0.5MB），再加 venv 与依赖，向上取整。
@@ -73,6 +79,8 @@ PEERS: tuple[PeerManifest, ...] = (
         required=True,
         note="行情、K线、财务、资金流、公告、研报，151 个 MCP 工具。不装则 A 股取数不可用。",
         entry="th-cn version",
+        # `[sources]` 的 extras 实测漏 lxml，部分公告/研报源解析会静默失败
+        extra_requirements=("lxml>=4.9",),
     ),
     PeerManifest(
         key="tickhub_us",
@@ -154,11 +162,46 @@ def unchecked_notes(keys: tuple[str, ...] | list[str] | None = None) -> tuple[st
     return tuple(f"未勾「{item.label}」：{item.note}" for item in PEERS if item.key not in selected)
 
 
+def install_spec(key: str) -> list[str]:
+    """一个 peer 完整的 pip 参数串（主包 + 补充依赖）。`bundle` 类返回空列表。"""
+    item = BY_KEY[key]
+    if not item.package:
+        return []
+    return [f"{item.package}{item.version}", *item.extra_requirements]
+
+
+def requirements_text(key: str) -> str:
+    """导出给人看的依赖清单（便携包打包、排查缺包时用）。
+
+    头几行是 `#` 注释，其余每行一个 requirement，可直接 `pip install -r`。
+    """
+    item = BY_KEY[key]
+    lines = [
+        f"# {item.label}（{item.target}）",
+        f"# 落盘位置：<安装根>/file/modules/{item.target}",
+        f"# 验活入口：{item.entry or '（无，增强包由服务健康检查判定）'}",
+        f"# 磁盘占用：约 {item.size_mb} MB",
+    ]
+    if not item.package:
+        lines.append("# 增强包：PG/Redis/MinIO/API 由 financecoffer installer 装二进制，无 pip 清单")
+        return "\n".join(lines) + "\n"
+    lines.append(f"# 主包：{item.package}{item.version}")
+    lines.append("")
+    lines.append(f"{item.package}{item.version}")
+    if item.extra_requirements:
+        lines.append("")
+        lines.append("# extras 未覆盖、实测缺了会让功能静默失效的补充项：")
+        lines.extend(item.extra_requirements)
+    return "\n".join(lines) + "\n"
+
+
 __all__ = [
     "BY_KEY",
     "PEERS",
     "PYPI_MIRRORS",
     "PeerManifest",
+    "install_spec",
+    "requirements_text",
     "total_mb",
     "unchecked_notes",
 ]
