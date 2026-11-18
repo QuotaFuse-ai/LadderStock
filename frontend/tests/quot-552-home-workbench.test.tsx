@@ -88,10 +88,12 @@ describe('routeHomeQuery（回车路由判定）', () => {
     expect(routeHomeQuery('600519 怎么样')).toEqual({ kind: 'assistant', question: '600519 怎么样' })
   })
 
-  it('名称 / 关键词 → 聚合搜索面板（命中哪边由数据决定）', () => {
-    expect(routeHomeQuery('浦发')).toEqual({ kind: 'search', text: '浦发' })
-    expect(routeHomeQuery('机器人')).toEqual({ kind: 'search', text: '机器人' })
-    expect(routeHomeQuery('AI')).toEqual({ kind: 'search', text: 'AI' })
+  it('名称 / 关键词 → AI 研究对话（回车路由不再产出搜索面板意图）', () => {
+    // QUOT-552 收口后：`homeQueryRoute.ts` 只保留 empty / research / assistant 三种产出，
+    // `search` 仅留给显式入口（`?search=` 深链、搜索历史里的词）
+    expect(routeHomeQuery('浦发')).toEqual({ kind: 'assistant', question: '浦发' })
+    expect(routeHomeQuery('机器人')).toEqual({ kind: 'assistant', question: '机器人' })
+    expect(routeHomeQuery('AI')).toEqual({ kind: 'assistant', question: 'AI' })
   })
 })
 
@@ -112,6 +114,14 @@ const bottomInput = () => screen.getByLabelText('搜索或提问') as HTMLInputE
 function typeAndEnter(text: string) {
   fireEvent.change(bottomInput(), { target: { value: text } })
   fireEvent.keyDown(bottomInput(), { key: 'Enter' })
+}
+
+/**
+ * 组件挂载时会读一次 `/api/research/desk/history`（刷新回看），那是恢复上一轮记录的
+ * 旁路请求，不属于「本轮输入引发的请求」；断言「没发请求」时按接口把它剔掉。
+ */
+function fieldCalls(): unknown[][] {
+  return vi.mocked(fetch).mock.calls.filter(([url]) => !String(url).includes('/desk/history'))
 }
 
 describe('研究面板：三页签 + 唯一输入框（QUOT-552 目标 2/3）', () => {
@@ -148,14 +158,18 @@ describe('研究面板：三页签 + 唯一输入框（QUOT-552 目标 2/3）', 
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/assistant'))).toBe(false)
   })
 
-  it('名称回车：打开既有搜索面板（模态），词已填好', () => {
+  it('名称回车：切到研究股票页签走 assistant，不再开搜索面板', async () => {
     renderPanel()
     typeAndEnter('机器人')
 
-    const dialog = screen.getByRole('dialog')
-    expect((within(dialog).getByRole('combobox') as HTMLInputElement).value).toBe('机器人')
-    // 面板仍是那个 overlay：底部输入框不是第二套结果面板
-    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    // QUOT-552 收口后回车路由不再产出 `search`：名称/关键词与问句同走 assistant 通道，
+    // 面板（SearchPanel 模态）只保留给显式入口（`?search=` 深链、搜索历史 chip）
+    expect(screen.getByRole('tab', { name: /研究股票/ }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryAllByRole('dialog')).toHaveLength(0)
+    expect(bottomInput().value).toBe('')
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes('/api/research/home/assistant'))
+    expect(call).toBeTruthy()
+    expect(JSON.parse(String((call![1] as RequestInit).body)).question).toBe('机器人')
   })
 
   it('输入法组合期间的回车不路由', () => {
@@ -163,7 +177,9 @@ describe('研究面板：三页签 + 唯一输入框（QUOT-552 目标 2/3）', 
     fireEvent.change(bottomInput(), { target: { value: '今天大盘怎么样？' } })
     fireEvent.keyDown(bottomInput(), { key: 'Enter', isComposing: true })
     expect(screen.getByRole('tab', { name: '快捷入口' }).getAttribute('aria-selected')).toBe('true')
-    expect(fetch).not.toHaveBeenCalled()
+    // 研究面板挂载时会拉一次 `/api/research/desk/history`（刷新回看，QUOT-582），
+    // 这条不属于「本轮输入发出的请求」，所以按接口过滤后再断言
+    expect(fieldCalls()).toEqual([])
   })
 
   it('起步问题点一下只填底部输入框，不自动发请求', () => {
@@ -171,7 +187,9 @@ describe('研究面板：三页签 + 唯一输入框（QUOT-552 目标 2/3）', 
     fireEvent.click(screen.getByRole('tab', { name: '研究股票' }))
     fireEvent.click(screen.getByRole('button', { name: '今天大盘和自选有哪些值得注意的变化？' }))
     expect(bottomInput().value).toBe('今天大盘和自选有哪些值得注意的变化？')
-    expect(fetch).not.toHaveBeenCalled()
+    // 研究面板挂载时会拉一次 `/api/research/desk/history`（刷新回看，QUOT-582），
+    // 这条不属于「本轮输入发出的请求」，所以按接口过滤后再断言
+    expect(fieldCalls()).toEqual([])
   })
 
   it('搜索历史页签复用 model.recent：点 chip 打开面板带词', () => {

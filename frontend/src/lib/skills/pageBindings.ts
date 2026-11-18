@@ -40,6 +40,9 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   // 无档案空态由页内自行打开助手并预填问题
   { prefix: '/knowledge', pkg: null },
   { prefix: '/settings', pkg: null },
+  // 首次安装向导（`navigate('/setup')` 在缺失项时自动跳转）：只读 setup 快照
+  // 并引导补全，没有对应的技能包，按开放域登记
+  { prefix: '/setup', pkg: null },
 ]
 
 export interface PageBinding {

@@ -4,10 +4,10 @@
   "note": "目录条目数按原始清单逐条实数；52 是前八类之和（12+8+6+7+5+6+5+3），后四类再补 18 条，总计 70。",
   "total": 70,
   "status_count": {
-    "ready": 64,
+    "ready": 66,
     "planned": 1,
     "existing_page": 2,
-    "not_supported": 3
+    "not_supported": 1
   },
   "groups": [
     {
@@ -810,7 +810,7 @@
       "priority": "P1",
       "package": "",
       "steps": "",
-      "status": "ready",
+      "status": "existing_page",
       "note": "功能已在独立页面承载，工具实测可达"
     },
     {
@@ -836,7 +836,7 @@
       "priority": "P2",
       "package": "",
       "steps": "",
-      "status": "ready",
+      "status": "existing_page",
       "note": "功能已在独立页面承载，工具实测可达"
     },
     {
