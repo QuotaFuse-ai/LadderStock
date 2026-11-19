@@ -146,9 +146,7 @@ class SelfHealEngine:
         self._module_ports: dict[str, tuple[int, ...]] = {
             name: tuple(ports) for name, ports in (module_ports or MODULE_PORTS).items()
         }
-        self._sleeper: Callable[[float], None] = (
-            sleeper if sleeper is not None else self._wait
-        )
+        self._sleeper: Callable[[float], None] = sleeper if sleeper is not None else self._wait
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._tick_lock = threading.RLock()
@@ -178,9 +176,7 @@ class SelfHealEngine:
         if self.running:
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name="supervisor-selfheal", daemon=True
-        )
+        self._thread = threading.Thread(target=self._loop, name="supervisor-selfheal", daemon=True)
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -212,9 +208,7 @@ class SelfHealEngine:
                 # 先观测再处置：crash 事件不被本轮重拉的退避等待延迟；
                 # 处置结果（恢复/放弃）下一轮观测如实上报。
                 entries = [
-                    entry
-                    for module in modules
-                    if (entry := self.ledger.get(module)) is not None
+                    entry for module in modules if (entry := self.ledger.get(module)) is not None
                 ]
                 try:
                     self._monitor.observe(entries, is_alive=self._alive)

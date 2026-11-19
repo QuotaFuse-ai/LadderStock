@@ -234,9 +234,7 @@ def test_intentional_stop_never_self_heals(tmp_path: Path) -> None:
 def test_notifier_exception_is_swallowed_and_heal_continues(tmp_path: Path) -> None:
     notifier = RecordingNotifier()
     notifier.raise_on = "failure"
-    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(
-        tmp_path, notifier=notifier
-    )
+    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(tmp_path, notifier=notifier)
     ledger.ensure("tickhub", ports=(8000,))
     ledger.update("tickhub", pid=123)
     restarter.fail = True  # 重拉必失败 → 触发 failure 通知
@@ -296,9 +294,7 @@ def test_log_roll_keeps_only_the_cap(tmp_path: Path) -> None:
 
 def test_engine_log_dir_also_rolls(tmp_path: Path) -> None:
     log_dir = tmp_path / "logs"
-    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(
-        tmp_path, log_dir=log_dir
-    )
+    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(tmp_path, log_dir=log_dir)
     ledger.ensure("tickhub", ports=(8000,))
     ledger.update("tickhub", pid=123)
 

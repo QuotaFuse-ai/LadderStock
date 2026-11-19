@@ -98,9 +98,7 @@ def module_registry(adapters: dict[str, ModuleAdapter]) -> dict[str, ModuleAdapt
     missing = set(MODULE_ORDER) - set(adapters)
     unknown = set(adapters) - set(MODULE_ORDER) - ON_DEMAND_MODULES
     if missing or unknown:
-        raise ValueError(
-            f"适配器集合与模块注册表不符：缺 {sorted(missing)}，多 {sorted(unknown)}"
-        )
+        raise ValueError(f"适配器集合与模块注册表不符：缺 {sorted(missing)}，多 {sorted(unknown)}")
     for name, adapter in adapters.items():
         if name in ON_DEMAND_MODULES:
             continue

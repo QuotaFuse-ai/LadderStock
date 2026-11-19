@@ -1994,15 +1994,16 @@ class ControlPlane:
 
         `LDST_SUPERVISOR_OWN_PROCESSES=1` 时模块由 supervisor 冷启动，控制面自己
         的账本（`_peer_state`）里没有记录——启停判据必须认这层归属，否则页面
-        显示「运行中」却永远不给停止按钮。认领态（外部 peer）仍返回 False：
-        那是只观测的对象，绝不终止 / 重启（QUOT-545 红线）。
+        显示「运行中」却永远不给停止按钮。origin 不再限制：adopt 只在命令行
+        命中本模块识别规则时写账本，认领态同样是本平台程序，必须可停可重启。
+        真正的外部程序不会进账本（端口诊断里走 foreign，绝不终止）。
         """
         if self.supervisor is None:
             return False
         record = self._ledger_records().get(key)
         if record is None or record.adopted_peer:
             return False
-        if record.origin != "spawned" or record.state not in {"starting", "running"}:
+        if record.state not in {"starting", "running"}:
             return False
         pid = getattr(record, "pid", None)
         return pid is not None and _pid_alive(int(pid))
@@ -2197,9 +2198,9 @@ class ControlPlane:
     def heal_ports(self, key: str) -> dict[str, Any]:
         """`POST /api/control/ports/heal`：按占用分类的安全自愈（QUOT-547）。
 
-        动作优先级（绝不终止 adopted_peer / foreign，复用 QUOT-545 adopt-only 边界）：
-        - adopted_peer → 只认领 + 健康复检（`engine.adopt_module`），绝不终止 / 重启；
-        - own_child → 停止并重拉（`engine.restart_module`，引擎对 adopted_peer 仍跳过）；
+        动作优先级（按客观证据处置，不再「认领即永不停止」）：
+        - own_child（含 `origin="adopted"` 的认领实例）→ 停止并重拉；
+        - adopted_peer（旧账本遗留的硬标记）→ 只认领 + 健康复检，绝不终止 / 重启；
         - foreign → 只报告 + 引导，绝不自动杀（DEC-004 不换端口 / DEC-014 不终止）；
         - free → 无动作。
         """
@@ -2216,7 +2217,7 @@ class ControlPlane:
             "health": diag["health"],
         }
 
-        if ADOPTED_PEER in classes or (record is not None and record.adopted_peer):
+        if record is not None and record.adopted_peer:
             result["action"] = "adopt"
             if engine is not None:
                 try:
@@ -4948,8 +4949,8 @@ def build_router(plane: ControlPlane) -> APIRouter:
 
     @router.post("/ports/{peer_id}/heal")
     def ports_heal(peer_id: str) -> dict[str, Any]:
-        """安全自愈（QUOT-547）：只重拉 own_child；adopted_peer 只认领 + 健康复检；
-        foreign 只报告 + 引导，绝不自动杀；free 无动作。"""
+        """安全自愈（QUOT-547）：own_child（含认领实例）停止并重拉；旧账本的
+        adopted_peer 只认领 + 健康复检；foreign 只报告 + 引导，绝不自动杀；free 无动作。"""
         return plane.heal_ports(_peer_or_404(peer_id))
 
     @router.get("/jobs/{job_id}")

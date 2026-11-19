@@ -209,17 +209,47 @@ def build_port_inspector(
     return inspect
 
 
+def _apply_port_overrides(adapters: Mapping[str, Any], override_path: Path) -> dict[str, Any]:
+    """把端口记录应用到适配器：有记录就用记录端口，没记录用出厂端口。
+
+    只在「记录面数与出厂面数一致」时复用（面数变了说明模块形态改过，旧记录
+    作废）；重建失败（适配器不支持换端口字面值）则保持出厂端口，行为与改动前
+    一致，绝不静默换到错误端口上。
+    """
+    from ladderstock.supervisor.module_adapters import rebase_adapter_ports
+    from ladderstock.supervisor.port_allocator import load_port_overrides
+
+    overrides = load_port_overrides(Path(override_path).parent, path=Path(override_path))
+    out: dict[str, Any] = dict(adapters)
+    for name, ports in overrides.items():
+        adapter = out.get(name)
+        if adapter is None:
+            continue
+        base = tuple(getattr(adapter, "ports", ()) or ())
+        if len(base) != len(ports):
+            continue
+        try:
+            rebuilt = rebase_adapter_ports(adapter, tuple(ports))
+        except Exception:  # noqa: BLE001 - 重建失败保持出厂端口
+            rebuilt = None
+        if rebuilt is not None:
+            out[name] = rebuilt
+    return out
+
+
 def build_port_avoidance(
     env: Mapping[str, str] | None = None,
     spawned_pids: Callable[[], Mapping[int, str]] | None = None,
+    override_path: Path | None = None,
 ) -> tuple[Any, Any]:
     """生产端口避让装配（QUOT-594）：避让器 + 适配器重建器。
 
     避让器按既有四分类判定（`classify_port_owner`，失败关闭）：own_child /
-    adopted_peer 在听回原端口（不避让），foreign 在听扫描 base+1..+100，
-    结果写 config/ports.yaml（下次启动复用）。重建器只支持命令行型适配器
-    （argv 可换端口字面值）；WSL compose / schtasks 形态回 None，维持拒绝
-    语义。psutil 不可用时避让器回 None 引擎自然降级为 DEC-004 原语义。
+    adopted_peer 在听回原端口（不避让），foreign 在听扫描 base+1..+100。
+    **避让结果写运行目录的记录文件**（`override_path`，不进 git）；不给路径时
+    才沿用旧的 `config/ports.yaml` 行为。重建器只支持命令行型适配器（argv 可
+    换端口字面值）；WSL compose / schtasks 形态回 None，维持拒绝语义。
+    psutil 不可用时避让器回 None 引擎自然降级为 DEC-004 原语义。
     """
 
     from ladderstock.cli.paths import config_dir
@@ -230,7 +260,7 @@ def build_port_avoidance(
     )
     from ladderstock.web.port_diagnostics import classify_port_owner
 
-    store = PortOverrideStore(config_dir())
+    store = PortOverrideStore(config_dir(), store_path=override_path)
     store.refresh()
 
     def avoid(module: str, base: tuple[int, ...], record: Any) -> tuple[int, ...]:
@@ -609,9 +639,19 @@ def build_supervisor_engines(
     supervisor_dir = Path(root) / "supervisor"
     ledger = Ledger(supervisor_dir / "ledger.json", window_seconds=WINDOW_SECONDS)
     notifier = build_default_notifier(supervisor_dir / "notifications.log", panel_url=panel_url)
-    avoider, rebaser = build_port_avoidance(env=env, spawned_pids=lambda: processes.spawned_pids)
+    # 端口避让记录落在运行目录（不进 git）：出厂端口留在 config/ports.yaml，
+    # 加一结论只记一次，之后启动以记录为准，不再重复回写仓库配置。
+    override_path = supervisor_dir / "port_overrides.json"
+    avoider, rebaser = build_port_avoidance(
+        env=env,
+        spawned_pids=lambda: processes.spawned_pids,
+        override_path=override_path,
+    )
+    adapters = _apply_port_overrides(
+        build_default_adapters(env=env, log_dir=supervisor_dir / "logs"), override_path
+    )
     processes = SupervisorEngine(
-        adapters=build_default_adapters(env=env, log_dir=supervisor_dir / "logs"),
+        adapters=adapters,
         ledger=ledger,
         procs=default_process_ops(),
         port_avoider=avoider,

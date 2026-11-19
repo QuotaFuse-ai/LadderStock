@@ -65,6 +65,7 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
 
 _VALID_ENVS = ("prod", "test")
 
+
 class _EnvPortsMapping(Mapping[str, tuple[int, ...]]):
     """按当前环境实时解析的只读端口表（QUOT-593）。
 

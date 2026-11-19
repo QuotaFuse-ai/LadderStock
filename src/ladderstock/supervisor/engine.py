@@ -154,6 +154,49 @@ class SupervisorEngine:
                 return int(pid)
         return 0
 
+    def _reap_stale(self, adapter: ModuleAdapter, record: ModuleRecord) -> list[int]:
+        """清掉本模块在端口上的残留 / 重复实例（账本不认的那些）。
+
+        判据三合一，缺一不动：端口在监听、适配器证据确认「占用者属于本模块」
+        （cmdline 特征匹配）、pid 不是账本当前登记的活实例。外部程序的命令行
+        不匹配本模块特征，永远进不来——DEC-014「绝不终止非本控制面的进程」
+        不变。
+
+        这是「控制面没停干净 → 子进程还在 → 端口冲突 → 再也起不来」的死循环
+        的兜底：上一代遗留的同款进程是我方产物，可以按整树清理后重起。
+        """
+        identify = getattr(adapter, "identify", None)
+        if identify is None:
+            return []
+        ledger_pid = (
+            record.pid if record.pid is not None and self._procs.alive(record.pid) else None
+        )
+        if ledger_pid is not None:
+            # 账本入口进程还活着：端口上的本模块进程很可能是它的子孙（wrapper →
+            # child），属于正常实例而非残留，不能动。
+            return []
+        victims: set[int] = set()
+        for port in adapter.ports:
+            try:
+                item = identify(port)
+            except Exception:
+                continue
+            pid = getattr(item, "pid", None)
+            if not pid or not getattr(item, "matched", False):
+                continue
+            if ledger_pid is not None and int(pid) == int(ledger_pid):
+                continue
+            victims.add(int(pid))
+        for pid in sorted(victims):
+            self._procs.kill_tree(pid)
+        if victims:
+            deadline = self._monotonic() + self._kill_grace
+            while self._monotonic() < deadline:
+                if not any(self._procs.alive(pid) for pid in victims):
+                    break
+                self._sleep(self._poll)
+        return sorted(victims)
+
     def _verify_pid(self, record: ModuleRecord) -> str:
         """对账三态：alive / reuse / dead。无证据一律不认（失败关闭）。"""
         pid = record.pid
@@ -204,6 +247,11 @@ class SupervisorEngine:
         record.stopping_by_user = False
 
         if adapter.probe():
+            # 端口上有本模块形态、但账本不认的进程 → 上一代没停干净的残留 /
+            # 重复实例，先按整树清掉再走正常启动。外部程序的命令行不匹配本模块
+            # 特征，永远不会进入清理集合（DEC-014 红线不变）。账本里活着且就是
+            # 监听者的实例同样排除，不会被误杀。
+            self._reap_stale(adapter, record)
             verdict = self._verify_pid(record)
             if verdict == "alive":
                 # 幂等：已经在跑且账本对得上，直接续 running。
@@ -437,11 +485,10 @@ class SupervisorEngine:
         record.ports = list(MODULE_PORTS[name])
 
         if record.adopted_peer:
-            # 外部 peer 认领（QUOT-545）：只认领、不终止、不重启，退出后原样保留
-            # （QUOT-519/523/527 红线）。不写停止意图、不改状态——账本对它是
-            # 观测记录，不是处置依据。前任 supervisor 遗留的自有进程不带此标记，
-            # 崩溃恢复语义不变。
-            return record
+            # 命令行匹配本模块的实例一律按自有处置（允许停止）：认领不再等于
+            # 「永不停止」。打上永不停止标记会让上一代残留永远关不掉，形成
+            # 「停不住 → 端口冲突 → 起不来」死循环。
+            record.adopted_peer = False
 
         if record.state == "stopped":
             # 账本已判定停了：要么真停了，要么对账判定端口上的进程不是我们的
@@ -465,6 +512,11 @@ class SupervisorEngine:
 
         # 2) 窗口内等真的停了（回读端口，不是只看 adapter 返回）
         if self._await_quiet(adapter, self._stop_grace):
+            if record.pid is not None and self._procs.alive(record.pid):
+                # 端口静了但入口进程还在（卡死 / 掉线 / 只绑了一半）：这是半停，
+                # 不是停成功。整树收掉——否则它还活着，下次启动又撞残留。
+                self._force_kill(record, reason="graceful_stop_left_process")
+                self._await_quiet(adapter, self._kill_grace)
             record.state = "stopped"
             record.stopped_at = now_iso()
             record.stop_reason = graceful_error or STOP_BY_REQUEST
@@ -503,25 +555,25 @@ class SupervisorEngine:
         """单模块重启：只动该模块，其它模块的 pid 必须不变（判过证据 3）。
 
         全程持同一把引擎锁：重启期间 start_all/stop_all/state 一律排队。
-        外部 peer 认领（`adopted_peer`）不会被停止（QUOT-545 闸门在
-        `_stop_module`）：进程已死才允许拉起替代实例；进程活着但端口未监听
-        （卡死/掉线）时失败关闭——绝不为了重启而终止外部进程，也不造双实例。
+        命令行已确认属于本模块的实例（含 `origin="adopted"`）按自有处置：卡死 /
+        掉线照常停掉再拉起；端口被命令行不匹配的外部程序占着时报冲突、不动它。
         """
         with self._lock:
-            record = self._ledger.record(name)
-            if (
-                record is not None
-                and record.adopted_peer
-                and self._verify_pid(record) == "alive"
-                and not self._adapter(name).probe()
-            ):
-                raise SupervisorError(
-                    f"{name} 是外部认领的 peer：进程仍在运行（pid={record.pid}）"
-                    "但端口未监听。按 adopt-only 安全边界不终止外部进程，"
-                    "本次未重启；请先人工确认该进程已退出"
-                )
+            # 不再因为「认领」拒绝重启：命令行已确认是本模块程序的实例按自有处置，
+            # 卡死 / 掉线时照常停掉再拉起，避免残留长期占端口。
+            adapter = self._adapter(name)
             before = {other: self._ledger.record(other) for other in MODULE_ORDER if other != name}
-            self._stop_module(name)
+            try:
+                self._stop_module(name)
+            except SupervisorError as exc:
+                if adapter.probe():
+                    # 停止流程清不掉端口 → 端口上不是本模块能停的东西：如实报「被别人占着」，
+                    # 而不是含糊的「强杀失败」（DEC-004：不终止外部进程、不自动换端口）。
+                    raise SupervisorError(
+                        f"{name} 的端口已被其它进程占用（停止流程清不掉），"
+                        "按 DEC-004 不终止外部进程、不自动换端口"
+                    ) from None
+                raise SupervisorError(str(exc)) from None
             self._start_module(name)
             after = {other: self._ledger.record(other) for other in MODULE_ORDER if other != name}
             drifted = [
@@ -611,14 +663,23 @@ class SupervisorEngine:
                 return None
             parent_chain = getattr(evidence, "parent_chain", ())
             parent = parent_chain[0].parent_pid if parent_chain else None
+            prior_pid = record.pid  # 上一代账本里的 pid（走到这里必然已死或指纹不符）
+            if record.origin == "spawned" and prior_pid is not None:
+                # 账本记着「这个模块上一代是本控制面自己拉起、而那个 pid 已经死了」
+                # ——端口上这条同款命令行就是上一代没停干净的残留 / 重复实例。
+                # 这里**不认领**：认领等于把半死或重复的实例继续留在端口上，用户
+                # 下一次点重启还是撞冲突。直接返回 None，让调用方走正常启动路径，
+                # 由 `_start_module` 按证据清理残留后重新拉起（关得掉、起得来）。
+                return None
             record.pid = int(evidence.pid)
             record.parent_pid = parent
             record.started_at = record.started_at or now_iso()
             record.origin = "adopted"
-            # 账本证明不了是本控制面拉的（否则走上面的续健康分支）：这是外部
-            # peer 认领，不是前任 supervisor 遗留的自有进程——任何停止路径
-            # 一律跳过（QUOT-545）。
-            record.adopted_peer = True
+            # 命令行已确认是本模块自己的程序（适配器证据命中）：不再打
+            # 「永不停止」标记。打上标记会让上一代没退干净的残留永远关不掉，
+            # 形成「停不住 → 端口冲突 → 起不来」的死循环。停止路径改按
+            # 「命令行属于本模块」这一条客观证据处置，不碰命令行不匹配的外部程序。
+            record.adopted_peer = False
             record.cmdline_hash = cmdline_hash(evidence.cmdline)
             record.state = "running"
             record.forced_kill = False

@@ -129,11 +129,12 @@ def test_classify_stopped_ledger_record_does_not_claim_port() -> None:
     assert classification == FOREIGN
 
 
-def test_classify_stale_adopted_flag_is_observe_only() -> None:
-    """现网账本由旧代码写成：origin=adopted 但漏打 adopted_peer 标记（False）。
+def test_classify_adopted_origin_is_stoppable() -> None:
+    """origin=adopted、无硬标记：命令行指纹相符 → own_child，可停可重拉。
 
-    这正是 8000 的真实账本态。绝不能因标记滞后判成 own_child 进而被自愈重拉
-    （红线：绝不终止 / 重启 peer）；origin=adopted 一律按认领态只观测。
+    认领只在命令行命中本模块识别规则时写入，即「端口上跑的是本平台程序」。
+    若把它永久归为只观测，上一代残留就永远关不掉，形成端口冲突死循环。
+    命令行不匹配的才走 foreign（绝不终止）。
     """
     stale = ModuleRecord(
         module="tickhub",
@@ -147,9 +148,8 @@ def test_classify_stale_adopted_flag_is_observe_only() -> None:
     classification, reason = classify_port_owner(
         pid=PEER_PID, mine_pids=set(), record=stale, live_cmdline=PEER_CMDLINE
     )
-    assert classification == ADOPTED_PEER
-    assert "origin=adopted" in reason
-    assert "绝不自动终止" in reason
+    assert classification == OWN_CHILD
+    assert "可停止 / 重拉" in reason
 
 
 # --------------------------------------------------------------------------- #
@@ -432,8 +432,8 @@ def test_heal_adopted_peer_only_adopts_never_restarts(tmp_path: Path) -> None:
     assert engine.restart_calls == []  # 绝不终止 / 重启 adopted peer
 
 
-def test_heal_stale_adopted_flag_never_restarts(tmp_path: Path) -> None:
-    """现网 8000 账本态（origin=adopted、adopted_peer=False）：自愈只认领，绝不重拉。"""
+def test_heal_adopted_origin_restarts_instead_of_observe_only(tmp_path: Path) -> None:
+    """origin=adopted、无硬标记：自愈要真的停掉重拉，而不是永久只认领。"""
     stale = ModuleRecord(
         module="tickhub",
         ports=[8000],
@@ -450,9 +450,9 @@ def test_heal_stale_adopted_flag_never_restarts(tmp_path: Path) -> None:
         ports=lambda port: [PortOwner(pid=PEER_PID, process="th-cn.exe")] if port == 8000 else [],
     )
     result = plane.heal_ports("tickhub")
-    assert result["action"] == "adopt"
-    assert engine.adopt_calls == ["tickhub"]
-    assert engine.restart_calls == []  # 标记滞后也绝不终止 / 重启 peer
+    assert result["action"] == "restart"
+    assert engine.restart_calls == ["tickhub"]
+    assert engine.adopt_calls == []
 
 
 def test_heal_own_child_restarts(tmp_path: Path) -> None:

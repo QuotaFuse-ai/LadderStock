@@ -133,9 +133,7 @@ class TestEnvDetection:
 
     def test_env_yaml_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
         monkeypatch.delenv("LDST_ENV", raising=False)
-        (tmp_path / "env.yaml").write_text(
-            yaml.safe_dump({"env": "test"}), encoding="utf-8"
-        )
+        (tmp_path / "env.yaml").write_text(yaml.safe_dump({"env": "test"}), encoding="utf-8")
         monkeypatch.setattr(modules_module, "config_dir", lambda: tmp_path, raising=False)
         assert current_env() == "test"
 
@@ -147,9 +145,7 @@ class TestEnvDetection:
 
     def test_ldst_env_beats_env_yaml(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
         monkeypatch.setenv("LDST_ENV", "prod")
-        (tmp_path / "env.yaml").write_text(
-            yaml.safe_dump({"env": "test"}), encoding="utf-8"
-        )
+        (tmp_path / "env.yaml").write_text(yaml.safe_dump({"env": "test"}), encoding="utf-8")
         monkeypatch.setattr(modules_module, "config_dir", lambda: tmp_path, raising=False)
         assert current_env() == "prod"
 
@@ -187,16 +183,12 @@ class TestRegistryValidation:
         monkeypatch.setenv("LDST_ENV", "test")
         module_registry(_fake_adapters(module_ports("test")))  # type: ignore[arg-type]
 
-    def test_registry_rejects_prod_adapters_under_test_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_registry_rejects_prod_adapters_under_test_env(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("LDST_ENV", "test")
         with pytest.raises(ValueError, match="端口"):
             module_registry(_fake_adapters(module_ports("prod")))  # type: ignore[arg-type]
 
-    def test_registry_rejects_test_adapters_under_prod_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_registry_rejects_test_adapters_under_prod_env(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("LDST_ENV", "prod")
         with pytest.raises(ValueError, match="端口"):
             module_registry(_fake_adapters(module_ports("test")))  # type: ignore[arg-type]

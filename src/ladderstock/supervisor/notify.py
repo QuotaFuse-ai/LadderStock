@@ -92,12 +92,15 @@ class ToastSink:
     def failure(
         self, *, module: str, ports: tuple[int, ...], attempt: int, max_attempts: int, reason: str
     ) -> None:
-        self._show(failure_title(module, attempt, max_attempts),
-                   failure_body(module, ports, reason, self.panel_url))
+        self._show(
+            failure_title(module, attempt, max_attempts),
+            failure_body(module, ports, reason, self.panel_url),
+        )
 
     def gave_up(self, *, module: str, ports: tuple[int, ...], attempts: int, reason: str) -> None:
-        self._show(gave_up_title(module, attempts),
-                   failure_body(module, ports, reason, self.panel_url))
+        self._show(
+            gave_up_title(module, attempts), failure_body(module, ports, reason, self.panel_url)
+        )
 
     def recovered(self, *, module: str, pid: int | None) -> None:
         # D5：只有失败才弹通知；恢复不弹 Toast，事件日志通道（EventLogSink）留痕即可。
@@ -140,7 +143,7 @@ def _toast_script(title: str, body: str) -> str:
         "[Windows.UI.Notifications.ToastNotificationManager,"
         " Windows.UI.Notifications, ContentType=WindowsRuntime] > $null; "
         "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; "
-        "$xml.LoadXml('<toast><visual><binding template=\"ToastGeneric\">"
+        '$xml.LoadXml(\'<toast><visual><binding template="ToastGeneric">'
         f"<text>{safe_title}</text><text>{safe_body}</text>"
         "</binding></visual></toast>'); "
         "$toast = New-Object Windows.UI.Notifications.ToastNotification $xml; "

@@ -54,19 +54,15 @@ def classify_port_owner(
     判定顺序（失败关闭：证明不了是本方亲手拉的一律不自动处置）：
     1. PID 在本控制面状态账里 → own_child（本控制面亲手启动的最强证据）；
     2. supervisor 账本认得它（pid 相符 + 正在服务）：实时命令行可得且与账本
-       指纹不符 → foreign（PID 复用）；否则按**来源**分：
-       - `adopted_peer=True` → adopted_peer；
-       - `origin="spawned"` → own_child（本 supervisor 会话亲手拉起，可停可重拉）；
-       - `origin="adopted"` → adopted_peer（认领态，只观测，绝不自动终止 / 重启）；
+       指纹不符 → foreign（PID 复用）；否则 `adopted_peer=True` → adopted_peer，
+       其余（含 `origin="adopted"`）→ own_child（可停可重拉）；
     3. 其余（含拿不到 PID）→ foreign。
 
-    为什么 `origin="adopted"` 即便 `adopted_peer=False` 也归 adopted_peer：现网账本
-    可能由旧代码写成（外部 peer 被记成 origin=adopted 但漏打 adopted_peer 标记），
-    且 `page_boot._record_peer` / `engine.adopt_module` 对「已存活且指纹相符」的记录
-    会提前返回、不回填标记——滞后标记不可信。自愈红线（绝不终止 / 重启 8000 等 peer）
-    要求失败关闭：只有本会话亲手 spawn（origin=spawned / 本控制面 PID）才允许重拉，
-    其余认领态一律只观测。这与派单目标 2「 consult origin=adopted / adopted_peer」一致，
-    也不改引擎 stop_all 的 QUOT-545 语义（那条路径直接读 adopted_peer 标记，不走这里）。
+    为什么 `origin="adopted"` 也归 own_child：`adopt_module` / `page_boot._record_peer`
+    只在命令行命中本模块识别规则时才写这条记录，即「端口上跑的是本平台的程序」。
+    把它永久归为 adopted_peer 会让上一代没退干净的残留永远关不掉，形成
+    「停不住 → 端口冲突 → 起不来」的死循环。命令行不匹配的外部程序仍走 foreign，
+    绝不终止（DEC-014）。
 
     `live_cmdline=None` 表示调用方没查实时命令行（快照路径求快）：此时不做
     复用判定，只按账本来源分类；诊断 API 会带上实时命令行做精确判定。
@@ -83,13 +79,12 @@ def classify_port_owner(
         and pid in own_tree_pids
         and record.state in _LIVE_STATES
     ):
-        if record.adopted_peer or record.origin == "adopted":
+        if record.adopted_peer:
             return ADOPTED_PEER, (
                 "监听者是 supervisor 认领态记录的子孙进程；只观测，绝不终止 / 重启"
             )
         return OWN_CHILD, (
-            f"监听者是 supervisor 亲手拉起的进程 {record.pid} 的子孙进程（同一份服务），"
-            "可停止 / 重拉"
+            f"监听者是 supervisor 记录的进程 {record.pid} 的子孙进程（同一份服务），可停止 / 重拉"
         )
     if (
         record is not None
@@ -105,11 +100,12 @@ def classify_port_owner(
             return FOREIGN, "PID 复用：实时命令行与账本指纹不符，按外部进程处理（不终止）"
         if record.adopted_peer:
             return ADOPTED_PEER, "外部启动、已被 supervisor 认领的 peer；只观测，绝不终止 / 重启"
-        if record.origin == "spawned":
-            return OWN_CHILD, "supervisor 本会话亲手拉起（origin=spawned）的进程，可停止 / 重拉"
-        return ADOPTED_PEER, (
-            "supervisor 账本为认领态（origin=adopted）：非本会话亲手拉起，按外部 peer "
-            "只观测，绝不自动终止 / 重启（认领标记可能滞后，失败关闭）"
+        # origin 不再区分 spawned / adopted：adopt 只在命令行命中本模块时发生，
+        # 认领态同样是本平台的程序。把它当「永不处置」会让上一代残留永远关不掉，
+        # 形成「停不住 → 端口冲突 → 起不来」死循环。
+        return OWN_CHILD, (
+            f"supervisor 账本认得它（origin={record.origin}）且命令行指纹相符，"
+            "按自有处置，可停止 / 重拉"
         )
     if pid is None:
         return FOREIGN, "端口有监听但拿不到占用者 PID，无法证明归属（不终止）"

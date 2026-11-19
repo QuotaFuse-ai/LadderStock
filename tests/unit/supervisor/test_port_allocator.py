@@ -330,9 +330,7 @@ def test_engine_state_reports_avoided_from(tmp_path: Path) -> None:
 
     state = engine.state()
     modules = {
-        name: view
-        for name, view in state["modules"].items()
-        if name in ("tickhub_us", "tickhub")
+        name: view for name, view in state["modules"].items() if name in ("tickhub_us", "tickhub")
     }
     assert modules["tickhub_us"]["avoided_from"] == [8002]
     assert "avoided_from" not in modules["tickhub"]

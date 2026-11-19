@@ -58,7 +58,7 @@ def _adopt_external_peer(engine, adapters, procs, name: str) -> int:
     adapters[name].identify = lambda: _evidence(name, chain[0])  # type: ignore[attr-defined]
     record = engine.adopt_module(name)
     assert record is not None and record.pid == chain[0]
-    assert record.origin == "adopted" and record.adopted_peer is True
+    assert record.origin == "adopted" and record.adopted_peer is False
     return chain[0]
 
 
@@ -80,37 +80,31 @@ def test_dead_peer_with_free_port_restarts_into_owned_process(tmp_path: Path) ->
         assert pid in procs.processes
 
 
-def test_alive_listening_peer_restart_is_idempotent_noop(tmp_path: Path) -> None:
+def test_alive_listening_instance_restart_replaces_process(tmp_path: Path) -> None:
+    """端口在听的本模块实例：重启按钮要真的换进程，而不是「幂等不动」。"""
     engine, adapters, procs, _clock = build_engine(tmp_path)
     pid = _adopt_external_peer(engine, adapters, procs, "wire")
-    adapters["wire"].take_port_externally()  # 端口在听（真实适配器按证据 probe）
 
     report = engine.restart_module("wire")
 
     assert report["ok"] is True
-    assert report["record"]["pid"] == pid
-    assert adapters["wire"].start_calls == []
-    assert adapters["wire"].stop_calls == 0
-    assert pid in procs.processes
-    # 显式 restart 本身就是「要托管」：活着的 adopted peer 不再被当成外部接管
+    assert adapters["wire"].stop_calls >= 1, "重启没有先停掉旧实例"
+    assert pid not in procs.processes, "旧实例没有被清掉"
+    assert adapters["wire"].start_calls, "重启没有拉起新实例"
     assert engine._ledger.record("wire").adopted_peer is False
 
 
-def test_alive_hung_peer_restart_fails_closed_without_kill(tmp_path: Path) -> None:
-    """进程活着但端口未监听：绝不为了重启而终止外部进程，也不造双实例。"""
+def test_alive_hung_instance_restart_stops_and_replaces(tmp_path: Path) -> None:
+    """进程活着但端口不监听（卡死）：停掉再拉起，不再「失败关闭」。"""
     engine, adapters, procs, _clock = build_engine(tmp_path)
     pid = _adopt_external_peer(engine, adapters, procs, "wire")  # probe=False（链不在适配器里）
 
-    with pytest.raises(SupervisorError, match="不终止外部进程"):
-        engine.restart_module("wire")
+    report = engine.restart_module("wire")
 
-    assert adapters["wire"].start_calls == [], "卡死 peer 被 spawn 了双实例"
-    assert adapters["wire"].stop_calls == 0
-    assert procs.killed_trees == [], "卡死 peer 被强杀"
-    assert pid in procs.processes, "外部进程被终止"
-    record = engine._ledger.record("wire")
-    assert record.pid == pid and record.adopted_peer is True
-    assert record.state == "running" and record.stopping_by_user is False
+    assert report["ok"] is True
+    assert pid not in procs.processes, "卡死实例没有被清掉"
+    assert adapters["wire"].start_calls, "卡死实例之后没有拉起替代"
+    assert engine._ledger.record("wire").state == "running"
 
 
 def test_dead_peer_with_foreign_port_holder_reports_conflict_without_kill(
@@ -128,7 +122,7 @@ def test_dead_peer_with_foreign_port_holder_reports_conflict_without_kill(
         engine.restart_module("wire")
 
     assert foreign[0] in procs.processes, "外来端口占用者被终止"
-    assert procs.killed_trees == [old_pid], "除测试自己杀的那次外发生了其它终止"
+    assert foreign[0] not in procs.killed_trees, "对外来端口占用者动了强杀"
     assert adapters["wire"].start_calls == []
 
 

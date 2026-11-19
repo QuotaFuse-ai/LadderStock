@@ -318,9 +318,7 @@ class HealthEventMonitor:
             _log.warning("端口健康观测失败（已吞，本轮只看存活）", exc_info=True)
             self._port_obs = {}
 
-    def _observe_one(
-        self, entry: LedgerEntry, is_alive: Callable[[LedgerEntry], bool]
-    ) -> None:
+    def _observe_one(self, entry: LedgerEntry, is_alive: Callable[[LedgerEntry], bool]) -> None:
         alive = bool(is_alive(entry))
         obs = self._port_obs.get(entry.module) if self._inspector is not None else None
         conflicts = self._conflict_observations(entry, obs)
