@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import io
+import os
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -418,6 +419,30 @@ def test_diagnose_ports_foreign_and_own_child(tmp_path: Path) -> None:
     plane._peer_state("tickhub")["pids"] = [999]
     entry = plane.diagnose_ports("tickhub")["peers"][0]["ports"][0]
     assert entry["class"] == OWN_CHILD
+
+
+def test_other_face_spawned_under_this_board_is_own_child(tmp_path: Path) -> None:
+    """多面模块账本只记主面：另一面挂在本看板进程树下，同样是本方，不是 foreign。"""
+    other_face = 4242
+    ledger = _ledger(tmp_path, _record(adopted_peer=False))
+    plane = _plane(
+        tmp_path,
+        engine=RecordingEngine(ledger),
+        ports=lambda port: (
+            [PortOwner(pid=PEER_PID, process="th-cn.exe")]
+            if port == 8000
+            else [PortOwner(pid=other_face, process="python.exe")]
+        ),
+    )
+    board = os.getpid()
+    plane._tree_probe = lambda pid: [board, other_face] if pid == board else [pid]
+    ports = {entry["port"]: entry for entry in plane.diagnose_ports("tickhub")["peers"][0]["ports"]}
+    assert ports[8787]["class"] == OWN_CHILD
+    assert all(not c.get("foreign") for c in plane.snapshot("tickhub")["port_conflicts"])
+
+    plane._tree_probe = lambda pid: [pid]
+    ports = {entry["port"]: entry for entry in plane.diagnose_ports("tickhub")["peers"][0]["ports"]}
+    assert ports[8787]["class"] == FOREIGN
 
 
 # ---- 安全自愈：只动 own_child ------------------------------------------------

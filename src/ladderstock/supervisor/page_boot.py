@@ -61,6 +61,9 @@ GUARD_SCAN_ARG_ENV = "LDST_WATCH_GUARD_SCAN"
 GUARD_STOP_ARG_ENV = "LDST_WATCH_GUARD_STOP"
 #: 自带子进程的退出标记（看板关闭时写；`python -m ...` 在 Windows 上收不到优雅终止）
 CHILD_STOP_ARG_ENV = "LDST_PAGE_BOOT_STOP"
+#: 拉起自有子进程的看板身份（`pid@创建时间`）：看板被杀时来不及写退出标记，
+#: 子进程靠它发现自己成了孤儿并自退（Windows 子进程不随父进程退出）
+OWNER_PID_ENV = "LDST_PAGE_BOOT_OWNER"
 #: 等自有子进程正常退出的轮询（秒）：先给子进程一个自退窗口，等不到再恢复它（/F）
 STOP_GRACE_SEC = 5.0
 STOP_POLL_SEC = 0.2
@@ -95,6 +98,43 @@ STATE_PORT_OCCUPIED = "port_occupied"
 STATE_NOT_LISTENING = "not_listening"
 STATE_SKIPPED = "skipped"
 STATE_FAILED = "failed"
+
+
+def owner_token(pid: int | None = None) -> str:
+    """`pid@创建时间`；创建时间取不到时只给 pid（判活退化为按 pid）。"""
+    pid = os.getpid() if pid is None else int(pid)
+    try:
+        import psutil
+
+        return f"{pid}@{psutil.Process(pid).create_time():.3f}"
+    except Exception:  # noqa: BLE001 - 无 psutil / 拿不到创建时间
+        return str(pid)
+
+
+def owner_gone(token: str | None) -> bool:
+    """`owner_token` 对应的进程是否已经不在（pid 被复用也算不在）。没有 token 视为在。"""
+    if not token:
+        return False
+    pid_text, _, created = token.partition("@")
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return False
+    try:
+        import psutil
+    except ImportError:
+        from ladderstock.supervisor.restart import pid_alive
+
+        return not pid_alive(pid)
+    try:
+        proc = psutil.Process(pid)
+        if created and abs(proc.create_time() - float(created)) > 1.0:
+            return True
+        return not proc.is_running()
+    except psutil.NoSuchProcess:
+        return True
+    except Exception:  # noqa: BLE001 - 无权限等：拿不准就当还在，不误退
+        return False
 
 
 def autostart_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -491,6 +531,7 @@ class PageBoot:
         env = dict(self.env)
         env[TICK_ENV] = f"{self.tick_sec:g}"
         env["PYTHONUNBUFFERED"] = "1"
+        env[OWNER_PID_ENV] = owner_token()
         # 入口退化成 `python -m` 时，子进程要能找到本仓库（src 布局 / 未安装）；
         # 冻结态没有源码树，子进程就是同一个 exe，不需要 PYTHONPATH。
         if not runtime.is_frozen():
@@ -772,7 +813,8 @@ def watch_guard_main(env: Mapping[str, str] | None = None) -> int:
     if not scan_argv:
         return 2
     stop_path = Path(values[GUARD_STOP_ARG_ENV]) if values.get(GUARD_STOP_ARG_ENV) else None
-    while not _stop_requested(stop_path):
+    owner = values.get(OWNER_PID_ENV)
+    while not _stop_requested(stop_path) and not owner_gone(owner):
         code = subprocess.call(scan_argv, cwd=os.getcwd())  # noqa: S603 — argv 由本进程给定
         if code == 4 and retries:
             _sleep_unless_stopping(retries.pop(0), stop_path)
@@ -803,6 +845,7 @@ __all__ = [
     "BAR_SEARCH_LOOKBACK_DAYS",
     "DEFAULT_TICK_SEC",
     "GUARD_RETRY_DELAYS",
+    "OWNER_PID_ENV",
     "PAGE_AUTOSTART_ENV",
     "PageBoot",
     "SCHEDULER_MODULE",
@@ -811,5 +854,7 @@ __all__ = [
     "WATCH_GUARD_MODULE",
     "WatchScanner",
     "autostart_enabled",
+    "owner_gone",
+    "owner_token",
     "watch_guard_main",
 ]

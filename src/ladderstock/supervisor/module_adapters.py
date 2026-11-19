@@ -92,6 +92,16 @@ LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 HOST_CONFIG_ENV = "LDST_HOST_CONFIG"
 HOST_CONFIG_REL = Path("ops") / "host" / "LdstHostConfig.psd1"
 
+#: FinanceCoffer 运行形态的**显式声明**开关，取值见 `FINANCECOFFER_FORMS`。
+#: 便携包只发 bundle（Windows 原生 pg/redis/minio），终端用户机器上没有 WSL；
+#: 形态必须被显式声明出来，声明缺失时处置动作一律失败关闭，绝不静默回落到
+#: WSL / docker compose —— 那会在没装 WSL 的机器上把「起不来」伪装成「在启动」。
+FINANCECOFFER_FORM_ENV = "LDST_FINANCECOFFER_FORM"
+#: 允许的形态字面值：bundle = 本地原生包；wsl = 老的容器形态（需显式声明）
+FINANCECOFFER_FORMS = ("bundle", "wsl")
+#: bundle 形态的声明标记：安装器写的状态文件，在位即声明为 bundle
+FINANCECOFFER_BUNDLE_MARKER = "install_state.json"
+
 #: peer 根覆盖：`LDST_PEER_ROOT/<同级名>`，空 = `<安装根>/<同级名>`（bundle 相对）
 DEFAULT_PEER_ROOT_ENV = "LDST_PEER_ROOT"
 #: 安装根覆盖（bundle 相对解析的根；见 `install_root()`）
@@ -1375,6 +1385,45 @@ def _command_adapters(
             clock=clock,
             sleep=sleep,
         ),
+        # Qdrant 栈（2026-11-18 用户裁决：本地单体二进制，不用 Docker）。
+        # 一个 peer 一个入口：`run_stack.py` 是父进程，同时拉起
+        # `runtime\qdrant.exe`（REST/gRPC）与 MCP 面（mcp/run_mcp.py）；
+        # 父进程活着 = 栈活着，父进程退出时一并收掉子进程。
+        # 端口由 LDST_QDRANT_* 显式注入（不靠子脚本自推导，避免双份口径）；
+        # 识别用 `qdrant.exe` 作 alt_match——监听端口的是子进程，单靠
+        # `run_stack.py` 认不出它，_reap_stale 就清不掉上一代残留。
+        "qdrant": BaseAdapter(
+            "qdrant",
+            qdrant_ports,
+            (
+                StartFace(
+                    face="stack",
+                    argv=(
+                        str(_venv_exe(qdrant_dir, "python.exe")),
+                        str(qdrant_dir / "run_stack.py"),
+                    ),
+                    cwd=qdrant_dir,
+                    port=qdrant_api_port,
+                    match=("run_stack.py",),
+                    alt_match=("qdrant.exe",),
+                    inherit_chain=True,
+                    extra_ports=(qdrant_grpc_port,),
+                    log_name="qdrant-stack.log",
+                ),
+            ),
+            host=host,
+            env_files=(qdrant_dir / ".env",),
+            env_overrides={
+                "LDST_QDRANT_WEB_PORT": str(qdrant_api_port),
+                "LDST_QDRANT_GRPC_PORT": str(qdrant_grpc_port),
+                # MCP 面 = 9300 + offset，与 web 面固定差 2967（run_stack.py 同口径）
+                "LDST_QDRANT_MCP_PORT": str(qdrant_api_port + 2967),
+            },
+            log_dir=log_dir,
+            evidence_cache_sec=evidence_cache_sec,
+            clock=clock,
+            sleep=sleep,
+        ),
         "proxyfleet": BaseAdapter(
             "proxyfleet",
             pf_ports,
@@ -1429,25 +1478,34 @@ def _command_adapters(
 
 
 def rebase_adapter_ports(adapter: BaseAdapter, ports: tuple[int, ...]) -> BaseAdapter:
-    """按避让后的实际端口重建命令行型适配器（QUOT-594 端口自动避让）。
+    """按避让后的实际端口重建适配器（QUOT-594 端口自动避让）。
 
-    `_command_adapters()` 构造时端口硬编码在 `StartFace.argv`（`--port NNNN`）
-    与 `face.port` 里；避让只换基准表中同位置端口的字面值，argv 其余部分、
-    匹配关键字里的端口号、env / 日志配置原样保留。face 顺序即端口表顺序
-    （构造处保证），逐位替换。匹配关键字（match/alt_match 等）里内嵌的
-    端口号是**基准端口**——避让后监听者 cmdline 用新端口，关键字仍能命中
-    exe / 子命令片段（判定不依赖端口字面值），不影响认领与对账。
+    两类适配器分别处理：
+
+    - **命令行型**（有 `faces`）：端口硬编码在 `StartFace.argv`（`--port NNNN`）
+      与 `face.port` 里，逐位替换字面值，argv 其余部分 / 匹配关键字 / env / 日志原样保留。
+    - **观测型**（无 `faces`，如 FinanceCoffer）：进程不由本适配器拉起，换端口
+      = 换观测端口，走它自己的 `with_ports()`。此前这里无条件访问 `.faces`，
+      对 FinanceCoffer 抛 AttributeError 又被上层吞掉，端口记录因此完全失效。
     """
-    if len(ports) != len(adapter.faces):
+    faces = getattr(adapter, "faces", None)
+    if faces is None:
+        with_ports = getattr(adapter, "with_ports", None)
+        if with_ports is None:
+            raise SupervisorError(
+                f"{adapter.name} 既无启动面（faces）也不支持 with_ports，无法应用端口记录"
+            )
+        return with_ports(tuple(ports))
+    if len(ports) != len(faces):
         raise SupervisorError(
-            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数（{len(adapter.faces)}）不符"
+            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数（{len(faces)}）不符"
         )
-    faces = []
-    for face, port in zip(adapter.faces, ports, strict=True):
+    rebased = []
+    for face, port in zip(faces, ports, strict=True):
         old = str(face.port)
         new = str(port)
         argv = tuple(new if token == old else token for token in face.argv)
-        faces.append(
+        rebased.append(
             replace(
                 face,
                 argv=argv,
@@ -1462,7 +1520,7 @@ def rebase_adapter_ports(adapter: BaseAdapter, ports: tuple[int, ...]) -> BaseAd
     return BaseAdapter(
         adapter.name,
         tuple(ports),
-        faces,
+        rebased,
         host=adapter._host,
         env_files=adapter._env_files,
         env_overrides=dict(adapter._env_overrides),
@@ -1572,9 +1630,10 @@ class FinanceCofferAdapter:
         readback_wait_sec: float = 15.0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        ports: tuple[int, ...] | None = None,
     ) -> None:
         self.name = "financecoffer"
-        self.ports = MODULE_PORTS["financecoffer"]
+        self.ports = MODULE_PORTS["financecoffer"] if ports is None else tuple(ports)
         self._peer = peer_dir
         self._deploy = peer_dir / "deploy"
         self._host = host or default_host_pivot()
@@ -1589,15 +1648,74 @@ class FinanceCofferAdapter:
         self._distro_cache: str | None = None
         self._fc_cache: tuple[float, str] = (0.0, "")
 
-    def _is_bundle(self) -> bool:
-        """bundle 形态判据：`install_state.json` 在位的就绪包。
+    def with_ports(self, ports: tuple[int, ...]) -> FinanceCofferAdapter:
+        """按端口记录重建本适配器（QUOT-594）。
 
-        2026-11-18 起 FinanceCoffer 已本地化（pg / redis / minio / api 都是
-        `runtime/` 下的 Windows 原生二进制，由 `modules.financecoffer.services`
-        启停），不再跑在 WSL 容器里。判据只认这一个标记，两种形态共用同一目录，
-        没有标记的老机器仍然走原来的 compose 路径。
+        本适配器不是命令行型（没有 `faces`）：bundle 形态下进程由安装器拉起，
+        适配器只负责按端口认领与体检。所以「换端口」= 换观测端口，不改 argv。
+        此前 `rebase_adapter_ports` 直接访问 `.faces` 抛 AttributeError，又被
+        上层静默吞掉，导致 financecoffer 的端口记录完全不生效。
         """
-        return (self._peer / "install_state.json").is_file()
+        if len(ports) != len(self.ports):
+            raise SupervisorError(
+                f"{self.name} 避让端口数（{len(ports)}）与观测端口数（{len(self.ports)}）不符"
+            )
+        return FinanceCofferAdapter(
+            peer_dir=self._peer,
+            host=self._host,
+            log_dir=self._log_dir,
+            env=self._env,
+            evidence_cache_sec=self._cache_sec,
+            readback_wait_sec=self._readback_wait,
+            clock=self._clock,
+            sleep=self._sleep,
+            ports=tuple(ports),
+        )
+
+    def _form(self) -> str | None:
+        """解析运行形态；**未声明返回 None，绝不猜**。
+
+        声明来源按优先级：
+        1. 机器级 `LDST_FINANCECOFFER_FORM`（`bundle` / `wsl`）——老的容器机器
+           必须显式写 `wsl` 才会走 compose 路径；
+        2. 安装器写的 `install_state.json` 在位 → 声明为 `bundle`
+           （2026-11-18 起 pg / redis / minio / api 都是 `runtime/` 下的 Windows
+           原生二进制，由 `modules.financecoffer.services` 启停）。
+
+        两者都没有 = 形态未声明。历史实现在这里默认回落 compose，导致便携包
+        漏打标记文件时，在没有 WSL 的用户机器上静默走容器路径再失败，报错还
+        指向 WSL，完全误导。现在改为显式报错（见 `_require_form`）。
+        """
+        declared = str(self._env.get(FINANCECOFFER_FORM_ENV) or "").strip().lower()
+        if declared in FINANCECOFFER_FORMS:
+            return declared
+        if (self._peer / FINANCECOFFER_BUNDLE_MARKER).is_file():
+            return "bundle"
+        return None
+
+    def _form_error(self) -> SupervisorError:
+        """形态未声明 / 声明非法时的统一报错（处置动作用，失败关闭）。"""
+        declared = str(self._env.get(FINANCECOFFER_FORM_ENV) or "").strip()
+        if declared and declared.lower() not in FINANCECOFFER_FORMS:
+            return SupervisorError(
+                f"financecoffer 运行形态声明非法：{FINANCECOFFER_FORM_ENV}={declared!r}，"
+                f"只接受 {' / '.join(FINANCECOFFER_FORMS)}；拒绝猜测形态"
+            )
+        return SupervisorError(
+            "financecoffer 运行形态未声明，拒绝启动 / 停止："
+            f"{self._peer} 下没有 {FINANCECOFFER_BUNDLE_MARKER}（bundle 安装标记），"
+            f"也没有设置 {FINANCECOFFER_FORM_ENV}。"
+            "本地原生包请重新执行安装生成该标记；"
+            f"确要用老的 WSL 容器形态请显式设置 {FINANCECOFFER_FORM_ENV}=wsl。"
+            "（不静默回落 WSL：便携包用户机器上通常没有 WSL）"
+        )
+
+    def _require_form(self) -> str:
+        """处置动作（start / stop / kill）取形态：未声明即抛，失败关闭。"""
+        form = self._form()
+        if form is None:
+            raise self._form_error()
+        return form
 
     def _start_bundle(self) -> SpawnedProcess:
         """本地 bundle 启动：pg → minio → api（pg 是 api 的硬依赖，必须串行）。"""
@@ -1665,7 +1783,7 @@ class FinanceCofferAdapter:
     # ------------------------------------------------------------------ 协议
 
     def start(self) -> SpawnedProcess:
-        if self._is_bundle():
+        if self._require_form() == "bundle":
             return self._start_bundle()
         # Windows 侧冲突预检（QUOT-516）：端口被非本模块进程占住时拒绝启动，
         # 否则容器会在 WSL 内照常拉起，Windows 侧却永远连不上（静默假成功）。
@@ -1714,7 +1832,7 @@ class FinanceCofferAdapter:
 
     def stop(self, pid: int | None = None, timeout: float | None = None) -> None:
         del pid, timeout
-        if self._is_bundle():
+        if self._require_form() == "bundle":
             self._stop_bundle()
             return
         distro = self.distro()
@@ -1726,7 +1844,7 @@ class FinanceCofferAdapter:
         self._cache.clear()
 
     def kill(self) -> None:
-        if self._is_bundle():
+        if self._require_form() == "bundle":
             self._stop_bundle()
             return
         distro = self.distro()
@@ -1762,11 +1880,31 @@ class FinanceCofferAdapter:
             return PortEvidence(port=port, listening=False, detail="Windows 侧端口未监听")
         pid = self._host.owner_pid(port)
         chain = self._host.parent_chain(pid) if pid else ()
-        if self._is_bundle():
+        form = self._form()
+        snap = chain[0] if chain else None
+        if form is None:
+            # 形态未声明：不猜归属，也不在这里抛（巡检要能继续跑完其它模块）。
+            # 明确报「未声明」而不是回落容器判据 —— 回落会把本机原生进程说成
+            # 「WSL 内没有容器」，把用户引向根本不存在的 WSL 问题。
+            return PortEvidence(
+                port=port,
+                listening=True,
+                matched=False,
+                pid=pid,
+                name=snap.name if snap else "",
+                cmdline=snap.cmdline if snap else (),
+                parent_chain=chain,
+                detail=(
+                    f"运行形态未声明（缺 {FINANCECOFFER_BUNDLE_MARKER}，"
+                    f"未设 {FINANCECOFFER_FORM_ENV}），无法判定端口归属；"
+                    "请重新安装生成本地包标记，或显式声明 "
+                    f"{FINANCECOFFER_FORM_ENV}=wsl"
+                ),
+            )
+        if form == "bundle":
             # 本地 bundle 形态没有 WSL 容器可查，归属证据只能是「占用端口的进程
             # 就是 runtime/api 起的 financecoffer serve」。沿用容器判据会让
             # probe 永远 False → 引擎判「30s 内端口无监听」并整树终止。
-            snap = chain[0] if chain else None
             cmd_text = " ".join(snap.cmdline) if snap else ""
             matched = "financecoffer" in cmd_text
             detail = (
@@ -1791,7 +1929,6 @@ class FinanceCofferAdapter:
             if containers
             else "WSL 内没有 running 的 financecoffer api 容器（端口可能是残留转发）"
         )
-        snap = chain[0] if chain else None
         return PortEvidence(
             port=port,
             listening=True,

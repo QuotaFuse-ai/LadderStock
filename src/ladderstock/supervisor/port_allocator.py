@@ -16,6 +16,7 @@ DEC-014 绝不杀外来进程；避让只是换**自己**监听的端口，不�
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from collections.abc import Callable, Mapping
@@ -24,6 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from ladderstock.supervisor.modules import current_env
+
+_LOG = logging.getLogger(__name__)
 
 #: 避让上限：base+100 仍无空闲则报 needs_human，绝不无限扫描
 MAX_SHIFT = 100
@@ -58,10 +61,18 @@ class PortAllocation:
 
 
 def _read_payload(path: Path) -> dict[str, Any]:
-    """按后缀读记录（.json / 其余按 yaml）；无文件或损坏一律返回空。"""
+    """按后缀读记录（.json / 其余按 yaml）；无文件返回空，内容损坏记警告后返回空。
+
+    编码用 ``utf-8-sig``：Windows 上 PowerShell 的 ``Set-Content`` 默认写 UTF-8 BOM，
+    用 ``utf-8`` 读会让首字符变成 \\ufeff 直接 JSONDecodeError。此前该异常被静默吞成
+    ``{}``，导致 ``port_overrides.json`` 明明写着端口覆盖、实际却完全不生效。
+    """
     try:
-        text = Path(path).read_text(encoding="utf-8")
-    except Exception:  # noqa: BLE001 - 无文件 / 读失败
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001 - 读失败按无记录，但要留痕
+        _LOG.warning("port_payload_read_failed path=%s detail=%s", path, exc)
         return {}
     try:
         if Path(path).suffix.lower() == ".json":
@@ -70,9 +81,13 @@ def _read_payload(path: Path) -> dict[str, Any]:
             import yaml
 
             data = yaml.safe_load(text)
-    except Exception:  # noqa: BLE001 - 内容损坏
+    except Exception as exc:  # noqa: BLE001 - 内容损坏：不能静默
+        _LOG.warning("port_payload_parse_failed path=%s detail=%s", path, exc)
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        _LOG.warning("port_payload_not_mapping path=%s type=%s", path, type(data).__name__)
+        return {}
+    return data
 
 
 def _write_payload(path: Path, payload: Mapping[str, Any]) -> Path:

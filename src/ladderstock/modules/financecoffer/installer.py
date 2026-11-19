@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -51,6 +52,7 @@ API_DEPS: tuple[str, ...] = (
 #: embedding 服务依赖；torch 走 CPU 索引（本机没有 CUDA，装 GPU 版只是白占 2GB）
 EMBEDDING_DEPS: tuple[str, ...] = ("transformers>=4.40",)
 TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
+
 
 
 class BundleError(RuntimeError):
@@ -269,6 +271,62 @@ def install(
         return {"ok": False, "status": "failed", "detail": str(exc), "target": str(root_path)}
 
 
+def _dist_key(requirement: str) -> str:
+    """把 `transformers>=4.40` / `psycopg[binary]>=3.1` 归一成 `transformers` / `psycopg`。"""
+    return re.split(r"[<>=!~;\[\s]", requirement.strip(), maxsplit=1)[0].lower()
+
+
+def _dist_normalized(text: str) -> str:
+    """PEP 503 归一化：`python-dotenv` / `python_dotenv` 视为同一个包。"""
+    return re.sub(r"[-_.]+", "_", text.lower())
+
+
+def _has_dist(target: Path, dist: str) -> bool:
+    """`--target` 目录里是否已有这个分发包（只看 `*.dist-info`，不 import、不联网）。
+
+    为什么必须查：`pip install --target` 不认目标目录里已装的包，每次都整包重下。
+    torch 走官方索引，网络不通就失败，而状态文件据此写下「依赖未装齐」——
+    2026-11-19 实测 torch 2.15.0+cpu 明明躺在目录里、`import torch` 正常，
+    却被记成缺依赖。
+    """
+    if not dist:
+        return False
+    try:
+        entries = list(target.iterdir())
+    except OSError:
+        return False
+    key = _dist_normalized(dist)
+    for entry in entries:
+        name = entry.name.lower()
+        if not name.endswith(".dist-info"):
+            continue
+        stem = _dist_normalized(name[: -len(".dist-info")])
+        if stem == key or stem.startswith(f"{key}_"):
+            return True
+    return False
+
+
+def _pip_install(target: Path, packages: Iterable[str], *, index_url: str | None = None) -> str:
+    """把依赖装进 `--target` 目录；失败返回可读原因（不抛异常）。
+
+    提取成模块级函数而不是 `_install_deps` 里的闭包：安装这一步要能被单测替换掉，
+    否则每次验证幂等都得真的联网拉 2GB 的 torch。
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--target", str(target)]
+    cmd.extend(packages)
+    if index_url:
+        cmd.extend(["--index-url", index_url])
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"pip 调用失败：{exc}"
+    if done.returncode != 0:
+        tail = (done.stderr or done.stdout or "").strip().splitlines()[-1:] or ["未知错误"]
+        return f"pip 退出码 {done.returncode}：{tail[0]}"
+    return "ok"
+
+
 def _install_deps(root: Path | None, with_embedding: bool) -> dict[str, Any]:
     """把 API / embedding 的 Python 依赖装进模块目录（`--target`），不碰全局环境。
 
@@ -285,31 +343,29 @@ def _install_deps(root: Path | None, with_embedding: bool) -> dict[str, Any]:
         results["detail"] = "api 组件未装，跳过依赖安装"
         return results
 
-    def _pip(target: Path, packages: Iterable[str], *, index_url: str | None = None) -> str:
-        target.mkdir(parents=True, exist_ok=True)
-        cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--target", str(target)]
-        cmd.extend(packages)
-        if index_url:
-            cmd.extend(["--index-url", index_url])
-        try:
-            done = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return f"pip 调用失败：{exc}"
-        if done.returncode != 0:
-            tail = (done.stderr or done.stdout or "").strip().splitlines()[-1:] or ["未知错误"]
-            return f"pip 退出码 {done.returncode}：{tail[0]}"
-        return "ok"
-
-    results["api"] = _pip(runtime / "api-deps", API_DEPS)
+    api_target = runtime / "api-deps"
+    api_missing = tuple(pkg for pkg in API_DEPS if not _has_dist(api_target, _dist_key(pkg)))
+    # 已装齐就跳过：绝不无谓重下，也避免覆盖正在被服务占用的文件。
+    results["api"] = _pip_install(api_target, api_missing) if api_missing else "ok"
     if results["api"] != "ok":
         problems.append(f"api 依赖：{results['api']}")
 
     if with_embedding:
-        results["embedding"] = _pip(runtime / "embedding-deps", ("torch",), index_url=TORCH_INDEX)
-        if results["embedding"] == "ok":
-            results["embedding"] = _pip(runtime / "embedding-deps", EMBEDDING_DEPS)
-        if results["embedding"] != "ok":
-            problems.append(f"embedding 依赖：{results['embedding']}")
+        embedding_target = runtime / "embedding-deps"
+        outcome = "ok"
+        # torch 与 transformers 各自判断：只补真缺的那一段，缺就不碰。
+        for packages, index in ((("torch",), TORCH_INDEX), (EMBEDDING_DEPS, None)):
+            missing = tuple(
+                pkg for pkg in packages if not _has_dist(embedding_target, _dist_key(pkg))
+            )
+            if not missing:
+                continue
+            outcome = _pip_install(embedding_target, missing, index_url=index)
+            if outcome != "ok":
+                break
+        results["embedding"] = outcome
+        if outcome != "ok":
+            problems.append(f"embedding 依赖：{outcome}")
 
     results["ok"] = not problems
     results["detail"] = "；".join(problems)

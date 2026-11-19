@@ -14,9 +14,14 @@ import json
 import os
 import signal
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Protocol
+
+try:  # psutil 是可选依赖：缺了就全走 tasklist / CIM 子进程通道
+    import psutil
+except ImportError:  # pragma: no cover - 依赖探测
+    psutil = None  # type: ignore[assignment]
 
 #: 进程查询类子进程的兜底超时（与 control.PROCESS_QUERY_TIMEOUT_SEC 同档）
 QUERY_TIMEOUT_SEC = 10.0
@@ -83,17 +88,37 @@ class ProcessOps(Protocol):
     def tree_pids(self, root_pid: int) -> list[int]:
         """root 及全部子孙（含隔代）；root 已死返回空表。"""
 
+    def descendants(self, root_pids: Iterable[int]) -> set[int]:
+        """多个根的子树并集：一次父子表快照，不做逐节点存活反查。
+
+        与 `tree_pids` 的差别是成本：Windows 上 `tree_pids` 对每个节点都要开一次
+        PowerShell 查存活（十几个节点就是十几秒），多根多次调用足以把控制面拖死。
+        归属判定只需要「某 pid 在不在本方集合里」，一次快照在内存算完整棵即可。
+        """
+
     def kill_tree(self, root_pid: int) -> None:
         """整树强杀；杀完不回读（确认由引擎的 probe 负责）。"""
 
 
 class WindowsProcessOps:
-    """tasklist / Get-CimInstance / taskkill 的真实实现（本项目以 Windows 为主）。"""
+    """tasklist / Get-CimInstance / taskkill 的真实实现（本项目以 Windows 为主）。
+
+    查询先走 psutil（进程内 API，毫秒级）；每次 tasklist / PowerShell 都要起一个
+    子进程（约 0.15s / 1s），`/state` 每模块要查好几次，串起来就是几十秒。psutil
+    缺失或被拒（权限）时才退回子进程通道。
+    """
 
     def self_pid(self) -> int:  # pragma: no cover - 平台直通
         return os.getpid()
 
     def alive(self, pid: int) -> bool:  # pragma: no cover - 子进程查询
+        if psutil is not None:
+            try:
+                return bool(psutil.Process(int(pid)).is_running())
+            except psutil.NoSuchProcess:
+                return False
+            except (psutil.Error, OSError):
+                pass
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
             shell=False,
@@ -105,6 +130,15 @@ class WindowsProcessOps:
         return "No tasks" not in (result.stdout or "")
 
     def cmdline(self, pid: int) -> tuple[str, ...] | None:  # pragma: no cover - 子进程查询
+        if psutil is not None:
+            try:
+                argv = psutil.Process(int(pid)).cmdline()
+            except psutil.NoSuchProcess:
+                return None
+            except (psutil.Error, OSError):
+                argv = []
+            if argv:
+                return tuple(argv)
         raw = self._cim_query(
             f'(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").CommandLine'
         )
@@ -134,6 +168,25 @@ class WindowsProcessOps:
             tree.append(current)
             queue.extend(children.get(current, []))
         return tree
+
+    def descendants(self, root_pids: Iterable[int]) -> set[int]:  # pragma: no cover - 子进程查询
+        edges = self._parent_edges()
+        roots = {int(pid) for pid in root_pids}
+        if not edges:
+            # 拿不到父子表：保守只认根本身，绝不把别的进程当成本方
+            return roots
+        children: dict[int, list[int]] = {}
+        for child, parent in edges:
+            children.setdefault(parent, []).append(child)
+        out: set[int] = set()
+        queue = list(roots)
+        while queue:
+            current = queue.pop()
+            if current in out:
+                continue
+            out.add(current)
+            queue.extend(children.get(current, []))
+        return out
 
     def kill_tree(self, root_pid: int) -> None:  # pragma: no cover - 子进程终止
         result = subprocess.run(
@@ -195,7 +248,17 @@ class WindowsProcessOps:
         return None
 
     def _parent_edges(self) -> list[tuple[int, int]]:  # pragma: no cover - 子进程查询
-        """全系统 (child_pid, parent_pid) 表：CIM 优先，wmic /format:csv 兜底。"""
+        """全系统 (child_pid, parent_pid) 表：psutil 优先，CIM、wmic /format:csv 兜底。"""
+        if psutil is not None:
+            try:
+                edges = [
+                    (int(proc.info["pid"]), int(proc.info["ppid"] or 0))
+                    for proc in psutil.process_iter(["pid", "ppid"])
+                ]
+            except (psutil.Error, OSError):
+                edges = []
+            if edges:
+                return edges
         raw = self._cim_query(
             "Get-CimInstance Win32_Process | "
             'ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }'
@@ -278,6 +341,29 @@ class PosixProcessOps:
             tree.append(current)
             queue.extend(children.get(current, []))
         return tree
+
+    def descendants(self, root_pids: Iterable[int]) -> set[int]:  # pragma: no cover - 非 Windows
+        children: dict[int, list[int]] = {}
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat_text = (entry / "stat").read_text(errors="replace")
+            except OSError:
+                continue
+            tail = stat_text.rsplit(")", 1)[-1].split()
+            if len(tail) < 2:
+                continue
+            children.setdefault(int(tail[1]), []).append(int(entry.name))
+        out: set[int] = set()
+        queue = [int(pid) for pid in root_pids]
+        while queue:
+            current = queue.pop()
+            if current in out:
+                continue
+            out.add(current)
+            queue.extend(children.get(current, []))
+        return out
 
     def kill_tree(self, root_pid: int) -> None:  # pragma: no cover - 非 Windows
         # SIGKILL 是 POSIX 专属常量（Windows 的 signal 模块没有）；这个方法只在

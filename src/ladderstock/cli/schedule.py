@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
 import sys
 import time
@@ -2217,6 +2218,33 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
         _fail("定时调度需要 APScheduler：pip install apscheduler", EXIT_CONFIG)
         raise AssertionError from exc  # pragma: no cover - _fail 已退出
 
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.data import scheduler_lock
+    from ladderstock.supervisor.page_boot import (
+        CHILD_STOP_ARG_ENV,
+        OWNER_PID_ENV,
+        owner_gone,
+    )
+
+    stop_raw = os.environ.get(CHILD_STOP_ARG_ENV)
+    stop_marker = Path(stop_raw) if stop_raw else None
+    owner_pid = os.environ.get(OWNER_PID_ENV)
+
+    def should_exit() -> bool:
+        if stop_marker is not None and stop_marker.exists():
+            return True
+        return owner_gone(owner_pid)
+
+    lease = scheduler_lock.wait_acquire(
+        data_dir(),
+        holder="ldst schedule run",
+        should_stop=should_exit,
+        on_standby=lambda holder: error(f"已有调度器在执行任务表（{holder}），本进程待命"),
+    )
+    if lease is None:
+        error("定时任务未启动：收到退出信号")
+        return
+
     scheduler_conf = table.get("scheduler") or {}
     timezone = str(scheduler_conf.get("timezone") or DEFAULT_TIMEZONE)
     grace = int(scheduler_conf.get("misfire_grace_seconds", DEFAULT_MISFIRE_GRACE_SECONDS))
@@ -2254,6 +2282,20 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
             minute=minute,
             **common,
         )
+
+    # 看板写了退出标记、或拉起本进程的看板已经不在（被杀 / 崩溃）：自行收尾。
+    # Windows 上子进程不会随父进程退出，不自查就会留成孤儿，下次启动再叠一个调度器。
+    def exit_if_orphaned() -> None:
+        if should_exit():
+            scheduler.shutdown(wait=False)
+
+    scheduler.add_job(
+        exit_if_orphaned,
+        "interval",
+        seconds=2,
+        id="ldst-exit-watch",
+        replace_existing=True,
+    )
     error(
         f"定时任务已启动（{timezone}）："
         + "、".join(f"{job.get('trigger')} {job.get('name')}" for job in jobs)
@@ -2266,6 +2308,8 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
             scheduler.shutdown(wait=False)
         except Exception:  # noqa: BLE001 - 已经停了
             pass
+    finally:
+        lease.release()
 
 
 # ---------------------------------------------------------------- 命令实现

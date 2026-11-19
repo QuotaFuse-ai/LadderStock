@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -63,7 +64,10 @@ from ladderstock.supervisor.adapters import MODULE_ORDER
 from ladderstock.supervisor.debate_probes import build_debate_probes
 from ladderstock.supervisor.engine import SupervisorEngine, SupervisorError
 from ladderstock.supervisor.health_events import (
+    OWNER_ADOPTED_PEER,
+    OWNER_FOREIGN,
     OWNER_FREE,
+    OWNER_OWN_CHILD,
     HealthEventBus,
     PortInspector,
     PortObservation,
@@ -95,6 +99,8 @@ if TYPE_CHECKING:
     from ladderstock.supervisor.ledger import LedgerEntry
 
 SUPERVISOR_PREFIX = "/api/supervisor"
+
+_LOG = logging.getLogger(__name__)
 
 #: 退出时等后台 `start_all` 收尾的上限（秒）；超时就取消，不拖住关停。
 START_ALL_JOIN_TIMEOUT_SEC = 20.0
@@ -137,6 +143,7 @@ class SupervisorEngines:
 
 def build_port_inspector(
     spawned_pids: Callable[[], Mapping[int, str]] | None = None,
+    identifies: Callable[[str, int], bool] | None = None,
 ) -> PortInspector:
     """生产端口观测（QUOT-556 / QUOT-557）：一次连接表扫描看全部托管模块的端口归属。
 
@@ -149,7 +156,15 @@ def build_port_inspector(
       误认成自有。未提供时退化为 QUOT-556 口径（mine_pids 为空，只按该模块账本判）。
     psutil 不可用 / 扫描失败返回空映射：监控本轮只看存活类事件，不误报端口类。
     只读，绝不终止任何进程。
+
+    监听者 pid 与账本不等时按「同一份服务」认（`same_service`，不算冲突），证据
+    由强到弱：祖先链上有账本根（指纹相符）→ own_child；祖先链上有本看板直接拉起
+    的子进程 → own_child；`identifies(module, port)` 按适配器识别规则命中 →
+    adopted_peer（只观测）。多面模块（StockSenate mcp + webui）账本只记主面，
+    venv 启动器背后真正监听的是解释器孙进程——不认这层，健康实例会被当成
+    「外部占用」弹窗，或被当成残留每轮「安全重启」一遍。
     """
+    server_pid = os.getpid()
 
     def inspect(entries: Sequence[LedgerEntry]) -> dict[str, tuple[PortObservation, ...]]:
         if psutil is None:  # pragma: no cover - 依赖探测
@@ -184,6 +199,38 @@ def build_port_inspector(
                 if live is not None and cmdline_hash(live) == expected:
                     mine.add(int(owned_pid))
 
+        def _ancestors(pid: int) -> list[Any]:
+            try:
+                return list(psutil.Process(pid).parents())
+            except (psutil.Error, OSError):
+                return []
+
+        def _verified_root(entry: LedgerEntry) -> int | None:
+            if entry.pid is None or entry.state not in ("starting", "running"):
+                return None
+            live = _cmdline(int(entry.pid))
+            if live is None or (entry.cmdline_hash and cmdline_hash(live) != entry.cmdline_hash):
+                return None
+            return int(entry.pid)
+
+        def _same_service(entry: LedgerEntry, port: int, pid: int) -> str | None:
+            root = _verified_root(entry)
+            for parent in _ancestors(pid):
+                if parent.pid == root or parent.pid in mine:
+                    return OWNER_OWN_CHILD
+                try:
+                    if parent.ppid() == server_pid:
+                        return OWNER_OWN_CHILD
+                except (psutil.Error, OSError):
+                    continue
+            if identifies is not None:
+                try:
+                    if identifies(entry.module, port):
+                        return OWNER_ADOPTED_PEER
+                except Exception:  # noqa: BLE001 - 识别失败等于没有证据
+                    return None
+            return None
+
         report: dict[str, tuple[PortObservation, ...]] = {}
         for entry in entries:
             observations: list[PortObservation] = []
@@ -200,8 +247,19 @@ def build_port_inspector(
                     record=entry,
                     live_cmdline=_cmdline(pid) if pid is not None else None,
                 )
+                same = None
+                if pid is not None and pid != entry.pid:
+                    same = _same_service(entry, port, pid)
+                if same is not None and owner == OWNER_FOREIGN:
+                    owner = same
                 observations.append(
-                    PortObservation(port=port, listening=True, owner=owner, pid=pid)
+                    PortObservation(
+                        port=port,
+                        listening=True,
+                        owner=owner,
+                        pid=pid,
+                        same_service=same is not None,
+                    )
                 )
             report[entry.module] = tuple(observations)
         return report
@@ -230,7 +288,11 @@ def _apply_port_overrides(adapters: Mapping[str, Any], override_path: Path) -> d
             continue
         try:
             rebuilt = rebase_adapter_ports(adapter, tuple(ports))
-        except Exception:  # noqa: BLE001 - 重建失败保持出厂端口
+        except Exception as exc:  # noqa: BLE001 - 重建失败保持出厂端口，但必须留痕
+            # 静默吞掉曾让 financecoffer 的端口记录长期「写了却不生效」而无人察觉。
+            _LOG.warning(
+                "port_override_rebase_failed module=%s ports=%s detail=%s", name, ports, exc
+            )
             rebuilt = None
         if rebuilt is not None:
             out[name] = rebuilt
@@ -668,7 +730,10 @@ def build_supervisor_engines(
         modules=MODULE_ORDER if cold_start else None,
         cold_start=cold_start,
         event_bus=bus,
-        port_inspector=build_port_inspector(spawned_pids=lambda: processes.spawned_pids),
+        port_inspector=build_port_inspector(
+            spawned_pids=lambda: processes.spawned_pids,
+            identifies=processes.identifies_port,
+        ),
         port_conflict_restarter=_own_conflict_restarter(processes),
         is_pid_alive=pid_alive,
         stage_monitor=StageHealthMonitor(

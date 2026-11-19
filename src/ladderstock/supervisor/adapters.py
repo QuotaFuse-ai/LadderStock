@@ -40,6 +40,10 @@ MODULE_ORDER: tuple[str, ...] = (
     "tickhub_us",
     "wire",
     "senate",
+    # Qdrant（2026-11-18 用户裁决）：本地单体二进制 + MCP 面，一个入口
+    # `run_stack.py`。排在这里是因为 senate / financecoffer 的知识库与
+    # 记忆都要它先就位；不排在最后，免得看门狗起来时向量层还是空的。
+    "qdrant",
     "financecoffer",
     "proxyfleet",
     "watch",

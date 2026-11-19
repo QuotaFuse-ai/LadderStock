@@ -895,7 +895,9 @@ class _StreamTurnPersist:
         self._question = question[:MAX_MESSAGE_CHARS]
         self._conn: sqlite3.Connection | None = None
         self._seq: int | None = None
-        self._broken = False
+        # `chat_store.connect(None)` 会回落到 `data_dir()`（源码态即仓库下的 `data/`），
+        # 没接库的调用方（单测、桩控制面）因此会写进用户的真实会话库
+        self._broken = data_root is None
 
     def _open(self) -> sqlite3.Connection | None:
         try:

@@ -251,6 +251,9 @@ class PortObservation:
     listening: bool
     owner: str
     pid: int | None = None
+    #: 占用者与账本 pid 不等，但属于本模块同一份服务（venv 启动器 → 解释器这类
+    #: 多代进程的子孙、多面模块另一面的启动器）：本尊在听，不是残留冲突
+    same_service: bool = False
 
 
 #: 端口观测器：一次调用看全部托管模块（装配侧实现可做一次连接表扫描摊薄成本）。
@@ -363,7 +366,7 @@ class HealthEventMonitor:
                 conflicts.append(item)
                 continue
             if item.owner in (OWNER_OWN_CHILD, OWNER_ADOPTED_PEER):
-                if item.pid is None or item.pid == entry.pid:
+                if item.pid is None or item.pid == entry.pid or item.same_service:
                     continue  # 旧口径 / 本尊在听（含已死本尊的旧观测）
                 if self._is_pid_alive is None or not self._is_pid_alive(item.pid):
                     continue  # 无探针 / 占用者已死：不是残留冲突

@@ -19,16 +19,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, Runner
 from openai import AsyncOpenAI
 
+_LOG = logging.getLogger(__name__)
+
 #: 单轮最多几次"模型→工具→模型"。到顶就停，避免模型反复查同一个数把请求拖死。
 DEFAULT_MAX_TURNS = 6
+
+#: 本机缓存表的数据日滞后多少天就要在表头显式标注。
+#: 3 天覆盖「周末 + 一个节假日」的正常休市；超过就不是正常休市能解释的了。
+STALE_DAYS_WARN = 3
 
 #: 事件名（装配层按这几个分支处理）
 EVENT_TEXT = "text"  # (名称, {"text": 累积全文})
@@ -277,6 +285,29 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         days = [day for day in days if day]
         return max(days) if days else None
 
+    def _normalize_code(raw: Any) -> str | None:
+        """把用户/模型给的代码归一成 6 位数字；取不到就返回 None。
+
+        接受 `600519` / `600519.SH` / `sh600519` 三种形态。**不用 lstrip 剥前缀**
+        ——那会按字符集吃掉代码本身的数字（`lstrip("shSHzszjbjBJ")` 的老写法有此坑）。
+        """
+        text = str(raw or "").strip().upper()
+        if not text:
+            return None
+        match = re.search(r"(\d{6})", text)
+        return match.group(1) if match else None
+
+    def _stale_days(as_of: str | None) -> int | None:
+        """数据日距今天（Asia/Shanghai）几天；无法判定返回 None。"""
+        if not as_of:
+            return None
+        try:
+            day = date.fromisoformat(as_of)
+        except ValueError:
+            return None
+        today = datetime.now(timezone(timedelta(hours=8))).date()
+        return max(0, (today - day).days)
+
     def _cell(value: Any) -> Any:
         if isinstance(value, (dict, list)):
             return json.dumps(value, ensure_ascii=False)[:180]
@@ -285,6 +316,59 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         if value is None:
             return None
         return str(value)[:200]
+
+    _name_planes: dict[str, Any] = {}
+
+    def _names_from_basic(root: Any) -> dict[str, str]:
+        """兜底：直接从 `symbol_basic` 只读表取 `code → name`。
+
+        为什么不只靠 `SymbolPlane`：它要遍历全部数据集、给 5000+ 标的算首字母，
+        冷路径下可能被别的进程（正式服 5950 与测试服 5951 共用同一份 data）拖住
+        或抛异常；而异常原先被静默吞掉，页面就只剩「名称」整列空。这张表只读，
+        不参与任何写锁，拿得到就先补上。
+        """
+        from ladderstock.data import archive
+
+        try:
+            snap = archive.snapshot("symbol_basic", root=root)
+        except Exception as exc:  # noqa: BLE001 - 兜底也读不出才是真缺口
+            _LOG.warning("symbol_basic 兜底读名失败：%s", exc)
+            return {}
+        names: dict[str, str] = {}
+        for row in snap.records:
+            code = _normalize_code(row.get("code"))
+            name = str(row.get("name") or "").strip()
+            if code and name:
+                names[code] = name
+        return names
+
+    def _symbol_names() -> dict[str, str]:
+        """`code → 名称`，先取本机标的字典（`SymbolPlane`），失败再回落 `symbol_basic`。
+
+        为什么需要：`fund_flow` / `dragon_tiger` 这类上游数据集的 `name` 字段是空的
+        （2026-11-19 实测 600519 的 name 为 null），直接展示会让表格「名称」整列空。
+        两条都读不出才返回空表——宁可留空，也不拿别处的名字硬凑。
+        """
+        from ladderstock.cli.paths import data_dir
+        from ladderstock.web.symbols import SymbolPlane
+
+        root = _root() or data_dir()
+        key = str(root)
+        plane = _name_planes.get(key)
+        if plane is None:
+            plane = SymbolPlane(data_root=root)
+            _name_planes[key] = plane
+        try:
+            # 复用同一个 SymbolPlane 实例：`_collect_cached` 只在字典文件变化时重算。
+            # 每次新建实例会把 6000+ 标的的首字母重算一遍（历史实测把 /symbols 拖过 5s）。
+            index, _ = plane._collect_cached()
+        except Exception as exc:  # noqa: BLE001 - 字典读不出要能看见并回落
+            _LOG.warning("symbol names 取自 SymbolPlane 失败，回落 symbol_basic：%s", exc)
+            return _names_from_basic(root)
+        names = {code: str(row.get("name") or "") for code, row in index.items()}
+        if names:
+            return names
+        return _names_from_basic(root)
 
     def _cached_tool(
         *,
@@ -297,11 +381,17 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         default_limit: int,
         caption: str,
         kind_hint: str | None = None,
+        code_kinds: tuple[str, ...] | None = None,
     ) -> ToolSpec:
         """读一张（或按 `kind` 分几张）本机缓存表，排成表格块。
 
         `fields` 是 payload 里的键，`columns` 是对应的人读表头——两列必须等长，
         这里不猜字段别名：上游没给的值就留空，不补 0。
+
+        `code_kinds` 声明哪些 kind 支持「按个股代码取数」（None = 该表不是个股维度）。
+        给了 code 就**只回这只票的行、并按这只票自己的最新交易日**取；查不到就明说
+        查不到，**绝不回退展示别的股票**——那正是「问茅台资金流却返回 000002」的成因：
+        旧实现不传 code，且用整张表的最新日过滤，别的票更新了这只没更新就一行不剩。
         """
         first = next(iter(datasets.values()))
 
@@ -313,8 +403,25 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             except (TypeError, ValueError):
                 limit = default_limit
             limit = max(1, min(limit, 50))
-            records = _read(dataset, limit=max(limit * 6, 200))
+
+            # 只有声明了个股维度的 kind 才接受 code；行业/概念表按代码过滤没有意义。
+            effective_kind = kind or next(iter(datasets))
+            accepts_code = code_kinds is not None and effective_kind in code_kinds
+            code = _normalize_code(args.get("code")) if accepts_code else None
+            if accepts_code and str(args.get("code") or "").strip() and code is None:
+                return ToolResult(
+                    text=f"{label}：代码 {args.get('code')!r} 不是合法的 6 位证券代码，未取数"
+                )
+
+            records = _read(dataset, code=code, limit=max(limit * 6, 200))
             if not records:
+                if code:
+                    return ToolResult(
+                        text=(
+                            f"{label}未取到（本机缓存里没有 {code} 的 {dataset} 记录，"
+                            f"可能这只票还没同步过）"
+                        )
+                    )
                 return ToolResult(
                     text=f"{label}未取到（本机缓存里没有 {dataset} 的记录，可能还没同步过）"
                 )
@@ -324,14 +431,30 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 for row in records
                 if latest is None or str(row.get("trade_date") or "")[:10] == latest
             ][:limit]
-            table_rows = [[_cell(row.get(field)) for field in fields] for row in rows]
-            metrics = {
-                "table": {
-                    "columns": columns,
-                    "rows": table_rows,
-                    "caption": f"{caption}（{latest or '交易日未知'} 本机缓存）",
-                }
-            }
+            if not rows:
+                # 理论上到不了（latest 取自 records 自身），留作兜底：宁可说没有，
+                # 也不把别的交易日的行当成最新日展示。
+                return ToolResult(text=f"{label}未取到（{dataset} 没有可展示的记录）")
+            names: dict[str, str] = {}
+            # 上游 name 整列为空时才去查字典：查一次够用，也别为本来有名字的表白跑一趟。
+            if "name" in fields and any(not str(row.get("name") or "").strip() for row in rows):
+                names = _symbol_names()
+            table_rows: list[list[Any]] = []
+            for row in rows:
+                cells: list[Any] = []
+                for field in fields:
+                    value = row.get(field)
+                    if field == "name" and not str(value or "").strip():
+                        value = names.get(str(row.get("code") or "").strip()) or None
+                    cells.append(_cell(value))
+                table_rows.append(cells)
+            behind = _stale_days(latest)
+            title = f"{caption}（{latest or '交易日未知'} 本机缓存）"
+            if code:
+                title = f"{caption} · {code}（{latest or '交易日未知'} 本机缓存）"
+            if behind is not None and behind > STALE_DAYS_WARN:
+                title += f"｜数据已滞后 {behind} 天，非当日口径"
+            metrics = {"table": {"columns": columns, "rows": table_rows, "caption": title}}
             sources = [
                 {
                     "name": f"本机缓存 · {dataset}",
@@ -345,6 +468,10 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 "count": len(rows),
                 "rows": rows,
             }
+            if code:
+                payload["code"] = code
+            if behind is not None:
+                payload["stale_days"] = behind
             return ToolResult(
                 text=json.dumps(payload, ensure_ascii=False, default=str),
                 metrics=metrics,
@@ -359,6 +486,14 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 "type": "string",
                 "enum": list(datasets),
                 "description": kind_hint,
+            }
+        if code_kinds:
+            properties["code"] = {
+                "type": "string",
+                "description": (
+                    "个股 6 位代码（如 600519）。问某一只票时必须传，"
+                    "否则返回的是全市场排行的前几行、不是这只票。"
+                ),
             }
         return ToolSpec(
             name=name,
@@ -519,8 +654,9 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             name="fund_flow",
             label="资金流",
             description=(
-                "查资金流向。kind=stock 个股资金流（按代码查需用 lookup 拿到的代码），"
-                "kind=industry 行业资金流排行。"
+                "查资金流向。kind=stock 个股资金流、kind=industry 行业资金流排行。"
+                "问某一只票（如「茅台资金流」）时必须传 code=该股 6 位代码，"
+                "否则拿到的是全市场排行前几行、不是这只票。"
                 "用户问「资金在往哪流」「主力净流入多少」时调用。"
             ),
             datasets={"stock": "fund_flow", "industry": "industry_fund_flow"},
@@ -529,6 +665,7 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             default_limit=15,
             caption="资金流向",
             kind_hint="stock 个股 / industry 行业，默认 stock",
+            code_kinds=("stock",),
         ),
         _cached_tool(
             name="dragon_tiger",
@@ -542,6 +679,7 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             columns=["名称", "代码", "收盘", "涨跌幅(%)", "净买入(元)", "净占比(%)"],
             default_limit=15,
             caption="龙虎榜",
+            code_kinds=("dragon_tiger",),
         ),
         _cached_tool(
             name="hot_rank",
@@ -555,6 +693,7 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             columns=["排名", "名称", "代码", "热度", "涨跌幅(%)", "标签"],
             default_limit=15,
             caption="个股热度榜",
+            code_kinds=("hot_rank",),
         ),
         _cached_tool(
             name="news_flash",

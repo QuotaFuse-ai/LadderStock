@@ -183,7 +183,9 @@ def test_cached_tool_marks_as_of_and_caption(tmp_path: Path, tools: dict[str, An
         root=tmp_path,
     )
     result = tools["hot_rank"].invoke({"limit": 2})
-    assert result.metrics["table"]["caption"].endswith("2026-11-13 本机缓存）")
+    # 表头必须带数据日；滞后超过阈值时会在后面追加「已滞后 N 天」提示，
+    # 所以这里断言包含而非 endswith（滞后提示是后加的口径，见 test_cached_tool_code_filter）。
+    assert "2026-11-13 本机缓存）" in result.metrics["table"]["caption"]
     assert result.sources[0]["name"] == "本机缓存 · hot_rank"
     assert result.sources[0]["as_of"] == "2026-11-13"
 

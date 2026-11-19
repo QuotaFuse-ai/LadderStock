@@ -106,6 +106,7 @@ class TestEnvTables:
             "tickhub_us",
             "wire",
             "senate",
+            "qdrant",
             "financecoffer",
             "proxyfleet",
             "watch",

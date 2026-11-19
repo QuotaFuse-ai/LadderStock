@@ -225,9 +225,22 @@ def _make_peer_dirs(tmp_path: Path) -> dict[str, str]:
     return env
 
 
-def _adapters(tmp_path: Path, host: FakeHost | None = None) -> tuple[FakeHost, dict[str, Any]]:
+def _adapters(
+    tmp_path: Path,
+    host: FakeHost | None = None,
+    *,
+    fc_form: str | None = None,
+) -> tuple[FakeHost, dict[str, Any]]:
+    """构造全部适配器。
+
+    `fc_form` 显式声明 financecoffer 的运行形态（`bundle` / `wsl`）。形态不再
+    隐式回落：容器形态的老用例必须传 `fc_form="wsl"`，否则适配器按「未声明」
+    失败关闭——这正是便携包要的语义。
+    """
     fake = host or FakeHost()
     env = _make_peer_dirs(tmp_path)
+    if fc_form is not None:
+        env["LDST_FINANCECOFFER_FORM"] = fc_form
     built = build_default_adapters(
         host=fake,
         env=env,
@@ -384,7 +397,7 @@ def _fc_host() -> FakeHost:
 
 
 def test_financecoffer_probe_needs_both_windows_port_and_wsl_api_container(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}", "932"), ports=(8100,))
     assert fc.probe() is True
@@ -398,7 +411,7 @@ def test_financecoffer_probe_needs_both_windows_port_and_wsl_api_container(tmp_p
 
 
 def test_financecoffer_start_runs_compose_then_keeps_an_anchor(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     spawned = fc.start()
 
@@ -414,7 +427,7 @@ def test_financecoffer_start_refuses_foreign_port_owner_without_side_effects(
     tmp_path: Path,
 ) -> None:
     """QUOT-516：Windows 侧占口 → 拒绝启动，绝不先把 WSL 容器拉起来。"""
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     # 模块未运行（WSL 内无 api 容器）而端口被外部占住 = 真冲突形态
     host.responses = [
         (needle, result)
@@ -435,7 +448,7 @@ def test_financecoffer_start_refuses_foreign_port_owner_without_side_effects(
 def test_financecoffer_start_proceeds_when_own_container_already_listening(
     tmp_path: Path,
 ) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
     spawned = fc.start()
@@ -455,7 +468,7 @@ def test_financecoffer_distro_override_wins_over_wsl_list(tmp_path: Path) -> Non
 
 
 def test_financecoffer_stop_reads_back_container_gone(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     fc.start()
     host.port_owner.clear()
@@ -559,7 +572,7 @@ def test_proxyfleet_probe_is_false_for_a_foreign_listener(tmp_path: Path) -> Non
 
 def test_financecoffer_identify_port_returns_single_port_evidence(tmp_path: Path) -> None:
     """带 port 调用返回单端口 PortEvidence（供 page_boot._identify 认领），不再是聚合。"""
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     pid = host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
 
@@ -574,7 +587,7 @@ def test_financecoffer_identify_port_returns_single_port_evidence(tmp_path: Path
 
 def test_financecoffer_identify_no_arg_returns_aggregate(tmp_path: Path) -> None:
     """无参 identify() 仍返回聚合 Identification，.matched / .ports 口径不变。"""
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
 

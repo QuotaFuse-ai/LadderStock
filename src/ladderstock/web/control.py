@@ -2024,6 +2024,37 @@ class ControlPlane:
             return set()
         return {int(item) for item in pids or ()}
 
+    def _launcher_tree_pids(
+        self, key: str, ctl: PeerControl, owners: Iterable[int | None], known: set[int]
+    ) -> set[int]:
+        """本控制面拉起的启动器的整棵进程树（只在有解释不了的占用者时才查）。
+
+        多面 peer（StockSenate 的 mcp + webui）每个面一个 venv 启动器，真正监听端口
+        的是启动器拉起的解释器子孙；账本只记一个根，另一面的监听者会被判成
+        foreign → 自愈不停拉替代实例。启动器必须先过 `_ownership_refusal`
+        （exe 逐字相符 + 创建时间相符），PID 复用的进程绝不会因此被认成自有。
+        """
+        unexplained = {int(pid) for pid in owners if pid is not None} - known
+        if not unexplained:
+            return set()
+        # supervisor 引擎拉起的面同样挂在本看板进程树下（账本只记主面）
+        try:
+            tree = {int(item) for item in self._tree_probe(os.getpid()) or ()}
+        except Exception:  # noqa: BLE001 - 查询失败等于没有证据，不放宽归属
+            tree = set()
+        if unexplained <= tree:
+            return tree
+        for record in pid_records(self._peer_state(key)):
+            if self._ownership_refusal(ctl, record) is not None:
+                continue
+            try:
+                tree |= {int(item) for item in self._tree_probe(int(record["pid"])) or ()}
+            except Exception:  # noqa: BLE001 - 查询失败等于没有证据，不放宽归属
+                continue
+            if unexplained <= tree:
+                break
+        return tree
+
     def _port_conflicts(
         self,
         key: str,
@@ -2045,6 +2076,12 @@ class ControlPlane:
         mine = set(state_pids(self._peer_state(key)))
         record = self._ledger_records().get(key)
         own_tree = self._own_tree_pids(record)
+        listeners = [
+            owner.pid
+            for owners in (mcp_owners, web_owners, *(extra_owners or {}).values())
+            for owner in owners
+        ]
+        mine |= self._launcher_tree_pids(key, ctl, listeners, mine | own_tree)
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
             for owner in self._port_probe(port):
                 conflicts.append(
@@ -2117,6 +2154,12 @@ class ControlPlane:
         mcp_owners = self._port_probe(ctl.mcp_port)
         web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
         extra_owners = {port: self._port_probe(port) for port in ctl.extra_ports}
+        listeners = [
+            owner.pid
+            for owners in (mcp_owners, web_owners, *extra_owners.values())
+            for owner in owners
+        ]
+        mine |= self._launcher_tree_pids(key, ctl, listeners, mine | own_tree)
         listening = bool(mcp_owners or web_owners or any(extra_owners.values()))
         health = (
             self._health_snapshot(ctl, item=item, mcp_listening=bool(mcp_owners))
@@ -2813,6 +2856,31 @@ class ControlPlane:
             for port, owner in self._occupied_ports(ctl)
             if not ctl.start_command_faces or port in target_ports
         ]
+
+        # 1a. 本方残留先清再起。原来的口径是「端口被占直接失败」，于是上一代
+        #     没退干净的残留（可执行文件就在本 peer 安装目录里）永远关不掉，
+        #     重启必然撞端口 —— 这就是「起不来」的死循环。只清可执行文件落在
+        #     本 peer 目录之下、且不在系统黑名单里的进程；落在目录外的一概判外部，
+        #     仍然失败关闭（DEC-004 不换端口 / DEC-014 不终止）。
+        residual = [(port, owner) for port, owner in occupied if self._own_residual_pid(ctl, owner)]
+        if residual:
+            for port, owner in residual:
+                job.log(f"  端口 {port} 被本方残留占用（PID {owner.pid}），先清理再启动")
+                if os.name == "nt":
+                    self._run(["taskkill", "/PID", str(owner.pid), "/T", "/F"], directory, 30.0)
+                else:  # pragma: no cover - 本项目以 Windows 为主
+                    self._run(["kill", "-TERM", str(owner.pid)], directory, 30.0)
+            deadline = time.monotonic() + START_GRACE_SEC
+            while time.monotonic() < deadline:
+                if not self._target_ports_occupied(ctl, target_ports):
+                    break
+                time.sleep(0.5)
+            occupied = [
+                (port, owner)
+                for port, owner in self._occupied_ports(ctl)
+                if not ctl.start_command_faces or port in target_ports
+            ]
+
         if occupied:
             port, owner = occupied[0]
             raise JobFailure(
@@ -3353,6 +3421,47 @@ class ControlPlane:
             for owner in self._port_probe(port):
                 occupied.append((port, owner))
         return occupied
+
+    def _target_ports_occupied(self, ctl: PeerControl, target_ports: set[int]) -> bool:
+        """本次要拉起的面里还有没有被占着的端口（清理残留后用它判断是否已释放）。"""
+        for port, _owner in self._occupied_ports(ctl):
+            if not ctl.start_command_faces or port in target_ports:
+                return True
+        return False
+
+    def _own_residual_pid(self, ctl: PeerControl, owner: PortOwner) -> bool:
+        """端口占用者是不是本 peer 目录里的残留进程（上一代没退干净 / 重复实例）。
+
+        判据两条，命中任意一条即可（都要求不在受保护的系统 / 关键进程名单里）：
+        1. 可执行文件落在本 peer 的安装目录之下；
+        2. 命令行里出现本 peer 安装目录的绝对路径。
+
+        为什么不能只看 1：bundle 的 venv 启动器（`Scripts\\python.exe`）实际
+         `ExecutablePath` 是用户级 uv / 系统解释器，落在安装根之外，只看 exe 会把
+         「跑的就是这份安装」的自家进程一律判成外部，于是残留永远清不掉。
+        两条都不命中（查不到路径 / 路径在目录外 / 受保护程序）一律 False ——
+        命令行 / 路径不匹配的外部程序绝不终止（DEC-014）。
+        """
+        if owner.pid is None:
+            return False
+        pid = int(owner.pid)
+        exe, name = self._process_info(pid, Path(ctl.directory))
+        label = (name or (os.path.basename(exe) if exe else "")).strip().lower()
+        if label in DENY_PROCESS_NAMES:
+            return False
+        if exe and _is_under(exe, ctl.directory):
+            return True
+        cmdline = self._safe_cmdline(pid)
+        if not cmdline:
+            return False
+        target = os.path.normcase(_abs_path(ctl.directory))
+        for part in cmdline:
+            try:
+                if target in os.path.normcase(_abs_path(part)):
+                    return True
+            except (OSError, TypeError, ValueError):
+                continue
+        return False
 
     # ---------------------------------------------------------------- 验证条件
 

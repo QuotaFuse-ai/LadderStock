@@ -17,7 +17,8 @@
 - `LDST_SCHEDULE_IN_WEB=0` 整个后台调度关掉（测试、排障、或你要改用 `schedule serve`）；
 - `LDST_SCHEDULE_KINDS=agent_research,watch_live` 只挂指定几类（想减负时用）。
 
-**别同时开 `ldst schedule serve`**：两边都会按表执行，任务会跑两遍（提醒重复、上游双份）。
+同一数据目录只允许一个调度器执行（`data/state/scheduler.lock`，见 `data/scheduler_lock.py`）：
+页面自启的 `ldst schedule run` 或手动开的调度进程先拿到锁时，这里转待命，对方退出再接管。
 """
 
 from __future__ import annotations
@@ -29,8 +30,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ladderstock.data import scheduler_lock
+
 RUNNER_ENV = "LDST_SCHEDULE_IN_WEB"
 KINDS_ENV = "LDST_SCHEDULE_KINDS"
+LEASE_HOLDER = "ldst run（看板内置调度）"
 
 
 def _all_kinds() -> tuple[str, ...]:
@@ -59,6 +63,10 @@ class ScheduleRunner:
         self._timezone = "Asia/Shanghai"
         self._loaded: list[str] = []
         self._error: str | None = None
+        self._lease: scheduler_lock.SchedulerLease | None = None
+        self._standby: threading.Thread | None = None
+        self._standby_holder: str | None = None
+        self._stopping = threading.Event()
 
     # ------------------------------------------------------------ 生命周期
 
@@ -75,10 +83,42 @@ class ScheduleRunner:
         return os.environ.get(RUNNER_ENV, "1").strip().lower() not in ("0", "false", "no", "off")
 
     def start(self) -> dict[str, Any]:
-        """装载并按表启动；已经在跑就只做一次 reload。"""
+        """装载并按表启动；已经在跑就只做一次 reload。
+
+        同一数据目录已有别的调度器在执行（锁被占）时不重复挂表，转后台待命，
+        对方退出后自动接管。
+        """
         if self._scheduler is not None:
             self.reload()
             return self.status()
+        if self._lease is None:
+            lease = scheduler_lock.try_acquire(self._root, holder=LEASE_HOLDER)
+            if lease is None:
+                self._begin_standby()
+                return self.status()
+            self._lease = lease
+        return self._start_scheduler()
+
+    def _begin_standby(self) -> None:
+        if self._standby is not None and self._standby.is_alive():
+            return
+        self._standby_holder = scheduler_lock.current_holder(self._root)
+        self._stopping.clear()
+
+        def wait() -> None:
+            lease = scheduler_lock.wait_acquire(
+                self._root, holder=LEASE_HOLDER, should_stop=self._stopping.is_set
+            )
+            if lease is None:
+                return
+            self._lease = lease
+            self._standby_holder = None
+            self._start_scheduler()
+
+        self._standby = threading.Thread(target=wait, name="ldst-schedule-standby", daemon=True)
+        self._standby.start()
+
+    def _start_scheduler(self) -> dict[str, Any]:
         try:
             from apscheduler.schedulers.background import (  # type: ignore[import-untyped]
                 BackgroundScheduler,
@@ -136,6 +176,7 @@ class ScheduleRunner:
             return self.status()
 
     def shutdown(self) -> None:
+        self._stopping.set()
         scheduler = self._scheduler
         self._scheduler = None
         if scheduler is not None:
@@ -143,10 +184,15 @@ class ScheduleRunner:
                 scheduler.shutdown(wait=False)
             except Exception:  # noqa: BLE001 - 已经停了
                 pass
+        lease, self._lease = self._lease, None
+        if lease is not None:
+            lease.release()
 
     def status(self) -> dict[str, Any]:
         return {
             "running": self._scheduler is not None,
+            "standby": self._scheduler is None and self._standby_holder is not None,
+            "standby_holder": self._standby_holder,
             "timezone": self._timezone,
             "kinds": list(self._kinds),
             "jobs": list(self._loaded),

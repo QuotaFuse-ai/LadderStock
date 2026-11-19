@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -60,6 +61,8 @@ BACKOFF_SECONDS: tuple[float, ...] = (5.0, 15.0, 45.0)
 WINDOW_SECONDS = 300.0
 DEFAULT_POLL_INTERVAL = 1.0
 DEFAULT_LOG_MAX_LINES = 200
+#: `/state` 快照的并发度：一模块一个判活，外加七阶段快照
+SNAPSHOT_WORKERS = 8
 
 # 484 前端契约：self_heal.status ∈ ok | healing | gave_up（与 health 三值一一对应）。
 SELF_HEAL_STATUS: dict[str, str] = {
@@ -444,10 +447,24 @@ class SelfHealEngine:
                 known.setdefault(module, self._module_ports.get(module, ()))
             for entry in self.ledger.entries():
                 known.setdefault(entry.module, tuple(entry.ports))
-            modules = [
-                self._module_snapshot(module, ports, self.ledger.get(module), now)
-                for module, ports in known.items()
-            ]
+            # 逐模块判活彼此独立，页面自有子进程的判活还要起一次 PowerShell；串行时
+            # 整个 /state 是各项之和（实测 7–48s），并行后只取最慢的那一项。
+            items = [(module, ports, self.ledger.get(module)) for module, ports in known.items()]
+            with ThreadPoolExecutor(
+                max_workers=SNAPSHOT_WORKERS, thread_name_prefix="ldst-snapshot"
+            ) as pool:
+                stages = (
+                    pool.submit(self._stage_monitor.snapshot)
+                    if self._stage_monitor is not None
+                    else None
+                )
+                modules = list(
+                    pool.map(
+                        lambda item: self._module_snapshot(item[0], item[1], item[2], now),
+                        items,
+                    )
+                )
+                stage_payload = stages.result() if stages is not None else None
             modules.sort(key=lambda item: str(item["module"]))
             payload: dict[str, Any] = {
                 "ok": True,
@@ -464,7 +481,7 @@ class SelfHealEngine:
                 payload["events_latest"] = self.event_bus.latest_seq
             if self._stage_monitor is not None:
                 # 采集 → 入库七阶段整链路快照（QUOT-562）：schema 见 core/stage_events。
-                payload["stages"] = self._stage_monitor.snapshot()
+                payload["stages"] = stage_payload
             return payload
 
     def _module_snapshot(
