@@ -34,6 +34,11 @@ TEMPERATURE_FORMULA = (
 )
 
 
+def _as_int(value: Any) -> int:
+    """脏数据兜底：只有真正的 int 才当成板数，其余（None / str / 浮点）按 0。"""
+    return value if isinstance(value, int) else 0
+
+
 def _codes(records: list[dict[str, Any]]) -> set[str]:
     codes: set[str] = set()
     for record in records:
@@ -260,7 +265,7 @@ def _live_metrics(day: date | str, root: Any = None) -> dict[str, Any] | None:
                 "name": str(item.get("name") or ""),
                 "streak": item.get("streak"),
             }
-            for item in leaders
+            for item in (leaders or [])
             if isinstance(item, dict) and str(item.get("code") or "").strip()
         ],
         "unknown": {"limit_pool": 0, "broken_board": 0},
@@ -357,7 +362,7 @@ def _live_full_metrics(
             for item in sorted(
                 pool_rows,
                 key=lambda row: (
-                    -(row.get("streak") if isinstance(row.get("streak"), int) else 0),
+                    -_as_int(row.get("streak")),
                     str(row.get("code") or ""),
                 ),
             )[:10]

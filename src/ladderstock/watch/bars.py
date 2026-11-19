@@ -67,8 +67,11 @@ def _normalize(row: Mapping[str, Any], day: str) -> dict[str, Any]:
     ts = _parse_ts(row.get("ts"))
     if ts.date().isoformat() != day:
         raise BarRejected(f"{code} 的样本日期 {ts.date().isoformat()} 不是 {day}（拒收旧数据）")
+    raw_price = row.get("price")
+    if raw_price is None:
+        raise BarRejected(f"{code} 的 price 缺失")
     try:
-        price = float(row.get("price"))
+        price = float(raw_price)
     except (TypeError, ValueError) as exc:
         raise BarRejected(f"{code} 的 price 非法：{row.get('price')!r}") from exc
     if price <= 0:

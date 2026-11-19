@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from ladderstock.supervisor.adapters import (

@@ -32,9 +32,6 @@ from typing import Any
 RUNNER_ENV = "LDST_SCHEDULE_IN_WEB"
 KINDS_ENV = "LDST_SCHEDULE_KINDS"
 
-_RUNNER: ScheduleRunner | None = None
-_RUNNER_LOCK = threading.Lock()
-
 
 def _all_kinds() -> tuple[str, ...]:
     """调度表支持的全部任务类型（单一来源：cli/schedule.py 的 JOB_KINDS）。"""

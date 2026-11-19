@@ -63,13 +63,14 @@ def symbol_refresh(
             progress=progress,
         )
 
+    exit_code = EXIT_OK if result.rows else EXIT_SOURCE
     payload = {
         "command": "ldst symbol refresh",
         "result": result.as_dict(),
-        "exit_code": EXIT_OK if result.rows else EXIT_SOURCE,
+        "exit_code": exit_code,
     }
     emit(payload, output)
-    raise typer.Exit(payload["exit_code"])
+    raise typer.Exit(exit_code)
 
 
 def symbol_status(output: OutputOption = None) -> None:

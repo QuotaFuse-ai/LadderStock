@@ -3396,7 +3396,10 @@ class ControlPlane:
         # compose / 计划任务形态本来就没有 .venv，它们的「已安装」另有判据（与快照
         # installed 同源）：compose 文件在位、目录在位。否则 Qdrant 这类刚一键接入
         # 的模块会被判成「没装」，配置抽屉与写入接口一起失效。
-        compose_ready = bool(ctl.compose_file) and (path.parent / ctl.compose_file).is_file()
+        compose_name = ctl.compose_file
+        compose_ready = False
+        if compose_name:
+            compose_ready = (path.parent / compose_name).is_file()
         task_ready = bool(ctl.task_name) and path.parent.is_dir()
         # 便携二进制形态（2026-11-18 Qdrant 去 Docker 化）：没有 .venv、没有 compose、
         # 也没有计划任务，判据是 scaffold 落下的 config.yaml + .env 在位。

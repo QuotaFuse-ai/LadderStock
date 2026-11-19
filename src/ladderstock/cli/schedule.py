@@ -1368,6 +1368,9 @@ def _run_watch_alert(
             continue
         price = row.get("price")
         prev = row.get("prev_close")
+        if price is None or prev is None:
+            missing.append(code)
+            continue
         try:
             price_f = float(price)
             prev_f = float(prev)
@@ -1449,7 +1452,7 @@ def _board_limit_pct(code: str, name: str | None) -> float:
     return 10.0
 
 
-def _limit_price_from_prev(prev_close: float, code: str, name: str | None) -> float | None:
+def _limit_price_from_prev(prev_close: float | None, code: str, name: str | None) -> float | None:
     """用昨收推当日涨停价：`昨收 × (1 + 幅度)`，四舍五入到分。
 
     当日涨停池还没同步（盘中就是这种情况）时，这是**唯一**能给出封板判定基准的办法；
@@ -1629,9 +1632,13 @@ def _run_watch_live(
             if not isinstance(row, dict):
                 continue
             code = str(row.get("code") or "").strip()
+            raw_price = row.get("price")
+            raw_change = row.get("change_pct")
+            if raw_price is None or raw_change is None:
+                continue
             try:
-                price = float(row.get("price"))
-                change = float(row.get("change_pct"))
+                price = float(raw_price)
+                change = float(raw_change)
             except (TypeError, ValueError):
                 continue
             if code and price > 0 and change >= 4.5:
@@ -1647,9 +1654,13 @@ def _run_watch_live(
         code = _bare(str(row.get("code") or ""))
         if not code:
             continue
+        raw_price = row.get("price")
+        if raw_price is None:
+            continue
         try:
-            price = float(row.get("price"))
-            prev = float(row.get("prev_close")) if row.get("prev_close") is not None else None
+            price = float(raw_price)
+            raw_prev = row.get("prev_close")
+            prev = float(raw_prev) if raw_prev is not None else None
         except (TypeError, ValueError):
             continue
         prev_snap = state.get(code) or {}
@@ -1691,7 +1702,7 @@ def _run_watch_live(
         if limit_price is None:
             # 涨停池只提供「涨停价」，不提供样本：票本身仍按自选/持仓采，样本条数不受影响
             limit_price = limit_prices.get(code)
-        if limit_price is None and code in sample_only:
+        if limit_price is None and prev is not None and code in sample_only:
             # 兜底样本来自涨停池：当日池还没同步（盘中常态），用昨收推涨停价，
             # 封板/开板判定才有基准。自选票不推算——不替普通票编一个涨停价。
             limit_price = _limit_price_from_prev(
@@ -1766,7 +1777,7 @@ def _run_watch_live(
     )
     if research is not None:
         detail += f"；异动研究[{research.get('status')}]：{str(research.get('detail') or '')[:120]}"
-    payload: dict[str, Any] = {
+    result_payload: dict[str, Any] = {
         **base,
         "status": status,
         "detail": detail,
@@ -1778,8 +1789,8 @@ def _run_watch_live(
         "minute_bars": bars_result,
     }
     if research is not None:
-        payload["auto_research"] = research
-    return payload
+        result_payload["auto_research"] = research
+    return result_payload
 
 
 #: 一次异动最多自动研究几只：30 秒级任务里跑 agent 是重动作，宁可少跑几只
@@ -2051,7 +2062,7 @@ def _run_plan_tick(
             ),
             encoding="utf-8",
         )
-        summary = _one_line(reply)
+        summary = " ".join(reply.split())
         lines.append(f"- {plan.symbol_label()}：{summary[:300]}")
         return {"status": "ok", "summary": summary, "path": str(out_path)}
 

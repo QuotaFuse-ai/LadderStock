@@ -74,6 +74,13 @@ warn_unused_ignores = true
 module = ["yaml.*", "jsonschema.*"]
 ignore_missing_imports = true
 
+# psycopg 是 FC 直读的**可选**依赖（本机装了才走直读，CI 里没装）。
+# 「找不到存根」只说明该可选依赖没安装，不是代码缺陷——整包忽略缺失导入，
+# 让本机与 CI 两侧判定一致（否则 CI 报 import-not-found、本机报 unused-ignore）。
+[[tool.mypy.overrides]]
+module = ["psycopg", "psycopg.*"]
+ignore_missing_imports = true
+
 # QUOT-611：进程内 mem0 SDK 及其可选运行时（torch / sentence-transformers）
 # 都没有 py.typed，且 torch 是安装包按需携带的可选依赖；这些模块在 CI 里
 # 只可能被「找不到存根」这一种原因报错，按官方建议整包忽略缺失导入。

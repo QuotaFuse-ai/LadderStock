@@ -410,7 +410,10 @@ def run_once(job_id: str, *, data_root: Path | None = None) -> dict[str, Any]:
                 **last,
             }
 
-    captured = {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")}
+    captured: dict[str, Any] = {
+        "status": "running",
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+    }
 
     def _worker() -> None:
         from ladderstock.cli.schedule import run_job

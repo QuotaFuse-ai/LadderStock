@@ -468,7 +468,7 @@ def _replace_role_skills(text: str, role: str, skills: list[str]) -> str:
             start = index
             break
     if start is None:
-        raise SenateError(f"agent_roles.toml 里没有角色 {role}")
+        raise SenateError("SENATE_INVALID_VALUE", f"agent_roles.toml 里没有角色 {role}")
     end = len(lines)
     for index in range(start + 1, len(lines)):
         stripped = lines[index].strip()
@@ -674,7 +674,7 @@ class SenateRoleModels:
         config_dir = self.config_path.parent
         roles_file = config_dir / "agent_roles.toml"
         if not roles_file.is_file():
-            raise SenateError("agent_roles.toml 不存在，无法保存技能")
+            raise SenateError("SENATE_WRITE_FAILED", "agent_roles.toml 不存在，无法保存技能")
         known = {item["name"] for item in self._skill_library(config_dir)}
         cleaned: list[str] = []
         for raw in skills:
@@ -682,7 +682,7 @@ class SenateRoleModels:
             if not name:
                 continue
             if name not in known:
-                raise SenateError(f"技能库中没有：{name}")
+                raise SenateError("SENATE_INVALID_VALUE", f"技能库中没有：{name}")
             if name not in cleaned:
                 cleaned.append(name)
         text = roles_file.read_text(encoding="utf-8")
@@ -773,10 +773,10 @@ class SenateRoleModels:
     def _validate_roles(path: Path) -> None:
         data = read_toml(path)
         if not isinstance(data.get("roles"), dict) or not data["roles"]:
-            raise SenateError("agent_roles.toml 解析后缺少 [roles]")
+            raise SenateError("SENATE_WRITE_FAILED", "agent_roles.toml 解析后缺少 [roles]")
         for name in data["roles"]:
             if not isinstance(data["roles"][name], dict):
-                raise SenateError(f"角色 {name} 不是表")
+                raise SenateError("SENATE_WRITE_FAILED", f"角色 {name} 不是表")
 
     def status(self) -> dict[str, Any]:
         contract, authoritative = self._contract()

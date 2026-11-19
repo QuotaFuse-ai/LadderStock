@@ -717,7 +717,7 @@ def _live_ladder(day: date, root: Any) -> dict[str, Any] | None:
                 for row in pool_rows
                 if str(row.get("code") or "").strip()
             ),
-            key=lambda row: (-(row["boards"] or 0), row["code"]),
+            key=lambda row: (-(_int_or_none(row["boards"]) or 0), row["code"]),
         )[:10]
         pool_at = str((pool or {}).get("fetched_at") or "")
         result["source_detail"] = (
