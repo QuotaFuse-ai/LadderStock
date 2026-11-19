@@ -125,6 +125,12 @@ PROCESS_QUERY_TIMEOUT_SEC = 10.0
 #: 两者天然有子秒级差；5s 足够覆盖落盘/取时开销，又小于常见的 PID 复用窗口（QUOT-177 P1-2）
 PROCESS_START_TOLERANCE_SEC = 5.0
 
+#: 端口就绪宽限期（秒）。子模块启动是 wrapper → venv → serve 多层，`spawn` 返回时
+#: 只有最外层起来，真正绑端口的孙子进程还要几秒。这段窗口里「进程在、端口没起」
+#: 是正常启动过程；立刻判 FAILED 会让页面弹出「进程还在但服务端口没有监听」的
+#: 假故障（并连带后续模块）。超过宽限期仍未监听才如实报故障。
+PORT_READY_GRACE_SEC = 30.0
+
 #: 任何情况下都不终止的进程（PID 复用时的最后一道闸，QUOT-123 P0-2）
 DENY_PROCESS_NAMES = frozenset(
     {
@@ -1486,6 +1492,7 @@ class ControlPlane:
         supervisor: SupervisorEngine | None = None,
         cmdline_probe: Callable[[int], tuple[str, ...] | None] | None = None,
         mcp_probe: Callable[[str, float], tuple[bool, str]] | None = None,
+        tree_probe: Callable[[int], list[int]] | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
@@ -1505,6 +1512,9 @@ class ControlPlane:
         # QUOT-547：实时命令行（PID 复用判定）与 MCP 协议存活探测都可注入，
         # 测试给假件；生产走 proctree 的 CIM/wmic 与回环 MCP GET。
         self._cmdline_probe = cmdline_probe or default_process_ops().cmdline
+        # 进程树（QUOT-XXX 多代进程归属）：账本只记根 PID，监听端口的是它的子孙
+        # （ProxyFleet 的 proxyfleet.exe → serve 子进程）。归属判定需要这条证据。
+        self._tree_probe = tree_probe or default_process_ops().tree_pids
         self._mcp_probe = mcp_probe or probe_mcp_alive
         self._http_post = http_post or _post_json
         self._spawn = spawn or _spawn_process
@@ -1540,6 +1550,10 @@ class ControlPlane:
             sorted({ctl.repo for ctl in self.peers.values() if ctl.repo}),
         )
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ldst-control")
+        #: 探测专用池（`board()` 里每个 peer 的端口/进程/health/版本探测都是阻塞的
+        #: subprocess 或 HTTP，串行会把列表页拖到十几秒——前端 15s 就超时）。
+        #: 与 `_executor` 分开，长任务（启停/安装）不会把探测线程占满。
+        self._probe_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ldst-probe")
 
     # ---------------------------------------------------------------- 状态文件
 
@@ -1822,7 +1836,8 @@ class ControlPlane:
                 # 按「本控制面记录过 PID」判定（QUOT-481 缺陷 3）：外部手工拉起的
                 # 进程即使占着端口也不显示可停（DEC-014 硬约束 3：绝不终止非本
                 # 控制面启动的进程；面板上如实把它显示成运行中即可）。
-                "can_stop": ctl.managed and bool(state_pids(self._peer_state(key))),
+                "can_stop": ctl.managed
+                and (bool(state_pids(self._peer_state(key))) or self._supervised_own(key)),
                 "can_open": open_url is not None,
                 #  config_keys 为空 = 没有可写键（未配白名单的模块）：页面据此置灰
                 # 「编辑配置」，不给空抽屉与「保存后创建」的假承诺（QUOT-480）。
@@ -1925,6 +1940,14 @@ class ControlPlane:
         if pids and not any(_pid_alive(pid) for pid in pids):
             return STATUS_STOPPED, "进程已退出，端口无监听"
         if pids:
+            # 刚 spawn 的进程要先经 wrapper → venv → serve 才绑端口，中间有几秒
+            # 「进程在、端口没起」的正常窗口；不满宽限期照实报「启动中」，
+            # 超时才判故障（否则一屏假告警）。
+            started = _parse_state_time(self._peer_state(key).get("last_start_at"))
+            if started is not None:
+                elapsed = (datetime.now(UTC) - started).total_seconds()
+                if 0 <= elapsed < PORT_READY_GRACE_SEC:
+                    return STATUS_STARTING, "启动中：进程已起，端口尚未监听"
             return STATUS_FAILED, "进程仍在但端口无监听（保留进程日志）"
         if not installed:
             return STATUS_NOT_INSTALLED, self._not_installed_detail(key)
@@ -1966,6 +1989,40 @@ class ControlPlane:
                 return ledger.records()
         return {}
 
+    def _supervised_own(self, key: str) -> bool:
+        """该 peer 是否由 supervisor 引擎持有归属（本会话亲手拉起）。
+
+        `LDST_SUPERVISOR_OWN_PROCESSES=1` 时模块由 supervisor 冷启动，控制面自己
+        的账本（`_peer_state`）里没有记录——启停判据必须认这层归属，否则页面
+        显示「运行中」却永远不给停止按钮。认领态（外部 peer）仍返回 False：
+        那是只观测的对象，绝不终止 / 重启（QUOT-545 红线）。
+        """
+        if self.supervisor is None:
+            return False
+        record = self._ledger_records().get(key)
+        if record is None or record.adopted_peer:
+            return False
+        if record.origin != "spawned" or record.state not in {"starting", "running"}:
+            return False
+        pid = getattr(record, "pid", None)
+        return pid is not None and _pid_alive(int(pid))
+
+    def _own_tree_pids(self, record: ModuleRecord | None) -> set[int]:
+        """账本进程的全部子孙 PID（含根）。
+
+        多代进程模块（`proxyfleet.exe serve` 的 venv 启动器再拉起真正的 serve）
+        只把根 PID 记账，监听端口的是子孙；这条证据让「同一份服务」不被 PID
+        不等误判成外部进程。查不到就返回空集（失败关闭，退回只比 PID）。
+        """
+        pid = getattr(record, "pid", None)
+        if record is None or pid is None:
+            return set()
+        try:
+            pids = self._tree_probe(int(pid))
+        except Exception:  # noqa: BLE001 - 查询失败等于没有证据，绝不据此放宽归属
+            return set()
+        return {int(item) for item in pids or ()}
+
     def _port_conflicts(
         self,
         key: str,
@@ -1986,6 +2043,7 @@ class ControlPlane:
         conflicts: list[dict[str, Any]] = []
         mine = set(state_pids(self._peer_state(key)))
         record = self._ledger_records().get(key)
+        own_tree = self._own_tree_pids(record)
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
             for owner in self._port_probe(port):
                 conflicts.append(
@@ -2007,7 +2065,10 @@ class ControlPlane:
         for bound_port in sorted(bound):
             for owner in bound[bound_port]:
                 classification, reason = classify_port_owner(
-                    pid=owner.pid, mine_pids=mine, record=record
+                    pid=owner.pid,
+                    mine_pids=mine,
+                    record=record,
+                    own_tree_pids=own_tree,
                 )
                 if classification == OWN_CHILD:
                     continue
@@ -2051,6 +2112,7 @@ class ControlPlane:
         item = raw_item if isinstance(raw_item, Mapping) else {}
         record = self._ledger_records().get(key)
         mine = set(state_pids(self._peer_state(key)))
+        own_tree = self._own_tree_pids(record)
         mcp_owners = self._port_probe(ctl.mcp_port)
         web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
         extra_owners = {port: self._port_probe(port) for port in ctl.extra_ports}
@@ -2091,6 +2153,7 @@ class ControlPlane:
                     mine_pids=mine,
                     record=record,
                     live_cmdline=live_cmdline,
+                    own_tree_pids=own_tree,
                 )
                 ports.append(
                     {
@@ -2388,7 +2451,10 @@ class ControlPlane:
         registry = self._sources_peers()
         registered = set(registry)
         keys = [key for key in self.peers if key in registered] or list(self.peers)
-        snapshots = [self.snapshot(key) for key in keys]
+        # 每张卡的探测都是阻塞调用（端口归属查进程、health 打 HTTP、版本起 venv
+        # 子进程），串行累加成十几秒，页面 15s 超时就会报「取数超时」。并发跑，
+        # 总耗时≈最慢一张卡。
+        snapshots = list(self._probe_executor.map(self.snapshot, keys))
         by_id = {snapshot["id"]: snapshot for snapshot in snapshots}
         for key, item in registry.items():
             if key not in by_id and isinstance(item, Mapping):
@@ -2408,7 +2474,9 @@ class ControlPlane:
                 for key, item in registry.items()
                 if isinstance(item, Mapping)
             ],
-            "components": [self.component_snapshot(key) for key in self.components],
+            "components": list(
+                self._probe_executor.map(self.component_snapshot, list(self.components))
+            ),
             "port_conflicts": conflicts,
             "ports": {
                 # 看板端口按当前实例解析（prod=5950 / test=5951），不能写死，
@@ -3192,6 +3260,20 @@ class ControlPlane:
         if ctl.task_name:
             return self._stop_task(job, ctl)
         records = pid_records(self._peer_state(job.peer))
+
+        # supervisor 托管的模块（LDST_SUPERVISOR_OWN_PROCESSES=1）：控制面账本里没有
+        # 记录，但引擎持有归属证据与「整树终止 + 回读端口」能力。委托给引擎停，
+        # 否则这里会直接判成「未记录到本控制面启动的进程」——停止按钮变死键。
+        if not records and self._supervised_own(job.peer) and self.supervisor is not None:
+            job.step = f"委托 supervisor 停止 {job.peer}"
+            outcome = self.supervisor.stop_module(job.peer)
+            job.log(f"  supervisor 结果：{outcome.get('record')}")
+            entry = self._peer_state(job.peer)
+            entry["pids"] = []
+            entry["last_stop_at"] = _now_iso()
+            entry.pop("last_start_at", None)
+            self._save_state()
+            return
 
         # 只终止「本控制面启动过」的进程（DEC-014 硬约束 3）
         if not records:

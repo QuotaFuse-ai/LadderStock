@@ -1051,9 +1051,14 @@ def build_blocks(
 
     # 2. 指标：白名单 + 出处；拿不到时如实说没取到，而不是凭空造数
     items = _pick_metrics(metrics)
+    chart = _series_block(metrics)
+    table = _table_block(metrics)
     if items:
         blocks.append(build_block(BLOCK_METRIC, {"items": items}))
-    elif not skip_metric_notice:
+    elif not skip_metric_notice and chart is None and table is None:
+        # 指标段为空 ≠ 本轮没取到数据：多行结果走「表格」、序列走「图」，这两种
+        # 形态本来就没有白名单标量键（四只指数的行情表就是一例）。这时再报
+        # 「本轮没有取到可核实的指标数据」，等于对着一屏真实数据说没数。
         blocks.append(
             build_block(
                 BLOCK_NOTICE,
@@ -1066,12 +1071,10 @@ def build_blocks(
         )
 
     # 3. 序列 → 图
-    chart = _series_block(metrics)
     if chart is not None:
         blocks.append(build_block(BLOCK_CHART, chart))
 
     # 4. 表格
-    table = _table_block(metrics)
     if table is not None:
         blocks.append(build_block(BLOCK_TABLE, table))
 

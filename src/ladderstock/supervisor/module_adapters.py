@@ -595,8 +595,15 @@ class PsutilHostPivot(WindowsHostPivot):
         # 只对「名字已经和 needle 沾边」或「解释器/运行时」读命令行：读全量 cmdline
         # 在 Windows 上会被 ERROR_PARTIAL_COPY 重试拖死（见 _snapshot_of 注释）。
         runtime_names = {
-            "python.exe", "python", "pythonw.exe", "pythonw", "py.exe",
-            "node.exe", "node", "qdrant.exe", "qdrant",
+            "python.exe",
+            "python",
+            "pythonw.exe",
+            "pythonw",
+            "py.exe",
+            "node.exe",
+            "node",
+            "qdrant.exe",
+            "qdrant",
         }
         for proc in psutil.process_iter(["pid", "name"]):
             try:
@@ -1421,9 +1428,7 @@ def _command_adapters(
     }
 
 
-def rebase_adapter_ports(
-    adapter: BaseAdapter, ports: tuple[int, ...]
-) -> BaseAdapter:
+def rebase_adapter_ports(adapter: BaseAdapter, ports: tuple[int, ...]) -> BaseAdapter:
     """按避让后的实际端口重建命令行型适配器（QUOT-594 端口自动避让）。
 
     `_command_adapters()` 构造时端口硬编码在 `StartFace.argv`（`--port NNNN`）
@@ -1435,8 +1440,7 @@ def rebase_adapter_ports(
     """
     if len(ports) != len(adapter.faces):
         raise SupervisorError(
-            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数"
-            f"（{len(adapter.faces)}）不符"
+            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数（{len(adapter.faces)}）不符"
         )
     faces = []
     for face, port in zip(adapter.faces, ports, strict=True):
@@ -1451,8 +1455,7 @@ def rebase_adapter_ports(
                 match=tuple(_rebase_match(m, old, new) for m in face.match),
                 alt_match=tuple(_rebase_match(m, old, new) for m in face.alt_match),
                 alt_matches=tuple(
-                    tuple(_rebase_match(m, old, new) for m in group)
-                    for group in face.alt_matches
+                    tuple(_rebase_match(m, old, new) for m in group) for group in face.alt_matches
                 ),
             )
         )
@@ -1586,9 +1589,84 @@ class FinanceCofferAdapter:
         self._distro_cache: str | None = None
         self._fc_cache: tuple[float, str] = (0.0, "")
 
+    def _is_bundle(self) -> bool:
+        """bundle 形态判据：`install_state.json` 在位的就绪包。
+
+        2026-11-18 起 FinanceCoffer 已本地化（pg / redis / minio / api 都是
+        `runtime/` 下的 Windows 原生二进制，由 `modules.financecoffer.services`
+        启停），不再跑在 WSL 容器里。判据只认这一个标记，两种形态共用同一目录，
+        没有标记的老机器仍然走原来的 compose 路径。
+        """
+        return (self._peer / "install_state.json").is_file()
+
+    def _start_bundle(self) -> SpawnedProcess:
+        """本地 bundle 启动：pg → minio → api（pg 是 api 的硬依赖，必须串行）。"""
+        from ladderstock.modules.financecoffer import services
+
+        for port in self.ports:
+            evidence = self._build_evidence(port)
+            if evidence.listening and not evidence.matched:
+                raise SupervisorError(
+                    f"financecoffer 的端口 {port} 已被非本模块进程占用"
+                    f"（pid={evidence.pid} cmd={' '.join(evidence.cmdline)[:160]}），拒绝启动"
+                )
+        pg = services.start_pg()
+        if not pg.get("ok"):
+            raise SupervisorError(f"financecoffer 的 PostgreSQL 起不来：{pg.get('detail')}")
+        # minio 不可用只影响对象存储面，API 仍可对外，不因此拒绝启动
+        services.start_minio()
+        api = services.start_api(wait_seconds=10.0)
+        pid = 0
+        try:
+            pid = int((self._peer / "run" / "fc-api.pid").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pid = 0
+        if not api.get("ok") and pid <= 0:
+            raise SupervisorError(f"financecoffer API 起不来：{api.get('detail')}")
+        if pid:
+            self._roots.append(pid)
+        self._cache.clear()
+        self._fc_cache = (0.0, "")
+        # 必须回真实命令行：引擎用 cmdline_hash 做 PID 复用对账，若这里给逻辑名
+        # （"financecoffer serve api"），与实际 `python -m financecoffer serve api`
+        # 哈希对不上 → reconcile 判 suspected_pid_reuse 把刚起来的模块记成 stopped
+        # （进程仍在监听，状态与事实自相矛盾）。
+        cmdline: tuple[str, ...] = ("financecoffer", "serve", "api")
+        if pid:
+            try:
+                snap = self._host.snapshot(pid)
+            except Exception:
+                snap = None
+            if snap is not None and getattr(snap, "cmdline", None):
+                cmdline = tuple(snap.cmdline)
+        return SpawnedProcess(
+            pid=pid,
+            parent_pid=os.getpid(),
+            cmdline=cmdline,
+        )
+
+    def _stop_bundle(self) -> None:
+        from ladderstock.modules.financecoffer import services
+
+        try:
+            services.stop_all()
+        finally:
+            # 兜底：services 侧半停（pid 文件失真 / 某一步抛异常）时，按本适配器
+            # 已知的根进程强杀整树，保证端口一定释放——否则引擎 `_await_quiet`
+            # 超时，整个模块被记成 failed，停止按钮永远失败。
+            for root_pid in list(self._roots):
+                try:
+                    self._host.terminate_tree(root_pid, force=True)
+                except Exception:
+                    pass
+            self._roots.clear()
+            self._cache.clear()
+
     # ------------------------------------------------------------------ 协议
 
     def start(self) -> SpawnedProcess:
+        if self._is_bundle():
+            return self._start_bundle()
         # Windows 侧冲突预检（QUOT-516）：端口被非本模块进程占住时拒绝启动，
         # 否则容器会在 WSL 内照常拉起，Windows 侧却永远连不上（静默假成功）。
         for port in self.ports:
@@ -1636,6 +1714,9 @@ class FinanceCofferAdapter:
 
     def stop(self, pid: int | None = None, timeout: float | None = None) -> None:
         del pid, timeout
+        if self._is_bundle():
+            self._stop_bundle()
+            return
         distro = self.distro()
         self._wsl(distro, self._stop_script(), timeout=WSL_COMMAND_TIMEOUT_SEC)
         for root in self._roots:
@@ -1645,6 +1726,9 @@ class FinanceCofferAdapter:
         self._cache.clear()
 
     def kill(self) -> None:
+        if self._is_bundle():
+            self._stop_bundle()
+            return
         distro = self.distro()
         self._wsl(distro, self._kill_script(), timeout=WSL_COMMAND_TIMEOUT_SEC)
         for root in self._roots:
@@ -1678,6 +1762,28 @@ class FinanceCofferAdapter:
             return PortEvidence(port=port, listening=False, detail="Windows 侧端口未监听")
         pid = self._host.owner_pid(port)
         chain = self._host.parent_chain(pid) if pid else ()
+        if self._is_bundle():
+            # 本地 bundle 形态没有 WSL 容器可查，归属证据只能是「占用端口的进程
+            # 就是 runtime/api 起的 financecoffer serve」。沿用容器判据会让
+            # probe 永远 False → 引擎判「30s 内端口无监听」并整树终止。
+            snap = chain[0] if chain else None
+            cmd_text = " ".join(snap.cmdline) if snap else ""
+            matched = "financecoffer" in cmd_text
+            detail = (
+                f"本地 bundle api 在监听（pid={pid}）"
+                if matched
+                else f"端口由非本模块进程监听（pid={pid} cmd={cmd_text[:120]}）"
+            )
+            return PortEvidence(
+                port=port,
+                listening=True,
+                matched=matched,
+                pid=pid,
+                name=snap.name if snap else "",
+                cmdline=snap.cmdline if snap else (),
+                parent_chain=chain,
+                detail=detail,
+            )
         containers = self._fc_api_containers()
         matched = bool(containers)
         detail = (
@@ -2203,11 +2309,7 @@ class ProxyPoolAdapter:
             argv = self._forwarder_argv(mapping)
             pid = self._host.spawn(
                 argv,
-                cwd=(
-                    runtime.app_dir()
-                    if runtime.is_frozen()
-                    else Path(__file__).resolve().parent
-                ),
+                cwd=(runtime.app_dir() if runtime.is_frozen() else Path(__file__).resolve().parent),
                 env=self._environment(),
                 log_path=self._log_dir / f"proxypool-{_safe_log_name(mapping.mapping_id)}.log",
             )

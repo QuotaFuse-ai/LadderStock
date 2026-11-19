@@ -47,6 +47,7 @@ def classify_port_owner(
     mine_pids: Collection[int],
     record: ModuleRecord | None,
     live_cmdline: Sequence[str] | None = None,
+    own_tree_pids: Collection[int] | None = None,
 ) -> tuple[str, str]:
     """单个端口占用者的归属分类 + 人类可读理由（纯函数，不碰宿主）。
 
@@ -72,6 +73,24 @@ def classify_port_owner(
     """
     if pid is not None and pid in mine_pids:
         return OWN_CHILD, "本控制面启动并记录的进程（own_child），可停止 / 重拉"
+    # 单进程多代形态（ProxyFleet 的 `proxyfleet.exe serve` → 真正的 serve 子进程、
+    # venv 启动器 → 解释器）：账本只记根 PID，监听端口的是它的子孙。监听者出现在
+    # 账本进程的进程树里就是**同一份我方服务**，不能按「PID 不等」判成外部进程。
+    if (
+        pid is not None
+        and record is not None
+        and own_tree_pids
+        and pid in own_tree_pids
+        and record.state in _LIVE_STATES
+    ):
+        if record.adopted_peer or record.origin == "adopted":
+            return ADOPTED_PEER, (
+                "监听者是 supervisor 认领态记录的子孙进程；只观测，绝不终止 / 重启"
+            )
+        return OWN_CHILD, (
+            f"监听者是 supervisor 亲手拉起的进程 {record.pid} 的子孙进程（同一份服务），"
+            "可停止 / 重拉"
+        )
     if (
         record is not None
         and pid is not None

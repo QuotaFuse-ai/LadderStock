@@ -158,9 +158,12 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         # 一行一只，四个数各自完整，不会被 `MAX_METRIC_ITEMS` 截断。
         table_rows: list[list[Any]] = []
         date_part = ""
+        latest_ts = ""
         for row in rows:
             # 上游时间戳是 `20261113161427` 这种紧凑串，切成 `2026-11-13` 给人看。
             ts = str(row.get("timestamp") or "")
+            if ts:
+                latest_ts = ts
             if not date_part and len(ts) >= 8:
                 date_part = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
             table_rows.append(
@@ -171,11 +174,20 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                     _fnum(row.get("amount")),
                 ]
             )
+        # 口径随快照时钟变，不能一律写「收盘」：盘中问到的就是实时快照。
+        clock = latest_ts[8:12] if len(latest_ts) >= 12 else ""
+        caption = (
+            "指数行情为当日收盘口径"
+            if clock and clock >= "1500"
+            else "指数行情为盘中实时快照（当日尚未收盘）"
+        )
         metrics = {
             "table": {
-                "columns": ["指数", "最新点位", "涨跌幅(%)", "成交额(元)"],
+                # 上游 `amount` 的单位是**万元**（tickhub index_quote），标「元」会把
+                # 3461 亿写成 3461 万，差 10000 倍。
+                "columns": ["指数", "最新点位", "涨跌幅(%)", "成交额(万元)"],
                 "rows": table_rows,
-                "caption": "指数行情为同一交易日收盘口径",
+                "caption": caption,
             }
         }
         sources = [
@@ -477,7 +489,7 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 "yesterday_limit_up": "yesterday_limit_up",
             },
             fields=["name", "code", "change_pct", "amount", "streak", "turnover_rate"],
-            columns=["名称", "代码", "涨跌幅(%)", "成交额(元)", "连板", "换手率(%)"],
+            columns=["名称", "代码", "涨跌幅(%)", "成交额(万元)", "连板", "换手率(%)"],
             default_limit=20,
             caption="涨停梯队",
             kind_hint="limit_pool 当日涨停 / broken_board 炸板 / yesterday_limit_up 昨日涨停",

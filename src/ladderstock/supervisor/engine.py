@@ -135,6 +135,25 @@ class SupervisorEngine:
         with self._lock:
             return self._ledger.reconcile(self._verify_pid, spawned_this_session=self._spawned_here)
 
+    def _claimed_pid(self, adapter: ModuleAdapter) -> int:
+        """端口证据里「确实属于本模块」的监听 pid（拿不到返回 0）。
+
+        `identify` 是适配器的扩展能力（Protocol 只保证 `probe()`），用运行时
+        探测取；没有该能力的适配器一律返回 0，行为与改动前一致。
+        """
+        identify = getattr(adapter, "identify", None)
+        if identify is None:
+            return 0
+        try:
+            ident = identify()
+        except Exception:
+            return 0
+        for item in getattr(ident, "ports", ()) or ():
+            pid = getattr(item, "pid", None)
+            if getattr(item, "matched", False) and pid:
+                return int(pid)
+        return 0
+
     def _verify_pid(self, record: ModuleRecord) -> str:
         """对账三态：alive / reuse / dead。无证据一律不认（失败关闭）。"""
         pid = record.pid
@@ -185,7 +204,8 @@ class SupervisorEngine:
         record.stopping_by_user = False
 
         if adapter.probe():
-            if self._verify_pid(record) == "alive":
+            verdict = self._verify_pid(record)
+            if verdict == "alive":
                 # 幂等：已经在跑且账本对得上，直接续 running。
                 # 但「用户显式点启动」本身就是要托管：把上一任留下的外部认领
                 # 升级为本程序托管，否则页面永远停在「外部接管 / 端口由控制面
@@ -196,6 +216,22 @@ class SupervisorEngine:
                     record.origin = "spawned"
                     record.adopted_peer = False
                     self._spawned_here.add(name)
+                self._ledger.update(record)
+                return record
+            claimed = (
+                self._claimed_pid(adapter) if verdict == "dead" and not record.adopted_peer else 0
+            )
+            if claimed:
+                # 端口在听、evidence 已确认是本模块进程，但账本记的 pid 已经死了
+                # （上一任留下的陈旧记录，例如强杀后由另一个本模块实例接手）。
+                # 按端口证据认领实际 pid，不能落到避让：避让器只认账本 pid，
+                # 会把「自己人占着端口」误判成外来冲突并拒绝拉起。
+                record.pid = claimed
+                record.state = "running"
+                record.health = HEALTH_OK
+                record.origin = "spawned"
+                record.adopted_peer = False
+                self._spawned_here.add(name)
                 self._ledger.update(record)
                 return record
             # 基准端口被 foreign 占用：优先避让（QUOT-594），未配避让器时
@@ -382,8 +418,7 @@ class SupervisorEngine:
             )
         if self._adapter_rebaser is None:
             raise SupervisorError(
-                f"{name} 避让到端口 {actual} 但当前适配器不支持端口重建，"
-                "按 DEC-004 不自动换端口"
+                f"{name} 避让到端口 {actual} 但当前适配器不支持端口重建，按 DEC-004 不自动换端口"
             )
         rebased = self._adapter_rebaser(adapter, tuple(actual))
         if rebased is None:
@@ -572,11 +607,7 @@ class SupervisorEngine:
                 self._ledger.update(record)
                 return record
             evidence = self._matched_evidence(adapter)
-            if (
-                evidence is None
-                or evidence.pid is None
-                or not getattr(evidence, "cmdline", ())
-            ):
+            if evidence is None or evidence.pid is None or not getattr(evidence, "cmdline", ()):
                 return None
             parent_chain = getattr(evidence, "parent_chain", ())
             parent = parent_chain[0].parent_pid if parent_chain else None

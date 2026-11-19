@@ -252,7 +252,22 @@ def start_pg(root: Path | None = None, *, wait_seconds: float = 15.0) -> dict[st
             "detail": f"{layout.pg_dir(root)}/bin 里没有 postgres，先装 PG 运行时",
         }
     data = layout.data_dir(root, "pgdata")
-    log = layout.logs_dir(root) / "pg.log"
+    # 日志按**实例端口**分开：正式服(5432) 与测试服(15432) 共用 `pg.log` 时，
+    # prod 的 postmaster 长期持有该文件句柄，test 侧 `>>` 追加打开失败 → 低权限
+    # 启动脚本静默退出，PG 从来没起来（表现为「15s 内未就绪」且日志无新增行）。
+    # 按端口命名比按 env 后缀更硬：两个环境的端口天然不同，历史遗留的
+    # `pg.log` 也不会再被任何一个实例争用。
+    log = layout.logs_dir(root) / f"pg-{pg_port()}.log"
+    # 强杀 / 掉电后 `postmaster.pid` 会留在原地，postmaster 启动时看到锁文件直接
+    # 退出。只在「文件里的 PID 已经不存活」时才清，在跑的实例绝不动。
+    lock = data / "postmaster.pid"
+    if lock.is_file():
+        try:
+            lock_pid = int(lock.read_text(encoding="utf-8").splitlines()[0].strip())
+        except (OSError, ValueError, IndexError):
+            lock_pid = 0
+        if lock_pid <= 0 or not _pid_alive(lock_pid):
+            lock.unlink(missing_ok=True)
     log.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         str(binary),
@@ -483,18 +498,39 @@ def stop_minio(root: Path | None = None, *, timeout: float = 8.0) -> dict[str, A
 
 
 def stop_all(root: Path | None = None) -> dict[str, Any]:
-    """停掉全部服务（重装 / 替换二进制之前必须先停，否则文件被占用复制会失败）。"""
+    """停掉全部服务（重装 / 替换二进制之前必须先停，否则文件被占用复制会失败）。
+
+    每一步独立捕获异常：任何一步失败都不能打断后面的步骤。原实现顺序调用，
+    中间一步抛异常（例如可选组件 embedding 没在跑时的边界态）会让 api/minio/
+    pg 全留在原地，控制面看到「端口还在监听」→ 判停止超时 → 模块记 failed
+    （真实踩过，表现为停止按钮永远失败）。
+    """
     results: dict[str, Any] = {}
+    errors: dict[str, str] = {}
     # 顺序：先断消费与对外面（ETL / MCP / API / embedding），最后停数据库。
     # 反过来会让 API 在停机过程中报一堆连接错误，也会让 ETL 半途失败。
-    results["etl"] = stop_etl(root)
-    results["mcp"] = stop_mcp(root)
-    results["embedding"] = stop_embedding(root)
-    results["api"] = stop_api(root)
-    results["minio"] = stop_minio(root)
-    results["redis"] = redis_service.stop(root)
-    results["pg"] = stop_pg(root)
-    return {"ok": all(item.get("ok") for item in results.values()), "services": results}
+    steps: tuple[tuple[str, Any], ...] = (
+        ("etl", stop_etl),
+        ("mcp", stop_mcp),
+        ("embedding", stop_embedding),
+        ("api", stop_api),
+        ("minio", stop_minio),
+        ("redis", redis_service.stop),
+        ("pg", stop_pg),
+    )
+    for key, fn in steps:
+        try:
+            results[key] = fn(root)
+        except Exception as exc:  # noqa: BLE001 - 单步失败不打断整条停机链
+            errors[key] = f"{type(exc).__name__}: {exc}"
+            results[key] = {"ok": False, "state": "unknown", "detail": errors[key]}
+    payload: dict[str, Any] = {
+        "ok": all(bool(item.get("ok")) for item in results.values()),
+        "services": results,
+    }
+    if errors:
+        payload["errors"] = errors
+    return payload
 
 
 # ------------------------------------------------------------------ FinanceCoffer API
