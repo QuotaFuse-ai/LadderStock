@@ -67,6 +67,7 @@ from ladderstock.ai.agent_runtime import (
 from ladderstock.ai.agent_runtime import (
     EVENT_TOOL as AGENT_TOOL,
 )
+from ladderstock.ai import backfill, number_audit
 from ladderstock.ai.agent_runtime import (
     build_agent,
     build_tools,
@@ -506,6 +507,7 @@ def _blocks_for(
     *,
     fetch_attempted: bool = False,
     metrics: Mapping[str, Any] | None = None,
+    extra_notes: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """会话模式的成功路径装配 `blocks`。
 
@@ -537,7 +539,77 @@ def _blocks_for(
     # 正文块原样下发、不截断，插在 citation 之前（citation 必须仍是最后一块）。
     if body and len(body) >= NARRATIVE_MIN_CHARS:
         blocks = _with_narrative(blocks, body)
-    return blocks
+    blocks = _with_extra_notes(blocks, extra_notes)
+    return _with_number_audit(blocks, body, metrics)
+
+
+def _with_number_audit(
+    blocks: list[dict[str, Any]],
+    text: str,
+    metrics: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """F6：正文里没对回本轮取数结果的小数 / 百分比，单独标一条提示。
+
+    只标不改：删数字会留下「收盘价元」这种残句，比留一个被标记的数更难读。
+    没有 metrics 的轮次直接跳过——那不是「数不对」，是「这一轮本来就没取数」。
+    """
+    if not text or not metrics:
+        return blocks
+    try:
+        result = number_audit.audit(text, metrics)
+    except Exception as exc:  # noqa: BLE001 - 自检失败不能影响回答本身
+        logger.warning("number audit failed: %s", exc)
+        return blocks
+    note = number_audit.notice_text(result)
+    if not note:
+        return blocks
+    block = build_block(
+        answer_blocks.BLOCK_NOTICE,
+        {"kind": answer_blocks.NOTICE_UNVERIFIED, "section": "数字核对", "message": note},
+    )
+    return _insert_before_citation(blocks, block)
+
+
+def _with_extra_notes(
+    blocks: list[dict[str, Any]], notes: Sequence[str]
+) -> list[dict[str, Any]]:
+    """把「数据缺口」这类服务端说明挂成一条 notice，放在来源之前。
+
+    文案由调用方给（`ai/backfill.notice_for`），这里只负责摆放与去重：
+    - 空串一律丢掉，不渲染空块；
+    - 同一 section 的旧块先摘掉，避免同一句话说两遍；
+    - 用 `_insert_before_citation`，仍在 6 块上限内腾位（citation 不动）。
+    """
+    texts = [str(note).strip() for note in notes if str(note).strip()]
+    if not texts:
+        return blocks
+    section = "数据缺口"
+    block = build_block(
+        answer_blocks.BLOCK_NOTICE,
+        {"kind": answer_blocks.NOTICE_NOTE, "section": section, "message": "\n".join(texts)},
+    )
+    trimmed = [
+        item
+        for item in blocks
+        if not (
+            item.get("type") == answer_blocks.BLOCK_NOTICE
+            and (item.get("payload") or {}).get("section") == section
+        )
+    ]
+    return _insert_before_citation(trimmed, block)
+
+
+def _coverage_note(question: str, data_root: Any) -> str | None:
+    """F3 的同步入口（串行路径用）：体检 + 决策 + 生成一句缺口说明。
+
+    体检属于「锦上添花」，任何异常都只记日志返回 None——不能因为本地库临时不可用
+    就把整轮回答变成 500。
+    """
+    try:
+        return backfill.notice_for(backfill.plan_backfill(question, data_root=data_root))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("backfill plan failed: %s", exc)
+        return None
 
 
 def _with_narrative(blocks: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
@@ -834,6 +906,7 @@ def _conversation_blocks(
     failure: ChatFailure | None = None,
     fetch_attempted: bool = False,
     metrics: Mapping[str, Any] | None = None,
+    extra_notes: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """一轮的块：失败只有一条 `notice`；成功复用现役装配链，再收到 D2 上限 6。
 
@@ -850,9 +923,13 @@ def _conversation_blocks(
                 retryable=failure.retryable,
             )
         )[:MAX_ANSWER_BLOCKS]
-    return _blocks_for(reply, sources, fetch_attempted=fetch_attempted, metrics=metrics)[
-        :MAX_ANSWER_BLOCKS
-    ]
+    return _blocks_for(
+        reply,
+        sources,
+        fetch_attempted=fetch_attempted,
+        metrics=metrics,
+        extra_notes=extra_notes,
+    )[:MAX_ANSWER_BLOCKS]
 
 
 def _arrive_blocks(
@@ -862,6 +939,7 @@ def _arrive_blocks(
     on_block: Callable[[list[dict[str, Any]]], None],
     fetch_attempted: bool = False,
     metrics: Mapping[str, Any] | None = None,
+    extra_notes: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """同 `_conversation_blocks` 成功路径，但逐块交付：每多一块就 `on_block(当前全部块)`。
 
@@ -874,6 +952,7 @@ def _arrive_blocks(
         sources=sources,
         fetch_attempted=fetch_attempted,
         metrics=metrics,
+        extra_notes=extra_notes,
     )
     for count in range(1, len(full) + 1):
         on_block([dict(block) for block in full[:count]])
@@ -1490,6 +1569,41 @@ async def run_turn_stream(
     yield _status("对话记录就绪", "done", item_id="session_store", action="store")
 
     with writer:
+        # F3 缺口自补：开跑前先把本地库体检一遍。缺的那一类不该等模型答完才暴露——
+        # 权限档允许就直接起后台补数任务（不占首屏），不允许就把缺口写成一条 notice；
+        # 两种情况都要在流水账上留一步，否则「补数」是黑箱，跟没做一样。
+        cover: dict[str, Any] = {}
+        cover_note: str | None = None
+        yield _status("数据体检（本地库）", "running", item_id="coverage", action="coverage")
+        try:
+            cover = await asyncio.to_thread(backfill.plan_backfill, message, data_root=data_root)
+            cover_note = backfill.notice_for(cover)
+        except Exception as exc:  # noqa: BLE001 - 体检失败不能拖垮整轮回答
+            logger.warning("backfill plan failed: %s", exc)
+        if cover.get("action") == backfill.ACTION_READY:
+            yield _status(
+                f"数据体检：{'、'.join(cover.get('kinds') or [])} 本地齐全",
+                "done",
+                item_id="coverage",
+                action="coverage",
+            )
+        elif cover.get("action") == backfill.ACTION_AUTO:
+            yield _status(
+                f"数据体检：缺 {'、'.join(cover.get('missing') or [])}，已起补数任务",
+                "done",
+                item_id="coverage",
+                action="coverage",
+            )
+        elif cover.get("action") == backfill.ACTION_CONFIRM:
+            yield _status(
+                f"数据体检：缺 {'、'.join(cover.get('missing') or [])}（需确认后才能补）",
+                "done",
+                item_id="coverage",
+                action="coverage",
+            )
+        else:
+            yield _status("数据体检：这一轮不需要补数", "done", item_id="coverage", action="coverage")
+
         yield _status("正在调用模型", "running", item_id="model", action="model")
         try:
             accumulated = ""
@@ -1666,6 +1780,7 @@ async def run_turn_stream(
             on_block=writer.arrive,
             fetch_attempted=used_tools,
             metrics=fetched.get("metrics") or {},
+            extra_notes=[cover_note] if cover_note else (),
         )
         writer.finish(chat_store.DONE, blocks)
         yield _status("model", "done", item_id="model")
@@ -1723,12 +1838,15 @@ def _run_turn_logged(
         for item in (result["sources"] or [])
         if isinstance(item, Mapping) and item.get("name")
     ]
+    # F3：串行路径同样先体检再装配（与流式路径同一套判定，不改权限口径）
+    cover_note = _coverage_note(text, data_root)
     blocks = _arrive_blocks(
         reply=reply,
         sources=[*sources, *tool_sources],
         on_block=writer.arrive,
         fetch_attempted=result["used_tools"],
         metrics=result["metrics"],
+        extra_notes=[cover_note] if cover_note else (),
     )
     writer.finish(chat_store.DONE, blocks)
     return {

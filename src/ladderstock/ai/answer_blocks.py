@@ -100,6 +100,11 @@ NOTICE_MISSING_DATA = "missing_data"
 #: 明明没降级却说降级，是错的话术，故独立成中性 kind。
 NOTICE_NOTE = "note"
 
+#: F6 数字自检：这条提示要**点名**没对回取数结果的那些数，所以必须允许数字。
+#: 红线 4 防的是「模型把无出处数字塞进提示块」；这里是程序拿正文原文比对后生成的块，
+#: 数字来自用户已看到的正文，不是新造的——放行不违背红线，只是把红线收窄到「谁生成的」。
+NOTICE_UNVERIFIED = "unverified"
+
 #: 与 `web/chat.py:434` `_source_note` 逐字一致（服务端文案，不是模型编的）。
 SOURCE_NOTE_WITHOUT_DATA = "（说明：本轮没有任何可核实的数据来源，以下内容不含具体行情数据。）"
 SOURCE_NOTE_NO_RECORD = "（说明：本轮页内数据未附带取数记录，回答不列外部来源。）"
@@ -703,14 +708,16 @@ def validate_notice(payload: Any) -> dict[str, Any]:
     body = _require_mapping(payload, "notice")
     _require_keys(body, ("kind",), ("kind", "section", "message", "actions"), "notice")
     kind = _require_str(body["kind"], "notice.kind")
-    allowed = NOTICE_KINDS + (NOTICE_MISSING_DATA, NOTICE_NOTE)
+    allowed = NOTICE_KINDS + (NOTICE_MISSING_DATA, NOTICE_NOTE, NOTICE_UNVERIFIED)
     if kind not in allowed:
         raise AnswerBlockError(f"notice.kind 必须取自 {allowed}，收到 {kind!r}")
     cleaned: dict[str, Any] = {"kind": kind}
     if "section" in body:
         cleaned["section"] = _require_str(body["section"], "notice.section", allow_empty=True)
     message = _require_str(body.get("message", ""), "notice.message", allow_empty=True)
-    if contains_number(message):
+    # 红线 4 的唯一例外：`unverified` 的文案由程序比对正文后生成，点名的那几个数
+    # 本来就印在用户已经看到的正文里。模型不产这个 kind（装配层只对程序开放）。
+    if kind != NOTICE_UNVERIFIED and contains_number(message):
         raise AnswerBlockError(f"notice.message 含数字（红线 4）：{message!r}")
     cleaned["message"] = message
     if "actions" in body:
@@ -1402,6 +1409,7 @@ __all__ = [
     "NOTICE_KINDS",
     "NOTICE_MISSING_DATA",
     "NOTICE_NOTE",
+    "NOTICE_UNVERIFIED",
     "ROUTE_TARGETS",
     "SOURCE_NOTE_NO_RECORD",
     "SOURCE_NOTE_PROFILE_ONLY",

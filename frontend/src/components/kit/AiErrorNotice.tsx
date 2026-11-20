@@ -8,6 +8,7 @@ import {
   Info,
   PackageOpen,
   Scissors,
+  ShieldQuestion,
   WifiOff,
   XCircle,
 } from 'lucide-react'
@@ -25,7 +26,12 @@ import { Badge, Button } from '../ui'
  * `error_taxonomy._RETRYABLE` 一致）。
  */
 
-export type AiNoticeKind = AiFailureKind | 'degraded' | 'missing_data' | 'note'
+export type AiNoticeKind =
+  | AiFailureKind
+  | 'degraded'
+  | 'missing_data'
+  | 'note'
+  | 'unverified'
 
 type ActionKey = 'retry' | 'switchModel' | 'status' | 'export'
 
@@ -104,6 +110,16 @@ const META: Record<AiNoticeKind, KindMeta> = {
     actions: ['retry', 'status'],
     hint: '这块数据没有取到，未用推算值填补；其余部分不受影响。',
     icon: PackageOpen,
+  },
+  // F6 数字自检：正文里的小数 / 百分比没对回本轮取数结果。不是失败——整轮仍然成功，
+  // 只是把那几个数标出来，让读者自己决定信不信；文案由后端比对后生成，可带数字。
+  unverified: {
+    title: '数字未核实',
+    tone: 'warn',
+    retryable: false,
+    actions: ['retry', 'status'],
+    hint: '这几个数没有出现在本轮工具返回里，可能是模型估算或引用了别的口径。',
+    icon: ShieldQuestion,
   },
 }
 

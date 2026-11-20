@@ -22,8 +22,10 @@ export const NOTICE_KINDS: readonly AiNoticeKind[] = [
   'internal',
   'degraded',
   'missing_data',
-  // 正常内容块（能力 / 风险提示 / 补充说明 / 佐证），不是失败
+  // 正常内容块（能力 / 风险提示 / 补充说明 / 佐证 / 数字核对），不是失败
   'note',
+  // F6 数字自检：只是把没对回取数结果的数标出来
+  'unverified',
 ]
 
 export function asNoticeKind(kind: string): AiNoticeKind {
