@@ -12,8 +12,10 @@ import { OUTER_MARK } from './BlockShell'
  *
  * 映射规则（前端不重算、不补写）：
  * - `text`       → 正文原样展示，**恒有值**（后端 `strip_numbers(first_sentence(...))`）
- * - `confidence` → 有就给置信度条；没给（AI 不评级，后端刻意省略）就不画，附一行说明，
- *                  绝不补造 0.5 之类的数字
+ * - `confidence` → 有就给置信度条；没给（AI 不评级，后端刻意省略）就**不画任何东西**，
+ *                  绝不补造 0.5 之类的数字。此前这里会补一行「本轮不提供置信度评级」，
+ *                  在结论已经正常给出时，这行字读起来像「没评估 / 不可信」，
+ *                  与正文自相矛盾（QUOT-627）——没有评级就安静地不显示。
  * - `tone`       → 只作标题上的文字标记；涨跌语义色只作用于数字（§8.1），文本不上色
  */
 
@@ -41,9 +43,13 @@ export function ConclusionBlock({ payload }: { payload: ConclusionBlockPayload }
         结论 · {tone.text}
       </p>
       <p className="break-words text-body leading-body text-text">{payload.text}</p>
-      {confidence === null ? (
-        <p className="text-caption leading-caption text-text-muted">本轮不提供置信度评级</p>
-      ) : (
+      {payload.falsifier !== undefined && (
+        <div data-falsifier className="flex flex-col gap-0.5 rounded border border-border bg-surface-3 px-2 py-1.5">
+          <span className="text-caption text-text-muted">翻转条件 · 出现即本条结论失效</span>
+          <span className="break-words text-caption leading-body text-text-secondary">{payload.falsifier}</span>
+        </div>
+      )}
+      {confidence !== null && (
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="text-caption text-text-secondary">置信度</span>

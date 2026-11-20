@@ -237,6 +237,10 @@ AGENT_TOOL_RULE = (
     "能做什么、不能做什么，不要当成数据查询，也不要罗列「这一项没取到」。\n"
     "- 用户问某公司但没说是哪家时，说明你能做什么，再请他给公司名或代码。\n"
     "- 同一轮里可以多次调工具：先查一只、看结果不够再查另一只，直到能直接回答。\n"
+    "- **判断类回答必须给翻转条件**：问「值不值得买 / 趋势会不会延续 / 估值贵不贵 /"
+    "多空怎么看」这类要给方向的问题时，正文最后单独一行写「翻转条件：…」，用**能观测到**"
+    "的阈值或事件（价格位、毛利率、公告、政策落地），不要写「视情况而定」「需持续跟踪」"
+    "这种谁都能说的话。纯事实查询（报价、名单、财务数字）不用写这一行。\n"
 )
 
 
@@ -514,15 +518,90 @@ def _blocks_for(
     丢掉超出 4 行的内容——用户看到的「闪一下变成骨架」就是这个。
     """
     text = (reply or "").strip()
-    if text and not fetch_attempted and not metrics and not sources:
-        return [build_block(answer_blocks.BLOCK_NARRATIVE, {"text": text})]
-    return _build_blocks(
+    # F5：翻转条件从正文里摘出来挂到结论卡上，正文用「摘掉这一行」的版本，
+    # 否则同一句话会在结论卡和正文块里各出现一次。
+    falsifier, body = answer_blocks.extract_falsifier(text)
+    if body and not fetch_attempted and not metrics and not sources:
+        return [build_block(answer_blocks.BLOCK_NARRATIVE, {"text": body})]
+    blocks = _build_blocks(
         dict(metrics or {}),
-        reply_to_structured(reply)["build_input"],
+        reply_to_structured(body)["build_input"],
         sources,
         fetch_attempted=fetch_attempted,
         keep_numbers=bool(metrics),
+        falsifier=falsifier,
     )
+    # QUOT-627：取到数的轮次也要能看到整段回答。此前只有「没调工具」才走正文块，
+    # 调过工具的轮次只剩「结论 + 指标/表格 + 补充说明（截 4 行、丢数字行）」，
+    # 用户看到的就是先正常、再闪成一张写着「中性 · 本轮不提供置信度评级 · 页面没有取到」的骨架卡。
+    # 正文块原样下发、不截断，插在 citation 之前（citation 必须仍是最后一块）。
+    if body and len(body) >= NARRATIVE_MIN_CHARS:
+        blocks = _with_narrative(blocks, body)
+    return blocks
+
+
+def _with_narrative(blocks: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
+    """把整段回答作为正文块插到 citation 之前（不重算、不摘要、不截断）。
+
+    插之前先摘掉「补充说明」notice：它的内容是 `narrative[1:] + highlights`，
+    全部来自同一段 reply——正文块已经逐字说了一遍，再挂一条就等于同一句话出现两次。
+    """
+    if any(item.get("type") == answer_blocks.BLOCK_NARRATIVE for item in blocks):
+        return blocks
+    block = build_block(answer_blocks.BLOCK_NARRATIVE, {"text": text})
+    blocks = [
+        item
+        for item in blocks
+        if not (
+            item.get("type") == answer_blocks.BLOCK_NOTICE
+            and (item.get("payload") or {}).get("section") == "补充说明"
+        )
+    ]
+    return _insert_before_citation(blocks, block)
+
+
+#: 超限时为「正文块」让位的顺序：按信息价值从低到高。
+_DROPPABLE: tuple[str, ...] = (
+    answer_blocks.BLOCK_NOTICE,
+    answer_blocks.BLOCK_CHART,
+    answer_blocks.BLOCK_METRIC,
+    answer_blocks.BLOCK_TABLE,
+)
+
+
+def _insert_before_citation(
+    blocks: list[dict[str, Any]], block: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """插一块到 citation 之前，并保证总数不破 `MAX_BLOCKS`。
+
+    `_build_blocks` 已经按 `MAX_BLOCKS` 收过口，直接插会变成第 7 块，`check_ordering`
+    就会拒。腾位顺序见 `_DROPPABLE`：先让重复的 `notice` 走，图次之，真实数据最后。
+    `conclusion` / `citation` / 新插的正文块永远不动（§6.4-1 / §6.4-2）。
+    """
+    index = next(
+        (i for i, item in enumerate(blocks) if item.get("type") == answer_blocks.BLOCK_CITATION),
+        len(blocks),
+    )
+    merged = blocks[:index] + [block] + blocks[index:]
+    keep = {id(item) for item in (block, *blocks[index:index + 1])}
+    for kind in _DROPPABLE:
+        while len(merged) > answer_blocks.MAX_BLOCKS:
+            victim = next(
+                (
+                    i
+                    for i, item in enumerate(merged)
+                    if i > 0 and item.get("type") == kind and id(item) not in keep
+                ),
+                None,
+            )
+            if victim is None:
+                break
+            del merged[victim]
+    return merged
+
+
+#: 正文块的最小长度：短于此的回答（「已记下」「好的」这类回执）没必要单独铺一段。
+NARRATIVE_MIN_CHARS = 80
 
 
 # 首页研究台的对话要能刷新后回看：给它一个**固定的**会话 id，每轮成功回答落一行
@@ -609,6 +688,13 @@ def _success_response(
                 },
             )
         )
+    # QUOT-627：取到数的轮次也要能看到整段回答。此前 `_build_blocks` 只留
+    # 「结论 + 指标/表格 + 补充说明（截 4 行、丢含数字的行）」，用户先看到正常回复，
+    # 再闪成一张「中性 · 本轮不提供置信度评级 · 页面没有取到」的骨架卡。正文块
+    # 原样下发、不截断，插在 citation 之前（citation 必须仍是最后一块）。
+    reply_text = str(result.get("reply") or "").strip()
+    if reply_text and len(reply_text) >= NARRATIVE_MIN_CHARS:
+        blocks = _with_narrative(blocks, reply_text)
     # `persist=(data_root, session_id, question)`：本轮落库供刷新回看。
     # 只有首页研究台传这个参数；页面助手 / 技能助手是一次性问答，不落库。
     if persist is not None:
@@ -1395,10 +1481,16 @@ async def run_turn_stream(
     # 这一轮的页面归属（`_prepare_call` 的 tab 与记忆 page 都取它）
     turn_page = context.page if context is not None and context.page else PAGE_PREFIX.strip("/")
 
-    yield _status("history", "done", item_id="history")
+    yield _status("读取会话历史", "done", item_id="history", action="history")
 
-    with _TurnWriter(data_root, session_id, message) as writer:
-        yield _status("model", "running", item_id="model")
+    # 建库连接在锁竞争时要等待（5950 / 5951 共用同一份 `chat.sqlite`）：先把这一步
+    # 亮出来，再把构造丢进线程，界面不会只剩上一行字干等。
+    yield _status("正在准备对话记录", "running", item_id="session_store", action="store")
+    writer = await asyncio.to_thread(_TurnWriter, data_root, session_id, message)
+    yield _status("对话记录就绪", "done", item_id="session_store", action="store")
+
+    with writer:
+        yield _status("正在调用模型", "running", item_id="model", action="model")
         try:
             accumulated = ""
             last_push = 0.0
@@ -1431,11 +1523,14 @@ async def run_turn_stream(
                     used_tools = True
                     label = str(payload.get("label") or payload.get("name") or "工具")
                     state = "done" if payload.get("state") == "done" else "running"
+                    # 查的是什么 / 回来多少：流水账要能看出这一步的实际内容
+                    detail = str(payload.get("detail") or "").strip()
+                    suffix = f"（{detail}）" if detail else ""
                     yield _status(
-                        "tool",
+                        f"{label} {'完成' if state == 'done' else '查询中'}{suffix}",
                         state,
                         item_id=f"tool:{payload.get('name')}",
-                        action=label,
+                        action="tool",
                     )
                 elif kind == "text":
                     accumulated = payload
@@ -1452,6 +1547,10 @@ async def run_turn_stream(
             elif reply and not accumulated:
                 yield _sse_frame("text", {"text": reply})
 
+            # 正文已落地，模型这一步要收口：否则「正在调用模型」会一直转，
+            # 正文都开始出了界面还在转圈。
+            yield _status("模型返回完成", "done", item_id="model", action="model")
+
             # 自我反思（与 `ask_agent` 同一判据）：这一轮没调工具却给了价格/涨跌幅，
             # 就补查一轮再覆盖正文。页面能看见「补查证据」这一步，不偷偷替换。
             decision = reflection.decide(
@@ -1461,7 +1560,12 @@ async def run_turn_stream(
                 metrics=fetched.get("metrics") or {},
             )
             if decision.needed:
-                yield _status("reflect", "running", item_id="reflect", action="补查证据")
+                yield _status(
+                    "正在补查证据（这一轮没有取到数）",
+                    "running",
+                    item_id="reflect",
+                    action="reflect",
+                )
                 logger.info(
                     "self_reflect triggered reason=%s head=%s", decision.reason, message[:40]
                 )
@@ -1478,11 +1582,15 @@ async def run_turn_stream(
                 ):
                     if kind == "tool":
                         followup_tools = True
+                        label = str(payload.get("label") or payload.get("name") or "工具")
+                        state = "done" if payload.get("state") == "done" else "running"
+                        detail = str(payload.get("detail") or "").strip()
+                        suffix = f"（{detail}）" if detail else ""
                         yield _status(
-                            "tool",
-                            "done" if payload.get("state") == "done" else "running",
-                            item_id=f"tool:{payload.get('name')}",
-                            action=str(payload.get("label") or payload.get("name") or "工具"),
+                            f"{label} {'完成' if state == 'done' else '查询中'}{suffix}",
+                            state,
+                            item_id=f"tool:{payload.get('name')}:followup",
+                            action="tool",
                         )
                     elif kind in ("text", "final"):
                         followup_text = payload
@@ -1498,7 +1606,7 @@ async def run_turn_stream(
                     used_tools = used_tools or followup_tools
                     yield _sse_frame("text", {"text": reply})
                     logger.info("self_reflect replaced used_tools=%s", used_tools)
-                yield _status("reflect", "done", item_id="reflect", action="补查证据")
+                yield _status("补查完成", "done", item_id="reflect", action="reflect")
         except (AssistantFailure, asyncio.CancelledError, GeneratorExit) as exc:
             if isinstance(exc, AssistantFailure):
                 chat_failure = _as_chat_failure(exc)

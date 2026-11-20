@@ -123,7 +123,13 @@ export function ActivityFeed({ feed, startedAt, compact, totalElapsedMs = null, 
 
   if (hidden) return null
 
-  const rows = state.items
+  /** 只有一个「正在调用模型」在转、又迟迟没有回音时的等待阈值 */
+  const MODEL_STALL_MS = 15_000
+  const rows = state.items.map((item) =>
+    item.state === 'running' && item.itemId === 'model' && elapsed >= MODEL_STALL_MS
+      ? { ...item, item: `上游排队中，已等 ${Math.floor(elapsed / 1000)} 秒` }
+      : item,
+  )
   const visible = collapsed ? rows.slice(-4) : rows
   const hiddenCount = rows.length - visible.length
 

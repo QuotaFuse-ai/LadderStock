@@ -1270,6 +1270,19 @@ async def stream_turn(
         }
         yield sse_event("status", data)
 
+    def _drain_tool_frames() -> list[Any]:
+        """把**已经发生**的工具调用立刻变成帧，不等模型整轮结束。
+
+        等待模型的每一轮空转都会调一次；队列空时返回 `[]`、一帧不发，
+        所以没有真实调用时输出与之前逐字节一致。
+        """
+        if not tool_pending:
+            return []
+        frames: list[Any] = []
+        while tool_pending:
+            frames.extend(_tool_frame(tool_pending.popleft()))
+        return frames
+
     def _done_frame(payload: dict[str, Any]) -> str:
         data: dict[str, Any] = {
             "session_id": session_id,
@@ -1431,6 +1444,14 @@ async def stream_turn(
                     # 正在跑的那一步（15s 慢模型直接断流）；用 wait 只「看」不取消。
                     finished, _ = await asyncio.wait({task}, timeout=STREAM_HEARTBEAT_POLL_SEC)
                     if not finished:
+                        # 等待模型出首个 token 期间也要把工具调用推出去：否则流水账
+                        # 全部攒到收尾一次性涌出，界面上只剩「正在调用」一行字。
+                        drained = _drain_tool_frames()
+                        if drained:
+                            for frame in drained:
+                                yield frame
+                            last_frame_ms = _monotonic_ms()
+                            continue
                         if _monotonic_ms() - last_frame_ms >= STREAM_HEARTBEAT_GAP_SEC * 1000:
                             yield _heartbeat(_monotonic_ms() - last_frame_ms, seq)
                             last_frame_ms = _monotonic_ms()
@@ -1501,9 +1522,21 @@ async def stream_turn(
             # 降级路径：CLI 一次性子进程 / 上游已传结构化 ai——正文一次性取回
             stop_wait = asyncio.ensure_future(active.stopped.wait())
             complete_task = asyncio.ensure_future(complete(channel, system, user, timeout=timeout))
-            done_set, _ = await asyncio.wait(
-                {stop_wait, complete_task}, return_when=asyncio.FIRST_COMPLETED
-            )
+            # 分段等待：降级通道一次返回全文，原先中途一帧不发，用户只能盯着
+            # 「正在调用 xx」一行；改成 0.5s 一轮，每轮把已发生的工具调用推出去
+            done_set: set[Any] = set()
+            while not done_set:
+                done_set, _ = await asyncio.wait(
+                    {stop_wait, complete_task}, timeout=STREAM_HEARTBEAT_POLL_SEC
+                )
+                for frame in _drain_tool_frames():
+                    yield frame
+                    last_frame_ms = _monotonic_ms()
+                if not done_set and (
+                    _monotonic_ms() - last_frame_ms >= STREAM_HEARTBEAT_GAP_SEC * 1000
+                ):
+                    yield _heartbeat(_monotonic_ms() - last_frame_ms, seq)
+                    last_frame_ms = _monotonic_ms()
             stop_wait.cancel()
             if stop_wait in done_set:
                 complete_task.cancel()

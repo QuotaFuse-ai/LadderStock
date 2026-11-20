@@ -18,6 +18,12 @@ export interface ConclusionBlockPayload {
   tone: ConclusionTone
   /** 0–1；载荷没给时为 `null`，如实显示「未提供」而不是猜一个 */
   confidence: number | null
+  /**
+   * F5：翻转条件（「什么情况下这条结论是错的」）。可选：载荷没给时整段不渲染，
+   * 也不补一个空字符串——空着比写一句「暂无」像研究员。用可选键而不是 `| null`，
+   * 是为了让旧载荷（只有 text/tone/confidence）解析后形状仍是原样。
+   */
+  falsifier?: string
 }
 
 export interface MetricItem {
@@ -26,6 +32,12 @@ export interface MetricItem {
   unit?: string
   direction?: MetricDirection
   as_of?: string
+  /** F4：出处族（如 `tencent`）；后端没给就不显示 */
+  source?: string
+  /** F4：取数接口（如 `quote`），与 source 一起拼成一行小字 */
+  endpoint?: string
+  /** F4：取数时间，悬停提示里用 */
+  fetched_at?: string
 }
 
 export interface MetricBlockPayload {
@@ -180,10 +192,12 @@ function conclusionPayload(raw: unknown): ConclusionBlockPayload | InvalidBlock 
     ? (record.tone as ConclusionTone)
     : 'neutral'
   const confidence = finite(record.confidence)
+  const falsifier = text(record.falsifier)
   return {
     text: body,
     tone,
     confidence: confidence === null ? null : Math.min(1, Math.max(0, confidence)),
+    ...(falsifier ? { falsifier } : {}),
   }
 }
 
@@ -205,6 +219,9 @@ function metricPayload(raw: unknown): MetricBlockPayload | InvalidBlock {
         ? (item.direction as MetricDirection)
         : undefined,
       as_of: text(item.as_of) ?? undefined,
+      source: text(item.source) ?? undefined,
+      endpoint: text(item.endpoint) ?? undefined,
+      fetched_at: text(item.fetched_at) ?? undefined,
     })
   }
   if (items.length === 0) return { type: 'invalid', reason: '指标块没有可展示的数值' }

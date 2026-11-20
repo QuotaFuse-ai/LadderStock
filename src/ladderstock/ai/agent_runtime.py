@@ -1544,6 +1544,66 @@ def build_agent(
     return agent, client
 
 
+#: 工具参数里优先展示的键（按顺序取第一个命中的）
+_TOOL_ARG_KEYS = (
+    "symbol",
+    "code",
+    "board_code",
+    "index_code",
+    "stock_code",
+    "ticker",
+    "keyword",
+    "query",
+    "sector",
+    "name",
+)
+
+
+def _tool_detail(arguments: Any) -> str:
+    """从一次工具调用的参数里抽一个能看懂的短标识；抽不出就返回空串。
+
+    流水账要让人看出"这一步查的是什么"（600519 / 半导体 / 央行），
+    而不是只有一个工具名。抽不到就留空，调用方按老文案渲染。
+    """
+    if not arguments:
+        return ""
+    try:
+        parsed = json.loads(arguments) if isinstance(arguments, str) else arguments
+    except Exception:  # noqa: BLE001 - 参数不是合法 JSON 时不展示，不影响主流程
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    for key in _TOOL_ARG_KEYS:
+        value = parsed.get(key)
+        if isinstance(value, (str, int)) and str(value).strip():
+            text = str(value).strip()
+            return text if len(text) <= 24 else text[:24] + "…"
+    return ""
+
+
+def _output_summary(raw: Any) -> str:
+    """工具返回的规模：条数优先，抽不出就返回空串。"""
+    text = ""
+    if isinstance(raw, dict):
+        text = str(raw.get("output") or "")
+    else:
+        text = str(raw or "")
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except Exception:  # noqa: BLE001 - 非 JSON 返回不展示规模
+        return ""
+    if isinstance(parsed, list):
+        return f"{len(parsed)} 条"
+    if isinstance(parsed, dict):
+        for key in ("data", "rows", "items", "results", "result"):
+            value = parsed.get(key)
+            if isinstance(value, list):
+                return f"{len(value)} 条"
+    return ""
+
+
 async def run_agent_stream(
     agent: Agent[Any],
     prompt: str,
@@ -1593,6 +1653,7 @@ async def run_agent_stream(
                         "name": tool_name,
                         "label": label_of.get(tool_name, tool_name),
                         "state": "running",
+                        "detail": _tool_detail(getattr(raw, "arguments", None)),
                     },
                 )
             elif name == "tool_output":
@@ -1604,6 +1665,7 @@ async def run_agent_stream(
                         "name": tool_name,
                         "label": label_of.get(tool_name, tool_name),
                         "state": "done",
+                        "detail": _output_summary(raw),
                     },
                 )
             continue

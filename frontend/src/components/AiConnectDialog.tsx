@@ -33,6 +33,8 @@ interface Preset {
   base: string
   model: string
   hint: string
+  /** 只有本机反代这类「不需要真密钥」的通道才预填，避免用户以为漏填了 Key */
+  key?: string
 }
 
 type Channel = 'cli' | 'api'
@@ -44,6 +46,14 @@ const PRESETS: readonly Preset[] = [
     base: 'https://api.deepseek.com/v1',
     model: 'deepseek-chat',
     hint: 'OpenAI 兼容',
+  },
+  {
+    id: 'relay',
+    label: '本机反代',
+    base: 'http://127.0.0.1:8317/v1',
+    model: 'deepseek-v4.1-flash',
+    hint: 'WorkBuddy · 本机 8317',
+    key: 'workbuddy-local',
   },
   {
     id: 'qwen',
@@ -174,6 +184,7 @@ export default function AiConnectDialog({ open, onClose, onSaved }: AiConnectDia
     setPreset(item.id)
     setBaseUrl(item.base)
     setModel(item.model)
+    setApiKey(item.key ?? '')
     setResult(null)
     setNotice(null)
   }

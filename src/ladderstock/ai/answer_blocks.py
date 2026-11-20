@@ -309,6 +309,87 @@ def contains_number(text: str) -> bool:
     return bool(_NUMBER_RE.search(str(text or "")))
 
 
+# ---- 结论句挑选（QUOT-627）------------------------------------------------ #
+#: 元信息句式：只交代「什么时候取的数」，不构成结论。这类句子当 headline 会出现
+#: 「结论 = 贵州茅台实时行情，数据时间 2026-11-20 14:49：」——用户看到的就是
+#: 「有边框、写着中性、没有结论」的那张卡。
+_META_MARKERS: tuple[str, ...] = (
+    "数据时间", "取数时间", "数据时点", "数据口径", "实时行情", "快照时间", "as of", "截至",
+)
+
+#: 方向词：只用来判断这句话是在说涨还是在说跌，不参与任何数值计算。
+#: 除了「上涨 / 下跌」这类完整词，也要认单字「涨 / 跌」——模型写「涨 1.75%」
+#: 时不会总写成「上涨」，只认完整词会让一条明显上涨的结论顶着「中性」（QUOT-627 复测）。
+_UP_WORDS: tuple[str, ...] = (
+    "上涨", "涨停", "涨", "回升", "走强", "净流入", "同比增长", "增加", "盈利", "高于", "创新高", "改善",
+    "转正", "翻红", "上行",
+)
+_DOWN_WORDS: tuple[str, ...] = (
+    "下跌", "跌停", "跌", "回落", "走弱", "净流出", "同比下降", "减少", "亏损", "低于", "承压", "下滑",
+    "转负", "翻绿", "下行",
+)
+
+#: 同时含涨、跌两向的**中性词**：「涨跌幅 -1.17%」里的「涨跌」不代表方向，
+#: 判 tone 前先剔掉，否则一句话里两向都命中，永远判成中性。
+_TONE_NEUTRAL_PHRASES: tuple[str, ...] = (
+    "涨跌幅", "涨跌额", "涨跌家数", "涨跌", "涨幅榜", "跌幅榜", "上涨家数", "下跌家数",
+)
+
+#: 结论句前面的列表符（「- 」「* 」「1. 」）：进结论块要剥掉，
+#: 否则结论会显示成「结论 · 偏多 **- 最新价：…**」。
+#: 两条分支都必须锚在行首——不锚会把句中「1485.75 元」里的「1485.」当序号切掉。
+_BULLET_PREFIX_RE = re.compile(r"^(?:[\-\*•·>]+|\d+[\.\)、])\s*")
+
+
+def _is_meta_sentence(text: str) -> bool:
+    """这句只交代取数时点、没有任何判断词 → 不是结论句。"""
+    body = str(text or "")
+    if not any(marker in body.lower() for marker in _META_MARKERS):
+        return False
+    return not any(word in body for word in _UP_WORDS + _DOWN_WORDS)
+
+
+def infer_tone(text: str) -> str:
+    """按句子里已有的方向词判 tone；两向同时出现或都没有 → 中性。
+
+    这里只做「读原文」不做「下判断」：不引入任何新数值，也不改变结论措辞，
+    只是把用户已经读到的方向搬到标题上，免得涨 1.63% 的回答顶着「中性」。
+    """
+    body = str(text or "")
+    for phrase in _TONE_NEUTRAL_PHRASES:
+        body = body.replace(phrase, "")
+    up = any(word in body for word in _UP_WORDS)
+    down = any(word in body for word in _DOWN_WORDS)
+    if up and not down:
+        return "positive"
+    if down and not up:
+        return "negative"
+    return "neutral"
+
+
+def strip_bullet(text: str) -> str:
+    """去掉句首列表符（「- 」「* 」「1. 」），结论块里不该带这些排版符号。"""
+    return _BULLET_PREFIX_RE.sub("", str(text or "").strip()).strip()
+
+
+def pick_headline(lines: Sequence[str]) -> str:
+    """从叙述里挑一句真结论：跳过元信息句，优先取带方向词的那句。"""
+    heads: list[str] = []
+    for line in lines:
+        head = strip_bullet(first_sentence(line))
+        if head:
+            heads.append(head)
+    if not heads:
+        return ""
+    for head in heads:
+        if not _is_meta_sentence(head) and infer_tone(head) != "neutral":
+            return head
+    for head in heads:
+        if not _is_meta_sentence(head):
+            return head
+    return heads[0]
+
+
 def _require_mapping(value: Any, where: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise AnswerBlockError(f"{where} 必须是对象，收到 {type(value).__name__}")
@@ -356,6 +437,50 @@ def _check_date(value: str, where: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# F5：翻转条件（「什么情况下我这个结论是错的」）
+# --------------------------------------------------------------------------- #
+#
+# 判断类结论最容易变成四平八稳的套话，加一句可证伪的条件才像研究员。模型按固定
+# 标记在正文里写一行，装配时抽出来挂到 conclusion 的 `falsifier` 字段上——**不新开
+# 块类型**：块数上限仍是 6，F7/F8/F10 的预算不被这一句吃掉；前端也只多渲染一行。
+
+#: 允许的行首标记（模型可以换说法，装配只认这几个，不猜同义词）
+FALSIFIER_MARKERS: tuple[str, ...] = ("翻转条件", "证伪条件", "失效条件", "反向信号")
+
+_FALSIFIER_LINE = re.compile(
+    r"^[\s>\-*•·]*\**\s*(?:" + "|".join(FALSIFIER_MARKERS) + r")\s*\**\s*[：:]\s*(.+)$"
+)
+
+
+def extract_falsifier(text: str) -> tuple[str | None, str]:
+    """抽出正文里的「翻转条件」那一行，返回 `(条件, 去掉该行的正文)`。
+
+    找不到时返回 `(None, 原文)`：**不补写、不猜**。模型没给就是这条样本没达标，
+    由统计口径去扣分，这里伪造一句比缺一句更坏（等于给结论编了个自己也不认的边界）。
+    只取第一条：一段回答给三个互相矛盾的失效条件，读者只会更不信。
+    """
+    if not text:
+        return None, text
+    found: str | None = None
+    kept: list[str] = []
+    for line in text.splitlines():
+        match = _FALSIFIER_LINE.match(line)
+        if match is not None:
+            candidate = match.group(1).strip().strip("*").strip()
+            if candidate:
+                # 条件行一律从正文删掉，重复的也不留：正文再出现一次就是同一句话
+                # 说两遍；只认第一条进 payload，后面几条不合并（互相矛盾的条件
+                # 拼在一起，读者只会更不信）。
+                if found is None:
+                    found = candidate
+                continue
+        kept.append(line)
+    if found is None:
+        return None, text
+    return found, "\n".join(kept).strip()
+
+
+# --------------------------------------------------------------------------- #
 # §6.3 逐字段校验
 # --------------------------------------------------------------------------- #
 
@@ -364,7 +489,12 @@ def validate_conclusion(payload: Any, *, allow_numbers: bool = False) -> dict[st
     """校验 conclusion payload；`allow_numbers=True` 放行已核对数字（QUOT-612，
     供 `build_blocks` 降级路径内部使用，不改变 payload schema）。"""
     body = _require_mapping(payload, "conclusion")
-    _require_keys(body, ("text", "tone"), ("text", "tone", "confidence"), "conclusion")
+    _require_keys(
+        body,
+        ("text", "tone"),
+        ("text", "tone", "confidence", "falsifier"),
+        "conclusion",
+    )
     text = _require_str(body["text"], "conclusion.text")
     if contains_number(text) and not allow_numbers:
         raise AnswerBlockError(f"conclusion.text 含数字（红线 4）：{text!r}")
@@ -372,6 +502,12 @@ def validate_conclusion(payload: Any, *, allow_numbers: bool = False) -> dict[st
     if tone not in TONES:
         raise AnswerBlockError(f"conclusion.tone 必须取自 {TONES}，收到 {tone!r}")
     cleaned: dict[str, Any] = {"text": text, "tone": tone}
+    # F5：翻转条件是「条件」不是「结论」，必须允许带数字（「跌破 1400」就是这个
+    # 条件本身）；红线 4 只约束 `text`，不能顺手把这一句也剥成残句。
+    if "falsifier" in body:
+        falsifier = _require_str(body["falsifier"], "conclusion.falsifier", allow_empty=True)
+        if falsifier.strip():
+            cleaned["falsifier"] = falsifier.strip()
     if "confidence" in body:
         confidence = _require_number(body["confidence"], "conclusion.confidence")
         if not 0.0 <= confidence <= 1.0:
@@ -391,7 +527,21 @@ def validate_metric(payload: Any) -> dict[str, Any]:
         where = f"metric.items[{index}]"
         item = _require_mapping(raw, where)
         _require_keys(
-            item, ("label", "value"), ("label", "value", "unit", "direction", "as_of"), where
+            item,
+            ("label", "value"),
+            (
+                "label",
+                "value",
+                "unit",
+                "direction",
+                "as_of",
+                # F4：出处族 / 接口 / 取数时间。三项都可缺省——老载荷与上游只给
+                # as_of 的路径照原样进来，前端按「有就显示」处理。
+                "source",
+                "endpoint",
+                "fetched_at",
+            ),
+            where,
         )
         label = _require_str(item["label"], f"{where}.label")
         value = _require_number(item["value"], f"{where}.value")
@@ -409,6 +559,12 @@ def validate_metric(payload: Any) -> dict[str, Any]:
             as_of = _require_str(item["as_of"], f"{where}.as_of")
             _check_date(as_of, f"{where}.as_of")
             entry["as_of"] = as_of
+        # F4：出处三项都是可选字符串；空串等于没给（上游有时把 None 写成 ""）
+        for key in ("source", "endpoint", "fetched_at"):
+            if key in item:
+                value_text = _require_str(item[key], f"{where}.{key}", allow_empty=True).strip()
+                if value_text:
+                    entry[key] = value_text
         cleaned_items.append(entry)
     return {"items": cleaned_items}
 
@@ -771,6 +927,15 @@ def _pick_metrics(metrics: Mapping[str, Any]) -> list[dict[str, Any]]:
         }
         if record.as_of:
             item["as_of"] = record.as_of
+        # F4 数字溯源：这一项是「哪个出处族 / 哪个接口 / 什么时候取的」。用户点开
+        # 数字就能看到依据链，而不是只被告知「数据来自工具」。参数不放进来——同一
+        # 轮往往查了多只票，把参数塞进每一项会让四个格子各挂一串代码，反而看不清。
+        if record.source:
+            item["source"] = record.source
+        if record.endpoint:
+            item["endpoint"] = record.endpoint
+        if record.fetched_at:
+            item["fetched_at"] = record.fetched_at
         direction = _direction(metrics, key)
         if direction is not None:
             item["direction"] = direction
@@ -947,6 +1112,9 @@ def build_blocks(
     # 用户问「该查哪些数据」「这家公司基本面怎么样（但没说哪家）」时本就没取数，
     # 报一屏缺失等于答错问题。这个判断由调用方按实际取数计划给，不靠关键词猜意图。
     fetch_attempted: bool = True,
+    # F5：翻转条件（「什么情况下这个结论是错的」）。调用方用 `extract_falsifier()`
+    # 从正文里抽出来再传进来；没抽到就传 None，结论卡安静地少一行，不占第二名。
+    falsifier: str | None = None,
 ) -> list[dict[str, Any]]:
     """§7 装配：AI 只决定「说什么话」，程序决定「给什么数」和「怎么摆」。
 
@@ -1031,13 +1199,20 @@ def build_blocks(
     skip_source_notice = intent in (INTENT_CHITCHAT,) or not fetch_attempted
     emit_evidence = intent == INTENT_CONCEPT and bool(narrative["evidence"])
 
-    # 1. 结论：narrative[0] 取第一句、剥数字（tone 中性、置信度不评级）；
+    # 1. 结论：从叙述里挑一句**真结论**（跳过「数据时间…」这类元信息句，QUOT-627）；
     #    QUOT-612：数字已核对（keep_numbers）时保留原文
-    raw_headline = first_sentence(narrative["narrative"][0])
+    raw_headline = pick_headline(narrative["narrative"])
     headline = raw_headline if keep_numbers else strip_numbers(raw_headline)
     if not headline:
         headline = "本轮没有可展示的结论。"
-    conclusion: dict[str, Any] = {"text": headline, "tone": "neutral"}
+    # QUOT-627：方向按原文词判，不再一律 neutral——涨 1.63% 的回答不该顶着「中性」。
+    # 只在数字已核对（本轮却有三具出处的数据）时启用；纯文字轮次仍为中性，不凭空评级。
+    tone = infer_tone(raw_headline) if keep_numbers else "neutral"
+    conclusion: dict[str, Any] = {"text": headline, "tone": tone}
+    # F5：只挂在结论卡上。没抽到就不加这个键——空字符串会让前端渲染一行「若 … 则」，
+    # 后面却没内容。
+    if falsifier and falsifier.strip():
+        conclusion["falsifier"] = falsifier.strip()
     if keep_numbers:
         # 已核对数字保留原句（QUOT-612）：payload 仍是 `{text, tone}` 两键，schema 不变
         # （前端 47 项 vitest 依赖），只放行数字校验。
@@ -1218,6 +1393,7 @@ __all__ = [
     "CHART_KINDS",
     "CAPABILITY_NOTE",
     "DIRECTIONS",
+    "FALSIFIER_MARKERS",
     "MAX_BLOCKS",
     "MAX_CHART_POINTS",
     "MAX_METRIC_ITEMS",
@@ -1237,10 +1413,14 @@ __all__ = [
     "build_blocks",
     "check_ordering",
     "contains_number",
+    "extract_falsifier",
     "first_sentence",
+    "infer_tone",
     "normalize_ai",
+    "pick_headline",
     "source_note",
     "strip_numbers",
+    "strip_bullet",
     "strip_source_note",
     "validate_action",
     "validate_blocks",
