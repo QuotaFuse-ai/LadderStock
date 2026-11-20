@@ -111,6 +111,12 @@ def _now_iso() -> str:
 def build_tools(data_root: Any) -> list[ToolSpec]:
     """构造首批工具。全部走现役取数链路，取不到返回"未取到"，不编数。"""
 
+    # 公告类型枚举直接从知识库的分类表取，避免两处硬编码漂移：
+    # 分类表加了新类型、工具 schema 却还写着旧的，模型就会去填一个不存在的值。
+    from ladderstock.knowledge.announcements import DOC_KIND_FALLBACK, DOC_KINDS
+
+    doc_kind_enum = " / ".join([*DOC_KINDS, DOC_KIND_FALLBACK])
+
     def lookup_quote(args: dict[str, Any]) -> ToolResult:
         from ladderstock.web.qa_fetch import FetchPlan, _prefixed_code, run_fetch
 
@@ -877,8 +883,20 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         query = str(params.get("query_text") or "").strip()
         if not query:
             return ToolResult(text="query_text 不能为空")
+        kind = str(params.get("doc_kind") or "").strip()
+        period = str(params.get("period") or "").strip()
         try:
-            hits = ann_module.search(query, symbol=symbol or None, top_k=5)
+            top_k = max(1, min(int(params.get("top_k") or 5), 20))
+        except (TypeError, ValueError):
+            top_k = 5
+        try:
+            hits = ann_module.search(
+                query,
+                symbol=symbol or None,
+                top_k=top_k,
+                doc_kinds=[kind] if kind else None,
+                periods=[period] if period else None,
+            )
         except Exception as exc:  # noqa: BLE001 - 知识库是可选依赖，失败不该让整轮挂掉
             # 兜底可以静默，但不能瞎：把本地知识库的失败原因带上，否则
             # 用户只看到「FC embedding 不可用」，无法判断是 qdrant 没起、
@@ -891,11 +909,30 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
                 )
             )
         if not hits:
+            # 带分类条件时不要再退回 FC：FC 那边的 pgvector 没有这些分类字段，
+            # 退回去只会拿一批不符合条件的切片冒充命中。
+            if kind or period:
+                return ToolResult(
+                    text=(
+                        f"知识库里没有符合「{query}」（类型={kind or '不限'}，"
+                        f"财报期={period or '不限'}）的公告切片。"
+                        "这是真实缺口，不要用别的公告内容顶替。"
+                    )
+                )
             return _fc_call("search_announcements_semantically", params)
-        lines = [f"公告语义检索：qdrant 命中 {len(hits)} 段（collection ladderstock_knowledge）"]
+        scope = []
+        if kind:
+            scope.append(f"类型={kind}")
+        if period:
+            scope.append(f"财报期={period}")
+        head = f"公告语义检索：qdrant 命中 {len(hits)} 段（collection ladderstock_knowledge"
+        head += f"，{'，'.join(scope)}）" if scope else "）"
+        lines = [head]
         for hit in hits:
             lines.append(
                 f"- [{hit.score:.4f}] {hit.symbol} {hit.ann_date} 《{hit.title}》"
+                f"（{hit.doc_kind}{'·' + hit.period if hit.period else ''}，"
+                f"第 {hit.chunk_index + 1}/{hit.chunk_total or '?'} 段）"
                 f"\n  {hit.text[:400].strip()}"
             )
         return ToolResult(text="\n".join(lines))
@@ -1062,21 +1099,34 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             name="announcement_search",
             label="公告语义检索",
             description=(
-                "在一只股票的公告库做语义检索，例如「有没有提过分红调整」「募集资金用途变更怎么说」。"
-                "关键词式提问（公告里有没有提到 X）用它，返回命中的公告片段；"
-                "公告尚未入库或 embedding 服务不可用时会明确报依赖不可用，不要编造公告内容。"
+                "在公告正文里做语义检索，例如「有没有提过分红调整」「募集资金用途变更怎么说」。"
+                "可按公告类型（财报/分红/回购/股东会/人事/关联交易…）和财报期收窄，"
+                "条件在算余弦之前生效，所以「只看 2026Q3 的财报类公告」这种问法不会被无关切片占位。"
+                "不给 symbol 就是全库检索。公告尚未入库或知识库不可用时会明确报依赖不可用，"
+                "不要编造公告内容。"
             ),
             params_schema={
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "6 位 A 股代码，如 600519"},
+                    "symbol": {"type": "string", "description": "可选。6 位 A 股代码，如 600519"},
                     "query_text": {"type": "string", "description": "要检索的语义问题或关键词"},
+                    "doc_kind": {
+                        "type": "string",
+                        "description": (
+                            f"可选。公告类型（共 {len(DOC_KINDS) + 1} 类）：{doc_kind_enum}"
+                        ),
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "可选。财报期，如 2026Q3 / 2026H1 / 2025A",
+                    },
+                    "top_k": {"type": "integer", "description": "可选。取几段，默认 5，上限 20"},
                     "year_range": {
                         "type": "string",
                         "description": "可选。公告年份区间，如 2024-2026",
                     },
                 },
-                "required": ["symbol", "query_text"],
+                "required": ["query_text"],
                 "additionalProperties": False,
             },
             invoke=_announcement_search,
@@ -1117,8 +1167,317 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
             },
             invoke=senate_debate,
         ),
+        ToolSpec(
+            name="ensure_data",
+            label="按需补数",
+            description=(
+                "回答某只 A 股的问题前，先确认本地库有没有对应数据；"
+                "缺了就自动补（联网采集 → 落库 → 建宽表）。"
+                "用户问财报、公告、行情、K 线且此前没取到过时，先调它，不要直接说「没有数据」。"
+                "只补被问到的那一只票，不扩到同板块。"
+                "返回「data_ready」表示已有数据可直接回答；"
+                "返回「pending」表示还在补，拿到 task_id 后"
+                "可用 data_task_status 复查，期间如实说正在补，不要编数。"
+            ),
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "6 位 A 股代码，如 600519"},
+                    "kinds": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["financial", "quote", "announcement", "kline"],
+                        },
+                        "description": "要确认/补齐的数据类。财报会自动带上行情（算 PE/PB 需要）。",
+                    },
+                    "budget_ms": {
+                        "type": "integer",
+                        "description": "同步等待上限（毫秒），默认 15000；超过就交回任务号",
+                    },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "用户已确认本次联网采集时置 true，避免重复弹窗",
+                    },
+                },
+                "required": ["symbol", "kinds"],
+                "additionalProperties": False,
+            },
+            invoke=lambda args: _ensure_data(data_root, args),
+        ),
+        ToolSpec(
+            name="data_task_status",
+            label="补数任务状态",
+            description=(
+                "查询补数任务进度。给 task_id 查单个；不给则列出所有在跑的任务。"
+                "只在 ensure_data 返回 pending 后用，不要在没有任务号时凭空查。"
+            ),
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "ensure_data 返回的任务号"},
+                },
+                "additionalProperties": False,
+            },
+            invoke=_data_task_status,
+        ),
+        ToolSpec(
+            name="sector_digest",
+            label="板块全景",
+            description=(
+                "回答「最近哪些板块有新变化值得跟踪」「哪些板块在走强」时用它。"
+                "一次给 N 个板块的涨跌幅、主力净流入、领涨股，并尽量附上成分股（按涨幅排序，"
+                "并标注其中我方本地已有财报的票）。"
+                "只补被问到的板块，不扩全市场；成分股解析不到时如实说「未解析」，不要凭板块名猜股票。"
+            ),
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["industry", "concept"],
+                        "description": "行业板块或概念板块，默认 industry",
+                    },
+                    "limit_boards": {
+                        "type": "integer",
+                        "description": "取前几个板块，默认 5，上限 10",
+                    },
+                    "members_per_board": {
+                        "type": "integer",
+                        "description": "每个板块取几只成分股，默认 10，上限 40",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            invoke=_sector_digest,
+        ),
         *extra,
     ]
+
+
+def _sector_digest(args: dict[str, Any]) -> ToolResult:
+    """板块全景：涨幅 / 资金 / 领涨股 / 成分股 / 其中我方有基本面的票。"""
+
+    from ladderstock.data import sectors
+
+    kind = str(args.get("kind") or "industry").strip().lower()
+    if kind not in ("industry", "concept"):
+        return ToolResult(text=f"不支持的板块类型：{kind}（可选 industry / concept）")
+
+    try:
+        limit_boards = int(args.get("limit_boards") or 5)
+    except (TypeError, ValueError):
+        limit_boards = 5
+    try:
+        members_per_board = int(args.get("members_per_board") or 10)
+    except (TypeError, ValueError):
+        members_per_board = 10
+
+    try:
+        payload = sectors.sector_digest(
+            kind,
+            limit_boards=max(1, min(limit_boards, 10)),
+            members_per_board=max(1, min(members_per_board, 40)),
+        )
+    except sectors.SectorError as exc:
+        return ToolResult(text=f"板块数据未取到（{exc}）。这是上游缺口，不要估算板块涨幅。")
+
+    lines: list[str] = []
+    table_rows: list[list[Any]] = []
+    for board in payload["boards"]:
+        members = board.get("members") or []
+        table_rows.append(
+            [
+                board["board_name"],
+                _fnum(board.get("change_pct")),
+                _fnum(board.get("main_net")),
+                board.get("leader_name") or "",
+                len(members) or "—",
+            ]
+        )
+        pct = _fnum(board.get("change_pct"))
+        leader = board.get("leader_name")
+        detail = f"{board['board_name']}：{pct}%，领涨 {leader}"
+        if board.get("main_net"):
+            detail += f"，主力净流入 {_fnum(board.get('main_net'))}"
+        if members:
+            top = [f"{m['name']}({m['code']} {_fnum(m.get('change_pct'))}%)" for m in members[:5]]
+            detail += "；成分股靠前：" + "、".join(top)
+            covered = board.get("members_covered") or []
+            if covered:
+                detail += f"；其中我方已有财报：{', '.join(covered)}"
+        else:
+            detail += "；成分股未能解析（板块榜是新浪口径，成分股要东财板块码，按名对不上）"
+        lines.append(detail)
+
+    metrics = {
+        "table": {
+            "columns": ["板块", "涨跌幅(%)", "主力净流入(元)", "领涨股", "成分股数"],
+            "rows": table_rows,
+            "caption": "板块全景（行业板块）" if kind == "industry" else "板块全景（概念板块）",
+        }
+    }
+    return ToolResult(
+        text="\n".join(lines) + f"\n\n本地已有财报覆盖：{payload['covered_total']} 只票。",
+        metrics=metrics,
+        sources=[
+            {
+                "name": "tickhub · board_fund_flow + board_members + stock_concept_blocks",
+                "fetched_at": _now_iso(),
+            }
+        ],
+    )
+
+
+def _ensure_data(data_root: Any, args: dict[str, Any]) -> ToolResult:
+    """先看本地、缺了再补。补数有同步预算，超时就把任务号交出去。"""
+
+    import time
+    from pathlib import Path
+
+    from ladderstock.core import policy
+    from ladderstock.data import coverage, tasks
+
+    symbol = coverage.normalize_symbol(args.get("symbol"))
+    if not symbol:
+        return ToolResult(text="缺少 symbol 参数，请给出 6 位 A 股代码（如 600000）")
+
+    raw_kinds = args.get("kinds") or ["financial"]
+    if isinstance(raw_kinds, str):
+        raw_kinds = [k.strip() for k in raw_kinds.split(",") if k.strip()]
+    kinds = [str(k).strip().lower() for k in raw_kinds if str(k).strip()]
+    unknown = [k for k in kinds if k not in coverage.KINDS]
+    if unknown:
+        return ToolResult(
+            text=f"不支持的数据类：{', '.join(unknown)}（可选：{'、'.join(coverage.KINDS)}）"
+        )
+
+    root = Path(data_root) if data_root else None
+    try:
+        before = coverage.check_coverage(symbol, kinds=kinds)
+    except coverage.CoverageUnavailable as exc:
+        return ToolResult(text=f"本地库不可用，无法判定覆盖（{exc}）。这是环境问题，不是数据缺失。")
+
+    ready = before.get("ready") or []
+    missing = before.get("missing") or []
+
+    if not missing:
+        stamp = ", ".join(
+            f"{key}@{value.get('as_of')}"
+            for key, value in before["kinds"].items()
+            if value.get("as_of")
+        )
+        return ToolResult(
+            text=(
+                f"{symbol} 本地数据齐全（{', '.join(ready)}）。"
+                f"最新口径：{stamp}。"
+                "可以直接据此回答。"
+            ),
+            metrics={"evidence": before},
+        )
+
+    policy_value = policy.load_policy(root)["confirm_policy"]
+    if policy.needs_confirm(policy.TIER_COLLECT, policy=policy_value) and not args.get("confirmed"):
+        return ToolResult(
+            text=(
+                f"{symbol} 本地缺 {', '.join(missing)}。补齐需要向 TickHub 发起一次联网采集"
+                f"（只写本地库，不改任何配置）。当前权限档为「{policy.describe(policy_value)['labels'][policy_value]}」，"
+                "需要你确认后才执行。"
+            ),
+            metrics={
+                "confirm_request": {
+                    "kind": "collect",
+                    "tier": policy.TIER_COLLECT,
+                    "symbol": symbol,
+                    "missing": missing,
+                    "policy": policy_value,
+                }
+            },
+        )
+
+    budget_ms = int(args.get("budget_ms") or 15000)
+    record = tasks.submit(symbol, missing, budget_ms=budget_ms)
+    task_id = record["task_id"]
+
+    # 同步等一小段：预算内跑完就当场给数，跑不完交句柄，别让对话卡住
+    deadline = time.monotonic() + max(2.0, budget_ms / 1000.0)
+    while time.monotonic() < deadline:
+        current = tasks.get(task_id) or {}
+        if current.get("status") in tasks.FINAL_STATUSES:
+            break
+        time.sleep(0.4)
+
+    current = tasks.get(task_id) or {}
+    status = current.get("status")
+    result = current.get("result") or {}
+    metadata = result.get("metadata") or {}
+
+    if status == tasks.STATUS_READY:
+        return ToolResult(
+            text=(
+                f"{symbol} 已补齐（{task_id}）。"
+                f"{'、'.join(ready + (metadata.get('ready') or []))} 已就绪，可以据此回答。"
+            ),
+            metrics={"evidence": metadata, "task_id": task_id, "status": status},
+        )
+
+    if status in (tasks.STATUS_PARTIAL, tasks.STATUS_FAILED) and metadata:
+        still = metadata.get("missing") or []
+        detail = "；".join((result.get("errors") or [])[:3])
+        return ToolResult(
+            text=(
+                f"{symbol} 补数{('部分完成' if status == tasks.STATUS_PARTIAL else '失败')}"
+                f"（{task_id}）。"
+                f"仍缺：{', '.join(still) or '未知'}。{('原因：' + detail) if detail else ''}"
+                "请如实说明缺口，不要编数。"
+            ),
+            metrics={"evidence": metadata, "task_id": task_id, "status": status},
+        )
+
+    # 还在跑：把句柄给出去，让用户/Agent 稍后用 data_task_status 取
+    return ToolResult(
+        text=(
+            f"{symbol} 正在补 {', '.join(missing)}（任务 {task_id}，当前 {status}）。"
+            "约十几秒后可用 data_task_status 查询；先说明「正在补」，不要编造数字。"
+        ),
+        metrics={"task_id": task_id, "status": status, "pending": True},
+    )
+
+
+def _data_task_status(args: dict[str, Any]) -> ToolResult:
+    from ladderstock.data import tasks
+
+    task_id = str(args.get("task_id") or "").strip()
+    if not task_id:
+        active = tasks.get_manager().list_active()
+        if not active:
+            return ToolResult(text="没有正在运行的补数任务。")
+        return ToolResult(text=json.dumps({"active": active}, ensure_ascii=False, default=str))
+
+    record = tasks.get(task_id)
+    if record is None:
+        return ToolResult(text=f"任务 {task_id} 不存在或已过期（记录保留 30 分钟）。")
+
+    status = record.get("status")
+    if status not in tasks.FINAL_STATUSES:
+        stages = json.dumps(record.get("stages"), ensure_ascii=False)
+        return ToolResult(
+            text=f"任务 {task_id} 仍在 {status}，阶段：{stages}。",
+            metrics={"task_id": task_id, "status": status},
+        )
+
+    metadata = (record.get("result") or {}).get("metadata") or {}
+    errors = (record.get("result") or {}).get("errors") or []
+    reason = f"原因：{'；'.join(errors)}" if record.get("error") else ""
+    return ToolResult(
+        text=(
+            f"任务 {task_id} 结束：{status}。"
+            f"就绪：{', '.join(metadata.get('ready') or []) or '无'}；"
+            f"仍缺：{', '.join(metadata.get('missing') or []) or '无'}。"
+            f"{reason}"
+        ),
+        metrics={"task_id": task_id, "status": status, "evidence": metadata},
+    )
 
 
 def _to_function_tool(spec: ToolSpec, collector: dict[str, Any] | None = None) -> FunctionTool:

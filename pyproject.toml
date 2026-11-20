@@ -33,6 +33,9 @@ dependencies = [
   # 模型自主选工具 / 定轮次的 agent 运行时（OpenAI Agents SDK）。进核心依赖而不是
   # optional：AI 对话与研究台是主线功能，安装包必须自带，用户不该自己 pip install。
   "openai-agents>=0.24,<1",
+  # 公告正文抽取（knowledge/fulltext.py）：TickHub 只给 PDF 链接，正文得自己解析。
+  # 纯 Python，无系统依赖，进核心依赖——知识库是主线能力，不能让它缺件。
+  "pypdf>=5.0,<8",
 ]
 
 [project.optional-dependencies]

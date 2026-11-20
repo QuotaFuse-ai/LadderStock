@@ -86,6 +86,7 @@ from ladderstock.web.control import (
     is_control_path,
     is_loopback_host,
 )
+from ladderstock.web.data_assets import build_data_router
 from ladderstock.web.financecoffer_api import build_financecoffer_router
 from ladderstock.web.inbox import build_router as build_inbox_router
 from ladderstock.web.industry import IndustryPlane
@@ -2178,6 +2179,12 @@ def create_app(
     # 安装（后台任务 + 进度轮询）、启停、卸载。闸门同控制面：安装/卸载/启停
     # 都是真命令真落盘，来源证据（回环 Origin 或 X-LDST-Client）必不可少。
     app.include_router(build_financecoffer_router())
+
+    # ------------------------------------- 数据资产 / 补数任务 / 权限档
+    #
+    # `/api/data/*`：平台上"看得见"的入口——140 只票的财报期数、公告条数、
+    # 最新报告日；单票明细；补数任务句柄；权限三档读写。闸门同控制面。
+    app.include_router(build_data_router(root))
 
     # ------------------------------------- 首次配置 / 子模块安装向导面
     #

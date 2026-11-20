@@ -15,6 +15,7 @@ import LimitUpScreen from './screens/limitup/LimitUpScreen'
 import JournalScreen from './screens/JournalScreen'
 import KnowledgeDetailScreen from './screens/knowledge/KnowledgeDetailScreen'
 import KnowledgeEntryScreen from './screens/knowledge/KnowledgeEntryScreen'
+import DataAssetsScreen from './screens/DataAssetsScreen'
 import MarketScreen from './screens/MarketScreen'
 import InboxScreen from './screens/my-stocks/InboxScreen'
 import MyStocksScreen from './screens/my-stocks/MyStocksScreen'
@@ -120,6 +121,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   // QUOT-567：「知识库」= 落地页收 6 位代码 → 档案页读 `GET /api/knowledge/:market/:symbol`
   '/knowledge': <KnowledgeEntryScreen />,
   '/knowledge/:market/:symbol': <KnowledgeDetailScreen />,
+  // 数据资产：本地库的票 / 财报期数 / 公告条数（读 `/api/data/assets*`）
+  '/data-assets': <DataAssetsScreen />,
   // 旧入口：此前首页重定向到复盘；带查询串保留（`?state=` 演示态）
   '/index.html': <Navigate to="/" replace />,
   '*': <NotFound />,

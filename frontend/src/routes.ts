@@ -59,6 +59,8 @@ export const ROUTE_PATHS = [
   // 档案页直接读后端 `GET /api/knowledge/:market/:symbol`；深链形如 `/knowledge/SH/600000`。
   '/knowledge',
   '/knowledge/:market/:symbol',
+  // 数据资产：本地库里有哪些票、几期财报、几条公告正文（读 `/api/data/assets*`）
+  '/data-assets',
   '/index.html',
   '*',
 ] as const
