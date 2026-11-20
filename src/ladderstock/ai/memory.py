@@ -303,7 +303,8 @@ def _verify_model_integrity(models_dir: Path) -> None:
             bad.append(f"{rel}（哈希不一致）")
     if bad:
         raise MemoryUnavailable(
-            "模型文件完整性校验失败：" + "；".join(bad)
+            "模型文件完整性校验失败："
+            + "；".join(bad)
             + f"。安装包 {models_dir} 内文件损坏或被改动，请重新安装（SHA256SUMS 为随包清单）。"
         )
 
@@ -374,9 +375,7 @@ def _build_memory(models_dir: Path, state_dir: Path) -> Any:
     from ladderstock.ai.fallback import load_config
 
     config = load_config()
-    target = next(
-        (t for t in config.targets if t.backend.configured), None
-    )
+    target = next((t for t in config.targets if t.backend.configured), None)
     if target is None:
         raise MemoryUnavailable(
             "记忆引擎初始化失败：本地 LLM 网关未配置"
@@ -411,8 +410,7 @@ def _build_memory(models_dir: Path, state_dir: Path) -> Any:
         raise
     except Exception as exc:  # noqa: BLE001 - qdrant 本地锁冲突等，统一显式失败
         raise MemoryUnavailable(
-            f"记忆引擎初始化失败：{exc.__class__.__name__}: {exc}"
-            f"（qdrant 路径 {qdrant_path}）"
+            f"记忆引擎初始化失败：{exc.__class__.__name__}: {exc}（qdrant 路径 {qdrant_path}）"
         ) from None
 
     config = MemoryConfig(
@@ -490,9 +488,7 @@ def engine_health() -> dict[str, Any]:
         return {
             "engine": "in-process",
             "branch": getattr(_engine, "engine_branch", "unknown"),
-            "embedder": getattr(
-                _engine, "embedder_info", {"engine": "sentence-transformers"}
-            ),
+            "embedder": getattr(_engine, "embedder_info", {"engine": "sentence-transformers"}),
             "ok": True,
         }
     if _engine_error is not None:
@@ -1006,9 +1002,7 @@ KNOWLEDGE_END = "<<<KNOWLEDGE_END>>>"
 
 MEMORY_SECTION_HEADER = "【对话记忆（可能过时，仅作线索）】"
 KNOWLEDGE_SECTION_HEADER = "【标的档案（带 as_of，优先于对话记忆）】"
-EMPTY_KNOWLEDGE_NOTE = (
-    "（该标的没有可用档案；档案缺失时以页级数据为准，不要引用记忆补全。）"
-)
+EMPTY_KNOWLEDGE_NOTE = "（该标的没有可用档案；档案缺失时以页级数据为准，不要引用记忆补全。）"
 
 MEMORY_CONFLICT_RULE = (
     "若【对话记忆】与【标的档案】或【页级上下文】冲突，以档案与页级数据为准，"

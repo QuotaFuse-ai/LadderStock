@@ -44,6 +44,7 @@ def _local_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo: Path) ->
 # 1. schema 迁移
 # --------------------------------------------------------------------------- #
 
+
 def test_schema_migration_is_idempotent(tmp_path: Path) -> None:
     conn = sqlite_store.connect(root=tmp_path, create=True)
     assert conn is not None
@@ -100,6 +101,7 @@ def test_newer_schema_is_refused(tmp_path: Path) -> None:
 # 2. journal 命令闭环（只写本机）
 # --------------------------------------------------------------------------- #
 
+
 def _add(argv: list[str]) -> None:
     result = runner.invoke(app, ["journal", "add", *argv])
     assert result.exit_code == 0, result.stderr
@@ -108,14 +110,34 @@ def _add(argv: list[str]) -> None:
 def test_journal_add_list_stats_roundtrip(tmp_path: Path) -> None:
     _add(
         [
-            "--code", "600000", "--side", "buy", "--price", "10", "--qty", "100",
-            "--note", SENTINEL, "--date", DATE, "--plan-price", "10.0",
+            "--code",
+            "600000",
+            "--side",
+            "buy",
+            "--price",
+            "10",
+            "--qty",
+            "100",
+            "--note",
+            SENTINEL,
+            "--date",
+            DATE,
+            "--plan-price",
+            "10.0",
         ]
     )
     _add(
         [
-            "--code", "600000", "--side", "sell", "--price", "11", "--qty", "100",
-            "--date", DATE,
+            "--code",
+            "600000",
+            "--side",
+            "sell",
+            "--price",
+            "11",
+            "--qty",
+            "100",
+            "--date",
+            DATE,
         ]
     )
 
@@ -125,9 +147,7 @@ def test_journal_add_list_stats_roundtrip(tmp_path: Path) -> None:
     assert [row["side"] for row in rows] == ["buy", "sell"]
     assert all(row["code"] == "600000" for row in rows)
 
-    filtered = runner.invoke(
-        app, ["journal", "list", "--code", "000001", "--output", "json"]
-    )
+    filtered = runner.invoke(app, ["journal", "list", "--code", "000001", "--output", "json"])
     assert filtered.exit_code == 0
     assert json.loads(filtered.stdout) == []
 
@@ -150,8 +170,18 @@ def test_journal_add_list_stats_roundtrip(tmp_path: Path) -> None:
 def test_journal_stats_flags_deviation(tmp_path: Path) -> None:
     _add(
         [
-            "--code", "600519", "--side", "buy", "--price", "12", "--qty", "10",
-            "--date", DATE, "--plan-price", "10",
+            "--code",
+            "600519",
+            "--side",
+            "buy",
+            "--price",
+            "12",
+            "--qty",
+            "10",
+            "--date",
+            DATE,
+            "--plan-price",
+            "10",
         ]
     )
     result = runner.invoke(app, ["journal", "stats", "--output", "json"])
@@ -172,6 +202,7 @@ def test_journal_list_without_store_returns_empty(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 隐私断言
 # --------------------------------------------------------------------------- #
+
 
 def test_journal_never_in_mcp_listing_or_envelope(tmp_path: Path) -> None:
     journal_log.add_trade(
@@ -244,9 +275,16 @@ def test_export_hides_journal_unless_explicit(tmp_path: Path) -> None:
     flagged = runner.invoke(
         app,
         [
-            "export", "--format", "md", "--date", DATE,
-            "--out", str(tmp_path / "flagged"), "--with-journal",
-            "--output", "json",
+            "export",
+            "--format",
+            "md",
+            "--date",
+            DATE,
+            "--out",
+            str(tmp_path / "flagged"),
+            "--with-journal",
+            "--output",
+            "json",
         ],
     )
     assert flagged.exit_code == 0, flagged.stderr

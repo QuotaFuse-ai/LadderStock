@@ -294,6 +294,8 @@ export interface PoolCandidate {
     main_net_pct: number | null
     theme_tags: string[]
     theme_board_change_pct: number | null
+    /** 题材分为空时的原因：有归属但当日未进榜 / 根本没取到归属，两者要能分开看 */
+    theme_note: string | null
   }
 }
 
@@ -1028,6 +1030,7 @@ function parsePoolCandidate(value: unknown): PoolCandidate | null {
       main_net_pct: numberOrNull(raw.main_net_pct),
       theme_tags: stringList(raw.theme_tags),
       theme_board_change_pct: numberOrNull(raw.theme_board_change_pct),
+      theme_note: text(raw.theme_note) || null,
     },
   }
 }

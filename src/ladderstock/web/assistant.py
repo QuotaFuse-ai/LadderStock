@@ -35,18 +35,49 @@ import re
 import secrets
 import socket
 import sqlite3
+import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
-from ladderstock.ai import answer_blocks, fallback, memory, module_memory
-from ladderstock.ai.answer_blocks import AnswerBlockError, build_block, normalize_ai
+from ladderstock.ai import (
+    answer_blocks,
+    fallback,
+    memory,
+    module_memory,
+    plans,
+    preferences,
+    reflection,
+)
+from ladderstock.ai.agent_runtime import (
+    EVENT_FINAL as AGENT_FINAL,
+)
+from ladderstock.ai.agent_runtime import (
+    EVENT_TEXT as AGENT_TEXT,
+)
+from ladderstock.ai.agent_runtime import (
+    EVENT_TOOL as AGENT_TOOL,
+)
+from ladderstock.ai.agent_runtime import (
+    build_agent,
+    build_tools,
+    run_agent_stream,
+)
+from ladderstock.ai.answer_blocks import (
+    CAPABILITY_BRIEF,
+    AnswerBlockError,
+    build_block,
+    normalize_ai,
+)
 from ladderstock.ai.answer_blocks import build_blocks as _build_blocks
 from ladderstock.ai.cli_provider import CliUnavailable, build_chat_client
 from ladderstock.ai.error_taxonomy import classify_error
@@ -100,15 +131,44 @@ def module_for(page_key: str | None) -> str:
     return PAGE_KEY_MODULES.get(path, DEFAULT_MODULE)
 
 
+# 能力问题的口径（首页 / 深挖 / 页面抽屉共用这一段）：**只固定范围，不固定措辞**。
+# 用户明确要求「同一个问题问两次可以稍有不同」，所以这里给的是可自由改写的清单，
+# 不是逐字照抄的模板；重复问时换个说法讲同一组能力即可。
+_CAPABILITY_RULE = (
+    "\n【能力说明】用户问你会什么 / 你能做什么 / 你在这页能做什么（或类似问法）时：\n"
+    "- 直接以「你可以…」这类第二人称句子回应，**不要**再用「我是 LadderStock 研究助手」开头"
+    "做自我介绍（同一会话里已经说过就不必再说一遍）。\n"
+    "- 只挑 3–4 条与本页、本轮问题最相关的能力展开，其余用一句「其他行情、情绪、资金、财报也能查」"
+    "带过；**不要把能力清单逐条搬一遍**，整段回答控制在 6 行以内。\n"
+    "- 每次换个切入角度：按「看什么」分类、给两三个具体场景例子、或按本页能干什么来讲都行，"
+    "但不得超出下面这份范围。\n"
+    "- 结尾一定落到一个可执行的下一步：反问要看哪只票 / 哪个板块，或直接给出一个建议动作。\n"
+    "- 「不做的事」（不给买卖建议、不预测价格、不拿记忆补数字）只用一句话概括，不要展开。\n"
+    "- 用户只是打招呼（你好 / 在吗 / 有人吗）时，同样直接给「你可以…」+ 一个下一步，"
+    "**不要**报身份、也不要说「页面数据没取到」这类话——那会让打招呼看起来像故障通知。\n"
+    "- 全篇不要以「我是 LadderStock 研究助手」开头；身份只在用户明确问「你是谁」时用半句带过。\n"
+    "- 不要罗列「这一项没取到」。\n"
+    "- 能力范围：" + CAPABILITY_BRIEF + "\n"
+)
+
 SYSTEM_PROMPT = (
     "你是 LadderStock「个股深挖」页的研究助手。只依据【页级上下文】里给出的数据回答，"
     "不要编造上下文里没有的数字、日期或结论。\n"
     "- 上下文缺失的行情 / 财报 / 事件，就直说「这一项页面没有取到」，不要用一般知识补。\n"
+    "- 用户问「该查哪些数据 / 怎么核对」这类方法问题时，直接给一份可执行的查证清单"
+    "（查什么、在哪个页面查、核对什么口径），不要回答成「页面没有取到」。\n"
+    "- 用户问某家公司 / 某只股票、但没说是哪一家时，"
+    "**先反问标的**：一句话说明你是 LadderStock 助手、"
+    "能做什么，再请他给公司名或代码。不要罗列一串「这一项页面没有取到」，那是在答另一个问题。\n"
     "- 上下文里的数字只是页面已展示数据的摘要，不能当作新的行情结论；"
     "不要给出买卖建议，也不要预测价格。\n"
     "- 回答用简洁中文，必要时分点；不要输出 JSON，不要使用 Markdown 标记"
-    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。"
-)
+    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。\n"
+    "- 用户让你「持续盯着某只票 / 某个板块」（盯住、跟踪、留意、每天看）时，"
+    "**你已经能接**：这条目标会被自动写进【进行中的研究任务】，按它说的节奏"
+    "（每天盘后 / 盘中间隔 / 有异动）自己推进，结论进「提醒」。所以直接答应，并说清"
+    "「盯哪几只、什么节奏、比哪几项变化」；不要回答「我没有后台自动盯盘的能力」。"
+) + _CAPABILITY_RULE
 
 # QUOT-476：/skills 页没有个股深挖页的页面数据，预设跟着页面走——
 # 技能助手只拿页键 / 绑定技能 / 对象三键上下文，口径改为「技能步骤引导 + 不编造」。
@@ -120,7 +180,11 @@ SKILL_SYSTEM_PROMPT = (
     "上下文没给出技能步骤时，就按问题本身回答。\n"
     "- 不要给出买卖建议，也不要预测价格。\n"
     "- 回答用简洁中文，必要时分点；不要输出 JSON，不要使用 Markdown 标记"
-    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。"
+    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。\n"
+    "- 用户让你「持续盯着某只票 / 某个板块」（盯住、跟踪、留意、每天看）时，"
+    "**你已经能接**：这条目标会被自动写进【进行中的研究任务】，按它说的节奏"
+    "（每天盘后 / 盘中间隔 / 有异动）自己推进，结论进「提醒」。所以直接答应，并说清"
+    "「盯哪几只、什么节奏、比哪几项变化」；不要回答「我没有后台自动盯盘的能力」。"
 )
 
 # QUOT-487：记忆段与档案段是系统提示里的独立分段，各自标注来源；
@@ -139,12 +203,40 @@ _MEMORY_CONFLICT_RULE = (
 PAGE_SYSTEM_PROMPT = (
     "你是 LadderStock 页面助手，只回答当前页面（行情 / 产业 / 日历等）的问题。"
     "只依据【页级上下文】里给出的数据回答，不要编造其中没有的行情、新闻、财报数字、日期或结论。\n"
-    "- 上下文缺失的行情 / 新闻 / 财报 / 事件，就直说「本页这项没取到」，不要用一般知识补。\n"
+    "- 上下文缺失的行情 / 新闻 / 财报 / 事件，就直说「本页这项没取到」，"
+    "不要用一般知识补。\n"
+    "- 用户问某家公司 / 某只股票、但没说是哪一家时，**先反问标的**："
+    "一句话说明你是 LadderStock 助手、"
+    "能做什么，再请他给公司名或代码。不要罗列「这一项页面没有取到」，那是在答另一个问题。\n"
     "- 这是页面内的轻量问答，不做单只股票的深度研究；需要深挖单个标的时，请回到个股研究页再问。\n"
     "- 上下文里的数字只是页面已展示数据的摘要，不能当作新的行情结论；"
     "不要给出买卖建议，也不要预测价格。\n"
     "- 回答用简洁中文，必要时分点；不要输出 JSON，不要使用 Markdown 标记"
-    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。"
+    "（**、#、表格），用纯文本与短横线分点；不要复述整段上下文。\n"
+    "- 用户让你「持续盯着某只票 / 某个板块」（盯住、跟踪、留意、每天看）时，"
+    "**你已经能接**：这条目标会被自动写进【进行中的研究任务】，按它说的节奏"
+    "（每天盘后 / 盘中间隔 / 有异动）自己推进，结论进「提醒」。所以直接答应，并说清"
+    "「盯哪几只、什么节奏、比哪几项变化」；不要回答「我没有后台自动盯盘的能力」。"
+) + _CAPABILITY_RULE
+
+# agent 路径追加段：上面三套预设都是「只依据页级上下文」的问答口径，而 agent 本轮
+# 能自己调工具取真数。不补这一段，「上下文里没有就不要说」会被读成「不许调工具」，
+# 模型明明有 lookup_quote 也不用，退化成只会说「这一项没取到」。
+AGENT_TOOL_RULE = (
+    "\n【本轮可用工具】你可以在本轮内调用工具取真实数据，取到之后再回答。\n"
+    "- 用户只给了名称或简称（「浦发」「茅台」）时，先 lookup_symbols 拿代码，"
+    "再查行情；不要猜代码。\n"
+    "- 问个股当前行情 → lookup_quote；问大盘指数 → lookup_index；问自选/持仓 → lookup_watchlist。\n"
+    "- 问个股历史走势 → kline_daily；问涨停/炸板/连板梯队 → limit_ladder；"
+    "问板块或概念强弱 → board_rank；问资金流向 → fund_flow；问龙虎榜 → dragon_tiger；"
+    "问人气热股 → hot_rank；问消息与题材 → news_flash；问财务或业绩预告 → finance_fundamentals。\n"
+    "- 这一批（除 lookup_quote / lookup_index 外）读的是**本机缓存的最新交易日**，不是实时行情；"
+    "回答里要如实带上这个日期（工具结果里的 as_of），不要说成「今天实时」。\n"
+    "- 工具返回「未取到」时如实说这一项没取到，不要用记忆、常识或推算补数字。\n"
+    "- 用户问你是谁、能做什么（如「介绍下自己」）时，直接说明你是 LadderStock 研究助手、"
+    "能做什么、不能做什么，不要当成数据查询，也不要罗列「这一项没取到」。\n"
+    "- 用户问某公司但没说是哪家时，说明你能做什么，再请他给公司名或代码。\n"
+    "- 同一轮里可以多次调工具：先查一只、看结果不够再查另一只，直到能直接回答。\n"
 )
 
 
@@ -257,6 +349,10 @@ def _failure_response(exc: AssistantFailure) -> JSONResponse:
 #: 现役 `ask()` 不做结构化输出（`json_mode=False`），`reply` 是纯文本；本适配器把 reply
 #: 按句切成 `narrative`，供 `build_blocks` 装配 conclusion。**不让模型产出块**（红线 2）。
 _SENTENCE_RE = re.compile(r"[^。！？；!?;\n]+[。！？；!?;]?")
+#: 分点列表的行首标记：`- ` / `* ` / `• ` / `1. ` / `1、` / `1)`。
+#: 命中两行以上就按「列表」处理——整行成一条，不再按句切开，否则首句被抽去当
+#: 结论、剩下的半句散进补充说明，用户看到的就是断成两截。
+_LIST_MARK_RE = re.compile(r"^(?:[-*•·]|\d+[.、)])\s*")
 
 #: 归类线索：只做**确定性**判定——句子以线索词**开头**才归类，不猜语义、不补内容。
 #: 正文中间顺带提到「风险」不算风险句，宁可留在 narrative 也不误收（切不干净就留空）。
@@ -310,7 +406,14 @@ def reply_to_structured(reply: str) -> dict[str, Any]:
     前者旁挂进响应（`ai_structured`），后者原样可喂 `build_blocks(metrics, ..., sources)`。
     """
     text = (reply or "").strip()
-    sentences = [part.strip() for part in _SENTENCE_RE.findall(text) if part.strip()]
+    # 分点式回答按**整行**切：一行就是一个要点。逐句切会把第一行的首句抽去当结论、
+    # 其余半句散进「补充说明」，同一段话被劈成两处，用户读到的是断句。
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    is_list = sum(1 for line in lines if _LIST_MARK_RE.match(line)) >= 2
+    if is_list:
+        sentences = lines
+    else:
+        sentences = [part.strip() for part in _SENTENCE_RE.findall(text) if part.strip()]
     if not sentences and text:
         sentences = [text]
     narrative: list[str] = []
@@ -396,14 +499,53 @@ def _normalize_context(
 def _blocks_for(
     reply: str,
     sources: Sequence[ChatSource],
+    *,
+    fetch_attempted: bool = False,
+    metrics: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """成功路径装配 `blocks`。
+    """会话模式的成功路径装配 `blocks`。
 
-    `metrics` 一律传 `{}`：现役三路由拿不到任何程序算出的数，`build_blocks` 于是生成
-    `notice(missing_data)`——**不伪造 metrics**（红线 6 / 本单第 5 条）。真实 metrics
-    接入是待办（见回报）。`sources=[]` 时由 `build_blocks` 生成「无来源」notice。
+    `metrics` 是 agent 这一轮工具调用的真实产出（带 `Provenance`）；没调工具时为空，
+    metric 块的缺失提示由 `fetch_attempted` 决定——没查就不摆「没取到」，查了才摆。
+
+    没调工具、没有 metrics、也没有来源的轮次（问候 / 能力说明 / 概念解释）走
+    **正文块**：整段 reply 原样下发。这类回答没有「首句即结论」的结构，套研究卡
+    只会得到「结论·中性」+「补充说明（正文 4 行折叠）」，把一条完整回答切成两截并
+    丢掉超出 4 行的内容——用户看到的「闪一下变成骨架」就是这个。
     """
-    return _build_blocks({}, reply_to_structured(reply)["build_input"], sources)
+    text = (reply or "").strip()
+    if text and not fetch_attempted and not metrics and not sources:
+        return [build_block(answer_blocks.BLOCK_NARRATIVE, {"text": text})]
+    return _build_blocks(
+        dict(metrics or {}),
+        reply_to_structured(reply)["build_input"],
+        sources,
+        fetch_attempted=fetch_attempted,
+        keep_numbers=bool(metrics),
+    )
+
+
+# 首页研究台的对话要能刷新后回看：给它一个**固定的**会话 id，每轮成功回答落一行
+# `chat_turn`。前缀 `desk:` 是刻意的——对话模式的会话列表按这个前缀把它过滤掉，
+# 否则首页那几张问答会混进「我的会话」里。
+DESK_SESSION_ID = "desk:home"
+DESK_SESSION_PREFIX = "desk:"
+
+
+def _persist_desk_turn(
+    data_root: Any, session_id: str, question: str, blocks: list[dict[str, Any]]
+) -> None:
+    """把首页研究台的一轮问答写进 `chat_turn`（回看用）。
+
+    落库只是"能回看"，不是回答成立的前提：写失败只记日志，绝不把一次成功回答
+    变成 500——这与对话模式里 `_TurnWriter` 的口径一致。
+    """
+    try:
+        with _TurnWriter(data_root, session_id, question) as writer:
+            writer.start(blocks)
+            writer.finish(chat_store.DONE, blocks)
+    except Exception as exc:  # noqa: BLE001 - 回看能力失败不影响本轮回答
+        logger.warning("desk_turn_persist_failed session=%s detail=%s", session_id, exc)
 
 
 def _success_response(
@@ -414,6 +556,8 @@ def _success_response(
     plan: FetchPlan | None = None,
     fetched_metrics: Mapping[str, Any] | None = None,
     fetched_sources: Sequence[Mapping[str, Any]] | None = None,
+    fetch_attempted: bool | None = None,
+    persist: tuple[Any, str, str] | None = None,
 ) -> dict[str, Any]:
     """成功响应：既有四键原样透传，**只追加** `blocks` 与 `ai_structured`。
 
@@ -427,6 +571,11 @@ def _success_response(
     adapted = reply_to_structured(result["reply"])
     metrics = dict(fetched_metrics or {})
     all_sources: list[Any] = [*sources, *(fetched_sources or [])]
+    # 本轮是否真的发起了取数：agent 路径由「模型有没有调工具」决定（`fetch_attempted`
+    # 显式传入）；旧路径仍按 `plan.dataset is None` 判断——那是「没查」，不是
+    # 「查了没取到」，装配层据此不再摆「指标 / 来源没取到」。
+    if fetch_attempted is None:
+        fetch_attempted = True if plan is None else plan.dataset is not None
     blocks = _build_blocks(
         metrics,
         adapted["build_input"],
@@ -434,12 +583,18 @@ def _success_response(
         intent=intent,
         # 取到数或点了名失败源时，本轮确实带了真实取数行为
         page_data=bool(metrics),
+        fetch_attempted=fetch_attempted,
     )
     if plan is not None and plan.source_failures and not metrics:
-        blocks = [b for b in blocks if not (
-            b.get("type") == "notice" and b.get("payload", {}).get("kind") == "missing_data"
-            and b.get("payload", {}).get("section") == "指标"
-        )]
+        blocks = [
+            b
+            for b in blocks
+            if not (
+                b.get("type") == "notice"
+                and b.get("payload", {}).get("kind") == "missing_data"
+                and b.get("payload", {}).get("section") == "指标"
+            )
+        ]
         blocks.append(
             build_block(
                 "notice",
@@ -449,13 +604,15 @@ def _success_response(
                     # notice.message 不允许出现数字（answer_blocks 红线 4），
                     # 失败细节里往往带数字，只点名具体源，细节进服务端日志。
                     "message": "取数失败，"
-                    + "、".join(
-                        failure.split(":")[0].strip() for failure in plan.source_failures
-                    )
+                    + "、".join(failure.split(":")[0].strip() for failure in plan.source_failures)
                     + " 没有返回可用数据",
                 },
             )
         )
+    # `persist=(data_root, session_id, question)`：本轮落库供刷新回看。
+    # 只有首页研究台传这个参数；页面助手 / 技能助手是一次性问答，不落库。
+    if persist is not None:
+        _persist_desk_turn(persist[0], persist[1], persist[2], blocks)
     return {
         **result,
         "blocks": blocks,
@@ -585,13 +742,18 @@ MAX_ANSWER_BLOCKS = 6
 
 
 def _conversation_blocks(
-    *, reply: str, sources: Sequence[ChatSource], failure: ChatFailure | None = None
+    *,
+    reply: str,
+    sources: Sequence[ChatSource],
+    failure: ChatFailure | None = None,
+    fetch_attempted: bool = False,
+    metrics: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """一轮的块：失败只有一条 `notice`；成功复用现役装配链，再收到 D2 上限 6。
 
-    `metrics` 一律 `{}`（与 `_blocks_for` 同口径：会话模式同样拿不到程序算出的数，
-    由 `build_blocks` 出 `notice(missing_data)`，不伪造）。块的顺序、文案、数字剥离
-    全部由 `ai/answer_blocks.py` 负责，这里不另拼。
+    `fetch_attempted` 由调用方给：只有 agent 这一轮**真的调了工具**才算查过。没查过
+    就不摆「指标 / 来源没取到」——那是把「没查」说成「查了没取到」，等于用告警块回答
+    一个没问的问题。块的顺序、文案、数字剥离仍全部由 `ai/answer_blocks.py` 负责。
     """
     if failure is not None:
         return _failure_blocks(
@@ -602,7 +764,9 @@ def _conversation_blocks(
                 retryable=failure.retryable,
             )
         )[:MAX_ANSWER_BLOCKS]
-    return _blocks_for(reply, sources)[:MAX_ANSWER_BLOCKS]
+    return _blocks_for(reply, sources, fetch_attempted=fetch_attempted, metrics=metrics)[
+        :MAX_ANSWER_BLOCKS
+    ]
 
 
 def _arrive_blocks(
@@ -610,6 +774,8 @@ def _arrive_blocks(
     reply: str,
     sources: Sequence[ChatSource],
     on_block: Callable[[list[dict[str, Any]]], None],
+    fetch_attempted: bool = False,
+    metrics: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """同 `_conversation_blocks` 成功路径，但逐块交付：每多一块就 `on_block(当前全部块)`。
 
@@ -617,7 +783,12 @@ def _arrive_blocks(
     不在这里重排；逐块交付只服务「边到达边 upsert」的落库时机（DEC-085）。返回值与
     `_conversation_blocks()` 完全一致，`on_block` 收到的最后一次快照就是返回值。
     """
-    full = _conversation_blocks(reply=reply, sources=sources)
+    full = _conversation_blocks(
+        reply=reply,
+        sources=sources,
+        fetch_attempted=fetch_attempted,
+        metrics=metrics,
+    )
     for count in range(1, len(full) + 1):
         on_block([dict(block) for block in full[:count]])
     return full
@@ -741,6 +912,7 @@ def _session_history(
         turns.append(ContextHistoryTurn(role="user", text=row["question"]))
         turns.append(ContextHistoryTurn(role="assistant", text=row["answer"]))
     return turns
+
 
 class _TurnWriter:
     """一轮问答的落库句柄：同一轮只产生一行 `chat_turn`，`status` 在同一行上流转。
@@ -928,6 +1100,480 @@ def run_turn(
             raise
 
 
+#: 正文增量的最小间隔：每 0.12s 推一次累积全文，避免逐 token 刷爆事件循环
+STREAM_TEXT_INTERVAL_SEC = 0.12
+
+
+def _sse_frame(event: str, payload: Mapping[str, Any]) -> str:
+    """一帧 SSE：`event:` + 单行 JSON。JSON 用 `ensure_ascii=False` 保留中文原文。"""
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def wants_stream(request: Request) -> bool:
+    """`Accept: text/event-stream` 才走流；其余（含不带 Accept 的调用方）原样走 JSON。"""
+    return "text/event-stream" in (request.headers.get("accept") or "").lower()
+
+
+def _precheck_turn(body: ChatRequest) -> tuple[str, str]:
+    """流式路径的入参校验，与 `run_turn` 首段同口径；返回 `(session_id, message)`。"""
+    text = (body.message or "").strip()
+    if not text:
+        raise ChatFailure(
+            400,
+            code="empty_message",
+            reason="invalid_request",
+            kind="internal",
+            message="message 不能为空",
+            retryable=False,
+        )
+    if len(text) > MAX_QUESTION_ASK_CHARS:
+        raise ChatFailure(
+            400,
+            code="message_too_long",
+            reason="invalid_request",
+            kind="internal",
+            message=f"message 过长（上限 {MAX_QUESTION_ASK_CHARS} 字）",
+            retryable=False,
+        )
+    return resolve_session_id(body.session_id), text
+
+
+async def _run_agent_turn(
+    *,
+    question: str,
+    context: str,
+    page_label: str,
+    module: str,
+    page: str,
+    data_root: Any,
+    view_tab: str | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
+    day: str | None = None,
+    symbol: str | None = None,
+    prepared: _PreparedCall | None = None,
+) -> AsyncIterator[tuple[str, Any]]:
+    """agent 路径的一轮：与 `ask_stream` 同形（`text` / `final`），额外多一个 `tool`。
+
+    与 `ask_stream` 的差别只在**决策权**：这里把取数当工具交出去，由模型自己决定查不查、
+    查几个、查几轮；prompt 仍是 `_prepare_call()` 拼的那份（记忆 / 知识库 / 页级上下文
+    一并保留），两条路径的内容不会漂移。
+
+    通道不满足条件时抛 `AssistantFailure`，由调用方决定是否回落——本函数不自己吞。
+    """
+    try:
+        config = fallback.load_config()
+        target = config.resolve_for(module)
+    except BoundaryViolation as exc:
+        raise AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}") from None
+    # SDK 走 /chat/completions，只有 openai 型后端能用；CLI 订阅通道与 anthropic 不在此列
+    if target.backend.kind != "openai":
+        raise AssistantFailure(
+            503,
+            "ai_channel_not_supported",
+            f"当前通道（{target.backend.kind}）不支持工具调用，需要 OpenAI 兼容后端",
+        )
+    base_url = target.backend.base_url
+    api_key = target.backend.api_key
+    if not (base_url and api_key):
+        raise AssistantFailure(503, "ai_not_configured", "AI 通道缺少 base_url / api_key")
+
+    # 非流式入口（`ask_agent`）已经 prepare 过一次：同一份 prompt 不再重复召回
+    # 记忆与档案（那是两次 IO），也让它事后能用同一个 prepared 写记忆。
+    if prepared is None:
+        prepared = _prepare_call(
+            question=question,
+            context=context,
+            day=day,
+            page_label=page_label,
+            system_prompt=system_prompt,
+            module=module,
+            symbol=symbol,
+            tab=view_tab or page,
+            data_root=data_root,
+        )
+    specs = build_tools(data_root)
+    labels = {spec.name: spec.label for spec in specs}
+    # 工具跑出来的 metrics / sources 收在这里，final 时一并交给装配层：
+    # 模型写的正文会被块协议剥数字（红线 4），数字只能从这条通道进 metric 块。
+    collected: dict[str, Any] = {"metrics": {}, "sources": []}
+    agent, client = build_agent(
+        model=target.model,
+        base_url=base_url,
+        api_key=api_key,
+        instructions=prepared.system + AGENT_TOOL_RULE,
+        tool_specs=specs,
+        collector=collected,
+    )
+    try:
+        async for kind, payload in run_agent_stream(
+            agent, prepared.user, labels=labels, collector=collected
+        ):
+            if kind == AGENT_TOOL:
+                yield "tool", payload
+            elif kind == AGENT_TEXT:
+                yield "text", payload.get("text", "")
+            elif kind == AGENT_FINAL:
+                yield "final", payload.get("text", "")
+                if payload.get("metrics") or payload.get("sources"):
+                    yield (
+                        "data",
+                        {
+                            "metrics": payload.get("metrics") or {},
+                            "sources": payload.get("sources") or [],
+                        },
+                    )
+    finally:
+        await client.close()
+
+
+async def ask_agent(
+    *,
+    question: str,
+    context: str,
+    day: str | None = None,
+    tab: str | None = None,
+    page_label: str = "个股深挖",
+    system_prompt: str = SYSTEM_PROMPT,
+    module: str = DEFAULT_MODULE,
+    symbol: str | None = None,
+    page: str = "research",
+    data_root: Any = None,
+    sync_memory: bool = False,
+    remember_plan: bool = True,
+) -> dict[str, Any]:
+    """非流式跑一轮 **agent**：返回值与 `ask()` 同形，外加工具产出的 metrics / sources。
+
+    存在的理由：`/api/research/{code}/assistant`、`/api/page/assistant`、
+    `/api/skills/assistant`、以及 `/api/conversation/turns` 的 JSON 路径此前都
+    走 `ask()`——先调一次模型、再由代码按意图补取数。那是"问答"，不是 agent：
+    查不查由关键词决定，模型看不到查回来的东西。统一到这里后，四条入口与流式
+    路径共用同一份决策（模型自己选工具、定轮次），只有交付方式不同。
+
+    `remember_plan=False` 给「任务推进」用：推进时问的那句本身带「盯住 600000」，
+    若还让它建任务，每推进一次就繁殖一条新任务，五天就把上限打满。
+    """
+    prepared = _prepare_call(
+        question=question,
+        context=context,
+        day=day,
+        tab=tab,
+        page_label=page_label,
+        system_prompt=system_prompt,
+        module=module,
+        symbol=symbol,
+        data_root=data_root,
+    )
+    reply = ""
+    fetched: dict[str, Any] = {}
+    used_tools = False
+    async for kind, payload in _run_agent_turn(
+        question=question,
+        context=context,
+        page_label=page_label,
+        module=module,
+        page=page,
+        data_root=data_root,
+        system_prompt=system_prompt,
+        day=day,
+        symbol=symbol,
+        view_tab=tab,
+        prepared=prepared,
+    ):
+        if kind == "tool":
+            used_tools = True
+        elif kind == "text":
+            reply = payload
+        elif kind == "final":
+            reply = payload
+        elif kind == "data":
+            fetched = payload
+
+    text = (reply or "").strip()
+    if not text:
+        raise AssistantFailure(502, "ai_empty", "AI 返回了空回答（模型未产出内容），请重试。")
+
+    # 自我反思：模型这一轮一次工具都没调，却给了价格/涨跌幅这类结论——那不是数据，
+    # 是编的。补查一轮是唯一正确的动作（`ai/reflection.py` 只反思一次，不递归）。
+    decision = reflection.decide(
+        question=question,
+        reply=text,
+        used_tools=used_tools,
+        metrics=fetched.get("metrics") or {},
+    )
+    if decision.needed:
+        logger.info("self_reflect triggered reason=%s head=%s", decision.reason, question[:40])
+        followup_text = ""
+        followup_fetched: dict[str, Any] = {}
+        followup_tools = False
+        async for kind, payload in _run_agent_turn(
+            question=reflection.followup(question, reason=decision.reason),
+            context=context,
+            page_label=page_label,
+            module=module,
+            page=page,
+            data_root=data_root,
+            system_prompt=system_prompt,
+            day=day,
+            symbol=symbol,
+            view_tab=tab,
+        ):
+            if kind == "tool":
+                followup_tools = True
+            elif kind == "text":
+                followup_text = payload
+            elif kind == "final":
+                followup_text = payload
+            elif kind == "data":
+                followup_fetched = payload
+        if reflection.should_replace(text, followup_text):
+            text = followup_text.strip()
+            if followup_fetched.get("metrics"):
+                fetched = followup_fetched
+            used_tools = used_tools or followup_tools
+            logger.info("self_reflect replaced used_tools=%s", used_tools)
+
+    _remember(
+        prepared,
+        question=question,
+        symbol=symbol,
+        page=page,
+        sync_memory=sync_memory,
+        remember_plan=remember_plan,
+    )
+    return {
+        "reply": text,
+        "model": prepared.model,
+        "ai": prepared.echo,
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "metrics": fetched.get("metrics") or {},
+        "sources": fetched.get("sources") or [],
+        "used_tools": used_tools,
+    }
+
+
+async def run_turn_stream(
+    *,
+    message: str,
+    session_id: str,
+    context: ChatRequestContext | None = None,
+    data_root: Any = None,
+) -> AsyncIterator[str]:
+    """会话模式的一轮问答，以 SSE 帧逐段交付。
+
+    帧契约（与前端 `conversation.ts` 的 `parseSseFrame` 对齐）：
+
+    - `status`：`{action, item, state, item_id?, elapsed_ms?}`，只服务等待态的流水账；
+    - `text`：`{text}`，**累积全文**（前端整段替换，不做拼接）；
+    - `done`：与 JSON 路径的响应同形（含 `blocks` / `turn_seq` / `status`）。
+
+    与 `run_turn` 的另一处差别是**正文直接从流式通道拿**，不走 `ask()` 的一次性返回；
+    但 prompt、记忆写入、块装配、落库时机全部复用同一条现役链路，最终 `blocks`
+    与串行路径逐字段一致。
+    """
+    started = time.monotonic()
+
+    def _status(item: str, state: str, *, item_id: str | None = None, action: str = "run") -> str:
+        payload: dict[str, Any] = {
+            "action": action,
+            "item": item,
+            "state": state,
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+        }
+        if item_id is not None:
+            payload["item_id"] = item_id
+        return _sse_frame("status", payload)
+
+    sources = list(context.sources) if context is not None else []
+    history = _session_history(data_root, session_id)
+    structured = AsyncStructuredContext(
+        page=context.page if context is not None else None,
+        data=context.data if context is not None else None,
+        sources=sources,
+        history=history,
+    )
+    context_text, _ = _normalize_context(structured)
+    # 这一轮的页面归属（`_prepare_call` 的 tab 与记忆 page 都取它）
+    turn_page = context.page if context is not None and context.page else PAGE_PREFIX.strip("/")
+
+    yield _status("history", "done", item_id="history")
+
+    with _TurnWriter(data_root, session_id, message) as writer:
+        yield _status("model", "running", item_id="model")
+        try:
+            accumulated = ""
+            last_push = 0.0
+            reply = ""
+            used_tools = False
+            fetched: dict[str, Any] = {}
+            # 与 `ask_agent` 同构：先把 prompt / 记忆 / 知识库准备好，再交给 agent。
+            # 这份 prepared 事后还要用在同一处写记忆与长期偏好——流式此前没这一步，
+            # 页面对话的记忆与偏好一直是空的（只有 JSON 路径写）。
+            prepared_turn = _prepare_call(
+                question=message,
+                context=context_text,
+                page_label="对话模式",
+                module=RUN_TURN_MODULE,
+                tab=turn_page,
+                data_root=data_root,
+            )
+            # 首选 agent 路径：模型自主选工具、定轮次。它解决的是"该不该查"——查过就
+            # 有真实数据可装配，没查就说明缺什么，不再靠猜意图决定要不要打「没取到」。
+            async for kind, payload in _run_agent_turn(
+                question=message,
+                context=context_text,
+                page_label="对话模式",
+                module=RUN_TURN_MODULE,
+                page=turn_page,
+                data_root=data_root,
+                prepared=prepared_turn,
+            ):
+                if kind == "tool":
+                    used_tools = True
+                    label = str(payload.get("label") or payload.get("name") or "工具")
+                    state = "done" if payload.get("state") == "done" else "running"
+                    yield _status(
+                        "tool",
+                        state,
+                        item_id=f"tool:{payload.get('name')}",
+                        action=label,
+                    )
+                elif kind == "text":
+                    accumulated = payload
+                    now = time.monotonic()
+                    if now - last_push >= STREAM_TEXT_INTERVAL_SEC:
+                        last_push = now
+                        yield _sse_frame("text", {"text": accumulated})
+                elif kind == "final":
+                    reply = payload
+                elif kind == "data":
+                    fetched = payload
+            if accumulated and accumulated != reply:
+                yield _sse_frame("text", {"text": accumulated})
+            elif reply and not accumulated:
+                yield _sse_frame("text", {"text": reply})
+
+            # 自我反思（与 `ask_agent` 同一判据）：这一轮没调工具却给了价格/涨跌幅，
+            # 就补查一轮再覆盖正文。页面能看见「补查证据」这一步，不偷偷替换。
+            decision = reflection.decide(
+                question=message,
+                reply=reply,
+                used_tools=used_tools,
+                metrics=fetched.get("metrics") or {},
+            )
+            if decision.needed:
+                yield _status("reflect", "running", item_id="reflect", action="补查证据")
+                logger.info(
+                    "self_reflect triggered reason=%s head=%s", decision.reason, message[:40]
+                )
+                followup_text = ""
+                followup_fetched: dict[str, Any] = {}
+                followup_tools = False
+                async for kind, payload in _run_agent_turn(
+                    question=reflection.followup(message, reason=decision.reason),
+                    context=context_text,
+                    page_label="对话模式",
+                    module=RUN_TURN_MODULE,
+                    page=turn_page,
+                    data_root=data_root,
+                ):
+                    if kind == "tool":
+                        followup_tools = True
+                        yield _status(
+                            "tool",
+                            "done" if payload.get("state") == "done" else "running",
+                            item_id=f"tool:{payload.get('name')}",
+                            action=str(payload.get("label") or payload.get("name") or "工具"),
+                        )
+                    elif kind in ("text", "final"):
+                        followup_text = payload
+                        if kind == "text" and payload:
+                            yield _sse_frame("text", {"text": payload})
+                    elif kind == "data":
+                        followup_fetched = payload
+                if reflection.should_replace(reply, followup_text):
+                    reply = followup_text.strip()
+                    accumulated = reply
+                    if followup_fetched.get("metrics"):
+                        fetched = followup_fetched
+                    used_tools = used_tools or followup_tools
+                    yield _sse_frame("text", {"text": reply})
+                    logger.info("self_reflect replaced used_tools=%s", used_tools)
+                yield _status("reflect", "done", item_id="reflect", action="补查证据")
+        except (AssistantFailure, asyncio.CancelledError, GeneratorExit) as exc:
+            if isinstance(exc, AssistantFailure):
+                chat_failure = _as_chat_failure(exc)
+                writer.finish(
+                    chat_store.FAILED,
+                    _conversation_blocks(reply="", sources=sources, failure=chat_failure),
+                )
+                yield _sse_frame(
+                    "done",
+                    {
+                        "ok": False,
+                        "code": chat_failure.code,
+                        "reason": chat_failure.reason,
+                        "retryable": chat_failure.retryable,
+                        "detail": chat_failure.message,
+                    },
+                )
+                return
+            writer.finish(chat_store.ABORTED)
+            raise
+        except Exception as exc:  # noqa: BLE001 - 兜底：任何异常都要变成终态帧
+            # 以前只接 `AssistantFailure`，模型侧抛出的 `openai.APIConnectionError`
+            # 会直接穿出生成器：SSE 就地断掉，前端等不到 `done` 帧，页面表现就是
+            # 「这一轮没答出来」而没有任何原因。这里统一收成 ai_upstream 再落终态。
+            logger.exception("run_turn_stream 出现未分类异常，按 ai_upstream 收尾")
+            failure = AssistantFailure(502, "ai_upstream", f"{type(exc).__name__}: {exc}")
+            chat_failure = _as_chat_failure(failure)
+            writer.finish(
+                chat_store.FAILED,
+                _conversation_blocks(reply="", sources=sources, failure=chat_failure),
+            )
+            yield _sse_frame(
+                "done",
+                {
+                    "ok": False,
+                    "code": chat_failure.code,
+                    "reason": chat_failure.reason,
+                    "retryable": chat_failure.retryable,
+                    "detail": chat_failure.message,
+                },
+            )
+            return
+
+        # 工具调用是「这一轮真的发起取数」的唯一证据：用它决定要不要出取数类告警，
+        # 而不是靠问题里有没有某些词。模型一次没查，就不该摆「指标没取到」。
+        # 同时把工具产出的 metrics / sources 交给装配层——那才是页面上能看到的数。
+        tool_sources = [
+            ChatSource(**item)
+            for item in (fetched.get("sources") or [])
+            if isinstance(item, Mapping) and item.get("name")
+        ]
+        # 回答成立后与 JSON 路径走同一份记账：记忆（mem0）+ 长期偏好（本地文件）。
+        _remember(prepared_turn, question=message, symbol=None, page=turn_page, sync_memory=False)
+        blocks = _arrive_blocks(
+            reply=reply,
+            sources=[*sources, *tool_sources],
+            on_block=writer.arrive,
+            fetch_attempted=used_tools,
+            metrics=fetched.get("metrics") or {},
+        )
+        writer.finish(chat_store.DONE, blocks)
+        yield _status("model", "done", item_id="model")
+        yield _sse_frame(
+            "done",
+            {
+                "ok": True,
+                "session_id": session_id,
+                "reply": reply,
+                "blocks": blocks,
+                "turn_seq": writer.turn_seq,
+                "status": chat_store.DONE,
+            },
+        )
+
+
 def _run_turn_logged(
     writer: _TurnWriter,
     *,
@@ -945,23 +1591,37 @@ def _run_turn_logged(
     `writer.arrive`，落库内容与返回值最终一致。
     """
     try:
-        result = ask(
-            question=text,
-            context=context_text,
-            page_label="对话模式",
-            module=RUN_TURN_MODULE,
-            page=(
-                context.page
-                if context is not None and context.page
-                else PAGE_PREFIX.strip("/")
-            ),
-            data_root=data_root,
+        # JSON 路径与流式路径共用同一个 agent：此前这里调 `ask()`，同一句问题
+        # 流式与不流式会有两种决策方式（一个模型自己选工具、一个代码按意图猜）。
+        # 本函数跑在线程池里（`run_in_threadpool`），没有运行中的事件循环，可用 asyncio.run。
+        result = asyncio.run(
+            ask_agent(
+                question=text,
+                context=context_text,
+                page_label="对话模式",
+                module=RUN_TURN_MODULE,
+                page=(
+                    context.page if context is not None and context.page else PAGE_PREFIX.strip("/")
+                ),
+                data_root=data_root,
+            )
         )
     except AssistantFailure as exc:
         raise _as_chat_failure(exc) from None
 
     reply = result["reply"]
-    blocks = _arrive_blocks(reply=reply, sources=sources, on_block=writer.arrive)
+    tool_sources = [
+        ChatSource(**item)
+        for item in (result["sources"] or [])
+        if isinstance(item, Mapping) and item.get("name")
+    ]
+    blocks = _arrive_blocks(
+        reply=reply,
+        sources=[*sources, *tool_sources],
+        on_block=writer.arrive,
+        fetch_attempted=result["used_tools"],
+        metrics=result["metrics"],
+    )
     writer.finish(chat_store.DONE, blocks)
     return {
         "ok": True,
@@ -1108,6 +1768,205 @@ def _recall_memories(
         return []
 
 
+@dataclass
+class _PreparedCall:
+    """一次问答的完整准备结果（`ask` 与 `ask_stream` 共用，保证 prompt 同源）。"""
+
+    client: Any
+    model: str
+    echo: dict[str, str]
+    system: str
+    user: str
+    settings: memory.MemorySettings
+    mem_client: memory.MemoryClient | None
+    scope: fallback.MemoryScope | None
+    data_root: Any = None
+
+
+def _prepare_call(
+    *,
+    question: str,
+    context: str,
+    day: str | None = None,
+    tab: str | None = None,
+    page_label: str = "个股深挖",
+    system_prompt: str = SYSTEM_PROMPT,
+    module: str = DEFAULT_MODULE,
+    symbol: str | None = None,
+    memory_settings: memory.MemorySettings | None = None,
+    memory_client: memory.MemoryClient | None = None,
+    data_root: Any = None,
+) -> _PreparedCall:
+    """通道 + 记忆召回 + 知识库 + 拼 system/user。
+
+    抽出来的唯一目的是让 `ask()`（一次性）与 `ask_stream()`（逐段）走**同一份**
+    prompt 与同一段召回顺序：流式只换交付方式，不换内容。任何一侧改 prompt
+    都必须改到这里，否则两条路径会漂移。
+    """
+    client, model = _load_client(module)
+    echo = _ai_echo(module, model)
+    scope_info = memory_scope_for(module)
+    scope = (
+        fallback.MemoryScope(scope_info["agent_id"], scope_info["kb_scope"])
+        if scope_info is not None
+        else None
+    )
+    settings = memory_settings if memory_settings is not None else memory.load_settings()
+    mem_client = memory_client if memory_client is not None else memory.shared_client(settings)
+    hits = (
+        _recall_memories(question, symbol=symbol, settings=settings, client=mem_client, scope=scope)
+        if scope is not None
+        else []
+    )
+    root = data_root if data_root is not None else data_dir()
+    knowledge_block = _recall_knowledge(
+        question,
+        symbol=symbol,
+        data_root=root,
+    )
+    block = memory.render_memory_block(hits, knowledge=knowledge_block)
+    if block and scope_info is not None:
+        block = f"{scope_info['label']}\n{block}"
+    # 长期偏好段紧跟角色设定：它讲的是「你是谁、要什么」这类全局约定，优先于
+    # 本轮召回的记忆与档案。空表时不留空段（普通人首次使用不该看到「偏好」字样）。
+    # **必须显式传 root**：不传就回落到默认数据盘，注入路径换盘（测试盘 / 便携盘）时
+    # 会读到另一台机器的偏好，测试与生产都会错。
+    preference_block = preferences.render(preferences.load(root))
+    # 进行中的研究任务排在偏好之后：偏好是长期不变的，任务是「这周让我盯的」。
+    plan_block = plans.render(plans.active(root))
+    sections = [system_prompt]
+    if preference_block:
+        sections.append(preference_block)
+    if plan_block:
+        sections.append(plan_block)
+    if block:
+        sections.extend((block, _MEMORY_CONFLICT_RULE))
+    system = "\n\n".join(sections)
+    # 空 context 的占位句必须写成「给模型看的指令」而不是「像事实的句子」：
+    # 写成「这一页的数据还没取到」时，模型会原样复述给用户（问候轮尤其明显）。
+    header = "【页级上下文】\n" + (
+        context.strip() or "（本轮未附带页面数据；此句只给你看，禁止复述给用户。）"
+    )
+    meta = f"页面：{page_label} · 视图 {tab or '未标注'} · 日期 {day or '未标注'}"
+    user = f"{meta}\n{header}\n\n【问题】\n{question.strip()}"
+    return _PreparedCall(
+        client=client,
+        model=model,
+        echo=echo,
+        system=system,
+        user=user,
+        settings=settings,
+        mem_client=mem_client,
+        scope=scope,
+        data_root=data_root,
+    )
+
+
+def _as_assistant_failure(exc: BaseException) -> AssistantFailure:
+    """把通道异常统一归类成 `AssistantFailure`（`ask` / `ask_stream` 共用一份口径）。"""
+    if isinstance(exc, (UnconfiguredError, BoundaryViolation)):
+        return AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}")
+    if isinstance(exc, CliUnavailable):
+        return AssistantFailure(503, "ai_cli_unavailable", f"订阅版 CLI 不可用：{exc}")
+    if isinstance(exc, (ProviderError, httpx.HTTPError, OSError)):
+        failure = classify_error(exc)
+        if _is_timeout(exc):
+            return AssistantFailure(
+                504, "ai_timeout", f"AI 响应超时（{int(ASSISTANT_TIMEOUT_SEC)}s）：{failure.detail}"
+            )
+        if failure.kind == "quota":
+            return AssistantFailure(429, "ai_quota", failure.message)
+        if failure.kind == "network":
+            return AssistantFailure(
+                502, "ai_network", f"AI 请求未送达（网络/代理）：{failure.detail}"
+            )
+        return AssistantFailure(502, "ai_upstream", failure.message)
+    failure = classify_error(exc)
+    if _is_timeout(exc):
+        return AssistantFailure(
+            504, "ai_timeout", f"AI 响应超时（{int(ASSISTANT_TIMEOUT_SEC)}s）：{failure.detail}"
+        )
+    return AssistantFailure(502, "ai_upstream", failure.message)
+
+
+def _name_resolver(data_root: Any) -> Callable[[str], str | None]:
+    """中文名 → 代码，供「盯住浦发银行」这类说法解析标的。
+
+    只认本机标的字典（`web/symbols.SymbolPlane`），查不到就返回 None——绝不猜。
+    解析失败的代价是「这条任务没建成」，猜错的代价是「盯错了票」，后者严重得多。
+    """
+
+    def resolve(name: str) -> str | None:
+        text = (name or "").strip()
+        if not text:
+            return None
+        try:
+            from ladderstock.web.symbols import SymbolPlane
+
+            payload = SymbolPlane(data_root=Path(data_root) if data_root else data_dir()).search(
+                text, 3
+            )
+        except Exception as exc:  # noqa: BLE001 - 检索失败就当解析不出
+            logger.warning("symbol_resolver_failed name=%s detail=%s", text, exc)
+            return None
+        matches = ((payload or {}).get("payload") or {}).get("matches") or []
+        for item in matches:
+            matched_name = str(item.get("name") or "")
+            if (
+                matched_name == text
+                or matched_name.startswith(text)
+                or text.startswith(matched_name)
+            ):
+                return str(item.get("symbol") or "") or None
+        return None
+
+    return resolve
+
+
+def _remember(
+    prepared: _PreparedCall,
+    *,
+    question: str,
+    symbol: str | None,
+    page: str,
+    sync_memory: bool,
+    remember_plan: bool = True,
+) -> None:
+    """回答成立后写记忆、长期偏好与跨轮任务；失败只记日志（绝不影响回答）。
+
+    偏好沉淀**不依赖** mem0：没有命名空间/客户端时也照抽照存，因为它是本地文件，
+    与记忆通道的可用性无关（普通人装上就能用，不该先要求他跑通向量库）。
+    跨轮任务同理：一句话就能建一条「盯它一周」的任务，不需要用户先去配调度。
+    """
+    try:
+        preferences.remember(question, data_root=prepared.data_root)
+    except Exception as exc:  # noqa: BLE001 - 偏好是增强，任何异常都不能影响回答
+        logger.warning("preferences_store_failed detail=%s", exc)
+    try:
+        if remember_plan:
+            plan = plans.maybe_create(
+                question,
+                data_root=prepared.data_root,
+                resolver=_name_resolver(prepared.data_root),
+            )
+            if plan is not None:
+                logger.info("plan_created_from_chat id=%s symbols=%s", plan.id, plan.symbols)
+    except Exception as exc:  # noqa: BLE001 - 建任务失败同样不能影响回答
+        logger.warning("plans_create_failed detail=%s", exc)
+    if prepared.mem_client is None or prepared.scope is None:
+        return
+    memory.dispatch_store(
+        question,
+        symbol=symbol,
+        page=page,
+        run_id=uuid.uuid4().hex,
+        settings=prepared.settings,
+        client=prepared.mem_client,
+        sync=sync_memory,
+        scope=prepared.scope,
+    )
+
+
 def ask(
     *,
     question: str,
@@ -1138,85 +1997,104 @@ def ask(
     `cli.paths.data_dir()` 解析（与知识库 REST 出口同一口径）。记忆段固定排在
     档案段之前（`render_memory_block` 的分段顺序）。
     """
-    client, model = _load_client(module)
-    echo = _ai_echo(module, model)
-    scope_info = memory_scope_for(module)
-    scope = (
-        fallback.MemoryScope(scope_info["agent_id"], scope_info["kb_scope"])
-        if scope_info is not None
-        else None
-    )
-    settings = memory_settings if memory_settings is not None else memory.load_settings()
-    mem_client = memory_client if memory_client is not None else memory.shared_client(settings)
-    hits = (
-        _recall_memories(question, symbol=symbol, settings=settings, client=mem_client, scope=scope)
-        if scope is not None
-        else []
-    )
-    knowledge_block = _recall_knowledge(
-        question,
+    prepared = _prepare_call(
+        question=question,
+        context=context,
+        day=day,
+        tab=tab,
+        page_label=page_label,
+        system_prompt=system_prompt,
+        module=module,
         symbol=symbol,
-        data_root=data_root if data_root is not None else data_dir(),
+        memory_settings=memory_settings,
+        memory_client=memory_client,
+        data_root=data_root,
     )
-    block = memory.render_memory_block(hits, knowledge=knowledge_block)
-    if block and scope_info is not None:
-        block = f"{scope_info['label']}\n{block}"
-    if block:
-        system = f"{system_prompt}\n\n{block}\n\n{_MEMORY_CONFLICT_RULE}"
-    else:
-        system = system_prompt
-    header = "【页级上下文】\n" + (context.strip() or "（这一页的数据还没取到。）")
-    meta = f"页面：{page_label} · 视图 {tab or '未标注'} · 日期 {day or '未标注'}"
-    user = f"{meta}\n{header}\n\n【问题】\n{question.strip()}"
     try:
-        reply = client.complete(model, system, user, json_mode=False)
-    except (UnconfiguredError, BoundaryViolation) as exc:
-        raise AssistantFailure(503, "ai_not_configured", f"未配置 AI 通道：{exc}") from None
-    except CliUnavailable as exc:
-        raise AssistantFailure(503, "ai_cli_unavailable", f"订阅版 CLI 不可用：{exc}") from None
-    except (ProviderError, httpx.HTTPError, OSError) as exc:
-        failure = classify_error(exc)
-        if _is_timeout(exc):
-            raise AssistantFailure(
-                504, "ai_timeout", f"AI 响应超时（{int(ASSISTANT_TIMEOUT_SEC)}s）：{failure.detail}"
-            ) from None
-        if failure.kind == "quota":
-            raise AssistantFailure(429, "ai_quota", failure.message) from None
-        if failure.kind == "network":
-            raise AssistantFailure(
-                502, "ai_network", f"AI 请求未送达（网络/代理）：{failure.detail}"
-            ) from None
-        raise AssistantFailure(502, "ai_upstream", failure.message) from None
+        reply = prepared.client.complete(
+            prepared.model, prepared.system, prepared.user, json_mode=False
+        )
     except Exception as exc:  # noqa: BLE001 - 兜底也要给可读原因，绝不静默失败
-        failure = classify_error(exc)
-        if _is_timeout(exc):
-            raise AssistantFailure(
-                504, "ai_timeout", f"AI 响应超时（{int(ASSISTANT_TIMEOUT_SEC)}s）：{failure.detail}"
-            ) from None
-        raise AssistantFailure(502, "ai_upstream", failure.message) from None
+        raise _as_assistant_failure(exc) from None
 
     text = (reply or "").strip()
     if not text:
         raise AssistantFailure(502, "ai_empty", "AI 返回了空回答（模型未产出内容），请重试。")
-    if mem_client is not None and scope is not None:
-        # QUOT-487 写入：回答已经成立，异步落库；失败只记日志，不影响本次响应。
-        # 命名空间两维随载荷同行（QUOT-498），无命名空间时不落库
-        memory.dispatch_store(
-            question,
-            symbol=symbol,
-            page=page,
-            run_id=uuid.uuid4().hex,
-            settings=settings,
-            client=mem_client,
-            sync=sync_memory,
-            scope=scope,
-        )
+    # QUOT-487 写入：回答已经成立，异步落库；失败只记日志，不影响本次响应。
+    _remember(prepared, question=question, symbol=symbol, page=page, sync_memory=sync_memory)
     return {
         "reply": text,
-        "model": model,
-        "ai": echo,
+        "model": prepared.model,
+        "ai": prepared.echo,
         "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
+
+
+async def ask_stream(
+    *,
+    question: str,
+    context: str,
+    day: str | None = None,
+    tab: str | None = None,
+    page_label: str = "个股深挖",
+    system_prompt: str = SYSTEM_PROMPT,
+    module: str = DEFAULT_MODULE,
+    symbol: str | None = None,
+    page: str = "research",
+    memory_settings: memory.MemorySettings | None = None,
+    memory_client: memory.MemoryClient | None = None,
+    sync_memory: bool = False,
+    data_root: Any = None,
+) -> AsyncIterator[tuple[str, str]]:
+    """逐段产出 `(kind, payload)`；`kind='text'` 是**累积全文**。
+
+    与 `ask()` 共用 `_prepare_call()`——prompt、记忆、知识库的顺序一字不差。
+    通道没有 token 增量（CLI 一次性子进程 / 假客户端）时回落到一次 `complete`，
+    仍然只发一帧 `text`，由调用方按「不是逐字」如实展示，不假装流式。
+    """
+    prepared = _prepare_call(
+        question=question,
+        context=context,
+        day=day,
+        tab=tab,
+        page_label=page_label,
+        system_prompt=system_prompt,
+        module=module,
+        symbol=symbol,
+        memory_settings=memory_settings,
+        memory_client=memory_client,
+        data_root=data_root,
+    )
+    streamer = getattr(prepared.client, "aiter_text", None)
+    accumulated = ""
+    try:
+        if streamer is not None:
+            async for chunk in streamer(prepared.model, prepared.system, prepared.user):
+                accumulated += chunk
+                yield ("text", accumulated)
+        else:
+            reply = prepared.client.complete(
+                prepared.model, prepared.system, prepared.user, json_mode=False
+            )
+            accumulated = reply or ""
+            if accumulated:
+                yield ("text", accumulated)
+    except NotImplementedError:
+        # CLI 通道没有 token 级增量：退回一次性补全，正文照旧完整
+        reply = prepared.client.complete(
+            prepared.model, prepared.system, prepared.user, json_mode=False
+        )
+        accumulated = reply or ""
+        if accumulated:
+            yield ("text", accumulated)
+    except Exception as exc:  # noqa: BLE001
+        raise _as_assistant_failure(exc) from None
+
+    text = accumulated.strip()
+    if not text:
+        raise AssistantFailure(502, "ai_empty", "AI 返回了空回答（模型未产出内容），请重试。")
+    _remember(prepared, question=question, symbol=symbol, page=page, sync_memory=sync_memory)
+    yield ("final", text)
 
 
 def _question_payload_error(
@@ -1261,7 +2139,7 @@ def build_router(data_root: Any = None) -> APIRouter:
     router = APIRouter(prefix=ASSISTANT_PREFIX, dependencies=[Depends(_guard)])
 
     @router.post("/{code}/assistant")
-    def research_assistant(code: str, body: AssistantRequest) -> Any:
+    async def research_assistant(code: str, body: AssistantRequest) -> Any:
         question = body.question.strip()
         error = _question_payload_error(question, body.context)
         if error is not None:
@@ -1269,11 +2147,12 @@ def build_router(data_root: Any = None) -> APIRouter:
         context, sources = _normalize_context(body.context)
         intent = classify_intent(question, context)
         try:
-            result = ask(
+            result = await ask_agent(
                 question=question,
                 context=context,
                 day=body.date,
                 tab=body.tab,
+                page_label="个股深挖",
                 module="senate",
                 symbol=code,
                 page="research",
@@ -1281,15 +2160,63 @@ def build_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        plan = _fetch_for_intent(question, intent, context_symbol=code, data_root=data_root)
         return _success_response(
             result,
             sources,
             intent,
-            plan=plan,
-            fetched_metrics=plan.fetched_metrics,
-            fetched_sources=plan.fetched_sources,
+            fetched_metrics=result["metrics"],
+            fetched_sources=result["sources"],
+            fetch_attempted=result["used_tools"],
+            # 首页研究台固定会话：刷新 / 重开页面时由 `GET /api/research/desk/history` 读回。
+            # 只对首页（code 占位 `home`）落库；个股深挖页的问答属于单页一次性问答，
+            # 混进同一个会话会让「首页回看」里冒出别页的问题。
+            persist=((data_root, DESK_SESSION_ID, question) if code == "home" else None),
         )
+
+    @router.get("/desk/history")
+    def desk_history(limit: int = 20) -> Any:
+        """首页研究台的最近若干轮（刷新回看）。
+
+        只读：库还没建（从没问过）时返回空列表，不现建一个空库。
+        """
+        capped = max(1, min(int(limit), 50))
+        conn = chat_store.connect(data_root, create=False)
+        if conn is None:
+            return {"turns": []}
+        try:
+            rows = chat_store.session_turns(conn, DESK_SESSION_ID)
+            turns = [
+                {
+                    "seq": row["seq"],
+                    "question": row["question"],
+                    "blocks": _blocks_for_view(row),
+                    "status": row["status"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows[-capped:]
+            ]
+            return {"turns": turns}
+        except Exception as exc:  # noqa: BLE001 - 回看失败按空处理，不挡首页
+            logger.warning("desk_history_read_failed detail=%s", exc)
+            return {"turns": []}
+        finally:
+            chat_store.close(conn)
+
+    @router.post("/desk/history/clear")
+    def clear_desk_history() -> Any:
+        """「清空」按钮的服务端口径：把首页研究台那一条会话真删掉。
+
+        只删 `desk:home` 这一条，对话模式的会话不受影响；库不存在时按「本来就空」
+        返回，不现建库。
+        """
+        conn = chat_store.connect(data_root, create=False)
+        if conn is None:
+            return {"deleted": False}
+        try:
+            deleted = chat_store.delete_session(conn, DESK_SESSION_ID)
+            return {"deleted": bool(deleted)}
+        finally:
+            chat_store.close(conn)
 
     return router
 
@@ -1304,9 +2231,7 @@ def _blocks_for_view(row: dict[str, Any]) -> list[Any]:
         return []
 
 
-def build_conversation_router(
-    *, data_root: Any = None, config_root: Any = None
-) -> APIRouter:
+def build_conversation_router(*, data_root: Any = None, config_root: Any = None) -> APIRouter:
     """`/api/conversation/*`（QUOT-580）：会话模式的一轮问答 + 会话列表读取。
 
     阶段 F 的 `SessionList` 只消费这里：`GET /api/conversation/sessions` 列会话，
@@ -1327,7 +2252,16 @@ def build_conversation_router(
         if conn is None:
             return {"sessions": []}
         try:
-            return {"sessions": chat_store.list_sessions(conn)}
+            rows = chat_store.list_sessions(conn)
+            # 首页研究台的 `desk:home` 会话是为了刷新回看而落的，不是用户在对话模式里
+            # 建的会话——留在列表里会多出一个点不开的条目，这里按前缀剔掉。
+            return {
+                "sessions": [
+                    item
+                    for item in rows
+                    if not str(item.get("session_id") or "").startswith(DESK_SESSION_PREFIX)
+                ]
+            }
         finally:
             chat_store.close(conn)
 
@@ -1385,10 +2319,26 @@ def build_conversation_router(
         return {"session_id": session_id, "deleted": deleted}
 
     @router.post("/turns")
-    def post_turn(body: ChatRequest) -> Any:
+    async def post_turn(request: Request, body: ChatRequest) -> Any:
+        if wants_stream(request):
+            try:
+                session_id, text = _precheck_turn(body)
+            except ChatFailure as exc:
+                return _record_failure(body.session_id or "", exc)
+            return StreamingResponse(
+                run_turn_stream(
+                    message=text,
+                    session_id=session_id,
+                    context=body.context,
+                    data_root=data_root,
+                ),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
         try:
             session_id = resolve_session_id(body.session_id)
-            return run_turn(
+            return await run_in_threadpool(
+                run_turn,
                 message=body.message,
                 session_id=session_id,
                 context=body.context,
@@ -1425,7 +2375,7 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
     router = APIRouter(prefix=SKILLS_PREFIX, dependencies=[Depends(_guard)])
 
     @router.post("/assistant")
-    def skill_assistant(body: SkillAssistantRequest) -> Any:
+    async def skill_assistant(body: SkillAssistantRequest) -> Any:
         question = body.question.strip()
         error = _question_payload_error(question, body.context)
         if error is not None:
@@ -1436,7 +2386,7 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
         context, sources = _normalize_context(body.context)
         intent = classify_intent(question, context)
         try:
-            result = ask(
+            result = await ask_agent(
                 question=question,
                 context=context,
                 tab=body.page_key,
@@ -1448,14 +2398,13 @@ def build_skills_router(data_root: Any = None) -> APIRouter:
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        plan = _fetch_for_intent(question, intent, data_root=data_root)
         return _success_response(
             result,
             sources,
             intent,
-            plan=plan,
-            fetched_metrics=plan.fetched_metrics,
-            fetched_sources=plan.fetched_sources,
+            fetched_metrics=result["metrics"],
+            fetched_sources=result["sources"],
+            fetch_attempted=result["used_tools"],
         )
 
     return router
@@ -1474,7 +2423,7 @@ def build_page_router(data_root: Any = None) -> APIRouter:
     router = APIRouter(prefix=PAGE_PREFIX, dependencies=[Depends(_guard)])
 
     @router.post("/assistant")
-    def page_assistant(body: PageAssistantRequest) -> Any:
+    async def page_assistant(body: PageAssistantRequest) -> Any:
         question = body.question.strip()
         error = _question_payload_error(question, body.context)
         if error is not None:
@@ -1486,26 +2435,28 @@ def build_page_router(data_root: Any = None) -> APIRouter:
         if body.bound_skill:
             page_label += f" · {body.bound_skill}"
         intent = classify_intent(question, context)
+        # 能力问题**不走固定文案**：口径由 `PAGE_SYSTEM_PROMPT` 末尾的 `_CAPABILITY_RULE`
+        # 约束（范围固定、措辞自由），同一个问题问两次允许说得不一样。
         try:
-            result = ask(
+            result = await ask_agent(
                 question=question,
                 context=context,
                 tab=body.page_key,
                 page_label=page_label,
                 system_prompt=PAGE_SYSTEM_PROMPT,
                 module=module_for(body.page_key),
+                page="page",
                 data_root=data_root,
             )
         except AssistantFailure as exc:
             return _failure_response(exc)
-        plan = _fetch_for_intent(question, intent, data_root=data_root)
         return _success_response(
             result,
             sources,
             intent,
-            plan=plan,
-            fetched_metrics=plan.fetched_metrics,
-            fetched_sources=plan.fetched_sources,
+            fetched_metrics=result["metrics"],
+            fetched_sources=result["sources"],
+            fetch_attempted=result["used_tools"],
         )
 
     return router

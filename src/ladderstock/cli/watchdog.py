@@ -588,9 +588,7 @@ def watchdog_command(
             help="直接拉起看板的 argv（JSON 字符串数组）；被 supervisor 托管时由它给出",
         ),
     ] = "",
-    probe_interval: Annotated[
-        float, typer.Option("--probe-interval", help="探活间隔（秒）")
-    ] = 2.0,
+    probe_interval: Annotated[float, typer.Option("--probe-interval", help="探活间隔（秒）")] = 2.0,
     output: OutputOption = None,
 ) -> None:
     """无端口自愈监控器：探活主服务，确认中断后自动重启。不监听任何端口。"""

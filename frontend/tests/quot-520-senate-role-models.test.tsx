@@ -50,6 +50,44 @@ const CONFIGURED: Record<string, { provider: string; model: string }> = {
   social: { provider: 'deepseek', model: 'deepseek-chat' },
 }
 
+/**
+ * StockSenate `agent_roles` 的 kind 分布：7 分析师 / 2 多空 / 2 经理 / 1 交易员 /
+ * 3 风险 / 1 质量闸门。组件按 kind 分组且默认只展开「分析师」，payload 不带 kind
+ * 时全部落「其他角色」并被收起，行级 testid 根本渲染不出来——所以夹具必须补齐。
+ */
+const ROLE_KIND: Record<string, string> = {
+  market: 'analyst',
+  social: 'analyst',
+  news: 'analyst',
+  fundamentals: 'analyst',
+  policy: 'analyst',
+  hot_money: 'analyst',
+  lockup: 'analyst',
+  bull: 'researcher',
+  bear: 'researcher',
+  research_manager: 'manager',
+  portfolio_manager: 'manager',
+  trader: 'trader',
+  risk_aggressive: 'risk',
+  risk_neutral: 'risk',
+  risk_conservative: 'risk',
+  quality_gate: 'judge',
+}
+
+/** 组头 testid 的遍历口径，与组件 `ROLE_GROUPS` + `OTHER_GROUP` 一致。 */
+const GROUP_KINDS = ['analyst', 'researcher', 'manager', 'trader', 'risk', 'judge', 'other'] as const
+
+/** 组件默认只展开「分析师」组，逐组点开后才看得到全部 16 行。 */
+function expandAllGroups(): void {
+  for (const kind of GROUP_KINDS) {
+    const group = screen.queryByTestId(`senate-group-${kind}`)
+    if (!group) continue
+    // 组头是 section 的直接子 button；组内还有「测试」按钮，不能按 role 全取
+    const head = group.querySelector<HTMLButtonElement>(':scope > button')
+    if (head && head.getAttribute('aria-expanded') === 'false') fireEvent.click(head)
+  }
+}
+
 function roleStatus(
   role: string,
   value: { provider: string; model: string } | null,
@@ -57,6 +95,7 @@ function roleStatus(
   return {
     role,
     label: role,
+    kind: ROLE_KIND[role],
     configured: value !== null,
     provider: value?.provider ?? null,
     model: value?.model ?? null,
@@ -164,8 +203,13 @@ function testCalls(fetchMock: ReturnType<typeof mockFetch>) {
  * keyEnv state，flush 前恒为空串。交互前必须等它，保证草稿已初始化。
  */
 async function waitDraftsReady(roleTestId: string, expectedKeyEnv: string): Promise<HTMLElement> {
+  // 组件默认只展开「分析师」组：先等分组渲染出来，再逐组点开，否则行级 testid 不存在
+  await screen.findByTestId('senate-group-analyst')
+  expandAllGroups()
   const market = await screen.findByTestId(roleTestId)
-  const keyInput = within(market).getByLabelText('api_key_env（变量名）') as HTMLInputElement
+  // `api_key_env` 收口到全局那一处（所有角色共用，写 `[llm].api_key_env`）；
+  // 它被 payload 写入 = 草稿重置 effect 已 flush
+  const keyInput = screen.getByLabelText('api_key_env（全局，所有角色共用）') as HTMLInputElement
   await waitFor(() => expect(keyInput.value).toBe(expectedKeyEnv))
   return market
 }
@@ -181,6 +225,8 @@ describe('SenateRoleModels', () => {
     mockFetch({})
     const { container } = render(<SenateRoleModels controlReady />)
 
+    await screen.findByTestId('senate-group-analyst')
+    expandAllGroups()
     const market = await screen.findByTestId('senate-role-market')
     expect(within(market).getByText('角色 TOML')).toBeTruthy()
     const options = within(market)
@@ -213,6 +259,8 @@ describe('SenateRoleModels', () => {
       }),
     })
     render(<SenateRoleModels controlReady />)
+    await screen.findByTestId('senate-group-analyst')
+    expandAllGroups()
     const market = await screen.findByTestId('senate-role-market')
     expect(within(market).getByText('未配置')).toBeTruthy()
   })
@@ -236,8 +284,9 @@ describe('SenateRoleModels', () => {
     render(<SenateRoleModels controlReady />)
 
     const market = await waitDraftsReady('senate-role-market', 'MINIMAX_API_KEY')
-    fireEvent.change(within(market).getByLabelText('Provider'), { target: { value: 'openai' } })
-    fireEvent.change(within(market).getByLabelText('Model'), { target: { value: 'gpt-5-mini' } })
+    // 行内 select 的 aria-label 带角色名（`market provider` / `market model`），按尾部词匹配
+    fireEvent.change(within(market).getByLabelText(/provider$/i), { target: { value: 'openai' } })
+    fireEvent.change(within(market).getByLabelText(/模型$/), { target: { value: 'gpt-5-mini' } })
     fireEvent.click(screen.getByTestId('senate-save'))
 
     await screen.findByText(/已保存 1 个角色/)
@@ -261,7 +310,7 @@ describe('SenateRoleModels', () => {
     render(<SenateRoleModels controlReady />)
 
     const market = await waitDraftsReady('senate-role-market', 'MINIMAX_API_KEY')
-    const model = within(market).getByLabelText('Model') as HTMLInputElement
+    const model = within(market).getByLabelText(/模型$/) as HTMLInputElement
     fireEvent.change(model, { target: { value: 'MiniMax-Text-01' } })
     fireEvent.click(screen.getByTestId('senate-save'))
 

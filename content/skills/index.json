@@ -123,7 +123,7 @@
     {
       "name": "senate-desk",
       "label": "多空辩论与回测",
-      "status": "unconnected",
+      "status": "ready",
       "step_count": 4,
       "tool_count": 5,
       "path": "skills/senate-desk",
@@ -133,7 +133,7 @@
         "action": "open_ai_dock",
         "auto_send": false
       },
-      "blocked_by": "StockSenate MCP（127.0.0.1:8765）未接进 LadderStock；须 POST 握手，约 20s"
+      "blocked_by": ""
     },
     {
       "name": "us-dossier",

@@ -291,9 +291,7 @@ def _validate(cfg: BacktestConfig) -> None:
     if isinstance(cfg.transfer_fee, bool) or not isinstance(cfg.transfer_fee, int | float):
         raise BacktestConfigError(f"transfer_fee 必须是数值，收到 {cfg.transfer_fee!r}")
     if not math.isfinite(float(cfg.transfer_fee)) or cfg.transfer_fee < 0:
-        raise BacktestConfigError(
-            f"transfer_fee 必须是 >= 0 的有限数值，收到 {cfg.transfer_fee!r}"
-        )
+        raise BacktestConfigError(f"transfer_fee 必须是 >= 0 的有限数值，收到 {cfg.transfer_fee!r}")
     if not (0 < cfg.in_sample_ratio < 1):
         raise BacktestConfigError(
             f"in_sample_ratio 必须在 (0, 1) 开区间内，收到 {cfg.in_sample_ratio!r}"
@@ -303,18 +301,14 @@ def _validate(cfg: BacktestConfig) -> None:
     if cfg.min_trades < 1:
         raise BacktestConfigError(f"min_trades 必须 >= 1，收到 {cfg.min_trades!r}")
     if not isinstance(cfg.cost_tiers, tuple) or len(cfg.cost_tiers) < 2:
-        raise BacktestConfigError(
-            f"cost_tiers 至少 2 档，收到 {cfg.cost_tiers!r}"
-        )
+        raise BacktestConfigError(f"cost_tiers 至少 2 档，收到 {cfg.cost_tiers!r}")
     for index, tier in enumerate(cfg.cost_tiers):
         if isinstance(tier, bool) or not isinstance(tier, int | float):
             raise BacktestConfigError(f"cost_tiers[{index}] 必须是数值，收到 {tier!r}")
         if float(tier) < 0:
             raise BacktestConfigError(f"cost_tiers[{index}] 不能为负数，收到 {tier!r}")
     if list(cfg.cost_tiers) != sorted(cfg.cost_tiers):
-        raise BacktestConfigError(
-            f"cost_tiers 必须按从小到大排序，收到 {cfg.cost_tiers!r}"
-        )
+        raise BacktestConfigError(f"cost_tiers 必须按从小到大排序，收到 {cfg.cost_tiers!r}")
     for index, preset in enumerate(cfg.presets):
         if not isinstance(preset, CostPreset):
             raise BacktestConfigError(f"presets[{index}] 必须是 CostPreset，收到 {preset!r}")
@@ -362,9 +356,7 @@ def _coerce_tiers(raw: Any) -> tuple[float, ...]:
 def _require(raw: Mapping[str, Any], path: str, *, source: Path) -> Any:
     present, value = _dig(raw, path)
     if not present:
-        raise BacktestConfigError(
-            f"{source}:缺字段 {path!r}；不静默回落默认值，请补上"
-        )
+        raise BacktestConfigError(f"{source}:缺字段 {path!r}；不静默回落默认值，请补上")
     return value
 
 
@@ -383,9 +375,7 @@ def _coerce_presets(raw: Any, *, source: Path) -> tuple[CostPreset, ...]:
             if key not in item
         ]
         if missing:
-            raise BacktestConfigError(
-                f"{source}:costs.presets[{index}] 缺字段 {missing}"
-            )
+            raise BacktestConfigError(f"{source}:costs.presets[{index}] 缺字段 {missing}")
         presets.append(
             CostPreset(
                 key=str(item["key"]),
@@ -464,8 +454,7 @@ def load_config(path: Path | None = None) -> BacktestConfig:
     sources: dict[str, str] = {}
     if new_style:
         values = {
-            key: _require(raw, dotted, source=path)
-            for key, dotted in COST_FIELD_YAML_PATH.items()
+            key: _require(raw, dotted, source=path) for key, dotted in COST_FIELD_YAML_PATH.items()
         }
         commission = float(values["commission_rate_wan"]) / 10_000
         stamp_duty = float(values["stamp_duty_wan"]) / 10_000
@@ -473,8 +462,7 @@ def load_config(path: Path | None = None) -> BacktestConfig:
         commission_floor = float(values["commission_floor_yuan"])
     else:
         legacy = {
-            key: _require(raw, dotted, source=path)
-            for key, dotted in FIELD_YAML_PATH.items()
+            key: _require(raw, dotted, source=path) for key, dotted in FIELD_YAML_PATH.items()
         }
         commission = float(legacy["commission"])
         stamp_duty = float(legacy["stamp_duty"])

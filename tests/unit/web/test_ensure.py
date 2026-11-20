@@ -63,6 +63,7 @@ def _ensure(registry, root: Path, clock: FakeClock, *, cooldown: float = 300.0) 
 # 1. 新鲜只读 / 冷启动触发
 # --------------------------------------------------------------------------- #
 
+
 def test_theme_fresh_reads_only_no_outbound(data_root: Path) -> None:
     duckdb_store.write_dataset(
         "theme_news", [{"theme": "ai", "trade_date": DAY.isoformat()}], root=data_root
@@ -125,6 +126,7 @@ def test_pool_cold_start_triggers_and_persists(data_root: Path) -> None:
 # 2. 冷却 / 单飞 / 并发上限
 # --------------------------------------------------------------------------- #
 
+
 def test_cooldown_bounds_retries_while_stale(data_root: Path) -> None:
     # 上游全挂 → 数据始终陈旧：冷却期内不许重打，拨过冷却才允许重试。
     transport = ensure_transport(DAY.isoformat(), failing=("wire_get_digest",))
@@ -178,6 +180,7 @@ def test_failure_degrades_and_never_raises(data_root: Path) -> None:
 # 3. 无源不自采 / 未知组
 # --------------------------------------------------------------------------- #
 
+
 def test_no_source_when_dataset_undeclared(data_root: Path) -> None:
     transport = ensure_transport(DAY.isoformat())
     registry = make_ensure_registry(transport, data_root, datasets=["limit_pool"])
@@ -205,6 +208,7 @@ def test_groups_are_exactly_the_four_pages() -> None:
 # --------------------------------------------------------------------------- #
 # 4. industry：base_pool 常规口径，绝不锚点扩池（DEC-074 付费动作仍显式）
 # --------------------------------------------------------------------------- #
+
 
 def test_industry_cold_start_uses_base_pool_not_anchor_expansion(data_root: Path) -> None:
     transport = ensure_transport(DAY.isoformat())

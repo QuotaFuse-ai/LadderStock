@@ -65,6 +65,7 @@ FIVE_DONE = checkpoint.STAGES[:5]
 # 造盘上真实形态的产物
 # --------------------------------------------------------------------------- #
 
+
 def write_stage_artifact(
     root: Path,
     stage: str,
@@ -156,6 +157,7 @@ def mark_degraded(root: Path, stage: str) -> None:
 # 客户端 / 假子进程
 # --------------------------------------------------------------------------- #
 
+
 class FakeRun:
     """假子进程：记录 argv，返回预设退出码；`gate` 不为 None 时阻塞在闸门上。"""
 
@@ -219,9 +221,7 @@ def _status(client: TestClient, code: str = CODE, day: str | None = DAY) -> dict
 
 
 def _run(client: TestClient, body: dict[str, Any], **headers: str) -> Any:
-    return client.post(
-        f"/api/research/{CODE}/run", json=body, headers={**WRITE_HEADERS, **headers}
-    )
+    return client.post(f"/api/research/{CODE}/run", json=body, headers={**WRITE_HEADERS, **headers})
 
 
 def _wait_job(client: TestClient, job_id: str, *, timeout: float = 10.0) -> dict[str, Any]:
@@ -238,6 +238,7 @@ def _wait_job(client: TestClient, job_id: str, *, timeout: float = 10.0) -> dict
 # --------------------------------------------------------------------------- #
 # 1. 正常：六段 + 各段产物
 # --------------------------------------------------------------------------- #
+
 
 def test_status_returns_six_stages_with_json_and_markdown(tmp_path: Path) -> None:
     seed(tmp_path)
@@ -323,6 +324,7 @@ def test_status_has_no_side_effects(tmp_path: Path) -> None:
 # 2. 404：研究不存在 / 任务未知
 # --------------------------------------------------------------------------- #
 
+
 def test_status_404_when_research_absent(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/api/research/600001", params={"date": DAY})
 
@@ -340,6 +342,7 @@ def test_status_404_when_code_has_no_record_and_no_date(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2b. QUOT-400：404 的三种语义 + 研究引擎不可用（503）
 # --------------------------------------------------------------------------- #
+
 
 def test_unknown_code_is_404_with_unknown_code_wording(tmp_path: Path) -> None:
     """「代码不存在」态：格式合法但前缀不可能是 A 股 → 404 + 未知代码文案（不是空态文案）。"""
@@ -399,6 +402,7 @@ def test_job_progress_404_for_unknown_job(tmp_path: Path) -> None:
 # 3. 409：同标的同日已有任务在跑
 # --------------------------------------------------------------------------- #
 
+
 def test_run_409_while_same_code_and_day_is_running(tmp_path: Path) -> None:
     gate = threading.Event()
     run = FakeRun(gate=gate)
@@ -437,6 +441,7 @@ def test_run_409_releases_the_slot_when_the_job_finishes(tmp_path: Path) -> None
 # --------------------------------------------------------------------------- #
 # 4. 422：参数非法
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     ("body", "hint"),
@@ -499,6 +504,7 @@ def _status_detail(response: Any) -> str:
 # --------------------------------------------------------------------------- #
 # 续跑：argv 等价 CLI + 进度接口
 # --------------------------------------------------------------------------- #
+
 
 def test_run_invokes_the_equivalent_cli_and_reports_progress(tmp_path: Path) -> None:
     seed(tmp_path, done=FIVE_DONE, failed=("report",))
@@ -574,6 +580,7 @@ def test_run_failure_keeps_cli_message_as_job_error(tmp_path: Path) -> None:
 # 端到端：真实产物目录 → 起任务补段 → 读回可渲染的整页载荷
 # --------------------------------------------------------------------------- #
 
+
 def test_end_to_end_rerun_lands_real_artifacts_and_page_can_render(tmp_path: Path) -> None:
     """`run` 位顶掉子进程，落盘走真实的 `artifacts.write_stage` + `checkpoint.record`。
 
@@ -618,6 +625,7 @@ def test_end_to_end_rerun_lands_real_artifacts_and_page_can_render(tmp_path: Pat
 # 闸门与开关
 # --------------------------------------------------------------------------- #
 
+
 def test_non_loopback_source_is_403(tmp_path: Path) -> None:
     seed(tmp_path)
     remote = _client(tmp_path, client=REMOTE)
@@ -626,9 +634,12 @@ def test_non_loopback_source_is_403(tmp_path: Path) -> None:
 
 def test_post_without_source_evidence_is_403(tmp_path: Path) -> None:
     seed(tmp_path, done=FIVE_DONE, failed=("report",))
-    assert _client(tmp_path).post(
-        f"/api/research/{CODE}/run", json={"date": DAY, "only": "report"}
-    ).status_code == 403
+    assert (
+        _client(tmp_path)
+        .post(f"/api/research/{CODE}/run", json={"date": DAY, "only": "report"})
+        .status_code
+        == 403
+    )
 
 
 def test_cross_origin_post_is_403_even_with_client_header(tmp_path: Path) -> None:
@@ -647,9 +658,10 @@ def test_same_origin_page_can_read_and_run(tmp_path: Path) -> None:
     seed(tmp_path, done=FIVE_DONE, failed=("report",))
     client = _client(tmp_path, FakeRun(0), headers={"Origin": BASE_URL})
     assert client.get(f"/api/research/{CODE}", params={"date": DAY}).status_code == 200
-    assert client.post(
-        f"/api/research/{CODE}/run", json={"date": DAY, "only": "report"}
-    ).status_code == 200
+    assert (
+        client.post(f"/api/research/{CODE}/run", json={"date": DAY, "only": "report"}).status_code
+        == 200
+    )
 
 
 def test_control_switch_off_keeps_research_readable_and_runnable(

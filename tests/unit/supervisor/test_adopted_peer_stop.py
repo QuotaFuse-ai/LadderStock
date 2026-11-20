@@ -1,11 +1,11 @@
-"""adopted peer 停止边界（QUOT-545）：外部 peer 认领绝不终止，前任自有进程仍可停。
+"""自有实例停止语义：命令行已确认属于本模块的实例一律可停（不再「认领即永不停止」）。
 
-账本以 `adopted_peer` 标记区分两种 adopted：
-- 外部 peer 认领（`adopt_module` 证据路径 / PageBoot 记账）→ 停止路径一律跳过；
-- 前任 supervisor 遗留自有进程（对账续托管）→ 无标记，stop_all 正常停止。
+历史语义（QUOT-545）是「外部 peer 认领后任何停止路径跳过」，它让上一代没退干净
+的残留永远关不掉，形成「停不住 → 端口冲突 → 起不来」的死循环。现在改为按客观
+证据处置：适配器命令行证据命中本模块 → 视为自有，可停、可重启；命令行不匹配的
+外部程序仍然绝不终止（由 `_reap_stale` 的 matched 判据与 foreign 分类保证）。
 
-全部走 fake（fakes.py），不起真进程；真实进程的回归见
-`tests/integration/test_stop_all_ownership.py`。
+全部走 fake（fakes.py），不起真进程。
 """
 
 from __future__ import annotations
@@ -43,15 +43,16 @@ def _evidence(module: str, pid: int) -> Identification:
     )
 
 
-def _adopt_external_peer(engine, adapters, procs, name: str) -> int:
-    """模拟外部 peer：进程不在适配器链里，按识别证据认领。返回 peer pid。"""
+def _adopt_instance(engine, adapters, procs, name: str) -> int:
+    """模拟「端口上已有本模块程序」：命令行命中识别规则，按证据认领。"""
     chain = procs.spawn_chain(
         (f"C:/venv/{name}.exe", "run"), ppid=1, ports=adapters[name].ports, depth=1
     )
     adapters[name].identify = lambda: _evidence(name, chain[0])  # type: ignore[attr-defined]
     record = engine.adopt_module(name)
     assert record is not None and record.pid == chain[0]
-    assert record.origin == "adopted" and record.adopted_peer is True
+    assert record.origin == "adopted"
+    assert record.adopted_peer is False, "认领不再打「永不停止」标记"
     return chain[0]
 
 
@@ -71,76 +72,67 @@ def _second_session_engine(tmp_path: Path, adapters, procs, clock) -> Supervisor
     )
 
 
-# ------------------------------------------------------- 外部 peer：一律跳过
+# ------------------------------------------------------- 认领实例：可停可重启
 
 
-def test_stop_all_skips_adopted_peer_and_keeps_ledger_intact(tmp_path: Path) -> None:
+def test_stop_all_stops_adopted_instance(tmp_path: Path) -> None:
     engine, adapters, procs, _clock = build_engine(tmp_path)
-    pid = _adopt_external_peer(engine, adapters, procs, "wire")
+    pid = _adopt_instance(engine, adapters, procs, "wire")
 
     report = engine.stop_all()
 
     assert report["ok"] is True
-    assert report["modules"]["wire"]["skipped"] == "adopted_peer"
-    assert adapters["wire"].stop_calls == 0, "对外部 peer 调了适配器 stop()"
-    assert procs.killed_trees == [], "对外部 peer 动了强杀"
-    assert pid in procs.processes, "外部 peer 被终止"
-    record = engine._ledger.record("wire")
-    assert record is not None
-    assert record.pid == pid
-    assert record.state == "running", "外部 peer 的账本状态被停止流程改动"
-    assert record.stopping_by_user is False, "外部 peer 被误写主动停意图"
-    assert record.health == HEALTH_OK
+    assert "skipped" not in report["modules"]["wire"]
+    assert adapters["wire"].stop_calls >= 1, "停止路径没有走到适配器"
+    assert pid not in procs.processes, "认领的实例没有被停止"
+    assert engine._ledger.record("wire").state == "stopped"
 
 
-def test_stop_module_skips_adopted_peer(tmp_path: Path) -> None:
+def test_stop_module_stops_adopted_instance(tmp_path: Path) -> None:
     engine, adapters, procs, _clock = build_engine(tmp_path)
-    pid = _adopt_external_peer(engine, adapters, procs, "wire")
+    pid = _adopt_instance(engine, adapters, procs, "wire")
 
     view = engine.stop_module("wire")
 
     assert view["ok"] is True
-    assert view["record"]["pid"] == pid
-    assert view["record"]["adopted_peer"] is True
-    assert adapters["wire"].stop_calls == 0
-    assert pid in procs.processes
+    assert view["record"]["adopted_peer"] is False
+    assert pid not in procs.processes
 
 
-def test_restart_module_keeps_adopted_peer_pid(tmp_path: Path) -> None:
+def test_restart_module_replaces_adopted_instance(tmp_path: Path) -> None:
     engine, adapters, procs, _clock = build_engine(tmp_path)
-    pid = _adopt_external_peer(engine, adapters, procs, "wire")
-    adapters["wire"].take_port_externally()  # 端口在听（真实适配器按证据 probe）
+    pid = _adopt_instance(engine, adapters, procs, "wire")
 
     report = engine.restart_module("wire")
 
     assert report["ok"] is True
-    assert report["record"]["pid"] == pid, "重启把外部 peer 换成了新进程"
-    assert adapters["wire"].start_calls == [], "重启 spawn 了外部 peer"
-    assert adapters["wire"].stop_calls == 0
-    assert pid in procs.processes
+    new_pid = report["record"]["pid"]
+    assert new_pid != pid, "重启后仍指着旧实例"
+    assert adapters["wire"].start_calls, "重启没有拉起新实例"
+    assert pid not in procs.processes, "旧实例没有被清掉"
 
 
-def test_stop_all_still_stops_owned_modules_alongside_skipped_peer(tmp_path: Path) -> None:
+def test_stop_all_stops_owned_and_adopted_together(tmp_path: Path) -> None:
     engine, adapters, procs, _clock = build_engine(tmp_path)
     engine.start_module("senate")
     senate_pids = adapters["senate"].chain_pids()
-    peer_pid = _adopt_external_peer(engine, adapters, procs, "wire")
+    adopted_pid = _adopt_instance(engine, adapters, procs, "wire")
 
     report = engine.stop_all()
 
     assert report["ok"] is True
     for pid in senate_pids:
-        assert pid not in procs.processes, "自有模块没有被停止"
-    assert peer_pid in procs.processes, "外部 peer 被连带终止"
+        assert pid not in procs.processes
+    assert adopted_pid not in procs.processes
     assert engine._ledger.record("senate").state == "stopped"
-    assert engine._ledger.record("wire").state == "running"
+    assert engine._ledger.record("wire").state == "stopped"
 
 
 # --------------------------------------------- 前任自有进程：崩溃恢复仍可停
 
 
 def test_previous_supervisor_spawned_process_is_still_stopped(tmp_path: Path) -> None:
-    """回归护栏：不能「凡 adopted 都跳过」——前任自己拉的进程必须仍可停。"""
+    """回归护栏：前任自己拉的进程必须仍可停。"""
     engine_a, adapters, procs, clock = build_engine(tmp_path)
     engine_a.start_module("wire")
     pids = adapters["wire"].chain_pids()
@@ -149,8 +141,8 @@ def test_previous_supervisor_spawned_process_is_still_stopped(tmp_path: Path) ->
     engine_b = _second_session_engine(tmp_path, adapters, procs, clock)
     summary = engine_b.reconcile()
     record = engine_b._ledger.record("wire")
-    assert summary["wire"] == "adopted:still_running"
-    assert record.origin == "adopted" and record.adopted_peer is False
+    assert summary["wire"] == "alive:spawned_prev_session"
+    assert record.origin == "spawned" and record.adopted_peer is False
 
     report = engine_b.stop_all()
 
@@ -161,26 +153,25 @@ def test_previous_supervisor_spawned_process_is_still_stopped(tmp_path: Path) ->
     assert engine_b._ledger.record("wire").state == "stopped"
 
 
-def test_adopted_peer_flag_survives_crash_recovery(tmp_path: Path) -> None:
-    """外部 peer 认领跨会话仍是外部 peer：对账续托管不得洗掉标记。"""
+def test_adopted_instance_survives_crash_recovery_as_stoppable(tmp_path: Path) -> None:
+    """跨会话仍是可停实例：对账续托管不得把「可停」变回「永不停止」。"""
     engine_a, adapters, procs, clock = build_engine(tmp_path)
-    pid = _adopt_external_peer(engine_a, adapters, procs, "wire")
+    pid = _adopt_instance(engine_a, adapters, procs, "wire")
 
     engine_b = _second_session_engine(tmp_path, adapters, procs, clock)
     summary = engine_b.reconcile()
 
-    assert summary["wire"] == "adopted:still_running"
+    assert summary["wire"] in ("adopted:still_running", "alive:adopted_prev_session")
     record = engine_b._ledger.record("wire")
-    assert record.adopted_peer is True and record.pid == pid
+    assert record is not None and record.adopted_peer is False and record.pid == pid
     engine_b.stop_all()
-    assert pid in procs.processes
-    assert adapters["wire"].stop_calls == 0
+    assert pid not in procs.processes
 
 
-def test_explicit_spawn_clears_peer_flag_and_restores_stoppability(tmp_path: Path) -> None:
+def test_explicit_spawn_clears_adopt_origin(tmp_path: Path) -> None:
     engine, adapters, procs, _clock = build_engine(tmp_path)
-    pid = _adopt_external_peer(engine, adapters, procs, "wire")
-    procs.kill_tree(pid)  # 外部 peer 自己死了
+    pid = _adopt_instance(engine, adapters, procs, "wire")
+    procs.kill_tree(pid)  # 实例自己死了
     adapters["wire"].release_external()
 
     engine.start_module("wire")  # 显式启动 = 真正 spawn，归属回到本控制面
@@ -225,14 +216,14 @@ def test_record_restart_success_clears_peer_flag(tmp_path: Path) -> None:
     assert entry.adopted_peer is False and entry.pid == 43
 
 
-def test_reconcile_dead_peer_marks_stopped_without_touching_flag(tmp_path: Path) -> None:
+def test_reconcile_dead_instance_marks_stopped(tmp_path: Path) -> None:
     engine, adapters, procs, _clock = build_engine(tmp_path)
-    pid = _adopt_external_peer(engine, adapters, procs, "wire")
+    pid = _adopt_instance(engine, adapters, procs, "wire")
     procs.kill_tree(pid)
 
     engine.reconcile()
 
     record = engine._ledger.record("wire")
     assert record.state == "stopped"
-    assert record.adopted_peer is True
+    assert record.adopted_peer is False
     assert procs.killed_trees == [pid]  # 只有测试自己杀的那一次

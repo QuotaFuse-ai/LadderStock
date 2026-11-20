@@ -43,6 +43,7 @@ NO_CONSTITUENT_CODES = "本行业没有成分代码（归属未绑定或缓存�
 # 一次缓存读取 + 三种投影
 # --------------------------------------------------------------------------- #
 
+
 class CacheProjection:
     """六个输入数据集的一次读取，供日频序列 / 逐股明细 / 逐日资金流使用。
 
@@ -62,9 +63,7 @@ class CacheProjection:
     def errors(self) -> list[str]:
         """本次读不动的数据集（`_Reader` 会把异常收进 `error`，不让整条链路崩）。"""
         return [
-            f"{dataset}：{source.error}"
-            for dataset, source in self.sources.items()
-            if source.error
+            f"{dataset}：{source.error}" for dataset, source in self.sources.items() if source.error
         ]
 
     def codes_for(self, l1_code: str | None) -> list[str]:
@@ -231,6 +230,7 @@ class CacheProjection:
 # 序列小工具
 # --------------------------------------------------------------------------- #
 
+
 def _rolling_percentile(daily: dict[str, float], lookback_days: int) -> list[Point]:
     """每日序列的滚动经验分位：分位算法与保留位数都和 R5 当期分位同一个。"""
     days, values = metrics.window_series(daily, lookback_days=lookback_days)
@@ -280,6 +280,7 @@ def _max_day(*days: str | None) -> str | None:
 # --------------------------------------------------------------------------- #
 # 缺口 #6：规则信号
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class Predicate:
@@ -635,9 +636,7 @@ def _format_threshold(value: float, fmt: str) -> str:
 
 def _payload_as_of(payload: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
     """没有信号时的数据时点：被评估行业里最新的字段时点，再退到清单顶层时点。"""
-    days = [
-        str(day) for row in rows for day in (row.get("metric_as_of") or {}).values() if day
-    ]
+    days = [str(day) for row in rows for day in (row.get("metric_as_of") or {}).values() if day]
     if not days:
         days = [str(day) for day in dict(payload.get("as_of") or {}).values() if day]
     return max(days) if days else None

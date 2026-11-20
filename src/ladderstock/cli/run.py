@@ -219,6 +219,26 @@ def launch(
             error(str(exc))
             raise typer.Exit(EXIT_CONFIG) from None
     _log(f"看板已启动 http://{host}:{port}（只读 API + 静态页面；Ctrl+C 退出）")
+    # 定时研究 / 盯盘随服务一起跑：普通人只开一个服务就有定时能力，不必再起
+    # `ldst schedule serve`。只挂研究/盯盘三类；快照与同步仍归独立调度进程。
+    # `LDST_SCHEDULE_IN_WEB=0` 可整体关掉（测试与排障用）。
+    from ladderstock.web.schedule_runner import get_runner, start_runner
+
+    runner = start_runner()
+    if runner is not None:
+        state = runner.status()
+        _log("定时调度已随服务启动（" + ("、".join(state["jobs"]) or "没有启用中的任务") + "）")
+    # 增益包守护：模块监控线程。为什么挂这里而不是系统服务——便携包要
+    # win/mac/linux 同一套行为，daemon 线程随主进程生死，不需要计划任务、
+    # `.vbs` 或管理员权限。`LDST_MODULES_MONITOR=0` 可整体关掉。
+    from ladderstock.modules import monitor
+
+    monitor_state = monitor.start()
+    if monitor_state.get("started"):
+        interval = int(float(monitor_state.get("interval_sec") or 0))
+        _log(f"模块监控已启动（每 {interval} 秒自愈一轮；LDST_MODULES_MONITOR=0 可关）")
+    else:
+        _log(f"模块监控未启动：{monitor_state.get('reason')}")
     if open_browser:
         threading.Thread(
             target=_open_when_ready,
@@ -246,6 +266,15 @@ def launch(
         raise typer.Exit(EXIT_CONFIG) from None
     finally:
         _restore_break_handler(previous_break)
+        try:
+            from ladderstock.modules import monitor as monitor_module
+
+            monitor_module.stop()
+        except Exception:  # noqa: BLE001 - 收尾失败不该盖掉真正的退出原因
+            pass
+        runner_now = get_runner()
+        if runner_now is not None:
+            runner_now.shutdown()
         _log("看板已停止，端口已释放")
     raise typer.Exit(EXIT_OK)
 

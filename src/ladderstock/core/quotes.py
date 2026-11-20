@@ -138,8 +138,7 @@ def daily_change_map(
     else:
         prev_closes = {}
         status["reason"] = (
-            f"{PRICE_DATASET} 缓存里找不到 {wanted.isoformat()} 之前的交易日，"
-            "昨收无从取值"
+            f"{PRICE_DATASET} 缓存里找不到 {wanted.isoformat()} 之前的交易日，昨收无从取值"
         )
 
     result: dict[str, dict[str, Any]] = {}

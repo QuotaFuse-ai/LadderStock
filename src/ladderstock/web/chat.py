@@ -209,6 +209,7 @@ class Channel:
 # 会话记忆（进程内）
 # --------------------------------------------------------------------------- #
 
+
 @dataclasses.dataclass
 class _Session:
     turns: list[tuple[str, str]]
@@ -226,11 +227,7 @@ def reset_sessions() -> None:
 
 
 def _evict(now: float) -> None:
-    expired = [
-        key
-        for key, session in _SESSIONS.items()
-        if now - session.touched > SESSION_TTL_SEC
-    ]
+    expired = [key for key, session in _SESSIONS.items() if now - session.touched > SESSION_TTL_SEC]
     for key in expired:
         _SESSIONS.pop(key, None)
     while len(_SESSIONS) > MAX_SESSIONS:
@@ -292,6 +289,7 @@ def resolve_session_id(raw: str | None) -> str:
 # 时间 / 链接 / 上下文校验
 # --------------------------------------------------------------------------- #
 
+
 def _local_tz() -> Any:
     return datetime.now().astimezone().tzinfo
 
@@ -320,9 +318,9 @@ def _safe_url(raw: str | None) -> str | None:
         return None
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return None
-    return urllib.parse.urlunsplit(
-        (parsed.scheme.lower(), parsed.netloc, parsed.path, "", "")
-    )[:MAX_URL_CHARS]
+    return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc, parsed.path, "", ""))[
+        :MAX_URL_CHARS
+    ]
 
 
 def _check_depth(value: Any, depth: int) -> None:
@@ -414,9 +412,7 @@ def _context_block(context: ChatRequestContext | None) -> tuple[str, bool]:
             code="context_too_long",
             reason="invalid_request",
             kind="internal",
-            message=(
-                f"页内上下文过长（上限 {MAX_CONTEXT_CHARS} 字），请缩小页面数据后重试"
-            ),
+            message=(f"页内上下文过长（上限 {MAX_CONTEXT_CHARS} 字），请缩小页面数据后重试"),
             retryable=False,
         )
     return dumped, True
@@ -425,6 +421,7 @@ def _context_block(context: ChatRequestContext | None) -> tuple[str, bool]:
 # --------------------------------------------------------------------------- #
 # 提示词
 # --------------------------------------------------------------------------- #
+
 
 def _build_messages(
     *,
@@ -438,9 +435,7 @@ def _build_messages(
     if context is not None and context.page:
         parts.append(f"【页面】{context.page.strip()[:80]}")
     parts.append(
-        "【页内数据（只读）】\n" + context_json
-        if context_json
-        else "【页内数据】本轮没有提供。"
+        "【页内数据（只读）】\n" + context_json if context_json else "【页内数据】本轮没有提供。"
     )
     if sources:
         lines = []
@@ -470,6 +465,7 @@ def _source_note(*, has_data: bool, sources: Sequence[Mapping[str, Any]]) -> str
 # 待确认的后台研究建议（只建议，不启动）
 # --------------------------------------------------------------------------- #
 
+
 def _pending_research(message: str) -> list[dict[str, Any]]:
     codes: list[str] = []
     for code in _CODE_RE.findall(message or ""):
@@ -492,6 +488,7 @@ def _pending_research(message: str) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 # 通道选择与调用
 # --------------------------------------------------------------------------- #
+
 
 def timeout_limit() -> float:
     """服务端单轮上限：默认 60s，环境变量可覆盖（夹在 5–300s）。"""
@@ -828,9 +825,7 @@ def _classify_exception(exc: BaseException, channel: Channel) -> ChatFailure:
 #
 def _block_event(seq: int, block: Mapping[str, Any]) -> str:
     """`seq` 放在**事件层**（与 `type` / `payload` 平级），不进 payload（任务书 6.3）。"""
-    return sse_event(
-        "block", {"seq": seq, "type": block["type"], "payload": block["payload"]}
-    )
+    return sse_event("block", {"seq": seq, "type": block["type"], "payload": block["payload"]})
 
 
 # 生成与连接解耦（QUOT-583 / 任务书 9 章 + 11 章红线）：
@@ -900,7 +895,9 @@ class _StreamTurnPersist:
         self._question = question[:MAX_MESSAGE_CHARS]
         self._conn: sqlite3.Connection | None = None
         self._seq: int | None = None
-        self._broken = False
+        # `chat_store.connect(None)` 会回落到 `data_dir()`（源码态即仓库下的 `data/`），
+        # 没接库的调用方（单测、桩控制面）因此会写进用户的真实会话库
+        self._broken = data_root is None
 
     def _open(self) -> sqlite3.Connection | None:
         try:
@@ -1032,8 +1029,7 @@ def _without_source_note(turn: Mapping[str, Any], blocks: Sequence[Mapping[str, 
     if not note:
         return reply
     emitted = any(
-        block.get("type") == answer_blocks.BLOCK_NOTICE
-        and block["payload"].get("message") == note
+        block.get("type") == answer_blocks.BLOCK_NOTICE and block["payload"].get("message") == note
         for block in blocks
     )
     suffix = f"\n\n{note}"
@@ -1094,7 +1090,6 @@ def _finalized_prefix(text: str) -> str:
     return "".join(part for part in parts if part and part.endswith(ends)).rstrip()
 
 
-
 class _UserStopped(Exception):
     """用户主动停止（`stop_turn`）：与「断开」严格区分，落 `aborted`。"""
 
@@ -1127,9 +1122,7 @@ def _new_finalized_blocks(
     # notice 由 narrative[1:] 合成、随定稿句子增多而增长——两者都不在流中发，
     # 收尾统一发，保证已发块不可变（前缀稳定性）。
     hold = 1
-    if len(snapshot) >= 2 and str(
-        snapshot[-2].get("payload", {}).get("section")
-    ) == "补充说明":
+    if len(snapshot) >= 2 and str(snapshot[-2].get("payload", {}).get("section")) == "补充说明":
         hold = 2
     stable = snapshot[:-hold] if snapshot else snapshot
     for index, block in enumerate(stable[: len(sent)]):
@@ -1137,7 +1130,7 @@ def _new_finalized_blocks(
             sent[index], ensure_ascii=False, sort_keys=True
         ):
             raise AnswerBlockDivergence(index)
-    return stable[len(sent):]
+    return stable[len(sent) :]
 
 
 def _collect_tool_record(pending: deque[dict[str, Any]]) -> Callable[[dict[str, Any]], None]:
@@ -1248,11 +1241,7 @@ async def stream_turn(
             else f"{tool} 调用完成"
         )
         started_at = record.get("started_ms")
-        elapsed = (
-            max(0, _monotonic_ms() - int(started_at))
-            if isinstance(started_at, int)
-            else 0
-        )
+        elapsed = max(0, _monotonic_ms() - int(started_at)) if isinstance(started_at, int) else 0
         yield _stream_status("tool", item, "running", item_id=item_id, actions=actions)
         actions.append(
             {
@@ -1291,9 +1280,7 @@ async def stream_turn(
             data["stream_mode"] = stream_mode
         return sse_event("done", data)
 
-    def _half_stream_done(
-        reason: str, failure: ChatFailure | None = None
-    ) -> list[str]:
+    def _half_stream_done(reason: str, failure: ChatFailure | None = None) -> list[str]:
         data: dict[str, Any] = {
             "ok": False,
             "completed": False,
@@ -1318,9 +1305,7 @@ async def stream_turn(
             return False
         if await is_disconnected():
             detached_event.set()
-            _logger.info(
-                "chat_stream_disconnected session_id=%s seq=%d", session_id, seq
-            )
+            _logger.info("chat_stream_disconnected session_id=%s seq=%d", session_id, seq)
         return detached_event.is_set()
 
     persist = _StreamTurnPersist(data_root, session_id, (message or "").strip())
@@ -1425,9 +1410,7 @@ async def stream_turn(
             sources=sources,
             history=history,
         )
-        yield _stream_status(
-            "model", f"正在调用 {model_label}", "running", item_id="model_call"
-        )
+        yield _stream_status("model", f"正在调用 {model_label}", "running", item_id="model_call")
         model_started = _monotonic_ms()
         last_frame_ms = _monotonic_ms()
 
@@ -1446,14 +1429,9 @@ async def stream_turn(
                         task = asyncio.ensure_future(aiter.__anext__())
                     # 不能用 wait_for 包 __anext__：超时会 Cancel 掉上游生成器
                     # 正在跑的那一步（15s 慢模型直接断流）；用 wait 只「看」不取消。
-                    finished, _ = await asyncio.wait(
-                        {task}, timeout=STREAM_HEARTBEAT_POLL_SEC
-                    )
+                    finished, _ = await asyncio.wait({task}, timeout=STREAM_HEARTBEAT_POLL_SEC)
                     if not finished:
-                        if (
-                            _monotonic_ms() - last_frame_ms
-                            >= STREAM_HEARTBEAT_GAP_SEC * 1000
-                        ):
+                        if _monotonic_ms() - last_frame_ms >= STREAM_HEARTBEAT_GAP_SEC * 1000:
                             yield _heartbeat(_monotonic_ms() - last_frame_ms, seq)
                             last_frame_ms = _monotonic_ms()
                         continue
@@ -1477,7 +1455,7 @@ async def stream_turn(
                             _persist_blocks(sent_blocks)
                             yield _block_event(seq, block)
                         last_frame_ms = _monotonic_ms()
-                        tail = tail[len(finalized):]
+                        tail = tail[len(finalized) :]
             finally:
                 if task is not None and not task.done():
                     task.cancel()
@@ -1522,9 +1500,7 @@ async def stream_turn(
         else:
             # 降级路径：CLI 一次性子进程 / 上游已传结构化 ai——正文一次性取回
             stop_wait = asyncio.ensure_future(active.stopped.wait())
-            complete_task = asyncio.ensure_future(
-                complete(channel, system, user, timeout=timeout)
-            )
+            complete_task = asyncio.ensure_future(complete(channel, system, user, timeout=timeout))
             done_set, _ = await asyncio.wait(
                 {stop_wait, complete_task}, return_when=asyncio.FIRST_COMPLETED
             )
@@ -1629,7 +1605,7 @@ async def stream_turn(
             persist.finish(chat_store.FAILED, [])
             yield _half_stream_done(failure.reason, failure)[0]
             return
-        for block in blocks[len(sent_blocks):]:
+        for block in blocks[len(sent_blocks) :]:
             seq += 1
             sent_blocks.append(block)
             _persist_blocks(sent_blocks)
@@ -1749,6 +1725,7 @@ async def stream_turn(
 # --------------------------------------------------------------------------- #
 # 一轮问答
 # --------------------------------------------------------------------------- #
+
 
 async def run_turn(
     *,
@@ -2011,8 +1988,7 @@ def wants_stream(request: Request) -> bool:
     """显式开关：**只认** `Accept: text/event-stream`；缺省 / 其它取值一律非流式。"""
     values = request.headers.get("accept", "")
     return any(
-        part.split(";", 1)[0].strip().lower() == "text/event-stream"
-        for part in values.split(",")
+        part.split(";", 1)[0].strip().lower() == "text/event-stream" for part in values.split(",")
     )
 
 

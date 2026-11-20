@@ -313,9 +313,7 @@ def test_placeholder_report_still_audits_clean(data_dir: Path) -> None:
         on_all_failed="degrade_to_text",
         sections={},
     )
-    run = ResearchPipeline(
-        CODE, config=config, client=ForbiddenClient(), root=data_dir
-    ).run(DAY)
+    run = ResearchPipeline(CODE, config=config, client=ForbiddenClient(), root=data_dir).run(DAY)
     assert run.exit_code == 9 and run.degraded is True
 
     result = check(data_dir)

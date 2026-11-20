@@ -92,9 +92,11 @@ def safe_path(data_root: Any, *segments: str) -> Path:
     abs_target = root.joinpath(*segments).resolve()
     root_text = str(root)
     target_text = str(abs_target)
-    inside = target_text == root_text or target_text.startswith(
-        root_text + "/"
-    ) or target_text.startswith(root_text + "\\")
+    inside = (
+        target_text == root_text
+        or target_text.startswith(root_text + "/")
+        or target_text.startswith(root_text + "\\")
+    )
     if not inside:
         raise PathEscape(f"路径越出数据区：{segments!r}")
     # 逐级禁符号链接：只走 root 之下的词法层级

@@ -72,6 +72,7 @@ READ_FAILURE = "行业数据读取失败"
 # 参数校验
 # --------------------------------------------------------------------------- #
 
+
 def _invalid(detail: str) -> HTTPException:
     """参数非法：SPEC 钉的是 422（控制面用 400，这里不能跟着改，前端按 422 写死）。"""
     return HTTPException(status_code=422, detail=detail)
@@ -120,17 +121,28 @@ def parse_rule_id(raw: Any) -> str | None:
 # 载荷组装
 # --------------------------------------------------------------------------- #
 
+
 def _primary_day(payload: dict[str, Any], probe: dict[str, Any]) -> str | None:
     """信封 `data_as_of`：载荷自己声明的时点优先，否则沿用 `ldst industry show` 的规则。
 
     - 信号载荷自己给了 `as_of`（该条判定用到字段时点的最大值）→ 就是它；
-    - 清单 / 详情没有这种标量声明，取归属表（`sw_industry_map`）自己的数据日，与 CLI 同一个口径。
+    - 清单载荷的 `as_of` 是**每个维度各自的最新时点**字典（景气/资金/估值/动量/拥挤度），
+      取其中最晚的一个当数据时间；
+    - 都没有时退回归属表自己的数据日，与 CLI 同一个口径。
+
+    **不要把归属表 `sw_industry_map` 的 as_of 当数据时间**：那一列记的是「行业分类变更
+    生效日」（实测 max 是 2024-07-30），拿它当数据时间会让整页看着像停在两年前，
+    而五个维度的时点其实都是 2026 年的。
 
     不用请求日期顶替（METRICS.md §4.3）；不可用时由调用方置 `None`。
     """
     declared = payload.get("as_of")
     if isinstance(declared, str) and declared:
         return declared
+    if isinstance(declared, dict):
+        days = [str(value) for value in declared.values() if value]
+        if days:
+            return max(days)
     datasets = probe.get("datasets") or {}
     block = datasets.get(snapshot.META_PRIMARY_DATASET) or {}
     day = block.get("as_of")
@@ -188,6 +200,7 @@ def _envelope(payload: dict[str, Any], origin: dict[str, Any] | None = None) -> 
 # --------------------------------------------------------------------------- #
 # 读取面
 # --------------------------------------------------------------------------- #
+
 
 class IndustryPlane:
     """三个只读接口的取数：一次请求读一次清单 / 一次缓存，不跨请求缓存。
@@ -251,9 +264,7 @@ class IndustryPlane:
         note = self._ensure_note()
         listing = self._listing()
         self._apply_note(listing, note)
-        verdict = self._read(
-            lambda: evaluate_signals(listing, industry=industry, rule_id=rule_id)
-        )
+        verdict = self._read(lambda: evaluate_signals(listing, industry=industry, rule_id=rule_id))
         return _envelope(verdict, listing)
 
     def _ensure_note(self) -> str:
@@ -325,6 +336,7 @@ def _project(projection: CacheProjection, codes: list[str]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 闸门与路由
 # --------------------------------------------------------------------------- #
+
 
 async def _guard(request: Request) -> None:
     """产业读取的来源闸门：回环 + `Host` 白名单，判据与控制面 / 研究面同一套函数。

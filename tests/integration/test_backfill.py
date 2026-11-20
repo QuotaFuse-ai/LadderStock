@@ -217,9 +217,7 @@ def test_consecutive_failures_stop_the_fanout_and_list_not_attempted(data_home) 
 
 
 def test_empty_result_is_reported_not_fabricated(data_home) -> None:
-    payload, _ = _run(
-        data_home, _transport(empty_codes=("000001",)), codes=["600000", "000001"]
-    )
+    payload, _ = _run(data_home, _transport(empty_codes=("000001",)), codes=["600000", "000001"])
 
     assert payload["exit_code"] == 8
     statuses = {row["code"]: row["status"] for row in payload["codes"]}
@@ -242,9 +240,7 @@ def test_eastmoney_stage_refuses_unregistered_sources(repo, monkeypatch) -> None
 def test_eastmoney_stage_resolves_registered_em_sources(repo) -> None:
     """仓库里的 sources.yaml 已登记东财出口，阶段2 的链路要能直接组出来。"""
     ensure_sources_registered("eastmoney")
-    registry = ProviderRegistry(
-        sync=apply_source_policy(load_sync_config(), "eastmoney")
-    )
+    registry = ProviderRegistry(sync=apply_source_policy(load_sync_config(), "eastmoney"))
     assert [spec.id for spec in registry.chain("daily_k")] == ["tickhub_em_kline"]
     assert [spec.tool for spec in registry.chain("daily_k")] == ["em_kline"]
     assert [spec.id for spec in registry.chain("index_daily")] == ["tickhub_em_index"]

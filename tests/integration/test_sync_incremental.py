@@ -58,6 +58,7 @@ def _kline_transport() -> FakeTransport:
 # 水位
 # --------------------------------------------------------------------------- #
 
+
 def test_first_run_is_full_then_next_run_sends_since(data_home) -> None:
     transport = _kline_transport()
     registry = make_registry(transport, data_home)
@@ -158,6 +159,7 @@ def test_replace_dataset_rerun_does_not_duplicate(data_home) -> None:
 # 失败与退出码
 # --------------------------------------------------------------------------- #
 
+
 def test_partial_failure_exits_8_and_can_resume(data_home) -> None:
     broken = FakeTransport(
         handlers={"tencent_kline": lambda _params: tickhub_payload(kline_records(DAY1))},
@@ -257,6 +259,7 @@ def test_empty_response_does_not_delete_existing_day(data_home) -> None:
 # --------------------------------------------------------------------------- #
 # CLI 接线
 # --------------------------------------------------------------------------- #
+
 
 def test_cli_sync_dataset_succeeds_and_prints_json(repo, data_home, monkeypatch) -> None:
     transport = _kline_transport()

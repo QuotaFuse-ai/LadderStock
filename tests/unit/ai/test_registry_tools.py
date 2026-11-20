@@ -159,9 +159,7 @@ def test_realtime_and_fetch_tools_are_excluded_even_when_read_only() -> None:
         entry("ladder_get_review", read_only=True),
         *(entry(name, read_only=True) for name in sorted(registry_tools.EXCLUDED_TOOLS)),
     ]
-    assert [item.name for item in registry_tools.callable_entries(rows)] == [
-        "ladder_get_review"
-    ]
+    assert [item.name for item in registry_tools.callable_entries(rows)] == ["ladder_get_review"]
 
 
 def test_registry_descriptors_match_tools_shape() -> None:
@@ -277,9 +275,7 @@ def test_second_gate_rejects_names_outside_the_executor(tmp_path: Path) -> None:
 @pytest.mark.parametrize("key", ["date", "until", "month"])
 def test_future_argument_is_refused(key: str) -> None:
     with pytest.raises(tools.ToolRefusal) as caught:
-        registry_tools.check_not_future(
-            {key: "2026-10-28"}, base_day=DAY, today=date(2026, 11, 14)
-        )
+        registry_tools.check_not_future({key: "2026-10-28"}, base_day=DAY, today=date(2026, 11, 14))
     assert caught.value.reason == "future_date"
 
 
@@ -522,9 +518,7 @@ class ToolClient:
 
         user = next(msg["content"] for msg in messages if msg["role"] == "user")
         stage = next(
-            line.split("：", 1)[1]
-            for line in user.splitlines()
-            if line.startswith("段落标识：")
+            line.split("：", 1)[1] for line in user.splitlines() if line.startswith("段落标识：")
         )
         self.seen_tools.append((stage, tuple(item["function"]["name"] for item in tools_doc)))
         queue = self.pending.get(stage) or []
@@ -652,9 +646,7 @@ def test_flag_on_fabricated_name_fails_the_stage_on_first_attempt(
     assert len(lines) == 1 and lines[0]["reason"] == "unauthorized_tool"
 
 
-def test_flag_on_no_calls_emits_no_events(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_flag_on_no_calls_emits_no_events(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(registry_tools.REGISTRY_TOOLS_ENV, "1")
     write_snapshot(tmp_path, [entry("ladder_get_review")])
     bus = RecordingBus()

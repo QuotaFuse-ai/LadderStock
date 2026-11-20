@@ -167,8 +167,7 @@ def test_reduce_position_twr_and_mwr_hand_check() -> None:
     ]
     base = flows[0][0]
     npv = sum(
-        amount / (1.0 + group["xirr"]) ** ((day - base).days / 365.0)
-        for day, amount in flows
+        amount / (1.0 + group["xirr"]) ** ((day - base).days / 365.0) for day, amount in flows
     )
     assert npv == pytest.approx(0.0, abs=1e-3)
 
@@ -316,9 +315,9 @@ def test_suspension_day_uses_last_close_without_interpolation() -> None:
 def test_single_trading_day_has_no_series() -> None:
     trades = [_trade(1, day="2025-01-02", shares=100, price=10)]
 
-    group = compute_view(
-        trades, {SYMBOL: _points("2025-01-02", [10])}, as_of=date(2025, 1, 2)
-    )["groups"][0]
+    group = compute_view(trades, {SYMBOL: _points("2025-01-02", [10])}, as_of=date(2025, 1, 2))[
+        "groups"
+    ][0]
 
     assert group["ok"] is True
     assert group["series"] is None

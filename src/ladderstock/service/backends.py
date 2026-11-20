@@ -188,9 +188,7 @@ class WindowsTaskBackend(PlatformBackend):
             "| ConvertTo-Json -Compress }"
         )
         return (
-            ServiceCommand(
-                ("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
-            ),
+            ServiceCommand(("powershell", "-NoProfile", "-NonInteractive", "-Command", script)),
         )
 
     def parse_status(self, results: Sequence[CommandResult]) -> dict[str, object]:
@@ -209,8 +207,7 @@ class WindowsTaskBackend(PlatformBackend):
                 "running": False,
                 "state": "unknown",
                 "detail": (
-                    "Get-ScheduledTask 输出无法解析："
-                    + _trim(result.stderr or result.stdout)
+                    "Get-ScheduledTask 输出无法解析：" + _trim(result.stderr or result.stdout)
                 ),
             }
         state = str(payload.get("state") or "")
@@ -271,17 +268,13 @@ class LaunchdBackend(PlatformBackend):
         )
 
     def uninstall_commands(self, spec: ServiceSpec) -> tuple[ServiceCommand, ...]:
-        return (
-            ServiceCommand(("launchctl", "bootout", f"gui/{self._uid()}/{LAUNCHD_LABEL}")),
-        )
+        return (ServiceCommand(("launchctl", "bootout", f"gui/{self._uid()}/{LAUNCHD_LABEL}")),)
 
     def post_uninstall_commands(self, spec: ServiceSpec) -> tuple[ServiceCommand, ...]:
         return ()
 
     def status_commands(self, spec: ServiceSpec) -> tuple[ServiceCommand, ...]:
-        return (
-            ServiceCommand(("launchctl", "print", f"gui/{self._uid()}/{LAUNCHD_LABEL}")),
-        )
+        return (ServiceCommand(("launchctl", "print", f"gui/{self._uid()}/{LAUNCHD_LABEL}")),)
 
     def parse_status(self, results: Sequence[CommandResult]) -> dict[str, object]:
         result = results[0] if results else None
@@ -320,7 +313,7 @@ class LaunchdBackend(PlatformBackend):
 def systemd_quote(value: str) -> str:
     """systemd 单元值引用：空格/引号/反斜杠需要引号；`%` 是 specifier 前缀。"""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
-    if any(ch in escaped for ch in (' ', "\t", '"', "\\")) or escaped == "":
+    if any(ch in escaped for ch in (" ", "\t", '"', "\\")) or escaped == "":
         return f'"{escaped}"'
     return escaped
 

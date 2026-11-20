@@ -134,9 +134,7 @@ def test_doctor_keeps_26_checks_and_warning_does_not_change_exit(
     repo_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     unmasked = "council_memo: 未联调：peer 不可达（http://127.0.0.1:8765/mcp）"
-    monkeypatch.setattr(
-        "ladderstock.cli.main.provisional_tool_warnings", lambda: [unmasked]
-    )
+    monkeypatch.setattr("ladderstock.cli.main.provisional_tool_warnings", lambda: [unmasked])
 
     result = runner.invoke(app, ["doctor", "--output", "json"])
 

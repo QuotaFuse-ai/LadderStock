@@ -17,6 +17,7 @@ from ladderstock.industry import metrics
 # 取整与数值过滤
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize(
     ("value", "digits", "want"),
     [
@@ -42,6 +43,7 @@ def test_finite_numbers_rejects_bool_and_text() -> None:
 # --------------------------------------------------------------------------- #
 # 中位数 / 平均 / 分位
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     ("series", "want"),
@@ -92,6 +94,7 @@ def test_percentile_rank_never_interpolates() -> None:
 # --------------------------------------------------------------------------- #
 # 比率与窗口
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     ("numerator", "denominator", "want"),

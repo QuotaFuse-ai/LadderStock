@@ -11,6 +11,7 @@ import { TableBlock } from './TableBlock'
 import { CitationBlock } from './CitationBlock'
 import { NoticeBlock } from './NoticeBlock'
 import { ActionBlock } from './ActionBlock'
+import { NarrativeBlock } from './NarrativeBlock'
 import { isKnownTarget } from './targets'
 
 /**
@@ -114,6 +115,9 @@ function BlockView({
           onOpenStatus={onOpenStatus}
         />
       )
+    case 'narrative':
+      // 对话正文：整段原样展示，不摘要、不截断
+      return <NarrativeBlock payload={block.payload} />
     case 'action': {
       const items = block.payload.items.filter((item) => isKnownTarget(item.target))
       const dropped = block.payload.items.filter((item) => !isKnownTarget(item.target))

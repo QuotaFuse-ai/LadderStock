@@ -608,6 +608,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       main_net_pct: 12.6,
       theme_tags: ['机器人'],
       theme_board_change_pct: 8.0,
+      theme_note: null,
     },
   },
   {
@@ -624,6 +625,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       main_net_pct: 10.2,
       theme_tags: ['锂电'],
       theme_board_change_pct: -1.2,
+      theme_note: null,
     },
   },
   {
@@ -640,6 +642,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       main_net_pct: 6.4,
       theme_tags: ['机器人'],
       theme_board_change_pct: 8.0,
+      theme_note: null,
     },
   },
   {
@@ -656,6 +659,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       main_net_pct: 3.1,
       theme_tags: ['消费电子'],
       theme_board_change_pct: 3.1,
+      theme_note: null,
     },
   },
   {
@@ -672,6 +676,7 @@ const POOL_CANDIDATES: PoolCandidate[] = [
       main_net_pct: 1.8,
       theme_tags: ['环保'],
       theme_board_change_pct: 2.4,
+      theme_note: null,
     },
   },
 ]

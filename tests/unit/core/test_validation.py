@@ -31,6 +31,7 @@ NEXT = date(2026, 10, 28)
 # 条件生成
 # --------------------------------------------------------------------------- #
 
+
 def test_build_conditions_uses_program_thresholds() -> None:
     sentiment = {"temperature": 62.5, "promotion_rate": 43.2, "seal_rate": 71.4}
     ladder = {"height": 5, "gap_levels": [4]}
@@ -76,6 +77,7 @@ def test_build_conditions_skips_missing_metrics() -> None:
 # 判定
 # --------------------------------------------------------------------------- #
 
+
 def _cond(operator: str, value: Any) -> dict[str, Any]:
     return {"metric": "temperature", "operator": operator, "value": value}
 
@@ -115,6 +117,7 @@ def test_evaluate_gap_levels() -> None:
 # 读写
 # --------------------------------------------------------------------------- #
 
+
 def test_validation_path_and_roundtrip(tmp_path: Any) -> None:
     path = validation_path(DAY, tmp_path)
     assert path == tmp_path / "state" / "validation" / f"{DAY}.json"
@@ -143,6 +146,7 @@ def test_load_validation_ignores_corrupt_file(tmp_path: Any) -> None:
 # 交易日与下一交易日
 # --------------------------------------------------------------------------- #
 
+
 def test_session_days_reads_limit_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     records = [
         {"trade_date": "2026-10-27", "code": "600000"},
@@ -162,6 +166,7 @@ def test_session_days_reads_limit_pool(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------- #
 # 对账
 # --------------------------------------------------------------------------- #
+
 
 def _write_conditions(tmp_path: Any, conditions: list[dict[str, Any]]) -> None:
     validation_module.write_document(

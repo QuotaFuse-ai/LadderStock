@@ -32,9 +32,12 @@ datas = collect_datas(REPO_ROOT)
 assert_relative_destinations(datas)
 datas += collect_data_files("uvicorn")
 datas += collect_data_files("fastapi")
+# `agents`（openai-agents）的提示词模板是 .md 数据文件，不 collect 时运行期
+# `read_text` 直接 FileNotFoundError（烟测实测：memory_consolidation_prompt.md 缺失）。
+datas += collect_data_files("agents")
 
 hiddenimports = list(HIDDEN_IMPORTS)
-for package in ("uvicorn", "fastapi", "pydantic", "mcp", "apscheduler"):
+for package in ("uvicorn", "fastapi", "pydantic", "mcp", "apscheduler", "agents"):
     hiddenimports += collect_submodules(package)
 
 a = Analysis(

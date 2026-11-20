@@ -28,9 +28,7 @@ TOTAL_FETCH_BUDGET_SEC = 15.0
 #: 行情类问题的默认日线根数
 DEFAULT_KLINE_LIMIT = 60
 
-_CODE_WITH_PREFIX_RE = re.compile(
-    r"(?:SH|SZ|BJ)[:. ]?\s*(\d{6})", re.IGNORECASE
-)
+_CODE_WITH_PREFIX_RE = re.compile(r"(?:SH|SZ|BJ)[:. ]?\s*(\d{6})", re.IGNORECASE)
 _BARE_CODE_RE = re.compile(r"\b(\d{6})\b")
 
 #: 意图 → dataset 选择。key 是数据需求关键词组；标的行情感（涨跌/涨停/炸板/情绪）
@@ -110,9 +108,7 @@ def select_dataset(
         return "sentiment", {}, None
     if symbol is None:
         return None, {}, None
-    field_key = next(
-        (key for word, key in _KLINE_FIELD_WORDS if word in text), None
-    )
+    field_key = next((key for word, key in _KLINE_FIELD_WORDS if word in text), None)
     if any(word in text for word in _KLINE_WORDS):
         params: dict[str, Any] = {
             "code": symbol.partition(".")[0],
@@ -244,10 +240,22 @@ def metrics_from_outcome(outcome: Any, dataset: str, symbol: str | None) -> dict
         return {}
     fetched_at = _now_iso()
     metrics: dict[str, Any] = {}
-    if dataset == "spot_quote":
+    if dataset in ("spot_quote", "index_quote"):
         bare_symbol = (symbol or "").partition(".")[0]
+        # 指数记录里的 `code` 是不带 sh/sz 前缀的纯代码（`000001`），所以比较前
+        # 也要把前缀剥掉，否则会错配到 rows[0]（问深证成指却回上证）。
+        bare_symbol = bare_symbol.removeprefix("sh").removeprefix("sz").removeprefix("bj")
         row = next(
-            (r for r in rows if str(r.get("code") or "").partition(".")[0] == bare_symbol),
+            (
+                r
+                for r in rows
+                if str(r.get("code") or "")
+                .partition(".")[0]
+                .removeprefix("sh")
+                .removeprefix("sz")
+                .removeprefix("bj")
+                == bare_symbol
+            ),
             rows[0],
         )
         as_of = _as_of_of(outcome, row)
@@ -255,7 +263,7 @@ def metrics_from_outcome(outcome: Any, dataset: str, symbol: str | None) -> dict
             number = _row_value(row, keys)
             if number is None:
                 continue
-            unit = "%" if key == "change_pct" else "元"
+            unit = "%" if key == "change_pct" else ("点" if dataset == "index_quote" else "元")
             metrics[key] = Provenance(
                 value=number,
                 unit=unit,
@@ -368,7 +376,5 @@ def run_fetch(
     if metrics:
         sources.append(source_from_outcome(outcome, plan.dataset, plan.symbol))
     else:
-        plan.source_failures.append(
-            f"{plan.dataset}: 上游没有返回可用的记录行"
-        )
+        plan.source_failures.append(f"{plan.dataset}: 上游没有返回可用的记录行")
     return metrics, sources

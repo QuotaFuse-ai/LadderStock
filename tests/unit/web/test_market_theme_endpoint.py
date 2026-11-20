@@ -60,6 +60,7 @@ def _body(root: Path, params: dict[str, str] | None = None) -> dict[str, Any]:
 # 1. 空态：未接入 Wire 是预期状态，不是 bug
 # --------------------------------------------------------------------------- #
 
+
 def test_without_theme_news_returns_available_false(tmp_path: Path) -> None:
     body = _body(tmp_path)
 
@@ -76,8 +77,171 @@ def test_without_theme_news_returns_available_false(tmp_path: Path) -> None:
     assert body["source_status"] == "partial"
     detail = body["source_detail"]
     assert "theme_news 未接入（QuotaFuse Wire）" in detail
-    assert "qfw" in detail
-    assert "ldst sync" in detail  # 给出可执行的下一步，而不是只说「没有」
+    # 给出可执行的下一步，而不是只说「没有」；文案不再让用户自己跑 sync
+    assert "收盘同步" in detail
+    assert "ldst sync" not in detail
+
+
+def test_falls_back_to_latest_partition_with_lag_note(tmp_path: Path) -> None:
+    """当日没落库但更早有记录：退到那天并说明滞后，而不是判「未接入」。
+
+    Wire 的 `wire_get_digest` 按自己最后一次生成简报的日期落库，这个日期常落后于
+    交易日；此时数据是有的，只是不新。判成「未接入」会把排障方向指反（qfw 配好了、
+    sync 也跑过），所以这里要既给出数据日期，也给出滞后几个交易日。
+    """
+    _seed_theme_news(
+        tmp_path,
+        [{"theme": "算力硬件", "strength": 88.5, "trade_date": "2026-10-20"}],
+    )
+
+    body = _body(tmp_path)  # 请求 STAMP = 2026-10-23
+
+    assert body["available"] is True
+    assert body["payload"]["available"] is True
+    assert body["data_as_of"] == "2026-10-20"
+    assert "数据日期 2026-10-20" in body["source_detail"]
+    assert "滞后" in body["source_detail"]
+    assert body["payload"]["date"] == STAMP  # 请求日仍是请求日，回退不冒充当天
+
+
+def test_falls_back_to_limit_pool_industry_when_wire_has_no_strength(tmp_path: Path) -> None:
+    """Wire 的 digest 只有文字简报（没有强度分）→ 退到本机涨停池按行业聚合。
+
+    出一排 `null` 的题材名会让前端判「数据未同步」；本机能算的（行业涨停家数）
+    就用本机算，并把口径写进 `source_detail`。
+    """
+    _seed_theme_news(tmp_path, [{"theme": "ai", "trade_date": STAMP}])
+    duckdb_store.write_dataset(
+        "limit_pool",
+        [
+            {
+                "code": "000001",
+                "name": "某某银行",
+                "industry": "银行",
+                "streak": 2,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000002",
+                "name": "某某地产甲",
+                "industry": "房地产",
+                "streak": 1,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000003",
+                "name": "某某地产乙",
+                "industry": "房地产",
+                "streak": 3,
+                "trade_date": STAMP,
+            },
+        ],
+        root=tmp_path,
+    )
+
+    body = _body(tmp_path)
+    themes = body["payload"]["themes"]
+
+    assert body["available"] is True
+    assert [row["theme"] for row in themes] == ["房地产", "银行"]
+    assert themes[0]["limit_up_count"] == 2
+    assert themes[0]["strength"] == pytest.approx(100.0)
+    assert themes[1]["strength"] == pytest.approx(50.0)
+    assert themes[0]["leader"] == "000003 某某地产乙"  # 连板最高的当龙头
+    assert themes[0]["delta"] is None  # 没有上一交易日分区 → null，不拿 0 顶
+    assert "limit_pool 行业聚合" in body["source_detail"]
+
+
+def test_industry_falls_back_to_previous_partition_when_today_is_not_archived(
+    tmp_path: Path,
+) -> None:
+    """当日还没归档（盘中、15:35 之前）→ 退到最近一个有分区的交易日做行业聚合。
+
+    盘中打开题材轮动不该是一整段「数据未同步」；但也不能把昨天的行业分布挂在今天
+    名下，所以 `data_as_of` 必须是那天的日期，`source_detail` 里写明为什么。
+    """
+    prev = date(2026, 10, 22).isoformat()
+    duckdb_store.write_dataset(
+        "limit_pool",
+        [
+            {
+                "code": "000001",
+                "name": "某某银行甲",
+                "industry": "银行",
+                "streak": 1,
+                "trade_date": prev,
+            },
+            {
+                "code": "000003",
+                "name": "某某地产乙",
+                "industry": "房地产",
+                "streak": 3,
+                "trade_date": prev,
+            },
+        ],
+        root=tmp_path,
+    )
+
+    body = _body(tmp_path)  # 请求 2026-10-23，但只有 10-22 的分区
+
+    assert body["available"] is True
+    assert body["data_as_of"] == prev
+    assert [row["theme"] for row in body["payload"]["themes"]] == ["房地产", "银行"]
+    assert "尚未收盘同步" in body["source_detail"]
+
+
+def test_industry_delta_uses_previous_partition_and_missing_industry_counts_as_zero(
+    tmp_path: Path,
+) -> None:
+    """环比基准取上一交易日分区；上一日没有这个行业 → 按 0 家算差，而不是抛错。"""
+    prev = date(2026, 10, 22).isoformat()
+    duckdb_store.write_dataset(
+        "limit_pool",
+        [
+            {
+                "code": "000009",
+                "name": "某某银行乙",
+                "industry": "银行",
+                "streak": 1,
+                "trade_date": prev,
+            }
+        ],
+        root=tmp_path,
+    )
+    duckdb_store.write_dataset(
+        "limit_pool",
+        [
+            {
+                "code": "000002",
+                "name": "某某地产甲",
+                "industry": "房地产",
+                "streak": 1,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000003",
+                "name": "某某地产乙",
+                "industry": "房地产",
+                "streak": 2,
+                "trade_date": STAMP,
+            },
+            {
+                "code": "000001",
+                "name": "某某银行甲",
+                "industry": "银行",
+                "streak": 1,
+                "trade_date": STAMP,
+            },
+        ],
+        root=tmp_path,
+    )
+
+    body = _body(tmp_path)
+    themes = {row["theme"]: row for row in body["payload"]["themes"]}
+
+    assert themes["房地产"]["delta"] == pytest.approx(2.0)  # 前一日 0 家 → +2
+    assert themes["银行"]["delta"] == pytest.approx(0.0)  # 1 → 1
+    assert "环比基准 2026-10-22" in body["source_detail"]
 
 
 def test_records_without_theme_field_are_not_invented(tmp_path: Path) -> None:
@@ -93,6 +257,7 @@ def test_records_without_theme_field_are_not_invented(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 有数据：白名单字段、强度降序、缺值给 null
 # --------------------------------------------------------------------------- #
+
 
 def test_seeded_themes_project_whitelist_and_sort_by_strength(tmp_path: Path) -> None:
     _seed_theme_news(
@@ -235,6 +400,7 @@ def test_rows_are_capped_at_twenty(tmp_path: Path) -> None:
 # 3. 隐私：资讯正文与链接绝不进响应
 # --------------------------------------------------------------------------- #
 
+
 def test_news_body_and_url_never_leave_the_box(tmp_path: Path) -> None:
     _seed_theme_news(
         tmp_path,
@@ -301,6 +467,7 @@ def test_projection_is_strip_private_identity_even_when_upstream_leaks(
 # 4. 参数：date 可选，格式严格
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("raw", ["20261029", "2026-13-01", "2026-10-29T00:00", "昨天", "2026-10"])
 def test_invalid_date_is_400(tmp_path: Path, raw: str) -> None:
     response = _client(tmp_path).get("/api/market/theme", params={"date": raw})
@@ -322,6 +489,7 @@ def test_date_defaults_to_today(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 5. 回环独占 + 只 GET
 # --------------------------------------------------------------------------- #
+
 
 def test_non_loopback_source_is_403(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed_theme_news(tmp_path, [{"theme": "算力硬件", "strength": 88.5, "trade_date": STAMP}])

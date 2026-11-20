@@ -114,15 +114,11 @@ def test_windows_status_parses_task_json_or_absent(tmp_path: Path) -> None:
     assert installed["installed"] is True
     assert installed["running"] is True
 
-    absent = backend.parse_status(
-        [CommandResult((), 0, stdout='{"installed": false}')]
-    )
+    absent = backend.parse_status([CommandResult((), 0, stdout='{"installed": false}')])
     assert absent["installed"] is False
     assert absent["running"] is False
 
-    unavailable = backend.parse_status(
-        [CommandResult((), -1, error="找不到命令：powershell")]
-    )
+    unavailable = backend.parse_status([CommandResult((), -1, error="找不到命令：powershell")])
     assert unavailable["state"] == "unknown"
     assert "powershell" in str(unavailable["detail"])
 
@@ -180,9 +176,7 @@ def test_launchd_status_shows_running_job_and_not_loaded(tmp_path: Path) -> None
     assert running["running"] is True
     assert running["pid"] == 4242
 
-    absent = backend.parse_status(
-        [CommandResult((), 1, stderr="Could not find service")]
-    )
+    absent = backend.parse_status([CommandResult((), 1, stderr="Could not find service")])
     assert absent["installed"] is False
     assert absent["state"] == "not-loaded"
 
@@ -270,10 +264,7 @@ def test_systemd_status_parses_properties(tmp_path: Path) -> None:
                 (),
                 0,
                 stdout=(
-                    "LoadState=not-found\n"
-                    "UnitFileState=\n"
-                    "ActiveState=inactive\n"
-                    "SubState=dead\n"
+                    "LoadState=not-found\nUnitFileState=\nActiveState=inactive\nSubState=dead\n"
                 ),
             )
         ]

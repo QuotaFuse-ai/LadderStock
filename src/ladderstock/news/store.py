@@ -160,6 +160,7 @@ def _now() -> str:
 # 写
 # --------------------------------------------------------------------------- #
 
+
 def upsert_items(conn: sqlite3.Connection, items: list[NewsItem]) -> int:
     """幂等写入资讯条目：同 id 覆盖、保留首次入库时间。"""
     if not items:
@@ -285,6 +286,7 @@ def _title_key(title: str) -> str:
 # 读
 # --------------------------------------------------------------------------- #
 
+
 def load_items(
     conn: sqlite3.Connection,
     *,
@@ -339,9 +341,7 @@ def _row_to_item(row: sqlite3.Row) -> NewsItem:
     )
 
 
-def source_counts(
-    conn: sqlite3.Connection, *, start: date, end: date
-) -> dict[str, int]:
+def source_counts(conn: sqlite3.Connection, *, start: date, end: date) -> dict[str, int]:
     """窗口内各栏目的条目数（`GET /api/news` 的栏目账本用，QUOT-279）。
 
     只算 `published_day` 落窗的行：没有发布时间的条目在这里不计——它们是合并候选，
@@ -355,9 +355,7 @@ def source_counts(
     return {str(row["source"]): int(row["n"]) for row in rows}
 
 
-def covering_run(
-    conn: sqlite3.Connection, *, start: date, end: date
-) -> dict[str, Any] | None:
+def covering_run(conn: sqlite3.Connection, *, start: date, end: date) -> dict[str, Any] | None:
     """最近一次**覆盖** `[start, end]` 的取数账本；没有则 `None`。
 
     `news_runs.detail.sources_status` 是当时每一栏的结论（含 `failed` / `skipped` 的原因），

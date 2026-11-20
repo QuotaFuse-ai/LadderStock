@@ -73,6 +73,7 @@ def transport_called(registry) -> list[str]:
 # 1. 退避：按上游建议的时长等，次数与时长都有上限
 # --------------------------------------------------------------------------- #
 
+
 def test_backoff_waits_the_seconds_the_peer_asked_for(tmp_path) -> None:
     state = {"n": 0}
 
@@ -96,9 +97,7 @@ def test_backoff_waits_the_seconds_the_peer_asked_for(tmp_path) -> None:
     assert outcome.from_cache is False
     assert "tickhub_kline/tencent_kline:rate_limited" in outcome.trail
     assert "tickhub_kline/tencent_kline:ok" in outcome.trail
-    paced_events = [
-        event for event in registry.health.events() if event["kind"] == "rate_limited"
-    ]
+    paced_events = [event for event in registry.health.events() if event["kind"] == "rate_limited"]
     assert any("QFSD-7001" in (event.get("detail") or "") for event in paced_events)
     # 退避成功后不该继续背着冷却闸门
     assert registry.health.cooldown_until("tickhub_kline") is None
@@ -208,9 +207,7 @@ def test_rate_limit_budget_is_configurable(tmp_path) -> None:
     sync["sync"]["rate_limit"] = {"max_retries": 1, "max_wait_sec": 2}
     _cache_yesterday_pool(tmp_path)
     slept: list[float] = []
-    registry = make_registry(
-        _always_paced(1), tmp_path, sync=sync, sleeper=slept.append
-    )
+    registry = make_registry(_always_paced(1), tmp_path, sync=sync, sleeper=slept.append)
 
     registry.fetch("daily_k", trade_date=TODAY)
 
@@ -233,6 +230,7 @@ def test_allow_cache_false_still_raises_and_says_it_was_rate_limiting(tmp_path) 
 # --------------------------------------------------------------------------- #
 # 3. 限流导致的降级不算任务失败
 # --------------------------------------------------------------------------- #
+
 
 def test_sync_round_stays_degraded_with_exit_code_zero(isolated_data_dir) -> None:
     """`ldst sync` 汇总：限流降级落 `degraded`，退出码不翻成 4/8。"""
@@ -276,9 +274,7 @@ def test_rate_limited_snapshot_job_is_degraded_and_keeps_the_stale_pool(tmp_path
 
     assert result["status"] == "degraded", result
     snapshot = json.loads(
-        intraday.snapshot_path("10:00", date(2026, 10, 30), tmp_path).read_text(
-            encoding="utf-8"
-        )
+        intraday.snapshot_path("10:00", date(2026, 10, 30), tmp_path).read_text(encoding="utf-8")
     )
     stale = snapshot["source"]["pool_stale"]
     assert stale["as_of"] == "2026-10-29"
@@ -295,8 +291,11 @@ def test_stale_pool_is_only_accepted_for_rate_limiting(tmp_path) -> None:
     registry = StubRegistry(from_cache=True, data_as_of={"yesterday_limit_up": date(2026, 10, 29)})
 
     result = intraday.run_slot(
-        "10:00", now=datetime(2026, 10, 30, 10, 0, 5), timezone="Asia/Shanghai",
-        root=tmp_path, registry=registry,
+        "10:00",
+        now=datetime(2026, 10, 30, 10, 0, 5),
+        timezone="Asia/Shanghai",
+        root=tmp_path,
+        registry=registry,
     )
 
     assert result["status"] == "missing"
@@ -311,8 +310,11 @@ def test_rate_limited_quotes_degrade_without_writing_an_empty_snapshot(tmp_path)
     )
 
     result = intraday.run_slot(
-        "10:00", now=datetime(2026, 10, 30, 10, 0, 5), timezone="Asia/Shanghai",
-        root=tmp_path, registry=registry,
+        "10:00",
+        now=datetime(2026, 10, 30, 10, 0, 5),
+        timezone="Asia/Shanghai",
+        root=tmp_path,
+        registry=registry,
     )
 
     assert result["status"] == "degraded", result

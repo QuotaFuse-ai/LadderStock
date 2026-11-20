@@ -63,6 +63,22 @@ npx vitest run
 npx vite build
 ```
 
+以上是 **CI 的写法**：runner 网络正常，`npx` 直接命中已安装的本地 bin。
+
+**在本地跑请改用 `npm test` / `node_modules\.bin\*`，不要用 `npx`**。`npx` 会先联网做一次
+npm registry 的包解析与版本检查，在慢网络（VPN 全局代理）下这一步可能长时间卡住，
+表现就是命令停在 banner 之后没有任何输出，容易被误判成「进程挂了 / 端口采集超时」：
+
+```powershell
+cd frontend
+$env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""; $env:CI="1"   # 本地回环不走代理；CI=1 关掉交互式 watch
+node_modules\.bin\tsc.cmd --noEmit
+node_modules\.bin\vitest.cmd run          # 全量约 3 分钟；单文件 7–8 秒
+node_modules\.bin\vite.cmd build
+```
+
+`$env:CI="1"` 同样必要：没有它 `vitest` 会进入交互式 watch，看起来像卡死。
+
 CI 固定 Node 20；本机 Node 22.17.1 实测同样通过。`package-lock.json` 已提交，`npm ci` 不需要再生成锁文件。
 
 ### 本机实测（2026-10-31，Windows 10 / Python 3.12.10 / Node 22.17.1）

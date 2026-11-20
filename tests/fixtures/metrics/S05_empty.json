@@ -21,7 +21,7 @@
       "gap_levels": [],
       "missing": ["limit_pool", "yesterday_limit_up", "broken_board"],
       "unknown": {"limit_pool": 0, "broken_board": 0},
-      "reason_contains": "ldst sync"
+      "reason_contains": "还没有归档"
     },
     "ladder": {
       "available": false,

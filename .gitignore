@@ -123,3 +123,12 @@ docs/tasks/QUOT-553/*.png
 !docs/tasks/QUOT-566/
 !docs/tasks/QUOT-566/README.md
 !docs/tasks/QUOT-566/acceptance.md
+
+# 子模块容器（运行时目录联接，不随仓库分发）
+file/
+
+# 运行时状态 / 缓存 / 随包 Python（本地生成，绝不入库）
+control/
+python/
+state/
+supervisor/

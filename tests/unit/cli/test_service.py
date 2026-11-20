@@ -52,9 +52,7 @@ class FakeManager:
         self._maybe_raise()
         return dict(self.payload)
 
-    def render_all(
-        self, spec: Any, out_dir: Path, *, platforms: tuple[str, ...]
-    ) -> dict[str, Any]:
+    def render_all(self, spec: Any, out_dir: Path, *, platforms: tuple[str, ...]) -> dict[str, Any]:
         self.calls.append(("render", str(out_dir)))
         self.platforms = tuple(platforms)
         self._maybe_raise()
@@ -146,9 +144,7 @@ def test_render_defaults_to_all_three_platforms(manager: FakeManager, tmp_path: 
     assert manager.platforms == ("windows", "macos", "linux")
 
 
-def test_render_accepts_repeated_platform_filter(
-    manager: FakeManager, tmp_path: Path
-) -> None:
+def test_render_accepts_repeated_platform_filter(manager: FakeManager, tmp_path: Path) -> None:
     result = _run(
         [
             "render",
@@ -198,9 +194,7 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
     def build(_root: str, *, panel_url: str | None = None) -> Any:
         return SimpleNamespace(processes=processes, panel_url=panel_url)
 
-    monkeypatch.setattr(
-        "ladderstock.web.supervisor_api.build_supervisor_engines", build
-    )
+    monkeypatch.setattr("ladderstock.web.supervisor_api.build_supervisor_engines", build)
     return processes
 
 

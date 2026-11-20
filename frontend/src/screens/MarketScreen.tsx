@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Database } from 'lucide-react'
 
@@ -9,6 +9,7 @@ import {
   type LadderEnvelope,
   type LadderLevel,
   type LadderResult,
+  type LadderStock,
   type MarketHistoryPoint,
   type MarketHistoryPayload,
   type MarketThemePayload,
@@ -70,12 +71,6 @@ import { useMarketView } from './market/useMarketView'
  */
 
 type MarketTab = 'sentiment' | 'ladder' | 'theme'
-
-const TAB_OPTIONS: ReadonlyArray<{ value: MarketTab; label: string }> = [
-  { value: 'sentiment', label: '情绪温度' },
-  { value: 'ladder', label: '连板梯队' },
-  { value: 'theme', label: '题材轮动' },
-]
 
 const TAB_LABEL: Record<MarketTab, string> = {
   sentiment: '情绪温度',
@@ -169,6 +164,30 @@ function NotSynced({
     />
   )
 }
+
+const LEADER_COLUMNS: Array<Column<LadderStock>> = [
+  {
+    key: 'code',
+    header: '代码',
+    width: '104px',
+    render: (row) => <span className="ldst-num">{row.code}</span>,
+  },
+  {
+    key: 'name',
+    header: '名称',
+    truncate: true,
+    cellTitle: (row) => row.name || MISSING,
+    render: (row) => row.name || MISSING,
+  },
+  {
+    key: 'boards',
+    header: '连板',
+    width: '88px',
+    numeric: true,
+    sort: (a, b) => a.boards - b.boards,
+    render: (row) => formatInt(row.boards),
+  },
+]
 
 const LADDER_COLUMNS: Array<Column<LadderLevel>> = [
   {
@@ -312,11 +331,33 @@ export default function MarketScreen() {
   const reloadAll = () => requests.forEach((request) => request.reload())
   const busy = requests.some((request) => request.status === 'loading')
 
+  // 打开「今天」但没有今天的数据时（盘中涨停池要 15:35 收盘同步），自动退到最近有数据的一天，
+  // 并在页面上说明。用户自己选过日期就不再改他的选择。
+  useEffect(() => {
+    if (demo) return
+    if (params.get('date')) return
+    if (sentiment.status !== 'ready' || history.status !== 'ready') return
+    if (sentiment.data?.payload.sentiment?.available) return
+    const points = history.data?.payload.points
+    if (!Array.isArray(points) || points.length === 0) return
+    const latest = points[points.length - 1]?.date
+    if (!latest || latest === tradeDate) return
+    const paramsNext = new URLSearchParams(params)
+    paramsNext.set('date', latest)
+    setParams(paramsNext, { replace: true })
+  }, [demo, params, sentiment.status, sentiment.data, history.status, history.data, tradeDate, setParams])
+
   // QUOT-407：图表自动刷新，默认 15s；档位与默认值见 lib/chartRefresh.ts。
   const refresh = useChartRefresh()
   useAutoRefresh(reloadAll, refresh.seconds, !busy)
 
   const sent: SentimentResult | null = sentiment.data?.payload.sentiment ?? null
+  // 盘中实时读数（当日归档还没生成）：温度/封板率/涨停家数是此刻的，晋级率与断层要收盘后才有
+  const liveMode = sent?.mode === 'live'
+  // 盘中拿到当日涨停全集时，晋级率与断层都算得出来（后端不再把它们写进 missing）
+  const liveGapKnown = liveMode && !(sent?.missing ?? []).includes('ladder_gap')
+  // 显示的不是今天、且有昨日及以前的数据 → 说明今天还没到收盘同步（不是故障）
+  const todayHasNoData = !demo && tradeDate !== localDateIso() && (sent?.available ?? false)
   const ladderResult: LadderResult | null = ladder.data?.payload.ladder ?? null
   const historyPayload: MarketHistoryPayload | null = history.data?.payload ?? null
   const themePayload: MarketThemePayload | null = theme.data?.payload ?? null
@@ -410,7 +451,14 @@ export default function MarketScreen() {
         ready: levels.length > 0,
         missing: false,
         missingLabel: '接口未接入（404）',
-        label: levels.length > 0 ? <><Num>{formatInt(levels.length)}</Num> 档</> : null,
+        label:
+          levels.length > 0 ? (
+            ladderResult?.partial ? (
+              <>盘中 <Num>{formatInt(ladderResult?.count)}</Num> 只龙头</>
+            ) : (
+              <><Num>{formatInt(levels.length)}</Num> 档</>
+            )
+          ) : null,
         reason:
           levels.length > 0
             ? null
@@ -511,12 +559,6 @@ export default function MarketScreen() {
             onChange={(event) => setDate(event.target.value)}
           />
         </Field>
-        <Segmented
-          ariaLabel="市场分段"
-          options={TAB_OPTIONS}
-          value={tab}
-          onChange={setTab}
-        />
         <div className="flex flex-col gap-1">
           <span className="text-caption text-text-secondary">自动刷新</span>
           <Segmented
@@ -528,7 +570,14 @@ export default function MarketScreen() {
           />
         </div>
         <div className="grow" />
-        <span className="text-caption text-text-muted">三段共用同一个交易日</span>
+        <span className="text-caption text-text-muted">
+          三段共用同一个交易日
+          {todayHasNoData && (
+            <span className="ml-2 text-text-secondary">
+              · 今日（{localDateIso()}）涨停池要 15:35 收盘同步，这之前看的是最近一个已收盘交易日
+            </span>
+          )}
+        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-4 desk:grid-cols-12">
@@ -539,7 +588,12 @@ export default function MarketScreen() {
                 <MetricCard
                   label="情绪温度"
                   hero
-                  badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
+                  badge={
+                    <>
+                      <SourceBadges envelope={liveMode ? null : usable ? sentiment.data : null} />
+                      {liveMode && <Badge tone="info">盘中实时</Badge>}
+                    </>
+                  }
                   value={currentTemperature === null ? MISSING : formatInt(currentTemperature)}
                   note={
                     currentTemperature === null ? (
@@ -548,19 +602,29 @@ export default function MarketScreen() {
                       <>
                         <span className="ldst-num">50</span> 为中性 · 涨停{' '}
                         <span className="ldst-num">{formatInt(sent?.limit_up_count)}</span> 家
+                        炸板 <span className="ldst-num">{formatInt(sent?.broken_count)}</span> 家 · 封板率{' '}
+                        <span className="ldst-num">{formatRatePct(sent?.seal_rate).text}</span>
+                        {liveMode && ' · 盘中口径，收盘同步后按归档重算'}
                       </>
                     )
                   }
                 />
                 <MetricCard
                   label="晋级率"
-                  badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
+                  badge={
+                    <>
+                      <SourceBadges envelope={liveMode ? null : usable ? sentiment.data : null} />
+                      {liveMode && <Badge tone="info">盘中实时</Badge>}
+                    </>
+                  }
                   value={formatRatePct(usable ? sent?.promotion_rate : null).text}
                   note={
                     usable && isFiniteNumber(sent?.promotion_rate) ? (
                       <>
                         昨日涨停 <span className="ldst-num">{formatInt(sent?.yesterday_limit_up_count)}</span> 家
                       </>
+                    ) : liveMode ? (
+                      '盘中不算晋级率（要当日涨停全集，15:35 收盘同步后出）'
                     ) : (
                       '数据未同步'
                     )
@@ -568,11 +632,36 @@ export default function MarketScreen() {
                 />
                 <MetricCard
                   label="梯队断层"
-                  badge={<SourceBadges envelope={usable ? sentiment.data : null} />}
-                  value={gapLevels === null ? MISSING : formatInt(gapLevels.length)}
-                  unit={gapLevels === null ? undefined : '档'}
+                  badge={
+                    <>
+                      <SourceBadges envelope={liveMode ? null : usable ? sentiment.data : null} />
+                      {liveMode && <Badge tone="info">盘中实时</Badge>}
+                    </>
+                  }
+                  value={
+                    liveMode
+                      ? liveGapKnown && gapLevels !== null
+                        ? formatInt(gapLevels.length)
+                        : MISSING
+                      : gapLevels === null
+                        ? MISSING
+                        : formatInt(gapLevels.length)
+                  }
+                  unit={liveMode ? (liveGapKnown && gapLevels !== null ? '档' : undefined) : gapLevels === null ? undefined : '档'}
                   note={
-                    gapLevels === null ? (
+                    liveMode ? (
+                      liveGapKnown ? (
+                        <>
+                          最高 <span className="ldst-num">{formatInt(sent?.max_board)}</span> 板 ·{' '}
+                          {sent?.gap ? '存在断层' : '无断层'}
+                        </>
+                      ) : (
+                        <>
+                          盘中只到最高 <span className="ldst-num">{formatInt(sent?.max_board)}</span> 板；
+                          断层按收盘涨停池算
+                        </>
+                      )
+                    ) : gapLevels === null ? (
                       '数据未同步'
                     ) : (
                       <>
@@ -692,9 +781,33 @@ export default function MarketScreen() {
                 <NotSynced
                   tradeDate={tradeDate}
                   reason={usable ? (ladderResult?.reason ?? '涨停池没有可解析的连板数据') : '数据未同步'}
-                  detail="梯队来自当日涨停池，缺失时不画柱、不补 0。"
+                  detail={
+                    liveMode
+                      ? '盘中先按当日实时涨停池算；若那一刻只拿到涨停家数与龙头前十（没有当日全集），梯队的每一档家数就不算——15:35 收盘同步后按归档涨停池画。'
+                      : '梯队来自当日涨停池，缺失时不画柱、不补 0。'
+                  }
                   onRetry={reloadAll}
                 />
+              ) : ladderResult?.partial ? (
+                <div className="flex flex-col gap-3">
+                  <DataTable<LadderStock>
+                    columns={LEADER_COLUMNS}
+                    rows={ladderResult?.leader_candidates ?? []}
+                    rowKey={(row) => row.code}
+                    caption={
+                      <>
+                        盘中龙头（前 <Num>{formatInt(ladderResult?.count)}</Num> 只，最高{' '}
+                        <Num>{formatInt(ladderResult?.height)}</Num> 板）；盘中拿不到当日涨停全集，
+                        每一档的家数不算，完整梯队 15:35 收盘同步后出
+                      </>
+                    }
+                    density={density}
+                  />
+                  <SourceLine
+                    envelope={ladder.data}
+                    extra="盘中实时接口只给龙头名单；个股与最高板是真的，家数不是全量"
+                  />
+                </div>
               ) : (
                 <div className="flex flex-col gap-3">
                   <BarChart
@@ -757,7 +870,12 @@ export default function MarketScreen() {
                     rowKey={(row) => row.theme}
                     caption={
                       <>
-                        题材强度明细（<Num>{tradeDate}</Num>），按强度降序
+                        题材强度明细（<Num>{theme.data?.data_as_of ?? tradeDate}</Num>），按强度降序
+                        {theme.data?.data_as_of && theme.data.data_as_of !== tradeDate && (
+                          <span className="ml-2">
+                            · 今日盘中不重算行业分布，用最近已收盘交易日
+                          </span>
+                        )}
                       </>
                     }
                     density={density}
@@ -808,9 +926,15 @@ export default function MarketScreen() {
                 <li>情绪温度 0–100，50 中性；区间带 40–60 只做视觉参考，不是交易信号。</li>
                 <li>梯队按板数升序，柱高为家数；末位未知板位不计入柱图。</li>
                 <li>
-                  题材强度为当日相对分（0–100），只同日可比；数据源 QuotaFuse Wire，接口
-                  <code className="ldst-num mx-1">/api/market/theme</code>
-                  已上线：本机未接 Wire 时是「数据未同步」空态，只有 404 才标「接口未接入（404）」，两者不混为一谈。
+                  题材强度为当日相对分（0–100），只同日可比。优先用 QuotaFuse Wire 的题材简报；
+                  Wire 只给文字简报、没有强度分时，退到本机涨停池按行业聚合（该行业涨停家数归一，
+                  环比基准为上一交易日），口径写在「来源」里。
+                  {themePayload === null ? (
+                    <>
+                      接口<code className="ldst-num mx-1">/api/market/theme</code>
+                      返回 404，才标「接口未接入（404）」。
+                    </>
+                  ) : null}
                 </li>
                 <li>缺失一律 {MISSING} + 原因，绝不补 0、不画假线。</li>
               </ul>

@@ -6,14 +6,12 @@
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import socket
 import subprocess
 import sys
 import threading
-from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -26,6 +24,7 @@ from ladderstock.cli.backtest import register as register_backtest
 from ladderstock.cli.export import export as export_command
 from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
+from ladderstock.cli.knowledge import register as register_knowledge
 from ladderstock.cli.legacy_ports import warn_legacy_port
 from ladderstock.cli.mcp import register as register_mcp
 from ladderstock.cli.news import events_command, news_command
@@ -42,6 +41,7 @@ from ladderstock.cli.service import register as register_service
 from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.supervisor import register as register_supervisor
+from ladderstock.cli.symbol import register as register_symbol
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
 from ladderstock.cli.watchdog import register as register_watchdog
@@ -89,6 +89,8 @@ mcp_app = typer.Typer(no_args_is_help=True, help="MCP Server")
 tools_app = typer.Typer(no_args_is_help=True, help="MCP 工具枚举")
 config_app = typer.Typer(no_args_is_help=True, help="配置")
 schedule_app = typer.Typer(no_args_is_help=True, help="定时调度")
+# 标的字典（代码 ↔ 名称）：全市场 `symbol_basic` 表的刷新与查询，实现体在 cli/symbol.py
+symbol_app = typer.Typer(no_args_is_help=True, help="标的字典（代码 ↔ 名称）")
 backtest_app = typer.Typer(no_args_is_help=True, help="回测（A 股日频策略，M1）")
 
 for parent, child, name in (
@@ -111,6 +113,7 @@ for parent, child, name in (
     (mcp_app, tools_app, "tools"),
     (app, config_app, "config"),
     (app, schedule_app, "schedule"),
+    (app, symbol_app, "symbol"),
     (app, backtest_app, "backtest"),
 ):
     parent.add_typer(child, name=name)
@@ -202,6 +205,9 @@ register_watchdog(app)
 # 单入口 supervisor（QUOT-523）：不进看板也能全起 / 全停 / 单模块重启。
 register_supervisor(app)
 
+# 知识库投影（形态 2）：公告正文 → qdrant，可被脚本/监控调度。
+register_knowledge(app)
+
 # 跨平台服务/开机自启/托盘（QUOT-527）：三平台原生机制 + dry-run 安装面。
 register_service(app)
 
@@ -219,6 +225,8 @@ register_weekly(app)
 # 实现体在 cli/sync.py / cli/sources.py；此处只做注册（DEC-003 命令名不变）
 register_sync(sync_app)
 register_sources(sources_app)
+# 全市场标的字典（代码 ↔ 名称）：`symbol refresh|status|lookup`，实现体在 cli/symbol.py
+register_symbol(symbol_app)
 
 # 历史日线回补 + 缺口报表（QUOT-501）：票池与窗口在 config/backfill.yaml，
 # 实现体在 cli/backfill.py + data/backfill.py（缺口口径见 docs/CLI.md §N）
@@ -386,59 +394,8 @@ def config_migrate(
     raise typer.Exit(EXIT_OK)
 
 
-# 实现体在 cli/schedule.py（APScheduler；任务表见 config/schedule.yaml）
-# `schedule run` 看退出标记自退（见 `_stop_when_marked`）
-def _stop_when_marked(command: Callable[..., Any]) -> Callable[..., Any]:
-    """`schedule run` 的收尾：看板写的退出标记出现就让调度器停下，长驻进程自行退出。
-
-    Windows 上无控制台的 python 收不到优雅终止（taskkill 只能 /F），
-    所以由看板写标记、这里每 2 秒看一眼，走正常收尾再退。
-    """
-
-    def wrapped(*args: Any, **kwargs: Any) -> Any:
-        from apscheduler.schedulers.base import BaseScheduler  # type: ignore[import-untyped]
-
-        from ladderstock.supervisor.page_boot import CHILD_STOP_ARG_ENV
-
-        raw = os.environ.get(CHILD_STOP_ARG_ENV)
-        marker = Path(raw) if raw else None
-        if marker is None:
-            return command(*args, **kwargs)
-        wake = threading.Event()
-        original_start = BaseScheduler.start
-
-        def start(scheduler: BaseScheduler) -> None:
-            scheduler.add_job(
-                lambda: wake.set(),
-                "interval",
-                seconds=2,
-                id="page-boot-stop",
-                replace_existing=True,
-            )
-
-            def watch() -> None:
-                wake.wait()
-                scheduler.shutdown(wait=False)
-
-            threading.Thread(target=watch, name="page-boot-stop", daemon=True).start()
-            original_start(scheduler)
-
-        BaseScheduler.start = start  # type: ignore[method-assign, unused-ignore]
-        try:
-            return command(*args, **kwargs)
-        finally:
-            BaseScheduler.start = original_start  # type: ignore[method-assign, unused-ignore]
-
-    functools.update_wrapper(wrapped, command)
-    return wrapped
-
-
-# 页面自启拉起的 `schedule run` 看退出标记自退（见 `_stop_when_marked`）
-for _entry in schedule_app.registered_commands:
-    if _entry.name == "run" and _entry.callback is not None:
-        _entry.callback = _stop_when_marked(_entry.callback)
-
-
+# 实现体在 cli/schedule.py（APScheduler；任务表见 config/schedule.yaml）；
+# 页面自启拉起的 `schedule run` 看退出标记 / 看板存活自退，见 `start_daemon`
 register_schedule(schedule_app)
 
 
@@ -539,9 +496,7 @@ def service_entry(
             available, detail = False, str(exc)
         else:
             threading.Thread(
-                target=lambda: backend.run(
-                    TrayController(quit_handler, panel_url=panel_url)
-                ),
+                target=lambda: backend.run(TrayController(quit_handler, panel_url=panel_url)),
                 name="ldst-tray",
                 daemon=True,
             ).start()
@@ -554,9 +509,7 @@ def service_entry(
         own_processes_on_lifecycle=True,
         open_ensure=OpenEnsure(),
     )
-    launch_dashboard(
-        host=host, port=port, open_browser=False, app=app, stop_event=stop_event
-    )
+    launch_dashboard(host=host, port=port, open_browser=False, app=app, stop_event=stop_event)
 
 
 @app.command(
@@ -754,6 +707,12 @@ def doctor(
 
 
 def main() -> None:
+    # 记忆子模块（mem0/torch）随包分发在 `file/modules/memory/site-packages`，
+    # 必须在解析任何子命令之前上 sys.path：源码态与便携包同一相对路径，
+    # 因此启动脚本不再需要写 PYTHONPATH。
+    from ladderstock.core import runtime
+
+    runtime.install_memory_path()
     try:
         app()
     except LadderStockError as exc:

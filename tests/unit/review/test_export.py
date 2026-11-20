@@ -57,6 +57,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # Markdown 渲染（--format md 与降级共用）
 # --------------------------------------------------------------------------- #
 
+
 def test_markdown_has_headings_tables_and_lists(report: dict) -> None:
     text = render_markdown(report)
     assert "# 2026-10-27 收盘复盘" in text
@@ -91,6 +92,7 @@ def test_markdown_accepts_string_narrative_and_empty_metrics(report: dict) -> No
 # --------------------------------------------------------------------------- #
 # 字体探测
 # --------------------------------------------------------------------------- #
+
 
 def test_candidate_fonts_are_platform_specific() -> None:
     candidates = _candidate_fonts()
@@ -170,6 +172,7 @@ def test_pdf_text_is_extractable_and_chinese(report: dict, tmp_path: Path) -> No
 # 降级：字体缺失 → Markdown，退出码 0
 # --------------------------------------------------------------------------- #
 
+
 def test_missing_font_degrades_to_markdown(
     report: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -200,6 +203,7 @@ def test_md_and_degraded_share_one_renderer(
 # --------------------------------------------------------------------------- #
 # CLI 端到端
 # --------------------------------------------------------------------------- #
+
 
 def test_cli_export_md_writes_report(data_root: Path) -> None:
     result = runner.invoke(app, ["export", "--format", "md", "--date", DATE])

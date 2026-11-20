@@ -103,6 +103,7 @@ STATE_KEYS = {
     "completed_at",
 }
 
+
 #: 一级（结构化 JSON）各段脚本返回
 def _scripted(stage: str) -> str:
     title = checkpoint.STAGE_TITLES[stage]
@@ -360,9 +361,7 @@ def test_all_failed_exit_9(tmp_path: Path, configured: None) -> None:
     # 前五段没有产物，报告段直接判「缺输入」而不是重新取数（一次模型调用都不发）
     assert client_c.stages("report") == []
     directory_c = artifacts.artifact_dir(CODE, DAY, worst)
-    assert not directory_c.exists() or not list(directory_c.glob("*")), list(
-        directory_c.glob("*")
-    )
+    assert not directory_c.exists() or not list(directory_c.glob("*")), list(directory_c.glob("*"))
 
     checkpoint_c = json.loads(
         Path(checkpoint.checkpoint_path(CODE, DAY, worst)).read_text(encoding="utf-8")
@@ -414,9 +413,7 @@ def test_artifact_shape(tmp_path: Path, configured: None) -> None:
         assert len(markdown.strip()) > len(f"# {title}") + len("## 叙述")
 
     # checkpoint：六段一条不少不多，顺序即 STAGES，每条状态字段形状固定
-    raw = json.loads(
-        Path(checkpoint.checkpoint_path(CODE, DAY, root)).read_text(encoding="utf-8")
-    )
+    raw = json.loads(Path(checkpoint.checkpoint_path(CODE, DAY, root)).read_text(encoding="utf-8"))
     assert list(raw["stages"]) == list(STAGES)
     assert raw["code"] == CODE and raw["date"] == DAY and raw["version"] == 1
     for name, state in raw["stages"].items():

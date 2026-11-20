@@ -114,9 +114,7 @@ def test_cancel_kills_grandchild(tmp_path: Path) -> None:
     assert not _alive(child), "取消后孙进程仍然存活（进程树没杀干净）"
 
 
-def test_acomplete_reuses_prompt_shape(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_acomplete_reuses_prompt_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`acomplete` 与同步 `complete` 用同一套 prompt 拼接与围栏剥离。"""
     seen: dict[str, str] = {}
 
@@ -155,9 +153,7 @@ def test_acomplete_reuses_prompt_shape(
     assert cli_provider.JSON_ONLY_INSTRUCTION in seen["stdin"]
 
 
-def test_acomplete_timeout_is_cli_timeout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_acomplete_timeout_is_cli_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """真起一个睡着的进程：`acomplete` 超时后抛 `CliTimeout`，不是 `CliUnavailable`。"""
     monkeypatch.setattr(
         cli_provider,

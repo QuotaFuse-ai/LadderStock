@@ -138,7 +138,13 @@ export default function LimitUpScreen() {
         truncate: true,
         cellTitle: (row) => row.reason ?? '',
         render: (row) =>
-          row.reason === null ? <MissingCell reason="后端未提供涨停原因" /> : row.reason,
+          row.reason === null ? (
+            // 说清是谁没给：tickhub_limit_pool 这一版返回里没有涨停原因字段，
+            // 不是本机解析漏了；同花顺备源带这个字段，补同步后才会有值
+            <MissingCell reason="上游 tickhub_limit_pool 不返回涨停原因字段（同花顺备源 ths_limit_up_pool 带此字段）" />
+          ) : (
+            row.reason
+          ),
       },
     ],
     [],

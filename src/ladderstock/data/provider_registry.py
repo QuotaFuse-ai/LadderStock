@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 import httpx
 import yaml
@@ -134,6 +135,7 @@ _PEER_FAULT_ERRORS = (
 # 配置读取
 # --------------------------------------------------------------------------- #
 
+
 def load_sources_config(path: Path | None = None) -> dict[str, Any]:
     return _load_yaml(Path(path) if path is not None else config_dir() / "sources.yaml")
 
@@ -157,6 +159,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 规格对象
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class PeerEndpoint:
@@ -184,17 +187,43 @@ class SourceSpec:
         return f"{self.id}/{self.tool}"
 
 
+def _offset_url(url: str, offset: int) -> str:
+    """把 URL 里的端口按偏移平移（QUOT-618）；offset=0 原样返回。
+
+    数据层曾经直读 `sources.yaml` 的 `default_url`（写死 8000 / 8002 / 8791），
+    测试服把进程搬到 18000 系后仍去打生产端口，表现为「数据源进程已退出」。
+    只平移显式写进 yaml 的默认地址；`url_env` 指定的地址是显式配置，不动。
+    """
+    if offset == 0 or not url:
+        return url
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    port = parts.port
+    if port is None:
+        return url
+    host = parts.hostname or ""
+    netloc = f"{host}:{port + offset}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def build_peers(sources_doc: dict[str, Any]) -> dict[str, PeerEndpoint]:
     peers: dict[str, PeerEndpoint] = {}
+    from ladderstock.core.boundary import _external_hosted, port_offset
+
+    offset = port_offset()
     for key, item in (sources_doc.get("peers") or {}).items():
         item = item or {}
         env_name = str(item.get("url_env") or "")
         url = os.environ.get(env_name, "") if env_name else ""
+        # 外部托管（WSL 容器 / 计划任务）的地址不平移：那份服务只有一份，正式服与
+        # 测试服共用同一个；平移后只会打到空端口，把「在跑」报成「已退出」。
+        peer_offset = 0 if _external_hosted(str(key)) else offset
         peers[str(key)] = PeerEndpoint(
             key=str(key),
             product=str(item.get("product") or key),
             mcp_name=str(item.get("mcp_name") or key),
-            url=url or str(item.get("default_url") or ""),
+            url=url or _offset_url(str(item.get("default_url") or ""), peer_offset),
             timeout_sec=float(item.get("timeout_sec") or 10.0),
         )
     return peers
@@ -222,6 +251,7 @@ def build_specs(sources_doc: dict[str, Any]) -> dict[str, SourceSpec]:
 # --------------------------------------------------------------------------- #
 # 传输层
 # --------------------------------------------------------------------------- #
+
 
 class Transport(Protocol):
     """peer 工具调用接口；测试注入假 transport 即可完全离线。"""
@@ -293,9 +323,7 @@ class HttpMcpTransport:
 
     def probe(self, peer: PeerEndpoint, *, timeout: float) -> dict[str, Any]:
         names = [
-            str(tool["name"])
-            for tool in self.list_tools(peer, timeout=timeout)
-            if tool.get("name")
+            str(tool["name"]) for tool in self.list_tools(peer, timeout=timeout) if tool.get("name")
         ]
         return {"peer": peer.key, "tools": names}
 
@@ -397,6 +425,11 @@ class HttpMcpTransport:
         if not peer.url:
             raise SourceUnavailable(f"{peer.product} 未配置地址（{peer.key}）")
         headers = {"content-type": "application/json", "accept": MCP_ACCEPT}
+        # 2026-11-18：部分 peer 的 MCP 面要求 Bearer（FinanceCoffer 监听 0.0.0.0 时必须给 token，
+        # 见 `fcoffer mcp http` 的 E_CONFIG 约束）。token 只从环境变量取，不进 sources.yaml。
+        token = os.environ.get(f"LDST_{peer.key.upper()}_MCP_TOKEN", "").strip()
+        if token:
+            headers["authorization"] = f"Bearer {token}"
         if session.session_id:
             headers[MCP_SESSION_HEADER] = session.session_id
         if session.protocol_version:
@@ -565,7 +598,6 @@ def _unwrap_mcp_result(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-
 def _content_text(result: dict[str, Any]) -> str:
     """`tools/call` 失败时 `content[].text` 里的一句话（真实 peer 把校验错误放这里）。"""
     content = result.get("content")
@@ -628,9 +660,7 @@ def provisional_tool_warnings(
         try:
             info = probe.probe(peer, timeout=timeout)
         except Exception:  # noqa: BLE001 - 探活失败只影响这条 warning 的措辞
-            warnings.append(
-                f"{dataset}: 未联调：peer 不可达（{mask_url(peer.url)}）"
-            )
+            warnings.append(f"{dataset}: 未联调：peer 不可达（{mask_url(peer.url)}）")
             continue
         names = [str(name) for name in (info.get("tools") or []) if name]
         if binding.tool in names:
@@ -646,6 +676,7 @@ def provisional_tool_warnings(
 # 健康与冷却日志
 # --------------------------------------------------------------------------- #
 
+
 def health_path(root: Path | None = None) -> Path:
     base = Path(root) if root is not None else data_dir()
     return base / "state" / "health.json"
@@ -660,26 +691,63 @@ class HealthLog:
         self._data = self._load()
 
     def _load(self) -> dict[str, Any]:
+        """读健康日志。**读也会撞占用**：另一端正在 `os.replace` 时，这里会拿到
+        `PermissionError / WinError 32`（Windows 上 quite 常见）。短重试几次，
+        仍读不到就当空基线——健康日志读不到不该让建 registry 直接失败。
+        """
+        empty: dict[str, Any] = {"version": 1, "cooldowns": {}, "events": []}
         if not self.path.is_file():
-            return {"version": 1, "cooldowns": {}, "events": []}
+            return empty
+        text = ""
+        for attempt, delay in enumerate((0.0, 0.02, 0.05, 0.12)):
+            try:
+                text = self.path.read_text(encoding="utf-8")
+                break
+            except OSError:
+                if attempt == 3:
+                    return empty
+                time.sleep(delay)
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8") or "{}")
+            data = json.loads(text or "{}")
         except json.JSONDecodeError:
-            return {"version": 1, "cooldowns": {}, "events": []}
+            return empty
         if not isinstance(data, dict):
-            return {"version": 1, "cooldowns": {}, "events": []}
+            return empty
         data.setdefault("cooldowns", {})
         data.setdefault("events", [])
         return data
 
     def _flush(self) -> None:
+        """落盘健康日志。**多进程同写是常态**（web / 调度 / 盯盘守护各有一份）。
+
+        两条硬规矩：
+
+        1. 临时文件名必须唯一（带 pid 与随机后缀）：写死 `health.json.tmp` 时，
+           两个进程会抢同一个临时文件，`os.replace` 必撞 `WinError 32`——这正是
+           「limit_pool 取数失败：另一个程序正在使用此文件」的来源；
+        2. 替换失败要短退避重试（杀毒 / 索引服务也会短暂占用目标文件），
+           全部失败就退化成直接覆盖写——**宁可少一次原子性，也不能让取数因为
+           写日志失败而失败**（health 是侧通道，不是取数的前置条件）。
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2, default=str) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(tmp, self.path)
+        payload = json.dumps(self._data, ensure_ascii=False, indent=2, default=str) + "\n"
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}-{uuid4().hex[:8]}.tmp")
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            for attempt, delay in enumerate((0.02, 0.05, 0.12, 0.3)):
+                try:
+                    os.replace(tmp, self.path)
+                    return
+                except OSError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(delay)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            self.path.write_text(payload, encoding="utf-8")
 
     # ---------------------------------------------------------------- 冷却
 
@@ -699,9 +767,7 @@ class HealthLog:
             return None
         return item if isinstance(item, dict) else None
 
-    def set_cooldown(
-        self, source_id: str, seconds: float, *, reason: str, tool: str = ""
-    ) -> None:
+    def set_cooldown(self, source_id: str, seconds: float, *, reason: str, tool: str = "") -> None:
         if seconds <= 0:
             return
         until = _now() + timedelta(seconds=seconds)
@@ -711,12 +777,19 @@ class HealthLog:
                 "reason": reason,
                 "tool": tool,
             }
-            self._flush()
+            self._flush_quietly()
 
     def clear_cooldown(self, source_id: str) -> None:
         with self._lock:
             if (self._data.get("cooldowns") or {}).pop(source_id, None) is not None:
-                self._flush()
+                self._flush_quietly()
+
+    def _flush_quietly(self) -> None:
+        """落盘失败只丢这一条日志，**绝不让取数因此失败**（health 是侧通道）。"""
+        try:
+            self._flush()
+        except OSError:
+            pass
 
     # ---------------------------------------------------------------- 事件
 
@@ -742,7 +815,7 @@ class HealthLog:
             events.append(event)
             if len(events) > MAX_HEALTH_EVENTS:
                 del events[: len(events) - MAX_HEALTH_EVENTS]
-            self._flush()
+            self._flush_quietly()
 
     def active_cooldowns(self, *, now: datetime | None = None) -> list[dict[str, Any]]:
         moment = now or _now()
@@ -781,6 +854,7 @@ class HealthLog:
 # --------------------------------------------------------------------------- #
 # 注册表
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class _Pending:
@@ -871,9 +945,7 @@ class ProviderRegistry:
         configured_ttl = cold_hot.get("intraday_cache_ttl_sec") or DEFAULT_TTL_SEC
         self.ttl_sec = float(ttl_sec) if ttl_sec is not None else float(configured_ttl)
         rate_limit = (self.sync_doc.get("sync") or {}).get("rate_limit") or {}
-        self.rate_limit_retries = int(
-            rate_limit.get("max_retries", DEFAULT_RATE_LIMIT_RETRIES)
-        )
+        self.rate_limit_retries = int(rate_limit.get("max_retries", DEFAULT_RATE_LIMIT_RETRIES))
         self.rate_limit_max_wait_sec = float(
             rate_limit.get("max_wait_sec", DEFAULT_RATE_LIMIT_MAX_WAIT_SEC)
         )
@@ -928,9 +1000,7 @@ class ProviderRegistry:
             None,
         )
         if primary is None:
-            raise LadderStockError(
-                f"{dataset} 在 sources.yaml 里没有 primary 记录", EXIT_CONFIG
-            )
+            raise LadderStockError(f"{dataset} 在 sources.yaml 里没有 primary 记录", EXIT_CONFIG)
         return self._validated_chain(dataset, [primary.id, *primary.fallback])
 
     def _validated_chain(self, dataset: str, ids: list[str]) -> list[SourceSpec]:
@@ -1165,9 +1235,7 @@ class ProviderRegistry:
             )
 
         if allow_cache:
-            outcome = self._replay(
-                dataset, trade_date, trail, failures, rate_limited=backoff.hit
-            )
+            outcome = self._replay(dataset, trade_date, trail, failures, rate_limited=backoff.hit)
             if outcome is not None:
                 return outcome
         # failures 为空说明链路里的工具都在冷却期，一次调用都没发出去——
@@ -1190,9 +1258,7 @@ class ProviderRegistry:
         """
         if not isinstance(exc, RateLimited) or exc.retry_after_s is None:
             return spec.cooldown_sec
-        return min(
-            max(exc.retry_after_s, spec.cooldown_sec), self.rate_limit_max_cooldown_sec
-        )
+        return min(max(exc.retry_after_s, spec.cooldown_sec), self.rate_limit_max_cooldown_sec)
 
     def _call_source(
         self,
@@ -1406,6 +1472,7 @@ class ProviderRegistry:
 # --------------------------------------------------------------------------- #
 # 工具函数
 # --------------------------------------------------------------------------- #
+
 
 def _catalog() -> dict[str, Any]:
     from ladderstock.core.boundary import DATASET_CATALOG

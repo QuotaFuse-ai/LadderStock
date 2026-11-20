@@ -20,6 +20,14 @@ RESOURCE_DIRS: tuple[tuple[str, str], ...] = (
 
 #: 动态导入/运行期才用到的包：静态分析抓不到，必须显式声明。
 HIDDEN_IMPORTS: tuple[str, ...] = (
+    # OpenAI Agents SDK：模型 provider / session / handoff 都走运行期动态加载
+    # （`openai_provider` 按字符串取 `OpenAIChatCompletionsModel` 之类），
+    # 静态分析抓不到。漏了它的表现是打包后一调 AI 就 ModuleNotFoundError，
+    # 而源码态完全正常——正是「安装包必须自带」这句话最容易漏的一环。
+    "agents",
+    "agents.models.openai_chatcompletions",
+    "agents.models.openai_responses",
+    "agents.models.chatcmpl_stream_handler",
     # anyio 在首个请求时用 importlib.import_module("anyio._backends._asyncio")
     # 动态选后端，静态分析抓不到。PyInstaller 有 contrib hook 自动收它，py2app
     # 没有对应 hook（CI macos smoke 实测 ModuleNotFoundError），必须显式声明。
@@ -48,6 +56,17 @@ HIDDEN_IMPORTS: tuple[str, ...] = (
     "uvicorn.protocols.websockets.auto",
     "uvicorn.lifespan.on",
     "yaml",
+    # `agents.mcp._compat` 用 importlib.import_module("mcp.shared.exceptions") 取异常
+    # 类型，静态分析抓不到；漏了它，冻结后第一次 import agents 就失败。
+    "mcp.shared.exceptions",
+    # mcp.server.request_state → cryptography.exceptions → _rust 绑定；py2app 不会
+    # 自动收顶层 C 扩展 `_cffi_backend`，CI macos smoke 实测报 ModuleNotFoundError。
+    "cryptography",
+    "_cffi_backend",
+    # typer 的异常钩子用 rich 渲染 traceback，rich.Syntax 按名字加载 lexer；
+    # 缺了它，真正的异常会被渲染失败盖掉，日志里只剩 lexer 的报错。
+    "pygments",
+    "pygments.lexers.python",
 )
 
 #: 三平台都不需要、且会显著增大产物的包（本仓是独立应用，不 import 这些 peer）。
@@ -96,10 +115,5 @@ def assert_relative_destinations(datas: Iterable[tuple[str, str]]) -> None:
     for _src, dest in datas:
         path = Path(dest)
         windows_drive = bool(re.match(r"^[A-Za-z]:", dest))
-        if (
-            path.is_absolute()
-            or path.drive
-            or windows_drive
-            or dest.startswith(("/", "\\"))
-        ):
+        if path.is_absolute() or path.drive or windows_drive or dest.startswith(("/", "\\")):
             raise ValueError(f"随包目标必须是相对路径，实际为 {dest!r}")

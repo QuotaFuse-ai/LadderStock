@@ -64,6 +64,7 @@ def _row(
 # 1. schema v2：列口径与旧库升级
 # --------------------------------------------------------------------------- #
 
+
 def test_fresh_database_has_v2_position_columns(tmp_path: Path) -> None:
     conn = sqlite_store.connect(root=tmp_path, create=True)
     assert conn is not None
@@ -144,6 +145,7 @@ def test_second_open_does_not_rebuild_or_rebackup(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. CRUD：校验与退出码
 # --------------------------------------------------------------------------- #
+
 
 def test_add_normalizes_code_and_returns_saved_row(tmp_path: Path) -> None:
     row = position_module.add_position(
@@ -294,6 +296,7 @@ def test_remove_deletes_and_reports_basis(tmp_path: Path) -> None:
 # 3. compute_metrics：手算对照
 # --------------------------------------------------------------------------- #
 
+
 def _rows_partial() -> list[dict[str, Any]]:
     """三只持仓，其中 `000001` 取不到价（成本 22000、有价 20000）。"""
     return [
@@ -305,9 +308,7 @@ def _rows_partial() -> list[dict[str, Any]]:
 
 def test_metrics_zero_cost_growth_is_null() -> None:
     """成本 ≤ 0 时涨跌幅没有基期，计算层 yoy 判无意义，给 null 不硬算（QUOT-512）。"""
-    metrics = position_module.compute_metrics(
-        [_row("600000", 0.0, 100.0)], {"600000": 12.0}
-    )
+    metrics = position_module.compute_metrics([_row("600000", 0.0, 100.0)], {"600000": 12.0})
     item = metrics["items"][0]
     assert item["unrealized_pnl"] == 1200.0
     assert item["unrealized_pnl_pct"] is None
@@ -489,6 +490,7 @@ def test_metrics_is_independent_of_price_lookup() -> None:
 # 4. CLI 闭环（只写本机）
 # --------------------------------------------------------------------------- #
 
+
 def _invoke(argv: list[str]) -> Any:
     return runner.invoke(app, ["position", *argv])
 
@@ -496,9 +498,21 @@ def _invoke(argv: list[str]) -> Any:
 def test_cli_roundtrip_reports_local_only_each_time() -> None:
     added = _invoke(
         [
-            "add", "--code", "600000", "--cost", "10.5", "--qty", "1000",
-            "--date", "2026-10-20", "--industry", "银行", "--note", "哨兵-C",
-            "--output", "json",
+            "add",
+            "--code",
+            "600000",
+            "--cost",
+            "10.5",
+            "--qty",
+            "1000",
+            "--date",
+            "2026-10-20",
+            "--industry",
+            "银行",
+            "--note",
+            "哨兵-C",
+            "--output",
+            "json",
         ]
     )
     assert added.exit_code == 0, added.stderr

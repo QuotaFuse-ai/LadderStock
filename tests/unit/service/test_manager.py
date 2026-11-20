@@ -78,9 +78,7 @@ def _manager(
 
 
 @pytest.mark.parametrize("platform", ["windows", "macos", "linux"])
-def test_install_dry_run_never_touches_disk_or_os(
-    tmp_path: Path, platform: str
-) -> None:
+def test_install_dry_run_never_touches_disk_or_os(tmp_path: Path, platform: str) -> None:
     runner = FakeRunner()
     manager = _manager(tmp_path, runner, platform=platform, current=platform)
 

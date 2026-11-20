@@ -104,7 +104,10 @@ describe('涨停样本表格', () => {
     expect(screen.getByTitle('后端未提供连板数')).toBeTruthy()
     expect(screen.getByTitle('后端未提供首次封板时间')).toBeTruthy()
     expect(screen.getAllByTitle('后端未提供末次封板时间')).toHaveLength(2)
-    expect(screen.getByTitle('后端未提供涨停原因')).toBeTruthy()
+    // 缺失原因文案按「谁没给」写清：这一版 tickhub_limit_pool 返回里就没有该字段
+    expect(
+      screen.getByTitle('上游 tickhub_limit_pool 不返回涨停原因字段（同花顺备源 ths_limit_up_pool 带此字段）'),
+    ).toBeTruthy()
 
     // UI-SPEC v1.1 §8 / §3.15：后端裸 HHMMSS 必须格式化成 HH:mm:ss（同 §11.15 第一条）。
     expect(screen.getByText('09:30:15')).toBeTruthy()

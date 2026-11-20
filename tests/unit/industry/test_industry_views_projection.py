@@ -48,6 +48,7 @@ EVIDENCE_KEYS = {
 # 造盘与取值小工具
 # --------------------------------------------------------------------------- #
 
+
 def seeded(tmp_path: Path, case: str) -> tuple[Path, Path]:
     return prepare(load_case(case), tmp_path)
 
@@ -70,6 +71,7 @@ def projection(data: Path, config: Path) -> views.CacheProjection:
 # --------------------------------------------------------------------------- #
 # 缺口 #1：清单的逐行指标投影
 # --------------------------------------------------------------------------- #
+
 
 def test_metric_projection_keys_match_metric_paths_exactly(tmp_path: Path) -> None:
     """投影的键集合与 `metric_paths()` 同名同序；缺值保留键并写 `null`，不省略。"""
@@ -133,9 +135,7 @@ def test_list_as_of_is_per_industry_and_never_request_day(tmp_path: Path) -> Non
         assert row["metric_as_of"][path] is None
     for name in DIMENSIONS:
         days = [
-            day
-            for key, day in row["metric_as_of"].items()
-            if key.startswith(f"{name}.") and day
+            day for key, day in row["metric_as_of"].items() if key.startswith(f"{name}.") and day
         ]
         assert row["as_of"][name] == (max(days) if days else None)
     assert listing["as_of"]["valuation"] == max(
@@ -163,6 +163,7 @@ def test_list_with_metrics_on_empty_cache_keeps_null_keys(tmp_path: Path) -> Non
 # --------------------------------------------------------------------------- #
 # 缺口 #3 / #4 / #7：日频序列与逐股明细
 # --------------------------------------------------------------------------- #
+
 
 def test_history_last_point_equals_current_percentile(tmp_path: Path) -> None:
     """序列最后一个点必须等于当期分位：同一个窗口、同一批行、同一个公式。"""
@@ -267,6 +268,7 @@ def test_constituent_rows_have_exact_contract_keys(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 缺口 #6：规则判定
 # --------------------------------------------------------------------------- #
+
 
 def metrics_listing(tmp_path: Path, case: str) -> dict[str, Any]:
     data, config = seeded(tmp_path, case)

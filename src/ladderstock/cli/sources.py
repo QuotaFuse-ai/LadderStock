@@ -62,6 +62,7 @@ def _parse_since(value: str | None) -> datetime | None:
 # list
 # --------------------------------------------------------------------------- #
 
+
 def sources_list(output: OutputOption = None) -> None:
     registry = ProviderRegistry()
     emit({"peers": registry.peer_rows(), "sources": registry.describe()}, output)
@@ -70,6 +71,7 @@ def sources_list(output: OutputOption = None) -> None:
 # --------------------------------------------------------------------------- #
 # validate
 # --------------------------------------------------------------------------- #
+
 
 def _chain_rows(
     registry: ProviderRegistry, datasets: list[str]
@@ -225,9 +227,7 @@ def _config_problems(
         return problems
     scope = set(datasets)
     return [
-        problem
-        for problem in problems
-        if problem.record == source_id or problem.record in scope
+        problem for problem in problems if problem.record == source_id or problem.record in scope
     ]
 
 
@@ -239,6 +239,7 @@ def _binding(dataset: str) -> DatasetBinding | None:
 # health
 # --------------------------------------------------------------------------- #
 
+
 def sources_health(
     since: Annotated[str | None, typer.Option(help="起始时间（ISO）")] = None,
     output: OutputOption = None,
@@ -246,9 +247,7 @@ def sources_health(
     registry = ProviderRegistry()
     moment = _parse_since(since)
     payload = registry.health.report(since=moment, limit=100)
-    degraded = [
-        row for row in registry.describe() if row.get("cooldown_until") not in (None, "-")
-    ]
+    degraded = [row for row in registry.describe() if row.get("cooldown_until") not in (None, "-")]
     payload["sources_in_cooldown"] = degraded
     payload["peers"] = registry.peer_rows()
     emit(payload, output)

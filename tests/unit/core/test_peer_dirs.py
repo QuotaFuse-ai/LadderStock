@@ -17,6 +17,9 @@ def test_env_override_wins(monkeypatch, tmp_path) -> None:
 
 def test_sibling_directory_discovered(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(boundary, "_install_root", lambda: tmp_path)
+    # 容器也要钉到 tmp：开发机上仓库里可能真有 file/modules/<peer>，
+    # 不隔离的话容器分支会抢在同级发现之前命中。
+    monkeypatch.setattr(boundary, "modules_root", lambda env=None: tmp_path / "file" / "modules")
     (tmp_path / "LadderStock").mkdir()
     (tmp_path / "TickHub-CN").mkdir()
     # Wire 实际嵌套一层：D:\workplace\Wire\quotafuse-wire
@@ -30,6 +33,7 @@ def test_sibling_directory_discovered(monkeypatch, tmp_path) -> None:
 
 def test_missing_directory_keeps_placeholder(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(boundary, "_install_root", lambda: tmp_path)
+    monkeypatch.setattr(boundary, "modules_root", lambda env=None: tmp_path / "file" / "modules")
     (tmp_path / "LadderStock").mkdir()
 
     resolved = resolve_peer_control({"LDST_PEER_DIR_SENATE": "   "})

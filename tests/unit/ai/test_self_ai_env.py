@@ -33,8 +33,7 @@ def test_env_file_fills_missing_credentials(tmp_path, monkeypatch) -> None:
     ):
         monkeypatch.delenv(name, raising=False)
     (tmp_path / "ai.env").write_text(
-        "LDST_LLM_BASE_URL=https://api.deepseek.com/v1\n"
-        "LDST_LLM_API_KEY=sk-file\n",
+        "LDST_LLM_BASE_URL=https://api.deepseek.com/v1\nLDST_LLM_API_KEY=sk-file\n",
         encoding="utf-8",
     )
 

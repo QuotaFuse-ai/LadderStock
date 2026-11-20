@@ -291,13 +291,9 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     adapters: dict[str, PeerAdapter] = {}
     for name in MODULE_ORDER:
         token = (
-            peers[name].token
-            if name in peers
-            else f"quot528-idle-{name}-{uuid.uuid4().hex[:8]}"
+            peers[name].token if name in peers else f"quot528-idle-{name}-{uuid.uuid4().hex[:8]}"
         )
-        adapters[name] = PeerAdapter(
-            name, ports[name], token=token, tmp_path=tmp_path, host=host
-        )
+        adapters[name] = PeerAdapter(name, ports[name], token=token, tmp_path=tmp_path, host=host)
 
     ledger = Ledger(tmp_path / "supervisor" / "ledger.json", window_seconds=300.0)
     engine = SupervisorEngine(

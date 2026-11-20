@@ -50,9 +50,7 @@ def _post(client: TestClient, **body: Any) -> Any:
 
 
 def _ok_channel() -> chat_channel.Channel:
-    return chat_channel.Channel(
-        kind="cli", label="cli_codex:default", config=None, target=None
-    )
+    return chat_channel.Channel(kind="cli", label="cli_codex:default", config=None, target=None)
 
 
 def _write_ai_config(config_root: Path, *, cli: str | None = None) -> None:
@@ -79,6 +77,7 @@ def _clean_sessions() -> None:
 # --------------------------------------------------------------------------- #
 # 成功路径
 # --------------------------------------------------------------------------- #
+
 
 def test_chat_returns_reply_and_real_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -148,9 +147,7 @@ def test_chat_suggests_but_never_starts_research(
     monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _ok_channel())
     monkeypatch.setattr(chat_channel, "complete", fake_complete)
 
-    body = _post(
-        _client(tmp_path), message="帮我分析一下 600000 的基本面"
-    ).json()
+    body = _post(_client(tmp_path), message="帮我分析一下 600000 的基本面").json()
 
     pending = body["pending_research"]
     assert [item["code"] for item in pending] == ["600000"]
@@ -161,6 +158,7 @@ def test_chat_suggests_but_never_starts_research(
 # --------------------------------------------------------------------------- #
 # 失败三态（+ 其它类）
 # --------------------------------------------------------------------------- #
+
 
 def test_chat_without_config_is_503_no_channel(tmp_path: Path) -> None:
     response = _post(_client(tmp_path), message="你好")
@@ -213,9 +211,7 @@ def test_chat_network_failure_is_502(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "网络" in body["detail"]
 
 
-def test_chat_upstream_5xx_is_502_upstream(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chat_upstream_5xx_is_502_upstream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """上游真的回了 5xx：与「请求没送达」区分开报 `ai_upstream`，仍可重试。"""
 
     class _UpstreamError(Exception):
@@ -266,9 +262,7 @@ def test_chat_timeout_is_504(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert cancelled.is_set()
 
 
-def test_chat_empty_reply_is_not_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chat_empty_reply_is_not_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_complete(channel, system, user, *, timeout):
         return "   "
 
@@ -281,9 +275,7 @@ def test_chat_empty_reply_is_not_success(
     assert response.json()["code"] == "ai_empty"
 
 
-def test_chat_rejects_future_source_time(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chat_rejects_future_source_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _ok_channel())
 
     response = _post(
@@ -297,9 +289,7 @@ def test_chat_rejects_future_source_time(
     assert response.json()["retryable"] is False
 
 
-def test_chat_rejects_oversized_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chat_rejects_oversized_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chat_channel, "load_channel", lambda _root=None: _ok_channel())
 
     response = _post(
@@ -322,6 +312,7 @@ def test_chat_rejects_blank_message(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 会话记忆 / 中止
 # --------------------------------------------------------------------------- #
+
 
 def test_chat_multi_turn_keeps_successful_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -410,6 +401,7 @@ def test_turn_aborts_when_frontend_disconnects(
 # --------------------------------------------------------------------------- #
 # 回归：generate / retry 的 job 型契约不变
 # --------------------------------------------------------------------------- #
+
 
 def test_generate_and_retry_contract_unchanged(tmp_path: Path) -> None:
     plane = _plane(tmp_path)

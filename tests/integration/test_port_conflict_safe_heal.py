@@ -103,9 +103,7 @@ def test_foreign_occupation_reports_and_never_kills(world: World) -> None:
     heal.tick()
 
     events = bus.since(0)
-    assert [e.event for e in events] == [EVENT_PORT_CONFLICT], (
-        f"events={[e.event for e in events]}"
-    )
+    assert [e.event for e in events] == [EVENT_PORT_CONFLICT], f"events={[e.event for e in events]}"
     conflict = events[0]
     assert conflict.module == "wire"
     assert conflict.conflicts[0]["owner"] == OWNER_FOREIGN

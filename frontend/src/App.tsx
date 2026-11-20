@@ -1,5 +1,8 @@
-import { Link, Navigate, Route, Routes } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
+
+import { getStatus } from './api/setup'
 
 import Layout from './components/Layout'
 import AiReviewScreen from './screens/AiReviewScreen'
@@ -12,6 +15,7 @@ import LimitUpScreen from './screens/limitup/LimitUpScreen'
 import JournalScreen from './screens/JournalScreen'
 import KnowledgeDetailScreen from './screens/knowledge/KnowledgeDetailScreen'
 import KnowledgeEntryScreen from './screens/knowledge/KnowledgeEntryScreen'
+import DataAssetsScreen from './screens/DataAssetsScreen'
 import MarketScreen from './screens/MarketScreen'
 import InboxScreen from './screens/my-stocks/InboxScreen'
 import MyStocksScreen from './screens/my-stocks/MyStocksScreen'
@@ -23,6 +27,7 @@ import ResearchEntryScreen from './screens/research/ResearchEntryScreen'
 import ResearchReportScreen from './screens/research/ResearchReportScreen'
 import ReviewScreen from './screens/ReviewScreen'
 import SettingsScreen from './screens/SettingsScreen'
+import SetupScreen from './screens/setup/SetupScreen'
 import SignalsScreen from './screens/signals/SignalsScreen'
 import SkillDetailScreen from './screens/skills/SkillDetailScreen'
 import SkillPackageScreen from './screens/skills/SkillPackageScreen'
@@ -103,6 +108,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/industry/:name': <IndustryDetailScreen />,
   '/signals': <SignalsScreen />,
   '/settings': <SettingsScreen />,
+  // 首次配置 / 子模块安装向导（便携包首次启动拦截到这一屏）
+  '/setup': <SetupScreen />,
   // QUOT-146：个股深挖入口是落地页（填 6 位代码），深挖与报告页由它链入
   '/research': <ResearchEntryScreen />,
   '/research/:code': <ResearchDetailScreen />,
@@ -114,12 +121,36 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   // QUOT-567：「知识库」= 落地页收 6 位代码 → 档案页读 `GET /api/knowledge/:market/:symbol`
   '/knowledge': <KnowledgeEntryScreen />,
   '/knowledge/:market/:symbol': <KnowledgeDetailScreen />,
+  // 数据资产：本地库的票 / 财报期数 / 公告条数（读 `/api/data/assets*`）
+  '/data-assets': <DataAssetsScreen />,
   // 旧入口：此前首页重定向到复盘；带查询串保留（`?state=` 演示态）
   '/index.html': <Navigate to="/" replace />,
   '*': <NotFound />,
 }
 
 export default function App() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [probeDone, setProbeDone] = useState(false)
+
+  /**
+   * 首次启动拦截：便携包不带子模块，缺任何一项都意味着某些功能会静默不可用。
+   * 这里只探一次，且**失败即放行**——后端没起来时把人锁死在向导页比不引导更糟。
+   */
+  useEffect(() => {
+    if (probeDone) return
+    if (location.pathname === '/setup') {
+      setProbeDone(true)
+      return
+    }
+    getStatus()
+      .then((snapshot) => {
+        setProbeDone(true)
+        if (snapshot.missing_count > 0) navigate('/setup', { replace: true })
+      })
+      .catch(() => setProbeDone(true))
+  }, [probeDone, location.pathname, navigate])
+
   return (
     <Routes>
       <Route element={<Layout />}>

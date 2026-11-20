@@ -106,6 +106,7 @@ class Digest:
 # 格式化：缺失写 `—`，数字带单位
 # --------------------------------------------------------------------------- #
 
+
 def _money(value: float | None) -> str:
     return MISSING if value is None else f"{value:,.2f} 元"
 
@@ -136,6 +137,7 @@ def _label(name: str, code: str) -> str:
 # --------------------------------------------------------------------------- #
 # 取数小工具（只读本机 / 已登记数据集）
 # --------------------------------------------------------------------------- #
+
 
 def _lazy_registry(root: Path | None) -> Any:
     """调度器默认不注入 registry；这里按本机配置建一个（构造本身不出网）。"""
@@ -168,9 +170,7 @@ def _previous_cached_day(day: date, root: Path | None) -> date | None:
     """`day` 之前最近一个**本机有分区**的交易日；找不到就是 `None`（不猜节日）。"""
     cursor = day - timedelta(days=1)
     for _ in range(PREV_LOOKBACK_DAYS):
-        if cursor.weekday() < 5 and archive.has_partition(
-            quotes.PRICE_DATASET, cursor, root=root
-        ):
+        if cursor.weekday() < 5 and archive.has_partition(quotes.PRICE_DATASET, cursor, root=root):
             return cursor
         cursor -= timedelta(days=1)
     return None
@@ -203,6 +203,7 @@ def _number(raw: Any) -> float | None:
 # --------------------------------------------------------------------------- #
 # 盘前（09:05）
 # --------------------------------------------------------------------------- #
+
 
 def _premarket(
     job: str,
@@ -301,6 +302,7 @@ def _float(raw: Any) -> float | None:
 # --------------------------------------------------------------------------- #
 # 收盘（15:40）
 # --------------------------------------------------------------------------- #
+
 
 def _close(
     job: str,
@@ -402,6 +404,7 @@ def _close(
 # 自选变化（16:15）
 # --------------------------------------------------------------------------- #
 
+
 def _watch_changes(
     job: str,
     *,
@@ -465,9 +468,7 @@ def _watch_changes(
         close_pct = (now_row["close"] - then_row["close"]) / then_row["close"] * 100.0
         volume_pct = None
         if now_row.get("volume") is not None and then_row.get("volume"):
-            volume_pct = (
-                (now_row["volume"] - then_row["volume"]) / then_row["volume"] * 100.0
-            )
+            volume_pct = (now_row["volume"] - then_row["volume"]) / then_row["volume"] * 100.0
         lines.append(
             f"{code} 收盘 {_price(now_row['close'])}（{_pct(close_pct)}）"
             f"成交量 {_amount(now_row.get('volume'))}（{_pct(volume_pct)}）"
@@ -488,6 +489,7 @@ def _watch_changes(
 # --------------------------------------------------------------------------- #
 # 对外入口
 # --------------------------------------------------------------------------- #
+
 
 def build(
     job: str,

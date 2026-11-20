@@ -76,6 +76,7 @@ def _event(item, note: str | None = None) -> NewsEvent:
 # 默认关闭
 # --------------------------------------------------------------------------- #
 
+
 def test_model_is_off_by_default() -> None:
     assert AI_ENRICH_ENABLED_BY_DEFAULT is False
 
@@ -109,6 +110,7 @@ def _stream_result(events, items=()):
 # --------------------------------------------------------------------------- #
 # 送模型的最小视图
 # --------------------------------------------------------------------------- #
+
 
 def test_prompt_carries_only_title_summary_url_label_keyword() -> None:
     item = _item()
@@ -150,6 +152,7 @@ def test_privacy_guard_refuses_to_send(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------- #
 # 只写叙述
 # --------------------------------------------------------------------------- #
+
 
 def test_enrich_adds_notes_without_touching_the_facts() -> None:
     item = _item()
@@ -260,6 +263,7 @@ def test_batch_cap_is_visible_in_the_module() -> None:
 # 模型不可用：不装成功，也不炸流
 # --------------------------------------------------------------------------- #
 
+
 def test_missing_model_config_degrades_without_losing_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -295,6 +299,7 @@ def test_http_client_is_imported_lazily_not_at_module_scope() -> None:
 # 与流的接线
 # --------------------------------------------------------------------------- #
 
+
 def test_apply_to_stream_writes_notes_back_and_counts_them() -> None:
     item = _item()
     event = _event(item)
@@ -322,9 +327,13 @@ def test_apply_to_stream_persists_notes_only_when_the_stream_was_persisted(
         "ladderstock.news.stream.persist_events",
         lambda events, **kw: calls.append(len(events)) or 0,
     )
-    monkeypatch.setattr(ai_enrich, "enrich_events", lambda events, items, **kw: EnrichResult(
-        events=[e.with_ai_note("叙述") for e in events], attempted=1, enriched=1
-    ))
+    monkeypatch.setattr(
+        ai_enrich,
+        "enrich_events",
+        lambda events, items, **kw: EnrichResult(
+            events=[e.with_ai_note("叙述") for e in events], attempted=1, enriched=1
+        ),
+    )
     apply_to_stream(stream, enabled=True)
     assert calls == []
 

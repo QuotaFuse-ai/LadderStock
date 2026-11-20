@@ -29,8 +29,15 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "tickhub_us": (8002,),
         "wire": (8790, 8791),
         "senate": (8765, 8786),
-        "financecoffer": (8100,),
+        # 2026-11-18 用户裁决：FinanceCoffer 已是 LadderStock 的本地增益包
+        # （`file/modules/financecoffer`，由 modules/financecoffer/services.py 起），
+        # 不再由 WSL compose 托管 → 与其它模块同口径，正式段铺在基准端口。
+        # 8100 = REST API，8101 = MCP 面（`fcoffer mcp http`）。
+        "financecoffer": (8100, 8101),
         "proxyfleet": (8788, 8789),
+        # Qdrant（2026-11-18 用户裁决）：本地单体二进制，不再用 Docker。
+        # (REST/Dashboard, gRPC) —— gRPC 面探测得到，但并作一个进程托管。
+        "qdrant": (6333, 6334),
         # QUOT-589 重修：看门狗无端口化（用户裁决全机只留 5950/5951），
         # 不再监听 5952——空元组 = 无端口模块，probe 靠 cmdline 扫描
         # （WatchdogAdapter）。
@@ -44,8 +51,12 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
         "tickhub_us": (18002,),
         "wire": (18790, 18791),
         "senate": (18765, 18786),
-        "financecoffer": (18100,),
+        # 与 prod 同口径 +10000：FC 不再是「归 compose 自己决定端口」的例外，
+        # 测试段就是 18100(REST) / 18101(MCP)。
+        "financecoffer": (18100, 18101),
         "proxyfleet": (18788, 18789),
+        # Qdrant（2026-11-18 用户裁决）：本地单体二进制，测试段 = 基准 + 10000。
+        "qdrant": (16333, 16334),
         # QUOT-589 重修：同样无端口化，不占 15952。
         "watch": (),
         "proxypool": (),
@@ -53,6 +64,7 @@ _ENV_PORTS: dict[str, dict[str, tuple[int, ...]]] = {
 }
 
 _VALID_ENVS = ("prod", "test")
+
 
 class _EnvPortsMapping(Mapping[str, tuple[int, ...]]):
     """按当前环境实时解析的只读端口表（QUOT-593）。

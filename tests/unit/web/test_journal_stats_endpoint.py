@@ -77,17 +77,30 @@ def _client(root: Path, client: tuple[str, int] = LOOPBACK, **kwargs: Any) -> Te
 def _seed_trades(root: Path) -> None:
     """买入 10×100 → 卖出 11×100：一个盈利闭环，已实现盈亏 100。"""
     journal_log.add_trade(
-        "600000", "buy", 10.0, 100.0, note=SENTINEL_NOTE, trade_date=DATE,
-        plan_price=10.0, root=root,
+        "600000",
+        "buy",
+        10.0,
+        100.0,
+        note=SENTINEL_NOTE,
+        trade_date=DATE,
+        plan_price=10.0,
+        root=root,
     )
     journal_log.add_trade(
-        "600000", "sell", 11.0, 100.0, note=SENTINEL_NOTE, trade_date=DATE, root=root,
+        "600000",
+        "sell",
+        11.0,
+        100.0,
+        note=SENTINEL_NOTE,
+        trade_date=DATE,
+        root=root,
     )
 
 
 # --------------------------------------------------------------------------- #
 # 1. 空态：200 而不是 404，四个指标 null 而不是 0
 # --------------------------------------------------------------------------- #
+
 
 def test_empty_store_returns_200_with_zero_structure(tmp_path: Path) -> None:
     client = _client(tmp_path)
@@ -105,8 +118,13 @@ def test_empty_store_returns_200_with_zero_structure(tmp_path: Path) -> None:
     assert body["data_source_status"] == "missing"
     assert body["range"] == {"from": None, "to": None}
     for key in (
-        "total_trades", "buy_count", "sell_count", "closed_rounds",
-        "wins", "losses", "flats",
+        "total_trades",
+        "buy_count",
+        "sell_count",
+        "closed_rounds",
+        "wins",
+        "losses",
+        "flats",
     ):
         assert body[key] == 0, key
     # 无样本不拿 0 冒充
@@ -123,6 +141,7 @@ def test_empty_store_returns_200_with_zero_structure(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 有数据：数字与 CLI 同源，且不含 symbols / 明细 / note
 # --------------------------------------------------------------------------- #
+
 
 def test_with_data_returns_aggregates_without_symbols_or_notes(tmp_path: Path) -> None:
     _seed_trades(tmp_path)
@@ -158,8 +177,14 @@ def test_deviation_threshold_and_count_only(tmp_path: Path) -> None:
     - 默认 1% → 未命中 0 笔。
     """
     journal_log.add_trade(
-        "600519", "buy", 10.05, 10.0, note=SENTINEL_NOTE, trade_date=DATE,
-        plan_price=10.0, root=tmp_path,
+        "600519",
+        "buy",
+        10.05,
+        10.0,
+        note=SENTINEL_NOTE,
+        trade_date=DATE,
+        plan_price=10.0,
+        root=tmp_path,
     )
     body = _client(tmp_path).get("/api/journal/stats", params={"deviation": "0.001"}).json()
     assert body["deviation_review"] == {"threshold_pct": 0.1, "count": 1}
@@ -172,6 +197,7 @@ def test_deviation_threshold_and_count_only(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 隐私：投影结果是 strip_private 的不动点
 # --------------------------------------------------------------------------- #
+
 
 def test_payload_is_strip_private_identity(tmp_path: Path) -> None:
     _seed_trades(tmp_path)
@@ -231,6 +257,7 @@ def test_projection_drops_forbidden_fields_even_if_upstream_adds_them(
 # 4. 回环独占：非回环 403，Host 不在白名单 403
 # --------------------------------------------------------------------------- #
 
+
 def test_non_loopback_source_is_403(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed_trades(tmp_path)
     # 即使运维开了远程访问 + Token，也不能把日志放出去（Token 管「谁能进」，不管「数据出不出」）
@@ -243,9 +270,7 @@ def test_non_loopback_source_is_403(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "100" not in response.text  # 任何聚合数字都不能随 403 漏出
 
     # 回环来源但不带合法 Host（DNS rebinding 场景）同样 403
-    rebinding = _client(tmp_path).get(
-        "/api/journal/stats", headers={"host": "evil.example.com"}
-    )
+    rebinding = _client(tmp_path).get("/api/journal/stats", headers={"host": "evil.example.com"})
     assert rebinding.status_code == 403
 
     # 对照：回环 + 正常 Host 放行
@@ -265,6 +290,7 @@ def test_control_switch_does_not_close_journal_stats(
 # --------------------------------------------------------------------------- #
 # 5. 只 GET + 参数校验 + Tier 2 未开
 # --------------------------------------------------------------------------- #
+
 
 def test_only_get_is_allowed(tmp_path: Path) -> None:
     client = _client(tmp_path)

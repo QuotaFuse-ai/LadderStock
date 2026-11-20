@@ -37,6 +37,7 @@ DIGEST_JOBS = {
 # 夹具
 # --------------------------------------------------------------------------- #
 
+
 def _sources_doc() -> dict[str, Any]:
     sources = copy.deepcopy(SOURCES_DOC)
     sources["sources"].append(
@@ -99,14 +100,10 @@ def _registry(
 
     transport = FakeTransport(
         handlers={"tencent_quote_batch": spot},
-        errors={"tencent_quote_batch": RuntimeError("QFSD-7001 rate limited")}
-        if failing
-        else {},
+        errors={"tencent_quote_batch": RuntimeError("QFSD-7001 rate limited")} if failing else {},
         tools=["tencent_quote_batch"],
     )
-    return make_registry(
-        transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC)
-    )
+    return make_registry(transport, root, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC))
 
 
 def _seed_daily(root: Path, rows: list[dict[str, Any]]) -> None:
@@ -136,9 +133,13 @@ def _holding(root: Path, *, symbol: str = "600000", shares: float = 100.0) -> No
 # 调度表 / schema
 # --------------------------------------------------------------------------- #
 
+
 def test_default_jobs_carry_three_digests() -> None:
-    digs = {job["id"]: (job["summary"], job["trigger"]) for job in schedule_cli.DEFAULT_JOBS
-            if job["kind"] == "digest"}
+    digs = {
+        job["id"]: (job["summary"], job["trigger"])
+        for job in schedule_cli.DEFAULT_JOBS
+        if job["kind"] == "digest"
+    }
 
     assert digs == DIGEST_JOBS
     assert "premarket_reminder" not in {job["id"] for job in schedule_cli.DEFAULT_JOBS}
@@ -149,8 +150,11 @@ def test_repo_schedule_declares_three_digests(repo: Path) -> None:
     table, warnings, _source = schedule_cli.load_schedule()
 
     assert warnings == []
-    digs = {job["id"]: (job["summary"], job["trigger"]) for job in table["jobs"]
-            if job["kind"] == "digest"}
+    digs = {
+        job["id"]: (job["summary"], job["trigger"])
+        for job in table["jobs"]
+        if job["kind"] == "digest"
+    }
     assert digs == DIGEST_JOBS
 
 
@@ -183,10 +187,7 @@ def test_schema_enum_contains_digest() -> None:
 
     schema = json.loads(
         (
-            Path(__file__).resolve().parents[3]
-            / "config"
-            / "schema"
-            / "schedule.schema.json"
+            Path(__file__).resolve().parents[3] / "config" / "schema" / "schedule.schema.json"
         ).read_text(encoding="utf-8")
     )
     kinds = schema["properties"]["jobs"]["items"]["properties"]["kind"]["enum"]
@@ -197,13 +198,17 @@ def test_schema_enum_contains_digest() -> None:
 # 盘前
 # --------------------------------------------------------------------------- #
 
+
 def test_premarket_lines_only_sourced_facts(tmp_path: Path) -> None:
     watchlist.add_watch("600000", root=tmp_path)
     watchlist.add_watch("000001", root=tmp_path)
     registry = _registry(
         tmp_path,
-        {"600000": _quote_row("600000", name="浦发银行", price=10.5, prev_close=10.0,
-                              change_pct=5.0)},
+        {
+            "600000": _quote_row(
+                "600000", name="浦发银行", price=10.5, prev_close=10.0, change_pct=5.0
+            )
+        },
     )
 
     outcome = digest.build(
@@ -281,8 +286,11 @@ def test_notification_failure_still_writes_inbox_and_marks_degraded(
     watchlist.add_watch("600000", root=tmp_path)
     registry = _registry(
         tmp_path,
-        {"600000": _quote_row("600000", name="浦发银行", price=10.5, prev_close=10.0,
-                              change_pct=5.0)},
+        {
+            "600000": _quote_row(
+                "600000", name="浦发银行", price=10.5, prev_close=10.0, change_pct=5.0
+            )
+        },
     )
     job = {**_premarket_job(), "channel": "desktop"}
 
@@ -302,8 +310,11 @@ def test_rerun_same_day_updates_single_row_and_preserves_read_at(tmp_path: Path)
     watchlist.add_watch("600000", root=tmp_path)
     registry = _registry(
         tmp_path,
-        {"600000": _quote_row("600000", name="浦发银行", price=10.5, prev_close=10.0,
-                              change_pct=5.0)},
+        {
+            "600000": _quote_row(
+                "600000", name="浦发银行", price=10.5, prev_close=10.0, change_pct=5.0
+            )
+        },
     )
     job = _premarket_job()
 
@@ -325,6 +336,7 @@ def test_rerun_same_day_updates_single_row_and_preserves_read_at(tmp_path: Path)
 # --------------------------------------------------------------------------- #
 # 收盘
 # --------------------------------------------------------------------------- #
+
 
 def test_close_digest_uses_local_daily_k_and_portfolio(tmp_path: Path) -> None:
     _seed_daily(
@@ -378,6 +390,7 @@ def test_close_digest_without_ledger_says_so(tmp_path: Path) -> None:
 # 自选变化
 # --------------------------------------------------------------------------- #
 
+
 def test_watch_changes_with_a_single_history_day_says_not_comparable(tmp_path: Path) -> None:
     watchlist.add_watch("600000", root=tmp_path)
     _seed_daily(tmp_path, [{"code": "600000", "trade_date": "2026-11-05", "close": 10.5}])
@@ -417,6 +430,7 @@ def test_watch_changes_skips_when_watchlist_is_empty(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 通用
 # --------------------------------------------------------------------------- #
+
 
 def test_unknown_summary_is_a_failed_digest_not_an_exception() -> None:
     outcome = digest.build("x", "nope")

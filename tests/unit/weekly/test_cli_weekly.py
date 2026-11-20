@@ -74,6 +74,7 @@ def _run(args: list[str]) -> Any:
 # 参数：非法周标签一律 2，且不产出任何文件
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize(
     "value",
     ["2026-W00", "2026-W54", "2025-W53", "banana", "2026-10", "../evil", "2026-13-01"],
@@ -95,6 +96,7 @@ def test_date_is_normalized_to_its_week(seeded_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 6：整周没有可用单日指标
 # --------------------------------------------------------------------------- #
+
 
 def test_empty_week_exits_not_found_but_keeps_artifacts(data_dir: Path) -> None:
     result = _run(["weekly", "--week", WEEK, "--output", "json"])
@@ -120,6 +122,7 @@ def test_payload_keys_are_stable(seeded_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 9：事实包有数、AI 段落降级
 # --------------------------------------------------------------------------- #
+
 
 def test_seeded_week_degrades_offline_and_lands_artifacts(seeded_dir: Path) -> None:
     result = _run(["weekly", "--week", WEEK, "--output", "json"])

@@ -31,6 +31,7 @@ def _engine(strategy: Scripted, *, costs: CostModel = NO_COST, limit_pct: float 
 # 1. 涨停买不进
 # --------------------------------------------------------------------------- #
 
+
 def test_limit_up_blocks_buy() -> None:
     # 昨收 10.00 ⇒ 涨停价 11.00；执行日开盘正好 11.00（一字涨停）⇒ 买不进
     bars = [
@@ -69,6 +70,7 @@ def test_limit_up_does_not_block_buy_below_limit() -> None:
 # --------------------------------------------------------------------------- #
 # 2. 跌停卖不出
 # --------------------------------------------------------------------------- #
+
 
 def test_limit_down_blocks_sell() -> None:
     # Scripted 按**信号日**查表、成交落在下一根（信号 t / 执行 t+1）：
@@ -119,6 +121,7 @@ def test_limit_down_allows_sell_above_limit_price() -> None:
 # 3. 停牌跳过
 # --------------------------------------------------------------------------- #
 
+
 def test_suspension_skips_day_without_filling() -> None:
     # 06-03 成交量 0（停牌）：那天本应执行 06-02 的满仓信号，但停牌不下单、也不延后；
     # 06-03 收盘策略已回到空仓 ⇒ 06-04 不补成交。
@@ -138,6 +141,7 @@ def test_suspension_skips_day_without_filling() -> None:
     next_day = next(row for row in result.log if row.date == "2025-06-04")
     assert next_day.executed_side == ""
     assert result.trades == []
+
 
 def test_suspension_keeps_existing_position_untouched() -> None:
     # 先买入，再停牌：停牌日持仓保持，权益按停牌日收盘价（= 前收）不动；
@@ -169,6 +173,7 @@ def test_suspension_keeps_existing_position_untouched() -> None:
 # 4. T+1
 # --------------------------------------------------------------------------- #
 
+
 def test_t_plus_one_blocks_same_day_sell() -> None:
     # 05-12 收盘信号满仓 ⇒ 05-13 开盘买入；05-13 收盘已翻空 ⇒ 05-14 开盘卖出（T+1 刚好放行）。
     # 若引擎允许当日回转，05-13 会先买后卖、最终空仓 —— 用 t_plus_one_blocked 与成交日钉死。
@@ -183,9 +188,7 @@ def test_t_plus_one_blocks_same_day_sell() -> None:
     buy_day = next(row for row in result.log if row.date == "2025-05-13")
     assert buy_day.executed_side == "buy"
     # 买入当根不得卖出：同一根 K 线既买又卖是不可能的（日频 + T+1）
-    assert all(
-        not (row.executed_side == "buy" and row.shares_after == 0) for row in result.log
-    )
+    assert all(not (row.executed_side == "buy" and row.shares_after == 0) for row in result.log)
     sell_day = next(row for row in result.log if row.date == "2025-05-14")
     assert sell_day.executed_side == "sell"
     assert sell_day.t_plus_one_blocked is False  # 次日已解冻，卖单不再被 T+1 挡
@@ -197,9 +200,7 @@ def test_t_plus_one_blocks_same_day_sell() -> None:
 
 def test_t_plus_one_never_has_intraday_round_trip() -> None:
     # 交替信号：任何一笔回合的开、平仓日都不可能同一天
-    bars = [
-        flat_bar(f"2025-07-{day:02d}", 10.0 + (day % 3) * 0.1) for day in range(1, 15)
-    ]
+    bars = [flat_bar(f"2025-07-{day:02d}", 10.0 + (day % 3) * 0.1) for day in range(1, 15)]
     table = {bar.date: (1.0 if index % 2 == 0 else 0.0) for index, bar in enumerate(bars[:-1])}
     result = _engine(Scripted(table), costs=REAL_COST).run(bars)
     assert result.trades
@@ -210,6 +211,7 @@ def test_t_plus_one_never_has_intraday_round_trip() -> None:
 # --------------------------------------------------------------------------- #
 # 涨跌停幅度：主板 10% / 创业板 20%（同一撮合引擎，幅度由标的决定）
 # --------------------------------------------------------------------------- #
+
 
 def test_chinext_limit_is_20_percent() -> None:
     main = classify("600000")

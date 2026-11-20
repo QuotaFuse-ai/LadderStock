@@ -246,10 +246,14 @@ def render_markdown(card: Mapping[str, Any]) -> str:
         lines.append(f"| `{key}` | `{value}` | {card['config_sources'].get(key, '—')} |")
     lines.append("")
 
-    lines += [
-        "## 假设（写死在代码里）",
-        "",
-    ] + [f"- {item}" for item in card["assumptions"]] + [""]
+    lines += (
+        [
+            "## 假设（写死在代码里）",
+            "",
+        ]
+        + [f"- {item}" for item in card["assumptions"]]
+        + [""]
+    )
 
     lines += [
         "## 基准",
@@ -281,7 +285,7 @@ def render_html(card: Mapping[str, Any]) -> str:
     tier_rows = "".join(
         f'<tr><td class="num">{tier["commission"] * 10000:g}‱</td>'
         f'<td class="num {"neg" if tier["cumulative_return"] < 0 else ""}">'
-        f'{_esc(_pct(tier["cumulative_return"]))}</td>'
+        f"{_esc(_pct(tier['cumulative_return']))}</td>"
         f'<td class="num">{_esc(_pct(tier["annualized_return"]))}</td>'
         f'<td class="num">{_esc(_pct(tier["max_drawdown"]))}</td>'
         f'<td class="num">{tier["trade_count"]}</td>'
@@ -289,7 +293,7 @@ def render_html(card: Mapping[str, Any]) -> str:
         for tier in gate.get("cost_tiers") or []
     )
     seg_rows = "".join(
-        f'<tr><td>{_esc(seg["label"])}</td><td>{_esc(seg["start"])} ~ {_esc(seg["end"])}</td>'
+        f"<tr><td>{_esc(seg['label'])}</td><td>{_esc(seg['start'])} ~ {_esc(seg['end'])}</td>"
         f'<td class="num">{seg["bars"]}</td>'
         f'<td class="num">{_esc(_pct(seg["metrics"].get("cumulative_return")))}</td>'
         f'<td class="num">{seg["metrics"].get("trade_count")}</td></tr>'
@@ -297,14 +301,14 @@ def render_html(card: Mapping[str, Any]) -> str:
     )
     check_rows = "".join(
         f'<tr class="{"ok" if c["status"] == PASS else "bad"}">'
-        f'<td>{_esc(c["label"])}</td>'
-        f'<td>{"通过" if c["status"] == PASS else "未通过"}</td>'
-        f'<td>{_esc(c["reason"] or "—")}</td></tr>'
+        f"<td>{_esc(c['label'])}</td>"
+        f"<td>{'通过' if c['status'] == PASS else '未通过'}</td>"
+        f"<td>{_esc(c['reason'] or '—')}</td></tr>"
         for c in gate.get("checks") or []
     )
     config_rows = "".join(
-        f'<tr><td><code>{_esc(key)}</code></td><td>{_esc(value)}</td>'
-        f'<td>{_esc(card["config_sources"].get(key, "—"))}</td></tr>'
+        f"<tr><td><code>{_esc(key)}</code></td><td>{_esc(value)}</td>"
+        f"<td>{_esc(card['config_sources'].get(key, '—'))}</td></tr>"
         for key, value in card["config"].items()
     )
     assumption_items = "".join(f"<li>{_esc(item)}</li>" for item in card["assumptions"])
@@ -327,7 +331,7 @@ def render_html(card: Mapping[str, Any]) -> str:
 body {{ margin: 0; font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   color: #1f2937; background: #f5f6f8; }}
 main {{ max-width: 1080px; margin: 24px auto; padding: 0 16px 48px; }}
-header {{ background: {'#16a34a' if passed else '#dc2626'}; color: #fff;
+header {{ background: {"#16a34a" if passed else "#dc2626"}; color: #fff;
   padding: 16px 20px; border-radius: 8px; }}
 header h1 {{ margin: 0 0 4px; font-size: 20px; }}
 header .meta {{ font-size: 12px; opacity: .92; word-break: break-all; }}
@@ -355,7 +359,7 @@ footer {{ text-align: center; color: #9ca3af; font-size: 12px; margin-top: 24px;
 </head>
 <body>
 <main>
-<header class="{'pass' if passed else 'fail'}">
+<header class="{"pass" if passed else "fail"}">
   <h1>回测运行卡 · {_esc(card["symbol"])} · {_esc(card["strategy"])}</h1>
   <div class="meta">
     run_id <strong>{_esc(card["run_id"])}</strong>
@@ -367,7 +371,7 @@ footer {{ text-align: center; color: #9ca3af; font-size: 12px; margin-top: 24px;
   </div>
 </header>
 <div class="status {status_class}">
-  校验门结论：<strong>{'通过（绿）' if passed else '未通过（红）'}</strong>
+  校验门结论：<strong>{"通过（绿）" if passed else "未通过（红）"}</strong>
 </div>
 {banner}
 {warn_block}

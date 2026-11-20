@@ -67,6 +67,7 @@ def _now_iso() -> str:
 # 载荷归一（与 `vite.config.ts` 的 `readDocument` / POST 合并同形）
 # --------------------------------------------------------------------------- #
 
+
 def _text_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -173,6 +174,7 @@ def merge_report(
 # 落盘
 # --------------------------------------------------------------------------- #
 
+
 def _read_document(path: Path) -> dict[str, Any]:
     """读索引文件；不存在 / 半截 / 形状不对都当空索引（同 Vite，不让巡检或上报卡死）。"""
     try:
@@ -213,6 +215,7 @@ def _unlink_quietly(path: str) -> None:
 # 平面
 # --------------------------------------------------------------------------- #
 
+
 class StateIndexPlane:
     """`<data_root>/state/frontend-index.json` 的唯一读写入口。
 
@@ -249,6 +252,7 @@ class StateIndexPlane:
 # 闸门
 # --------------------------------------------------------------------------- #
 
+
 async def _guard(request: Request) -> None:
     """回环来源 + `Host` 白名单；不受 `LDST_CONTROL_ENABLED` 影响。"""
     if not control_plane.is_loopback_host(control_plane.client_host(request.client)):
@@ -279,6 +283,7 @@ async def _write_guard(request: Request) -> None:
 # --------------------------------------------------------------------------- #
 # 路由
 # --------------------------------------------------------------------------- #
+
 
 async def _read_body(request: Request) -> dict[str, Any]:
     """收 body 并解析成对象：超限 413（先认 `Content-Length`，再逐块累加），坏 JSON 400。"""

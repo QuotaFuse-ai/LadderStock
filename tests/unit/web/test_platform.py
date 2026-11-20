@@ -147,9 +147,7 @@ def test_restart_with_same_origin_loopback_passes(tmp_path: Path) -> None:
 
 def test_restart_with_foreign_origin_is_rejected(tmp_path: Path) -> None:
     client = _client(tmp_path)
-    response = client.post(
-        "/platform/restart", headers={"Origin": "http://evil.example"}
-    )
+    response = client.post("/platform/restart", headers={"Origin": "http://evil.example"})
     assert response.status_code == 403
 
 

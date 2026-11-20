@@ -67,7 +67,8 @@ afterEach(() => {
 describe('顶栏面包屑', () => {
   it('`/my-stocks` 显示所属一级栏目「我的股票」', () => {
     renderLayout('/my-stocks')
-    expect(within(topbar()).getByText('我的股票')).toBeTruthy()
+    // 顶栏现在有两处「我的股票」：面包屑 `strong` 与栏目内子导航的胶囊（子导航含同名的 `/my-stocks` 入口）
+    expect(within(topbar()).getByText('我的股票', { selector: 'strong' })).toBeTruthy()
     expect(within(topbar()).getByText('工作空间 /')).toBeTruthy()
   })
 
@@ -202,6 +203,6 @@ describe('移动端抽屉（<768px）', () => {
     fireEvent.click(within(dialog).getByRole('link', { name: /事件日历/ }))
 
     expect(screen.queryByRole('dialog', { name: '导航菜单' })).toBeNull()
-    expect(within(topbar()).getByText('我的股票')).toBeTruthy()
+    expect(within(topbar()).getByText('我的股票', { selector: 'strong' })).toBeTruthy()
   })
 })

@@ -41,7 +41,6 @@ def tool_params(tool: str, *, topic: str) -> dict[str, Any]:
     return {"topic": topic}
 
 
-
 def from_wire_envelope(
     dataset: str, envelope: dict[str, Any], *, topic: str | None = None
 ) -> LadderEnvelope:

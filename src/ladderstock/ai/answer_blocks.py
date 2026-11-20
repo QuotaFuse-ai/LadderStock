@@ -49,6 +49,12 @@ BLOCK_TABLE = "table"
 BLOCK_CITATION = "citation"
 BLOCK_NOTICE = "notice"
 BLOCK_ACTION = "action"
+#: 第 8 种（QUOT-6xx）：**对话正文块**。本轮没调任何工具（纯问答 / 能力说明 /
+#: 概念解释）时整轮只出这一块，正文原样、按句不切、不折叠。
+#: 为什么必须独立：`conclusion` 的语义是「只取首句当结论、剥数字、正文 4 行折叠」，
+#: 拿它承载闲聊会把「你好，我是研究助手。我能做的事：- 查行情 - 查涨停池 …」
+#: 切成「结论·中性」+「补充说明（4 行截断）」，同一段话被劈成两处还丢内容。
+BLOCK_NARRATIVE = "narrative"
 
 BLOCK_TYPES: tuple[str, ...] = (
     BLOCK_CONCLUSION,
@@ -58,6 +64,7 @@ BLOCK_TYPES: tuple[str, ...] = (
     BLOCK_CITATION,
     BLOCK_NOTICE,
     BLOCK_ACTION,
+    BLOCK_NARRATIVE,
 )
 
 #: D2 拍板取 6（QUOT-581 收口）。超限时由 `_enforce_limit` 瘦身 / 丢中段可省块。
@@ -77,7 +84,7 @@ TONES: tuple[str, ...] = ("neutral", "positive", "negative", "warning")
 DIRECTIONS: tuple[str, ...] = ("up", "down", "flat")
 CHART_KINDS: tuple[str, ...] = ("line", "bar", "area")
 
-#: `AiErrorNotice` 的 6 种 kind（§3.4）。`missing_data` 是 D7 新增的第 7 种，
+#: `AiErrorNotice` 的 6 种失败 kind（§3.4）。`missing_data` 是 D7 新增的第 7 种，
 #: 决策为「不新增」时删掉这一项即可。
 NOTICE_KINDS: tuple[str, ...] = (
     "network",
@@ -88,6 +95,10 @@ NOTICE_KINDS: tuple[str, ...] = (
     "degraded",
 )
 NOTICE_MISSING_DATA = "missing_data"
+#: 第 8 种、**不是失败**：承载「能力」「风险提示」「补充说明」「佐证」这类正常内容。
+#: 此前这些块借 `degraded`，前端于是显示成「AI 叙述降级 · 已用备用路径 / 本地回放」——
+#: 明明没降级却说降级，是错的话术，故独立成中性 kind。
+NOTICE_NOTE = "note"
 
 #: 与 `web/chat.py:434` `_source_note` 逐字一致（服务端文案，不是模型编的）。
 SOURCE_NOTE_WITHOUT_DATA = "（说明：本轮没有任何可核实的数据来源，以下内容不含具体行情数据。）"
@@ -106,6 +117,23 @@ CAPABILITY_NOTE = (
     "我可以：查当前页面的行情与指标数据、解释概念术语、做多标的对比、"
     "读页面上下文回答页内问题。我不做单只股票的深度研究，"
     "需要深挖时请到个股研究页提问。"
+)
+
+#: 「你会什么 / 你用哪些工具」的**能力边界清单**，注入首页与页面抽屉的提示词。
+#: 只固定「能做 / 不能做」的范围，措辞交给模型自由组织：同一个问题问两次允许说得不一样
+#: （用户明确要「每次稍有变动」），但不许超出这份范围，也不许把能力问题答成「这项没取到」。
+#: 清单里刻意不写具体代码与点位（红线：固定文案不带数字）。
+CAPABILITY_BRIEF = (
+    "个股实时行情、最近若干交易日的日线走势；"
+    "大盘主要指数的点位与涨跌；"
+    "涨停池、炸板名单、连板梯队、板块与概念强弱；"
+    "资金流向、龙虎榜、人气热股榜；"
+    "快讯与题材纪要、财务指标与业绩预告；"
+    "用户自己的自选股与持仓。"
+    "还能接长期盯盘：用户说盯哪几只、什么节奏（每天盘后 / 盘中间隔 / 有异动）、"
+    "比哪几项变化，就按节奏推进，结论进「提醒」。"
+    "不做的事：不给买卖建议、不预测价格；除实时报价与大盘指数外，其余读本机缓存的"
+    "最新交易日数据，要带上日期，不冒充实时；查不到的数据直接说没取到，不拿记忆补。"
 )
 
 #: `action.target` 只能指向既有页路由（frontend/src/routes.ts 的 `ROUTE_PATHS`，
@@ -519,7 +547,7 @@ def validate_notice(payload: Any) -> dict[str, Any]:
     body = _require_mapping(payload, "notice")
     _require_keys(body, ("kind",), ("kind", "section", "message", "actions"), "notice")
     kind = _require_str(body["kind"], "notice.kind")
-    allowed = NOTICE_KINDS + (NOTICE_MISSING_DATA,)
+    allowed = NOTICE_KINDS + (NOTICE_MISSING_DATA, NOTICE_NOTE)
     if kind not in allowed:
         raise AnswerBlockError(f"notice.kind 必须取自 {allowed}，收到 {kind!r}")
     cleaned: dict[str, Any] = {"kind": kind}
@@ -536,6 +564,18 @@ def validate_notice(payload: Any) -> dict[str, Any]:
             for i, action in enumerate(actions)
         ]
     return cleaned
+
+
+def validate_narrative(payload: Any) -> dict[str, Any]:
+    """对话正文块：整段回答原样展示（不按句切、不折叠、不剥数字）。
+
+    与研究卡的 `conclusion` 刻意分开：没调工具的轮次没有「首句即结论」这种结构，
+    压成结论 + 补充说明只会把正文切碎，还丢掉超 4 行的那部分。正文是模型原话；
+    数字可信度由 `sources` / `metrics` 决定——走到本块的轮次 `metrics` 恒为空。
+    """
+    body = _require_mapping(payload, "narrative")
+    _require_keys(body, ("text",), ("text",), "narrative")
+    return {"text": _require_str(body["text"], "narrative.text")}
 
 
 def validate_action(payload: Any) -> dict[str, Any]:
@@ -577,6 +617,7 @@ VALIDATORS = {
     BLOCK_CITATION: validate_citation,
     BLOCK_NOTICE: validate_notice,
     BLOCK_ACTION: validate_action,
+    BLOCK_NARRATIVE: validate_narrative,
 }
 
 
@@ -607,7 +648,9 @@ def check_ordering(blocks: Sequence[Mapping[str, Any]]) -> None:
         raise AnswerBlockError(f"块数 {len(blocks)} 超过上限 {MAX_BLOCKS}（§6.4-4）")
     types = [block.get("type") for block in blocks]
     failure_only = len(types) == 1 and types[0] == BLOCK_NOTICE
-    if not failure_only:
+    # 对话正文块同理：整轮没有取数时正文就是答案本身，没有「结论」可放首位。
+    narrative_only = len(types) == 1 and types[0] == BLOCK_NARRATIVE
+    if not failure_only and not narrative_only:
         if types[0] != BLOCK_CONCLUSION:
             raise AnswerBlockError(f"blocks[0] 必须是 conclusion（§6.4-1），收到 {types[0]!r}")
         for index, block_type in enumerate(types):
@@ -899,6 +942,11 @@ def build_blocks(
     # QUOT-615：意图分流。默认 data_query 保持既有行为（旧调用方不改不回归）；
     # chitchat 只出 conclusion（不出两类 missing_data notice），concept 不出指标 notice。
     intent: str = INTENT_DATA_QUERY,
+    # 本轮是否**真的发起过取数**。默认 True 保持既有行为。
+    # 传 False 时不摆「指标 / 来源没取到」——那是「没查」，不是「查了没取到」：
+    # 用户问「该查哪些数据」「这家公司基本面怎么样（但没说哪家）」时本就没取数，
+    # 报一屏缺失等于答错问题。这个判断由调用方按实际取数计划给，不靠关键词猜意图。
+    fetch_attempted: bool = True,
 ) -> list[dict[str, Any]]:
     """§7 装配：AI 只决定「说什么话」，程序决定「给什么数」和「怎么摆」。
 
@@ -962,16 +1010,25 @@ def build_blocks(
         blocks.append(
             build_block(
                 BLOCK_NOTICE,
-                {"kind": "degraded", "section": "能力", "message": CAPABILITY_NOTE},
+                {"kind": NOTICE_NOTE, "section": "能力", "message": CAPABILITY_NOTE},
             )
         )
         check_ordering(blocks)
         return blocks
 
-    # QUOT-615 意图分流：chitchat / concept 不出「指标」missing_data notice；
+    # QUOT-615 意图分流：chitchat / concept / needs_symbol 不出「指标」missing_data notice；
     # chitchat 连「来源」notice 也不出（问候语挂数据告警即答非所问）。
-    skip_metric_notice = intent in (INTENT_CHITCHAT, INTENT_CONCEPT)
-    skip_source_notice = intent == INTENT_CHITCHAT
+    # needs_symbol 同理：用户还没说是哪家公司，这时报「没取到数据」是答错问题——
+    # 该反问标的，不是罗列缺失项。
+    skip_metric_notice = (
+        intent
+        in (
+            INTENT_CHITCHAT,
+            INTENT_CONCEPT,
+        )
+        or not fetch_attempted
+    )
+    skip_source_notice = intent in (INTENT_CHITCHAT,) or not fetch_attempted
     emit_evidence = intent == INTENT_CONCEPT and bool(narrative["evidence"])
 
     # 1. 结论：narrative[0] 取第一句、剥数字（tone 中性、置信度不评级）；
@@ -994,9 +1051,14 @@ def build_blocks(
 
     # 2. 指标：白名单 + 出处；拿不到时如实说没取到，而不是凭空造数
     items = _pick_metrics(metrics)
+    chart = _series_block(metrics)
+    table = _table_block(metrics)
     if items:
         blocks.append(build_block(BLOCK_METRIC, {"items": items}))
-    elif not skip_metric_notice:
+    elif not skip_metric_notice and chart is None and table is None:
+        # 指标段为空 ≠ 本轮没取到数据：多行结果走「表格」、序列走「图」，这两种
+        # 形态本来就没有白名单标量键（四只指数的行情表就是一例）。这时再报
+        # 「本轮没有取到可核实的指标数据」，等于对着一屏真实数据说没数。
         blocks.append(
             build_block(
                 BLOCK_NOTICE,
@@ -1009,42 +1071,44 @@ def build_blocks(
         )
 
     # 3. 序列 → 图
-    chart = _series_block(metrics)
     if chart is not None:
         blocks.append(build_block(BLOCK_CHART, chart))
 
     # 4. 表格
-    table = _table_block(metrics)
     if table is not None:
         blocks.append(build_block(BLOCK_TABLE, table))
 
     # 5. 风险：必须可见，不折叠；每条独立 notice（notice 不得在首位）
-    #    这里借 kind="degraded" 承载「风险提示」：AiErrorNotice 现有 6 种 kind 里
-    #    没有「风险」这一档，detail 段落装风险提示是枚举约束下的取舍；待 D7 决策
-    #    补 risk kind 后改这里一处即可。
+    #    风险提示是正常内容，不是降级：用中性 `note`，标题取段名。
+    #    notice **永远剥数字**：校验器禁止 notice 携带数字（红线 4），`keep_numbers`
+    #    是给「正文允许保留有出处的数字」用的，不能给 notice 开口子——否则回答里
+    #    一出现带行情数字的分点，装配就抛 `AnswerBlockError`，整轮变成 500。
     for risk in narrative["risks"][:2]:
-        text = risk if keep_numbers else strip_numbers(risk)
+        text = strip_numbers(risk)
         if text:
             blocks.append(
                 build_block(
                     BLOCK_NOTICE,
-                    {"kind": "degraded", "section": "风险提示", "message": text},
+                    {"kind": NOTICE_NOTE, "section": "风险提示", "message": text},
                 )
             )
 
     # 6. narrative[1:] + highlights：合并成一条 notice，每块 ≤4 行
-    #    同样借 kind="degraded" 表达「补充说明」，原因见第 5 步。
+    #    同样是正常内容，用 `note`（见第 5 步）。
+    #    **含数字的行直接丢弃，不剥成残句**：agent 会把工具结果写成「最新点位 3634.35」
+    #    这样的分点，而 notice 不许带数字（红线 4）；剥完剩「最新点位」半句比不说更糟。
+    #    数字已经由 metric / table 块承载，正文只留定性描述。
     extras = [
-        line if keep_numbers else strip_numbers(line)
+        line
         for line in (narrative["narrative"][1:] + narrative["highlights"])
+        if line and not contains_number(line)
     ]
-    extras = [line for line in extras if line]
     if extras:
         blocks.append(
             build_block(
                 BLOCK_NOTICE,
                 {
-                    "kind": "degraded",
+                    "kind": NOTICE_NOTE,
                     "section": "补充说明",
                     "message": "\n".join(extras[:MAX_TEXT_LINES]),
                 },
@@ -1058,7 +1122,7 @@ def build_blocks(
                 blocks.append(
                     build_block(
                         BLOCK_NOTICE,
-                        {"kind": "degraded", "section": "佐证", "message": line},
+                        {"kind": NOTICE_NOTE, "section": "佐证", "message": line},
                     )
                 )
 
@@ -1161,6 +1225,7 @@ __all__ = [
     "METRIC_UNITS",
     "NOTICE_KINDS",
     "NOTICE_MISSING_DATA",
+    "NOTICE_NOTE",
     "ROUTE_TARGETS",
     "SOURCE_NOTE_NO_RECORD",
     "SOURCE_NOTE_PROFILE_ONLY",

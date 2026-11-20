@@ -94,9 +94,7 @@ class ModelChat:
     #: 生效模型来自哪一级（`module` / `global`）
     source: str = "global"
 
-    def complete(
-        self, model: str, system: str, user: str, *, json_mode: bool
-    ) -> str:
+    def complete(self, model: str, system: str, user: str, *, json_mode: bool) -> str:
         return self.client.complete(model, system, user, json_mode=json_mode)
 
 
@@ -218,9 +216,7 @@ def _default_chat() -> ModelChat:
 def narrative_keys_ok(note: str, event: NewsEvent) -> bool:
     """把「AI 只写叙述」这条闸门显式跑一遍：ai_note 不是指标键，越界就报错。"""
     metrics: Mapping[str, Any] = {
-        key: value
-        for key, value in event.as_dict().items()
-        if key != "ai_note"
+        key: value for key, value in event.as_dict().items() if key != "ai_note"
     }
     assert_narrative_only({"narrative": note}, metrics)
     return True

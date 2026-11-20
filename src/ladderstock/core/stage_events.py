@@ -101,9 +101,7 @@ class StageSpec:
     summary: str
 
 
-def _spec(
-    stage: str, module: str, module_class: str, phase: str, summary: str
-) -> StageSpec:
+def _spec(stage: str, module: str, module_class: str, phase: str, summary: str) -> StageSpec:
     return StageSpec(
         stage=stage, module=module, module_class=module_class, phase=phase, summary=summary
     )

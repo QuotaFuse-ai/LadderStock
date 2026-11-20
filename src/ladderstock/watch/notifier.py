@@ -65,9 +65,7 @@ def normalize_channel(channel: str | None) -> str:
     """把 `--channel` 归一：缺省用 `console`；未知渠道抛用法错误。"""
     text = (channel or "").strip().lower() or DEFAULT_CHANNEL
     if text not in CHANNELS:
-        raise UnknownNotifierChannel(
-            f"未知通知渠道 {channel!r}；可用：{', '.join(CHANNELS)}"
-        )
+        raise UnknownNotifierChannel(f"未知通知渠道 {channel!r}；可用：{', '.join(CHANNELS)}")
     return text
 
 
@@ -79,9 +77,8 @@ def _now_iso() -> str:
 # console
 # --------------------------------------------------------------------------- #
 
-def _send_console(
-    title: str, body: str, stream: IO[str] | None = None
-) -> DeliveryResult:
+
+def _send_console(title: str, body: str, stream: IO[str] | None = None) -> DeliveryResult:
     """写本机终端：走 stderr，保证 stdout 只留结构化结果（CLI.md §F）。"""
     target = stream if stream is not None else sys.stderr
     try:
@@ -109,6 +106,7 @@ def _send_console(
 # desktop
 # --------------------------------------------------------------------------- #
 
+
 def _desktop_backend() -> Callable[[str, str], None] | None:
     """找本机桌面通知后端：Windows 优先 winotify，其余平台退回 plyer。"""
     if sys.platform.startswith("win"):
@@ -119,9 +117,7 @@ def _desktop_backend() -> Callable[[str, str], None] | None:
         if winotify is not None:
 
             def _winotify(title: str, body: str) -> None:
-                toast = winotify.Notification(
-                    app_id="LadderStock", title=title, msg=body or " "
-                )
+                toast = winotify.Notification(app_id="LadderStock", title=title, msg=body or " ")
                 toast.show()
 
             return _winotify
@@ -131,9 +127,7 @@ def _desktop_backend() -> Callable[[str, str], None] | None:
         return None
 
     def _plyer(title: str, body: str) -> None:
-        plyer.notify(
-            title=title, message=body or " ", app_name="LadderStock", timeout=8
-        )
+        plyer.notify(title=title, message=body or " ", app_name="LadderStock", timeout=8)
 
     return _plyer
 
@@ -147,9 +141,7 @@ def _split_command(command: str) -> list[str]:
     """
     argv = shlex.split(command, posix=os.name != "nt")
     return [
-        token[1:-1]
-        if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'"
-        else token
+        token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
         for token in argv
     ]
 
@@ -218,8 +210,7 @@ def _send_desktop(title: str, body: str) -> DeliveryResult:
             channel=CHANNEL_DESKTOP,
             ok=False,
             detail=(
-                "未找到桌面通知后端（可安装 winotify，"
-                f"或设置 {DESKTOP_CMD_ENV} 指向本机通知命令）"
+                f"未找到桌面通知后端（可安装 winotify，或设置 {DESKTOP_CMD_ENV} 指向本机通知命令）"
             ),
             degraded=True,
             sent_at=stamp,
@@ -242,6 +233,7 @@ def _send_desktop(title: str, body: str) -> DeliveryResult:
 # --------------------------------------------------------------------------- #
 # 对外入口
 # --------------------------------------------------------------------------- #
+
 
 def send(
     channel: str | None,

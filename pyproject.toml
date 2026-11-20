@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ladderstock"
-version = "0.1.0.dev0"
+version = "0.2.2"
 description = "天梯股复盘台 · A 股短线复盘与跟踪工作台（LadderStock）"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,6 +30,12 @@ dependencies = [
   "qdrant-client>=1.12,<2",
   "fastembed>=0.3,<1",
   "onnxruntime>=1.18,<2",
+  # 模型自主选工具 / 定轮次的 agent 运行时（OpenAI Agents SDK）。进核心依赖而不是
+  # optional：AI 对话与研究台是主线功能，安装包必须自带，用户不该自己 pip install。
+  "openai-agents>=0.24,<1",
+  # 公告正文抽取（knowledge/fulltext.py）：TickHub 只给 PDF 链接，正文得自己解析。
+  # 纯 Python，无系统依赖，进核心依赖——知识库是主线能力，不能让它缺件。
+  "pypdf>=5.0,<8",
 ]
 
 [project.optional-dependencies]
@@ -69,6 +75,13 @@ warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = ["yaml.*", "jsonschema.*"]
+ignore_missing_imports = true
+
+# psycopg 是 FC 直读的**可选**依赖（本机装了才走直读，CI 里没装）。
+# 「找不到存根」只说明该可选依赖没安装，不是代码缺陷——整包忽略缺失导入，
+# 让本机与 CI 两侧判定一致（否则 CI 报 import-not-found、本机报 unused-ignore）。
+[[tool.mypy.overrides]]
+module = ["psycopg", "psycopg.*"]
 ignore_missing_imports = true
 
 # QUOT-611：进程内 mem0 SDK 及其可选运行时（torch / sentence-transformers）

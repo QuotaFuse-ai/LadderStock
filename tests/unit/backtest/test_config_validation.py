@@ -75,6 +75,7 @@ def _fallback() -> BacktestConfig:
 # 1. 文件名 / 路径 / 默认值口径
 # --------------------------------------------------------------------------- #
 
+
 def test_default_path_is_config_backtest_yaml(tmp_path: Path) -> None:
     assert default_config_path(tmp_path) == tmp_path / "config" / "backtest.yaml"
 
@@ -164,6 +165,7 @@ def test_repo_config_file_is_valid() -> None:
 # 2. 写坏了就报错，不回落默认值
 # --------------------------------------------------------------------------- #
 
+
 def test_missing_field_raises_instead_of_default(tmp_path: Path) -> None:
     broken = GOOD_YAML.replace("  slippage: 0.001\n", "")
     with pytest.raises(BacktestConfigError, match="slippage"):
@@ -195,6 +197,7 @@ def test_tiers_non_numeric_raises(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 数值规则
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "field",
@@ -273,6 +276,7 @@ def test_unknown_override_key_raises() -> None:
 # --------------------------------------------------------------------------- #
 # 4. CLI 覆盖：实际生效值 + 来源
 # --------------------------------------------------------------------------- #
+
 
 def test_cli_override_changes_value_and_source() -> None:
     cfg = _fallback().with_overrides(commission=0.0005)

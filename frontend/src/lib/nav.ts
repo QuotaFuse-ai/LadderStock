@@ -8,6 +8,7 @@ import {
   CalendarRange,
   CandlestickChart,
   ClipboardCheck,
+  Database,
   FlaskConical,
   Flame,
   Gauge,
@@ -170,7 +171,10 @@ export const NAV_SECTIONS: NavSection[] = [
     key: 'knowledge',
     label: '知识库',
     icon: BookOpen,
-    pages: [{ to: '/knowledge', label: '知识库', icon: BookOpen }],
+    pages: [
+      { to: '/knowledge', label: '个股档案', icon: BookOpen },
+      { to: '/data-assets', label: '数据资产', icon: Database },
+    ],
   },
 ]
 

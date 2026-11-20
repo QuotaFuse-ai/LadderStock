@@ -57,9 +57,7 @@ def data_dir(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
 def _seed(root: Path, day: date, boards: dict[str, int], *, with_broken: bool = True) -> None:
     """写入某交易日的涨停池 / 昨日涨停 / 炸板三张表。"""
     duckdb_store.write_dataset("limit_pool", _limit(day, boards), root=root)
-    duckdb_store.write_dataset(
-        "yesterday_limit_up", _codes(day, list(boards)), root=root
-    )
+    duckdb_store.write_dataset("yesterday_limit_up", _codes(day, list(boards)), root=root)
     if with_broken:
         duckdb_store.write_dataset("broken_board", _codes(day, ["300750"]), root=root)
 
@@ -82,6 +80,7 @@ def _write_conditions(root: Path, day: date) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 条件生成
 # --------------------------------------------------------------------------- #
+
 
 def test_conditions_are_derived_from_program_metrics(data_dir: Path) -> None:
     _seed(data_dir, DAY1, {"600000": 3, "000001": 1})
@@ -124,6 +123,7 @@ def test_conditions_skip_metrics_that_are_missing(data_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 对账：三档结果
 # --------------------------------------------------------------------------- #
+
 
 def test_reconcile_all_conditions_judged_exits_zero(data_dir: Path) -> None:
     _seed(data_dir, DAY1, {"600000": 3, "000001": 1})
@@ -185,9 +185,7 @@ def test_reconcile_missing_metric_marks_unknown_and_returns_partial(data_dir: Pa
     _seed(data_dir, DAY1, {"600000": 3, "000001": 1})
     _write_conditions(data_dir, DAY1)
     # 下一交易日只有涨停池：晋级率 / 封板率都算不出来
-    duckdb_store.write_dataset(
-        "limit_pool", _limit(DAY2, {"600000": 3}), root=data_dir
-    )
+    duckdb_store.write_dataset("limit_pool", _limit(DAY2, {"600000": 3}), root=data_dir)
 
     result = runner.invoke(
         app, ["validate", "reconcile", "--date", DAY1.isoformat(), "--output", "json"]

@@ -154,14 +154,13 @@ KLINE_VOLUME_UNIT = "手"
 #: 均线窗口：简单移动平均，只按本次返回的 bar 序列计算，不足窗口为 null。
 KLINE_MA_WINDOWS: tuple[int, ...] = (5, 10, 20, 60)
 KLINE_MA_NOTE = "均线按本次返回的窗口计算，窗口不足的值为空"
-KLINE_VOLUME_NOTE = (
-    "volume 单位为手（1 手 = 100 股）：上游 tencent_kline 原样透传，本接口不换算"
-)
+KLINE_VOLUME_NOTE = "volume 单位为手（1 手 = 100 股）：上游 tencent_kline 原样透传，本接口不换算"
 
 
 # --------------------------------------------------------------------------- #
 # 参数校验
 # --------------------------------------------------------------------------- #
+
 
 def _invalid(detail: str) -> HTTPException:
     """参数非法：SPEC 定的就是 422（控制面用 400，这里不能跟着改，前端按 422 写）。"""
@@ -233,9 +232,7 @@ def research_days(code: str, root: Path) -> list[str]:
     return sorted(days, reverse=True)
 
 
-def parse_day(
-    raw: Any, *, code: str, root: Path, allow_empty: bool | None = None
-) -> str:
+def parse_day(raw: Any, *, code: str, root: Path, allow_empty: bool | None = None) -> str:
     """`date` → `YYYY-MM-DD`；缺省取该代码最近一次运行日，一次记录都没有则 404。
 
     `allow_empty`（只给「开始研究」用）：一次记录都没有时缺省今天，不拿历史
@@ -263,9 +260,7 @@ def parse_stage(raw: Any) -> str:
     """续跑段名：只允许六段常量之一。"""
     text = str(raw).strip() if isinstance(raw, str) else ""
     if text not in checkpoint.STAGES:
-        raise _invalid(
-            f"only 只能是六段之一：{', '.join(checkpoint.STAGES)}，收到 {raw!r}"
-        )
+        raise _invalid(f"only 只能是六段之一：{', '.join(checkpoint.STAGES)}，收到 {raw!r}")
     return text
 
 
@@ -309,9 +304,7 @@ def parse_periods(raw: Any) -> int:
     try:
         periods = int(raw)
     except (TypeError, ValueError):
-        raise _invalid(
-            f"periods 必须是整数（1..{EARNINGS_PERIODS_MAX}），收到 {raw!r}"
-        ) from None
+        raise _invalid(f"periods 必须是整数（1..{EARNINGS_PERIODS_MAX}），收到 {raw!r}") from None
     if not 1 <= periods <= EARNINGS_PERIODS_MAX:
         raise _invalid(f"periods 必须在 1..{EARNINGS_PERIODS_MAX} 内，收到 {raw!r}")
     return periods
@@ -346,6 +339,7 @@ def parse_window(raw: Any, *, name: str, default: int) -> int:
 # --------------------------------------------------------------------------- #
 # 产物读取
 # --------------------------------------------------------------------------- #
+
 
 def _read_markdown(code: str, day: str, stage: str, root: Path) -> str | None:
     """读人读件 `<stage>.md`；不存在或读不出来返回 None（不编造正文）。"""
@@ -384,6 +378,7 @@ def _mtime_iso(code: str, day: str, stage: str, root: Path) -> str | None:
 # --------------------------------------------------------------------------- #
 # 任务
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class ResearchJob(control_plane.Job):
@@ -787,6 +782,7 @@ def _empty_event_reason(dataset: str, root: Path) -> str:
 # K 线图：载荷纯函数（QUOT-428，参考库 klineView.ts 的消费形状）
 # --------------------------------------------------------------------------- #
 
+
 def _bar_float(bar: dict[str, Any], key: str) -> float | None:
     """已投影的 bar 里的数值；缺失 / null 如实为 None，不补 0。"""
     value = bar.get(key)
@@ -837,9 +833,7 @@ def _moving_average(values: list[float | None], window: int) -> list[float | Non
     return averages
 
 
-def _kline_series(
-    bars: list[dict[str, Any]], upstream_pct: list[float | None]
-) -> dict[str, Any]:
+def _kline_series(bars: list[dict[str, Any]], upstream_pct: list[float | None]) -> dict[str, Any]:
     """`bars` → 参考库 `KlineSeries`：列式数组 + `change` + `ma`（窗口 5/10/20/60）。"""
     closes = [_bar_float(bar, "close") for bar in bars]
     return {
@@ -857,6 +851,7 @@ def _kline_series(
 # --------------------------------------------------------------------------- #
 # 研究面
 # --------------------------------------------------------------------------- #
+
 
 def senate_plain_timeout() -> float:
     """白话结论的读取预算（秒）：默认 3s，`LDST_SENATE_PLAIN_TIMEOUT` 可覆盖。
@@ -957,9 +952,7 @@ class ResearchPlane:
             )
         return summary
 
-    def _status_payload(
-        self, code: str, day: str, summary: Mapping[str, Any]
-    ) -> dict[str, Any]:
+    def _status_payload(self, code: str, day: str, summary: Mapping[str, Any]) -> dict[str, Any]:
         stages: list[dict[str, Any]] = []
         degraded_any = False
         for entry in summary["stages"]:
@@ -1026,9 +1019,7 @@ class ResearchPlane:
                 payload["disclaimer"] = disclaimer
         return payload
 
-    def _senate_plain(
-        self, code: str, day: str
-    ) -> tuple[dict[str, Any] | None, str | None]:
+    def _senate_plain(self, code: str, day: str) -> tuple[dict[str, Any] | None, str | None]:
         """只读拉取 StockSenate 当日报告的 `sections.plain`（QUOT-536 契约）。
 
         走既有 Senate 读取路径：`council_memo` → MCP `stock_senate_report_query`
@@ -1076,9 +1067,7 @@ class ResearchPlane:
             kline_rows = archive.read_dataset("daily_k", None, root=self.data_root)
             finance_rows = archive.read_dataset("finance_indicators", None, root=self.data_root)
         except OSError as exc:
-            raise HTTPException(
-                status_code=500, detail=f"概览数据读取失败：{exc}"
-            ) from None
+            raise HTTPException(status_code=500, detail=f"概览数据读取失败：{exc}") from None
 
         mine = [row for row in kline_rows if _row_code(row) == bare]
         as_of = (
@@ -1157,8 +1146,7 @@ class ResearchPlane:
             (
                 item
                 for item in records or []
-                if isinstance(item, Mapping)
-                and str(item.get("code") or "").strip() == bare
+                if isinstance(item, Mapping) and str(item.get("code") or "").strip() == bare
             ),
             None,
         )
@@ -1318,9 +1306,7 @@ class ResearchPlane:
                 "consensus_forecast", None, code=bare, root=self.data_root
             )
         except OSError as exc:
-            raise HTTPException(
-                status_code=500, detail=f"财报数据读取失败：{exc}"
-            ) from None
+            raise HTTPException(status_code=500, detail=f"财报数据读取失败：{exc}") from None
 
         consensus = _consensus_view(consensus_rows)
         forecasts = _forecast_index(preview_rows)
@@ -1336,9 +1322,7 @@ class ResearchPlane:
                 {
                     "report_date": report_date,
                     "report_name": pick(row, REPORT_NAME_KEYS),
-                    "actual": {
-                        field: pick(row, source) for field, source in ACTUAL_FIELDS
-                    },
+                    "actual": {field: pick(row, source) for field, source in ACTUAL_FIELDS},
                     "forecast": forecast,
                     "forecast_reason": None if forecast else NO_FORECAST,
                     "publish_date": None,
@@ -1375,9 +1359,7 @@ class ResearchPlane:
             else "本地 consensus_forecast 无这只代码的缓存（未同步或上游无数据）"
         )
         earnings_reason = (
-            None
-            if earnings
-            else f"本地 finance_indicators 没有 {bare} 的报告期记录（未同步）"
+            None if earnings else f"本地 finance_indicators 没有 {bare} 的报告期记录（未同步）"
         )
         payload: dict[str, Any] = {
             "code": code,
@@ -1421,25 +1403,17 @@ class ResearchPlane:
         require_known_code(code)
         bare = code.partition(".")[0]
         sources = parse_sources(raw_sources)
-        before = parse_window(
-            raw_before, name="window_before", default=EVENT_WINDOW_BEFORE_DEFAULT
-        )
-        after = parse_window(
-            raw_after, name="window_after", default=EVENT_WINDOW_AFTER_DEFAULT
-        )
+        before = parse_window(raw_before, name="window_before", default=EVENT_WINDOW_BEFORE_DEFAULT)
+        after = parse_window(raw_after, name="window_after", default=EVENT_WINDOW_AFTER_DEFAULT)
         try:
-            stock_rows = duckdb_store.query_dataset(
-                "daily_k", None, code=bare, root=self.data_root
-            )
+            stock_rows = duckdb_store.query_dataset("daily_k", None, code=bare, root=self.data_root)
             index_rows = archive.read_dataset("index_daily", None, root=self.data_root)
             event_rows = {
                 dataset: duckdb_store.query_dataset(dataset, None, code=bare, root=self.data_root)
                 for dataset in sources
             }
         except OSError as exc:
-            raise HTTPException(
-                status_code=500, detail=f"事件数据读取失败：{exc}"
-            ) from None
+            raise HTTPException(status_code=500, detail=f"事件数据读取失败：{exc}") from None
 
         bench_rows = [row for row in index_rows if _row_code(row) == BENCHMARK_CODE]
         bench_days = sorted({_row_day(row) for row in bench_rows if _row_day(row)})
@@ -1472,9 +1446,7 @@ class ResearchPlane:
                     after=after,
                 )
             windows = [
-                event["window"]
-                for event in events
-                if event["window"]["excess_return"] is not None
+                event["window"] for event in events if event["window"]["excess_return"] is not None
             ]
             computed_any = computed_any or bool(windows)
             count = len(events)
@@ -1482,9 +1454,7 @@ class ResearchPlane:
             sample: dict[str, Any] = {
                 "required": EVENT_SAMPLE_MIN,
                 "window_available": len(windows),
-                "status": (
-                    "ok" if len(windows) >= EVENT_SAMPLE_MIN else "insufficient_sample"
-                ),
+                "status": ("ok" if len(windows) >= EVENT_SAMPLE_MIN else "insufficient_sample"),
                 "mean_stock_return": None,
                 "mean_benchmark_return": None,
                 "mean_excess_return": None,
@@ -1510,9 +1480,7 @@ class ResearchPlane:
                 # 把「为什么算不出来」的原因带出来：只有「0 < 8」等于没说，
                 # 页面要能看出是基准覆盖不到还是个股缺收盘价（QUOT-446 缺口清单）。
                 causes = Counter(
-                    event["window"]["reason"]
-                    for event in events
-                    if event["window"]["reason"]
+                    event["window"]["reason"] for event in events if event["window"]["reason"]
                 )
                 top = causes.most_common(1)[0] if causes else None
                 sample["reason"] = (
@@ -1697,6 +1665,7 @@ def _now_iso() -> str:
 # 闸门与路由
 # --------------------------------------------------------------------------- #
 
+
 async def _guard(request: Request) -> None:
     """研究接口的来源闸门：回环来源 + `Host` 白名单，写方法另需正向来源证据。
 
@@ -1772,12 +1741,8 @@ def build_router(plane: ResearchPlane) -> APIRouter:
         period: Annotated[
             str | None, Query(description="daily / weekly / monthly，缺省 daily")
         ] = None,
-        adjust: Annotated[
-            str | None, Query(description="qfq / hfq / none，缺省 qfq")
-        ] = None,
-        limit: Annotated[
-            int | None, Query(gt=0, description="根数，缺省 120，上限 500")
-        ] = None,
+        adjust: Annotated[str | None, Query(description="qfq / hfq / none，缺省 qfq")] = None,
+        limit: Annotated[int | None, Query(gt=0, description="根数，缺省 120，上限 500")] = None,
     ) -> dict[str, Any]:
         """K 线图（QUOT-410）：三档周期 × 三档复权运行时透传给 `tencent_kline`。"""
         return plane.kline(code, period, adjust, limit)

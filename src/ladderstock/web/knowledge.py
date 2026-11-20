@@ -29,6 +29,7 @@ from ladderstock.knowledge.model import (
 from ladderstock.knowledge.recall import recall
 from ladderstock.knowledge.store import (
     PathEscape,
+    load_manifest,
     load_profile,
 )
 from ladderstock.web import control as control_plane
@@ -41,6 +42,58 @@ class KnowledgePlane:
 
     def __init__(self, data_root: Any) -> None:
         self.data_root = data_root
+
+    def list(self) -> dict[str, Any]:
+        """`GET /api/knowledge`：已攒下哪些档案（manifest 索引 + 每份的现算状态）。
+
+        manifest 里有条目但 `profile.md` 缺失（只有 run 归档、没成档案）时，
+        条目照列、`has_profile: false`，页面据此提示「还没成档案」——
+        不把「索引里有、正文没有」伪装成「没有这只票」。
+        """
+        manifest = load_manifest(self.data_root)
+        today = sh_today()
+        items: list[dict[str, Any]] = []
+        for key, entry in (manifest.get("companies") or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            market_raw, _, symbol_raw = str(key).partition(":")
+            try:
+                market_norm = normalize_market(market_raw)
+                symbol_norm = normalize_symbol(symbol_raw)
+            except KnowledgeError:
+                continue
+            dossier = load_profile(self.data_root, market_norm, symbol_norm)
+            if dossier is None:
+                items.append(
+                    {
+                        "market": market_norm,
+                        "symbol": symbol_norm,
+                        "name": "",
+                        "as_of": str(entry.get("as_of") or ""),
+                        "status": str(entry.get("status") or ""),
+                        "valid_days": None,
+                        "has_profile": False,
+                        "sources": 0,
+                        "body_chars": 0,
+                    }
+                )
+                continue
+            status = dossier.computed_status(today)
+            items.append(
+                {
+                    "market": market_norm,
+                    "symbol": symbol_norm,
+                    "name": dossier.name,
+                    "as_of": dossier.as_of,
+                    "status": status,
+                    "valid_days": dossier.valid_days,
+                    "has_profile": True,
+                    "sources": len(dossier.sources),
+                    "body_chars": len(dossier.body or ""),
+                }
+            )
+        items.sort(key=lambda item: (item["as_of"], item["symbol"]), reverse=True)
+        return {"ok": True, "today": today, "count": len(items), "items": items}
 
     def get(self, market: str, symbol: str, *, include_recalled: bool = True) -> dict[str, Any]:
         """接口主逻辑：校验 → 读档案 → 判状态 →（可选）附召回结果。"""
@@ -101,6 +154,11 @@ async def _guard(request: Request) -> None:
 def build_router(plane: KnowledgePlane) -> APIRouter:
     """构造 `/api/knowledge` 一个只读路由。"""
     router = APIRouter(prefix=KNOWLEDGE_PREFIX, dependencies=[Depends(_guard)])
+
+    @router.get("")
+    def knowledge_index() -> dict[str, Any]:
+        """已攒档案清单：代码 / 名称 / 更新于 / 状态 / 是否已成档案。"""
+        return plane.list()
 
     @router.get("/{market}/{symbol}")
     def knowledge_get(

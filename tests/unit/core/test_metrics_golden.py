@@ -40,6 +40,7 @@ runner = CliRunner()
 # 夹具装载
 # --------------------------------------------------------------------------- #
 
+
 def load_case(path: Path) -> dict[str, Any]:
     case: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     assert case["datasets"].keys() >= {"limit_pool", "broken_board", "yesterday_limit_up"}
@@ -100,6 +101,7 @@ def assert_matches(expected: dict[str, Any], actual: dict[str, Any], label: str)
 # 1. 情绪指标：手算值 vs core
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("path", CASES, ids=IDS)
 def test_sentiment_matches_hand_calculation(
     path: Path, patch_snapshot: Callable[[dict[str, Any]], None]
@@ -119,6 +121,7 @@ def test_sentiment_matches_hand_calculation(
 # 2. 连板天梯：手算值 vs core（含层序与龙头顺序）
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("path", CASES, ids=IDS)
 def test_ladder_matches_hand_calculation(path: Path) -> None:
     case = load_case(path)
@@ -130,6 +133,7 @@ def test_ladder_matches_hand_calculation(path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 温度公式独立复算：只用文档口径的输入复算，不再调 core
 # --------------------------------------------------------------------------- #
+
 
 def documented_temperature(
     promotion: float | None, seal: float | None, height: int | None
@@ -169,6 +173,7 @@ def test_temperature_recomputes_from_reported_components(
 # 4. 断层定义独立复算：gap_levels 必须是 1..height-1 里缺席的层级
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("path", CASES, ids=IDS)
 def test_gap_levels_are_absent_interior_levels(path: Path) -> None:
     case = load_case(path)
@@ -188,10 +193,9 @@ def test_gap_levels_are_absent_interior_levels(path: Path) -> None:
 # 5. CLI 对拍：`ldst sentiment show` / `ldst ladder show` 必须与手算值一致
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("path", CASES, ids=IDS)
-def test_cli_matches_golden(
-    path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_matches_golden(path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     case = load_case(path)
     monkeypatch.setenv("LDST_DATA_DIR", str(tmp_path))
     for dataset, rows in case["datasets"].items():
@@ -206,9 +210,7 @@ def test_cli_matches_golden(
 
     # D-03：数据不可用时退出码 6（DEC-003「6 = 无结果」），stderr 仍给原因。
     expected_sentiment_code = 0 if case["expected"]["sentiment"]["available"] else 6
-    sentiment_run = runner.invoke(
-        app, ["sentiment", "show", "--date", DAY, "--output", "json"]
-    )
+    sentiment_run = runner.invoke(app, ["sentiment", "show", "--date", DAY, "--output", "json"])
     assert sentiment_run.exit_code == expected_sentiment_code, sentiment_run.stderr
     envelope = json.loads(sentiment_run.stdout)
     # D-02：外层是 `LadderEnvelope`，溯源键必须存在（缺数据时为 null，不是省略）。
@@ -225,14 +227,10 @@ def test_cli_matches_golden(
     else:
         assert envelope["data_as_of"] is None
         assert envelope["backend"] == "none"
-    assert_matches(
-        case["expected"]["sentiment"], sentiment_payload, f"{path.stem}.cli.sentiment"
-    )
+    assert_matches(case["expected"]["sentiment"], sentiment_payload, f"{path.stem}.cli.sentiment")
 
     expected_ladder_code = 0 if case["expected"]["ladder"]["available"] else 6
-    ladder_run = runner.invoke(
-        app, ["ladder", "show", "--date", DAY, "--output", "json"]
-    )
+    ladder_run = runner.invoke(app, ["ladder", "show", "--date", DAY, "--output", "json"])
     assert ladder_run.exit_code == expected_ladder_code, ladder_run.stderr
     ladder_envelope = json.loads(ladder_run.stdout)
     assert {"data_as_of", "cached_at", "backend"} <= set(ladder_envelope)
@@ -288,8 +286,6 @@ def test_ai_cannot_overwrite_metric_keys() -> None:
     with pytest.raises(boundary.BoundaryViolation):
         boundary.merge_narrative(metrics, {"summary": "自由发挥"})
 
-    merged = boundary.merge_narrative(
-        metrics, {"narrative": "情绪回暖", "degraded": False}
-    )
+    merged = boundary.merge_narrative(metrics, {"narrative": "情绪回暖", "degraded": False})
     assert merged["temperature"] == 71.4  # 指标原样保留
     assert merged["ai"] == {"narrative": "情绪回暖", "degraded": False}

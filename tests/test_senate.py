@@ -199,7 +199,7 @@ class GetContractTest(_SenateCase):
         names = [provider["name"] for provider in payload["providers"]]
         for expected in (*REAL_PROVIDERS, "offline"):
             self.assertIn(expected, names)
-        invented = ("anthropic", "google", "openrouter", "ollama", "lmstudio", "custom", "azure")
+        invented = ("anthropic", "google", "openrouter", "lmstudio", "custom", "azure")
         for name in invented:
             self.assertNotIn(name, names)
         minimax = next(p for p in payload["providers"] if p["name"] == "minimax")
@@ -331,9 +331,12 @@ class PutContractTest(_SenateCase):
             }
         )
         llm = self.senate.parsed()["llm"]
-        # StockSenate 的角色条目只认 provider / model：变量名落在全局 [llm].api_key_env。
-        self.assertEqual(llm["role_llms"]["bull"], {"provider": "minimax", "model": "MiniMax-M2"})
-        self.assertEqual(llm["api_key_env"], "MINIMAX_API_KEY")
+        # StockSenate 1.0.4 起角色条目本身认 `api_key_env`（逐角色密钥变量名），
+        # 明文值一律不落盘。
+        self.assertEqual(
+            llm["role_llms"]["bull"],
+            {"provider": "minimax", "model": "MiniMax-M2", "api_key_env": "MINIMAX_API_KEY"},
+        )
         self.assertNotIn(SENTINEL_KEY, self.senate.config_text)
 
     def test_stale_revision_rejected(self) -> None:

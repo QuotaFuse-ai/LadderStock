@@ -43,9 +43,7 @@ def weekly(
     week: Annotated[
         str | None, typer.Option("--week", help="ISO 周标签 YYYY-Www（缺省本周）")
     ] = None,
-    force: Annotated[
-        bool, typer.Option("--force", help="已完成的段落也重新生成")
-    ] = False,
+    force: Annotated[bool, typer.Option("--force", help="已完成的段落也重新生成")] = False,
     output: OutputOption = None,
 ) -> None:
     """生成本周（或指定周）的周度复盘：程序聚合事实包 + 五段 AI 叙述。"""

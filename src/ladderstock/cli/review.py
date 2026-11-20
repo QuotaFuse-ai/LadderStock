@@ -40,6 +40,7 @@ from ladderstock.review import pipeline
 # 工具
 # --------------------------------------------------------------------------- #
 
+
 def parse_date(value: str) -> str:
     """`--date` 必须是 YYYY-MM-DD；非法直接 2（参数错误）。"""
     try:
@@ -88,6 +89,7 @@ def _metric_envelope(
 # --------------------------------------------------------------------------- #
 # review
 # --------------------------------------------------------------------------- #
+
 
 def review(
     ctx: typer.Context,
@@ -149,10 +151,7 @@ def review_show(
 
     report = pipeline.load_report(day)
     if report is None:
-        error(
-            f"没有 {day} 的复盘：{pipeline.review_path(day)}"
-            f"（先运行 ldst review --date {day}）"
-        )
+        error(f"没有 {day} 的复盘：{pipeline.review_path(day)}（先运行 ldst review --date {day}）")
         raise typer.Exit(EXIT_NOT_FOUND)
     emit(report, output)
     raise typer.Exit(EXIT_OK)
@@ -161,6 +160,7 @@ def review_show(
 # --------------------------------------------------------------------------- #
 # validate
 # --------------------------------------------------------------------------- #
+
 
 def validate(
     ctx: typer.Context,
@@ -228,6 +228,7 @@ def validate_reconcile(
 # 核心指标
 # --------------------------------------------------------------------------- #
 
+
 def sentiment_show(
     ctx: typer.Context,
     date: Annotated[str | None, typer.Option(help="交易日 YYYY-MM-DD")] = None,
@@ -242,9 +243,7 @@ def sentiment_show(
     day = parse_date(date)
 
     snapshot = sentiment_module.compute_sentiment(day)
-    meta = ladder_module.cache_meta(
-        ["limit_pool", "broken_board", "yesterday_limit_up"], day
-    )
+    meta = ladder_module.cache_meta(["limit_pool", "broken_board", "yesterday_limit_up"], day)
     emit(
         _metric_envelope(
             domain="sentiment",
@@ -294,6 +293,7 @@ def ladder_show(
 # --------------------------------------------------------------------------- #
 # 注册
 # --------------------------------------------------------------------------- #
+
 
 def register(
     review_app: typer.Typer,

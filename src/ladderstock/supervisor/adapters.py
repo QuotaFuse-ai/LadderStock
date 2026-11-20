@@ -23,18 +23,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
-from ladderstock.supervisor.modules import module_ports
+from ladderstock.supervisor.modules import MODULE_PORTS, module_ports
 
 # 端口白名单唯一来源是 `supervisor.modules`（QUOT-491 / 482-C 落地）；QUOT-593
-# 起按环境分表，`MODULE_PORTS` 不再是静态常量：模块级 `__getattr__` 按当前
-# 环境解析成端口表快照（`from adapters import MODULE_PORTS` 兼容旧引用），
-# registry 校验一律走 `module_ports()` 的实时值。
-
-
-def __getattr__(name: str):
-    if name == "MODULE_PORTS":
-        return module_ports()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# 起按环境分表。`MODULE_PORTS` 是 `modules` 里的动态代理对象（按当前环境实时
+# 解析），这里**直接绑定它**，不要再用模块级 `__getattr__` 现算：
+# 动态 `__getattr__` 会骗过 `hasattr`，`monkeypatch.setattr(adapters,
+# "MODULE_PORTS", ports)` 撤销时会把当次解析的快照**固化成真实属性**，
+# 于是之后所有 registry 校验都按那一次的环境走（全量顺序下
+# `test_env_ports` 的 test 环境断言全线红）。
+# 真实属性则由 monkeypatch 原样还原成同一个代理对象。
 
 #: 启动顺序（QUOT-482 派单正文 + QUOT-523 追加 watch）；`stop_all` 严格取反向。
 MODULE_ORDER: tuple[str, ...] = (
@@ -42,15 +40,15 @@ MODULE_ORDER: tuple[str, ...] = (
     "tickhub_us",
     "wire",
     "senate",
+    # Qdrant（2026-11-18 用户裁决）：本地单体二进制 + MCP 面，一个入口
+    # `run_stack.py`。排在这里是因为 senate / financecoffer 的知识库与
+    # 记忆都要它先就位；不排在最后，免得看门狗起来时向量层还是空的。
+    "qdrant",
     "financecoffer",
     "proxyfleet",
     "watch",
 )
 
-#: 按需模块（QUOT-506）：在册、实现同一 `ModuleAdapter` 协议，但**不在** `MODULE_ORDER`。
-#: `start_all` / `stop_all` 不碰它们——只能经单模块入口（`start_module`）显式拉起，
-#: 这是「默认不启动」的结构保证，不是某个开关的默认值。
-#: 按需模块的端口由配置决定（`MODULE_PORTS` 登记为空元组），registry 不做等值校验。
 ON_DEMAND_MODULES: frozenset[str] = frozenset({"proxypool"})
 
 
@@ -104,9 +102,7 @@ def module_registry(adapters: dict[str, ModuleAdapter]) -> dict[str, ModuleAdapt
     missing = set(MODULE_ORDER) - set(adapters)
     unknown = set(adapters) - set(MODULE_ORDER) - ON_DEMAND_MODULES
     if missing or unknown:
-        raise ValueError(
-            f"适配器集合与模块注册表不符：缺 {sorted(missing)}，多 {sorted(unknown)}"
-        )
+        raise ValueError(f"适配器集合与模块注册表不符：缺 {sorted(missing)}，多 {sorted(unknown)}")
     for name, adapter in adapters.items():
         if name in ON_DEMAND_MODULES:
             continue

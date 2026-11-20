@@ -82,6 +82,7 @@ def _digest_transport(
 # 扇出：一个 slug 一次调用
 # --------------------------------------------------------------------------- #
 
+
 def test_topic_pool_fans_out_one_call_per_slug(data_home) -> None:
     transport = _digest_transport()
     registry = make_registry(transport, data_home, sync=_sync_doc(POOL))
@@ -127,6 +128,7 @@ def test_plain_envelope_without_the_shell_also_lands(data_home) -> None:
 # 空池：一次调用都不发
 # --------------------------------------------------------------------------- #
 
+
 def test_empty_topic_pool_issues_no_calls_and_skips(data_home) -> None:
     transport = _digest_transport()
     registry = make_registry(transport, data_home, sync=_sync_doc([]))
@@ -169,11 +171,10 @@ def test_blank_topic_is_a_config_error_not_a_call(data_home) -> None:
 # 链路守卫：`event_id` 维度的备源不进按日链路（DEC-043）
 # --------------------------------------------------------------------------- #
 
+
 def test_non_topic_fallback_in_chain_is_a_config_error(data_home) -> None:
     transport = _digest_transport()
-    registry = make_registry(
-        transport, data_home, sync=_sync_doc(POOL, fallback=["wire_timeline"])
-    )
+    registry = make_registry(transport, data_home, sync=_sync_doc(POOL, fallback=["wire_timeline"]))
 
     with pytest.raises(LadderStockError) as excinfo:
         run_sync(registry, _store(data_home), ["theme_news"])
@@ -195,6 +196,7 @@ def test_explicit_empty_fallback_is_not_refilled_from_sources(data_home) -> None
 # --------------------------------------------------------------------------- #
 # 部分失败：一个坏 slug 不废掉整池
 # --------------------------------------------------------------------------- #
+
 
 def test_one_unknown_slug_does_not_drop_the_rest(data_home) -> None:
     """冷却是**跨轮**闸门：单个入参被上游拒了不等于 peer 不健康。
@@ -235,6 +237,7 @@ def test_fanout_stops_after_consecutive_failures(data_home) -> None:
 # --------------------------------------------------------------------------- #
 # 降级：上游没有的字段就是 null，不冒 0
 # --------------------------------------------------------------------------- #
+
 
 def test_partial_digest_is_reported_degraded_not_ok(data_home) -> None:
     """Wire 的 LLM 上游不可达时回 `status=partial` + 兜底 summary：

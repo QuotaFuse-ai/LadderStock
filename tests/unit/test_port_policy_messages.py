@@ -91,12 +91,8 @@ def test_mcp_http_with_legacy_port_prints_hint_before_starting(
     calls: list[str] = []
 
     monkeypatch.setattr("ladderstock.cli.mcp.port_free", lambda _port, _host: True)
-    monkeypatch.setattr(
-        "ladderstock.mcp.server.create_http_app", lambda **_kw: object()
-    )
-    monkeypatch.setattr(
-        "uvicorn.run", lambda *_a, **_kw: calls.append("uvicorn.run")
-    )
+    monkeypatch.setattr("ladderstock.mcp.server.create_http_app", lambda **_kw: object())
+    monkeypatch.setattr("uvicorn.run", lambda *_a, **_kw: calls.append("uvicorn.run"))
 
     result = runner.invoke(app, ["mcp", "http", "--port", "8770"])
 
@@ -182,9 +178,7 @@ def test_mcp_http_real_addr_in_use_keeps_port_wording(
         raise OSError(errno.EADDRINUSE, "Address already in use")
 
     monkeypatch.setattr("ladderstock.cli.mcp.port_free", lambda _port, _host: True)
-    monkeypatch.setattr(
-        "ladderstock.mcp.server.create_http_app", lambda **_kw: object()
-    )
+    monkeypatch.setattr("ladderstock.mcp.server.create_http_app", lambda **_kw: object())
     monkeypatch.setattr("uvicorn.run", busy)
 
     result = runner.invoke(app, ["mcp", "http", "--port", "5979"])

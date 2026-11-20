@@ -115,6 +115,11 @@ _CLOSE_SOURCES: dict[str, Any] = {
                 "cooldown_sec": 60,
             }
             for dataset, tool in (
+                # 复盘情绪段直接依赖的两份池子（QUOT-347 起随 15:35 一起落）
+                ("broken_board", "broken_board_pool"),
+                ("yesterday_limit_up", "yesterday_limit_up_pool"),
+                # 行业维度退路：题材段没有 industry_board 时读它
+                ("industry_fund_flow", "board_fund_flow"),
                 ("consensus_forecast", "ths_eps_forecast"),
                 ("holder_trades", "holder_trades"),
                 ("institution_survey", "institution_survey"),
@@ -136,6 +141,26 @@ _CLOSE_SYNC: dict[str, Any] = {
             },
             "concept_board": {
                 "primary": "tickhub_concept",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+            },
+            # 复盘情绪段的两份池子
+            "broken_board": {
+                "primary": "tickhub_broken_board",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+            },
+            "yesterday_limit_up": {
+                "primary": "tickhub_yesterday_limit_up",
+                "fallback": [],
+                "watermark_field": "trade_date",
+                "mode": "replace",
+            },
+            # 行业维度退路：题材段优先 industry_board，缺了读板块资金流
+            "industry_fund_flow": {
+                "primary": "tickhub_industry_fund_flow",
                 "fallback": [],
                 "watermark_field": "trade_date",
                 "mode": "replace",
@@ -226,6 +251,11 @@ def _close_transport(day: str, fund_flow_rows: dict[str, int] | None = None) -> 
         handlers={
             "limit_up_pool": lambda _params: tickhub_payload(_limit_rows(day)),
             "concept_boards": lambda _params: tickhub_payload(_concept_rows(day)),
+            # 复盘情绪段的两份池子（形状与涨停池同构）
+            "broken_board_pool": lambda _params: tickhub_payload(_limit_rows(day)),
+            "yesterday_limit_up_pool": lambda _params: tickhub_payload(_limit_rows(day)),
+            # 行业维度退路（板块行，require_code=False）
+            "board_fund_flow": lambda _params: tickhub_payload(_concept_rows(day)),
             "stock_fund_flow": fund_handler,
             # QUOT-446：事件类工具的返回形状（对象快照 / 行列表 / 包一层 klines）。
             "ths_eps_forecast": lambda params: tickhub_payload(
@@ -307,6 +337,7 @@ def _close_transport(day: str, fund_flow_rows: dict[str, int] | None = None) -> 
 # 1. 注册面
 # --------------------------------------------------------------------------- #
 
+
 def test_schema_accepts_sync_close_kind() -> None:
     table = _default_table()
     validate_table(table)  # 不抛即通过（新 kind 已进 enum）
@@ -352,6 +383,7 @@ def test_structural_fallback_knows_sync_close() -> None:
 # --------------------------------------------------------------------------- #
 # 2 / 3. 分发面与边界（run_sync、generate 用桩替换，只验接线）
 # --------------------------------------------------------------------------- #
+
 
 def _patch_sync(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) -> list[list[str]]:
     """替换 `run_sync`，记录它收到的数据集顺序；返回调用记录。"""
@@ -411,9 +443,7 @@ def test_run_job_maps_sync_exit_code(
     calls = _patch_sync(monkeypatch, _sync_payload(exit_code))
     _patch_generate_ok(monkeypatch)
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
     assert result["status"] == expected, result
     assert calls == [list(CLOSE_SYNC_DATASETS)]
@@ -427,11 +457,11 @@ def test_run_job_detail_quotes_real_row_counts(
     _patch_sync(monkeypatch, _sync_payload(EXIT_OK))
     _patch_generate_ok(monkeypatch)
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
-    assert "concept_board=ok(+30/300)" in result["detail"], result
+    # 每个数据集的计数都来自 run_sync 的真实字段（顺序按 CLOSE_SYNC_DATASETS）
+    for i, dataset in enumerate(CLOSE_SYNC_DATASETS, start=1):
+        assert f"{dataset}=ok(+{10 * i}/{100 * i})" in result["detail"], result
     assert "交易日 1 个" in result["detail"], result
     assert "分区 0" not in result["detail"], result
 
@@ -445,9 +475,7 @@ def test_run_job_review_failure_degrades_but_keeps_sync_ok(
         lambda day, root=None: ({}, SimpleNamespace(failed=True, degraded=False)),
     )
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
     assert result["status"] == "degraded"
     assert "复盘" in result["detail"]
@@ -466,9 +494,7 @@ def test_run_job_config_error_folds_to_failed_without_raising(
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该跑到复盘")),
     )
 
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=tmp_path)
 
     assert result["status"] == "failed"
     assert "收盘同步中止" in result["detail"]
@@ -477,6 +503,7 @@ def test_run_job_config_error_folds_to_failed_without_raising(
 # --------------------------------------------------------------------------- #
 # 4. 落库面：真 run_sync + 离线桩，验证日分区、幂等、fund_flow 增长
 # --------------------------------------------------------------------------- #
+
 
 @pytest.fixture()
 def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -509,10 +536,8 @@ def test_sync_close_writes_daily_partitions_and_idempotent(
     transport = _close_transport(TRADING_DAY)
     _wire(monkeypatch, transport, data_home)
 
-    first = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
-    )
-    assert first["status"] == "ok", first
+    first = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home)
+    assert first["status"] == "ok", first["detail"]
 
     from ladderstock.data import duckdb_store
 
@@ -529,10 +554,8 @@ def test_sync_close_writes_daily_partitions_and_idempotent(
         data_home,
     )
 
-    again = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
-    )
-    assert again["status"] == "ok", again
+    again = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home)
+    assert again["status"] == "ok", again["detail"]
     assert duckdb_store.dataset_rows("fund_flow") == before_total
     partitions = list((duckdb_store.archive_root() / "2026" / "11" / "04").glob("*.parquet"))
     assert {p.name for p in partitions} == {f"{d}.parquet" for d in CLOSE_SYNC_DATASETS}
@@ -558,11 +581,9 @@ def test_sync_close_fund_flow_count_grows_on_refresh(
         _close_transport(TRADING_DAY, fund_flow_rows={"600000": 3, "000001": 2}),
         data_home,
     )
-    result = run_job(
-        SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home
-    )
+    result = run_job(SYNC_CLOSE_JOB, now=TRADING_MOMENT, timezone="Asia/Shanghai", root=data_home)
     after = duckdb_store.dataset_rows("fund_flow")
 
-    assert result["status"] == "ok", result
+    assert result["status"] == "ok", result["detail"]
     assert before == 2
     assert after > before

@@ -51,9 +51,7 @@ class _NoQuotes:
 
 @pytest.fixture(autouse=True)
 def _offline_prices(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "ladderstock.web.radar.fetch_prices", lambda *args, **kwargs: _NoQuotes()
-    )
+    monkeypatch.setattr("ladderstock.web.radar.fetch_prices", lambda *args, **kwargs: _NoQuotes())
 
 
 def _client(

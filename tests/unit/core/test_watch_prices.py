@@ -69,9 +69,7 @@ def test_previous_day_snapshot_is_archive() -> None:
 
 def test_cache_replay_in_session_is_cached() -> None:
     """明确的缓存回放证据 + 盘中 → `cached`，不因为时点在会话内就标实时。"""
-    verdict = judge_freshness(
-        "2026-11-04T10:42:21", priced=True, cache_replay=True, now=WED
-    )
+    verdict = judge_freshness("2026-11-04T10:42:21", priced=True, cache_replay=True, now=WED)
     assert verdict == "cached"
 
 
@@ -83,9 +81,7 @@ def test_archive_is_not_overridden_by_cache_evidence() -> None:
 
 def test_undecidable_is_none() -> None:
     """盘中但时点属于上一会话（停牌股）→ 判不出，回 `None` 而不是猜。"""
-    verdict = judge_freshness(
-        "2026-11-03T15:00:00", priced=True, now=WED
-    )
+    verdict = judge_freshness("2026-11-03T15:00:00", priced=True, now=WED)
     assert verdict is None
 
 

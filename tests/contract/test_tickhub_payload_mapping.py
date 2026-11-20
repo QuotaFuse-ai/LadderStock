@@ -229,6 +229,7 @@ def case_ids(cases: list[Any]) -> list[str]:
 # fixture 覆盖率
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("dataset", TICKHUB_DATASETS)
 def test_every_tickhub_dataset_has_a_real_fixture(dataset: str) -> None:
     """每个 tickhub 数据集至少有主工具的真实返回。
@@ -245,6 +246,7 @@ def test_every_tickhub_dataset_has_a_real_fixture(dataset: str) -> None:
 # --------------------------------------------------------------------------- #
 # 记录型：展开 + 透传 + 归属日
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(_RECORD_PARAMS, RECORD_CASES, ids=case_ids(RECORD_CASES))
 def test_real_response_maps_to_rows(
@@ -297,6 +299,7 @@ def test_rows_have_no_leading_empty_codes(
 # --------------------------------------------------------------------------- #
 # daily_k：根因的两条（K 线全丢 / 日期取成抓取时间）
 # --------------------------------------------------------------------------- #
+
 
 def test_daily_k_expands_klines_and_passes_caliber_fields() -> None:
     """根因一：真实 `data` 是对象，`klines` 里的 N 根 K 线必须变成 N 行。
@@ -371,6 +374,7 @@ def test_concept_membership_rename_keeps_the_stock_code() -> None:
 # 财报前瞻 / 事件回看（QUOT-446）
 # --------------------------------------------------------------------------- #
 
+
 def test_event_rows_land_on_the_announcement_day() -> None:
     """事件行的日期是公告日，不是抓取日：`holder_trades` 的 `notice_date` 必须归一。"""
     records = from_tool_response(
@@ -444,6 +448,7 @@ def test_index_daily_passes_the_index_code_and_uses_kline_dates() -> None:
 # 快照型
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize(_SNAPSHOT_PARAMS, SNAPSHOT_CASES, ids=case_ids(SNAPSHOT_CASES))
 def test_snapshot_dataset_stays_one_row(
     tool_file: str, dataset: str, tool: str, as_of: date
@@ -459,6 +464,7 @@ def test_snapshot_dataset_stays_one_row(
 # --------------------------------------------------------------------------- #
 # 失败形状：真实 peer 把错误放在 error.{code,message}
 # --------------------------------------------------------------------------- #
+
 
 def test_missing_required_code_raises_with_upstream_words() -> None:
     """空参调 `tencent_kline`：上游的 `QFSD-9001 missing a required argument: 'code'` 要留在报错里。
@@ -481,6 +487,7 @@ def test_unregistered_dataset_is_rejected() -> None:
 # --------------------------------------------------------------------------- #
 # 限流形状（QUOT-349）：QFSD-7001 要认出「可退避」，不能混进「源坏了」
 # --------------------------------------------------------------------------- #
+
 
 def test_rate_limited_response_carries_the_upstream_advice() -> None:
     """`error.detail.retry_after_s` 是这条链唯一的输入：认不出它，退避就无从谈起。"""
@@ -536,6 +543,7 @@ def test_other_failures_stay_generic() -> None:
 # --------------------------------------------------------------------------- #
 # 出参口径（QUOT-233 第 2 步）
 # --------------------------------------------------------------------------- #
+
 
 def test_code_pool_datasets_are_the_ones_requiring_code() -> None:
     assert CODE_POOL_DATASETS == frozenset(

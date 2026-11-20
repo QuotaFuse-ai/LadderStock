@@ -46,8 +46,13 @@ def _seed_pool_inputs(root: Any, day: str) -> None:
         root,
         "limit_pool",
         [
-            {"code": CODE, "name": "贵州茅台", "boards": 3, "turnover_rate": 8.0,
-             "hot_topic": "白酒"},
+            {
+                "code": CODE,
+                "name": "贵州茅台",
+                "boards": 3,
+                "turnover_rate": 8.0,
+                "hot_topic": "白酒",
+            },
             {"code": "000001", "name": "平安银行", "boards": 1, "turnover_rate": 2.0},
         ],
         day,
@@ -69,8 +74,7 @@ def test_realtime_hit_is_labeled_realtime_with_minute_fetched_at(tmp_path: Any) 
         tmp_path,
         "fund_flow_realtime",
         [
-            {"code": CODE, "name": "贵州茅台", "main_net": -171530812.0,
-             "main_net_pct": -30.63},
+            {"code": CODE, "name": "贵州茅台", "main_net": -171530812.0, "main_net_pct": -30.63},
             {"code": "000001", "name": "平安银行", "main_net": 0.0, "main_net_pct": 0.0},
         ],
         DAY,

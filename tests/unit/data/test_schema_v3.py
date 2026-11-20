@@ -112,9 +112,7 @@ def v2_db(tmp_path: Path) -> Path:
     return path
 
 
-def test_v2_upgrades_to_v3_with_timestamped_backup(
-    tmp_path: Path, v2_db: Path
-) -> None:
+def test_v2_upgrades_to_v3_with_timestamped_backup(tmp_path: Path, v2_db: Path) -> None:
     before_trades = None
     raw = sqlite3.connect(str(v2_db))
     raw.row_factory = sqlite3.Row
@@ -200,13 +198,33 @@ def test_new_tables_have_the_contract_columns(tmp_path: Path, v2_db: Path) -> No
         sqlite_store.close(conn)
 
     assert columns["portfolio_trades"] == [
-        "id", "symbol", "name", "type", "trade_date", "shares", "price", "fee",
-        "amount", "ratio", "note", "migrated_from", "undated", "created_at",
+        "id",
+        "symbol",
+        "name",
+        "type",
+        "trade_date",
+        "shares",
+        "price",
+        "fee",
+        "amount",
+        "ratio",
+        "note",
+        "migrated_from",
+        "undated",
+        "created_at",
     ]
     assert columns["portfolio_legacy_marks"] == ["position_id", "dismissed_at"]
     assert columns["inbox"] == [
-        "id", "job", "job_label", "kind", "title", "lines_json", "link",
-        "dedupe_key", "read_at", "created_at",
+        "id",
+        "job",
+        "job_label",
+        "kind",
+        "title",
+        "lines_json",
+        "link",
+        "dedupe_key",
+        "read_at",
+        "created_at",
     ]
 
 
@@ -246,9 +264,10 @@ def test_migrated_from_is_unique_and_nullable(tmp_path: Path, v2_db: Path) -> No
         conn.execute(insert, ("600521", 10, None))
         # 期初持仓的每股成本允许为负（分红 / 送转摊薄后的真实成本）
         conn.execute(insert, ("600522", -2.5, None))
-        assert conn.execute(
-            "SELECT price FROM portfolio_trades WHERE symbol = '600522'"
-        ).fetchone()[0] == -2.5
+        assert (
+            conn.execute("SELECT price FROM portfolio_trades WHERE symbol = '600522'").fetchone()[0]
+            == -2.5
+        )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(insert, ("600519", 10, 7))
     finally:

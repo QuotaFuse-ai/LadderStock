@@ -47,7 +47,7 @@ _TRUNCATED_HINTS = (
     "finish_reason=length",
     "finish_reason: length",
     "finish_reason':'length",
-    "finish_reason\":\"length",
+    'finish_reason":"length',
     "stop_reason=max_tokens",
     "max_tokens",
     "output truncated",
@@ -186,6 +186,7 @@ def classify_error(
 # 分类信号
 # --------------------------------------------------------------------------- #
 
+
 def _failure(kind: FailureKind, detail: str, max_detail: int) -> AiFailure:
     clean = sanitize(detail, max_len=max_detail)
     label = {
@@ -275,9 +276,7 @@ def _is_format_error(
                 except Exception:  # noqa: BLE001 - schema 本身有问题不算模型失败
                     pass
 
-    lowered = " ".join(
-        part for part in (_type_name(value), str(value)) if part
-    ).lower()
+    lowered = " ".join(part for part in (_type_name(value), str(value)) if part).lower()
     return _contains_any(lowered, ("invalid json", "jsondecode", "schema 不符", "schema mismatch"))
 
 

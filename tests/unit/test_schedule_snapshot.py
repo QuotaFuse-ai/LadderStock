@@ -159,4 +159,10 @@ def test_schedule_schema_enum_contains_snapshot() -> None:
         "digest",
         "wire_news",
         "knowledge_refresh",
+        "agent_research",
+        "watch_alert",
+        "watch_live",
+        "sentiment_live",
+        "plan_tick",
+        "sync_evening",
     ]

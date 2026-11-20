@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ExternalLink, Wrench } from 'lucide-react'
+import { ArrowRight, ExternalLink, Play, Wrench } from 'lucide-react'
 
 import { DemoStateBadge, PageHeader } from '../../components/PageShell'
+import { SenateRunner } from './SkillDetailScreen'
 import {
   Badge,
   Button,
@@ -77,6 +78,9 @@ function CatalogRow({ item }: { item: CatalogItem }) {
   const target = existingPageTarget(item)
   // 右侧动作：能看详情 → `/skills/:id`；已在页面 → 直达该页；无包 → 只有静态说明
   const canOpen = DETAIL_STATUSES.includes(item.status) && item.package !== ''
+  // 辩论方向（senate-desk）额外给一个就地发起的入口：不用先跳详情页再点一次。
+  const isSenate = item.package === 'senate-desk'
+  const [open, setOpen] = useState(false)
   const whole = (
     <CardBody className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -94,6 +98,35 @@ function CatalogRow({ item }: { item: CatalogItem }) {
       {item.note && <p className="text-caption leading-body text-text-muted">{item.note}</p>}
     </CardBody>
   )
+
+  if (isSenate) {
+    return (
+      <Card className="flex flex-col">
+        <div className="flex items-center">
+          <div className="min-w-0 flex-1">{whole}</div>
+          <Button
+            variant={open ? 'secondary' : 'primary'}
+            className="mr-3 shrink-0"
+            onClick={() => setOpen((value) => !value)}
+            leadingIcon={<Play className="size-3.5" aria-hidden="true" />}
+          >
+            {open ? '收起' : '发起合议'}
+          </Button>
+          <Link
+            to={`/skills/${item.id}`}
+            className="mr-3 shrink-0 text-caption text-text-muted hover:text-accent"
+          >
+            步骤详情
+          </Link>
+        </div>
+        {open && (
+          <div className="border-t border-border p-3">
+            <SenateRunner />
+          </div>
+        )}
+      </Card>
+    )
+  }
 
   if (canOpen) {
     return (

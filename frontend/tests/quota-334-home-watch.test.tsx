@@ -101,9 +101,13 @@ describe('首页演示源', () => {
     expect(await screen.findByText('上证指数')).toBeTruthy()
     expect(await screen.findByText('贵州茅台')).toBeTruthy()
     await waitFor(() => expect(dataRowCount()).toBeGreaterThan(0))
-    // 演示态根本不碰网络：fetch 全程是断连桩，首屏照样有内容
+    // 演示态根本不碰远端：fetch 全程是断连桩，首屏照样有内容。
+    // 研究台挂载时读的 `/api/research/desk/history`（刷新回看，QUOT-582）是本机历史，
+    // 不向远端取行情，按接口剔掉后再断言
     const calls = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
-    const apiCalls = calls.filter(([url]) => String(url).includes('/api/'))
+    const apiCalls = calls.filter(
+      ([url]) => String(url).includes('/api/') && !String(url).includes('/desk/history'),
+    )
     expect(apiCalls).toHaveLength(0)
   })
 

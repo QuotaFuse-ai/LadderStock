@@ -140,6 +140,7 @@ def _ok_registry(root: Path, **kwargs: Any) -> tuple[TestClient, _FakeRegistry]:
 # 1. 参数透传：三档周期 × 三档复权 × limit 都是运行时参数
 # --------------------------------------------------------------------------- #
 
+
 def test_kline_passes_default_runtime_params_through(tmp_path: Path) -> None:
     client, registry = _ok_registry(tmp_path)
 
@@ -176,9 +177,7 @@ def test_kline_period_adjust_combinations_pass_through(
 ) -> None:
     client, registry = _ok_registry(tmp_path)
 
-    response = client.get(
-        KLINE_URL, params={"period": period, "adjust": adjust}
-    )
+    response = client.get(KLINE_URL, params={"period": period, "adjust": adjust})
 
     assert response.status_code == 200
     call = registry.calls[0]
@@ -209,6 +208,7 @@ def test_kline_limit_bounds_are_enforced(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 参数校验：非法 4xx（SPEC §2.4），不发给上游
 # --------------------------------------------------------------------------- #
+
 
 def test_kline_invalid_period_is_422(tmp_path: Path) -> None:
     client, registry = _ok_registry(tmp_path)
@@ -264,6 +264,7 @@ def test_kline_malformed_code_is_422(tmp_path: Path) -> None:
 # 3. 信封形状：四段 + bars 投影（amount null 如实透传，不补 0）
 # --------------------------------------------------------------------------- #
 
+
 def test_kline_envelope_shape_and_bar_projection(tmp_path: Path) -> None:
     client, _ = _ok_registry(tmp_path)
 
@@ -307,6 +308,7 @@ def test_kline_works_without_any_research_artifacts(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 4. 空态与降级：peer 不可达 / 超时 / 返回空 → 200 + missing，不编造
 # --------------------------------------------------------------------------- #
+
 
 def test_kline_source_unavailable_is_200_missing(tmp_path: Path) -> None:
     registry = _FakeRegistry(exc=SourceUnavailable("peer tickhub 不可达（连接被拒）"))
@@ -354,6 +356,7 @@ def test_kline_degraded_when_upstream_source_status_is_not_ok(tmp_path: Path) ->
 # --------------------------------------------------------------------------- #
 # 5. 载荷补齐（QUOT-428）：series / 涨跌幅 / 均线 / 单位与标签
 # --------------------------------------------------------------------------- #
+
 
 def test_kline_series_columns_labels_and_units(tmp_path: Path) -> None:
     client, _ = _ok_registry(tmp_path)

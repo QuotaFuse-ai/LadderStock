@@ -196,9 +196,7 @@ def _start_missing(world: World) -> list[Started]:
         if not mine:
             continue
         adapter = world.adapters[name]
-        faces = [
-            next(item for item in adapter.faces if item.port == plan.port) for plan in mine
-        ]
+        faces = [next(item for item in adapter.faces if item.port == plan.port) for plan in mine]
         for face in faces:
             exe = Path(face.argv[0])
             if not exe.is_file():
@@ -211,9 +209,7 @@ def _start_missing(world: World) -> list[Started]:
                 env=adapter._environment(),
                 log_path=world.log_dir / face.log_name,
             )
-            started.append(
-                Started(module=name, ports=(face.port,), pids=[pid])
-            )
+            started.append(Started(module=name, ports=(face.port,), pids=[pid]))
     return started
 
 

@@ -144,9 +144,7 @@ class ResearchPipeline:
         facts_by_stage = dict(facts or {})
         provenance_by_stage = dict(provenance or {})
         document = checkpoint.load(self.code, day_text, self.root)
-        targets = checkpoint.targets(
-            document, force=force, retry_failed=retry_failed, only=only
-        )
+        targets = checkpoint.targets(document, force=force, retry_failed=retry_failed, only=only)
         # 未参与本次运行的段：载荷里仍按原样报出注入的指标（契约不变），只是解回标量
         metrics_by_stage = {
             stage: _plain_metrics(metrics) for stage, metrics in facts_by_stage.items()
@@ -224,9 +222,7 @@ class ResearchPipeline:
                     facts={},
                 )
             facts = {"upstream": inputs}
-            slot = artifacts.merge_slots(
-                {name: inputs[name]["provenance"] for name in inputs}
-            )
+            slot = artifacts.merge_slots({name: inputs[name]["provenance"] for name in inputs})
             return self._compose(stage, day, facts, slot)
 
         try:
@@ -474,9 +470,7 @@ class ResearchPipeline:
                 )
         failed = [item["stage"] for item in failures]
         generated = [name for name in targets if name not in failed]
-        reused = [
-            name for name in checkpoint.done_stages(document) if name not in generated
-        ]
+        reused = [name for name in checkpoint.done_stages(document) if name not in generated]
         return ResearchRunResult(
             code=self.code,
             date=day,

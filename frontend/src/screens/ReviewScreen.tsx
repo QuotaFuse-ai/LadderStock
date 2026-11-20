@@ -51,14 +51,26 @@ import SectionMetrics from './review/SectionMetrics'
 
 const NO_SECTIONS: ReviewSectionView[] = []
 
-/** 段级数据态：只看程序指标有没有落盘，与 AI 段落状态无关。 */
+/** 段级数据态：只看程序指标有没有落盘，与 AI 段落状态无关。
+ *
+ * `pending` 是「还没到公布时间」（例如当日龙虎榜 18:00 之后才出），不是本机缺数——
+ * 这种段单独显示「待公布」，不计入「五段中 N 段缺数」，免得一整天都像在报错。
+ */
 function sectionDataState(section: ReviewSectionView | undefined): {
   label: string
   tone: BadgeTone
 } {
   if (!section) return { label: '待生成', tone: 'neutral' }
-  if (section.metrics.available === false) return { label: '缺数', tone: 'warn' }
+  if (section.metrics.available === false) {
+    if (section.metrics.pending === true) return { label: '待公布', tone: 'neutral' }
+    return { label: '缺数', tone: 'warn' }
+  }
   return { label: '程序直出', tone: 'ok' }
+}
+
+/** 真正缺数的段（排除「待公布」这种业务时序未到）。 */
+function isMissingSection(section: ReviewSectionView): boolean {
+  return section.metrics.available === false && section.metrics.pending !== true
 }
 
 /** 离线回放的 IndexedDB 快照：只存复盘正文与程序指标，不含「我的判断」。 */
@@ -233,7 +245,14 @@ export default function ReviewScreen() {
   const viewHeader = usable ? header : replay ? parseHeader(replay.review) : null
   const viewSent = usable ? sent : replay?.sentiment ?? null
   const missingNames = useMemo(
-    () => viewSections.filter((section) => section.metrics.available === false).map((section) => section.name),
+    () => viewSections.filter(isMissingSection).map((section) => section.name),
+    [viewSections],
+  )
+  const pendingNames = useMemo(
+    () =>
+      viewSections
+        .filter((section) => section.metrics.available === false && section.metrics.pending === true)
+        .map((section) => section.name),
     [viewSections],
   )
 
@@ -266,6 +285,9 @@ export default function ReviewScreen() {
     if (state === 'empty') return `${tradeDate} 尚未生成复盘`
     if (state === 'partial') {
       if (failedLabels.length > 0) return `${tradeDate} · 部分数据源不可用`
+      if (missingNames.length === 0 && pendingNames.length > 0) {
+        return `${tradeDate} · 五段齐全，${formatInt(pendingNames.length)} 段待公布（不是缺数）`
+      }
       return `${tradeDate} · 五段中 ${formatInt(missingNames.length)} 段缺数`
     }
     if (demo) return `${tradeDate} · 演示数据（非真实行情）· 不写本机草稿`
@@ -379,6 +401,18 @@ export default function ReviewScreen() {
           其余段落照常渲染。补数后回到本页点「刷新」即可；也可以点右上角「本页数据同步」立即开始。
         </Banner>
       )}
+      {failedLabels.length === 0 &&
+        missingNames.length === 0 &&
+        pendingNames.length > 0 && (
+          // 「还没到公布时间」不是缺数：用提示色，不报警，也不引导用户去跑同步。
+          <Banner
+            tone="info"
+            title={`${formatInt(pendingNames.length)} 段待公布（不是缺数）`}
+          >
+            当日龙虎榜按交易所规则收盘后才公布（通常 18:00 之后），本机 18:30 会自动补取；
+            其余四段已按当天数据出全。
+          </Banner>
+        )}
 
       <div className="flex flex-wrap items-end gap-3">
         <Field label="交易日" htmlFor="review-date" className="w-44">

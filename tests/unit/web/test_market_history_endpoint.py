@@ -85,9 +85,7 @@ def _seed_day(root: Path, day: date, codes: tuple[str, ...], boards: dict[str, i
         [{"code": code, "trade_date": stamp} for code in codes],
         root=root,
     )
-    duckdb_store.write_dataset(
-        "broken_board", [{"code": "300999", "trade_date": stamp}], root=root
-    )
+    duckdb_store.write_dataset("broken_board", [{"code": "300999", "trade_date": stamp}], root=root)
 
 
 def _seed_sessions(root: Path) -> None:
@@ -109,6 +107,7 @@ def _body(root: Path, params: dict[str, str] | None = None) -> dict[str, Any]:
 # 1. 空态：结构稳定，样本不足的指标是 null 不是 0
 # --------------------------------------------------------------------------- #
 
+
 def test_empty_cache_returns_available_false_with_stable_shape(tmp_path: Path) -> None:
     body = _body(tmp_path)
 
@@ -128,13 +127,15 @@ def test_empty_cache_returns_available_false_with_stable_shape(tmp_path: Path) -
     assert body["source_status"] == "partial"
     assert body["confidence"] == "low"
     assert body["data_as_of"] is None  # 没数据不拿请求日期顶替（D-02）
-    # 空态也要说清「为什么没有」，前端才有得显示
-    assert "ldst sync" in body["source_detail"]
+    # 空态也要说清「为什么没有」，前端才有得显示；文案已不再让用户自己跑 sync
+    assert "自动补取" in body["source_detail"]
+    assert "ldst sync" not in body["source_detail"]
 
 
 # --------------------------------------------------------------------------- #
 # 2. 有数据：逐日成点，分位与较昨日均以最后一个可用日为准
 # --------------------------------------------------------------------------- #
+
 
 def test_seeded_sessions_return_ascending_points(tmp_path: Path) -> None:
     _seed_sessions(tmp_path)
@@ -168,9 +169,7 @@ def test_quantile_and_delta_use_last_available_day(tmp_path: Path) -> None:
 
     assert payload["delta_vs_prev"] == pytest.approx(round(latest - temperatures[-2], 1))
     at_or_below = sum(1 for value in temperatures if value <= latest)
-    assert payload["quantile"] == pytest.approx(
-        round(at_or_below / len(temperatures) * 100.0, 1)
-    )
+    assert payload["quantile"] == pytest.approx(round(at_or_below / len(temperatures) * 100.0, 1))
 
 
 def test_weekend_is_skipped_and_window_clips_to_days(tmp_path: Path) -> None:
@@ -188,6 +187,7 @@ def test_weekend_is_skipped_and_window_clips_to_days(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 参数名：前端 api.ts 的 `date` / `window` 是别名，本名 `to` / `days` 优先
 # --------------------------------------------------------------------------- #
+
 
 def test_frontend_aliases_date_and_window_are_accepted(tmp_path: Path) -> None:
     """`?date=&window=`（`frontend/src/api.ts:marketHistory`）与 `?to=&days=` 同义。"""
@@ -214,9 +214,8 @@ def test_canonical_names_win_when_both_are_given(tmp_path: Path) -> None:
 # 4. 缺日：如实进 missing_days，source_detail 点名缺哪几天
 # --------------------------------------------------------------------------- #
 
-def test_partial_days_land_in_missing_days(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+
+def test_partial_days_land_in_missing_days(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed_sessions(tmp_path)
     real = compute_sentiment
     dropped = SESSION_DAYS[1]
@@ -236,9 +235,7 @@ def test_partial_days_land_in_missing_days(
     assert dropped.isoformat() in body["source_detail"]
 
 
-def test_single_point_is_not_a_trend(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_single_point_is_not_a_trend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """只剩 1 个可用点 → `available=false`，分位与较昨日仍是 null。"""
     _seed_sessions(tmp_path)
     real = compute_sentiment
@@ -266,6 +263,7 @@ def test_single_point_is_not_a_trend(
 # --------------------------------------------------------------------------- #
 # 5. 参数：days 钳制而不是报错，日期严格 YYYY-MM-DD
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     ("raw", "expected_points"),
@@ -302,6 +300,7 @@ def test_invalid_params_are_400(tmp_path: Path, params: dict[str, str]) -> None:
 # 6. 回环独占 + 只 GET + 隐私恒等
 # --------------------------------------------------------------------------- #
 
+
 def test_non_loopback_source_is_403(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed_sessions(tmp_path)
     monkeypatch.setenv("LDST_WEB_ALLOW_REMOTE", "1")
@@ -314,9 +313,7 @@ def test_non_loopback_source_is_403(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "points" not in response.text  # 一个数字都不能随 403 漏出
 
     # 回环来源但不带合法 Host（DNS rebinding 场景）同样 403
-    rebinding = _client(tmp_path).get(
-        "/api/market/history", headers={"host": "evil.example.com"}
-    )
+    rebinding = _client(tmp_path).get("/api/market/history", headers={"host": "evil.example.com"})
     assert rebinding.status_code == 403
     # 对照：回环 + 正常 Host 放行
     assert _client(tmp_path).get("/api/market/history").status_code == 200

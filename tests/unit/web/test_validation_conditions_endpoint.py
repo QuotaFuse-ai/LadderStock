@@ -59,15 +59,14 @@ def _seed_document(root: Path, document: dict[str, Any]) -> Path:
 # 1. 写入并读回一致
 # --------------------------------------------------------------------------- #
 
+
 def test_write_then_read_back_matches(tmp_path: Path) -> None:
     client = _client(tmp_path)
     response = _put(
         client,
         {
             "trade_date": DATE,
-            "conditions": [
-                {"code": "600000", "trigger": "回踩 5 日线不破", "note": "可空"}
-            ],
+            "conditions": [{"code": "600000", "trigger": "回踩 5 日线不破", "note": "可空"}],
         },
     )
     assert response.status_code == 200, response.text
@@ -90,9 +89,7 @@ def test_write_then_read_back_matches(tmp_path: Path) -> None:
     read = client.get("/api/validation", params={"date": DATE})
     assert read.status_code == 200, read.text
     payload = read.json()["payload"]
-    assert payload["conditions"] == [
-        {"code": "600000", "trigger": "回踩 5 日线不破", "note": None}
-    ]
+    assert payload["conditions"] == [{"code": "600000", "trigger": "回踩 5 日线不破", "note": None}]
 
 
 def test_minimal_skeleton_when_file_absent(tmp_path: Path) -> None:
@@ -119,6 +116,7 @@ def test_minimal_skeleton_when_file_absent(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. `reconcile` 等对账结果原样保留
 # --------------------------------------------------------------------------- #
+
 
 def test_existing_reconcile_is_preserved_verbatim(tmp_path: Path) -> None:
     original = {
@@ -200,6 +198,7 @@ def test_replace_mode_keeps_reconcile_but_drops_old_conditions(tmp_path: Path) -
 # 3. 闸门：非回环 403 / 开关关闭 404
 # --------------------------------------------------------------------------- #
 
+
 def test_non_loopback_source_is_403(tmp_path: Path) -> None:
     payload = {"trade_date": DATE, "conditions": [{"trigger": "回踩不破"}]}
     response = _put(_client(tmp_path, client=REMOTE), payload)
@@ -207,9 +206,7 @@ def test_non_loopback_source_is_403(tmp_path: Path) -> None:
     assert not validation_path(DATE, tmp_path).exists()
 
     # 回环来源但 Host 不在白名单（DNS rebinding）同样 403
-    rebinding = _put(
-        _client(tmp_path), payload, headers={"host": "evil.example.com"}
-    )
+    rebinding = _put(_client(tmp_path), payload, headers={"host": "evil.example.com"})
     assert rebinding.status_code == 403, rebinding.text
     assert not validation_path(DATE, tmp_path).exists()
 
@@ -244,6 +241,7 @@ def test_cross_site_write_is_403(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 4. 请求体校验：非法日期 / 白名单 / 条数 / 文案长度
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "trade_date",
@@ -319,6 +317,7 @@ def test_trigger_whitespace_is_trimmed(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 5. `merge` 去重
 # --------------------------------------------------------------------------- #
+
 
 def test_merge_dedupes_by_code_and_trigger(tmp_path: Path) -> None:
     client = _client(tmp_path)
@@ -401,6 +400,7 @@ def test_merge_keeps_programmatic_conditions(tmp_path: Path) -> None:
 # 「控制面未启用或端点未合入」，`ValidateScreen` 的「后端」Tab 永远置灰。补一个同
 # 路径 GET，只为把 405 造出来——它不返回数据，读条件仍走 `GET /api/validation?date=`。
 
+
 def _state_files(root: Path) -> list[str]:
     """`state/` 下的既有文件（POSIX 相对路径），用来断言探针不落盘。"""
     base = root / "state"
@@ -435,9 +435,10 @@ def test_probe_put_route_is_still_writable(tmp_path: Path) -> None:
     """补 GET 不改变 PUT 语义：探针在后、写在后都照常。"""
     client = _client(tmp_path)
     assert client.get(URL).status_code == 405
-    assert _put(
-        client, {"trade_date": DATE, "conditions": [{"trigger": "回踩不破"}]}
-    ).status_code == 200
+    assert (
+        _put(client, {"trade_date": DATE, "conditions": [{"trigger": "回踩不破"}]}).status_code
+        == 200
+    )
     assert _state_files(tmp_path) == [f"validation/{DATE}.json"]
 
 

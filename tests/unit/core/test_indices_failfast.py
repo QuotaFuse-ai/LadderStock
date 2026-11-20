@@ -282,9 +282,7 @@ def test_real_http_transport_flavor_trips_breaker() -> None:
     """端到端形态：`SourceUnavailable` 由 `HttpMcpTransport` 从 httpx 异常构造，行为一致。"""
     registry = _ScriptedRegistry(
         raises={
-            ("index_quote_us", "DJI"): SourceUnavailable(
-                "超时", transport_nested=httpx.ReadTimeout
-            )
+            ("index_quote_us", "DJI"): SourceUnavailable("超时", transport_nested=httpx.ReadTimeout)
         }
     )
     cells = _cells(fetch_indices(registry))

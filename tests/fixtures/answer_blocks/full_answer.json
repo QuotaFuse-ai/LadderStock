@@ -173,7 +173,7 @@
     {
       "type": "notice",
       "payload": {
-        "kind": "degraded",
+        "kind": "note",
         "section": "风险提示",
         "message": "跌破三十八元支撑"
       }

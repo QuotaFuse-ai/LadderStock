@@ -33,6 +33,7 @@ from ladderstock.watch.notifier import (
 # 渠道归一
 # --------------------------------------------------------------------------- #
 
+
 def test_default_channel_is_console() -> None:
     assert normalize_channel(None) == CHANNEL_CONSOLE
     assert normalize_channel("") == CHANNEL_CONSOLE
@@ -55,6 +56,7 @@ def test_unknown_channel_is_usage_error() -> None:
 # --------------------------------------------------------------------------- #
 # console
 # --------------------------------------------------------------------------- #
+
 
 def test_console_writes_to_stderr_by_default(
     capsys: pytest.CaptureFixture[str],
@@ -97,9 +99,8 @@ def test_console_write_failure_degrades_without_raising() -> None:
 # desktop：壳命令
 # --------------------------------------------------------------------------- #
 
-def test_desktop_command_success(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
+
+def test_desktop_command_success(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     marker = tmp_path / "notified.txt"
     # 用 python -c 写文件，避免依赖平台上的特定通知工具
     script = (
@@ -125,9 +126,7 @@ def test_split_command_strips_quotes_on_both_platforms() -> None:
 
 
 def test_desktop_command_failure_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(
-        DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(3)"'
-    )
+    monkeypatch.setenv(DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(3)"')
 
     result = send(CHANNEL_DESKTOP, "标题", "正文")
 
@@ -182,10 +181,9 @@ def test_desktop_backend_exception_degrades(
 # 多渠道路由
 # --------------------------------------------------------------------------- #
 
+
 def test_send_many_isolates_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(
-        DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(1)"'
-    )
+    monkeypatch.setenv(DESKTOP_CMD_ENV, f'"{sys.executable}" -c "import sys; sys.exit(1)"')
 
     results = send_many([CHANNEL_CONSOLE, CHANNEL_DESKTOP], "多渠道路由", "正文")
 

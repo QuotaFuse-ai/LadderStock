@@ -18,6 +18,7 @@ export { TableBlock } from './TableBlock'
 export { CitationBlock } from './CitationBlock'
 export { NoticeBlock, NOTICE_KINDS, asNoticeKind, type NoticeBlockProps } from './NoticeBlock'
 export { ActionBlock } from './ActionBlock'
+export { NarrativeBlock } from './NarrativeBlock'
 export { isKnownTarget } from './targets'
 export {
   BACKEND_MAX_BLOCKS,

@@ -207,7 +207,21 @@ class AdapterRestarter:
         return MODULE_ORDER
 
     def is_alive(self, entry: LedgerEntry) -> bool:
-        return pid_alive(entry.pid)
+        """账本 pid 活着 **且** 端口上没有树外的同模块残留，才算这个模块健康。
+
+        只判 pid 会把「上一代没退干净的那一面还占着旧端口」当成已恢复，于是自愈
+        不重拉、残留一直留着，重启只能加一换端口（端口越漂越远的根因）。
+        判定异常按「活着」处理：宁可少修，也不误触发一次重启。
+        """
+        if not pid_alive(entry.pid):
+            return False
+        has_stray = getattr(self._engine, "has_stray_listener", None)
+        if not callable(has_stray):
+            return True
+        try:
+            return not bool(has_stray(entry.module))
+        except Exception:  # noqa: BLE001 - 判定失败按活着处理，不误触发重启
+            return True
 
     def restart(self, module: str) -> Any:
         """认领既有实例或按 bundle 命令表拉起；结论用 `RestartOutcome` 表达。"""

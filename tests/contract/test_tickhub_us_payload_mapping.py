@@ -84,9 +84,15 @@ DATASET_HK = "index_quote_hk"
 def _hk_body(symbol: str = "HSI.HK") -> dict:
     return us_quote_payload(
         symbol,
-        price=24315.92, prev_close=24557.04, change=-241.12, change_pct=-0.98,
-        source="tencent", market="HK", currency="HKD",
-        name="恒生指数", timestamp="2026-11-11 18:31:03",
+        price=24315.92,
+        prev_close=24557.04,
+        change=-241.12,
+        change_pct=-0.98,
+        source="tencent",
+        market="HK",
+        currency="HKD",
+        name="恒生指数",
+        timestamp="2026-11-11 18:31:03",
         warnings=["腾讯行情 属 Tier C：商用需事先书面许可，当前为非商用调用。"],
     )
 

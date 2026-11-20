@@ -7,6 +7,7 @@
 - 证据落 fc_verify/：PUT 响应原样（服务端对密钥掩码）、GET /config 原样、
   env 文件内容（密钥行打码后）、icacls 原样。
 """
+
 import json
 import subprocess
 import urllib.request
@@ -81,7 +82,12 @@ raw_env = ENV_FILE.read_text(encoding="utf-8")
 (OUT / "env_content_masked.txt").write_text(mask(raw_env), encoding="utf-8")
 
 icacls = subprocess.run(
-    ["icacls", str(ENV_FILE)], capture_output=True, text=True, errors="replace", timeout=15, check=False
+    ["icacls", str(ENV_FILE)],
+    capture_output=True,
+    text=True,
+    errors="replace",
+    timeout=15,
+    check=False,
 )
 (OUT / "icacls_create.txt").write_text(
     (icacls.stdout or "") + (icacls.stderr or ""), encoding="utf-8"
@@ -91,6 +97,11 @@ print((icacls.stdout or "").strip())
 
 body = put_resp if isinstance(put_resp, dict) else {}
 print("updated keys:", body.get("updated"))
-secrets_in_resp = [k for k, v in (body.get("values") or {}).items() if isinstance(v, dict) and "value" in v]
+secrets_in_resp = [
+    k for k, v in (body.get("values") or {}).items() if isinstance(v, dict) and "value" in v
+]
 print("响应里带明文 value 的键（必须为空）:", secrets_in_resp)
-print("响应里的密钥键样例:", json.dumps(body.get("values", {}).get("FC_MINIO_SECRET_KEY"), ensure_ascii=False))
+print(
+    "响应里的密钥键样例:",
+    json.dumps(body.get("values", {}).get("FC_MINIO_SECRET_KEY"), ensure_ascii=False),
+)

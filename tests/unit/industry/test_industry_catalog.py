@@ -57,9 +57,10 @@ def test_repo_catalog_loads_and_binds_shenwan_l1(repo: Path) -> None:
     assert all(
         entry.l1_code is None or L1_CODE_PATTERN.match(entry.l1_code) for entry in catalog.entries
     )
-    # 实测只有 4 个行业与板块同名（农林牧渔/有色金属/交通运输/房地产），
-    # 其余行业的板块字段必须留 null，所以绑定数不能悄悄涨
-    assert sum(1 for entry in catalog.entries if entry.board_name) == 4
+    # 实测与东财板块同名且当日能取到数据的行业：农林牧渔/有色金属/交通运输/房地产
+    # 之外，2026-11-17 实测 industry_fund_flow 里电子(BK1201)、家用电器(BK0456)、
+    # 美容护理(BK1035)各恰好命中 1 条，所以绑定数从 4 扩到 7；再涨必须有同样实测依据。
+    assert sum(1 for entry in catalog.entries if entry.board_name) == 7
     assert [entry.name for entry in catalog.entries if not entry.bound] == ["综合"]
     assert catalog.window == DEFAULT_WINDOW
     assert catalog.provenance.get("bound_via")

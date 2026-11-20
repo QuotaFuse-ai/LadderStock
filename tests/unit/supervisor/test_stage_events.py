@@ -168,9 +168,7 @@ def test_peer_events_do_not_carry_stage_payload() -> None:
     bus = HealthEventBus()
     bus.publish(module="wire", event=EVENT_CRASH, health="ok", state="down", reason="进程退出")
     StageSample.of(STAGE_COLLECT_SCRIPT, health=HEALTH_OK, reason="就绪")
-    bus.publish_stage(
-        StageSample.of(STAGE_COLLECT_SCRIPT, health=HEALTH_OK, reason="采集链路就绪")
-    )
+    bus.publish_stage(StageSample.of(STAGE_COLLECT_SCRIPT, health=HEALTH_OK, reason="采集链路就绪"))
 
     crash, stage = bus.since(0)
     assert crash.event == EVENT_CRASH
@@ -223,9 +221,7 @@ class _World:
         self.monitor.observe()
 
     def stage_events(self) -> list[dict[str, Any]]:
-        return [
-            item.to_dict() for item in self.bus.since(0) if item.event == EVENT_STAGE
-        ]
+        return [item.to_dict() for item in self.bus.since(0) if item.event == EVENT_STAGE]
 
     def snapshot(self) -> list[dict[str, Any]]:
         return self.monitor.snapshot()

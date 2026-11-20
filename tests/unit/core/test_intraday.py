@@ -109,6 +109,28 @@ def test_existing_snapshot_is_reported_as_already(tmp_path: Path) -> None:
     assert status["slots"]["10:00"]["status"] == "already"
 
 
+def test_second_trigger_keeps_ok_status_and_bytes(tmp_path: Path) -> None:
+    """同一时点被触发两次：第二次不重写文件，也**不能**把 `ok` 降级成 `already`。
+
+    页面用 status 区分「已写入」与「已有快照非本轮写入」；把 ok 覆盖成 already，
+    会让一个已经成功落盘的时点看起来像没成功（本机 09:35 / 11:30 就这么显示过）。
+    """
+    first = intraday.run_slot(
+        "10:00", now=moment(10, 0, 5), timezone=TZ, root=tmp_path, registry=StubRegistry()
+    )
+    target = snapshot_file("10:00", tmp_path)
+    before = target.read_bytes()
+
+    second = intraday.run_slot(
+        "10:00", now=moment(10, 3), timezone=TZ, root=tmp_path, registry=StubRegistry()
+    )
+
+    assert first["status"] == "ok"
+    assert second["status"] == "ok", second
+    assert target.read_bytes() == before  # 文件一个字节都没动
+    assert intraday.read_status(DAY, tmp_path)["slots"]["10:00"]["status"] == "ok"
+
+
 # --------------------------------------------------------------------------- #
 # 3. 正常快照：聚合读数 + 情绪面
 # --------------------------------------------------------------------------- #

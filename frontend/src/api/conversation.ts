@@ -394,12 +394,172 @@ export async function sendTurn(
   }
 }
 
+/** 流式等待态的流水账条目（服务端 `status` 帧） */
+export interface TurnStreamStatus {
+  action: string
+  item: string
+  state: string
+  item_id?: string
+  elapsed_ms?: number
+}
+
+export interface TurnStreamHandlers {
+  /** 每一帧 `status`：给等待态流水账用，不影响正文 */
+  onStatus?: (status: TurnStreamStatus) => void
+  /** 每一帧 `text`：**累积全文**（整段替换，不要拼接） */
+  onText?: (text: string) => void
+}
+
+/** 流式总预算：单轮模型 60s + 装配余量；比一次性的 15s 宽得多 */
+const STREAM_TIMEOUT_MS = 180000
+
+/** 解一帧 SSE：`event:` 行 + 若干 `data:` 行（JSON 可能跨行） */
+function parseSseFrame(chunk: string): { event: string; data: unknown } | null {
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of chunk.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+  }
+  if (dataLines.length === 0) return null
+  try {
+    return { event, data: JSON.parse(dataLines.join('\n')) as unknown }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 流式送一轮：同一端点，靠 `Accept: text/event-stream` 分流。
+ *
+ * 服务端帧序：`status(history done)` → `status(model running)` → `text × n`
+ * → `status(model done)` → `done`。`done` 帧与 JSON 路径同形，因此最终返回的
+ * `TurnSuccess` 与 `sendTurn()` 完全一致——调用方两条路可以共用同一段收尾逻辑。
+ *
+ * 服务端若降级（通道没有 token 增量）只会推一帧完整 `text`，本函数不区分，
+ * 由 UI 按到达节奏如实展示。
+ */
+export async function sendTurnStream(
+  request: TurnRequest,
+  handlers: TurnStreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<TurnSuccess> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS)
+  const relayAbort = () => controller.abort()
+  signal?.addEventListener('abort', relayAbort)
+  try {
+    const response = await fetch(`${CONVERSATION_BASE}/turns`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+      },
+      body: JSON.stringify(request),
+      signal: controller.signal,
+    })
+
+    if (!response.ok || !response.body) {
+      // 校验类失败（空消息 / 超长 / session_id 非法）仍是普通 JSON，走同一套错误口径
+      let raw: unknown = null
+      try {
+        raw = await response.json()
+      } catch {
+        raw = null
+      }
+      const failure = parseFailureBody(asRecord(raw))
+      throw new ConversationError(
+        'http',
+        failure?.detail || '这一轮没有答出来',
+        response.status,
+        failure?.detail ?? null,
+        failure?.code ?? null,
+        failure,
+      )
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let done: TurnSuccess | null = null
+
+    while (true) {
+      const { done: finished, value } = await reader.read()
+      if (finished) break
+      buffer += decoder.decode(value, { stream: true })
+      // 帧以空行分隔；最后一段可能不完整，留在 buffer 里等下一块
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary !== -1) {
+        const raw = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        boundary = buffer.indexOf('\n\n')
+        const frame = parseSseFrame(raw)
+        if (!frame) continue
+        const payload = asRecord(frame.data)
+        if (frame.event === 'status') {
+          handlers.onStatus?.({
+            action: asString(payload?.action),
+            item: asString(payload?.item),
+            state: asString(payload?.state),
+            item_id: asString(payload?.item_id) || undefined,
+            elapsed_ms:
+              typeof payload?.elapsed_ms === 'number' ? payload.elapsed_ms : undefined,
+          })
+        } else if (frame.event === 'text') {
+          handlers.onText?.(asString(payload?.text))
+        } else if (frame.event === 'done') {
+          if (payload?.ok === false) {
+            const failure = parseFailureBody(payload)
+            throw new ConversationError(
+              'http',
+              failure?.detail || '这一轮没有答出来',
+              null,
+              failure?.detail ?? null,
+              failure?.code ?? null,
+              failure,
+            )
+          }
+          const sessionId = asString(payload?.session_id)
+          if (!sessionId) throw new ConversationError('parse', '对话接口 /turns 缺少 session_id')
+          done = {
+            ok: true,
+            session_id: sessionId,
+            reply: asString(payload?.reply),
+            blocks: (payload?.blocks as TurnSuccess['blocks']) ?? null,
+            model: asString(payload?.model),
+            channel: asString(payload?.channel),
+            sources: Array.isArray(payload?.sources)
+              ? (payload?.sources as TurnContextSource[])
+              : [],
+            turn_seq: typeof payload?.turn_seq === 'number' ? payload.turn_seq : null,
+            status: asStatus(payload?.status),
+            fetched_at: asString(payload?.fetched_at),
+          }
+        }
+      }
+    }
+
+    if (!done) throw new ConversationError('parse', '对话接口 /turns 的流没有给出 done 帧')
+    return done
+  } catch (err) {
+    if (err instanceof ConversationError) throw err
+    if (controller.signal.aborted && !signal?.aborted) {
+      throw new ConversationError('timeout', `对话接口 /turns 超时（${STREAM_TIMEOUT_MS}ms）`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', relayAbort)
+  }
+}
+
 export const httpConversation = {
   listSessions,
   listTurns,
   renameSession,
   deleteSession,
   sendTurn,
+  sendTurnStream,
 }
 
 export type ConversationClient = typeof httpConversation

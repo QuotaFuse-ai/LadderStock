@@ -118,6 +118,7 @@ def test_every_kind_has_action_and_message(kind: str) -> None:
 # 脱敏
 # --------------------------------------------------------------------------- #
 
+
 def test_message_never_leaks_api_key() -> None:
     failure = classify_error(RuntimeError(f"401 unauthorized: api_key={SECRET}"))
     assert failure.kind == "internal"
@@ -164,6 +165,7 @@ def test_sanitize_collapses_and_truncates() -> None:
 # --------------------------------------------------------------------------- #
 # 不得误伤正常复盘文本
 # --------------------------------------------------------------------------- #
+
 
 def test_market_narrative_with_429_is_not_quota() -> None:
     """模型正文里的“429 家下跌”不能被当成额度错误。"""

@@ -25,22 +25,26 @@ class FakeSelfHeal:
     """482-C 引擎假件：snapshot() 返回任务书契约的 health 视角。"""
 
     def __init__(self, modules: list[dict[str, Any]] | None = None) -> None:
-        self._modules = modules if modules is not None else [
-            {
-                "module": "wire",
-                "ports": [8790, 8791],
-                "pid": 111,
-                "health": "ok",
-                "state": "running",
-                "restarts_5min": 0,
-                "restart_count": 0,
-                "stopping_by_user": False,
-                "origin": None,
-                "cmdline_hash": None,
-                "last_exit_reason": None,
-                "self_heal": {"attempts": 0, "max": 3, "status": "ok"},
-            }
-        ]
+        self._modules = (
+            modules
+            if modules is not None
+            else [
+                {
+                    "module": "wire",
+                    "ports": [8790, 8791],
+                    "pid": 111,
+                    "health": "ok",
+                    "state": "running",
+                    "restarts_5min": 0,
+                    "restart_count": 0,
+                    "stopping_by_user": False,
+                    "origin": None,
+                    "cmdline_hash": None,
+                    "last_exit_reason": None,
+                    "self_heal": {"attempts": 0, "max": 3, "status": "ok"},
+                }
+            ]
+        )
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -66,9 +70,7 @@ class FakeSupervisor:
         return {
             "supervisor_pid": 4242,
             "order": list(MODULE_ORDER),
-            "modules": {
-                "wire": {"ownership": "managed", "evidence": "ledger", "listening": True}
-            },
+            "modules": {"wire": {"ownership": "managed", "evidence": "ledger", "listening": True}},
         }
 
 

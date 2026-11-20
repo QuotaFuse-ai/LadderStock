@@ -487,7 +487,10 @@ def _real_financecoffer(
         peer_dir=tmp_path / "peers" / "financecoffer",
         host=host,
         log_dir=tmp_path / "logs",
-        env={"LDST_WSL_DISTRO": "Ubuntu-24.04"},
+        # 本夹具模拟的是老的 WSL 容器形态（wslhost 转发 + api 容器）。形态必须
+        # 显式声明：没有 bundle 标记又不声明时，适配器按「未声明」失败关闭，
+        # 不再静默回落 compose（便携包用户机器上没有 WSL）。
+        env={"LDST_WSL_DISTRO": "Ubuntu-24.04", "LDST_FINANCECOFFER_FORM": "wsl"},
         evidence_cache_sec=0.0,
     )
 

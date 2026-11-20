@@ -158,11 +158,11 @@ describe('市场屏演示源', () => {
     expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(13)
 
     // CH-02：连板梯队柱状图拿到 5 个板位
-    fireEvent.click(screen.getByRole('radio', { name: '连板梯队' }))
+    fireEvent.click(screen.getByRole('button', { name: '连板梯队' }))
     expect(screen.getByTestId('bar-chart').getAttribute('data-points')).toBe('5')
 
     // CH-03：题材强度横向条（真实 DOM 组件）画前 8 条，其余只进明细表
-    fireEvent.click(screen.getByRole('radio', { name: '题材轮动' }))
+    fireEvent.click(screen.getByRole('button', { name: '题材轮动' }))
     expect(screen.getAllByText('人工智能')).toHaveLength(2)
     expect(screen.getAllByText('新能源')).toHaveLength(2)
     expect(screen.getAllByText('地产')).toHaveLength(1)
@@ -200,7 +200,7 @@ describe('市场屏演示源', () => {
     expect(screen.getByText('2026-06-04')).toBeTruthy()
     expect(screen.queryByText('比亚迪')).toBeNull()
 
-    fireEvent.click(screen.getByRole('radio', { name: '题材轮动' }))
+    fireEvent.click(screen.getByRole('button', { name: '题材轮动' }))
     expect(screen.getAllByText('真实题材').length).toBeGreaterThan(0)
     expect(screen.queryByText('人工智能')).toBeNull()
   })

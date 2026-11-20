@@ -57,6 +57,9 @@ class _FakeClient:
 
 @pytest.fixture()
 def plane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # `LDST_LLM_MODEL` 会覆盖首个后端的默认模型（fallback.MODEL_OVERRIDE_ENV）；
+    # 开发机上跑过正式服时它会留在环境里，不清掉会把 tmp ai.yaml 的断言打成实机值。
+    monkeypatch.delenv(fallback.MODEL_OVERRIDE_ENV, raising=False)
     for name, value in ENV.items():
         monkeypatch.setenv(name, value)
     config_root = tmp_path / "config"

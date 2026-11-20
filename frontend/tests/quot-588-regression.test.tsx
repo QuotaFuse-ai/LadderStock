@@ -30,6 +30,32 @@ function jsonOk(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body }
 }
 
+/**
+ * 伪 SSE 响应：对话首问走的是 `httpConversation.sendTurnStream`（`POST /api/conversation/turns`
+ * 以 `text/event-stream` 返回），它要 `response.body.getReader()` 并按「`event: xxx` +
+ * `data: json` + 空行」切帧，最后一个 `event: done` 帧才判定这一轮落地。
+ * 只回普通 JSON 会落到「流没有给出 done 帧」，`onSessionCreated` 永远不触发。
+ */
+function sseOk(frames: Array<{ event: string; data: unknown }>, status = 200) {
+  const text = frames.map((frame) => `event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`).join('')
+  const encoder = new TextEncoder()
+  let sent = false
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => ({}),
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (sent) return { done: true, value: undefined }
+          sent = true
+          return { done: false, value: encoder.encode(text) }
+        },
+      }),
+    },
+  }
+}
+
 const posted: Array<{ url: string; body: { session_id?: string } }> = []
 
 beforeEach(() => {
@@ -96,7 +122,8 @@ describe('QUOT-588 回归 ②：首问失败停在消息层 / 成功后会话续
     fireEvent.change(screen.getByLabelText('向对话提问'), { target: { value: '浦发银行怎么看' } })
     fireEvent.submit(screen.getByTestId('composer'))
 
-    await vi.waitFor(() => expect(screen.getByText('这一轮没有答出来')).toBeTruthy())
+    // 失败块里 title 与兜底 detail 用的是同一句文案，所以按「至少出现一处」断言
+    await vi.waitFor(() => expect(screen.getAllByText('这一轮没有答出来').length).toBeGreaterThan(0))
     expect(screen.getByRole('button', { name: '重试这一问' })).toBeTruthy()
     // 空态两段式的欢迎文案不回来（没有闪回空白欢迎层）
     expect(screen.queryByText(/问一句就行/)).toBeNull()
@@ -111,18 +138,23 @@ describe('QUOT-588 回归 ②：首问失败停在消息层 / 成功后会话续
         const method = init?.method ?? 'GET'
         if (method === 'POST') {
           posted.push({ url: String(input), body: JSON.parse(String(init?.body ?? '{}')) })
-          return jsonOk({
-            ok: true,
-            session_id: replySessionId,
-            reply: '结论：持观望态度。',
-            blocks: [],
-            model: 'demo',
-            channel: 'demo',
-            sources: [],
-            turn_seq: 1,
-            status: 'done',
-            fetched_at: '',
-          })
+          return sseOk([
+            {
+              event: 'done',
+              data: {
+                ok: true,
+                session_id: replySessionId,
+                reply: '结论：持观望态度。',
+                blocks: [],
+                model: 'demo',
+                channel: 'demo',
+                sources: [],
+                turn_seq: 1,
+                status: 'done',
+                fetched_at: '',
+              },
+            },
+          ])
         }
         return jsonOk({
           session: { session_id: 's-new', title: '浦发银行怎么看', created_at: '', updated_at: '' },

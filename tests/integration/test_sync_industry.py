@@ -67,9 +67,7 @@ def _write_industry(config: Path, industries: list[dict[str, Any]]) -> None:
             "industries": industries,
         }
     }
-    (config / "industry.yaml").write_text(
-        yaml.safe_dump(doc, allow_unicode=True), encoding="utf-8"
-    )
+    (config / "industry.yaml").write_text(yaml.safe_dump(doc, allow_unicode=True), encoding="utf-8")
 
 
 def _handler(dataset: str, payload: Any) -> Any:
@@ -135,9 +133,7 @@ def _industry_transport() -> FakeTransport:
     def kline(params: dict[str, Any]) -> dict[str, Any]:
         return {
             "code": str(params["code"]),
-            "klines": [
-                {"date": DAY, "close": 10.0, "amount": 1e8, "change_pct": 1.0}
-            ],
+            "klines": [{"date": DAY, "close": 10.0, "amount": 1e8, "change_pct": 1.0}],
         }
 
     def board_flow(_params: dict[str, Any]) -> dict[str, Any]:

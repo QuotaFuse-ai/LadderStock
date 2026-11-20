@@ -150,6 +150,7 @@ def close(conn: duckdb.DuckDBPyConnection | None) -> None:
 # 记录规整
 # --------------------------------------------------------------------------- #
 
+
 def record_day(record: dict[str, Any], default: date | None = None) -> date | None:
     """从记录里取交易日；取不到就用 `default`，都没有则返回 None。"""
     for key in DATE_KEYS:
@@ -193,6 +194,7 @@ def _as_date(value: Any) -> date | None:
 # --------------------------------------------------------------------------- #
 # 写入
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class WriteResult:
@@ -324,7 +326,7 @@ def _write_rows(
     source: str,
 ) -> None:
     conn.execute(
-        f'CREATE TABLE IF NOT EXISTS {table} '
+        f"CREATE TABLE IF NOT EXISTS {table} "
         "(code VARCHAR, trade_date DATE, ingested_at TIMESTAMP, source VARCHAR, payload VARCHAR)"
     )
     conn.execute(
@@ -334,8 +336,7 @@ def _write_rows(
     _stage_rows(conn, rows, source=source)
     if mode == "replace":
         conn.execute(
-            f"DELETE FROM {table} WHERE trade_date IN "
-            "(SELECT DISTINCT trade_date FROM _ldst_stage)"
+            f"DELETE FROM {table} WHERE trade_date IN (SELECT DISTINCT trade_date FROM _ldst_stage)"
         )
     else:
         conn.execute(
@@ -344,8 +345,7 @@ def _write_rows(
             "WHERE s.code = t.code AND s.trade_date = t.trade_date)"
         )
     conn.execute(
-        f"INSERT INTO {table} ({', '.join(COLUMNS)}) "
-        f"SELECT {', '.join(COLUMNS)} FROM _ldst_stage"
+        f"INSERT INTO {table} ({', '.join(COLUMNS)}) SELECT {', '.join(COLUMNS)} FROM _ldst_stage"
     )
 
 
@@ -377,6 +377,7 @@ def _transaction(conn: duckdb.DuckDBPyConnection, body: Any) -> None:
 # --------------------------------------------------------------------------- #
 # Parquet 分区
 # --------------------------------------------------------------------------- #
+
 
 def partition_path(dataset: str, day: date | str, *, root: Path | None = None) -> Path:
     owner_of(dataset)  # 未登记数据集不许落分区
@@ -422,6 +423,7 @@ def _export_partition(
 # 读取
 # --------------------------------------------------------------------------- #
 
+
 def query_dataset(
     dataset: str,
     day: date | None = None,
@@ -453,8 +455,7 @@ def query_dataset(
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         tail = f" LIMIT {int(limit)}" if limit else ""
         rows = conn.execute(
-            f"SELECT {', '.join(COLUMNS)} FROM {table}{clause} "
-            f"ORDER BY trade_date, code{tail}",
+            f"SELECT {', '.join(COLUMNS)} FROM {table}{clause} ORDER BY trade_date, code{tail}",
             params,
         ).fetchall()
     finally:
@@ -468,9 +469,7 @@ def dataset_rows(dataset: str, *, root: Path | None = None) -> int:
     return _count_rows(None, _table(dataset), root)
 
 
-def _count_rows(
-    conn: duckdb.DuckDBPyConnection | None, table: str, root: Path | None
-) -> int:
+def _count_rows(conn: duckdb.DuckDBPyConnection | None, table: str, root: Path | None) -> int:
     owns = conn is None
     if conn is None:
         path = db_path(root)

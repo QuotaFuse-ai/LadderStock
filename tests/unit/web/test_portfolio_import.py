@@ -209,10 +209,7 @@ def test_import_refuses_an_overlong_batch_without_writing(tmp_path: Path) -> Non
 
 def test_import_refuses_an_overlong_body_without_writing(tmp_path: Path) -> None:
     client = _client(tmp_path)
-    records = [
-        _buy(note="备注" * 200)
-        for _ in range(MAX_IMPORT_ROWS)
-    ]
+    records = [_buy(note="备注" * 200) for _ in range(MAX_IMPORT_ROWS)]
 
     response = client.post(IMPORT, json={"records": records}, headers=BROWSER_HEADERS)
 

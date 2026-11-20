@@ -72,6 +72,35 @@ def bundle_root() -> Path:
     return exe.parent
 
 
+#: 记忆子模块的子路径：`<bundle_root>/file/modules/memory/site-packages`
+#:
+#: 记忆引擎（mem0 / torch / sentence-transformers）不装进应用自己的 Python 环境，
+#: 而是作为可搬运的子模块随包分发：源码态落在仓库 `file/modules/memory/`，冻结态
+#: 落在解包目录同一相对路径，两边都不需要外部 PYTHONPATH。
+MEMORY_MODULE_SUBPATH = ("file", "modules", "memory", "site-packages")
+
+
+def memory_site_packages() -> Path:
+    """记忆子模块的 site-packages 目录（只算路径，不保证存在）。"""
+    return bundle_root().joinpath(*MEMORY_MODULE_SUBPATH)
+
+
+def install_memory_path() -> Path | None:
+    """把记忆子模块的 site-packages 前置进 `sys.path`；目录不存在时返回 None。
+
+    必须在任何 `ladderstock.ai.memory` 导入之前调用——mem0 的 import 是硬依赖，
+    晚一步就只剩 ModuleNotFoundError。找不到目录不报错：瘦包、开发机都可能没有，
+    记忆届时按既有熔断降级（`engine_health` 给 not_loaded / ok:false），其余功能不受影响。
+    """
+    path = memory_site_packages()
+    if not path.is_dir():
+        return None
+    entry = str(path)
+    if entry not in sys.path:
+        sys.path.insert(0, entry)
+    return path
+
+
 def install_root(env: Mapping[str, str] | None = None) -> Path:
     """peer 的父目录（全部 bundle 相对，`LDST_INSTALL_ROOT` 优先）。"""
     values = os.environ if env is None else env

@@ -28,6 +28,7 @@ from tests.unit.backtest.conftest import flat_bar, write_daily_k
 CASH = 1_000_000.0
 RUN_ID_RE = re.compile(r"^bt_[0-9a-f]{8}$")
 
+
 #: 一段「有涨有跌、够长能切样本内外」的合成序列；不依赖本机 market.duckdb
 def _bars(count: int = 120) -> list[Bar]:
     out: list[Bar] = []
@@ -69,6 +70,7 @@ def _strip_volatile(card: dict) -> dict:
 # 1. 同参数 + 同数据 ⇒ 同 id，同内容
 # --------------------------------------------------------------------------- #
 
+
 def test_same_inputs_produce_same_run_id_and_identical_card(tmp_path: Path) -> None:
     first = _run(tmp_path)
     second = _run(tmp_path)
@@ -101,6 +103,7 @@ def test_rerun_overwrites_single_artifact_set(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 任一输入变 ⇒ id 变
 # --------------------------------------------------------------------------- #
+
 
 def test_different_commission_changes_run_id_and_card(tmp_path: Path) -> None:
     base = _run(tmp_path)
@@ -136,6 +139,7 @@ def test_compute_run_id_requires_data_fingerprint() -> None:
 # --------------------------------------------------------------------------- #
 # 3. 配置来源如实记录（yaml / cli / fallback 三态可区分）
 # --------------------------------------------------------------------------- #
+
 
 def test_card_records_effective_config_and_sources(tmp_path: Path) -> None:
     cfg = BacktestConfig(

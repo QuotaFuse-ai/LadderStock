@@ -1,0 +1,5 @@
+env: test
+board: 5950
+modules:
+  tickhub_us:
+  - 18003

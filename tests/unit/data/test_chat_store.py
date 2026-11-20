@@ -209,12 +209,20 @@ def test_eviction_cascades_turns(root: Path) -> None:
     assert conn is not None
     try:
         chat_store.append_turn(
-            conn, session_id="sess-old", question="旧", blocks_json="[]",
-            max_sessions=10, moment="2026-11-13T01:00:00+00:00",
+            conn,
+            session_id="sess-old",
+            question="旧",
+            blocks_json="[]",
+            max_sessions=10,
+            moment="2026-11-13T01:00:00+00:00",
         )
         chat_store.append_turn(
-            conn, session_id="sess-new", question="新", blocks_json="[]",
-            max_sessions=1, moment="2026-11-13T02:00:00+00:00",
+            conn,
+            session_id="sess-new",
+            question="新",
+            blocks_json="[]",
+            max_sessions=1,
+            moment="2026-11-13T02:00:00+00:00",
         )
         left = conn.execute(
             "SELECT COUNT(*) FROM chat_turn WHERE session_id = 'sess-old'"
@@ -258,9 +266,7 @@ def test_rename_session_truncates_and_missing_returns_none(root: Path) -> None:
     conn = chat_store.connect(root)
     assert conn is not None
     try:
-        chat_store.append_turn(
-            conn, session_id="sess-rename", question="首问", blocks_json="[]"
-        )
+        chat_store.append_turn(conn, session_id="sess-rename", question="首问", blocks_json="[]")
         title = chat_store.rename_session(conn, "sess-rename", "改名" * 40)
         missing = chat_store.rename_session(conn, "sess-missing", "改名")
         session = chat_store.get_session(conn, "sess-rename")

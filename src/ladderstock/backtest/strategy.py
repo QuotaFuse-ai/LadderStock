@@ -79,7 +79,7 @@ class MACross:
         closes = [bar.close for bar in history[-long:]]
         long_ma = sum(closes) / long
         # 短均线用长均线同一组尾部数据中的后 short_window 段
-        short_ma = sum(closes[-self.short_window:]) / self.short_window
+        short_ma = sum(closes[-self.short_window :]) / self.short_window
         return _clamp_target(1.0 if short_ma > long_ma else 0.0, where=self.name)
 
 

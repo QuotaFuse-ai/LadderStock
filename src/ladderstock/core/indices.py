@@ -685,8 +685,7 @@ def iso_timestamp(text: str) -> str | None:
     if len(digits) != 14:
         return None
     return (
-        f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}"
-        f"T{digits[8:10]}:{digits[10:12]}:{digits[12:14]}"
+        f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}T{digits[8:10]}:{digits[10:12]}:{digits[12:14]}"
     )
 
 

@@ -456,9 +456,7 @@ def test_port_conflict_reason_picks_most_conservative_owner() -> None:
 def test_foreign_conflict_event_carries_owner_and_pid() -> None:
     world = _World()
     entry = _entry()  # 活着，但端口被外来进程占着
-    world.ports["wire"] = [
-        PortObservation(port=8790, listening=True, owner=OWNER_FOREIGN, pid=555)
-    ]
+    world.ports["wire"] = [PortObservation(port=8790, listening=True, owner=OWNER_FOREIGN, pid=555)]
     world.observe(entry)
     events = world.events()
     assert [e["event"] for e in events] == [EVENT_PORT_CONFLICT]
@@ -531,9 +529,7 @@ def test_pid_none_preserves_legacy_healthy_self_no_conflict() -> None:
 def test_port_conflicts_accessor_matches_event_detail() -> None:
     world = _World()
     entry = _entry()
-    world.ports["wire"] = [
-        PortObservation(port=8790, listening=True, owner=OWNER_FOREIGN, pid=555)
-    ]
+    world.ports["wire"] = [PortObservation(port=8790, listening=True, owner=OWNER_FOREIGN, pid=555)]
     world.observe(entry)
     conflicts = world.monitor.port_conflicts(entry)
     assert [(c.port, c.owner, c.pid) for c in conflicts] == [(8790, OWNER_FOREIGN, 555)]

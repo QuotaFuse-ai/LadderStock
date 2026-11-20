@@ -111,6 +111,4 @@ def test_load_prompt_falls_back_when_missing(tmp_path) -> None:
 def test_narrative_must_be_array() -> None:
     """Schema 违例同样抛 StructuredOutputError（上层按 format 分类）。"""
     with pytest.raises(StructuredOutputError):
-        structured_output.validate_payload(
-            "sentiment", json.loads('{"narrative": "不是数组"}')
-        )
+        structured_output.validate_payload("sentiment", json.loads('{"narrative": "不是数组"}'))
