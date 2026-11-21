@@ -496,6 +496,41 @@ ldst position list --output json                         # realized.total_pnl（
 | 64 | `ldst knowledge sync-announcements` | 把 dwd 公告正文投影进 qdrant（幂等重跑覆盖） | `--since` / `--limit` / `--output` | 成功 0；qdrant 不可用 **4** |
 | 65 | `ldst knowledge status` | 投影现状：qdrant 点数 vs dwd 行数 | `--output` | 始终 0 + `{points, rows, lag}` |
 
+## S. 提醒引擎（DEC-087 增量，11）
+
+> 自定义规则 × 出站渠道。规则 7 类：`price_above / price_below / ma_break_down /
+> ma_break_up / volume_spike / pnl_drop / pnl_gain`；渠道 7 种：`console / desktop /
+> email / webhook / dingtalk / feishu / wecom`（后五种出站是对 DEC-006 旧红线的
+> 显式推翻，口径见 `docs/decisions/DEC-087-alert-rules-and-outbound-channels.md`）。
+> 存储 `data/alerts.sqlite`（独立于隐私库）；触发必落收件箱（`kind="alert"`），
+> 渠道只是投递。语义「越线报一次」：触发进冷却，条件离开才重臂。
+>
+> **CLI 计数口径更新（DEC-087）**：基线 31 条不变；叶子在 `LEAF_PATHS` 75 个基础上
+> +11（alert rules 6 + alert channels 4 + alert run 1），当前 **86** 个叶子；矩阵
+> 新增 3 条只读 argv（`rules list` / `channels list` / `run`），其余 8 条只做参数
+> 校验与本地库读写、不真投递，由 `tests/unit/alert/` 覆盖（CLI 计数仍以
+> `tests/fixtures/command_matrix.py` 为准）。
+>
+> 调度面：`kind: alert_check`（schema 已放开），默认种子任务 `alert_close`
+> （15:05，`enabled: false`）；盘中巡检可把 trigger 改成间隔形态（如 `300s`）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 66 | `ldst alert rules add` | 加一条规则 | `--kind / --symbol / --threshold / --window / --cooldown-min / --channels / --note` | 成功 0 + 新规则；参数非法 **2** |
+| 67 | `ldst alert rules list` | 规则清单 | `--enabled` | 始终 0（空库也 0） |
+| 68 | `ldst alert rules show` | 单条规则 + 运行态 | `rule_id` | 成功 0；不存在 **6** |
+| 69 | `ldst alert rules rm` | 删规则（连同运行态） | `rule_id` | 成功 0；不存在 **6** |
+| 70 | `ldst alert rules toggle` | 启停规则 | `rule_id` + `--off` | 成功 0；不存在 **6** |
+| 71 | `ldst alert rules update` | 改阈值 / 窗口 / 冷却 / 渠道 / 备注 | `rule_id` + 各 `--option` | 成功 0；非法组合 **2** |
+| 72 | `ldst alert channels add` | 配一个出站渠道 | `channel_id` + `--kind` + `--config JSON` | 成功 0（**回包 URL 打码**）；配置缺字段 **2** |
+| 73 | `ldst alert channels list` | 渠道清单（URL 打码） | — | 始终 0 |
+| 74 | `ldst alert channels rm` | 删渠道 | `channel_id` | 成功 0；不存在 **6** |
+| 75 | `ldst alert channels test` | 向渠道真发一条测试消息 | `channel_id` | 成功 0；投递失败 **4** |
+| 76 | `ldst alert run` | 手动跑一轮（与调度 / Web 同一个执行体） | — | 全部干净 0；有缺数 / 投递降级 **8**；没配规则 0 + `skipped` |
+
+`email` 渠道的 SMTP 密码只从环境变量读（默认 `LDST_ALERT_SMTP_PASSWORD`），
+`--config` 里写的是 `password_env` 这个**名字**，值永不落库、永不回显。
+
 ## F. 全局约定
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。
@@ -532,3 +567,5 @@ ldst position list --output json                         # realized.total_pnl（
 | 行业五维字段要么有值要么显式 `null`、可复算 | `industry list` / `industry show`（每字段带 R3 溯源，手算对照 `SPEC-INDUSTRY-METRICS.md` §7） |
 | 周报事实包稳定可复算、AI 失败仍出事实包 + 模板 | `weekly`（`SPEC-WEEKLY.md` §4 / §7 / §8；`--week` 非法 2、整周无读数 6、段落降级 9） |
 | 旧启动方式与旧数据目录过渡可用 | `config migrate` + 兼容脚本 |
+
+> AI生成

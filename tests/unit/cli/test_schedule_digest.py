@@ -143,8 +143,12 @@ def test_default_jobs_carry_three_digests() -> None:
 
     assert digs == DIGEST_JOBS
     assert "premarket_reminder" not in {job["id"] for job in schedule_cli.DEFAULT_JOBS}
-    # 17 = 16 + recall_due（F9 到期观点回访，随本批进默认表）
-    assert len(schedule_cli.DEFAULT_JOBS) == 17
+    # 18 = 17 + alert_close（DEC-087 提醒引擎终检，缺省 enabled: false）
+    assert len(schedule_cli.DEFAULT_JOBS) == 18
+    alert_close = next(
+        (job for job in schedule_cli.DEFAULT_JOBS if job["id"] == "alert_close"), None
+    )
+    assert alert_close is not None and alert_close["enabled"] is False
 
 
 def test_repo_schedule_declares_three_digests(repo: Path) -> None:

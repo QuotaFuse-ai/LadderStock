@@ -99,6 +99,9 @@ JOB_KINDS: tuple[str, ...] = (
     "news_collect",
     # F9 到期观点回访：扫账本、拉日线判对错（`ai/recall.py` 的 run_recall）。
     "recall",
+    # DEC-087 提醒引擎：用户自配规则（价格/均线/放量/浮盈亏）一轮求值 + 投递，
+    # 执行体 `alert/run.py:run_once()`（CLI / Web / 调度同一个入口）。
+    "alert_check",
 )
 
 #: 单次 `qfw run`（全赛道采集 + LLM 提炼）的时长上限：正常 1–3 分钟，超上限即终止
@@ -293,6 +296,16 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "kind": "recall",
         "trigger": "16:10",
         "enabled": True,
+    },
+    {
+        # DEC-087：提醒引擎终检——用户自配规则按收盘价再判一遍，命中即收件箱 +
+        # 出站渠道。默认关：先让用户用 `ldst alert run` / `/api/alert/run` 手动跑顺
+        # 再开定时；盘中巡检把 trigger 改成间隔形态（如 "300s"）。
+        "id": "alert_close",
+        "name": "15:05 收盘提醒终检",
+        "kind": "alert_check",
+        "trigger": "15:05",
+        "enabled": False,
     },
 )
 
@@ -2625,6 +2638,18 @@ def run_job(
             result.update(_run_plan_tick(job, now=now, timezone=timezone, root=root))
         elif kind == "recall":
             result.update(_run_recall(root=root))
+        elif kind == "alert_check":
+            # DEC-087 提醒引擎：与 `ldst alert run` / `POST /api/alert/run` 同一个执行体。
+            # 取数失败的规则按 no_data 记入 results，不拖垮整轮（执行体内部兜）。
+            from ladderstock.alert import run as alert_run
+
+            result.update(
+                alert_run.run_once(
+                    root=root,
+                    now=now,
+                    registry=registry,
+                )
+            )
         else:
             result.update(status="failed", detail=f"未知任务类型 {kind!r}")
     except Exception as exc:  # noqa: BLE001 - 单条任务失败不拖垮整轮

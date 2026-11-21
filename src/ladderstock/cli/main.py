@@ -19,6 +19,7 @@ import typer
 
 from ladderstock import __version__
 from ladderstock.cli.ai import register as register_ai
+from ladderstock.cli.alert import register as register_alert
 from ladderstock.cli.backfill import register as register_backfill
 from ladderstock.cli.backtest import register as register_backtest
 from ladderstock.cli.archive import register as register_archive
@@ -85,6 +86,7 @@ watch_app = typer.Typer(
     no_args_is_help=True, help="盘中盯盘（start|status|stop）与我的自选（add|rm|list）"
 )
 notify_app = typer.Typer(no_args_is_help=True, help="通知与提醒")
+alert_app = typer.Typer(no_args_is_help=True, help="提醒引擎（自定义规则 + 出站渠道，DEC-087）")
 journal_app = typer.Typer(no_args_is_help=True, help="交易日志（仅本机 SQLite）")
 position_app = typer.Typer(no_args_is_help=True, help="我的持仓（仅本机 SQLite，不经 MCP）")
 state_app = typer.Typer(no_args_is_help=True, help="前端持久化状态")
@@ -119,6 +121,7 @@ for parent, child, name in (
     (app, sources_app, "sources"),
     (app, watch_app, "watch"),
     (app, notify_app, "notify"),
+    (app, alert_app, "alert"),
     (app, journal_app, "journal"),
     (app, position_app, "position"),
     (app, state_app, "state"),
@@ -264,6 +267,9 @@ register_watch(watch_app)
 # 写面只落本机 SQLite，不经 HTTP（DEC-052 §2.3）
 register_watchlist(watch_app)
 register_notify(notify_app)
+# 提醒引擎（DEC-087）：自定义规则（价格/均线/放量/浮盈亏）× 出站渠道（邮件/webhook/IM）。
+# 出站渠道是对 watch/notifier 旧红线的显式推翻，实现体在 alert/ 包，收件箱仍是源头记录。
+register_alert(alert_app)
 
 
 # ---------------------------------------------------------------- 交易日志

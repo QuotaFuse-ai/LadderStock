@@ -104,6 +104,11 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("watch", "list"), {0}),
     (("watch", "rm", "--code", "600999"), {6}),
     (("notify", "test"), {0}),
+    # DEC-087 提醒引擎：rules/channels 的 list 是只读视图（空库即 0）；run 在没配规则时
+    # skipped 也按 0（真实触发与状态机由 tests/unit/alert/ 覆盖，不跑真行情）。
+    (("alert", "rules", "list"), {0}),
+    (("alert", "channels", "list"), {0}),
+    (("alert", "run"), {0}),
     # 交易日志（M2 已实现）：只写本机临时数据目录，成功即 0
     (
         (
@@ -333,6 +338,20 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("symbol", "status"),
     ("knowledge", "status"),
     ("knowledge", "sync-announcements"),
+    # DEC-087 提醒引擎（不计入 31 条基线，见 docs/CLI.md §S）：11 条叶子全部
+    # 实现 --output；add/show/rm/toggle/update/test 只做参数校验与本地库读写，
+    # 真实触发 / 投递不在矩阵里跑（会发网络请求）。基线 75 → 86。
+    ("alert", "rules", "add"),
+    ("alert", "rules", "list"),
+    ("alert", "rules", "show"),
+    ("alert", "rules", "rm"),
+    ("alert", "rules", "toggle"),
+    ("alert", "rules", "update"),
+    ("alert", "channels", "add"),
+    ("alert", "channels", "list"),
+    ("alert", "channels", "rm"),
+    ("alert", "channels", "test"),
+    ("alert", "run"),
     # 「对话模式与研究台」批次（2026-11-21 入库）新注册了 25 条叶子但**尚未实现
     # 全局 --output 契约**（archive/brief/coverage/debate/verify 族、news-archive、
     # peer serve），暂不登 LEAF_PATHS——test_registered_leaves_match_baseline

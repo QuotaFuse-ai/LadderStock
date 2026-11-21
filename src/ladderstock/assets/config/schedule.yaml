@@ -243,3 +243,11 @@ jobs:
     kind: sentiment_live
     trigger: "60s"
     enabled: true
+  # 提醒引擎终检（DEC-087）：用户自配规则按收盘价再判一遍，命中即收件箱 + 出站
+  # 渠道。与 `ldst alert run` / `POST /api/alert/run` 同一个执行体；盘中高频巡检
+  # 把 trigger 改成间隔形态（如 "300s"），引擎按「越线报一次」自动去重。
+  - id: alert_close
+    name: 15:05 收盘提醒终检
+    kind: alert_check
+    trigger: "15:05"
+    enabled: false

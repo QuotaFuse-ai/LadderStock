@@ -90,6 +90,7 @@ from ladderstock.web.control import (
 from ladderstock.web.data_assets import build_data_router
 from ladderstock.web.financecoffer_api import build_financecoffer_router
 from ladderstock.web.inbox import build_router as build_inbox_router
+from ladderstock.web.alert_api import build_router as build_alert_router
 from ladderstock.web.brief import build_router as build_brief_router
 from ladderstock.web.verify import build_router as build_verify_router
 from ladderstock.web.coverage import build_router as build_coverage_router
@@ -2139,6 +2140,10 @@ def create_app(
     # `/api/inbox`（GET 读 / 两条 POST 标已读）：本机隐私数据，平面 JSON + `no-store`，
     # 闸门复用雷达面的同一份实现（回环 + Host；写面再加同源来源证据），不新增鉴权。
     app.include_router(build_inbox_router(data_root=root))
+
+    # `/api/alert/*`（DEC-087 提醒引擎）：规则 / 出站渠道 / 手动跑一轮 / 触发历史。
+    # 渠道清单读面一律打码 webhook URL；写面与收件箱同闸（回环 + Host + 同源来源证据）。
+    app.include_router(build_alert_router(data_root=root))
 
     # -------------------------------------------- 简报面（F11 always-on 简报）
     #

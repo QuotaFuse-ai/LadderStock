@@ -67,7 +67,8 @@
               "plan_tick",
               "sync_evening",
               "news_collect",
-              "recall"
+              "recall",
+              "alert_check"
             ]
           },
           "trigger": {

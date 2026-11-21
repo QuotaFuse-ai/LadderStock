@@ -252,3 +252,14 @@ jobs:
     kind: recall
     trigger: "16:10"
     enabled: true
+
+  # 提醒引擎终检（DEC-087）：把用户自配规则（价格 / 均线 / 放量 / 浮盈亏）按
+  # **收盘价**再判一遍，命中即收件箱 + 出站渠道。与 `ldst alert run` 和
+  # `POST /api/alert/run` 是同一个执行体。
+  # 盘中高频巡检把 trigger 改成间隔形态（如 "300s"）即可；引擎按「越线报一次」
+  # 自我去重，不会因为高频跑而刷屏。
+  - id: alert_close
+    name: 15:05 收盘提醒终检
+    kind: alert_check
+    trigger: "15:05"
+    enabled: false
