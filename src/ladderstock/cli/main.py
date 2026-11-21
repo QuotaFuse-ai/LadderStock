@@ -36,6 +36,7 @@ from ladderstock.cli.legacy_ports import warn_legacy_port
 from ladderstock.cli.mcp import register as register_mcp
 from ladderstock.cli.news import events_command, news_archive_command, news_command
 from ladderstock.cli.notify import register as register_notify
+from ladderstock.cli.report import register as register_report
 from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
 from ladderstock.cli.pool import register as register_pool
@@ -270,6 +271,8 @@ register_watchlist(watch_app)
 register_notify(notify_app)
 # 组合统计（B 包 / DEC-089）：指标 / 基准 / 归因 / 行为 / 错题本，纯本地只读。
 register_analytics(app)
+# 周期报告（B 包后半）：月报 / 季报 / 年报，事实包 + 模板叙述。
+register_report(app)
 # 提醒引擎（DEC-087）：自定义规则（价格/均线/放量/浮盈亏）× 出站渠道（邮件/webhook/IM）。
 # 出站渠道是对 watch/notifier 旧红线的显式推翻，实现体在 alert/ 包，收件箱仍是源头记录。
 register_alert(alert_app)

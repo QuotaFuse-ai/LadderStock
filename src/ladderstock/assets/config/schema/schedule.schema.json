@@ -68,7 +68,8 @@
               "sync_evening",
               "news_collect",
               "recall",
-              "alert_check"
+              "alert_check",
+              "report"
             ]
           },
           "trigger": {

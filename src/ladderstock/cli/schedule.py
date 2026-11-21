@@ -102,6 +102,9 @@ JOB_KINDS: tuple[str, ...] = (
     # DEC-087 提醒引擎：用户自配规则（价格/均线/放量/浮盈亏）一轮求值 + 投递，
     # 执行体 `alert/run.py:run_once()`（CLI / Web / 调度同一个入口）。
     "alert_check",
+    # B 包后半：月报/季报/年报（事实包 + 模板叙述）。调度表没有「每月某日」
+    # 的触发器，所以按日跑 + 内部守卫：只有每月 1 日才生成上一个月的月报。
+    "report",
 )
 
 #: 单次 `qfw run`（全赛道采集 + LLM 提炼）的时长上限：正常 1–3 分钟，超上限即终止
@@ -720,7 +723,7 @@ def _collect_wire_news() -> dict[str, Any]:
         shown = "、".join(names[:3])
         detail += f"；不可用源 {len(unavailable)} 个：{shown}"
         if len(names) > 3:
-            detail += f" 等（详见记录里的 sources_unavailable）"
+            detail += " 等（详见记录里的 sources_unavailable）"
     if status == "degraded":
         detail += "；部分源不可用，如实记 degraded"
     return {"status": status, "detail": detail, "sources_unavailable": unavailable}
@@ -2650,6 +2653,25 @@ def run_job(
                     registry=registry,
                 )
             )
+        elif kind == "report":
+            # B 包后半：触发器只有 HH:MM / Ns，没有「每月某日」；按日跑 + 守卫：
+            # 仅每月 1 日生成上一个月报（其他日子 skipped，不补跑）。
+            moment = now or datetime.now()
+            if moment.day != 1:
+                result.update(status="skipped", detail="非月初（每月 1 日才生成月报）")
+            else:
+                from ladderstock.analytics import period as report_period
+
+                written = report_period.write_report("month", None, root=root)
+                report = written["report"]
+                result.update(
+                    status="ok",
+                    detail=(
+                        f"{report['label']} 月报已生成：已实现 "
+                        f"{report['portfolio']['realized_count']} 笔 / "
+                        f"{report['portfolio']['realized_total']:.2f}；{written['md_path']}"
+                    ),
+                )
         else:
             result.update(status="failed", detail=f"未知任务类型 {kind!r}")
     except Exception as exc:  # noqa: BLE001 - 单条任务失败不拖垮整轮

@@ -517,7 +517,7 @@ ldst position list --output json                         # realized.total_pnl（
 > **2026-11-22 补齐（`--output` 契约）**：「对话模式与研究台」批次的 25 条命令
 > （archive / brief / coverage / debate / verify 族、news-archive、peer serve）
 > 统一接入全局 `--output json|table|csv` 并登记进基线——`LEAF_PATHS` 86 → **111**
-> （DEC-089 的 `analytics` 再 +1 → **112**），
+> （DEC-089 的 `analytics` 再 +1 → **112**，B 包后半 `report` 再 +1 → **113**），
 > `test_registered_leaves_match_baseline` 转绿。`peer serve` 是长驻包裹层，
 > 只保留选项占位（与 `run` / `watchdog` 同口径）。
 >
@@ -587,6 +587,7 @@ ldst position list --output json                         # realized.total_pnl（
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
 | 102 | `ldst analytics` | 组合统计（指标/基准/归因/行为/错题本） | `--days`（默认 365） | 0；无流水或无日线 **6** |
+| 103 | `ldst report` | 月报/季报/年报（事实包 + 模板叙述，落 `data/report/`） | `--period month|quarter|year` / `--of` / `--dry-run` | 0；参数非法 **2** |
 
 ## F. 全局约定
 
