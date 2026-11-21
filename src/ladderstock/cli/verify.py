@@ -12,12 +12,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
+from ladderstock.cli.output import OutputOption, emit, resolve_format
 from ladderstock.research import verify
 
 _MIME_BY_SUFFIX = {
@@ -30,14 +30,13 @@ _MIME_BY_SUFFIX = {
 }
 
 
-def _echo_json(payload: Any) -> None:
-    typer.echo(json.dumps(payload, ensure_ascii=False, indent=1, default=str))
-
-
 def _print_result(payload: dict[str, Any]) -> None:
     extract = payload["extract"]
     typer.echo(f"{payload['filename']}（{payload['bytes']} 字节，{payload['mime']}）")
-    typer.echo(f"  抽取：{extract['status']}" + (f" · {extract['reason']}" if extract.get("reason") else ""))
+    typer.echo(
+        f"  抽取：{extract['status']}"
+        + (f" · {extract['reason']}" if extract.get("reason") else "")
+    )
     if extract.get("pages"):
         typer.echo(f"  页数：{extract['pages']} · 字数：{extract.get('chars')}")
     if payload.get("dates"):
@@ -50,7 +49,11 @@ def _print_result(payload: dict[str, Any]) -> None:
     typer.echo(
         f"  对账：{reconciled['matched']}/{reconciled['comparable']} 一致"
         f" · 不一致 {reconciled['mismatched']} · 无法核对 {reconciled['unverifiable']}"
-        + (f" · 正确率 {reconciled['accuracy'] * 100:.1f}%" if reconciled["accuracy"] is not None else "")
+        + (
+            f" · 正确率 {reconciled['accuracy'] * 100:.1f}%"
+            if reconciled["accuracy"] is not None
+            else ""
+        )
     )
     for row in reconciled["rows"]:
         mark = {"match": "✓", "mismatch": "✗", "unverifiable": "?"}.get(row["verdict"], "?")
@@ -65,25 +68,36 @@ def _print_result(payload: dict[str, Any]) -> None:
 
 
 def verify_capabilities(
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """本机能做什么：PDF 文本层 / 图片 vision / 本地 OCR。"""
     info = verify.capabilities()
-    if as_json:
-        _echo_json(info)
+    if resolve_format(output) != "table":
+        emit(info, output)
         return
-    typer.echo(f"PDF 文本层：{'可用（pypdf）' if info['pdf_text'] else '不可用 · ' + info['pdf_reason']}")
-    typer.echo(f"图片识别：{'已配置 vision 后端' if info['image_vision'] else '不可用 · ' + info['image_reason']}")
-    typer.echo(f"本地 OCR：{'可用' if info['local_ocr'] else '不可用 · ' + info['local_ocr_reason']}")
-    typer.echo("对账容差：" + "、".join(f"{key}={value}" for key, value in info["tolerance"].items()))
+    typer.echo(
+        f"PDF 文本层：{'可用（pypdf）' if info['pdf_text'] else '不可用 · ' + info['pdf_reason']}"
+    )
+    vision_state = (
+        "已配置 vision 后端" if info["image_vision"] else f"不可用 · {info['image_reason']}"
+    )
+    typer.echo(f"图片识别：{vision_state}")
+    typer.echo(
+        f"本地 OCR：{'可用' if info['local_ocr'] else '不可用 · ' + info['local_ocr_reason']}"
+    )
+    typer.echo(
+        "对账容差：" + "、".join(f"{key}={value}" for key, value in info["tolerance"].items())
+    )
 
 
 def verify_file(
     path: Annotated[str, typer.Argument(help="PDF 或截图路径")],
-    code: Annotated[str | None, typer.Option("--code", help="标的代码（图上没写时手工指定）")] = None,
+    code: Annotated[
+        str | None, typer.Option("--code", help="标的代码（图上没写时手工指定）")
+    ] = None,
     root: Annotated[str | None, typer.Option("--root", help="数据根（默认 data/）")] = None,
     no_save: Annotated[bool, typer.Option("--no-save", help="只打印，不落 data/verify/")] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """查证一份 PDF / 截图：抽取 → 关键数字 → 与本地数据对账。"""
     file_path = Path(path)
@@ -103,8 +117,8 @@ def verify_file(
         code=code,
         persist=not no_save,
     )
-    if as_json:
-        _echo_json(payload)
+    if resolve_format(output) != "table":
+        emit(payload, output)
     else:
         _print_result(payload)
     if not payload["ok"]:
@@ -115,12 +129,12 @@ def verify_file(
 def verify_history(
     limit: Annotated[int, typer.Option("--limit", "-n", help="最多几条")] = 20,
     root: Annotated[str | None, typer.Option("--root", help="数据根（默认 data/）")] = None,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """最近查证过的文件（只读落盘结果）。"""
     items = verify.history(Path(root) if root else None, limit=limit)
-    if as_json:
-        _echo_json({"items": items, "capabilities": verify.capabilities()})
+    if resolve_format(output) != "table":
+        emit({"items": items, "capabilities": verify.capabilities()}, output)
         return
     if not items:
         typer.echo("还没有查证记录（data/verify/ 为空）。")

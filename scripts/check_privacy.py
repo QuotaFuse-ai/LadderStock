@@ -12,9 +12,9 @@
 1. `config-secrets`       config/*.yaml 不得出现真实密钥，只允许 `*_env` 指向环境变量名；
 2. `credential-printing`  src 里把凭据 / Token 送进 print / log / error 的代码行；
 3. `privacy-surfaces`     MCP 工具清单、web 私有字段、journal 库不被 mcp/web/ai 引用
-                         （两条授权例外：`web/server.py` → `journal.stats`（DEC-015）与
-                         `web/radar.py` → `journal.position`（DEC-030 / QUOT-279）；
-                         两处都必须同时具备回环闸门 + `Host` 白名单，持仓那条还必须有 `no-store`。
+                         （授权例外见 `JOURNAL_IMPORT_ALLOWLIST`；最新一条为 DEC-088：
+                         radar 持仓批量导入 + AI 自选只读工具。每条都必须同时具备
+                         回环闸门 / 证据字符串，缺一即 FAIL；
                          经 `cli/position.py` 传递引用隐私库一律判 FAIL）；
 4. `boundary-guards`      用反例验证 `scan_no_collection()` / `audit_sources()` 拦得住越界；
 5. `listener-defaults`    web / MCP 默认只绑回环；非回环必须显式开关 + 鉴权 Token。
@@ -193,6 +193,15 @@ JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
             "host_header_allowed(",
             '"Cache-Control": "no-store"',
         ),
+        # 第五条授权例外（DEC-088）：持仓批量导入（对账单预览 + 写入）。与持仓面
+        # 同一套读/写闸门（回环 + Host，写面再加来源证据），不进信封 / MCP / AI。
+        "ladderstock.journal.portfolio_import": (
+            "def _positions_guard(",
+            "def _positions_write_guard(",
+            "privacy_read_guard(",
+            "privacy_write_guard(",
+            "DEC-088",
+        ),
     },
     # 第五条授权例外（QUOT-432 / DEC-058）：提醒收件箱（读写都只落本机 SQLite）。
     # 读 / 写面复用 `privacy_read_guard` / `privacy_write_guard`（与持仓、自选同一份
@@ -212,6 +221,16 @@ JOURNAL_IMPORT_ALLOWLIST: dict[str, dict[str, tuple[str, ...]]] = {
             "privacy_read_guard(",
             "privacy_write_guard(",
             '"Cache-Control": "no-store"',
+        ),
+    },
+    # 第七条授权例外（DEC-088）：AI 的「查我的自选」只读工具。这是「隐私表不进
+    # AI prompt」的**唯一例外**（只含 watchlist、只读、不写回、不进 MCP / 通知）。
+    # 证据字符串缺一即判 FAIL——白名单不能变成后门。
+    "src/ladderstock/ai/agent_runtime.py": {
+        "ladderstock.journal.watchlist": (
+            "def lookup_watchlist(",
+            "DEC-088",
+            "ToolResult(",
         ),
     },
 }

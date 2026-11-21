@@ -13,16 +13,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any
 
 import typer
 
+from ladderstock.cli.output import OutputOption, emit, resolve_format
 from ladderstock.data import coverage_board as cb
-
-
-def _echo_json(payload: Any) -> None:
-    typer.echo(json.dumps(payload, ensure_ascii=False, indent=1, default=str))
 
 
 def _fmt_coverage(row: dict[str, Any]) -> str:
@@ -48,12 +44,12 @@ def coverage_board(
         list[str] | None, typer.Option("--dataset", "-d", help="只查指定数据集（可重复）")
     ] = None,
     only_gaps: Annotated[bool, typer.Option("--gaps", help="只列需要处理的")] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON（全量，含 summary）")] = False,
+    output: OutputOption = None,
 ) -> None:
     """62 个数据集各自的落盘情况（只读本地库，不发请求）。"""
     payload = cb.board(datasets=list(dataset) if dataset else None)
-    if as_json:
-        _echo_json(payload)
+    if resolve_format(output) != "table":
+        emit(payload, output)
         return
     summary = payload["summary"]
     counts = summary["counts"]
@@ -71,13 +67,13 @@ def coverage_board(
 
 
 def coverage_gaps(
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """只看需要处理的数据集（按严重度排序）。"""
     payload = cb.board()
     rows = cb.gaps(payload)
-    if as_json:
-        _echo_json({"generated_at": payload["generated_at"], "gaps": rows})
+    if resolve_format(output) != "table":
+        emit({"generated_at": payload["generated_at"], "gaps": rows}, output)
         return
     if not rows:
         typer.echo("没有缺口。")
@@ -93,7 +89,7 @@ def coverage_plan(
         str | None, typer.Option("--codes", help="逗号分隔的代码，缺省用代码池")
     ] = None,
     max_codes: Annotated[int, typer.Option("--max-codes", help="单批上限")] = cb.MAX_BATCH_CODES,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """这批补采会请求什么（不发请求）。"""
     code_list = [c.strip() for c in codes.split(",") if c.strip()] if codes else None
@@ -102,8 +98,8 @@ def coverage_plan(
     except ValueError as exc:
         typer.echo(f"补不了：{exc}")
         raise typer.Exit(code=2) from None
-    if as_json:
-        _echo_json(prepared)
+    if resolve_format(output) != "table":
+        emit(prepared, output)
         return
     typer.echo(f"{prepared['dataset']} · 主源 {prepared['primary']}")
     if prepared["fallback"]:
@@ -122,7 +118,7 @@ def coverage_backfill(
     ] = None,
     max_codes: Annotated[int, typer.Option("--max-codes", help="单批上限")] = cb.MAX_BATCH_CODES,
     execute: Annotated[bool, typer.Option("--execute", help="真跑（默认只出计划）")] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """受控补采：默认只出计划；`--execute` 才真跑一次（单数据集单批）。"""
     code_list = [c.strip() for c in codes.split(",") if c.strip()] if codes else None
@@ -131,8 +127,10 @@ def coverage_backfill(
     except ValueError as exc:
         typer.echo(f"补不了：{exc}")
         raise typer.Exit(code=2) from None
-    if as_json:
-        _echo_json(result)
+    if resolve_format(output) != "table":
+        emit(result, output)
+        if result.get("status") in {"failed", "lost"}:
+            raise typer.Exit(code=1)
         return
     typer.echo(f"{result['dataset']} · 主源 {result['primary']} · {result['status']}")
     if not execute:

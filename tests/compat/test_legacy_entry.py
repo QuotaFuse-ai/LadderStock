@@ -79,6 +79,16 @@ DOCUMENTED_GROUPS = {
     # 2026-11-18 增量：标的字典与知识库投影，见 docs/CLI.md §Q / §R
     "symbol",
     "knowledge",
+    # 「对话模式与研究台」批次（2026-11-21 入库）：六族 25 条命令，见 §T
+    "archive",
+    "brief",
+    "coverage",
+    "debate",
+    "verify",
+    "news-archive",
+    "peer",
+    # DEC-087 提醒引擎（2026-11-22）：11 条命令，见 §S
+    "alert",
 }
 
 #: 文档承诺「只打印迁移提示」的旧端口（DEC-004）。

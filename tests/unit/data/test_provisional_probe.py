@@ -143,7 +143,8 @@ def test_doctor_keeps_26_checks_and_warning_does_not_change_exit(
     #    + peers 注册表检查 `peers:registry`（QUOT-403）
     #    + `config:backtest.yaml`（QUOT-500）
     #    + `config:backfill.yaml`（QUOT-501）：探测仍不参与计数
-    assert len(payload["checks"]) == 26, "检查项数必须仍是 26"
+    #    + `config:brief.yaml`（F11 简报开关，随本批补入随包模板 + CONFIG_FILES）
+    assert len(payload["checks"]) == 27, "检查项数必须仍是 27"
     assert any(c["check"] == "peers:registry" for c in payload["checks"])
     assert unmasked in payload["warnings"]
     assert result.exit_code == (0 if payload["ok"] else 3)

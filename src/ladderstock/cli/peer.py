@@ -21,9 +21,11 @@ import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
+from ladderstock.cli.output import OutputOption
 from ladderstock.core import discovery
 
 peer_app = typer.Typer(no_args_is_help=True, help="服务发现：模块自述卡")
@@ -58,7 +60,10 @@ def _card_lock(root: Path):
                 else:
                     import fcntl
 
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(  # type: ignore[attr-defined]
+                        handle.fileno(),
+                        fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+                    )
                 break
             except OSError:
                 if time.monotonic() >= deadline:
@@ -74,7 +79,7 @@ def _card_lock(root: Path):
             else:
                 import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
         except OSError:
             pass
         handle.close()
@@ -82,21 +87,29 @@ def _card_lock(root: Path):
 
 @peer_app.command("serve")
 def serve(
-    module: str = typer.Option(..., "--module", help="模块 id（与 config/sources.yaml 的 peers 键一致）"),
+    module: str = typer.Option(
+        ..., "--module", help="模块 id（与 config/sources.yaml 的 peers 键一致）"
+    ),
     mcp: int = typer.Option(0, "--mcp", help="MCP 面端口；模块没有这一面就不传"),
     web: int = typer.Option(0, "--web", help="Web 面端口；模块没有这一面就不传"),
-    face: str = typer.Option(
-        "", "--face", help="快捷面名：mcp / web（控制面按面的名字登记时用）"
-    ),
+    face: str = typer.Option("", "--face", help="快捷面名：mcp / web（控制面按面的名字登记时用）"),
     port: int = typer.Option(0, "--port", help="配合 --face 使用的端口"),
-    extra: list[int] = typer.Option(None, "--extra", help="附加端口，可重复"),
+    extra: Annotated[list[int] | None, typer.Option("--extra", help="附加端口，可重复")] = None,
     product: str = typer.Option("", "--product", help="对外展示的产品名"),
     card_root: str = typer.Option(
         "", "--card-root", help="卡片落点（模块安装目录）；默认取启动时的 cwd"
     ),
-    command: list[str] = typer.Argument(None, help="原启动命令；必须放在 -- 之后"),
+    command: Annotated[
+        list[str] | None, typer.Argument(help="原启动命令；必须放在 -- 之后")
+    ] = None,
+    output: OutputOption = None,
 ) -> None:
-    """先登记真实端口，再执行原启动命令；退出时撤卡。"""
+    """先登记真实端口，再执行原启动命令；退出时撤卡。
+
+    长驻包裹层：`--output` 只为全局契约留位（与 `run` / `watchdog` 同口径），
+    本命令不走结构化输出。
+    """
+    del output  # 明确：长驻进程不产生结构化输出
     if not command:
         typer.echo(
             "缺少原启动命令：ldst peer serve --module <id> [--mcp N] [--web N] -- <命令...>",

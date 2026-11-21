@@ -37,6 +37,9 @@ CONFIG_FILES: tuple[str, ...] = (
     "backtest.yaml",
     # 历史日线回补的票池 / 窗口 / 阶段标注（QUOT-501，见 docs/CLI.md §N）
     "backfill.yaml",
+    # F11 简报开关（notify / channel / threshold）：首次启动从随包模板补齐，
+    # 否则 `ldst brief config` 在干净环境里只能吃默认值、改不了。
+    "brief.yaml",
 )
 
 #: 随包发布的配置模板目录（相对源码树工程根）；运行时首次启动据此 seed

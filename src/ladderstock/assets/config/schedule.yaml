@@ -243,9 +243,21 @@ jobs:
     kind: sentiment_live
     trigger: "60s"
     enabled: true
-  # 提醒引擎终检（DEC-087）：用户自配规则按收盘价再判一遍，命中即收件箱 + 出站
-  # 渠道。与 `ldst alert run` / `POST /api/alert/run` 同一个执行体；盘中高频巡检
-  # 把 trigger 改成间隔形态（如 "300s"），引擎按「越线报一次」自动去重。
+
+  # 16:10 到期观点回访（F9）：扫一遍观点账本，把到期记录拉日线判对错并回写。
+  # 缺行情的记录留 open 等下一轮；周末/休市没有到期记录时按 ok 返回（无告警）。
+  # 与 `/api/assistant/recall` 手动入口走同一个 run_recall，口径一致。
+  - id: recall_due
+    name: 16:10 观点回访判定
+    kind: recall
+    trigger: "16:10"
+    enabled: true
+
+  # 提醒引擎终检（DEC-087）：把用户自配规则（价格 / 均线 / 放量 / 浮盈亏）按
+  # **收盘价**再判一遍，命中即收件箱 + 出站渠道。与 `ldst alert run` 和
+  # `POST /api/alert/run` 是同一个执行体。
+  # 盘中高频巡检把 trigger 改成间隔形态（如 "300s"）即可；引擎按「越线报一次」
+  # 自我去重，不会因为高频跑而刷屏。
   - id: alert_close
     name: 15:05 收盘提醒终检
     kind: alert_check

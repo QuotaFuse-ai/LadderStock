@@ -1,4 +1,4 @@
-﻿"""`ldst debate`：F7 多空对照表的命令行入口（register 模式，与 `cli/symbol.py` 同形）。
+"""`ldst debate`：F7 多空对照表的命令行入口（register 模式，与 `cli/symbol.py` 同形）。
 
 四个动作刻意分开，因为它们的"能不能做"不一样：
 
@@ -13,18 +13,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
+from ladderstock.cli.output import OutputOption, emit, resolve_format
 from ladderstock.cli.paths import data_dir
 from ladderstock.research import debate
-
-
-def _echo_json(payload: Any) -> None:
-    typer.echo(json.dumps(payload, ensure_ascii=False, indent=1, default=str))
 
 
 def _analyze(
@@ -100,27 +96,29 @@ def _print_human(payload: dict[str, Any]) -> None:
 
 def debate_list(
     limit: Annotated[int, typer.Option("--limit", "-n", help="最多列几条")] = 20,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """列出已保存的合议报告（只读文件名）。"""
     items = debate.list_reports(limit=limit)
-    if as_json:
-        _echo_json({"items": items, "availability": debate.availability()})
+    if resolve_format(output) != "table":
+        emit({"items": items, "availability": debate.availability()}, output)
         return
     if not items:
-        typer.echo("没有已保存的报告。StockSenate 还没跑过，或跑到了别处（见 ldst debate status）。")
+        typer.echo(
+            "没有已保存的报告。StockSenate 还没跑过，或跑到了别处（见 ldst debate status）。"
+        )
         return
     for item in items:
         typer.echo(f"{item['run_id']}  state={'有' if item['has_state'] else '无'}")
 
 
 def debate_status(
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """能不能跑（CLI / 配置 / 报告数）——回答「为什么这轮没有辩论」。"""
     info = debate.availability()
-    if as_json:
-        _echo_json(info)
+    if resolve_format(output) != "table":
+        emit(info, output)
         return
     typer.echo(f"目录：{info['home']}（{'存在' if info['home_exists'] else '缺失'}）")
     typer.echo(f"CLI：{info['cli'] or '没找到'}")
@@ -136,9 +134,13 @@ def debate_show(
     root: Annotated[
         str | None, typer.Option("--root", help="Senate 目录（默认 file/modules/senate）")
     ] = None,
-    min_quality: Annotated[float, typer.Option("--min-quality", help="质量阈值")] = debate.MIN_QUALITY,
-    min_points: Annotated[int, typer.Option("--min-points", help="多/空各最少论点")] = debate.MIN_POINTS,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    min_quality: Annotated[
+        float, typer.Option("--min-quality", help="质量阈值")
+    ] = debate.MIN_QUALITY,
+    min_points: Annotated[
+        int, typer.Option("--min-points", help="多/空各最少论点")
+    ] = debate.MIN_POINTS,
+    output: OutputOption = None,
 ) -> None:
     """读某标的某天（或最近）的报告，解析 + 门控。不跑合议。"""
     path = debate.latest_report(code, report_date, Path(root) if root else None)
@@ -146,8 +148,8 @@ def debate_show(
         typer.echo(f"没找到 {code} 在 {report_date or '任意日期'} 的报告")
         raise typer.Exit(code=1)
     payload = _analyze(path, min_quality=min_quality, min_points=min_points, persist=True)
-    if as_json:
-        _echo_json(payload)
+    if resolve_format(output) != "table":
+        emit(payload, output)
         return
     _print_human(payload)
 
@@ -155,7 +157,7 @@ def debate_show(
 def debate_last(
     code: Annotated[str, typer.Argument(help="标的代码")],
     root: Annotated[str | None, typer.Option("--root", help="Senate 目录")] = None,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """读该标的最近一份报告（`show` 不带日期的简写）。"""
     path = debate.latest_report(code, None, Path(root) if root else None)
@@ -165,8 +167,8 @@ def debate_last(
     payload = _analyze(
         path, min_quality=debate.MIN_QUALITY, min_points=debate.MIN_POINTS, persist=True
     )
-    if as_json:
-        _echo_json(payload)
+    if resolve_format(output) != "table":
+        emit(payload, output)
         return
     _print_human(payload)
 
@@ -178,27 +180,36 @@ def debate_run(
     ] = None,
     timeout: Annotated[int, typer.Option("--timeout", help="超时秒数")] = debate.DEFAULT_TIMEOUT,
     root: Annotated[str | None, typer.Option("--root", help="Senate 目录")] = None,
-    min_quality: Annotated[float, typer.Option("--min-quality", help="质量阈值")] = debate.MIN_QUALITY,
-    min_points: Annotated[int, typer.Option("--min-points", help="多/空各最少论点")] = debate.MIN_POINTS,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    min_quality: Annotated[
+        float, typer.Option("--min-quality", help="质量阈值")
+    ] = debate.MIN_QUALITY,
+    min_points: Annotated[
+        int, typer.Option("--min-points", help="多/空各最少论点")
+    ] = debate.MIN_POINTS,
+    output: OutputOption = None,
 ) -> None:
     """真跑一次合议（分钟级、烧 token），跑完立刻解析 + 门控。"""
     outcome = debate.run_debate(
         code, report_date, root=Path(root) if root else None, timeout=timeout
     )
+    structured = resolve_format(output) != "table"
     if not outcome.get("ok"):
-        typer.echo(f"合议没跑成：{outcome.get('reason')}")
-        if as_json:
-            _echo_json(outcome)
+        if structured:
+            emit(outcome, output)
+        else:
+            typer.echo(f"合议没跑成：{outcome.get('reason')}")
         raise typer.Exit(code=1)
     report_dir = outcome.get("report_dir")
     if not report_dir:
-        typer.echo("跑完了但没定位到报告目录")
+        if structured:
+            emit({"ok": False, "reason": "跑完了但没定位到报告目录", "run": outcome}, output)
+        else:
+            typer.echo("跑完了但没定位到报告目录")
         raise typer.Exit(code=1)
     payload = _analyze(report_dir, min_quality=min_quality, min_points=min_points, persist=True)
     payload["run"] = outcome
-    if as_json:
-        _echo_json(payload)
+    if structured:
+        emit(payload, output)
         return
     typer.echo(f"合议完成：{outcome.get('elapsed')}s，报告 {report_dir}")
     _print_human(payload)

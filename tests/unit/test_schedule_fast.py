@@ -1,4 +1,4 @@
-﻿"""盘中高频任务（QUOT-352）：间隔触发器 + 30s 关键快照 + 60s 资金流批量。
+"""盘中高频任务（QUOT-352）：间隔触发器 + 30s 关键快照 + 60s 资金流批量。
 
 钉住四件事：
 
@@ -60,7 +60,7 @@ def test_repo_schedule_declares_fast_jobs(repo: Path) -> None:
 
 
 def test_builtin_defaults_mirror_the_fast_jobs() -> None:
-    assert len(DEFAULT_JOBS) == 16
+    assert len(DEFAULT_JOBS) == 18  # 16 + recall_due + alert_close（DEC-087）
     assert fast_jobs(_default_table()) == fast_jobs(load_schedule()[0])
 
 

@@ -218,6 +218,7 @@ def build_tools(data_root: Any) -> list[ToolSpec]:
         )
 
     def lookup_watchlist(_args: dict[str, Any]) -> ToolResult:
+        """查看用户本机自选清单（DEC-088 授权：只读工具、不进 MCP / 通知、不写回）。"""
         from pathlib import Path
 
         from ladderstock.journal.watchlist import list_watch

@@ -85,6 +85,8 @@
 | **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
 | **QUOT-543 增量（1，非 P0 基线）** | `ai tools list` |
 | **QUOT-533 增量（1，非 P0 基线）** | `sync industry`（行业缓存真实联网补齐，DEC-074） |
+| **F 批次增量（25，非 P0 基线，见 §T）** | `archive *`、`brief *`、`coverage *`、`debate *`、`verify *`、`news-archive`、`peer serve` |
+| **DEC-087 增量（11，非 P0 基线，见 §S）** | `alert rules *`、`alert channels *`、`alert run` |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -511,6 +513,12 @@ ldst position list --output json                         # realized.total_pnl（
 > 校验与本地库读写、不真投递，由 `tests/unit/alert/` 覆盖（CLI 计数仍以
 > `tests/fixtures/command_matrix.py` 为准）。
 >
+> **2026-11-22 补齐（`--output` 契约）**：「对话模式与研究台」批次的 25 条命令
+> （archive / brief / coverage / debate / verify 族、news-archive、peer serve）
+> 统一接入全局 `--output json|table|csv` 并登记进基线——`LEAF_PATHS` 86 → **111**，
+> `test_registered_leaves_match_baseline` 转绿。`peer serve` 是长驻包裹层，
+> 只保留选项占位（与 `run` / `watchdog` 同口径）。
+>
 > 调度面：`kind: alert_check`（schema 已放开），默认种子任务 `alert_close`
 > （15:05，`enabled: false`）；盘中巡检可把 trigger 改成间隔形态（如 `300s`）。
 
@@ -530,6 +538,41 @@ ldst position list --output json                         # realized.total_pnl（
 
 `email` 渠道的 SMTP 密码只从环境变量读（默认 `LDST_ALERT_SMTP_PASSWORD`），
 `--config` 里写的是 `password_env` 这个**名字**，值永不落库、永不回显。
+
+## T. 「对话模式与研究台」批次（2026-11-21 入库，25）
+
+> 研究档案 / 简报 / 数据覆盖 / 多空对照 / 查证 / 服务发现六族。全部只读或只写本机，
+> 不新增采集；2026-11-22 统一接入全局 `--output json|table|csv` 并登记 `LEAF_PATHS`
+> （86 → 111）。退出码仍沿用 §F 总口径；各命令「找不到对象」一档当前为 1（历史现场
+> 值），与 §F 的 6 并存，脚本侧按需兼容。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 77 | `ldst archive list` | 研究档案体检表 | `--limit` | 0 |
+| 78 | `ldst archive show <code>` | 某标的某天档案逐段状态 | `--date` | 0；无档案 **1** |
+| 79 | `ldst archive export <code>` | 导出档案（md 交付件 / json 结构化） | `--date` / `--out` / `--format` | 0；失败 **1** |
+| 80 | `ldst archive search <keyword>` | 按代码 / 日期 / 正文检索档案 | `--limit` | 0 |
+| 81 | `ldst brief morning` | 晨报（只打印） | `--threshold` | 0 |
+| 82 | `ldst brief close` | 收盘复盘（只打印） | `--threshold` | 0 |
+| 83 | `ldst brief alerts` | 持仓异动（只打印） | `--threshold` | 0 |
+| 84 | `ldst brief today` | 三类各一份 | `--threshold` | 0 |
+| 85 | `ldst brief run <kind>` | 生成 → 去重 → 收件箱 →（可选）投递 | `--notify/--no-notify` / `--channel` / `--dry-run` | 0；未知 kind **2** |
+| 86 | `ldst brief history` | 最近几天推送状态 | `--limit` | 0 |
+| 87 | `ldst brief config` | 看 / 改通知开关（写 `config/brief.yaml`） | `--notify` / `--channel` / `--threshold` | 0；非法 **2** |
+| 88 | `ldst coverage board` | 62 个数据集落盘情况 | `--dataset` / `--gaps` | 0 |
+| 89 | `ldst coverage gaps` | 只看缺口（按严重度） | — | 0 |
+| 90 | `ldst coverage plan <dataset>` | 补采计划（不发请求） | `--codes` / `--max-codes` | 0；非法 **2** |
+| 91 | `ldst coverage backfill <dataset>` | 受控补采（默认 dry-run） | `--execute` / `--codes` / `--max-codes` | 0；失败 / 丢失 **1**；非法 **2** |
+| 92 | `ldst debate run <code>` | 真跑一次合议（分钟级、烧 token） | `--date` / `--timeout` / `--root` | 0；没跑成 **1** |
+| 93 | `ldst debate show <code>` | 读报告 + 质量门控 | `--date` / `--root` / `--min-quality` / `--min-points` | 0；无报告 **1** |
+| 94 | `ldst debate list` | 已保存的合议报告 | `--limit` | 0 |
+| 95 | `ldst debate last <code>` | 最近一份报告 | `--root` | 0；无报告 **1** |
+| 96 | `ldst debate status` | 能不能跑（CLI / 配置 / 报告数） | — | 0 |
+| 97 | `ldst verify capabilities` | 本机能做什么（PDF / vision / OCR） | — | 0 |
+| 98 | `ldst verify file <path>` | 查证 PDF / 截图：抽取 → 对账 | `--code` / `--root` / `--no-save` | 0；识别失败 **2** |
+| 99 | `ldst verify history` | 最近查证记录 | `--limit` / `--root` | 0 |
+| 100 | `ldst news-archive` | 把 news.sqlite 已有资讯补进归档与历史库（不重采） | `--dataset` / `--dry-run` / `--data-root` | 0；部分失败 **8** |
+| 101 | `ldst peer serve` | 模块启动包裹层：先登记自述卡再执行原命令 | `--module` / `--mcp` / `--web` / `--face` / `--port` / `--extra` / `--card-root` | 长驻（透传子进程退出码）；`--output` 仅占位 |
 
 ## F. 全局约定
 

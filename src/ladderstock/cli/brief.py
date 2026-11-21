@@ -16,16 +16,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any
 
 import typer
 
+from ladderstock.cli.output import OutputOption, emit, resolve_format
 from ladderstock.watch import brief
-
-
-def _echo_json(payload: Any) -> None:
-    typer.echo(json.dumps(payload, ensure_ascii=False, indent=1, default=str))
 
 
 def _print_brief(result: brief.Brief) -> None:
@@ -43,49 +39,55 @@ def _build_and_print(
     kind: str,
     *,
     threshold: float,
-    as_json: bool,
+    output: Any,
 ) -> None:
     result = brief.build(kind, threshold=threshold)
-    if as_json:
-        _echo_json(result.as_dict())
+    if resolve_format(output) != "table":
+        emit(result.as_dict(), output)
     else:
         _print_brief(result)
 
 
 def brief_morning(
-    threshold: Annotated[float, typer.Option("--threshold", help="异动阈值（%）")] = brief.ALERT_THRESHOLD_PCT,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    threshold: Annotated[
+        float, typer.Option("--threshold", help="异动阈值（%）")
+    ] = brief.ALERT_THRESHOLD_PCT,
+    output: OutputOption = None,
 ) -> None:
     """生成晨报（只打印，不写收件箱）。"""
-    _build_and_print(brief.BRIEF_MORNING, threshold=threshold, as_json=as_json)
+    _build_and_print(brief.BRIEF_MORNING, threshold=threshold, output=output)
 
 
 def brief_close(
-    threshold: Annotated[float, typer.Option("--threshold", help="异动阈值（%）")] = brief.ALERT_THRESHOLD_PCT,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    threshold: Annotated[
+        float, typer.Option("--threshold", help="异动阈值（%）")
+    ] = brief.ALERT_THRESHOLD_PCT,
+    output: OutputOption = None,
 ) -> None:
     """生成收盘复盘（只打印，不写收件箱）。"""
-    _build_and_print(brief.BRIEF_CLOSE, threshold=threshold, as_json=as_json)
+    _build_and_print(brief.BRIEF_CLOSE, threshold=threshold, output=output)
 
 
 def brief_alerts(
-    threshold: Annotated[float, typer.Option("--threshold", help="异动阈值（%）")] = brief.ALERT_THRESHOLD_PCT,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    threshold: Annotated[
+        float, typer.Option("--threshold", help="异动阈值（%）")
+    ] = brief.ALERT_THRESHOLD_PCT,
+    output: OutputOption = None,
 ) -> None:
     """生成持仓异动（只打印，不写收件箱）。"""
-    _build_and_print(brief.BRIEF_ALERTS, threshold=threshold, as_json=as_json)
+    _build_and_print(brief.BRIEF_ALERTS, threshold=threshold, output=output)
 
 
 def brief_today(
-    threshold: Annotated[float, typer.Option("--threshold", help="异动阈值（%）")] = brief.ALERT_THRESHOLD_PCT,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    threshold: Annotated[
+        float, typer.Option("--threshold", help="异动阈值（%）")
+    ] = brief.ALERT_THRESHOLD_PCT,
+    output: OutputOption = None,
 ) -> None:
     """三类各生成一份，一屏看完今天。"""
-    payload = {
-        kind: brief.build(kind, threshold=threshold).as_dict() for kind in brief.BRIEFS
-    }
-    if as_json:
-        _echo_json(payload)
+    payload = {kind: brief.build(kind, threshold=threshold).as_dict() for kind in brief.BRIEFS}
+    if resolve_format(output) != "table":
+        emit(payload, output)
         return
     for row in payload.values():
         typer.echo(f"【{row['title']}】{row['status']} · {row['detail']}")
@@ -106,7 +108,7 @@ def brief_run(
     ] = None,
     threshold: Annotated[float | None, typer.Option("--threshold", help="异动阈值（%）")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="只生成，不写收件箱、不投递")] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """生成并发布一份简报：去重 → 收件箱 →（可选）投递。"""
     name = str(kind or "").strip().lower()
@@ -116,9 +118,10 @@ def brief_run(
     settings = brief.load_settings()
     value = settings["threshold"] if threshold is None else threshold
     result = brief.build(name, threshold=value)
+    structured = resolve_format(output) != "table"
     if dry_run:
-        if as_json:
-            _echo_json({**result.as_dict(), "dry_run": True})
+        if structured:
+            emit({**result.as_dict(), "dry_run": True}, output)
         else:
             _print_brief(result)
             typer.echo("（dry-run：没有写收件箱，也没有投递）")
@@ -128,8 +131,8 @@ def brief_run(
         notify=notify,
         channel=channel or (settings["channel"] if notify else None),
     )
-    if as_json:
-        _echo_json({**outcome, "brief": result.as_dict()})
+    if structured:
+        emit({**outcome, "brief": result.as_dict()}, output)
         return
     _print_brief(result)
     typer.echo(
@@ -142,12 +145,12 @@ def brief_run(
 
 def brief_history(
     limit: Annotated[int, typer.Option("--limit", "-n", help="最多几天")] = 10,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """最近几天的简报状态（只读状态文件）。"""
     days = brief.history(limit=limit)
-    if as_json:
-        _echo_json({"days": days})
+    if resolve_format(output) != "table":
+        emit({"days": days}, output)
         return
     if not days:
         typer.echo("还没有跑过简报（data/brief/ 为空）。")
@@ -167,25 +170,29 @@ def brief_config(
     ] = None,
     channel: Annotated[str | None, typer.Option("--channel", help="console / desktop")] = None,
     threshold: Annotated[float | None, typer.Option("--threshold", help="异动阈值（%）")] = None,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """查看或修改简报开关（写 config/brief.yaml）。"""
+    structured = resolve_format(output) != "table"
     if notify is None and channel is None and threshold is None:
         settings = brief.load_settings()
         payload = {**settings, "path": str(brief.settings_path())}
-        if as_json:
-            _echo_json(payload)
+        if structured:
+            emit(payload, output)
             return
-        typer.echo(f"notify={settings['notify']} channel={settings['channel']} threshold={settings['threshold']}")
+        typer.echo(
+            f"notify={settings['notify']} channel={settings['channel']}"
+            f" threshold={settings['threshold']}"
+        )
         typer.echo(f"配置文件：{payload['path']}（不存在时用默认值）")
         return
     try:
         saved = brief.save_settings(notify=notify, channel=channel, threshold=threshold)
     except ValueError as exc:
         typer.echo(f"改不了：{exc}")
-        raise typer.Exit(code=2)
-    if as_json:
-        _echo_json(saved)
+        raise typer.Exit(code=2) from None
+    if structured:
+        emit(saved, output)
         return
     typer.echo(
         f"已写 {saved['path']}：notify={saved['notify']} channel={saved['channel']}"

@@ -13,16 +13,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any
 
 import typer
 
+from ladderstock.cli.output import OutputOption, emit, resolve_format
 from ladderstock.research import archive
-
-
-def _echo_json(payload: Any) -> None:
-    typer.echo(json.dumps(payload, ensure_ascii=False, indent=1, default=str))
 
 
 def _summary(item: dict[str, Any]) -> str:
@@ -42,12 +38,12 @@ def _summary(item: dict[str, Any]) -> str:
 
 def archive_list(
     limit: Annotated[int, typer.Option("--limit", "-n", help="最多列几条")] = 30,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """列出全部研究档案（每份一行体检）。"""
     items = archive.scan()[: max(1, limit)]
-    if as_json:
-        _echo_json({"count": len(items), "items": items})
+    if resolve_format(output) != "table":
+        emit({"count": len(items), "items": items}, output)
         return
     if not items:
         typer.echo("还没有研究档案（`ldst research <code>` 跑完一轮才会出现）。")
@@ -61,15 +57,15 @@ def archive_list(
 def archive_show(
     code: Annotated[str, typer.Argument(help="标的代码")],
     day: Annotated[str | None, typer.Option("--date", "-d", help="YYYY-MM-DD，缺省取最近")] = None,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """看某标的某天（或最近）档案的逐段状态。"""
     item = archive.find(code, day)
     if item is None:
         typer.echo(f"没有 {code} 在 {day or '任意日期'} 的研究档案")
         raise typer.Exit(code=1)
-    if as_json:
-        _echo_json(item)
+    if resolve_format(output) != "table":
+        emit(item, output)
         return
     typer.echo(f"{item['code']} · {item['date']} · {_summary(item)}")
     for row in item["stages"]:
@@ -94,21 +90,34 @@ def archive_show(
 def archive_export(
     code: Annotated[str, typer.Argument(help="标的代码")],
     day: Annotated[str | None, typer.Option("--date", "-d", help="YYYY-MM-DD，缺省取最近")] = None,
-    out: Annotated[str | None, typer.Option("--out", "-o", help="输出路径（默认 data/research_archive/<day>/<code>.<格式>）")] = None,
-    fmt: Annotated[str, typer.Option("--format", "-f", help="导出格式：md（可读交付件）/ json（结构化，给程序消费）")] = "md",
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    out: Annotated[
+        str | None,
+        typer.Option(
+            "--out", "-o", help="输出路径（默认 data/research_archive/<day>/<code>.<格式>）"
+        ),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option(
+            "--format", "-f", help="导出格式：md（可读交付件）/ json（结构化，给程序消费）"
+        ),
+    ] = "md",
+    output: OutputOption = None,
 ) -> None:
     """导出一份档案：Markdown（封面体检 + 逐段正文 + 依据链）或结构化 JSON。"""
     result = archive.export(code, day, out=out, fmt=fmt)
-    if as_json:
-        _echo_json(result)
+    structured = resolve_format(output) != "table"
+    if structured:
+        emit(result, output)
     if not result.get("ok"):
         typer.echo(f"导出失败：{result.get('reason')}")
         raise typer.Exit(code=1)
-    if not as_json:
+    if not structured:
+        missing = "、".join(result["missing"])
+        completeness = "完整" if result["complete"] else f"缺 {missing}"
         typer.echo(
             f"已导出 {result['code']} · {result['date']} → {result['path']}"
-            f"（{result['bytes']} 字节，{'完整' if result['complete'] else '缺 ' + '、'.join(result['missing'])}）"
+            f"（{result['bytes']} 字节，{completeness}）"
         )
     # 索引顺手刷新一次：导出过的档案一定是"已经人读过"的那份
     archive.write_index()
@@ -117,12 +126,12 @@ def archive_export(
 def archive_search(
     keyword: Annotated[str, typer.Argument(help="关键词：代码 / 日期 / 正文片段")],
     limit: Annotated[int, typer.Option("--limit", "-n", help="最多几条")] = 20,
-    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON")] = False,
+    output: OutputOption = None,
 ) -> None:
     """在档案里按代码/日期/正文找（返回命中片段与所在段）。"""
     hits = archive.search(keyword, limit=max(1, limit))
-    if as_json:
-        _echo_json({"keyword": keyword, "count": len(hits), "hits": hits})
+    if resolve_format(output) != "table":
+        emit({"keyword": keyword, "count": len(hits), "hits": hits}, output)
         return
     if not hits:
         typer.echo(f"没找到含「{keyword}」的档案")

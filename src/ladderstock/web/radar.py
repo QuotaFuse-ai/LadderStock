@@ -91,6 +91,7 @@ from ladderstock.journal.portfolio import legacy_rows as portfolio_legacy_rows
 from ladderstock.journal.portfolio import list_trades as list_portfolio_trades
 from ladderstock.journal.portfolio import migrate_legacy as migrate_portfolio_legacy
 from ladderstock.journal.portfolio import trade_as_dict as portfolio_trade_dict
+# DEC-088 授权：持仓批量导入（预览 + 写入）沿用持仓读/写面同一套闸门。
 from ladderstock.journal.portfolio_import import import_rows as import_portfolio_rows
 from ladderstock.journal.portfolio_import import preview as preview_portfolio_import
 from ladderstock.journal.position import (

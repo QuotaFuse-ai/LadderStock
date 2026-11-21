@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +72,14 @@ def test_lock_is_released_when_holder_process_dies(tmp_path: Path) -> None:
     finally:
         proc.kill()
         proc.wait(10)
+    # Windows 的 TerminateProcess 与内核锁回收之间有一个短暂的异步窗口：
+    # 句柄关闭 / 字节范围锁释放不与 wait() 返回原子同步（实测 ~0.5s）。
+    # 语义仍然钉「进程死后锁会释放」，但给一个有界重试窗口，不把调度抖动当失败。
+    deadline = time.monotonic() + 5.0
     lease = scheduler_lock.try_acquire(tmp_path, holder="me")
+    while lease is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+        lease = scheduler_lock.try_acquire(tmp_path, holder="me")
     assert lease is not None
     lease.release()
 

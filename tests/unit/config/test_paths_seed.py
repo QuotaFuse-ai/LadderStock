@@ -297,11 +297,12 @@ def test_packaged_templates_match_repo_config() -> None:
     """包内副本与仓库 `config/` 同步：两处各改一份就会让开发态与安装态漂移。
 
     `ports.yaml` 不在模板里——它由 `ldst run` 在启动成功后写入（端口避让记录），
-    属于运行时状态而非随包模板，比较时排除。
+    属于运行时状态而非随包模板；`ai.env` 同理（本地密钥文件，`.gitignore` 已排），
+    比较时一并排除。
     """
     _needs_repo_config()
     packaged = Path(paths.__file__).resolve().parents[1] / "assets" / "config"
-    runtime_only = {Path("ports.yaml")}
+    runtime_only = {Path("ports.yaml"), Path("ai.env")}
     repo_files = {
         p.relative_to(REPO_CONFIG) for p in REPO_CONFIG.rglob("*") if p.is_file()
     } - runtime_only

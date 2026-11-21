@@ -1,4 +1,4 @@
-﻿"""15:35 收盘全量同步任务（QUOT-347，kind=`sync_close`）。
+"""15:35 收盘全量同步任务（QUOT-347，kind=`sync_close`）。
 
 钉住四件事：
 
@@ -356,7 +356,7 @@ def test_schedule_schema_enum_contains_sync_close() -> None:
 
 
 def test_default_table_declares_sync_close_at_1535() -> None:
-    assert len(DEFAULT_JOBS) == 16
+    assert len(DEFAULT_JOBS) == 18  # 16 + recall_due + alert_close（DEC-087）
     jobs = [job for job in _default_table()["jobs"] if job.get("kind") == "sync_close"]
     assert len(jobs) == 1
     assert jobs[0]["trigger"] == "15:35"

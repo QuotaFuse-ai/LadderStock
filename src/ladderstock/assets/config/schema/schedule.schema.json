@@ -67,6 +67,7 @@
               "plan_tick",
               "sync_evening",
               "news_collect",
+              "recall",
               "alert_check"
             ]
           },
