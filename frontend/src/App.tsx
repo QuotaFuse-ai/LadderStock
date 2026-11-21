@@ -18,6 +18,7 @@ import KnowledgeEntryScreen from './screens/knowledge/KnowledgeEntryScreen'
 import DataAssetsScreen from './screens/DataAssetsScreen'
 import MarketScreen from './screens/MarketScreen'
 import InboxScreen from './screens/my-stocks/InboxScreen'
+import AlertRulesScreen from './screens/AlertRulesScreen'
 import MyStocksScreen from './screens/my-stocks/MyStocksScreen'
 import CalendarScreen from './screens/radar/CalendarScreen'
 import NewsScreen from './screens/radar/NewsScreen'
@@ -106,6 +107,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/my-stocks': <MyStocksScreen />,
   // QUOT-435：提醒 = 本机收件箱 + 只读定时任务 + 本机投递渠道（DEC-058 后端）
   '/inbox': <InboxScreen />,
+  // DEC-087：提醒规则 = 自定义规则（价格/均线/放量/浮盈亏）× 出站渠道（邮件/IM/webhook）
+  '/alert': <AlertRulesScreen />,
   // 旧深链保留可用：只重定向，不再单独挂屏（`routes.ts` 的 `NON_PAGE_ROUTES` 同步）
   '/watchlist': <Navigate to="/my-stocks?tab=watch" replace />,
   '/positions': <Navigate to="/my-stocks?tab=hold" replace />,

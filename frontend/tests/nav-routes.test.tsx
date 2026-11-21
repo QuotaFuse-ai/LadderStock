@@ -200,11 +200,17 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     ])
   })
 
-  it('「我的股票」= 一页两标签 + 事件日历 + 提醒（QUOT-431 / QUOT-435）', () => {
+  it('「我的股票」= 一页两标签 + 事件日历 + 提醒 + 提醒规则（QUOT-431 / QUOT-435 / DEC-087）', () => {
     const group = NAV_SECTIONS.find((section) => section.key === 'my-stocks')
     // 自选 / 持仓合成 `/my-stocks?tab=watch|hold`，侧栏只留一颗入口；旧地址只做重定向；
-    // 提醒（`/inbox`）是 QUOT-435 补上的组内第三项
-    expect(group?.pages.map((page) => page.to)).toEqual(['/my-stocks', '/calendar', '/inbox'])
+    // 提醒（`/inbox`）是 QUOT-435 补上的组内第三项；提醒规则（`/alert`）是 DEC-087
+    // 补上的组内第四项——收件箱看「收到了什么」，规则页管「在盯什么、往哪推」。
+    expect(group?.pages.map((page) => page.to)).toEqual([
+      '/my-stocks',
+      '/calendar',
+      '/inbox',
+      '/alert',
+    ])
     const other = NAV_SECTIONS.filter((section) => section.key !== 'my-stocks')
     const moved = other.flatMap((section) => section.pages.map((page) => page.to))
     expect(moved).not.toContain('/watchlist')

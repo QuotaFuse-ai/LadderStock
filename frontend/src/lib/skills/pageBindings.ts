@@ -31,6 +31,9 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   { prefix: '/my-stocks', pkg: 'portfolio-check' },
   { prefix: '/calendar', pkg: 'event-calendar' },
   { prefix: '/inbox', pkg: 'event-calendar' },
+  // DEC-087 提醒规则页：配置管理面（同 `/config` / `/settings`），只读规则与渠道、
+  // 不承接研究问答——不绑技能包，保持 page-channel 的 15 前缀契约不变。
+  { prefix: '/alert', pkg: null },
   { prefix: '/industry', pkg: 'sector-rotation' },
   { prefix: '/signals', pkg: 'sector-rotation' },
   { prefix: '/research', pkg: 'a-share-dossier' },

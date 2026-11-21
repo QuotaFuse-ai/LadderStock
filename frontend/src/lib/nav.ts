@@ -13,6 +13,7 @@ import {
   Flame,
   Gauge,
   Home,
+  BellRing,
   Layers,
   ListChecks,
   Microscope,
@@ -130,6 +131,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/my-stocks', label: '我的股票', icon: Star },
       { to: '/calendar', label: '事件日历', icon: CalendarDays },
       { to: '/inbox', label: '提醒', icon: Bell },
+      // DEC-087：提醒规则（自定义规则 × 出站渠道）。与「提醒」的分工：
+      // 收件箱看「收到了什么」，这里管「在盯什么、往哪推」。
+      { to: '/alert', label: '提醒规则', icon: BellRing },
     ],
   },
   {

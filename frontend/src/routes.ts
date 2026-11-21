@@ -41,6 +41,9 @@ export const ROUTE_PATHS = [
   '/my-stocks',
   // QUOT-435：提醒（本机收件箱 + 定时任务 + 本机投递渠道），「我的股票」组第三项
   '/inbox',
+  // DEC-087：提醒规则（自定义规则 × 出站渠道），「我的股票」组第四项。
+  // 与 /inbox 分工：inbox 是「收到了什么」，这里是「在盯什么、怎么推」。
+  '/alert',
   '/watchlist',
   '/positions',
   '/industry',
