@@ -39,7 +39,13 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   // QUOT-567：知识库两页只读展示平台攒的档案，未绑技能包（开放域）；
   // 无档案空态由页内自行打开助手并预填问题
   { prefix: '/knowledge', pkg: null },
+  // 数据资产页（`/data-assets`）：知识库入库与覆盖的观测面，纯只读看板，不绑技能包
+  { prefix: '/data-assets', pkg: null },
   { prefix: '/settings', pkg: null },
+  // 采集进度页（`/config`）与账本页（`/ledger`）：都是只读观测/复核面，
+  // 页内没有技能包入口，按开放域显式登记（不登记会被守卫判成静默退回）。
+  { prefix: '/config', pkg: null },
+  { prefix: '/ledger', pkg: null },
   // 首次安装向导（`navigate('/setup')` 在缺失项时自动跳转）：只读 setup 快照
   // 并引导补全，没有对应的技能包，按开放域登记
   { prefix: '/setup', pkg: null },

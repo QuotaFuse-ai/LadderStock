@@ -535,7 +535,7 @@ def test_migrates_v1_database_backfilling_done_status(root: Path) -> None:
     conn = chat_store.connect(root)
     assert conn is not None
     try:
-        assert chat_store.schema_version(conn) == 2
+        assert chat_store.schema_version(conn) == chat_store.SCHEMA_VERSION
         turns = chat_store.session_turns(conn, "sess-v1")
     finally:
         chat_store.close(conn)

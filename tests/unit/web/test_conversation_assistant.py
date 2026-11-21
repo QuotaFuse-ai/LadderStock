@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from ladderstock.ai import answer_blocks
 from ladderstock.data import chat_store
+from ladderstock.research import debate
 from ladderstock.web import assistant as assistant_module
 from ladderstock.web.server import create_app
 
@@ -652,3 +653,76 @@ def test_streaming_row_persists_after_hard_stop(tmp_path: Path) -> None:
         answer_blocks.BLOCK_CONCLUSION,
         answer_blocks.BLOCK_NOTICE,
     ]
+
+
+# --------------------------------------------------------------------------- #
+# F7 接线：主问答里的多空评审（`_debate_brief` 与 `extra_blocks` 的装配契约）
+# --------------------------------------------------------------------------- #
+
+
+def _debate_view(*, passed: bool) -> dict[str, Any]:
+    """一份 minimal 的 `debate.latest_view()` 形状（不读盘，只测接线）。"""
+    return {
+        "path": "reports/2026-11-17-600519-aaaa",
+        "normalized": {
+            "rating": "buy" if passed else "hold",
+            "rating_label": "看多" if passed else "中性",
+            "action": "买入观察" if passed else "持有",
+            "confidence": 0.6,
+            "code": "600519",
+            "date": "2026-11-17",
+            "flip_conditions": ["若批价重新跌破前低，本条结论失效"] if passed else [],
+        },
+        "gate": {
+            "passed": passed,
+            "score": 86.0 if passed else 60.0,
+            "threshold": 70.0,
+            "reasons": []
+            if passed
+            else ["报告标记 partial（有角色没跑完）", "质量分低于阈值（60 < 70）"],
+        },
+    }
+
+
+def test_debate_brief_only_fires_when_question_asks_for_debate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(debate, "latest_view", lambda code, *a, **k: _debate_view(passed=True))
+
+    assert assistant_module._debate_brief("今天大盘怎么样") == []
+    blocks = assistant_module._debate_brief("600519 多空怎么看")
+    assert [block["type"] for block in blocks] == [answer_blocks.BLOCK_CONCLUSION]
+
+
+def test_debate_brief_is_empty_without_code_or_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(debate, "latest_view", lambda code, *a, **k: None)
+
+    assert assistant_module._debate_brief("多空怎么看") == []
+    assert assistant_module._debate_brief("600519 多空怎么看") == []
+
+
+def test_debate_brief_reports_gate_failure_as_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(debate, "latest_view", lambda code, *a, **k: _debate_view(passed=False))
+
+    blocks = assistant_module._debate_brief("600519 多空辩论")
+
+    assert [block["type"] for block in blocks] == [answer_blocks.BLOCK_NOTICE]
+    assert blocks[0]["payload"]["kind"] == "degraded"
+
+
+def test_extra_blocks_keep_citation_last_and_total_within_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(debate, "latest_view", lambda code, *a, **k: _debate_view(passed=True))
+    extra = assistant_module._debate_brief("600519 多空怎么看")
+
+    blocks = assistant_module._conversation_blocks(
+        reply="中短期以震荡为主，量能没有明显放大。",
+        sources=[assistant_module.ChatSource(**_source())],
+        fetch_attempted=True,
+        extra_blocks=extra,
+    )
+
+    assert len(blocks) <= assistant_module.MAX_ANSWER_BLOCKS
+    assert blocks[-1]["type"] == answer_blocks.BLOCK_CITATION
+    assert any(block["type"] == answer_blocks.BLOCK_CONCLUSION for block in blocks[1:])

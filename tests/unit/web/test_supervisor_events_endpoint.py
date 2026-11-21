@@ -331,6 +331,65 @@ def test_restart_fake_without_ledger_keeps_legacy_behavior(tmp_path: Path) -> No
     assert processes.calls == [("restart", "wire")]
 
 
+class _PageBootChannel:
+    """页面自有子进程的重拉通道假件（watch_guard / scheduler）。"""
+
+    def __init__(self, *, ok: bool = True, detail: str = "已在运行（不重复拉起）") -> None:
+        self.ok = ok
+        self.detail = detail
+        self.calls: list[str] = []
+
+    @property
+    def known_modules(self) -> tuple[str, ...]:
+        return ("watch_guard", "scheduler")
+
+    def restart(self, module: str) -> RestartOutcome:
+        self.calls.append(module)
+        return RestartOutcome(ok=self.ok, pid=4242 if self.ok else None, detail=self.detail)
+
+
+def test_restart_routes_page_boot_modules_to_selfheal_channel(tmp_path: Path) -> None:
+    """watch_guard 不是适配器模块：重启要走 PageBoot 通道，不能落「未知模块」。"""
+    ledger = Ledger(tmp_path / "supervisor" / "ledger.json")
+    processes = FakeProcesses(ledger)
+    heal = FakeHeal()
+    channel = _PageBootChannel()
+    heal.restarter = channel  # type: ignore[attr-defined]
+    client = _client(tmp_path, heal=heal, processes=processes)
+
+    response = client.post(
+        "/api/supervisor/restart",
+        json={"modules": ["watch_guard"], "confirm": True},
+        headers=WRITE_HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["modules"]["watch_guard"]["ok"] is True
+    assert "已在运行" in body["modules"]["watch_guard"]["detail"]
+    assert channel.calls == ["watch_guard"]
+    assert processes.calls == [], "页面自有子进程被递进了适配器（会得到未知模块）"
+
+
+def test_restart_page_boot_failure_reported_without_500(tmp_path: Path) -> None:
+    ledger = Ledger(tmp_path / "supervisor" / "ledger.json")
+    heal = FakeHeal()
+    heal.restarter = _PageBootChannel(ok=False, detail="页面自启重拉失败：端口占用")  # type: ignore[attr-defined]
+    client = _client(tmp_path, heal=heal, processes=FakeProcesses(ledger))
+
+    response = client.post(
+        "/api/supervisor/restart",
+        json={"modules": ["watch_guard"], "confirm": True},
+        headers=WRITE_HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is False
+    assert "端口占用" in body["modules"]["watch_guard"]["error"]
+
+
 # -------------------------------------------------------------------- /state
 
 

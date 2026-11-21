@@ -616,10 +616,12 @@ class SupervisorEngine:
         record.ports = list(MODULE_PORTS[name])
 
         if record.adopted_peer:
-            # 命令行匹配本模块的实例一律按自有处置（允许停止）：认领不再等于
-            # 「永不停止」。打上永不停止标记会让上一代残留永远关不掉，形成
-            # 「停不住 → 端口冲突 → 起不来」死循环。
-            record.adopted_peer = False
+            # 外部启动、已被 supervisor 认领的 peer（QUOT-545）：全停路径原样
+            # 保留，绝不终止（DEC-014）。「上一代自有残留」在 `adopt_module`
+            # 的 `origin == "spawned"` 分支就返回 None、不会写成认领记录，
+            # 所以这里不存在「残留关不掉」的死循环。
+            # 用户要停外部实例时，走 `web/control.py` 的单模块控制，不经过这里。
+            return record
 
         if record.state == "stopped":
             # 账本已判定停了：要么真停了，要么对账判定端口上的进程不是我们的
@@ -686,13 +688,36 @@ class SupervisorEngine:
         """单模块重启：只动该模块，其它模块的 pid 必须不变（判过证据 3）。
 
         全程持同一把引擎锁：重启期间 start_all/stop_all/state 一律排队。
-        命令行已确认属于本模块的实例（含 `origin="adopted"`）按自有处置：卡死 /
-        掉线照常停掉再拉起；端口被命令行不匹配的外部程序占着时报冲突、不动它。
+        自有模块按自有处置：卡死 / 掉线照常停掉再拉起；端口被命令行不匹配的
+        外部程序占着时报冲突、不动它。外部 peer（`adopted_peer`）三态（QUOT-556）：
+        活着且在听 → 幂等续 running（ok + detail，不 spawn 不停止）；活着但端口
+        未监听 → 失败关闭（抛错交人，绝不代劳终止）；已死 → 清残留后拉起替代，
+        归属回到本控制面。
         """
         with self._module_lock(name):
-            # 不再因为「认领」拒绝重启：命令行已确认是本模块程序的实例按自有处置，
-            # 卡死 / 掉线时照常停掉再拉起，避免残留长期占端口。
             adapter = self._adapter(name)
+            # 外部 peer 闸门（QUOT-556 / DEC-014）：存活的外部实例一律不碰。
+            # 不设这道闸门的话，`_stop_module` 虽跳过、`_start_module` 却会在
+            # 端口已被本方监听时把 adopted 升级成 spawned（显式启动 = 接管），
+            # 于是「点一次重启」就把用户自己起的进程变成了可杀对象。
+            record = self._ledger.record(name)
+            if record is not None and record.adopted_peer and record.pid is not None:
+                peer_pid = int(record.pid)
+                if self._procs.alive(peer_pid):
+                    if adapter.probe():
+                        # 幂等续 running：不 spawn、不停止、PID 不变。
+                        return {
+                            "module": name,
+                            "ok": True,
+                            "record": _view(record),
+                            "others_unchanged": True,
+                            "detail": f"外部实例（pid {peer_pid}）在运行，不重复拉起",
+                        }
+                    # 存活但端口未监听（卡死）：失败关闭，交人，不代劳终止。
+                    raise SupervisorError(
+                        f"{name} 的外部实例（pid {peer_pid}）存活但端口 {record.ports} 未监听；"
+                        "按 DEC-014 不终止外部进程，请手动重启该实例"
+                    )
             before = {other: self._ledger.record(other) for other in MODULE_ORDER if other != name}
             try:
                 self._stop_module(name)
@@ -806,11 +831,13 @@ class SupervisorEngine:
             record.parent_pid = parent
             record.started_at = record.started_at or now_iso()
             record.origin = "adopted"
-            # 命令行已确认是本模块自己的程序（适配器证据命中）：不再打
-            # 「永不停止」标记。打上标记会让上一代没退干净的残留永远关不掉，
-            # 形成「停不住 → 端口冲突 → 起不来」的死循环。停止路径改按
-            # 「命令行属于本模块」这一条客观证据处置，不碰命令行不匹配的外部程序。
-            record.adopted_peer = False
+            # 走到这里的一定是**外部启动**的实例：账本里「上一代由本控制面
+            # 拉起、而那个 pid 已经死了」的残留已在上面 `origin == "spawned"`
+            # 分支返回 None，交给 `_start_module` 按证据清理后重拉。所以这里
+            # 必须记 `adopted_peer=True`——停止 / 自愈路径只认领 + 复检，
+            # 绝不终止用户自己起的进程（DEC-014）。把它写成 False 会让
+            # 「用户手动起的 peer」被当成自有子进程，heal / stop_all 直接杀掉。
+            record.adopted_peer = True
             record.cmdline_hash = cmdline_hash(evidence.cmdline)
             record.state = "running"
             record.forced_kill = False

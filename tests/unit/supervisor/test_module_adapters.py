@@ -202,6 +202,7 @@ PEER_ENV_KEYS = {
     "wire": "LDST_PEER_DIR_WIRE",
     "senate": "LDST_PEER_DIR_SENATE",
     "financecoffer": "LDST_PEER_DIR_FINANCECOFFER",
+    "qdrant": "LDST_PEER_DIR_QDRANT",
 }
 
 EXES = {
@@ -217,7 +218,14 @@ def _make_peer_dirs(tmp_path: Path) -> dict[str, str]:
     for key, env_key in PEER_ENV_KEYS.items():
         peer = tmp_path / "peers" / key
         peer.mkdir(parents=True)
-        if key in EXES:
+        if key == "qdrant":
+            # Qdrant 的两个启动面：venv 解释器 + run_stack.py（`_venv_exe` 固定 Scripts，
+            # 不随平台切 bin/，这里必须与生产一致，否则 CI 上会判成缺入口）。
+            scripts = peer / ".venv" / "Scripts"
+            scripts.mkdir(parents=True)
+            (scripts / "python.exe").write_bytes(b"")
+            (peer / "run_stack.py").write_bytes(b"")
+        elif key in EXES:
             scripts = peer / ".venv" / "Scripts"
             scripts.mkdir(parents=True)
             (scripts / EXES[key]).write_bytes(b"")
@@ -506,8 +514,14 @@ def test_proxyfleet_start_spawns_the_venv_service(tmp_path: Path) -> None:
     spawned = pf.start()
 
     argv, _cwd, child_env = host.spawns[0]
-    assert Path(argv[0]).name == "proxyfleet.exe"
-    assert argv[1:] == ("serve",)
+    # 2026-11-21：没有自带自述卡的模块由控制面套 `ldst peer serve` 包装层，
+    # 先登记真实端口再执行原命令；原命令原样留在 `--` 之后。
+    assert Path(argv[0]).name in {"python.exe", "python"}
+    assert tuple(argv[1:5]) == ("-m", "ladderstock", "peer", "serve")
+    assert "--" in argv
+    tail = list(argv)[list(argv).index("--") + 1 :]
+    assert Path(tail[0]).name == "proxyfleet.exe"
+    assert tuple(tail[1:]) == ("serve",)
     expected = MODULE_PORTS["proxyfleet"]
     assert child_env["PF_API_PORT"] == str(expected[0])
     assert child_env["PF_GATEWAY_PORT"] == str(expected[1])
@@ -1390,3 +1404,22 @@ def test_preflight_never_falls_back_to_hardcoded_workplace_paths(tmp_path: Path)
             assert text.startswith(str(root))
     # 各 peer 缺的是安装根下的同级目录，而不是某个旧部署路径
     assert str(root / "TickHub-CN") in _item(report, "tickhub").detail
+
+
+def test_environment_points_cards_at_module_dir(tmp_path: Path, monkeypatch) -> None:
+    """控制面拉起模块时必须告诉它「卡往哪写」。
+
+    2026-11-21 服务发现：模块的自述卡写在 `<安装目录>/.runtime/peer.json`，
+    面板按安装目录读。模块自己的仓库根和安装目录常常不是同一处（editable 安装），
+    不注入 `LDST_PEER_CARD_ROOT` 就会把卡写到源码仓库里，面板永远读不到。
+    """
+    _host, adapters = _adapters(tmp_path)
+    wire = _wire(adapters)
+
+    env = wire._environment()
+
+    assert env["LDST_PEER_CARD_ROOT"] == str(wire.faces[0].cwd)
+
+    # 部署方已显式指定落点时不得被覆盖
+    monkeypatch.setenv("LDST_PEER_CARD_ROOT", r"D:\cards")
+    assert wire._environment()["LDST_PEER_CARD_ROOT"] == r"D:\cards"

@@ -568,6 +568,11 @@ def test_code_pool_datasets_are_the_ones_requiring_code() -> None:
             "share_buyback",
             "lockup_calendar",
             "index_daily",
+            # 资讯雷达三个 code 必填栏目（2026-11-21 实测 required=["code"]）：
+            # 巨潮 / 深交所公告、东财个股新闻。空参必被上游拒，纳入代码池逐只扇出。
+            "announcement_cninfo",
+            "announcement_szse",
+            "news_eastmoney_stock",
         }
     )
     assert set(CODE_POOL_DATASETS) == {d for d in DATASET_CATALOG if needs_code(d)}
@@ -603,8 +608,15 @@ def test_tool_params_carry_code_and_declared_caliber(
 
 
 def test_incremental_start_uses_the_tools_real_argument_name() -> None:
-    """`tencent_kline` 没有 `since`，增量起点是 `start`（含当日，靠 upsert 折叠）。"""
-    assert SINCE_PARAM == {"daily_k": "start"}
+    """`tencent_kline` 没有 `since`，增量起点是 `start`（含当日，靠 upsert 折叠）。
+
+    公告两源（巨潮 / 深交所）的增量窗口入参同样是 `start`（2026-11-21 实测）。
+    """
+    assert SINCE_PARAM == {
+        "daily_k": "start",
+        "announcement_cninfo": "start",
+        "announcement_szse": "start",
+    }
 
     assert tool_params("daily_k", code="600000", since="2026-10-27") == {
         "period": "daily",

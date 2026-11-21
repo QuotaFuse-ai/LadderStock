@@ -27,6 +27,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from ladderstock.core import discovery
+
 Mode = Literal["append", "replace"]
 
 
@@ -415,6 +417,12 @@ class PeerControl:
     #: 起、要么全停）。分面后：某一面已在监听时，启动只补跑**未监听面**的命令、
     #: 端口预检也只查那些面——不再要求已服务的面先停下来。
     start_command_faces: tuple[str, ...] | None = None
+    #: 端口是否取自模块自述卡（`<安装目录>/.runtime/peer.json`）。True = 面板与
+    #: 探测用卡片上的真实端口；False = 按 `LDST_PORT_OFFSET` 推算的口径。
+    #: 自述卡缺失 / 失效时保持 False（算术仍是兜底，行为与改动前一致）。
+    discovered: bool = False
+    #: 生效的自述卡文件路径（面板展示「按哪张卡确认」用；None = 没读到卡）。
+    card_path: str | None = None
 
 
 PEER_CONTROL: dict[str, PeerControl] = {
@@ -1025,12 +1033,45 @@ def peer_directory(key: str, env: Mapping[str, str] | None = None) -> str:
     return str(modules_root(values) / PEER_CONTAINER_DIRS[key])
 
 
+def _apply_card(ctl: PeerControl) -> PeerControl:
+    """有有效自述卡时，用卡上的真实端口覆盖推算口径（算术降级为兜底）。
+
+    这是「服务发现」在边界层的唯一落点：谁提供服务谁登记，找服务的只查表。
+    卡片不存在 / 端口连不上 → 原样返回，`LDST_PORT_OFFSET` 的平移语义不变。
+    """
+    card = discovery.resolve(ctl.directory)
+    if card is None:
+        return ctl
+    changes: dict[str, Any] = {}
+    card_mcp = card.get("mcp")
+    if card_mcp and int(card_mcp) != ctl.mcp_port:
+        changes["mcp_port"] = int(card_mcp)
+    card_web = card.get("web")
+    if card_web and int(card_web) != ctl.web_port:
+        changes["web_port"] = int(card_web)
+    card_extra = tuple(int(port) for port in card.get("extra") or ())
+    if card_extra and card_extra != tuple(ctl.extra_ports):
+        changes["extra_ports"] = card_extra
+    if not changes:
+        # 卡上的端口与推算一致（说明就是这个口径起的）也算「有卡」：面板可据此
+        # 说明「按自述卡确认」，但不需要改任何端口。
+        return replace(
+            ctl, discovered=True, card_path=card.get("path") or ctl.card_path
+        )
+    changes["discovered"] = True
+    changes["card_path"] = card.get("path") or ctl.card_path
+    return replace(ctl, **changes)
+
+
 def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, PeerControl]:
     """解析 peer 目录与端口：环境变量 > LadderStock 同级目录 > 占位符。
 
     占位符目录不存在时控制面仍只读展示该 peer，只是不出安装按钮。
     端口按 `LDST_PORT_OFFSET` 整体平移（QUOT-618）：面板展示、端口冲突判定与
     `start_commands` 里的 `--port` 三处同时生效，避免「显示 18000、实际起 8000」。
+
+    自述卡（`core.discovery`）优先：模块自己登记了真实地址就用卡上的端口，
+    平移算术退化为兜底（2026-11-21：一台机器只有一份共用实例时，算术必然敲空门）。
     """
     values = os.environ if env is None else env
     offset = port_offset(values)
@@ -1038,7 +1079,7 @@ def resolve_peer_control(env: Mapping[str, str] | None = None) -> dict[str, Peer
     for key, ctl in PEER_CONTROL.items():
         directory = resolved_peer_dir(key, values)
         directory_str = str(directory) if directory is not None else ctl.directory
-        resolved[key] = _shift_control(ctl, offset, directory_str)
+        resolved[key] = _apply_card(_shift_control(ctl, offset, directory_str))
     return resolved
 
 

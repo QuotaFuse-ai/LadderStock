@@ -33,6 +33,11 @@ export interface ResearchSymbolBarProps {
   /** 当前页已取到的名称（概览 / 六段产物给），没有就显示代码 */
   name: string | null
   onOpen: (code: string) => void
+  /**
+   * F7：传入即表示「多空辩论」已接入——按钮可点，切到个股页的多空对照视角。
+   * 不传的页面（报告页等）保留「待接入」灰态，绝不导航到不存在的路由。
+   */
+  onDebate?: () => void
   className?: string
 }
 
@@ -54,7 +59,7 @@ const UNSUPPORTED = [
   { key: 'US', label: '美股', reason: '本机数据面只有 A 股，美股行情未接入' },
 ] as const
 
-export function ResearchSymbolBar({ code, name, onOpen, className }: ResearchSymbolBarProps) {
+export function ResearchSymbolBar({ code, name, onOpen, onDebate, className }: ResearchSymbolBarProps) {
   const [raw, setRaw] = useState(code ?? '')
   const [error, setError] = useState<string | null>(null)
   const [watchCodes, setWatchCodes] = useState<Set<string> | null>(null)
@@ -195,15 +200,27 @@ export function ResearchSymbolBar({ code, name, onOpen, className }: ResearchSym
                 </>
               )}
             </button>
-            <button
-              type="button"
-              aria-disabled="true"
-              title="多空辩论页尚未接入（路由未注册），入口先保留"
-              className="inline-flex cursor-not-allowed items-center gap-1 rounded-xs border border-border px-2 py-1 text-caption text-text-muted"
-            >
-              <Swords className="size-3" aria-hidden="true" /> 多空辩论
-              <Badge tone="warn">待接入</Badge>
-            </button>
+            {onDebate ? (
+              <button
+                type="button"
+                onClick={onDebate}
+                title="切到多空对照：读本机已落盘的 Senate 合议报告"
+                className="inline-flex items-center gap-1 rounded-xs border border-border px-2 py-1 text-caption text-text-secondary transition-colors duration-fast ease-ldst hover:text-accent"
+              >
+                <Swords className="size-3" aria-hidden="true" /> 多空辩论
+                <Badge tone="ok">已接入</Badge>
+              </button>
+            ) : (
+              <button
+                type="button"
+                aria-disabled="true"
+                title="多空辩论页尚未接入（路由未注册），入口先保留"
+                className="inline-flex cursor-not-allowed items-center gap-1 rounded-xs border border-border px-2 py-1 text-caption text-text-muted"
+              >
+                <Swords className="size-3" aria-hidden="true" /> 多空辩论
+                <Badge tone="warn">待接入</Badge>
+              </button>
+            )}
           </div>
         )}
       </div>

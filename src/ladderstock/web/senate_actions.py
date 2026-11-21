@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ladderstock.core.boundary import resolve_peer_control
+from ladderstock.research import debate as debate_bridge
 from ladderstock.web.control import write_source_allowed
 
 ANALYSIS_TOOL = "stock_senate_analysis"
@@ -372,6 +373,56 @@ def build_senate_actions_router() -> APIRouter:
         with _LOCK:
             items = sorted(_TASKS.values(), key=lambda t: t.started_at, reverse=True)
         return {"ok": True, "tasks": [_view(t) for t in items[:MAX_TASKS_KEPT]]}
+
+    # ------------------------------------------------------------------ #
+    # F7 多空对照：已落盘报告的「读 + 门控 + 对照表」
+    #
+    # 与上面的 `/analysis` 分工：那个负责"跑"（分钟级、写新报告），这里只负责
+    # "读已有的报告"并回答"够不够格出对照表"。跑完的 task 结果里没有
+    # `debate` 结构化对照，页面要的正是这份——所以单独开一组 GET。
+    # ------------------------------------------------------------------ #
+
+    @router.get("/debate/status")
+    def debate_status() -> dict[str, Any]:
+        """能不能跑、有没有报告——页面用它解释「为什么这轮没有辩论」。"""
+        return {"ok": True, **debate_bridge.availability()}
+
+    @router.get("/debate/reports")
+    def debate_reports(limit: int = 20) -> dict[str, Any]:
+        items = debate_bridge.list_reports(limit=max(1, min(int(limit), 200)))
+        return {"ok": True, "items": items}
+
+    @router.get("/debate/{code}")
+    def debate_view(code: str, date: str | None = None) -> dict[str, Any]:
+        """某标的某天（或最近）的多空对照 + 门控结论；不触发新合议。"""
+        path = debate_bridge.latest_report(code, date)
+        if path is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"没有 {code} 在 {date or '任意日期'} 的合议报告（先跑 /api/senate/analysis）",
+            )
+        loaded = debate_bridge.load_report(path)
+        if not loaded.get("ok"):
+            raise HTTPException(status_code=422, detail=str(loaded.get("reason") or "报告读不出来"))
+        normalized = debate_bridge.normalize(loaded)
+        gate = debate_bridge.assess(normalized)
+        try:
+            blocks = debate_bridge.to_blocks(normalized, gate)
+            blocks_error = None
+        except Exception as exc:  # noqa: BLE001 - 块契约错误不该吞掉门控结果
+            blocks = []
+            blocks_error = f"{type(exc).__name__}: {exc}"
+        return {
+            "ok": True,
+            "run_id": normalized.get("run_id"),
+            "code": normalized.get("code"),
+            "date": normalized.get("date"),
+            "report_dir": str(path),
+            "normalized": normalized,
+            "gate": gate,
+            "blocks": blocks,
+            "blocks_error": blocks_error,
+        }
 
     return router
 

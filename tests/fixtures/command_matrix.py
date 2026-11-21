@@ -333,6 +333,10 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("symbol", "status"),
     ("knowledge", "status"),
     ("knowledge", "sync-announcements"),
+    # 「对话模式与研究台」批次（2026-11-21 入库）新注册了 25 条叶子但**尚未实现
+    # 全局 --output 契约**（archive/brief/coverage/debate/verify 族、news-archive、
+    # peer serve），暂不登 LEAF_PATHS——test_registered_leaves_match_baseline
+    # 据实红（差 25 条），待各命令补 --output 后再随修复提交登记。
 )
 
 

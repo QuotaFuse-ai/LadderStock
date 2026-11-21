@@ -40,6 +40,10 @@ EXPECTED_TOOLS = {
     "risk_history",
     "senate_debate",
     "query_tool",
+    # F2/F3：自主补数（ensure_data 起任务、data_task_status 查句柄、sector_digest 板块摘要）
+    "ensure_data",
+    "data_task_status",
+    "sector_digest",
 }
 
 

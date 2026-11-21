@@ -172,6 +172,12 @@ class SelfHealEngine:
         #: 阶段级健康观测（QUOT-562）：采集 → 入库七阶段，探针由装配侧注入。
         #: None = 不观测（旧装配零影响）；内部自带节流，不随 tick 每秒重探。
         self._stage_monitor = stage_monitor
+        #: 接口层快照缓存（stale-while-revalidate）。现场探测一次 15~20s，页面每几秒
+        #: 轮询一次，同步算必然超过前端 15s 超时；这里回旧值、后台重算。
+        self._snapshot_guard = threading.Lock()
+        self._snapshot_cache: dict[str, Any] | None = None
+        self._snapshot_at = 0.0
+        self._snapshot_refreshing = False
 
     # ---------------------------------------------------------------- 生命周期
 
@@ -181,6 +187,8 @@ class SelfHealEngine:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, name="supervisor-selfheal", daemon=True)
         self._thread.start()
+        # 预热接口快照：页面第一次拉 `/state` 时已有值可回，不必同步等十几秒。
+        self._kick_snapshot_refresh()
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stop_event.set()
@@ -313,6 +321,15 @@ class SelfHealEngine:
             return
         if entry.health == HEALTH_NEEDS_HUMAN:
             return  # 超限待人工；只有 reset 能解除，不再自动动作。
+        if self._served_by_shared(entry):
+            # 本机没有自有副本，但同一模块的共用实例在服务（常跑在基础端口）。
+            # 这时拉起要么一直失败（「正在重拉第 N/3 次」空转），要么真起出第二份
+            # 与共用实例并存、重复采集。判活口径与面板同源：认「谁在服务」。
+            if entry.health != HEALTH_OK:
+                self.ledger.update(entry.module, health=HEALTH_OK)
+                self._log(entry, "共用主实例已在服务（本机无自有副本），不再重复拉起")
+                self._safe_notify_recovered(entry)
+            return
         if entry.pid is None and not window:
             if self.cold_start:
                 # 从没记账 / 账本丢了：按 bundle 命令表立刻拉一次（失败才进退避）。
@@ -366,6 +383,9 @@ class SelfHealEngine:
             )
         else:
             reason = outcome.detail or f"{label}失败"
+            # 重拉没成：账本必须离开 running，否则看板会把一个根本没起来的模块
+            # 继续显示成「运行中」（假 running）。具体原因另记在 last_exit_reason。
+            self.ledger.update(entry.module, state="down")
             self._log(entry, f"第 {attempt}/{self.max_restarts} 次{label}失败：{reason}")
             self._safe_notify_failure(entry, attempt, reason)
 
@@ -383,6 +403,22 @@ class SelfHealEngine:
             _log.warning("自愈通知失败（已吞，不影响自愈主流程）", exc_info=True)
 
     # ------------------------------------------------------- 探测 / 重拉 / 通知
+
+    def _served_by_shared(self, entry: LedgerEntry) -> bool:
+        """该模块是否已由「不是账本里那个 pid」的实例在服务（共用主实例）。
+
+        测试服按偏移探自有副本，但一台机器上往往只有一份共用实例跑在基础端口。
+        判活若只算「我亲手起的那个 pid 还活着吗」，就会把「服务明明在」判成没恢复，
+        进而空转重拉、或在真拉起来后与共用实例并存。重拉通道提供 `serves_module`
+        时才判（缺失则保持原自愈行为，不改变旧语义）。
+        """
+        check = getattr(self.restarter, "serves_module", None)
+        if not callable(check):
+            return False
+        try:
+            return bool(check(entry.module, tuple(entry.ports or ())))
+        except Exception:  # noqa: BLE001 - 判不准时保持原自愈行为
+            return False
 
     def _alive(self, entry: LedgerEntry) -> bool:
         if entry.pid is None:
@@ -435,6 +471,89 @@ class SelfHealEngine:
             _log.warning("自愈日志写盘失败（已吞）：%s", entry.module)
 
     # ------------------------------------------------------------------ 快照
+
+    def snapshot_cached(
+        self,
+        *,
+        ttl: float = 8.0,
+        block_when_empty: bool = False,
+        first_wait: float = 0.0,
+    ) -> dict[str, Any]:
+        """接口层快照：过期时后台重算、立刻回上一份；首帧没有值时回「探测中」。
+
+        现场探测（进程判活 / 端口归属 / 阶段探针）单次 15~20s，前端 15s 就超时，
+        于是把模块全标成「归属未知」。同步算会把每个请求都拖成超时，所以：
+        过期只回旧值 + 踢后台；首次没有值时也不阻塞，交给预热线程算完。
+
+        - `block_when_empty=True`：首帧同步算（测试 / 备用路由用；服务已预热时几乎不走）；
+        - `first_wait>0`：首帧最多等这么久（秒），等到就有值、等不到回占位。
+          合并版 /state 用 3s：既不会撞前端 15s 超时，也不会在预热完成的正常路径上白等。
+        """
+        kick = False
+        with self._snapshot_guard:
+            payload = self._snapshot_cache
+            stale = (
+                time.monotonic() - self._snapshot_at >= ttl if payload is not None else True
+            )
+            if stale and not self._snapshot_refreshing:
+                self._snapshot_refreshing = True
+                kick = True
+        if kick:
+            threading.Thread(
+                target=self._refresh_snapshot, name="ldst-selfheal-snapshot", daemon=True
+            ).start()
+        if payload is None and first_wait > 0:
+            deadline = time.monotonic() + float(first_wait)
+            while time.monotonic() < deadline:
+                with self._snapshot_guard:
+                    payload = self._snapshot_cache
+                if payload is not None:
+                    break
+                time.sleep(0.05)
+        if payload is None and block_when_empty:
+            try:
+                payload = self.snapshot()
+            except Exception:  # noqa: BLE001 - 算不出来就回占位，不让端点 500
+                _log.warning("首帧快照同步计算失败", exc_info=True)
+                payload = None
+            else:
+                with self._snapshot_guard:
+                    self._snapshot_cache = payload
+                    self._snapshot_at = time.monotonic()
+        if payload is None:
+            payload = {
+                "ok": False,
+                "detail": "首次探测进行中：进程判活与端口归属要十几秒，稍后自动可用",
+                "engine": {"running": self.running},
+                "modules": [],
+            }
+        # 事件序号是内存读，零成本：即使回的是旧快照，也要让前端拿到现场 latest，
+        # 否则弹窗会以为「没有新事件」而漏掉刚发生的跃迁。
+        if self.event_bus is not None:
+            payload = dict(payload)
+            payload["events_latest"] = self.event_bus.latest_seq
+        return payload
+
+    def _kick_snapshot_refresh(self) -> None:
+        with self._snapshot_guard:
+            if self._snapshot_refreshing:
+                return
+            self._snapshot_refreshing = True
+        threading.Thread(
+            target=self._refresh_snapshot, name="ldst-selfheal-snapshot-warm", daemon=True
+        ).start()
+
+    def _refresh_snapshot(self) -> None:
+        payload: dict[str, Any] | None = None
+        try:
+            payload = self.snapshot()
+        except Exception:  # noqa: BLE001 - 刷新失败保留旧快照，页面不该因此空白
+            _log.warning("接口快照后台刷新失败（保留上一份）", exc_info=True)
+        with self._snapshot_guard:
+            if payload is not None:
+                self._snapshot_cache = payload
+                self._snapshot_at = time.monotonic()
+            self._snapshot_refreshing = False
 
     def snapshot(self) -> dict[str, Any]:
         """GET /api/supervisor/state 的载荷：每模块 health 三值 + restarts_5min。"""

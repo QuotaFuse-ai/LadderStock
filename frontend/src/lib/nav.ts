@@ -21,7 +21,9 @@ import {
   Radio,
   Radar,
   ScrollText,
+  Scale,
   Settings,
+  SlidersHorizontal,
   Star,
   Timer,
   TrendingUp,
@@ -139,6 +141,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // QUOT-534：策略回测只读运行卡（参数 / 结果 / 证据三区）
       { to: '/backtest', label: '策略回测', icon: FlaskConical },
       { to: '/limit-up', label: '涨停样本', icon: Flame },
+      // F9：判断落账 + 到期回访，回答「之前那些判断后来对了吗」
+      { to: '/ledger', label: '观点账本', icon: Scale },
     ],
   },
   // QUOT-300：R9 产业研究两页已交付却进不去，补一级入口（新组排在验证之后、设置之前）
@@ -179,7 +183,12 @@ export const NAV_SECTIONS: NavSection[] = [
 ]
 
 /** 侧栏底部固定项：不进 `NAV_SECTIONS`（不参与展开分组），但仍是一等入口，一致性测试要覆盖。 */
-export const PINNED_NAV: NavPage[] = [{ to: '/settings', label: '设置', icon: Settings }]
+export const PINNED_NAV: NavPage[] = [
+  // 运行配置：定时任务 / 数据同步池 / 历史回填。此前这些只存在于 config/*.yaml，
+  // 界面上一个都看不到——放进固定项而不是塞进某一组，因为它跨"调度 + 取数"两侧。
+  { to: '/config', label: '运行配置', icon: SlidersHorizontal },
+  { to: '/settings', label: '设置', icon: Settings },
+]
 
 /** 侧栏品牌图标（顶栏/抽屉复用时取同一枚，避免各写一套）。 */
 export const BRAND_ICON = TrendingUp

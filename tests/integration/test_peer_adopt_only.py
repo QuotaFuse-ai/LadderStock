@@ -387,18 +387,29 @@ def test_selfheal_ticks_never_restart_or_respawn_live_peer(world: World) -> None
         assert world.adapters[name].start_calls == []
         _assert_peer_untouched(world, name, pid)
 
-    # 账本 PID 漂移到已死进程：自愈必须重新认领**同一个**实例，而不是拉起新进程。
+    # 账本 PID 漂移到已死进程（origin=spawned）：按「清理后重拉」口径，
+    # 自愈**不认领**这条已死的自有记录，而是走正常启动路径重拉。端口被原 peer
+    # 实例占着、DEC-004 禁止自动换端口，所以重拉如实失败、账本记「需人工处理」；
+    # 原实例必须原样存活，绝不能被终止（DEC-014）。
+    dead_pid = _dead_pid()
     world.ledger.update(
-        "tickhub", pid=_dead_pid(), state="running", origin="spawned", health=HEALTH_OK
+        "tickhub", pid=dead_pid, state="running", origin="spawned", health=HEALTH_OK
     )
     heal.tick()
 
     record = world.ledger.record("tickhub")
     assert record is not None
-    assert record.pid == baseline["tickhub"], "自愈没有把账本换绑回原 peer 实例"
-    assert record.origin == "adopted"
-    assert record.restart_count == 0, "认领不应占用 5 分钟重拉窗口"
-    assert world.adapters["tickhub"].start_calls == []
+    assert record.pid == dead_pid, "清理后重拉口径下，自愈不应把账本换绑回外部实例"
+    assert record.origin == "spawned", f"重拉失败的记录仍属自有 spawn 语义：{record.origin}"
+    assert record.state != "running", f"重拉并未成功，状态不该留在 running：{record.state}"
+    assert "不自动换端口" in (record.last_exit_reason or ""), (
+        f"应记下「端口被占且不换端口」的原因，实际：{record.last_exit_reason}"
+    )
+    # 端口被原实例占着，DEC-004 不允许再拉第二个：入口预检就拒绝了，
+    # 不会真的走到 adapter.start()。
+    assert world.adapters["tickhub"].start_calls == [], (
+        "端口已被本方实例占用时，不应再拉起第二个实例"
+    )
     _assert_peer_untouched(world, "tickhub", baseline["tickhub"])
 
 

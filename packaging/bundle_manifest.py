@@ -18,6 +18,13 @@ RESOURCE_DIRS: tuple[tuple[str, str], ...] = (
     ("frontend/dist", "frontend/dist"),
 )
 
+#: 嵌入模型默认**不进安装包**：三份权重合计 274MB，普通用户第一次启用记忆时
+#: 再按需下载（落到 `%LOCALAPPDATA%/LadderStock/models`，SHA256 校验）。
+#: `include_models=True` 只留给离线包/内网分发，别把默认路径又做重。
+MODEL_DIRS: tuple[tuple[str, str], ...] = (
+    ("file/models", "file/models"),
+)
+
 #: 动态导入/运行期才用到的包：静态分析抓不到，必须显式声明。
 HIDDEN_IMPORTS: tuple[str, ...] = (
     # OpenAI Agents SDK：模型 provider / session / handoff 都走运行期动态加载
@@ -67,9 +74,29 @@ HIDDEN_IMPORTS: tuple[str, ...] = (
     # 缺了它，真正的异常会被渲染失败盖掉，日志里只剩 lexer 的报错。
     "pygments",
     "pygments.lexers.python",
+    # 记忆引擎（mem0 + qdrant local + sentence-transformers/torch）：全部在
+    # 函数内按需 import，静态分析不保证收；普通用户机上没有可补装的 Python，
+    # 少一个就是 memory_unavailable。
+    "mem0",
+    "mem0.memory.main",
+    "mem0.memory.storage",
+    "mem0.embeddings.huggingface",
+    "mem0.configs.embeddings.base",
+    "mem0.configs.llms.openai",
+    "mem0.llms.openai",
+    "qdrant_client",
+    "qdrant_client.local",
+    "qdrant_client.local.qdrant_local",
+    "sentence_transformers",
+    "transformers",
+    "tokenizers",
+    "safetensors",
+    "huggingface_hub",
+    "numpy",
 )
 
 #: 三平台都不需要、且会显著增大产物的包（本仓是独立应用，不 import 这些 peer）。
+#: `numpy` 不能排除：torch / sentence-transformers / mem0 的向量层都要它。
 EXCLUDES: tuple[str, ...] = (
     "ProxyFleet",
     "proxyfleet",
@@ -79,21 +106,26 @@ EXCLUDES: tuple[str, ...] = (
     "ruff",
     "IPython",
     "matplotlib",
-    "numpy",
     "pandas",
 )
 
 
-def collect_datas(repo_root: str | Path) -> list[tuple[str, str]]:
+def collect_datas(
+    repo_root: str | Path, *, include_models: bool = False
+) -> list[tuple[str, str]]:
     """返回 PyInstaller `datas` 形态的 `(源目录, 相对目标)`。
 
     源目录缺失直接报错：缺 `frontend/dist` 打出来的包只能看到「前端未构建」提示页，
     那不算「双击起看板」，必须在构建期失败而不是交付后才发现。
+
+    `include_models=False`（默认）不收 `file/models`：274MB 权重由首次启动向导
+    按需下载，不占安装包体积。离线包/内网分发显式传 `True`。
     """
     root = Path(repo_root)
+    entries = RESOURCE_DIRS + (MODEL_DIRS if include_models else ())
     datas: list[tuple[str, str]] = []
     missing: list[str] = []
-    for src_rel, dest_rel in RESOURCE_DIRS:
+    for src_rel, dest_rel in entries:
         src = root / src_rel
         if not src.exists():
             missing.append(src_rel)

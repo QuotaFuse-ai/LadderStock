@@ -114,16 +114,27 @@ BAAI_MODEL_DIRNAME = "bge-small-zh-v1.5-baai"
 
 
 def _install_models_dir() -> Path:
-    """安装包内预置模型根：install_root/file/models/。LDST_MEMORY_MODELS_DIR 可覆盖。"""
+    """模型根：随包预置 → 用户下载目录 → 数据目录旁。LDST_MEMORY_MODELS_DIR 可覆盖。
+
+    默认安装包不带权重（274MB 太重），首次启用记忆时由 `ai/model_fetch.py`
+    下载到用户数据目录；这里只按顺序找现成的，绝不联网。
+    """
+    from ladderstock.ai import model_fetch
     from ladderstock.cli.paths import data_dir
-    from ladderstock.core.runtime import install_root
+    from ladderstock.core.runtime import install_root, project_root
 
     env = os.environ.get(ENV_MODELS_DIR, "").strip()
     if env:
         return Path(env)
-    candidate = install_root() / "file" / MODELS_DIRNAME
-    if candidate.is_dir():
-        return candidate
+    # 三套布局都要认：安装包 <install_root>/file/models、源码树 <repo>/file/models、
+    # 用户后下载目录（便携包默认路径）。谁先齐用谁，避免半装目录盖掉完好副本。
+    for candidate in (
+        install_root() / "file" / MODELS_DIRNAME,
+        project_root() / "file" / MODELS_DIRNAME,
+        model_fetch.download_root(),
+    ):
+        if (candidate / BAAI_MODEL_DIRNAME).is_dir():
+            return candidate
     # 兜底：数据目录旁的 models/（便携布局 / 测试）
     return data_dir().parent / MODELS_DIRNAME
 

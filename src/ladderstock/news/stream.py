@@ -62,9 +62,12 @@ class DatasetStatus:
     freshness: str = ""
     confidence: str = ""
     degraded: bool = False
+    #: 逐票明细（只有按 code 取的栏目才有）：`{code: 本轮取回条数}`。
+    #: 公告这类逐票栏目靠它回答「87 只里到底采到几只」，而不只是一个总条数。
+    per_code: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "dataset": self.dataset,
             "tool": self.tool,
             "status": self.status,
@@ -76,6 +79,9 @@ class DatasetStatus:
             "confidence": self.confidence,
             "degraded": self.degraded,
         }
+        if self.per_code:
+            payload["per_code"] = dict(self.per_code)
+        return payload
 
 
 @dataclass
@@ -98,6 +104,8 @@ class StreamResult:
     #: 抽取出的事件对象：给 `--ai`（默认关闭）留的入口，不进 `as_dict()`
     event_objects: list[NewsEvent] = field(default_factory=list)
     persisted: bool = False
+    #: 落归档的结果：`{written, datasets: {数据集: 行数}, errors: [...]}`
+    archive: dict[str, Any] = field(default_factory=dict)
     exit_code: int = EXIT_OK
 
     @property
@@ -126,6 +134,7 @@ class StreamResult:
             },
             "sources_status": [status.as_dict() for status in self.statuses],
             "extraction": dict(self.extraction),
+            "archive": dict(self.archive),
             "items": [item.as_dict() for item in self.items],
             "exit_code": self.exit_code,
         }
@@ -285,8 +294,12 @@ def _collect_one(
     errors: list[str] = []
     degraded = False
     last: DatasetStatus | None = None
+    per_code: dict[str, int] = {}
 
     for code in targets:
+        before = len(items)
+        if code:
+            per_code.setdefault(code, 0)
         for params in _tool_params(dataset, start=start, end=end, code=code, limit=limit):
             try:
                 outcome = registry.fetch(dataset, params=dict(params), trade_date=end)
@@ -303,6 +316,9 @@ def _collect_one(
                 errors.append(str(exc))
                 continue
             items.extend(decoded)
+            if code:
+                per_code[code] += len(items) - before
+                before = len(items)
             degraded = degraded or outcome.degraded
             last = DatasetStatus(
                 dataset=dataset,
@@ -315,6 +331,7 @@ def _collect_one(
                 freshness=envelope.freshness,
                 confidence=envelope.confidence,
                 degraded=degraded,
+                per_code=dict(per_code),
             )
 
     if last is not None:
@@ -323,6 +340,7 @@ def _collect_one(
                 last,
                 status=STATUS_EMPTY,
                 items=0,
+                per_code=dict(per_code),
                 detail="上游返回 0 条；该栏目无时间窗参数时也可能是 limit 之外的窗口没稿子",
             )
         if errors:
@@ -330,10 +348,11 @@ def _collect_one(
                 last,
                 status=STATUS_OK,
                 items=len(items),
+                per_code=dict(per_code),
                 degraded=True,
                 detail=f"部分调用失败：{errors[0]}"[:200],
             )
-        return items, replace(last, items=len(items))
+        return items, replace(last, items=len(items), per_code=dict(per_code))
 
     if errors:
         return [], DatasetStatus(
@@ -392,6 +411,8 @@ def _persist(
     items: list[NewsItem],
     root: Path | None,
 ) -> int:
+    # 先落归档、再写 news.sqlite：归档失败要在 detail 里留痕，不能只是「查询层查不到」
+    result.archive = _archive_items(items, root)
     conn = news_store.connect(root)
     assert conn is not None  # create=True
     try:
@@ -410,11 +431,119 @@ def _persist(
             stored=written,
             deduped=result.merged,
             events=result.events,
-            detail={"sources_status": [s.as_dict() for s in result.statuses]},
+            detail={
+                "sources_status": [s.as_dict() for s in result.statuses],
+                "archive": result.archive,
+            },
         )
         return written
     finally:
         news_store.close(conn)
+
+
+def _archive_items(items: list[NewsItem], root: Path | None) -> dict[str, Any]:
+    """把资讯条目按栏目（`provenance.dataset`）补进 `data/archive` 分区与历史库。
+
+    这一层原来缺着：采集器每轮 `status=ok`、`items=100`，却只有 `news_items` 里那几十行
+    能查到，`data/archive` 下没有 `research_report` 分区、`market.duckdb` 也没有这张表。
+    采到不入归档 = 查询层拿不到，等于没采。所以这里按 `core/boundary.py` 已登记的
+    资讯数据集原样走 `write_dataset(mode="append")`，分区日就是发布时间那一天。
+
+    写失败不吞：整条错误记进 `archive.errors`，页面与 `ldst news --output json` 都看得到。
+    """
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        dataset = str((item.provenance or {}).get("dataset") or "").strip()
+        day = item.day
+        if not dataset or day is None:
+            # 没有栏目标签（理论上不会）或没有发布日：不猜日期，宁可不入归档
+            continue
+        buckets.setdefault(dataset, []).append(
+            {
+                "code": item.related_codes[0] if item.related_codes else "",
+                "trade_date": day.isoformat(),
+                "content_hash": item.content_hash,
+                "title": item.title,
+                "url": item.url,
+                "published_at": item.published_at,
+                "summary": item.summary,
+                "source": item.source,
+                "data_as_of": item.published_at or day.isoformat(),
+                "related_codes": list(item.related_codes),
+            }
+        )
+
+    outcome: dict[str, Any] = {"written": 0, "datasets": {}, "errors": []}
+    if not buckets:
+        return outcome
+
+    from ladderstock.data import duckdb_store
+
+    for dataset, records in buckets.items():
+        try:
+            written = duckdb_store.write_dataset(
+                dataset,
+                records,
+                mode="append",
+                source="news",
+                default_trade_date=date.fromisoformat(str(records[0]["trade_date"])),
+                root=root,
+            )
+        except Exception as exc:  # noqa: BLE001 - 归档失败不能让整条资讯流失败，但必须留痕
+            outcome["errors"].append(f"{dataset}: {' '.join(str(exc).split())[:200]}")
+            continue
+        outcome["written"] += written.rows
+        outcome["datasets"][dataset] = written.rows
+    return outcome
+
+
+def backfill_archive(
+    *,
+    root: Path | None = None,
+    datasets: list[str] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """把 `data/news.sqlite` 已有条目补进归档与历史库（只读本地库，不重新采集）。
+
+    `_archive_items` 原来只挂在 `_persist` 上，也就是只对**新采**条目生效：库里
+    已有的 47 条 `research_report` 采到了、查询层也查得到，但 `data/archive` 没有
+    分区、`market.duckdb` 没有表——历史仍是「采了没存」。这条通道用本地库回填，
+    幂等（append + content_hash 去重），重复跑不会多出行。
+    """
+    conn = news_store.connect(root)
+    if conn is None:
+        raise LadderStockError("没有 data/news.sqlite，先跑一次 ldst news --store")
+    try:
+        items = news_store.load_items(conn)
+    finally:
+        news_store.close(conn)
+
+    wanted = {str(name).strip() for name in (datasets or []) if str(name).strip()}
+    if wanted:
+        items = [
+            item
+            for item in items
+            if str((item.provenance or {}).get("dataset") or "").strip() in wanted
+        ]
+
+    candidates: dict[str, int] = {}
+    for item in items:
+        dataset = str((item.provenance or {}).get("dataset") or "").strip()
+        if not dataset or item.day is None:
+            continue
+        candidates[dataset] = candidates.get(dataset, 0) + 1
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "items": len(items),
+            "candidates": candidates,
+            "written": 0,
+            "datasets": {},
+            "errors": [],
+        }
+    outcome = _archive_items(items, root)
+    return {"dry_run": False, "items": len(items), "candidates": candidates, **outcome}
 
 
 def persist_events(events: list[NewsEvent], *, root: Path | None = None) -> int:

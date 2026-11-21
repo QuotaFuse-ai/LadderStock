@@ -48,6 +48,9 @@ BACKGROUND_KINDS: tuple[str, ...] = (
     "knowledge_refresh",
     "reconcile",
     "notify",
+    "news_collect",
+    "sentiment_live",
+    "recall",
 )
 
 _KIND_LABELS = {
@@ -63,7 +66,10 @@ _KIND_LABELS = {
     "wire_news": "快讯抓取",
     "knowledge_refresh": "知识库刷新",
     "reconcile": "对账",
+    "news_collect": "资讯采集（公告/研报/快讯）",
     "notify": "通知",
+    "sentiment_live": "盘中实时情绪快照",
+    "recall": "观点回访判定（到期对错）",
 }
 
 #: 只在交易时段跑的后台任务——非交易时段一次上游都不打（与 `cli/schedule.py` 同口径）
@@ -430,6 +436,12 @@ def run_once(job_id: str, *, data_root: Path | None = None) -> dict[str, Any]:
                     "finished_at": outcome.get("finished_at"),
                 }
             )
+            # 明细落盘（QUOT-XXX）：wire 只报「28 个源不可用」时，名字留在这里，
+            # 页面才能回答「是哪几个」。只有明确白名单字段才带，避免塞进大对象。
+            for extra in ("sources_unavailable",):
+                value = outcome.get(extra)
+                if value:
+                    captured[extra] = value
         except Exception as exc:  # noqa: BLE001 - 线程里的异常只能记下来
             captured.update({"status": "failed", "detail": f"{type(exc).__name__}: {exc}"})
         captured.setdefault("finished_at", datetime.now().isoformat(timespec="seconds"))

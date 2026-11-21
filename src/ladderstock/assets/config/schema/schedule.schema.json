@@ -57,6 +57,7 @@
               "snapshot_fast",
               "sync_batch",
               "digest",
+              "brief",
               "wire_news",
               "knowledge_refresh",
               "agent_research",
@@ -64,7 +65,8 @@
               "watch_live",
               "sentiment_live",
               "plan_tick",
-              "sync_evening"
+              "sync_evening",
+              "news_collect"
             ]
           },
           "trigger": {
@@ -87,7 +89,10 @@
             "enum": [
               "premarket",
               "close",
-              "watch"
+              "watch",
+              "morning",
+              "close_review",
+              "position_alerts"
             ]
           },
           "dataset": {
@@ -102,6 +107,20 @@
           "daily_limit": {
             "type": "integer",
             "minimum": 1
+          },
+          "batch_size": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "news_collect：公告/研报按代码池分批的批大小（默认 100 只/批）"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "news_collect：每个栏目单次取数上限（默认 100 条）"
+          },
+          "candidate_filter": {
+            "type": "boolean",
+            "description": "news_collect：公告两源只查「池 ∪ 当日异动」（默认 true；无行情快照自动回退全池）"
           },
           "question": {
             "type": "string",

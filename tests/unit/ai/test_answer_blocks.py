@@ -620,3 +620,77 @@ def test_capability_blocks_structure() -> None:
 
     assert [b["type"] for b in blocks] == ["conclusion", "notice"]
     assert blocks[0]["payload"]["text"] == "你好。"
+
+
+# --------------------------------------------------------------------------- #
+# QUOT-627：结论句挑选 / tone 推断 —— 前端「中性骨架卡」的根因在这里
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # 用户实测的两条原话：第一条只交代取数时点，结不构成结论；
+        # 第二条带方向，必须判出方向，不能顶着「中性」。
+        ("贵州茅台（600519）实时行情，数据时间 2026-11-20 14:49：", True),
+        ("大盘（实时报价，时点 2026-11-20 16:14，已收盘）四个指数集体下跌，成长端跌幅明显更深：", False),
+        ("最新价：1485.75 元，涨 1.75%", False),
+        ("截至昨日收盘，主力净流出。", False),
+        ("数据口径：前复权。", True),
+    ],
+)
+def test_meta_sentence_detection(line: str, expected: bool) -> None:
+    assert answer_blocks._is_meta_sentence(line) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("大盘四个指数集体下跌，成长端跌幅明显更深", "negative"),
+        ("最新价 1485.75 元，涨 1.75%", "positive"),
+        ("涨跌幅 -1.23%", "neutral"),  # 中性复合词，剔掉后无方向
+        ("主力净流入，涨停家数增加", "positive"),
+        ("营收同比下降，净流出扩大", "negative"),
+        ("横盘震荡，量能没有明显放大", "neutral"),
+        ("", "neutral"),
+    ],
+)
+def test_infer_tone_reads_direction_words(text: str, expected: str) -> None:
+    assert answer_blocks.infer_tone(text) == expected
+
+
+def test_pick_headline_skips_meta_line_and_strips_bullet() -> None:
+    lines = [
+        "贵州茅台（600519）实时行情，数据时间 2026-11-20 14:49：",
+        "- 最新价：1485.75 元，涨 1.75%",
+        "- 昨收 1460.21 元",
+    ]
+    assert answer_blocks.pick_headline(lines) == "最新价：1485.75 元，涨 1.75%"
+
+
+def test_pick_headline_falls_back_to_first_non_meta_line() -> None:
+    lines = ["数据时间 2026-11-20 14:49：", "横盘震荡，量能没有明显放大。"]
+    assert answer_blocks.pick_headline(lines) == "横盘震荡，量能没有明显放大。"
+
+
+def test_build_blocks_tone_follows_source_text_and_numbers_kept() -> None:
+    """有出处（keep_numbers）时：结论挑真结论、tone 按原文方向、正文数字原样保留。"""
+    ai = {
+        "narrative": [
+            "贵州茅台（600519）实时行情，数据时间 2026-11-20，取自腾讯行情接口：",
+            "- 最新价 1485.75 元，涨 1.75%",
+            "成交量字段本次没有返回，这一项没有取到。",
+        ],
+        "highlights": [],
+        "risks": [],
+        "evidence": [],
+    }
+    sources = [{"name": "tickhub · tencent_quote_batch", "fetched_at": "2026-11-20T16:30:01+08:00"}]
+    blocks = build_blocks({}, ai, sources, keep_numbers=True, page_data=True)
+
+    conclusion = blocks[0]["payload"]
+    assert conclusion["tone"] == "positive"
+    assert conclusion["text"].startswith("最新价 1485.75 元，涨 1.75%")
+    # 「涨 / 跌」不再被当成元信息标记，方向句必须留下
+    assert "数据时间" not in conclusion["text"]
+

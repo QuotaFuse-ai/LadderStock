@@ -360,6 +360,53 @@ def uninstall_peer(key: str, *, root: Path | None = None, confirm: bool = False)
     return InstallResult(True, key, target, "not_installed")
 
 
+def install_packages(
+    key: str,
+    specs: list[str],
+    *,
+    interpreter: Path | None = None,
+    mirrors: Iterable[str] | None = None,
+    on_progress: ProgressFn | None = None,
+) -> InstallResult:
+    """在当前程序自己的解释器里装若干 pip 包（可选依赖用，不建 peer venv）。
+
+    与 `install_peer` 的区别只有两点：目标环境是主程序的 site-packages，
+    没有入口验证（可选依赖是库，不是命令）。镜像顺序、进度解析、失败处理完全复用。
+    """
+    py = Path(interpreter) if interpreter is not None else Path(sys.executable)
+    progress = _Progress(on_progress)
+    log: list[str] = []
+    try:
+        if not py.is_file():
+            raise InstallError(f"找不到解释器：{py}")
+        progress.stage(0.05, 0.9, f"使用 {py.name}")
+        last_error = ""
+        for index_args in _pip_index_args(list(mirrors or manifest.PYPI_MIRRORS)):
+            try:
+                _run_pip(py, ["install", *specs, *index_args], progress=progress, log=log)
+                last_error = ""
+                break
+            except InstallError as exc:
+                last_error = str(exc)
+                log.append(f"镜像失败，换下一个：{index_args[-1]}")
+                continue
+        if last_error:
+            raise InstallError(f"所有镜像都装不上，最后一次错误：{last_error}")
+        progress.emit(1.0, "安装完成")
+        return InstallResult(True, key, py, "ready")
+    except InstallError as exc:
+        return InstallResult(False, key, py, "failed", detail=str(exc), log_tail="\n".join(log[-12:]))
+    except Exception as exc:  # noqa: BLE001 - 未预期异常也要落失败
+        return InstallResult(
+            False,
+            key,
+            py,
+            "failed",
+            detail=f"{type(exc).__name__}: {exc}",
+            log_tail="\n".join(log[-12:]),
+        )
+
+
 def boundary_modules_target(item: manifest.PeerManifest, root: Path | None = None) -> Path:
     from ladderstock.core import boundary
 
@@ -380,6 +427,7 @@ def missing_peers(root: Path | None = None) -> tuple[str, ...]:
 __all__ = [
     "InstallError",
     "InstallResult",
+    "install_packages",
     "install_peer",
     "missing_peers",
     "portable_python",

@@ -1,4 +1,4 @@
-"""07:30 题材资讯每日采集任务（QUOT-554，kind=`wire_news`）。
+﻿"""07:30 题材资讯每日采集任务（QUOT-554，kind=`wire_news`）。
 
 钉住四件事：
 
@@ -161,7 +161,7 @@ def test_schedule_schema_enum_contains_wire_news() -> None:
 
 
 def test_default_table_declares_wire_news_first_at_0730() -> None:
-    assert len(DEFAULT_JOBS) == 15
+    assert len(DEFAULT_JOBS) == 16
     assert DEFAULT_JOBS[0]["id"] == "wire_news_daily"
     jobs = [job for job in _default_table()["jobs"] if job.get("kind") == "wire_news"]
     assert len(jobs) == 1

@@ -67,7 +67,8 @@ from ladderstock.ai.agent_runtime import (
 from ladderstock.ai.agent_runtime import (
     EVENT_TOOL as AGENT_TOOL,
 )
-from ladderstock.ai import backfill, number_audit
+from ladderstock.ai import backfill, ledger, number_audit, recall, research_plan
+from ladderstock.research import debate
 from ladderstock.ai.agent_runtime import (
     build_agent,
     build_tools,
@@ -612,6 +613,45 @@ def _coverage_note(question: str, data_root: Any) -> str | None:
         return None
 
 
+#: 只有问题真问到多空/评审，才把 StockSenate 的结论附进主问答——不每轮都去读报告
+_DEBATE_INTENT = re.compile(r"(多空|看多|看空|辩论|合议|评审|证伪|对手盘)", re.IGNORECASE)
+
+
+def _debate_brief(question: str) -> list[dict[str, Any]]:
+    """F7 接线：主问答里的多空评审块（0 或 1 块）。
+
+    只读已落盘报告（`debate.latest_view`），**不在这一轮起辩论**——那是 `/review` 页
+    的显式动作（一轮实测几分钟）。没有报告就返回空，不拿「还没有报告」占一块预算；
+    有报告但质量门没过，给一条 `notice(degraded)` 说清原因——这是 debate 模块的红线：
+    绝不出空对照表。
+
+    读报告的任何异常都只记日志返回空：评审是附加信息，不能把整轮回答变成失败。
+    """
+    if not _DEBATE_INTENT.search(question or ""):
+        return []
+    target = resolve_target(question)
+    if target is None:
+        return []
+    _market, symbol = target
+    try:
+        view = debate.latest_view(symbol)
+    except Exception as exc:  # noqa: BLE001 - 读报告失败不能拖垮整轮回答
+        logger.warning("debate latest_view failed: %s", exc)
+        return []
+    if view is None:
+        logger.debug(
+            "debate brief skipped: no report symbol=%s senate_home=%s",
+            symbol,
+            debate.senate_home(),
+        )
+        return []
+    try:
+        return [debate.summary_block(view)]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("debate summary_block failed: %s", exc)
+        return []
+
+
 def _with_narrative(blocks: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
     """把整段回答作为正文块插到 citation 之前（不重算、不摘要、不截断）。
 
@@ -699,6 +739,50 @@ def _persist_desk_turn(
         logger.warning("desk_turn_persist_failed session=%s detail=%s", session_id, exc)
 
 
+def _persist_record(
+    data_root: Any,
+    session_id: str | None,
+    seq: int | None,
+    question: str,
+    blocks: Sequence[Mapping[str, Any]],
+) -> None:
+    """F9：把这一轮的方向判断落进观点账本，到期由回访判定对错。
+
+    落账不是回答成立的前提：没有结论卡、方向中性/告警、拿不到基准价都直接跳过
+    （`ledger.record_from_turn` 已判过）；写库失败只记日志——与
+    `_persist_desk_turn` 同一口径，绝不让账本问题把一次成功回答变成 500。
+    """
+    if data_root is None:
+        return
+    try:
+        target = resolve_target(question)
+        record = ledger.record_from_turn(
+            question,
+            blocks,
+            symbol=target[1] if target else None,
+            session_id=session_id,
+            seq=seq,
+        )
+        if record is None:
+            return
+        conn = chat_store.connect(data_root)
+        if conn is None:
+            return
+        try:
+            chat_store.insert_record(conn, **record)
+        finally:
+            chat_store.close(conn)
+        logger.info(
+            "research_record_added id=%s symbol=%s direction=%s due=%s",
+            record["record_id"],
+            record.get("symbol"),
+            record["direction"],
+            record["due_date"],
+        )
+    except Exception as exc:  # noqa: BLE001 - 账本写失败不影响本轮回答
+        logger.warning("research_record_failed session=%s detail=%s", session_id, exc)
+
+
 def _success_response(
     result: Mapping[str, Any],
     sources: Sequence[ChatSource],
@@ -771,6 +855,8 @@ def _success_response(
     # 只有首页研究台传这个参数；页面助手 / 技能助手是一次性问答，不落库。
     if persist is not None:
         _persist_desk_turn(persist[0], persist[1], persist[2], blocks)
+        # F9：同一轮的判断落进观点账本（到期由回访判对错）
+        _persist_record(persist[0], persist[1], None, persist[2], blocks)
     return {
         **result,
         "blocks": blocks,
@@ -841,6 +927,17 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     context: ChatRequestContext | None = None
     timeout_sec: float | None = None
+    #: F2：用户确认/编辑过的研究计划（标题列表）。缺省或空表 = 没有计划，与现状一致。
+    plan: list[str] | None = None
+
+
+class PlanRequest(BaseModel):
+    """F2 计划草案的载荷：只要问题和页面上下文，不落库、不起模型。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str
+    context: ChatRequestContext | None = None
 
 
 class ChatFailure(Exception):
@@ -907,12 +1004,16 @@ def _conversation_blocks(
     fetch_attempted: bool = False,
     metrics: Mapping[str, Any] | None = None,
     extra_notes: Sequence[str] = (),
+    extra_blocks: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """一轮的块：失败只有一条 `notice`；成功复用现役装配链，再收到 D2 上限 6。
 
     `fetch_attempted` 由调用方给：只有 agent 这一轮**真的调了工具**才算查过。没查过
     就不摆「指标 / 来源没取到」——那是把「没查」说成「查了没取到」，等于用告警块回答
     一个没问的问题。块的顺序、文案、数字剥离仍全部由 `ai/answer_blocks.py` 负责。
+
+    `extra_blocks` 是正文之外的附加块（F7 的多空评审那一块）：插在 citation 之前，
+    腾位交给 `_insert_before_citation`（先丢重复 notice），最多插 1 块。
     """
     if failure is not None:
         return _failure_blocks(
@@ -923,13 +1024,18 @@ def _conversation_blocks(
                 retryable=failure.retryable,
             )
         )[:MAX_ANSWER_BLOCKS]
-    return _blocks_for(
+    base = _blocks_for(
         reply,
         sources,
         fetch_attempted=fetch_attempted,
         metrics=metrics,
         extra_notes=extra_notes,
     )[:MAX_ANSWER_BLOCKS]
+    # 附加块（F7 多空评审）插在 citation 之前，并沿用 `_insert_before_citation` 的
+    # 腾位规则——它保证 citation 仍在末尾、总数不破 6；最多插 1 块，正文不会被挤空。
+    for block in list(extra_blocks)[:1]:
+        base = _insert_before_citation(base, dict(block))
+    return base
 
 
 def _arrive_blocks(
@@ -940,6 +1046,7 @@ def _arrive_blocks(
     fetch_attempted: bool = False,
     metrics: Mapping[str, Any] | None = None,
     extra_notes: Sequence[str] = (),
+    extra_blocks: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """同 `_conversation_blocks` 成功路径，但逐块交付：每多一块就 `on_block(当前全部块)`。
 
@@ -953,6 +1060,7 @@ def _arrive_blocks(
         fetch_attempted=fetch_attempted,
         metrics=metrics,
         extra_notes=extra_notes,
+        extra_blocks=extra_blocks,
     )
     for count in range(1, len(full) + 1):
         on_block([dict(block) for block in full[:count]])
@@ -1522,6 +1630,7 @@ async def run_turn_stream(
     session_id: str,
     context: ChatRequestContext | None = None,
     data_root: Any = None,
+    plan: Sequence[str] | None = None,
 ) -> AsyncIterator[str]:
     """会话模式的一轮问答，以 SSE 帧逐段交付。
 
@@ -1614,6 +1723,23 @@ async def run_turn_stream(
             # 与 `ask_agent` 同构：先把 prompt / 记忆 / 知识库准备好，再交给 agent。
             # 这份 prepared 事后还要用在同一处写记忆与长期偏好——流式此前没这一步，
             # 页面对话的记忆与偏好一直是空的（只有 JSON 路径写）。
+            steps = research_plan.normalize_steps(plan)
+            if steps:
+                yield _status(
+                    f"按计划执行（{len(steps)} 步）", "done", item_id="plan", action="plan"
+                )
+                draft = research_plan.draft_steps(
+                    message,
+                    symbol=backfill.detect_symbol(message),
+                    kinds=backfill.kinds_for_question(message),
+                )
+                detail = research_plan.note_for(
+                    research_plan.validate_edits(base=draft, edited=steps)
+                )
+                if detail:
+                    yield _status(
+                        f"计划已调整：{detail}", "done", item_id="plan_edit", action="plan"
+                    )
             prepared_turn = _prepare_call(
                 question=message,
                 context=context_text,
@@ -1621,6 +1747,7 @@ async def run_turn_stream(
                 module=RUN_TURN_MODULE,
                 tab=turn_page,
                 data_root=data_root,
+                turn_plan=steps or None,
             )
             # 首选 agent 路径：模型自主选工具、定轮次。它解决的是"该不该查"——查过就
             # 有真实数据可装配，没查就说明缺什么，不再靠猜意图决定要不要打「没取到」。
@@ -1781,8 +1908,11 @@ async def run_turn_stream(
             fetch_attempted=used_tools,
             metrics=fetched.get("metrics") or {},
             extra_notes=[cover_note] if cover_note else (),
+            extra_blocks=_debate_brief(message),
         )
         writer.finish(chat_store.DONE, blocks)
+        # F9：流式路径同样落账——首页研究台与对话模式走的是同一份判定口径
+        _persist_record(data_root, session_id, writer.turn_seq, message, blocks)
         yield _status("model", "done", item_id="model")
         yield _sse_frame(
             "done",
@@ -1847,8 +1977,10 @@ def _run_turn_logged(
         fetch_attempted=result["used_tools"],
         metrics=result["metrics"],
         extra_notes=[cover_note] if cover_note else (),
+        extra_blocks=_debate_brief(text),
     )
     writer.finish(chat_store.DONE, blocks)
+    _persist_record(data_root, session_id, writer.turn_seq, text, blocks)
     return {
         "ok": True,
         "session_id": session_id,
@@ -2022,6 +2154,7 @@ def _prepare_call(
     memory_settings: memory.MemorySettings | None = None,
     memory_client: memory.MemoryClient | None = None,
     data_root: Any = None,
+    turn_plan: Sequence[str] | None = None,
 ) -> _PreparedCall:
     """通道 + 记忆召回 + 知识库 + 拼 system/user。
 
@@ -2060,11 +2193,16 @@ def _prepare_call(
     preference_block = preferences.render(preferences.load(root))
     # 进行中的研究任务排在偏好之后：偏好是长期不变的，任务是「这周让我盯的」。
     plan_block = plans.render(plans.active(root))
+    # F2 本轮计划（用户确认过的那份）紧跟在长期任务之后：它是"这一次要查什么"，
+    # 比长期任务更具体，所以排在后面、离问题更近。
+    turn_plan_block = research_plan.render(research_plan.normalize_steps(turn_plan))
     sections = [system_prompt]
     if preference_block:
         sections.append(preference_block)
     if plan_block:
         sections.append(plan_block)
+    if turn_plan_block:
+        sections.append(turn_plan_block)
     if block:
         sections.extend((block, _MEMORY_CONFLICT_RULE))
     system = "\n\n".join(sections)
@@ -2544,6 +2682,74 @@ def build_conversation_router(*, data_root: Any = None, config_root: Any = None)
             chat_store.close(conn)
         return {"session_id": session_id, "deleted": deleted}
 
+    @router.post("/plan")
+    async def post_plan(body: PlanRequest) -> Any:
+        """F2：先出一条可编辑的计划草案。纯规则，不调模型、不落库、不占延迟。"""
+        question = (body.message or "").strip()
+        if not question:
+            return {"ok": False, "error": "message_required"}
+        symbol = backfill.detect_symbol(question)
+        steps = research_plan.draft_steps(
+            question,
+            symbol=symbol,
+            kinds=backfill.kinds_for_question(question),
+        )
+        return {
+            "ok": True,
+            "symbol": symbol,
+            "max_steps": research_plan.MAX_STEPS,
+            "steps": [step.as_dict() for step in steps],
+        }
+
+    @router.get("/ledger")
+    def get_ledger(
+        limit: int = 50,
+        symbol: str | None = None,
+        status: str | None = None,
+    ) -> Any:
+        """F9：观点账本 —— 已落账的判断 + 命中统计。
+
+        `hit_rate` 只算已判的（hit / miss / flipped）；还没到期的 `open` 不进分母，
+        否则「准确率」会被自己的等待期稀释。
+        """
+        conn = _open_read()
+        empty = {
+            "total": 0,
+            "open": 0,
+            "hit": 0,
+            "miss": 0,
+            "flipped": 0,
+            "undecided": 0,
+            "judged": 0,
+            "hit_rate": None,
+        }
+        if conn is None:
+            return {"stats": empty, "records": []}
+        try:
+            return {
+                "stats": chat_store.record_stats(conn),
+                "records": chat_store.list_records(
+                    conn, limit=max(1, min(int(limit), 200)), symbol=symbol, status=status
+                ),
+            }
+        finally:
+            chat_store.close(conn)
+
+    @router.post("/recall")
+    def post_recall() -> Any:
+        """F9：手动跑一次回访（到期记录拉日线判对错）。
+
+        调度器还没统一之前，这个端点既是手动触发口，也是定时任务将来调用的同一个入口。
+        """
+        conn = chat_store.connect(data_root)
+        if conn is None:
+            return {"ok": False, "error": "chat_store_unavailable"}
+        try:
+            stats = recall.run_recall(conn, data_root=data_root)
+            return {"ok": True, **stats}
+        finally:
+            chat_store.close(conn)
+
     @router.post("/turns")
     async def post_turn(request: Request, body: ChatRequest) -> Any:
         if wants_stream(request):
@@ -2557,6 +2763,7 @@ def build_conversation_router(*, data_root: Any = None, config_root: Any = None)
                     session_id=session_id,
                     context=body.context,
                     data_root=data_root,
+                    plan=body.plan,
                 ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

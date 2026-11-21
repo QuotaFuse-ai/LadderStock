@@ -669,6 +669,50 @@ def default_host_pivot() -> HostPivot:
 # 模块启动面
 # --------------------------------------------------------------------------- #
 
+#: 没有自带自述卡的模块：控制面套 `ldst peer serve` 包装层，登记真实端口后再起
+#: （2026-11-21 用户口径）。tickhub / tickhub_us / wire / senate 自己会写卡，
+#: 再包一层只会多一个常驻解释器，不加。
+PEER_WRAP_MODULES = frozenset({"financecoffer", "proxyfleet", "qdrant", "memory"})
+
+
+def _peer_card_root(module: str, face: StartFace) -> str:
+    """卡片落点：与面板读卡口径一致的安装目录（PEER_CONTROL 解析结果）。"""
+    try:
+        from ladderstock.core.boundary import resolve_peer_control
+
+        ctl = resolve_peer_control().get(module)
+        if ctl is not None and ctl.directory:
+            return str(ctl.directory)
+    except Exception:  # noqa: BLE001 - 解析失败退回 cwd，不阻塞启动
+        pass
+    return str(face.cwd)
+
+
+def wrap_peer_argv(module: str, face: StartFace) -> list[str]:
+    """把模块启动命令套进包装层；不该包的模块原样返回。"""
+    argv = [str(part) for part in face.argv]
+    if module not in PEER_WRAP_MODULES:
+        return argv
+    if os.environ.get("LDST_PEER_WRAP", "1") != "1":
+        return argv
+    return [
+        sys.executable,
+        "-m",
+        "ladderstock",
+        "peer",
+        "serve",
+        "--module",
+        module,
+        "--face",
+        face.face,
+        "--port",
+        str(face.port),
+        "--card-root",
+        _peer_card_root(module, face),
+        "--",
+        *argv,
+    ]
+
 
 @dataclass(frozen=True)
 class StartFace:
@@ -1007,7 +1051,7 @@ class BaseAdapter:
             if not exe.is_file():
                 raise SupervisorError(f"{self.name} 的入口不存在：{exe}")
             pid = self._host.spawn(
-                face.argv,
+                wrap_peer_argv(self.name, face),
                 cwd=face.cwd,
                 env=self._environment(),
                 log_path=self._log_dir / face.log_name,
@@ -1191,6 +1235,11 @@ class BaseAdapter:
             env.update(load_env_file(path))
         env.update(self._env_overrides)
         env.setdefault("PYTHONUNBUFFERED", "1")
+        # 自述卡落点（2026-11-21 服务发现）：模块把「我在哪个端口」写进安装目录的
+        # `.runtime/peer.json`，面板按这张卡找地址，不再按「基础端口 + 偏移」推算。
+        # 不给明确目录时，模块会按自己的仓库根写，面板在 peer 目录里读不到。
+        if self.faces:
+            env.setdefault("LDST_PEER_CARD_ROOT", str(self.faces[0].cwd))
         return env
 
 

@@ -21,17 +21,23 @@ from ladderstock import __version__
 from ladderstock.cli.ai import register as register_ai
 from ladderstock.cli.backfill import register as register_backfill
 from ladderstock.cli.backtest import register as register_backtest
+from ladderstock.cli.archive import register as register_archive
+from ladderstock.cli.brief import register as register_brief
+from ladderstock.cli.coverage import register as register_coverage
+from ladderstock.cli.debate import register as register_debate
+from ladderstock.cli.verify import register as register_verify
 from ladderstock.cli.export import export as export_command
 from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
 from ladderstock.cli.knowledge import register as register_knowledge
 from ladderstock.cli.legacy_ports import warn_legacy_port
 from ladderstock.cli.mcp import register as register_mcp
-from ladderstock.cli.news import events_command, news_command
+from ladderstock.cli.news import events_command, news_archive_command, news_command
 from ladderstock.cli.notify import register as register_notify
 from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
 from ladderstock.cli.pool import register as register_pool
+from ladderstock.cli.peer import peer_app
 from ladderstock.cli.position import register as register_position
 from ladderstock.cli.research import research as research_command
 from ladderstock.cli.review import register as register_review
@@ -92,6 +98,16 @@ schedule_app = typer.Typer(no_args_is_help=True, help="定时调度")
 # 标的字典（代码 ↔ 名称）：全市场 `symbol_basic` 表的刷新与查询，实现体在 cli/symbol.py
 symbol_app = typer.Typer(no_args_is_help=True, help="标的字典（代码 ↔ 名称）")
 backtest_app = typer.Typer(no_args_is_help=True, help="回测（A 股日频策略，M1）")
+#: F7 多空对照：StockSenate 桥 + 质量门控（run/show/last/list/status），实现体在 cli/debate.py
+debate_app = typer.Typer(no_args_is_help=True, help="多空对照（StockSenate 合议）")
+#: F8 研究档案：list/show/export/search，见 cli/archive.py；只读本地落盘产物，不烧 token
+archive_app = typer.Typer(no_args_is_help=True, help="研究档案（检索与导出）")
+#: F11 always-on 简报：morning/close/alerts/today/run/history/config，见 cli/brief.py
+brief_app = typer.Typer(no_args_is_help=True, help="简报（晨报 / 收盘复盘 / 持仓异动）")
+#: F10 截图/PDF 查证：capabilities/file/history，见 cli/verify.py；PDF 走文本层，图片走可插拔 vision
+verify_app = typer.Typer(no_args_is_help=True, help="截图 / PDF 查证（抽取 → 对账）")
+#: F12 数据覆盖看板 + 受控补采：board/gaps/plan/backfill，见 cli/coverage.py
+coverage_app = typer.Typer(no_args_is_help=True, help="数据覆盖看板（落盘 / 缺口 / 补采）")
 
 for parent, child, name in (
     (app, review_app, "review"),
@@ -115,6 +131,12 @@ for parent, child, name in (
     (app, schedule_app, "schedule"),
     (app, symbol_app, "symbol"),
     (app, backtest_app, "backtest"),
+    (app, debate_app, "debate"),
+    (app, archive_app, "archive"),
+    (app, brief_app, "brief"),
+    (app, verify_app, "verify"),
+    (app, coverage_app, "coverage"),
+    (app, peer_app, "peer"),
 ):
     parent.add_typer(child, name=name)
 
@@ -300,6 +322,10 @@ app.command("news", help="资讯雷达：聚合公告/研报/快讯/政策，规
 app.command("events", help="事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口")(
     events_command
 )
+app.command(
+    "news-archive",
+    help="补归档：把 news.sqlite 已有资讯补进 data/archive 与历史库（不重新采集）",
+)(news_archive_command)
 
 
 # ---------------------------------------------------------------- MCP
@@ -404,6 +430,26 @@ register_schedule(schedule_app)
 # 实现体在 cli/backtest.py + backtest/ 包（feed/universe/strategy/match/score/guard/card/runner）：
 # 只读本机 daily_k，运行卡落 <data_dir>/backtests/<run_id>/；口径见 docs/specs/SPEC-BACKTEST.md
 register_backtest(backtest_app)
+
+# F7 多空对照（StockSenate 桥 + 质量门控）：`debate run|show|last|list|status`，
+# 实现体在 cli/debate.py；只读报告、不触发辩论的那几个动作不会烧 token
+register_debate(debate_app)
+
+# F8 研究档案（scan/export/search，纯本地读写）：`archive list|show|export|search`，
+# 实现体在 cli/archive.py + research/archive.py
+register_archive(archive_app)
+
+# F11 always-on 简报（组合模板 + 指纹去重 + 开关）：`brief morning|close|alerts|today|run|history|config`，
+# 实现体在 cli/brief.py + watch/brief.py；`morning/close/alerts/today` 只打印不落库
+register_brief(brief_app)
+
+# F10 截图/PDF 查证（抽取 → 关键数字 → 与本机数据对账）：`verify capabilities|file|history`，
+# 实现体在 cli/verify.py + research/verify.py；PDF 走 pypdf 文本层，图片走可插拔 vision 后端
+register_verify(verify_app)
+
+# F12 数据覆盖看板 + 受控补采：`coverage board|gaps|plan|backfill`，
+# 实现体在 data/coverage_board.py + cli/coverage.py；补采默认 dry-run，复用 cli/sync.py 通道
+register_coverage(coverage_app)
 
 
 # ---------------------------------------------------------------- 体检

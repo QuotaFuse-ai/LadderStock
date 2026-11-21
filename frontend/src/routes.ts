@@ -27,6 +27,10 @@ export const ROUTE_PATHS = [
   '/weekly',
   '/journal',
   '/validate',
+  // F9 观点账本：判断落一笔、到期回访判对错，与「验证」组同族但不与 `/validate` 共屏
+  '/ledger',
+  // 运行配置：定时任务 / 数据同步池 / 历史回填的只读可视化（写操作仍走文件与 /api/schedule）
+  '/config',
   // QUOT-534：策略回测（只读运行卡）挂在「验证」组，`?run=bt_xxxxxxxx` 深链
   '/backtest',
   '/limit-up',

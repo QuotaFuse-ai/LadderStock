@@ -13,8 +13,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   describePeerState,
   getJob,
+  getModelJob,
+  getModelStatus,
   getStatus,
   startInstall,
+  startModelFetch,
+  type ModelJob,
+  type ModelStatus,
   type SetupJob,
   type SetupPeer,
   type SetupStatus,
@@ -83,13 +88,114 @@ function PeerRow({
   )
 }
 
+/** 嵌入模型卡片：便携包默认不带权重，第一次用记忆时在这里下载。 */
+function ModelCard({
+  status,
+  busy,
+  onFetch,
+}: {
+  status: ModelStatus | null
+  busy: boolean
+  onFetch: () => void
+}) {
+  const job = status?.job ?? null
+  const running = job?.status === 'running'
+  const ready = status?.ready ?? false
+  return (
+    <div className="flex flex-col gap-2 rounded border border-border bg-surface p-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-body font-medium text-text">记忆嵌入模型</span>
+        <Badge tone={ready ? 'ok' : 'warn'}>{ready ? '已就绪' : '未下载'}</Badge>
+        <span className="ldst-num text-caption text-text-secondary">
+          {status?.size_mb ?? 0} MB
+        </span>
+        <span className="ldst-num ml-auto text-caption text-text-secondary">
+          {percent(job?.pct ?? (ready ? 1 : 0))}
+        </span>
+      </div>
+      <p className="text-caption text-text-secondary">
+        安装包不预置这份权重，省下的体积留给运行时。不下载也能看看板与行情，
+        只是「记忆」不可用；下载与校验都在本机完成。
+      </p>
+      {(running || !ready) && <PeerBar pct={job?.pct ?? 0} tone={job?.status === 'failed' ? 'fail' : ready ? 'ok' : 'run'} />}
+      {job?.message && <p className="ldst-num text-caption text-text-tertiary">{job.message}</p>}
+      {job?.error && <p className="text-caption text-danger">{job.error}</p>}
+      {!ready && (
+        <div>
+          <Button variant="primary" onClick={onFetch} disabled={busy || running}>
+            {running ? '正在下载…' : `下载模型（${status?.size_mb ?? 0} MB）`}
+          </Button>
+        </div>
+      )}
+      {status?.models_dir && (
+        <p className="ldst-num break-all text-caption text-text-tertiary">{status.models_dir}</p>
+      )}
+    </div>
+  )
+}
+
 export default function SetupScreen() {
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [job, setJob] = useState<SetupJob | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
+  const [modelBusy, setModelBusy] = useState(false)
   const timer = useRef<number | null>(null)
+  const modelTimer = useRef<number | null>(null)
+
+  const loadModel = useCallback(async () => {
+    try {
+      setModelStatus(await getModelStatus())
+    } catch {
+      // 模型状态读不到不该挡住子模块安装页
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadModel()
+  }, [loadModel])
+
+  useEffect(() => {
+    const job: ModelJob | null = modelStatus?.job ?? null
+    if (!job || job.status !== 'running') return undefined
+    modelTimer.current = window.setInterval(async () => {
+      try {
+        const response = await getModelJob()
+        const next = response.job
+        if (!next) return
+        setModelStatus((prev) => (prev ? { ...prev, job: next } : prev))
+        if (next.status !== 'running') {
+          setModelBusy(false)
+          void loadModel()
+        }
+      } catch {
+        // 轮询失败下一次继续
+      }
+    }, 1500) as unknown as number
+    return () => {
+      if (modelTimer.current !== null) window.clearInterval(modelTimer.current)
+      modelTimer.current = null
+    }
+  }, [modelStatus, loadModel])
+
+  const fetchModel = async () => {
+    if (modelBusy) return
+    setModelBusy(true)
+    try {
+      const response = await startModelFetch()
+      if (!response.ok) {
+        setMessage(response.detail || '启动模型下载失败')
+        setModelBusy(false)
+        return
+      }
+      await loadModel()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+      setModelBusy(false)
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -244,6 +350,8 @@ export default function SetupScreen() {
           <p className="text-caption text-text">{status?.interpreter_origin || '—'}</p>
         </div>
       </div>
+
+      <ModelCard status={modelStatus} busy={modelBusy} onFetch={() => void fetchModel()} />
 
       <div className="rounded border border-border bg-surface">
         {peers.length === 0 ? (

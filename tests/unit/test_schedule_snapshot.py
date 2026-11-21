@@ -1,4 +1,4 @@
-"""调度表接入 6 时点快照（QUOT-286）。
+﻿"""调度表接入 6 时点快照（QUOT-286）。
 
 钉住三件事：
 
@@ -57,7 +57,7 @@ def test_builtin_defaults_mirror_the_repo_schedule() -> None:
     builtin = snapshot_jobs(_default_table())
 
     assert [job["trigger"] for job in builtin] == SNAPSHOT_TRIGGERS
-    assert len(DEFAULT_JOBS) == 15
+    assert len(DEFAULT_JOBS) == 16
 
 
 def test_schema_accepts_snapshot_kind() -> None:
@@ -165,4 +165,5 @@ def test_schedule_schema_enum_contains_snapshot() -> None:
         "sentiment_live",
         "plan_tick",
         "sync_evening",
+        "news_collect",
     ]

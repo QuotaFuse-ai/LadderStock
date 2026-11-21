@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -89,6 +90,9 @@ from ladderstock.web.control import (
 from ladderstock.web.data_assets import build_data_router
 from ladderstock.web.financecoffer_api import build_financecoffer_router
 from ladderstock.web.inbox import build_router as build_inbox_router
+from ladderstock.web.brief import build_router as build_brief_router
+from ladderstock.web.verify import build_router as build_verify_router
+from ladderstock.web.coverage import build_router as build_coverage_router
 from ladderstock.web.industry import IndustryPlane
 from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.journal_write import build_router as build_journal_write_router
@@ -100,6 +104,9 @@ from ladderstock.web.radar import build_router as build_radar_router
 from ladderstock.web.research import ResearchPlane
 from ladderstock.web.research import build_router as build_research_router
 from ladderstock.web.senate_actions import build_senate_actions_router
+from ladderstock.web.config_api import build_router as build_config_router
+from ladderstock.web.pool_api import build_router as build_pool_router
+from ladderstock.web.progress_api import build_router as build_progress_router
 from ladderstock.web.setup_api import build_router as build_setup_router
 from ladderstock.web.state_index import StateIndexPlane
 from ladderstock.web.state_index import build_router as build_state_index_router
@@ -1329,6 +1336,40 @@ INDEX_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 ASSET_CACHE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 
+def _ensure_qdrant_boot(processes: Any, ports: list[int]) -> None:
+    """向量库随应用起落：端口已有人监听就什么都不做，没人监听才拉起。
+
+    以前 qdrant 要人手跑 `file/modules/qdrant/run_stack.py`；现在应用一启动就确保
+    它在线（按 `LDST_ENV`/`LDST_PORT_OFFSET` 自推导的端口，存储走模块自己的目录），
+    应用退出后由 run_stack 的 atexit 收掉子进程。
+    **绝不抢/杀别人的实例**：先探端口，有监听就直接返回。
+    异步执行，不拖慢 HTTP 启动；`LDST_AUTOSTART_QDRANT=0` 可关闭。
+    """
+    import logging
+    import threading
+
+    log = logging.getLogger(__name__)
+
+    def _boot() -> None:
+        import time
+
+        time.sleep(1.5)  # 让 HTTP 端口先绑上，避免与应用启动阶段抢 IO
+        try:
+            from ladderstock.core import discovery
+
+            if ports and any(discovery.port_open(port) for port in ports):
+                log.info("qdrant 已在运行（%s 有监听），不重复拉起", ports)
+                return
+            if processes is None:
+                return
+            processes.start_module("qdrant")
+            log.info("qdrant 已随应用拉起（%s）", ports)
+        except Exception:  # noqa: BLE001 - 向量库起不来不能拖垮整个面板
+            log.warning("qdrant 自带拉起失败（面板照常可用）", exc_info=True)
+
+    threading.Thread(target=_boot, name="qdrant-boot", daemon=True).start()
+
+
 def create_app(
     *,
     data_root: Path | None = None,
@@ -2099,6 +2140,27 @@ def create_app(
     # 闸门复用雷达面的同一份实现（回环 + Host；写面再加同源来源证据），不新增鉴权。
     app.include_router(build_inbox_router(data_root=root))
 
+    # -------------------------------------------- 简报面（F11 always-on 简报）
+    #
+    # `/api/brief/today|history|config` + `POST /api/brief/{kind}/run`：
+    # 晨报 / 收盘复盘 / 持仓异动的实时内容与开关。摘要器复用 `watch/digest.py`，
+    # 本面只做「组合 + 去重 + 落提醒 + 投递」，闸门同上（回环 + Host；写面再加同源）。
+    app.include_router(build_brief_router(data_root=root))
+
+    # -------------------------------------------- 截图 / PDF 查证面（F10）
+    #
+    # `/api/verify/capabilities|history` + `POST /api/verify/file`：上传一份 PDF 或截图，
+    # 抽取关键数字并与本机 daily_k / valuation_history / finance_indicators 对账。
+    # OCR 不可用时如实返回 `ocr_unavailable`，绝不伪造识别结果（本机无 tesseract）。
+    app.include_router(build_verify_router(data_root=root))
+
+    # -------------------------------------------- 数据覆盖看板面（F12）
+    #
+    # `/api/coverage/board|gaps|plan` + `POST /api/coverage/backfill`：62 个数据集各自的
+    # 落盘 / 最新日期 / 池内覆盖 / 缺口原因；补采默认返回计划，`execute=true` 才走
+    # `cli/sync.py` 的真实通道（限流、水位、写锁都在那层）。
+    app.include_router(build_coverage_router(data_root=root))
+
     # -------------------------------------------- 交易日志写入口（QUOT-561 / DEC-083）
     #
     # `/api/journal/trades`（POST）与 `/api/journal/write-info`（GET）是本机写入口：
@@ -2193,6 +2255,23 @@ def create_app(
     # 时前端切到向导页，普通用户点一次「开始安装」即可，不需要指导。
     app.include_router(build_setup_router())
 
+    # ------------------------------------- 运行配置只读视图（配置可视化页）
+    #
+    # `/api/config/*`：把 `sync.yaml` 的代码池与每个数据集的最新分区、`backfill.yaml`
+    # 的回填票池与最近缺口报表摆到页面上。只读——写操作仍走文件或 `/api/schedule/toggle`，
+    # 避免"页面上的值"与"进程里生效的值"分叉。
+    app.include_router(build_config_router(root))
+
+    # `/api/config/progress`：回答"到底采了多少、是不是在正常采"。域进度给覆盖率与
+    # 最新时点，采集器矩阵给每轮逐源状态（"为什么公告一条都没有"就靠这张表），
+    # 任务级结果给 failed/degraded/skipped 与各自原因。同样只读。
+    app.include_router(build_progress_router(root))
+
+    # `/api/config/pool`：代码池可配置。原来 `codes: &base_pool` 写死在 sync.yaml 里，
+    # 页面上只能看不能选；这里给出"按标的字典重排池子"的写入口——只改配置、
+    # 不触发任何采集（要跑数仍走「跑一次」或定时任务）。写入带备份与回滚。
+    app.include_router(build_pool_router(root))
+
     # ------------------------------------------- 自愈状态面（QUOT-491 / 482-C）
     #
     # `/api/supervisor/state`（GET 只读）+ `/api/supervisor/state/{module}/reset`
@@ -2267,6 +2346,36 @@ def create_app(
             ledger=engine.ledger if isinstance(engine, SelfHealEngine) else None,
         )
     mount_page_boot(app, boot)
+
+    # ------------------------------ 向量库自带（qdrant 随应用起落，2026-11-21）
+    #
+    # 以前是「谁要用谁手跑 run_stack.py」，于是面板永远显示它没起、辩论/召回拿不到
+    # 知识库。这里把「确保它在跑」归到应用生命周期：启动时探一次端口，没有实例才
+    # 起（有实例就绝不动）。`LDST_AUTOSTART_QDRANT=0` 可关闭（打包/无向量库场景）。
+    if (os.environ.get("LDST_AUTOSTART_QDRANT") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }:
+        ctl_qdrant = (
+            (getattr(plane, "peers", None) or {}).get("qdrant") if plane is not None else None
+        )
+        qdrant_ports = [
+            port
+            for port in (
+                (ctl_qdrant.mcp_port if ctl_qdrant else None),
+                (ctl_qdrant.web_port if ctl_qdrant else None),
+            )
+            if port
+        ]
+        if processes is not None:
+            # 附加模式（`LDST_SUPERVISOR_OWN_PROCESSES=0`）不接管**外部模块**的启停；
+            # qdrant 是 LadderStock 自己的依赖（知识库向量层），不是外部 peer，
+            # 「随应用起落」由应用自己负责，这是附加模式的唯一例外。
+            app.router.on_startup.append(
+                lambda ports=qdrant_ports: _ensure_qdrant_boot(processes, list(ports))
+            )
 
     # QUOT-607：watch_guard / scheduler 由 PageBoot 拉起记账，但它们不是
     # MODULE_ORDER 适配器模块——自愈把死掉的自有子进程交给默认 AdapterRestarter

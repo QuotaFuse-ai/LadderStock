@@ -112,6 +112,48 @@ export function uninstallPeer(
   })
 }
 
+/** 嵌入模型后下载（便携包默认不带 274MB 权重，首次用记忆时才下）。 */
+export type ModelStatus = {
+  ok: boolean
+  ready: boolean
+  models_dir: string
+  bundled_dir: string
+  model: string
+  dirname: string
+  size_mb: number
+  files: number
+  missing: string[]
+  mirrors: string[]
+  job: ModelJob | null
+}
+
+export type ModelJob = {
+  status: 'running' | 'done' | 'failed'
+  pct: number
+  message: string
+  models_dir?: string
+  started_at?: number
+  finished_at?: number | null
+  error?: string
+}
+
+export function getModelStatus(): Promise<ModelStatus> {
+  return request<ModelStatus>('/models')
+}
+
+export function startModelFetch(): Promise<{
+  ok: boolean
+  status?: string
+  detail?: string
+  job?: ModelJob | null
+}> {
+  return request('/models/fetch', { method: 'POST', body: '{}' })
+}
+
+export function getModelJob(): Promise<{ ok: boolean; job: ModelJob | null }> {
+  return request<{ ok: boolean; job: ModelJob | null }>('/models/job')
+}
+
 /** 状态文案：围观者只需要知道「装没装、能不能用」。 */
 export function describePeerState(state: string): string {
   switch (state) {

@@ -33,6 +33,8 @@ import SkillDetailScreen from './screens/skills/SkillDetailScreen'
 import SkillPackageScreen from './screens/skills/SkillPackageScreen'
 import SkillsIndexScreen from './screens/skills/SkillsIndexScreen'
 import ValidateScreen from './screens/ValidateScreen'
+import LedgerScreen from './screens/LedgerScreen'
+import ConfigScreen from './screens/ConfigScreen'
 import WatchScreen from './screens/WatchScreen'
 import WeeklyScreen from './screens/WeeklyScreen'
 import { ROUTE_PATHS, type RoutePath } from './routes'
@@ -87,6 +89,10 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/weekly': <WeeklyScreen />,
   '/journal': <JournalScreen />,
   '/validate': <ValidateScreen />,
+  // F9：观点账本——已落账判断与命中率（只读 chat.sqlite 的 research_record 表）
+  '/ledger': <LedgerScreen />,
+  // 运行配置：定时任务 / 数据同步池 / 历史回填，只读展示 config/*.yaml 与磁盘分区
+  '/config': <ConfigScreen />,
   // QUOT-534：策略回测，三区（参数 / 结果 / 证据）只读本机运行卡
   '/backtest': <BacktestScreen />,
   // 涨停样本：「验证」分组下的二级入口，支持 `?date=YYYY-MM-DD` 深链

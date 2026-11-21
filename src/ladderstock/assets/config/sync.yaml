@@ -238,14 +238,16 @@ sync:
     # ---------------- 资讯雷达（R6 / QUOT-144）----------------
     # 全部 `optional: true`：资讯是「按需按时间窗」的（`ldst news`），
     # 定时增量只是顺带归档。取不到只记 skipped，不把整轮 sync 的退出码拖成 8/4。
-    # 三个 code 必填的栏目（巨潮 / 深交所 / 东财个股新闻）在裸 `ldst sync` 里
-    # 必然被 peer 拒（上游要求 code），这是预期行为，不是链路故障。
+    # 三个 code 必填的栏目（巨潮 / 深交所 / 东财个股新闻）自 2026-11-21 起带
+    # base_pool 逐只扇出（真实 inputSchema required=["code"]，空参必被拒）；
+    # 巨潮主源上游出口代理 407 时由备源 announcements_backup（东财）接管。
     announcement_cninfo:
       primary: tickhub_announce_cninfo
       fallback: [tickhub_announce_cninfo_backup]
       watermark_field: data_as_of
       mode: append
       optional: true
+      codes: *base_pool
 
     announcement_szse:
       primary: tickhub_announce_szse
@@ -253,6 +255,7 @@ sync:
       watermark_field: data_as_of
       mode: append
       optional: true
+      codes: *base_pool
 
     research_report:
       primary: tickhub_research_report
@@ -267,6 +270,7 @@ sync:
       watermark_field: data_as_of
       mode: append
       optional: true
+      codes: *base_pool
 
     news_cctv:
       primary: tickhub_news_cctv

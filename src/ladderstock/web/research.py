@@ -48,6 +48,7 @@ from ladderstock.data import archive, duckdb_store
 from ladderstock.data.provider_registry import ProviderRegistry, SourceUnavailable
 from ladderstock.data.watermark import WatermarkStore
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
+from ladderstock.research import archive as research_archive
 from ladderstock.research import artifacts, checkpoint
 from ladderstock.web import control as control_plane
 
@@ -1708,12 +1709,55 @@ class ResearchRunRequest(BaseModel):
 
 
 def build_router(plane: ResearchPlane) -> APIRouter:
-    """构造 `/api/research/*` 三个路由（SPEC §2）。"""
+    """构造 `/api/research/*` 路由（SPEC §2）+ F8 的 `/archive/*` 档案接口。"""
     router = APIRouter(prefix=RESEARCH_PREFIX, dependencies=[Depends(_guard)])
 
     @router.get("/jobs/{job_id}")
     def job_progress(job_id: str) -> dict[str, Any]:
         return plane.job_view(job_id)
+
+    # ------------------------------------------------------------------ #
+    # F8 研究档案：`/archive/*` 必须排在 `/{code}` 之前——FastAPI 按注册
+    # 顺序匹配，否则 `archive` 会被当成一个代码。三个 GET 都只读本地落盘产物。
+    # ------------------------------------------------------------------ #
+
+    @router.get("/archive/list")
+    def archive_list(limit: int = 30) -> dict[str, Any]:
+        # 读**服务自己的** data_root（create_app 注入），不是进程默认 data_dir：
+        # 测试与本机多环境（5951/5950）下两者可能不同，读错目录会扫描出别人的档案。
+        items = research_archive.scan(root=plane.data_root)[: max(1, min(int(limit), 200))]
+        return {"ok": True, "count": len(items), "items": items}
+
+    @router.get("/archive/search")
+    def archive_search(q: str, limit: int = 20) -> dict[str, Any]:
+        if not q.strip():
+            raise HTTPException(status_code=422, detail="q 不能为空")
+        hits = research_archive.search(
+            q, root=plane.data_root, limit=max(1, min(int(limit), 100))
+        )
+        return {"ok": True, "keyword": q, "count": len(hits), "hits": hits}
+
+    @router.get("/archive/{code}")
+    def archive_detail(
+        code: str,
+        date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
+    ) -> dict[str, Any]:
+        item = research_archive.find(code, date_str, root=plane.data_root)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"没有 {code} 在 {date_str or '任意日期'} 的研究档案")
+        return {"ok": True, "item": item}
+
+    @router.post("/archive/{code}/export")
+    def archive_export(
+        code: str,
+        date_str: Annotated[str | None, Query(alias="date", description="YYYY-MM-DD")] = None,
+    ) -> dict[str, Any]:
+        """合并导出完整 MD（写在 data/research_archive/ 下，路径随结果返回）。"""
+        result = research_archive.export(code, date_str, root=plane.data_root)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=str(result.get("reason")))
+        research_archive.write_index(root=plane.data_root)
+        return result
 
     @router.get("/{code}")
     def research_status(

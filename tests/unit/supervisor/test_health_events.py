@@ -613,3 +613,65 @@ def test_adopted_peer_conflict_never_calls_restarter(tmp_path: Path) -> None:
 
     assert restarter.calls == [], "adopted 冲突被自动处置了（红线）"
     assert [e.event for e in bus.since(0)] == [EVENT_PORT_CONFLICT]
+
+
+# ------------------------------------------- 账本 pid 陈旧但同一服务在提供服务
+
+
+def test_dead_ledger_pid_served_by_same_service_recovers_with_evidence() -> None:
+    """账本 pid 死了、端口由同一服务的新进程在听 → 报 recovered（带新旧 pid 证据）。
+
+    这正是「服务一直正常、记账 pid 过期」的场景：不报 crash（不然前端弹窗永远关不掉），
+    恢复事件的 reason 必须写清依据，用户能自己核对。
+    """
+    world = _World()
+    entry = _entry(ports=[8790], pid=101)
+
+    world.alive.clear()
+    world.ports["wire"] = [PortObservation(port=8790, listening=False, owner=OWNER_FREE)]
+    world.observe(entry)
+    assert world.kinds() == [EVENT_CRASH]
+
+    world.occupants_alive.add(202)
+    world.now[0] += 10  # 端口观测按间隔节流，推进时钟让新一轮扫描生效
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD, pid=202, same_service=True)
+    ]
+    world.observe(entry)
+
+    kinds = world.kinds()
+    assert kinds == [EVENT_CRASH, EVENT_RECOVERED]
+    recovered = world.events()[-1]
+    assert recovered["state"] == "running"
+    reason = recovered["reason"]
+    assert isinstance(reason, str)
+    assert "101" in reason and "202" in reason
+
+
+def test_same_service_with_dead_occupant_stays_crash() -> None:
+    """同一服务的占用者也死了 → 证据不足，仍报 crash（宁可少报恢复）。"""
+    world = _World()
+    entry = _entry(ports=[8790], pid=101)
+
+    world.alive.clear()
+    world.occupants_alive.clear()
+    world.ports["wire"] = [
+        PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD, pid=202, same_service=True)
+    ]
+    world.observe(entry)
+    world.observe(entry)
+
+    assert world.kinds() == [EVENT_CRASH]
+
+
+def test_residual_same_owner_without_same_service_still_port_conflict() -> None:
+    """pid 不符、但没被标成同一服务 → 仍是残留占口（port_conflict），不得抹平成恢复。"""
+    world = _World()
+    entry = _entry(ports=[8790], pid=101)
+
+    world.alive.clear()
+    world.occupants_alive.add(999)
+    world.ports["wire"] = [PortObservation(port=8790, listening=True, owner=OWNER_OWN_CHILD, pid=999)]
+    world.observe(entry)
+
+    assert world.kinds() == [EVENT_PORT_CONFLICT]

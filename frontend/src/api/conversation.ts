@@ -70,6 +70,56 @@ export interface TurnRequest {
   message: string
   session_id?: string
   context?: TurnContext
+  /** F2：用户在计划卡上确认/改过的步骤标题；不传 = 不走计划 */
+  plan?: string[]
+}
+
+/** F2 计划草案里的一个步骤 */
+export interface PlanStep {
+  id: string
+  title: string
+  kind: string
+}
+
+export interface PlanDraft {
+  ok: boolean
+  symbol: string | null
+  max_steps: number
+  steps: PlanStep[]
+}
+
+/** 取计划草案：纯规则，服务端不调模型，通常几十毫秒返回 */
+export async function fetchPlan(
+  request: { message: string; context?: TurnContext },
+  signal?: AbortSignal,
+): Promise<PlanDraft> {
+  const raw = await requestJson<unknown>(`${CONVERSATION_BASE}/plan`, {
+    method: 'POST',
+    body: { message: request.message, context: request.context },
+    signal,
+    timeoutMs: PLAN_TIMEOUT_MS,
+  })
+  const root = asRecord(raw) ?? {}
+  const steps: PlanStep[] = []
+  if (Array.isArray(root.steps)) {
+    for (const item of root.steps) {
+      const entry = asRecord(item)
+      if (!entry) continue
+      const title = asString(entry.title).trim()
+      if (!title) continue
+      steps.push({
+        id: asString(entry.id) || `s${steps.length + 1}`,
+        title,
+        kind: asString(entry.kind),
+      })
+    }
+  }
+  return {
+    ok: root.ok !== false,
+    symbol: asString(root.symbol) || null,
+    max_steps: typeof root.max_steps === 'number' ? root.max_steps : 6,
+    steps,
+  }
 }
 
 export interface TurnSuccess {
@@ -209,6 +259,8 @@ const READ_TIMEOUT_MS = 8000
  * 短于它页面能自己收口，长于它服务端还在跑、页面却先报超时。
  */
 const TURN_TIMEOUT_MS = 15000
+/** 计划草案只跑规则，给 8s 足够；超时就按"没有计划"处理，别卡住提问 */
+const PLAN_TIMEOUT_MS = 8000
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
@@ -553,6 +605,154 @@ export async function sendTurnStream(
   }
 }
 
+// ------------------------------------------------------------ F9 观点账本
+
+/** 一条已落账的判断（`data/chat_store.py: research_record` 一行的 JSON 形态） */
+export interface LedgerRecord {
+  record_id: string
+  session_id: string | null
+  seq: number | null
+  symbol: string | null
+  question: string
+  direction: string
+  horizon_days: number
+  base_price: number | null
+  base_date: string | null
+  falsifier: string | null
+  due_date: string | null
+  status: string
+  outcome: {
+    reason?: string
+    pct_change?: number | null
+    flip_date?: string | null
+  } | null
+  created_at: string
+  updated_at: string
+}
+
+/** 账本汇总：`hit_rate` 只算已判的（hit / miss / flipped），`open` 不进分母 */
+export interface LedgerStats {
+  total: number
+  open: number
+  hit: number
+  miss: number
+  flipped: number
+  undecided: number
+  judged: number
+  hit_rate: number | null
+}
+
+export interface LedgerPayload {
+  stats: LedgerStats
+  records: LedgerRecord[]
+}
+
+export interface RecallResult {
+  ok: boolean
+  as_of?: string
+  due?: number
+  hit?: number
+  miss?: number
+  flipped?: number
+  undecided?: number
+  waiting?: number
+  skipped?: number
+  error?: string
+}
+
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function parseStats(raw: unknown): LedgerStats {
+  const root = asRecord(raw) ?? {}
+  return {
+    total: asNumber(root.total),
+    open: asNumber(root.open),
+    hit: asNumber(root.hit),
+    miss: asNumber(root.miss),
+    flipped: asNumber(root.flipped),
+    undecided: asNumber(root.undecided),
+    judged: asNumber(root.judged),
+    hit_rate: asNullableNumber(root.hit_rate),
+  }
+}
+
+function parseRecord(raw: unknown): LedgerRecord | null {
+  const root = asRecord(raw)
+  if (!root) return null
+  const recordId = asString(root.record_id)
+  if (!recordId) return null
+  const outcome = asRecord(root.outcome)
+  return {
+    record_id: recordId,
+    session_id: asString(root.session_id) || null,
+    seq: typeof root.seq === 'number' ? root.seq : null,
+    symbol: asString(root.symbol) || null,
+    question: asString(root.question),
+    direction: asString(root.direction),
+    horizon_days: asNumber(root.horizon_days),
+    base_price: asNullableNumber(root.base_price),
+    base_date: asString(root.base_date) || null,
+    falsifier: asString(root.falsifier) || null,
+    due_date: asString(root.due_date) || null,
+    status: asString(root.status) || 'open',
+    outcome: outcome
+      ? {
+          reason: asString(outcome.reason) || undefined,
+          pct_change: asNullableNumber(outcome.pct_change),
+          flip_date: asString(outcome.flip_date) || null,
+        }
+      : null,
+    created_at: asString(root.created_at),
+    updated_at: asString(root.updated_at),
+  }
+}
+
+/** 读账本：`GET /api/conversation/ledger?limit=&symbol=&status=`（只读，库不存在时返回空） */
+export async function fetchLedger(
+  query: { limit?: number; symbol?: string; status?: string } = {},
+  signal?: AbortSignal,
+): Promise<LedgerPayload> {
+  const params = new URLSearchParams()
+  if (query.limit) params.set('limit', String(query.limit))
+  if (query.symbol) params.set('symbol', query.symbol)
+  if (query.status) params.set('status', query.status)
+  const search = params.toString()
+  const raw = await requestJson<unknown>(`${CONVERSATION_BASE}/ledger${search ? `?${search}` : ''}`, {
+    signal,
+    timeoutMs: READ_TIMEOUT_MS,
+  })
+  const root = asRecord(raw) ?? {}
+  const records = Array.isArray(root.records)
+    ? root.records.map(parseRecord).filter((item): item is LedgerRecord => item !== null)
+    : []
+  return { stats: parseStats(root.stats), records }
+}
+
+/** 手动跑一次回访：`POST /api/conversation/recall`（到期记录拉日线判对错） */
+export async function runRecall(signal?: AbortSignal): Promise<RecallResult> {
+  const raw = await requestJson<unknown>(`${CONVERSATION_BASE}/recall`, {
+    method: 'POST',
+    signal,
+    // 回访要逐只取日线，比普通读慢；给 30s 仍不够就让它超时报错，不假装完成
+    timeoutMs: 30000,
+  })
+  const root = asRecord(raw) ?? {}
+  return {
+    ok: root.ok !== false,
+    as_of: asString(root.as_of) || undefined,
+    due: asNumber(root.due),
+    hit: asNumber(root.hit),
+    miss: asNumber(root.miss),
+    flipped: asNumber(root.flipped),
+    undecided: asNumber(root.undecided),
+    waiting: asNumber(root.waiting),
+    skipped: asNumber(root.skipped),
+    error: asString(root.error) || undefined,
+  }
+}
+
 export const httpConversation = {
   listSessions,
   listTurns,
@@ -560,6 +760,9 @@ export const httpConversation = {
   deleteSession,
   sendTurn,
   sendTurnStream,
+  fetchPlan,
+  fetchLedger,
+  runRecall,
 }
 
 export type ConversationClient = typeof httpConversation

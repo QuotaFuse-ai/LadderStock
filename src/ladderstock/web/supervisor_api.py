@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -144,6 +145,7 @@ class SupervisorEngines:
 def build_port_inspector(
     spawned_pids: Callable[[], Mapping[int, str]] | None = None,
     identifies: Callable[[str, int], bool] | None = None,
+    server_pid: int | None = None,
 ) -> PortInspector:
     """生产端口观测（QUOT-556 / QUOT-557）：一次连接表扫描看全部托管模块的端口归属。
 
@@ -163,11 +165,21 @@ def build_port_inspector(
     adopted_peer（只观测）。多面模块（StockSenate mcp + webui）账本只记主面，
     venv 启动器背后真正监听的是解释器孙进程——不认这层，健康实例会被当成
     「外部占用」弹窗，或被当成残留每轮「安全重启」一遍。
+
+    `server_pid` 仅用于测试注入「看板进程是谁」：默认本进程。单测里 pytest 本身
+    会起子进程，若拿 pytest 当看板，任何测试起的监听者都会被判成「看板直接拉起」
+    的 own_child，掩盖真实的归属口径。
     """
-    server_pid = os.getpid()
+    this_server_pid = os.getpid() if server_pid is None else int(server_pid)
 
     def inspect(entries: Sequence[LedgerEntry]) -> dict[str, tuple[PortObservation, ...]]:
         if psutil is None:  # pragma: no cover - 依赖探测
+            # 宁可大声说一次，也不要静默降级：没有 psutil 时端口观测恒为空，
+            # 端口归属 / 同服务换绑 / 冲突判定全部失效，页面只会反复弹 crash。
+            _LOG.warning(
+                "psutil 未安装：端口观测关闭（端口归属 / 冲突 / 换绑判定不可用）。"
+                "请 pip install 'psutil>=5.9,<8' 后重启服务。"
+            )
             return {}
         try:
             listeners: dict[int, int | None] = {}
@@ -219,7 +231,7 @@ def build_port_inspector(
                 if parent.pid == root or parent.pid in mine:
                     return OWNER_OWN_CHILD
                 try:
-                    if parent.ppid() == server_pid:
+                    if parent.ppid() == this_server_pid:
                         return OWNER_OWN_CHILD
                 except (psutil.Error, OSError):
                     continue
@@ -418,6 +430,8 @@ def build_stage_probes(
     ledger: Ledger,
     is_pid_alive: Callable[[int], bool] | None = None,
     sync_yaml: Path | None = None,
+    port_probe: Callable[[int], object] | None = None,
+    today: Callable[[], date] | None = None,
 ) -> dict[str, Callable[[], StageSample]]:
     """生产阶段探针（QUOT-562）：只读观测采集 → 入库七阶段，绝不触发采集。
 
@@ -439,8 +453,12 @@ def build_stage_probes(
     """
     data_root = Path(root)
     config_path = Path(sync_yaml) if sync_yaml is not None else None
+    _probe_port = port_probe
+    _today_provider = today
 
     def _today() -> date:
+        if _today_provider is not None:
+            return _today_provider()
         return datetime.now().astimezone().date()
 
     def _store() -> WatermarkStore:
@@ -448,7 +466,12 @@ def build_stage_probes(
         return WatermarkStore(path=data_root / "state" / "watermark.json")
 
     def _connect():
-        return duckdb_store.connect(duckdb_store.db_path(data_root), read_only=True)
+        # 观测层不重试：stage 探针每次 /state 都会跑一遍，connect 默认的重试退避
+        # 会把「进程内读写连接冲突」放大成 15~40s；页面 15s 超时于是永远打不满。
+        # 探测拿不到库就如实报「读不到」，不在这里等锁。
+        return duckdb_store.connect(
+            duckdb_store.db_path(data_root), read_only=True, attempts=1
+        )
 
     def _probe_sync_yaml() -> StageSample:
         path = config_path if config_path is not None else None
@@ -471,13 +494,43 @@ def build_stage_probes(
         )
 
     def _probe_collect_process() -> StageSample:
+        from ladderstock.core.boundary import resolve_peer_control
+
+        if _probe_port is None:
+            from ladderstock.web.control import probe_port as _port_probe_impl
+        else:
+            _port_probe_impl = _probe_port
+
         peers = sorted({binding.peer for binding in DATASET_CATALOG.values()})
+        try:
+            controls = resolve_peer_control()
+        except Exception:  # noqa: BLE001 - 解析失败按旧口径（只看账本 PID）
+            controls = {}
+
+        def _serving(peer: str) -> bool:
+            """账本 pid 只证明「我们拉起的那份」；共用实例在服务也算在线。
+
+            2026-11-21：这里原来只看账本 PID，一台机器只有一份共用实例时
+            （8000 在跑、账本 pid 是早前的死 pid）就报「部分采集 peer 不在线」，
+            与模块注册表的「运行中」自相矛盾。判活口径统一成「端口有人在服务」。
+            """
+            ctl = controls.get(peer)
+            if ctl is None:
+                return False
+            return any(
+                _port_probe_impl(port)
+                for port in (ctl.mcp_port, ctl.web_port, *ctl.extra_ports)
+                if port
+            )
+
         online: list[str] = []
         offline: list[str] = []
         for peer in peers:
             entry = ledger.get(peer)
             pid = entry.pid if entry is not None else None
             if pid is not None and (is_pid_alive is None or is_pid_alive(pid)):
+                online.append(peer)
+            elif _serving(peer):
                 online.append(peer)
             else:
                 offline.append(peer)
@@ -499,7 +552,36 @@ def build_stage_probes(
             "采集 peer 全部不在线（或未在面板登记），行情取不到数",
         )
 
+    def _closed_market_reason() -> str | None:
+        """休市返回「{日期} 周末休市/节假日休市…」理由；交易日或日历读不出来返回 None。"""
+        try:
+            from ladderstock.core.trading_calendar import (
+                STATUS_HOLIDAY,
+                STATUS_WEEKEND,
+                market_status,
+            )
+
+            status = market_status(_today())
+        except Exception:  # noqa: BLE001 - 日历读不出来就退回原口径
+            return None
+        if status not in {STATUS_WEEKEND, STATUS_HOLIDAY}:
+            return None
+        label = "周末休市" if status == STATUS_WEEKEND else "节假日休市"
+        reason = f"{_today().isoformat()} {label}，非交易日不要求当日行情"
+        try:
+            latest = _latest_trade_date()
+        except LadderStockError:
+            latest = None
+        if latest is not None:
+            reason += f"（最新到 {latest.isoformat()}）"
+        return reason
+
     def _probe_collect_store() -> StageSample:
+        # 休市日不产生日线：库里没有「今天」的记录是正常状态，报降级会天天误报
+        # （2026-11-21 周六现场）。交易日仍按原口径判「今天有没有落库」。
+        reason = _closed_market_reason()
+        if reason is not None:
+            return _stage_sample(STAGE_COLLECT_STORE, HEALTH_OK, reason)
         try:
             if duckdb_store.query_dataset(
                 STAGE_PROBE_DATASET, day=_today(), limit=1, root=data_root
@@ -602,6 +684,13 @@ def build_stage_probes(
         stale_line = (_today() - timedelta(days=STAGE_STALE_DAYS)).isoformat()
         if value >= today:
             return _stage_sample(STAGE_INGEST_WATERMARK, HEALTH_OK, "入库水位已推进到最新")
+        closed = _closed_market_reason()
+        if closed is not None:
+            return _stage_sample(
+                STAGE_INGEST_WATERMARK,
+                HEALTH_OK,
+                f"{closed}；入库水位停在最近交易日 {value}",
+            )
         if value >= stale_line:
             return _stage_sample(
                 STAGE_INGEST_WATERMARK,
@@ -660,6 +749,13 @@ def build_stage_probes(
                 STAGE_INGEST_IDEMPOTENT, HEALTH_WARN, "今天的行情数据存在重复行，重跑没有正确去重"
             )
         if not total:
+            closed = _closed_market_reason()
+            if closed is not None:
+                return _stage_sample(
+                    STAGE_INGEST_IDEMPOTENT,
+                    HEALTH_OK,
+                    f"{closed}；当日无入库数据，无需幂等校验",
+                )
             return _stage_sample(
                 STAGE_INGEST_IDEMPOTENT, HEALTH_WARN, "今天还没有入库数据，幂等校验暂无可查对象"
             )
@@ -745,6 +841,8 @@ def build_supervisor_engines(
             },
         ),
     )
+    #: 端口证据可用性（页面要能看见「为什么归属/冲突判不出来」，不能只靠日志）。
+    heal.port_evidence = "ok" if psutil is not None else "unavailable:psutil-missing"
     return SupervisorEngines(heal=heal, processes=processes, ledger=ledger)
 
 
@@ -867,7 +965,7 @@ def _adopted_restart_gate(processes: Any, modules: list[str]) -> list[str]:
     return gated
 
 
-def build_stop_router(processes: Any) -> APIRouter:
+def build_stop_router(processes: Any, heal: Any | None = None) -> APIRouter:
     """`/api/supervisor/{start,restart,stop}`（QUOT-523）：全部走写面闸门。"""
     router = APIRouter(prefix=SUPERVISOR_PREFIX, tags=["supervisor"])
 
@@ -905,7 +1003,25 @@ def build_stop_router(processes: Any) -> APIRouter:
                 ),
             )
         results: dict[str, Any] = {}
+        # 页面自有子进程（watch_guard / scheduler）不是 MODULE_ORDER 适配器模块，
+        # 直接递给 SupervisorEngine 只会得到「未知模块」。它们的重拉通道在
+        # `heal.restarter`（CompositeRestarter → PageBootRestarter），这里按名字
+        # 路由过去；适配器模块仍走 processes（启停 + 归属闸门原样不变）。
+        channel = getattr(heal, "restarter", None)
+        self_modules = tuple(getattr(channel, "known_modules", ()) or ())
         for name in modules:
+            if name not in MODULE_ORDER and name in self_modules and callable(
+                getattr(channel, "restart", None)
+            ):
+                outcome = channel.restart(name)
+                ok = bool(getattr(outcome, "ok", False))
+                detail = getattr(outcome, "detail", None)
+                results[name] = {
+                    "ok": ok,
+                    "error": None if ok else (detail or "重拉未成功"),
+                    "detail": detail,
+                }
+                continue
             try:
                 processes.restart_module(name)
             except SupervisorError as exc:
@@ -939,22 +1055,23 @@ def build_stop_router(processes: Any) -> APIRouter:
 def build_supervisor_router(heal: Any) -> APIRouter:
     router = APIRouter(prefix=SUPERVISOR_PREFIX, tags=["supervisor"])
 
-    #: `/state` 屏蔽重复计算：现场扫连接表 + 逐 pid 取 cmdline + WSL 侧归属证据，
-    #: 一次 15~20s（实测 17.4s）。页面每几秒轮询一次，不缓存就永远打不满超时，
-    #: 前端把全部模块标成「归属未知（supervisor 未接入）」——这是观测层性能问题，
-    #: 不是真的没接线。8s 内的重复请求直接回上一份快照。
-    _state_cache_sec = 8.0
-    _state_cache: dict[str, Any] = {"at": 0.0, "payload": None}
-
+    #: `/state` 的现场探测（扫连接表 + 逐 pid 取 cmdline + WSL 侧归属证据）一次
+    #: 15~20s（实测 17.4s），页面每几秒轮询一次，同步算必然超过前端 15s 超时，
+    #: 前端于是把全部模块标成「归属未知（supervisor 未接入）」。缓存逻辑收在
+    #: `SelfHealEngine.snapshot_cached()`（stale-while-revalidate），这里只转发，
+    #: 避免控制面同一端点用两套缓存。
     @router.get("/state")
     def state() -> dict[str, Any]:
-        now = time.monotonic()
-        cached = _state_cache["payload"]
-        if cached is not None and now - float(_state_cache["at"]) < _state_cache_sec:
-            return cached
-        payload = heal.snapshot()
-        _state_cache["payload"] = payload
-        _state_cache["at"] = time.monotonic()
+        cached = getattr(heal, "snapshot_cached", None)
+        if callable(cached):
+            # 备用路由（control 合并版是实机生效的那个）：首帧允许同步算一次，
+            # 保证没有预热时也拿到真快照；有缓存后仍是 stale-while-revalidate。
+            payload = dict(cached(block_when_empty=True))
+        else:
+            payload = dict(heal.snapshot())
+        evidence = getattr(heal, "port_evidence", None)
+        if evidence:
+            payload["port_evidence"] = evidence
         return payload
 
     @router.get("/events", dependencies=[Depends(_supervisor_write_guard)])
@@ -1025,7 +1142,7 @@ def mount_supervisor(
     """
     app.include_router(build_supervisor_router(heal))
     if processes is not None:
-        app.include_router(build_stop_router(processes))
+        app.include_router(build_stop_router(processes, heal))
 
     # 启动全起挪到后台任务：`start_all` 要逐个等模块端口 ready，放在 startup
     # 壮手里会把「打开看板」绑在一分多钟上（2026-11-18 用户实测卡住的主因之一）。

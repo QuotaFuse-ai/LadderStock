@@ -43,7 +43,20 @@ mcp = ["mcp>=1.0,<3"]
 web = ["fastapi>=0.110,<1", "uvicorn>=0.29,<1"]
 pdf = ["reportlab>=4.0,<6", "fonttools>=4.50,<5"]
 schedule = ["apscheduler>=3.10,<4"]
-all = ["ladderstock[mcp,web,pdf,schedule]"]
+# 桌面通知（watch/notifier.py）：Windows 用 winotify，其余平台用 plyer。
+# 缺了它摘要/研究卡照样落库，只是「通知[desktop]」降级——但用户看到的是两条降级，
+# 所以显式给一个 extra，装完 `ldst` 就能弹。
+desktop = ["winotify>=1.0,<2; sys_platform == 'win32'", "plyer>=2.1,<3; sys_platform != 'win32'"]
+# 记忆引擎（mem0 + qdrant local + BAAI 原版 safetensors）。普通用户机上没有
+# Python 可以补装，所以这几个依赖必须进构建环境、由 PyInstaller 打进 _internal。
+# torch 在 Windows/Linux 构建机请先按 CPU 轮子安装（CUDA 轮子会让包多出 GB 级）。
+memory = [
+    "mem0ai>=2.2,<3",
+    "qdrant-client>=1.20,<2",
+    "sentence-transformers>=6.3,<7",
+    "torch>=2.10,<3",
+]
+all = ["ladderstock[mcp,web,pdf,schedule,desktop,memory]"]
 dev = ["pytest>=8.0,<10", "ruff>=0.5,<1", "mypy>=1.10,<3", "types-psutil>=5.9"]
 
 [project.scripts]

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +44,9 @@ from ladderstock.supervisor.stage_monitor import StageHealthMonitor
 from ladderstock.web.server import create_app
 from ladderstock.web.supervisor_api import build_debate_probes, build_stage_probes
 
-TODAY = datetime.now().astimezone().date()
+# 固定一个工作日当「今天」：探针注入同一日期，测试不再随真实日历（周末/节假日）
+# 改变结论。11-20 是周五。
+TODAY = date(2026, 11, 20)
 PEERS = ("senate", "tickhub", "tickhub_us", "wire")
 
 
@@ -60,12 +62,18 @@ def _probes(
     ledger: Ledger | None = None,
     is_pid_alive: Any = None,
     sync_yaml: Path | None = None,
+    port_probe: Any = None,
+    today: Any = None,
 ) -> dict[str, Any]:
     return build_stage_probes(
         root,
         ledger=ledger or Ledger(root / "supervisor" / "ledger.json"),
         is_pid_alive=is_pid_alive,
         sync_yaml=sync_yaml,
+        # 默认「没有任何端口在服务」：测试主机上真的跑着 8765/8000 等模块，
+        # 不挡住就会把「死 pid」判成在线（判活口径已改成端口优先）。
+        port_probe=port_probe if port_probe is not None else (lambda _port: []),
+        today=today if today is not None else (lambda: TODAY),
     )
 
 
@@ -178,6 +186,28 @@ def test_collect_process_ok_warn_down_by_peer_liveness(tmp_path: Path) -> None:
     assert "tickhub_us" in sample.reason and "wire" in sample.reason
     assert "senate" not in sample.reason, "在线 peer 不该被点名"
 
+
+def test_collect_process_counts_shared_instance_on_base_port(tmp_path: Path) -> None:
+    """账本 pid 死了、但共用实例在服务：算在线，不报「不在线」。
+
+    2026-11-21 现场：账本里 tickhub 记的是早前那个死 pid，8000 上另有一份共用实例；
+    旧口径只看 pid，页面就写「部分采集 peer 不在线」，与模块注册表的「运行中」打架。
+    """
+    root = _root(tmp_path, "process-shared")
+    ledger = _ledger_with_pids(
+        root, {"senate": 101, "tickhub": None, "tickhub_us": 101, "wire": 101}
+    )
+    sample = _probes(
+        root,
+        ledger=ledger,
+        is_pid_alive=lambda pid: pid == 101,
+        # tickhub 的端口被卡上的真实值覆盖成 8000，环境偏移时是 18000；两种都认
+        port_probe=lambda port: ["shared"] if port in (8000, 18000) else [],
+    )["collect_process"]()
+
+    assert sample.health == HEALTH_OK
+    assert "tickhub" in sample.reason
+
     dead_root = _root(tmp_path, "process-dead")
     ledger = _ledger_with_pids(dead_root, {peer: None for peer in PEERS})
     sample = _probes(dead_root, ledger=ledger, is_pid_alive=lambda pid: False)["collect_process"]()
@@ -209,6 +239,40 @@ def test_collect_store_today_ok_recent_warn_stale_down(tmp_path: Path) -> None:
     sample = _probes(empty_root)["collect_store"]()
     assert sample.health == HEALTH_DOWN
     assert "空" in sample.reason
+
+
+def test_collect_store_closed_market_is_ok_not_degraded(tmp_path: Path) -> None:
+    """休市日（周六）没有当日行情是正常状态；库为空也不能报降级。"""
+    saturday = date(2026, 11, 21)
+
+    recent_root = _root(tmp_path, "store-sat")
+    _seed_daily(recent_root, date(2026, 11, 20))
+    sample = _probes(recent_root, today=lambda: saturday)["collect_store"]()
+    assert sample.health == HEALTH_OK
+    assert "休市" in sample.reason
+    assert "2026-11-20" in sample.reason
+
+    empty_root = _root(tmp_path, "store-sat-empty")
+    sample = _probes(empty_root, today=lambda: saturday)["collect_store"]()
+    assert sample.health == HEALTH_OK
+    assert "休市" in sample.reason
+
+
+def test_ingest_stages_on_closed_market_are_ok(tmp_path: Path) -> None:
+    """休市日水位停在最近交易日、当日无入库数据，都是正常状态，不是降级。"""
+    saturday = date(2026, 11, 21)
+    root = _root(tmp_path, "ingest-sat")
+    _seed_daily(root, date(2026, 11, 20))
+    _write_watermark(root, value="2026-11-20", runs=[_run("ok")])
+    probes = _probes(root, today=lambda: saturday)
+
+    watermark = probes["ingest_watermark"]()
+    assert watermark.health == HEALTH_OK
+    assert "休市" in watermark.reason
+
+    idempotent = probes["ingest_idempotent"]()
+    assert idempotent.health == HEALTH_OK
+    assert "休市" in idempotent.reason
 
 
 # --------------------------------------------------------- collect_success

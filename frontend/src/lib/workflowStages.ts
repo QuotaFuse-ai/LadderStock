@@ -5,9 +5,11 @@
  * 不产生任何新的健康判定——health / reason / as_of 全部原样来自后端 stage 事件。
  *
  * 信封契约（契约先行，B1/B2 落地前的消费口径）：
- * 事件经 S3 健康通道（QUOT-556）随 `GET /api/supervisor/state` 下发，两种信封都认：
- *   1. `stage_events: StageEvent[]`（每模块每阶段最新一条的快照数组）；
- *   2. `events: [{ type: 'stage', ...StageEvent }]`（S3 类型化事件流，payload 嵌套也认）。
+ * 事件经 S3 健康通道（QUOT-556）随 `GET /api/supervisor/state` 下发，三种信封都认：
+ *   1. `stages: StageEvent[]`（**当前生产实况**：每模块每阶段最新一条的快照数组，
+ *      由 `stages_api` 每拍重算；页面打开时历史阶段也能直接渲染，不依赖「新到事件」）；
+ *   2. `stage_events: StageEvent[]`（契约名，旧/测试载荷兼容）；
+ *   3. `events: [{ type: 'stage', ...StageEvent }]`（S3 类型化事件流，payload 嵌套也认）。
  * 字段缺失 / 枚举非法的条目直接丢弃（无法如实渲染），缺事件的模块显示「等待事件」。
  */
 
@@ -107,13 +109,15 @@ function parseStageEvent(entry: unknown): WorkflowStageEvent | null {
 }
 
 /**
- * 从 supervisor state 载荷提取 stage 事件（两种信封，见文件头）。
+ * 从 supervisor state 载荷提取 stage 事件（三种信封，见文件头）。
  * 同模块同阶段重复出现时只取第一条；非法条目丢弃，绝不补默认值。
  */
 export function extractStageEvents(payload: unknown): WorkflowStageEvent[] {
   if (typeof payload !== 'object' || payload === null) return []
   const record = payload as Record<string, unknown>
   const raw: unknown[] = []
+  // 生产实况：后端每拍下发的「每模块每阶段最新一条」快照，打开页面即有内容。
+  if (Array.isArray(record.stages)) raw.push(...record.stages)
   if (Array.isArray(record.stage_events)) raw.push(...record.stage_events)
   if (Array.isArray(record.events)) {
     for (const item of record.events) {

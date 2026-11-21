@@ -15,6 +15,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import socket
 import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -29,6 +30,17 @@ if TYPE_CHECKING:
 SYNCHRONIZE = 0x00100000
 WAIT_TIMEOUT = 0x00000102
 INFINITE = 0xFFFFFFFF
+
+
+def _port_open(port: int, timeout: float = 0.5) -> bool:
+    """回环端口是否有监听（只读，连上即真，不解释用途）。"""
+    if port <= 0:
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def windows_pid_alive(pid: int) -> bool:
@@ -182,6 +194,19 @@ class CompositeRestarter:
                 return channel.is_alive(entry)
         return self._channels[-1].is_alive(entry)
 
+    def serves_module(self, module: str, ports: Sequence[int] | None = None) -> bool:
+        """任一路由通道说「这个模块的服务在」就算在（多通道组合时不漏判）。"""
+        for channel in self._channels:
+            check = getattr(channel, "serves_module", None)
+            if not callable(check):
+                continue
+            try:
+                if check(module, ports):
+                    return True
+            except Exception:  # noqa: BLE001 - 单个通道判不准不影响其它通道
+                continue
+        return False
+
     def restart(self, module: str) -> Any:
         for channel in self._channels:
             if module in channel.known_modules:
@@ -206,6 +231,34 @@ class AdapterRestarter:
     def known_modules(self) -> tuple[str, ...]:
         return MODULE_ORDER
 
+    def serves_module(self, module: str, ports: Sequence[int] | None = None) -> bool:
+        """该模块的服务是否**正被某个实例提供**（含跑在基础端口的共用主实例）。
+
+        自愈只认账本 pid 时会漏掉一个事实：测试服的平移端口上并没有自家副本，
+        但同一模块的共用实例正跑在基础端口（8000/8790/8765/8788）。这时反复拉起
+        只会在失败里空转（页面上「正在重拉第 N/3 次」永不结束），真拉起来后又会
+        与共用实例并存、重复采集同一批数据。
+        判定口径：先按声明端口问「这个端口上有没有服务」，不通再回退一次
+        「端口 − 偏移」的基础口径。任一端口有监听即视为「已有实例在服务」——
+        自愈据此不再拉起，避免空转与双实例重复采集（只读探测，绝不终止任何人）。
+        """
+        # 延迟导入：boundary 与本包在函数级互相引用，顶层 import 会成环。
+        from ladderstock.core.boundary import port_offset
+
+        try:
+            offset = port_offset()
+        except Exception:  # noqa: BLE001 - 取不到偏移就当没有，按声明口径判
+            offset = 0
+        candidates: list[int] = []
+        for port in tuple(int(p) for p in (ports or ()) if p):
+            candidates.append(port)
+            if offset > 0 and port - offset > 0:
+                candidates.append(port - offset)
+        for port in candidates:
+            if _port_open(port):
+                return True
+        return False
+
     def is_alive(self, entry: LedgerEntry) -> bool:
         """账本 pid 活着 **且** 端口上没有树外的同模块残留，才算这个模块健康。
 
@@ -219,9 +272,22 @@ class AdapterRestarter:
         if not callable(has_stray):
             return True
         try:
-            return not bool(has_stray(entry.module))
+            stray = bool(has_stray(entry.module))
         except Exception:  # noqa: BLE001 - 判定失败按活着处理，不误触发重启
             return True
+        if not stray:
+            return True
+        # 有树外监听者，但端口上命中的仍是**本模块的程序**（多面模块的另一面、
+        # 或上一代换绑后的同服务进程）→ 服务是可用的。附加模式（spawn=False）
+        # 根本拉不起新实例，把「能用的服务」判成没恢复只会无限重拉、每轮弹窗。
+        # 清理旧树交给显式重启（引擎在那里按证据处置），判活这里按可用性判。
+        served = getattr(self._engine, "identifies_port", None)
+        if callable(served):
+            try:
+                return any(served(entry.module, int(port)) for port in tuple(entry.ports or ()))
+            except Exception:  # noqa: BLE001 - 识别失败按活着处理
+                return True
+        return False
 
     def restart(self, module: str) -> Any:
         """认领既有实例或按 bundle 命令表拉起；结论用 `RestartOutcome` 表达。"""

@@ -134,14 +134,14 @@ describe('BlockRenderer · 结论块', () => {
     expect(screen.getByText('0.62')).toBeTruthy()
   })
 
-  // QUOT-604 回归：后端刻意不给 confidence（AI 不评级），但 text 恒有值。
-  // 前端曾把可选当必选，整块返回 null 走 PlainConclusionCard 降级态，连已有结论都吞掉。
-  it('载荷只有 text + tone、没有 confidence：结论正文照样显示，不降级、不伪造置信度', () => {
+  // QUOT-627：没有 confidence 时不再补一行「本轮不提供置信度评级」——
+  // 结论已正常给出，这行字读起来像「没评估 / 不可信」，与正文自相矛盾。
+  it('载荷只有 text + tone、没有 confidence：结论正文照样显示，不降级、不补评级说明', () => {
     renderBlocks(<BlockRenderer blocks={[{ type: 'conclusion', payload: { text: '估值处于近五年中低位，股息率高于行业均值。', tone: 'neutral' } }]} />)
 
     const block = blockOf('conclusion')
     expect(within(block).getByText('估值处于近五年中低位，股息率高于行业均值。')).toBeTruthy()
-    expect(within(block).getByText('本轮不提供置信度评级')).toBeTruthy()
+    expect(within(block).queryByText('本轮不提供置信度评级')).toBeNull()
     expect(screen.queryByText('后端尚未透传白话结论')).toBeNull()
     expect(screen.queryByText(/本轮没有可展示的结论/)).toBeNull()
     // 没有置信度条，也没有补出来的数字
@@ -172,7 +172,7 @@ describe('BlockRenderer · 结论块', () => {
     )
 
     expect(screen.getByText('结论照出')).toBeTruthy()
-    expect(screen.getByText('本轮不提供置信度评级')).toBeTruthy()
+    expect(screen.queryByText('本轮不提供置信度评级')).toBeNull()
   })
 })
 

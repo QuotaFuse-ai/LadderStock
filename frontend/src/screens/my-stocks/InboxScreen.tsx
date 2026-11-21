@@ -17,6 +17,7 @@ import {
   type InboxItem,
 } from '../../api/inbox'
 import { OfflineBanner, PageHeader } from '../../components/PageShell'
+import BriefPanel from '../../components/brief/BriefPanel'
 import {
   Badge,
   Banner,
@@ -225,6 +226,9 @@ export default function InboxScreen() {
     <div className="flex flex-col gap-5">
       {header}
       {note}
+
+      {/* F11 今日简报：晨报 / 收盘复盘 / 持仓异动，落库走收件箱，开关只控制是否弹窗 */}
+      <BriefPanel onPublished={() => view.refresh()} />
 
       {actError && (
         <Banner

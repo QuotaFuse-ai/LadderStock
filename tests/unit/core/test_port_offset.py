@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import ladderstock.core.boundary as boundary
 from ladderstock.core.boundary import (
     PEER_CONTROL,
@@ -9,6 +11,17 @@ from ladderstock.core.boundary import (
 )
 
 TEST_OFFSET = 10000
+
+
+@pytest.fixture(autouse=True)
+def _no_runtime_cards(monkeypatch):
+    """端口算术的单测必须在「没有自述卡」的前提上跑。
+
+    真机装了子模块后，安装目录里就有 `.runtime/peer.json`；自述卡优先会让
+    `resolve_peer_control` 返回卡上的真实端口（8000），把「+offset 平移」的断言
+    全部打穿。这里把卡解析关掉，测试只验算术兜底（卡的行为由 test_discovery 覆盖）。
+    """
+    monkeypatch.setattr(boundary.discovery, "resolve", lambda *args, **kwargs: None)
 
 
 def test_offset_defaults_to_zero_when_unset(monkeypatch) -> None:

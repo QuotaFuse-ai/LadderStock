@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from ladderstock.core.boundary import owner_of
+from ladderstock.core.boundary import NEWS_STREAM_DATASETS, owner_of
 from ladderstock.core.models import Confidence, Freshness, LadderEnvelope
 from ladderstock.data.duckdb_store import record_code
 from ladderstock.errors import EXIT_SOURCE, LadderStockError
@@ -167,6 +167,20 @@ ROW_SHAPES: dict[str, RowShape] = {
     # 指数日线：`data.klines` 与 daily_k 同形状，但指数行没有 `period/adjust`
     # 这类口径字段可透传；`code` 从 `data.code` 透传（000300）。
     "index_daily": RowShape("klines", passthrough=("code",), date_keys=("date",)),
+    # 资讯雷达四栏目（2026-11-21 真实调用取样）：
+    # - 公告两源与备源 announcements_backup 同形状 `{code, announcements:[…]}`，
+    #   行内 publish_time 是「YYYY-MM-DD HH:MM:SS」，取前 10 位成交易日；
+    # - 东财个股新闻 `{code, news:[…]}`，行内 date 同样是日期时间串；
+    # - 新闻联播 `{date, items:[…]}` 没有个股维度，require_code=False，
+    #   日期由 data.date（HEADER_DATE_KEYS）透传成 trade_date。
+    "announcement_cninfo": RowShape(
+        "announcements", passthrough=("code",), date_keys=("publish_time",)
+    ),
+    "announcement_szse": RowShape(
+        "announcements", passthrough=("code",), date_keys=("publish_time",)
+    ),
+    "news_eastmoney_stock": RowShape("news", passthrough=("code",), date_keys=("date",)),
+    "news_cctv": RowShape("items", require_code=False),
 }
 
 #: `tdx_daily_package` 是 daily_k 的备源工具，形状按工具名登记（同数据集两种形状）
@@ -203,6 +217,12 @@ CODE_POOL_DATASETS: frozenset[str] = frozenset(
         "share_buyback",
         "lockup_calendar",
         "index_daily",
+        # 资讯雷达三个 code 必填栏目（2026-11-21 实测 inputSchema：required=["code"]）。
+        # 此前裸 sync 发空参被上游拒，才一直 skipped；纳入代码池后逐只扇出。
+        # cninfo 主源当前上游 407（出口代理要认证），备源 announcements_backup 实测可接管。
+        "announcement_cninfo",
+        "announcement_szse",
+        "news_eastmoney_stock",
     }
 )
 
@@ -226,8 +246,13 @@ FIXED_PARAMS: dict[str, dict[str, Any]] = {
 
 #: 增量水位在各工具里的入参名。`tencent_kline` 没有 `since`，只有 `start`（含当日，
 #: 重叠那天由 `(code, trade_date)` upsert 折叠，不会重复增长）。
+#: 公告两源的 `start` 同语义（YYYY-MM-DD，含当日；2026-11-21 实测带 start/end 可取）。
 #: 其余按日整批替换的数据集（涨停池 / 板块 / 情绪）本来就只回当天，没有增量入参。
-SINCE_PARAM: dict[str, str] = {"daily_k": "start"}
+SINCE_PARAM: dict[str, str] = {
+    "daily_k": "start",
+    "announcement_cninfo": "start",
+    "announcement_szse": "start",
+}
 
 
 def needs_code(dataset: str) -> bool:

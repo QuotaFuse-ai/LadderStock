@@ -155,6 +155,45 @@ def _as_date(value: Any) -> date | None:
     return None
 
 
+def stamp_partition_day(records: list[dict[str, Any]], day: date) -> list[dict[str, Any]]:
+    """把每条记录的分区日钉成 `day`，原数据日抄进 `data_as_of`。
+
+    只给 `partition_by: local_day` 的数据集用。原来写的是 `trade_date`/`date`，
+    这两个键 `duckdb_store.record_day` 会优先读，所以必须替换；替换前把原值
+    存到 `data_as_of`——「这条资讯讲的是哪天的市场」不能因为分区需要而丢掉。
+    """
+    stamped: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            stamped.append(record)
+            continue
+        source_day = record.get("data_as_of") or record.get("trade_date") or record.get("date")
+        item = dict(record)
+        item["trade_date"] = day.isoformat()
+        if source_day and not item.get("data_as_of"):
+            item["data_as_of"] = str(source_day)[:10]
+        stamped.append(item)
+    return stamped
+
+
+def apply_partition_day(
+    declared: dict[str, Any],
+    records: list[dict[str, Any]],
+    fallback: date | None,
+) -> tuple[list[dict[str, Any]], date | None]:
+    """按 `partition_by` 定分区日：`local_day` 时钉成本地采集日，其余原样沿用。
+
+    两条落库路径（单次 `sync_one` 和按赛道扇出的 `sync_topic_pool`）共用这一份判断，
+    避免只在其中一条上生效——`theme_news` 走的正是扇出那条。
+    """
+    if str(declared.get("partition_by") or "").strip() != "local_day":
+        return records, fallback
+    from ladderstock.core import intraday
+
+    day = intraday.local_moment(None, None).date()
+    return stamp_partition_day(records, day), day
+
+
 # --------------------------------------------------------------------------- #
 # 记录与水位
 # --------------------------------------------------------------------------- #
@@ -413,6 +452,7 @@ def sync_code_pool(
             f"sync.datasets.{dataset}.codes / codes_from / 本机自选均为空，未发起调用"
             f"（{binding.tool} 的 code 必填，空参实测回 QFSD-9001）"
         ),
+        declared=declared,
     )
 
 
@@ -677,6 +717,7 @@ def sync_topic_pool(
             f"未发起调用（{tool} 的 topic 必填，空参实测回 `topic Field required` 校验错误；"
             "取值为 Wire 的赛道 slug，不是中文赛道名）"
         ),
+        declared=declared,
     )
 
 
@@ -695,6 +736,7 @@ def sync_per_item(
     unit: str,
     params_for: Callable[[str], dict[str, Any]],
     empty_detail: str,
+    declared: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """「一个元素一次工具调用」的数据集：逐项取数、合并、一次事务落库。
 
@@ -808,12 +850,17 @@ def sync_per_item(
             from_cache=bool(cache_hits),
         )
 
+    rows, partition_day = apply_partition_day(
+        declared or {},
+        rows,
+        _as_date(last_envelope.data_as_of) if last_envelope else None,
+    )
     result = duckdb_store.write_dataset(
         dataset,
         rows,
         mode=binding.mode,
         source=",".join(dict.fromkeys(sources)),
-        default_trade_date=_as_date(last_envelope.data_as_of) if last_envelope else None,
+        default_trade_date=partition_day,
     )
     value = watermark_value(dataset, rows, last_envelope) if last_envelope is not None else None
     if result.empty or not value:
@@ -1064,12 +1111,23 @@ def sync_one(
     borrow_note: str | None = None
     if dataset == "limit_pool":
         records, borrow_note = borrow_limit_pool_reason(registry, records)
+
+    # 分区日口径（`partition_by: local_day`）：一些数据集的上游只给「数据是哪天的」，
+    # 但**采集发生在哪一天**才是分区的真正含义。`theme_news` 就踩过这个坑：它按
+    # `data_as_of`（11-18）定日 + replace 整日覆盖，于是今天采的 2,188 条被写进
+    # 11-18 的目录里，11-20 永远没有分区，看目录像是断档两天。
+    # 这里把分区钉成本地采集日，原数据日挪到 `data_as_of` 字段（事实不丢），
+    # 下游要「这条资讯属于哪天」仍然读得到。
+    records, partition_day = apply_partition_day(
+        declared, records, _as_date(envelope.data_as_of)
+    )
+
     result = duckdb_store.write_dataset(
         dataset,
         records,
         mode=binding.mode,
         source=outcome.source,
-        default_trade_date=_as_date(envelope.data_as_of),
+        default_trade_date=partition_day,
     )
 
     value = watermark_value(dataset, records, envelope)

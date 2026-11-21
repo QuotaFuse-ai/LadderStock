@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import shutil
@@ -44,7 +45,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ladderstock.ai import ai_yaml_edit, checkpoint, cli_provider, discovery, fallback
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.cli.paths import config_dir, project_root
+
+logger = logging.getLogger(__name__)
 from ladderstock.core.boundary import (
     PEER_DIR_ENV,
     BoundaryViolation,
@@ -1498,6 +1501,8 @@ class ControlPlane:
         # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
         self.config_root = Path(config_root) if config_root is not None else config_dir()
         self.peers: dict[str, PeerControl] = dict(peers or resolve_peer_control())
+        # 显式注入的 peers（测试假件）不做快照时的动态重解析：注入即最终口径。
+        self._peers_injected = peers is not None
         # 工具组件只读观测，不参与 peer 的数据边界与启停任务
         self.components: dict[str, ComponentControl] = dict(
             components if components is not None else resolve_components()
@@ -1677,9 +1682,96 @@ class ControlPlane:
 
     # ---------------------------------------------------------------- 快照
 
+    def _with_effective_ports(
+        self, ctl: PeerControl, *, library_only: bool
+    ) -> tuple[PeerControl, dict[int, int]]:
+        """把声明端口换成实际在监听的端口（仅回退到基础端口）。
+
+        测试服按 `LDST_PORT_OFFSET` 平移端口，但一台机器上的子模块通常只有一份
+        **共用实例**，跑在 `config/sources.yaml` 写的基础端口。按平移口径逐个去
+        敲，就会把「正在跑」判成「已停止」——「8 个模块 · 运行中 1」即此根因。
+        这里只在**声明端口无人监听**时才回退一次「端口 − 偏移」；命中后仍用真实
+        端口做健康检查与归属判定。启动命令不跟着改：要起自有副本时依旧按声明口径
+        起，规则不破。偏移为 0 时完全不介入（零改动、零回归）。
+        """
+        if library_only:
+            return ctl, {}
+        offset = port_offset()
+        if offset <= 0:
+            return ctl, {}
+        probed: dict[int, bool] = {}
+
+        def listening(port: int | None) -> bool:
+            if not port:
+                return False
+            if port not in probed:
+                probed[port] = bool(self._port_probe(port))
+            return probed[port]
+
+        mapping: dict[int, int] = {}
+
+        def pick(port: int | None) -> int | None:
+            if not port or listening(port):
+                return port
+            base = port - offset
+            if base > 0 and listening(base):
+                mapping[port] = base
+                return base
+            return port
+
+        changes: dict[str, Any] = {}
+        live_mcp = pick(ctl.mcp_port)
+        if live_mcp != ctl.mcp_port:
+            changes["mcp_port"] = live_mcp
+        if ctl.web_port:
+            live_web = pick(ctl.web_port)
+            if live_web != ctl.web_port:
+                changes["web_port"] = live_web
+        if ctl.extra_ports:
+            shifted = tuple(int(pick(port) or port) for port in ctl.extra_ports)
+            if shifted != tuple(ctl.extra_ports):
+                changes["extra_ports"] = shifted
+        if not mapping:
+            return ctl, {}
+        return (replace(ctl, **changes) if changes else ctl), mapping
+
     def snapshot(self, key: str) -> dict[str, Any]:
         """单个 peer 的探测结果（状态判定顺序严格按 PRD §3.1）。"""
         ctl = self.peers[key]
+        # 自述卡是「谁在服务谁说了算」：模块可能在面板起来之后才启动 / 重启 / 换端口，
+        # 启动时算一次会把「刚登记的新地址」永久定格成「没卡」。这里每轮快照重解析
+        # 一次，`core.discovery` 自带 2 秒缓存，不会把 8 个模块探成 8 次阻塞。
+        try:
+            if self._peers_injected:
+                card = None
+            else:
+                from ladderstock.core import discovery as discovery_card
+
+                card = discovery_card.read_card(self.peers[key].directory)
+        except Exception:  # noqa: BLE001 - 卡解析失败不许影响面板
+            card = None
+        if card:
+            # 卡是否成立用**面板同一套端口探测**（`_port_probe`）：页面判「有没有人监听」
+            # 与「卡能不能用」必须一个口径，不能用 socket 另一套判活。
+            card_ports = [
+                port
+                for port in (card.get("mcp"), card.get("web"), *(card.get("extra") or ()))
+                if port
+            ]
+            if any(self._port_probe(port) for port in card_ports):
+                changes: dict[str, Any] = {
+                    "discovered": True,
+                    "card_path": card.get("path"),
+                }
+                if card.get("mcp") and int(card["mcp"]) != ctl.mcp_port:
+                    changes["mcp_port"] = int(card["mcp"])
+                if card.get("web") and int(card["web"]) != ctl.web_port:
+                    changes["web_port"] = int(card["web"])
+                card_extra = tuple(int(port) for port in card.get("extra") or ())
+                if card_extra and card_extra != tuple(ctl.extra_ports):
+                    changes["extra_ports"] = card_extra
+                self.peers[key] = replace(self.peers[key], **changes)
+                ctl = self.peers[key]
         directory = Path(ctl.directory)
         dir_exists = directory.is_dir()
         registry = self._sources_peers()
@@ -1723,6 +1815,10 @@ class ControlPlane:
             installed = version is not None
 
         library_only = bool(getattr(ctl, "library_only", False))
+        # 平移口径（测试服 +10000）探不到时回退到基础端口：同一台机器上的子模块
+        # 往往只有一份共用实例，平移口径会去敲一个空端口，把「正在跑」报成
+        # 「已停止」（2026-11-21「8 个模块 · 运行中 1」就是这个根因）。
+        ctl, live_ports = self._with_effective_ports(ctl, library_only=library_only)
         mcp_owners = [] if library_only else self._port_probe(ctl.mcp_port)
         web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
         # QUOT-485：额外端口（ProxyFleet 的 8789 出口网关）也探归属并计入「是否
@@ -1757,6 +1853,11 @@ class ControlPlane:
         # 亲手拉起它」（手动启动很常见，如 CN 要先加载代理 env）。降级成归属提示，
         # 保留 PID/进程名与「不接管」的事实，避免整页全红。
         if status == STATUS_RUNNING:
+            if live_ports:
+                pairs = "、".join(
+                    f"{declared}→{actual}" for declared, actual in sorted(live_ports.items())
+                )
+                detail = f"{detail}；共用主实例探测（{pairs}）"
             own_ports = {ctl.mcp_port, ctl.web_port, *ctl.extra_ports}
             for conflict in conflicts:
                 if conflict.get("foreign") and conflict["port"] in own_ports:
@@ -1799,6 +1900,13 @@ class ControlPlane:
                 "web_label": ctl.web_port_label,
                 # 额外端口（QUOT-485，ProxyFleet 的 8789 出口网关）：探测归属，不打开
                 "extra": list(ctl.extra_ports),
+                # 非空表示这些面是按「共用主实例」的实际端口探测的（声明→实际）。
+                "live": {str(k): v for k, v in sorted(live_ports.items())},
+                "shared_instance": bool(live_ports),
+                # 端口来自模块自述卡（.runtime/peer.json）而不是偏移推算。
+                "discovered": bool(getattr(ctl, "discovered", False)),
+                # 生效卡文件（没读到卡为 None）：页面说明「按哪张卡确认」。
+                "card": getattr(ctl, "card_path", None),
             },
             "listening": {
                 "mcp": [owner.as_dict() for owner in mcp_owners],
@@ -2457,7 +2565,12 @@ class ControlPlane:
         # 直读 sources.yaml 的 default_port 原值，导致测试服里表格显示生产端口、
         # 卡片显示测试端口，同一页出现两套号。偏移量非 0 时才动，0 档零回归。
         offset = port_offset()
-        if port and offset:
+        live = (snapshot.get("ports") or {}).get("mcp") if snapshot else None
+        if live:
+            # 卡片按「共用主实例」的实际端口探测时，注册表这一行也跟同一口径，
+            # 否则同一页又会出现两套号（QUOT-618 的老毛病）。
+            port = int(live)
+        elif port and offset:
             port += offset
         if snapshot:
             status = str(snapshot.get("status"))
@@ -5146,18 +5259,34 @@ def build_supervisor_router(plane: ControlPlane) -> APIRouter:
     """
     router = APIRouter(prefix="/api/supervisor", dependencies=[Depends(_guard)])
 
-    @router.get("/state")
-    def supervisor_state() -> dict[str, Any]:
-        """482-C 健康视角 + 482-A 归属视角合并（账本命中 or cmdline 匹配）。"""
+    #: 合并后的整份 payload 也缓存：快照自带缓存后，`engine.state()`（账本 + cmdline
+    #: + 端口归属）仍是现场探测，同步算实测每拍 7~10s，页面 15s 超时窗口很吃紧。
+    #: stale-while-revalidate：过期回旧值 + 后台重算，首拍只踢后台、立刻回占位。
+    state_ttl = 8.0
+    state_holder: dict[str, Any] = {
+        "guard": threading.Lock(),
+        "at": 0.0,
+        "payload": None,
+        "refreshing": False,
+    }
+
+    def _compute_state(first_wait: float = 0.0) -> dict[str, Any]:
         engine = plane.supervisor
         heal = getattr(plane, "selfheal", None)
-        snapshot = getattr(heal, "snapshot", None)
-        if callable(snapshot):
-            payload = dict(snapshot())
-            payload["modules"] = [dict(item) for item in payload.get("modules", [])]
+        # 优先用缓存版快照。现场探测一次 15~20s，同步算会让页面每拍都超时，
+        # 前端于是把模块全标成「归属未知（supervisor 未接入）」。
+        cached = getattr(heal, "snapshot_cached", None)
+        if callable(cached):
+            payload = dict(cached(first_wait=first_wait))
+        elif callable(getattr(heal, "snapshot", None)):
+            payload = dict(heal.snapshot())
         else:
             payload = {"ok": True, "engine": None, "modules": []}
+        payload["modules"] = [dict(item) for item in payload.get("modules", [])]
         payload["order"] = list(MODULE_ORDER)
+        evidence = getattr(heal, "port_evidence", None)
+        if evidence:
+            payload["port_evidence"] = evidence
         if engine is None:
             payload["configured"] = False
             return payload
@@ -5170,6 +5299,65 @@ def build_supervisor_router(plane: ControlPlane) -> APIRouter:
             if extra:
                 item.update(extra)
         return payload
+
+    def _refresh_state() -> None:
+        payload: dict[str, Any] | None = None
+        try:
+            payload = _compute_state()
+        except Exception:  # noqa: BLE001 - 刷新失败保留旧值，页面不该因此空白
+            logger.warning("supervisor /state 后台刷新失败（保留上一份）", exc_info=True)
+        with state_holder["guard"]:
+            if payload is not None:
+                state_holder["payload"] = payload
+                state_holder["at"] = time.monotonic()
+            state_holder["refreshing"] = False
+
+    @router.get("/state")
+    def supervisor_state() -> dict[str, Any]:
+        """482-C 健康视角 + 482-A 归属视角合并（账本命中 or cmdline 匹配）。"""
+        kick = False
+        with state_holder["guard"]:
+            payload = state_holder["payload"]
+            stale = (
+                payload is None
+                or time.monotonic() - float(state_holder["at"]) >= state_ttl
+            )
+            if stale and not state_holder["refreshing"]:
+                state_holder["refreshing"] = True
+                kick = True
+        if kick:
+            threading.Thread(
+                target=_refresh_state, name="ldst-supervisor-state", daemon=True
+            ).start()
+        if payload is not None:
+            bus = getattr(getattr(plane, "selfheal", None), "event_bus", None)
+            if bus is not None:
+                payload = dict(payload)
+                payload["events_latest"] = bus.latest_seq
+            return payload
+        # 从来没有快照：这一次同步算（最多等 3s 让预热落地），之后都走缓存。
+        # 3s 远低于前端 15s 超时，所以首帧也不会被标成「取数超时」。
+        try:
+            payload = _compute_state(first_wait=3.0)
+        except Exception:  # noqa: BLE001 - 算不出来就回占位，不让端点 500
+            logger.warning("supervisor /state 首帧计算失败", exc_info=True)
+            payload = None
+        if payload is not None:
+            with state_holder["guard"]:
+                state_holder["payload"] = payload
+                state_holder["at"] = time.monotonic()
+            return payload
+        placeholder = {
+            "ok": False,
+            "detail": "首次探测进行中（进程判活 / 端口归属要十几秒）：稍后自动可用",
+            "configured": False,
+            "modules": [],
+            "order": list(MODULE_ORDER),
+        }
+        bus = getattr(getattr(plane, "selfheal", None), "event_bus", None)
+        if bus is not None:
+            placeholder["events_latest"] = bus.latest_seq
+        return placeholder
 
     return router
 

@@ -207,23 +207,57 @@ def _offset_url(url: str, offset: int) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
-def build_peers(sources_doc: dict[str, Any]) -> dict[str, PeerEndpoint]:
+def _port_url(url: str, port: int) -> str:
+    """把 URL 的端口换成 `port`（scheme / host / path 原样保留）。"""
+    if not url or not port:
+        return url
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if parts.port is None:
+        return url
+    host = parts.hostname or ""
+    return urlunsplit(
+        (parts.scheme, f"{host}:{int(port)}", parts.path, parts.query, parts.fragment)
+    )
+
+
+def build_peers(
+    sources_doc: dict[str, Any],
+    *,
+    controls: dict[str, Any] | None = None,
+) -> dict[str, PeerEndpoint]:
+    """peer 地址：`url_env` > 自述卡 > `default_url` 平移（兜底）。
+
+    服务发现（2026-11-21 用户口径「谁提供服务谁登记」）：模块自己写的
+    `peer.json` 里的 `mcp` 就是**实际监听端口**，用它时不再平移；没有卡才退回
+    `LDST_PORT_OFFSET` 算术。算术只能兜底 —— 一台机器只有一份共用实例时，
+    平移必然敲空门（5951 曾把在跑的 tickhub `8000` 读成 `18000`，补采因此
+    报「peer 全部不可用」并回放缓存）。
+    """
     peers: dict[str, PeerEndpoint] = {}
-    from ladderstock.core.boundary import _external_hosted, port_offset
+    from ladderstock.core.boundary import port_offset, resolve_peer_control
 
     offset = port_offset()
+    if controls is None:
+        # 卡探测要连端口；单测可用 `LDST_PEER_CARDS=0` 固定走算术口径。
+        controls = {} if os.environ.get("LDST_PEER_CARDS", "1") == "0" else resolve_peer_control()
     for key, item in (sources_doc.get("peers") or {}).items():
         item = item or {}
         env_name = str(item.get("url_env") or "")
         url = os.environ.get(env_name, "") if env_name else ""
-        # 外部托管（WSL 容器 / 计划任务）的地址不平移：那份服务只有一份，正式服与
-        # 测试服共用同一个；平移后只会打到空端口，把「在跑」报成「已退出」。
-        peer_offset = 0 if _external_hosted(str(key)) else offset
+        default_url = str(item.get("default_url") or "")
+        if not url:
+            ctl = controls.get(str(key))
+            card_port = int(getattr(ctl, "mcp_port", 0) or 0) if ctl is not None else 0
+            # `resolve_peer_control` 已把「外部托管不平移」与「卡优先」都算完：
+            # 有卡给卡端口，无卡给平移后的算术端口。
+            url = _port_url(default_url, card_port) if card_port else _offset_url(default_url, offset)
         peers[str(key)] = PeerEndpoint(
             key=str(key),
             product=str(item.get("product") or key),
             mcp_name=str(item.get("mcp_name") or key),
-            url=url or _offset_url(str(item.get("default_url") or ""), peer_offset),
+            url=url,
             timeout_sec=float(item.get("timeout_sec") or 10.0),
         )
     return peers
