@@ -132,3 +132,6 @@ control/
 python/
 state/
 supervisor/
+
+# 会话临时产物（工具工作目录，绝不入库）
+.temp/
