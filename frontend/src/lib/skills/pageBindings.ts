@@ -22,6 +22,8 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   { prefix: '/intraday', pkg: 'a-share-tape' },
   { prefix: '/review', pkg: 'review-journal' },
   { prefix: '/weekly', pkg: 'review-journal' },
+  // B 包 / DEC-089：复盘统计是只读观测面（同 /data-assets），不绑技能包
+  { prefix: '/analytics', pkg: null },
   { prefix: '/pool', pkg: 'review-journal' },
   { prefix: '/journal', pkg: 'review-journal' },
   { prefix: '/validate', pkg: 'review-journal' },

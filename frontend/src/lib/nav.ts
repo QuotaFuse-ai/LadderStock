@@ -110,6 +110,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/review/ai', label: 'AI复盘', icon: Bot },
       // R11（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
       { to: '/weekly', label: 'AI周报', icon: CalendarRange },
+      // B 包 / DEC-089：组合指标 / 基准 / 归因 / 行为 / 错题本（只读本机）
+      { to: '/analytics', label: '复盘统计', icon: BarChart3 },
       { to: '/pool', label: '候选池', icon: ListChecks },
     ],
   },

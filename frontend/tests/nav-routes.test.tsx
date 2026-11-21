@@ -107,11 +107,12 @@ describe('路由表 → 侧栏入口', () => {
 const REVIEW_PAGES = NAV_SECTIONS.find((section) => section.key === 'review')?.pages ?? []
 
 describe('复盘组三独立入口（QUOT-344 / DEC-046）', () => {
-  it('复盘组是 每日复盘 / AI复盘 / AI周报 / 候选池 四项，顺序与文案在册', () => {
+  it('复盘组是 每日复盘 / AI复盘 / AI周报 / 复盘统计 / 候选池 五项，顺序与文案在册', () => {
     expect(REVIEW_PAGES.map((page) => [page.to, page.label])).toEqual([
       ['/review', '每日复盘'],
       ['/review/ai', 'AI复盘'],
       ['/weekly', 'AI周报'],
+      ['/analytics', '复盘统计'],
       ['/pool', '候选池'],
     ])
   })

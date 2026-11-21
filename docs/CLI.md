@@ -87,6 +87,7 @@
 | **QUOT-533 增量（1，非 P0 基线）** | `sync industry`（行业缓存真实联网补齐，DEC-074） |
 | **F 批次增量（25，非 P0 基线，见 §T）** | `archive *`、`brief *`、`coverage *`、`debate *`、`verify *`、`news-archive`、`peer serve` |
 | **DEC-087 增量（11，非 P0 基线，见 §S）** | `alert rules *`、`alert channels *`、`alert run` |
+| **DEC-089 增量（1，非 P0 基线，见 §U）** | `analytics`（组合统计） |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -515,7 +516,8 @@ ldst position list --output json                         # realized.total_pnl（
 >
 > **2026-11-22 补齐（`--output` 契约）**：「对话模式与研究台」批次的 25 条命令
 > （archive / brief / coverage / debate / verify 族、news-archive、peer serve）
-> 统一接入全局 `--output json|table|csv` 并登记进基线——`LEAF_PATHS` 86 → **111**，
+> 统一接入全局 `--output json|table|csv` 并登记进基线——`LEAF_PATHS` 86 → **111**
+> （DEC-089 的 `analytics` 再 +1 → **112**），
 > `test_registered_leaves_match_baseline` 转绿。`peer serve` 是长驻包裹层，
 > 只保留选项占位（与 `run` / `watchdog` 同口径）。
 >
@@ -573,6 +575,18 @@ ldst position list --output json                         # realized.total_pnl（
 | 99 | `ldst verify history` | 最近查证记录 | `--limit` / `--root` | 0 |
 | 100 | `ldst news-archive` | 把 news.sqlite 已有资讯补进归档与历史库（不重采） | `--dataset` / `--dry-run` / `--data-root` | 0；部分失败 **8** |
 | 101 | `ldst peer serve` | 模块启动包裹层：先登记自述卡再执行原命令 | `--module` / `--mcp` / `--web` / `--face` / `--port` / `--extra` / `--card-root` | 长驻（透传子进程退出码）；`--output` 仅占位 |
+
+## U. 组合统计（DEC-089 增量，1）
+
+> 一次输出「组合指标 / 基准对比 / 交易归因 / 行为统计 / 错题本」。
+> 只读本机：组合账本（`portfolio_trades`）+ `daily_k` + `index_daily`（沪深300），
+> **不联网**；口径表见 `analytics/engine.py` 模块 docstring，页面与 CLI 共用一份。
+> Web 对应 `GET /api/analytics/summary`（回环 + Host + `no-store`）。
+> 「缺数就是 `null` + 原因」：无流水 / 无日线 → 退出码 **6**，不补 0。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 102 | `ldst analytics` | 组合统计（指标/基准/归因/行为/错题本） | `--days`（默认 365） | 0；无流水或无日线 **6** |
 
 ## F. 全局约定
 

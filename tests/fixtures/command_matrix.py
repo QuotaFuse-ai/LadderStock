@@ -109,6 +109,8 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("alert", "rules", "list"), {0}),
     (("alert", "channels", "list"), {0}),
     (("alert", "run"), {0}),
+    # B 包（DEC-089）：组合统计。矩阵在临时数据目录跑——没流水 → ok=False → 6。
+    (("analytics",), {6}),
     # 交易日志（M2 已实现）：只写本机临时数据目录，成功即 0
     (
         (
@@ -352,6 +354,8 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("alert", "channels", "rm"),
     ("alert", "channels", "test"),
     ("alert", "run"),
+    # B 包（DEC-089）：组合统计（只读本机隐私库的聚合面，不进 MCP / AI）
+    ("analytics",),
     # 「对话模式与研究台」批次（2026-11-21 入库）的 25 条命令：archive / brief /
     # coverage / debate / verify 族、news-archive（资讯归档回看）与 peer serve
     # （长驻包裹层，与 run/watchdog 同口径只保留 OutputOption 占位）。

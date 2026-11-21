@@ -25,6 +25,8 @@ export const ROUTE_PATHS = [
   '/review/ai',
   // AI 周报 = 按周聚合的叙述与事实包，`?week=YYYY-Www`
   '/weekly',
+  // B 包 / DEC-089：复盘统计（组合指标 / 基准 / 归因 / 行为 / 错题本），只读本机
+  '/analytics',
   '/journal',
   '/validate',
   // F9 观点账本：判断落一笔、到期回访判对错，与「验证」组同族但不与 `/validate` 共屏

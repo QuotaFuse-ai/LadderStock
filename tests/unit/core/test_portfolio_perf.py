@@ -177,6 +177,32 @@ def test_reduce_position_twr_and_mwr_hand_check() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def test_large_buy_same_day_markdown_is_not_amplified_by_prior_capital() -> None:
+    """同日大额买入的当日看跌，不能按原仓位放大成巨额当日亏损。
+
+    B 包 e2e 抓到的存量 bug：10k 组合当天买入 150k（成交后当日回落 ~3%），
+    旧口径把回落整段按 10k 原仓位摊，算出 −49.8% 的当日收益。
+    正确的口径：当日新买入的份额按**成交价**记账，盈亏从次日起计入。
+    """
+    trades = [
+        _trade(1, symbol=SYMBOL, day="2025-01-02", shares=100, price=10),
+        _trade(2, symbol=OTHER, day="2025-01-06", shares=1000, price=100, name="大票"),
+    ]
+    closes = {
+        SYMBOL: {"2025-01-02": 10.0, "2025-01-03": 10.1, "2025-01-06": 9.9},
+        OTHER: {"2025-01-06": 96.0, "2025-01-07": 97.0},
+    }
+    group = compute_view(trades, closes, as_of=date(2025, 1, 7))["groups"][0]
+
+    dates = group["series"]["dates"]
+    indexes = group["series"]["twr_index"]
+    day = dates.index("2025-01-06")
+    day_change = indexes[day] / indexes[day - 1] - 1
+    # 当日只有原仓位 −2% 的漂移（+手续费），绝不该出现 −50% 级别的放大
+    assert -0.05 < day_change < 0
+    assert all(value > 0 for value in indexes)
+
+
 def test_symbol_without_history_is_excluded_not_priced() -> None:
     trades = [
         _trade(1, day="2025-01-02", shares=100, price=10),

@@ -38,6 +38,7 @@ import LedgerScreen from './screens/LedgerScreen'
 import ConfigScreen from './screens/ConfigScreen'
 import WatchScreen from './screens/WatchScreen'
 import WeeklyScreen from './screens/WeeklyScreen'
+import AnalyticsScreen from './screens/AnalyticsScreen'
 import { ROUTE_PATHS, type RoutePath } from './routes'
 
 /**
@@ -88,6 +89,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/review/ai': <AiReviewScreen />,
   // R11 AI周报（QUOT-149 交付，导航标签 QUOT-344 更名）：`?week=YYYY-Www`，缺省本周
   '/weekly': <WeeklyScreen />,
+  // B 包 / DEC-089：复盘统计（组合指标 / 基准 / 归因 / 行为 / 错题本）
+  '/analytics': <AnalyticsScreen />,
   '/journal': <JournalScreen />,
   '/validate': <ValidateScreen />,
   // F9：观点账本——已落账判断与命中率（只读 chat.sqlite 的 research_record 表）

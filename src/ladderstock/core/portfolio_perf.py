@@ -416,7 +416,15 @@ def _simulate(
     series_by_symbol: Mapping[str, list[tuple[date, float]]],
     calendar: Sequence[date],
 ) -> _Simulated:
-    """按交易日推进：先记账（含当天现金流），再按收盘价给持仓估值。"""
+    """按交易日推进：先记账（含当天现金流），再按收盘价给持仓估值。
+
+    当日**新买入**的份额按成交价记账、不按当日收盘盯市（`today_buys`）：
+    否则「当天加一笔远大于原仓位的买入 + 当日价格回落」会把回落的整段亏损
+    按原仓位摊进当日收益（实测 10k 组合买 150k 后当日 −3.2%，旧口径被算成
+    −49.8%）。按成交价记账后，新仓位的盈亏从次日起自然计入——TWR 的
+    累计值是同一份盈亏，只是当日不再被流量规模放大。卖出不受影响：
+    已实现盈亏发生在卖出价上，本来就该计入当日。
+    """
     symbols = {book.symbol for book in included}
     ordered = sorted(trades, key=replay_order_key)
     result = _Simulated()
@@ -426,6 +434,7 @@ def _simulate(
     pending_income = 0.0
 
     for day in calendar:
+        today_buys: dict[str, list[tuple[float, float]]] = {}
         while cursor < len(ordered) and _trade_day(ordered[cursor]) <= day:
             trade = ordered[cursor]
             cursor += 1
@@ -435,6 +444,10 @@ def _simulate(
             flow, income = _apply(trade, books[symbol], held, result.cashflows)
             pending_flow += flow
             pending_income += income
+            if trade.type in ("opening", "buy") and trade.shares and trade.price:
+                today_buys.setdefault(symbol, []).append(
+                    (float(trade.shares), float(trade.price))
+                )
         value = 0.0
         for book in included:
             shares = held[book.symbol]
@@ -443,7 +456,11 @@ def _simulate(
             price = _last_close(series_by_symbol[book.symbol], day)
             if price is None:  # 覆盖检查保证不会发生；真发生就按 0 估值会造假，跳过整组
                 continue
-            value += shares * price
+            # 当日新买入的份额按成交价记账：从市值里扣掉 (收盘−成交价) 的差
+            adjustment = sum(
+                bought * (price - traded) for bought, traded in today_buys.get(book.symbol, [])
+            )
+            value += shares * price - adjustment
         result.dates.append(day)
         result.market_values.append(value)
         result.flows.append(pending_flow)

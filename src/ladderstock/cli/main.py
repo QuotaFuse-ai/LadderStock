@@ -20,6 +20,7 @@ import typer
 from ladderstock import __version__
 from ladderstock.cli.ai import register as register_ai
 from ladderstock.cli.alert import register as register_alert
+from ladderstock.cli.analytics import register as register_analytics
 from ladderstock.cli.backfill import register as register_backfill
 from ladderstock.cli.backtest import register as register_backtest
 from ladderstock.cli.archive import register as register_archive
@@ -267,6 +268,8 @@ register_watch(watch_app)
 # 写面只落本机 SQLite，不经 HTTP（DEC-052 §2.3）
 register_watchlist(watch_app)
 register_notify(notify_app)
+# 组合统计（B 包 / DEC-089）：指标 / 基准 / 归因 / 行为 / 错题本，纯本地只读。
+register_analytics(app)
 # 提醒引擎（DEC-087）：自定义规则（价格/均线/放量/浮盈亏）× 出站渠道（邮件/webhook/IM）。
 # 出站渠道是对 watch/notifier 旧红线的显式推翻，实现体在 alert/ 包，收件箱仍是源头记录。
 register_alert(alert_app)
