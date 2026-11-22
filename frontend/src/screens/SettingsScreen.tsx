@@ -408,18 +408,20 @@ function PeerCard({
         )}
 
         <p className="text-caption text-text-secondary">
-          MCP <span className="ldst-num">{peer.ports.mcp}</span> · {peer.ports.web_label}{' '}
-          <span className="ldst-num">{peer.ports.web ?? MISSING}</span> · {statusLabel}
           {uptime && (
             <>
-              {' · 运行 '}
+              {'运行 '}
               <span className="ldst-num">{uptime}</span>
+              {' · '}
             </>
           )}
+          端口实时占用与诊断见「数据与端口」
         </p>
 
         {peer.port_conflicts.length > 0 && (
-          <ul className="flex flex-col gap-1">
+          <>
+            <p className="text-caption text-text-muted">端口告警（占用明细见「数据与端口」）</p>
+            <ul className="flex flex-col gap-1">
             {peer.port_conflicts.map((conflict) => {
               const info = conflict.severity === 'info'
               return (
@@ -444,7 +446,8 @@ function PeerCard({
                 </li>
               )
             })}
-          </ul>
+            </ul>
+          </>
         )}
 
         {job && (
@@ -605,8 +608,7 @@ function ComponentCard({
         </div>
 
         <p className="text-caption text-text-secondary">
-          控制台 <span className="ldst-num">{component.ports.console}</span> · 网关{' '}
-          <span className="ldst-num">{component.ports.gateway ?? MISSING}</span> · {statusLabel}
+          控制台与网关的实时占用、越界与占用者诊断，统一见「数据与端口」
         </p>
         {heal && (
           <p className={cn('text-caption', heal.failed ? 'font-medium text-danger' : 'text-text-secondary')}>
@@ -2159,7 +2161,7 @@ export default function SettingsScreen() {
                 columns={REGISTRY_COLUMNS}
                 rows={registry}
                 rowKey={(row) => row.id}
-                caption="模块注册表：id / product / package / 端口 / 职责 / 是否已安装"
+                caption="模块注册表：id / product / package / 声明端口 / 职责 / 是否已安装（实时占用见「数据与端口」）"
                 density="compact"
                 loading={board.status === 'loading'}
                 empty={
@@ -2174,7 +2176,7 @@ export default function SettingsScreen() {
 
             <SectionCard
               title="子模块"
-              subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；前端不推断"
+              subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；端口实时占用与诊断见「数据与端口」"
               bodyClassName="p-0"
               actions={
                 <>
