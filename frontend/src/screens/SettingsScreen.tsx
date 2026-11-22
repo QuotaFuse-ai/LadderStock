@@ -90,19 +90,19 @@ import { cn } from '../lib/cn'
  * 设置页（P-07 / DESIGN-SPEC §4.8 + PRD-SETTINGS-CONTROL-PLANE）。
  *
  * 四个分区（左侧 176px 二级菜单，`?tab=` 深链）：
- *   子模块   —— 模块卡（生态 peer + 工具组件）+ 模块注册表；状态**只**取后端
+ *   子模块   —— 模块卡（生态 peer + 工具组件）+ 模块注册表 + 端口诊断/占用表；状态**只**取后端
  *              `status` / `status_label`，前端不推断。模块清单与数量一律来自后端
  *              注册表（唯一真源是 config/sources.yaml 的 peers 块，QUOT-403/420）。
+ *              （原「数据与端口」分区已并入本页；`?tab=ports` 深链保留，落到本页。）
+ *   增强包   —— 投研数据体积明细 / embedding / 安装启停。
  *   AI 接入  —— 端点 / 模型 / 密钥；密钥只写不读回（只显示 `set` + `preview`）。
- *   数据与端口 —— 端口诊断 + 安全自愈面板（QUOT-548，四分类白话诊断 + 一键安全修复）
- *              + 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
- *   关于     —— 版本、数据目录、DEC-006 边界、主题与密度（与侧栏同一状态）。
+ *   关于     —— 版本、数据目录、配置目录与配置文件状态（只读）、DEC-006 边界、主题与密度。
  *
  * 控制面未接入时：卡片退化为静态目录表 + 全按钮禁用 + 可见原因（§4.8 占位要求），
  * 不编造「已安装 / 运行中」。安装/启动/停止只经后端任务，前端 1s 轮询 job，不执行任何命令。
  */
 
-type Section = 'peers' | 'financecoffer' | 'ai' | 'ports' | 'about'
+type Section = 'peers' | 'financecoffer' | 'ai' | 'about'
 
 interface SectionMeta {
   value: Section
@@ -115,14 +115,11 @@ const SECTIONS: readonly SectionMeta[] = [
   // DEC-086：增强包（FinanceCoffer）的体积明细 / embedding 勾选 / 安装 / 启停 / 卸载
   { value: 'financecoffer', label: '增强包', hint: '投研数据：PG · Redis · MinIO（+ 可选 embedding）' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
-  { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
 ]
 
 function isSection(value: string | null): value is Section {
-  return (
-    value === 'peers' || value === 'financecoffer' || value === 'ai' || value === 'ports' || value === 'about'
-  )
+  return value === 'peers' || value === 'financecoffer' || value === 'ai' || value === 'about'
 }
 
 const PEER_STATUS_LABEL: Record<PeerStatus, string> = {
@@ -415,12 +412,12 @@ function PeerCard({
               {' · '}
             </>
           )}
-          端口实时占用与诊断见「数据与端口」
+          端口实时占用与诊断见本页下方「端口诊断」
         </p>
 
         {peer.port_conflicts.length > 0 && (
           <>
-            <p className="text-caption text-text-muted">端口告警（占用明细见「数据与端口」）</p>
+            <p className="text-caption text-text-muted">端口告警（占用明细见本页下方「端口占用」）</p>
             <ul className="flex flex-col gap-1">
             {peer.port_conflicts.map((conflict) => {
               const info = conflict.severity === 'info'
@@ -608,7 +605,7 @@ function ComponentCard({
         </div>
 
         <p className="text-caption text-text-secondary">
-          控制台与网关的实时占用、越界与占用者诊断，统一见「数据与端口」
+          控制台与网关的实时占用、越界与占用者诊断，统一见本页下方「端口占用」
         </p>
         {heal && (
           <p className={cn('text-caption', heal.failed ? 'font-medium text-danger' : 'text-text-secondary')}>
@@ -1491,15 +1488,15 @@ function AiSection({
 // ---------------------------------------------------------------- 分区三：端口与目录
 
 /**
- * `?tab=ports` 的内容。控制面未启用时也要渲染本段（§11.18「每段有自身
- * loading/empty/error」），端口取不到就逐行 `—`，不显示假定默认值。
- * QUOT-548：顶部新增「端口诊断 + 安全自愈」面板（消费 QUOT-547 诊断 API）；
+ * 原「数据与端口」分区的内容，现已并入「子模块」页（页末）；`?tab=ports` 深链仍可直达。
+ * 控制面未启用时也要渲染本段（§11.18「每段有自身 loading/empty/error」），
+ * 端口取不到就逐行 `—`，不显示假定默认值。
+ * QUOT-548：「端口诊断 + 安全自愈」面板（消费 QUOT-547 诊断 API）；
  * 原「一键体检」占位按钮由面板的「重新诊断」取代（体检接口已落地）。
  */
 function PortsSection({
   board,
   portRows,
-  stateConfig,
   controlReady,
   productOf,
   push,
@@ -1508,7 +1505,6 @@ function PortsSection({
 }: {
   board: AsyncResult<BoardPayload>
   portRows: PortRow[]
-  stateConfig: AsyncResult<StateConfigPayload>
   controlReady: boolean
   productOf: (peerId: string) => string
   push: (message: string, tone?: ToastItem['tone']) => void
@@ -1563,34 +1559,6 @@ function PortsSection({
           loading={board.status === 'loading'}
           empty={<EmptyState compact title="后端没有返回任何端口" description="端口清单来自 /api/control/board；控制面未接入时本表没有行可展示。" />}
         />
-      </SectionCard>
-
-      <SectionCard title="配置与数据目录" subtitle="来自 /api/state/config">
-        {stateConfig.status === 'ready' && stateConfig.data ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-caption text-text-secondary">
-              配置目录 <span className="ldst-num break-all">{stateConfig.data.config_dir}</span>
-            </p>
-            <p className="text-caption text-text-secondary">
-              数据目录 <span className="ldst-num break-all">{stateConfig.data.data_dir}</span>
-            </p>
-            <ul className="mt-half flex flex-wrap gap-2">
-              {stateConfig.data.files.map((file) => (
-                <li key={file.file}>
-                  <Badge tone={file.present ? 'ok' : 'warn'}>
-                    {file.present ? '有' : '缺'} <span className="ldst-num">{file.file}</span>
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : stateConfig.status === 'error' ? (
-          <ErrorBlock {...describeApiError(stateConfig.error)} variant="inline" onRetry={stateConfig.reload} />
-        ) : stateConfig.status === 'loading' ? (
-          <SkeletonText lines={2} />
-        ) : (
-          <EmptyState compact title="没有读到配置目录" description="/api/state/config 返回为空；确认本机服务已启动过一次。" />
-        )}
       </SectionCard>
     </div>
   )
@@ -1674,6 +1642,26 @@ function AboutSection({
             </div>
           ))}
         </dl>
+      </SectionCard>
+
+      <SectionCard title="配置文件状态" subtitle="来自 /api/state/config；目录路径见上表">
+        {stateConfig.status === 'ready' && stateConfig.data ? (
+          <ul className="flex flex-wrap gap-2">
+            {stateConfig.data.files.map((file) => (
+              <li key={file.file}>
+                <Badge tone={file.present ? 'ok' : 'warn'}>
+                  {file.present ? '有' : '缺'} <span className="ldst-num">{file.file}</span>
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : stateConfig.status === 'error' ? (
+          <ErrorBlock {...describeApiError(stateConfig.error)} variant="inline" onRetry={stateConfig.reload} />
+        ) : stateConfig.status === 'loading' ? (
+          <SkeletonText lines={2} />
+        ) : (
+          <EmptyState compact title="没有读到配置目录" description="/api/state/config 返回为空；确认本机服务已启动过一次。" />
+        )}
       </SectionCard>
 
       <SectionCard title="边界声明" subtitle="DEC-006">
@@ -1778,7 +1766,8 @@ export default function SettingsScreen() {
   )
 
   const tabParam = params.get('tab')
-  const section: Section = isSection(tabParam) ? tabParam : 'peers'
+  // `?tab=ports` 是旧深链（分享/截图里存在）：分区已并入子模块，这里保留回落。
+  const section: Section = tabParam === 'ports' ? 'peers' : isSection(tabParam) ? tabParam : 'peers'
 
   const changeSection = useCallback(
     (next: Section) => {
@@ -2069,11 +2058,10 @@ export default function SettingsScreen() {
       <div className="flex flex-col gap-4">
         <ErrorBlock {...describeApiError(controlError)} onRetry={board.reload} />
         {section === 'ai' && <AiSection controlReady={false} push={push} />}
-        {section === 'ports' && (
+        {section === 'peers' && (
           <PortsSection
             board={board}
             portRows={portRows}
-            stateConfig={stateConfig}
             controlReady={false}
             productOf={productOf}
             push={push}
@@ -2094,25 +2082,24 @@ export default function SettingsScreen() {
           </>
         </Banner>
         {section === 'peers' && (
-          <ul className="flex flex-col gap-3">
-            {STATIC_PEERS.map((peer) => (
-              <StaticPeerCard key={peer.id} peer={peer} reason="控制面未启用：模块状态无法探测。" />
-            ))}
-          </ul>
+          <>
+            <ul className="flex flex-col gap-3">
+              {STATIC_PEERS.map((peer) => (
+                <StaticPeerCard key={peer.id} peer={peer} reason="控制面未启用：模块状态无法探测。" />
+              ))}
+            </ul>
+            <PortsSection
+              board={board}
+              portRows={portRows}
+              controlReady={false}
+              productOf={productOf}
+              push={push}
+              onHealed={() => void board.refresh()}
+              supervisorState={supervisor.data}
+            />
+          </>
         )}
         {section === 'ai' && <AiSection controlReady={false} push={push} />}
-        {section === 'ports' && (
-          <PortsSection
-            board={board}
-            portRows={portRows}
-            stateConfig={stateConfig}
-            controlReady={false}
-            productOf={productOf}
-            push={push}
-            onHealed={() => void board.refresh()}
-            supervisorState={supervisor.data}
-          />
-        )}
         {section === 'financecoffer' && <FinanceCofferPanel />}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
@@ -2161,7 +2148,7 @@ export default function SettingsScreen() {
                 columns={REGISTRY_COLUMNS}
                 rows={registry}
                 rowKey={(row) => row.id}
-                caption="模块注册表：id / product / package / 声明端口 / 职责 / 是否已安装（实时占用见「数据与端口」）"
+                caption="模块注册表：id / product / package / 声明端口 / 职责 / 是否已安装（实时占用见本页下方）"
                 density="compact"
                 loading={board.status === 'loading'}
                 empty={
@@ -2176,7 +2163,7 @@ export default function SettingsScreen() {
 
             <SectionCard
               title="子模块"
-              subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；端口实时占用与诊断见「数据与端口」"
+              subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；端口实时占用与诊断见本页下方"
               bodyClassName="p-0"
               actions={
                 <>
@@ -2315,27 +2302,25 @@ export default function SettingsScreen() {
               {supervisor.data?.configured === false &&
                 ' 当前启停引擎尚未接线（482-B）：清单可查看，停止动作以后端真实返回为准，未接入时页面不会假装已停。'}
             </p>
+
+            {/* 原「数据与端口」分区并入此处：端口诊断 + 安全自愈 + 端口占用表 */}
+            <PortsSection
+              board={board}
+              portRows={portRows}
+              controlReady={controlReady}
+              productOf={productOf}
+              push={push}
+              onHealed={() => {
+                // 静默重取：reload 会整屏回 loading 骨架，把自愈结果横幅连同面板一起卸载掉。
+                void board.refresh()
+                void supervisor.refresh()
+              }}
+              supervisorState={supervisor.data}
+            />
           </>
         )}
 
         {section === 'ai' && <AiSection controlReady={controlReady} push={push} />}
-
-        {section === 'ports' && (
-          <PortsSection
-            board={board}
-            portRows={portRows}
-            stateConfig={stateConfig}
-            controlReady={controlReady}
-            productOf={productOf}
-            push={push}
-            onHealed={() => {
-              // 静默重取：reload 会整屏回 loading 骨架，把自愈结果横幅连同面板一起卸载掉。
-              void board.refresh()
-              void supervisor.refresh()
-            }}
-            supervisorState={supervisor.data}
-          />
-        )}
 
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
