@@ -1282,7 +1282,9 @@ export interface SupervisorModule {
   health: 'ok' | 'restarting' | 'needs_human'
   /** 原始生命周期：starting / running / stopping / stopped / failed / restarting / needs_human / down / unknown */
   state: string
+  /** 近 5 分钟滑动窗口内的重启次数：**当前健康指标**，0 表示近期稳定 */
   restarts_5min: number
+  /** 生命周期累计重启次数：**永不清零、仅供诊断**，不是「正在崩溃」的证据 */
   restart_count: number
   stopping_by_user: boolean
   origin: SupervisorOrigin

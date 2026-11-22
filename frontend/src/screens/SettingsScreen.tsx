@@ -79,6 +79,7 @@ import {
   selfHealView,
   ownershipView,
   avoidanceNote,
+  restartWindowNote,
   type SelfHealView,
   type StopCandidate,
 } from '../lib/supervisorView'
@@ -328,6 +329,8 @@ function PeerCard({
   const jobActive = job?.status === 'queued' || job?.status === 'running'
   const ownership = ownershipView(supervisor)
   const heal: SelfHealView | null = selfHealView(supervisor)
+  // 只呈现「近 5 分钟」窗口值，不展示生命周期累计重启数（累计值易被误读为频繁崩溃）
+  const restartNote = restartWindowNote(supervisor)
 
   return (
     <li
@@ -409,6 +412,12 @@ function PeerCard({
             <>
               {'运行 '}
               <span className="ldst-num">{uptime}</span>
+              {' · '}
+            </>
+          )}
+          {restartNote && (
+            <>
+              <span className="ldst-num text-warn">{restartNote}</span>
               {' · '}
             </>
           )}

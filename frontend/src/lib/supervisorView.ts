@@ -128,6 +128,16 @@ export function selfHealView(module: SupervisorModule | null): SelfHealView | nu
   return null
 }
 
+/**
+ * 近 5 分钟重启提示（窗口值）：>0 才给文案，绝不展示生命周期累计值——
+ * 累计 `restart_count` 会一路涨到几十上百（senate 80、watch 92…），
+ * 直接展示容易被误读为「频繁崩溃」。当前健康看 `restarts_5min`。
+ */
+export function restartWindowNote(module: SupervisorModule | null): string | null {
+  const count = module?.restarts_5min ?? 0
+  return count > 0 ? `近 5 分钟重启 ${count} 次` : null
+}
+
 function originLabel(origin: SupervisorOrigin): string {
   if (origin === 'spawned') return '本程序启动'
   if (origin === 'adopted') return '外部接管'
