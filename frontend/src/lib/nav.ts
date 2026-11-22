@@ -176,13 +176,15 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   // QUOT-567：第 10 组「知识库」——平台平时自动攒下来的个股档案。
-  // 单页组：`/knowledge` 是收代码的落地页，档案页 `/knowledge/:market/:symbol` 由它和深链进入。
+  // E 包 / DEC-091：组内新增第三页「笔记与检索」——平台攒的是档案，
+  // 这里放的是用户自己记的东西（笔记 CRUD / 跨票检索 / 估值换算器）。
   {
     key: 'knowledge',
     label: '知识库',
     icon: BookOpen,
     pages: [
       { to: '/knowledge', label: '个股档案', icon: BookOpen },
+      { to: '/knowledge/notes', label: '笔记与检索', icon: NotebookPen },
       { to: '/data-assets', label: '数据资产', icon: Database },
     ],
   },

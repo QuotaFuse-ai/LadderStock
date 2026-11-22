@@ -68,6 +68,9 @@ export const ROUTE_PATHS = [
   // 档案页直接读后端 `GET /api/knowledge/:market/:symbol`；深链形如 `/knowledge/SH/600000`。
   '/knowledge',
   '/knowledge/:market/:symbol',
+  // E 包 / DEC-091：笔记与检索（自己记的看法 + 跨票搜档案 + 估值换算器）。
+  // 静态段 `/notes` 由具体路由精确命中，不会被 `/:market/:symbol` 吞掉（少一段）。
+  '/knowledge/notes',
   // 数据资产：本地库里有哪些票、几期财报、几条公告正文（读 `/api/data/assets*`）
   '/data-assets',
   '/index.html',

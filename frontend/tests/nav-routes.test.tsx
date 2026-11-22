@@ -312,21 +312,25 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
 
 /**
  * QUOT-567：「知识库」是新增的第 10 组（不是在研究工具组里加一项）。
- * 组内两页：个股档案（落地页 `/knowledge`）+ 数据资产（`/data-assets`，知识库入库与覆盖的观测面）。
+ * E 包 / DEC-091：组内从两页变三页——个股档案 + 笔记与检索 + 数据资产。
  */
-describe('「知识库」组（QUOT-567）', () => {
-  it('第 10 组 key 是 `knowledge`，组内是 个股档案 + 数据资产 两页', () => {
+describe('「知识库」组（QUOT-567 / DEC-091）', () => {
+  it('第 10 组 key 是 `knowledge`，组内是 个股档案 + 笔记与检索 + 数据资产 三页', () => {
     expect(NAV_SECTIONS.at(-1)?.key).toBe('knowledge')
     const group = NAV_SECTIONS.find((section) => section.key === 'knowledge')
     expect(group?.label).toBe('知识库')
     expect(group?.pages.map((page) => [page.to, page.label])).toEqual([
       ['/knowledge', '个股档案'],
+      ['/knowledge/notes', '笔记与检索'],
       ['/data-assets', '数据资产'],
     ])
   })
 
-  it('落地页与档案页各命中自己的路由，档案深链不被落地页吞掉', () => {
+  it('落地页、笔记页与档案页各命中自己的路由，档案深链不被吞掉', () => {
     expect(matchedRoute('/knowledge')).toBe('/knowledge')
+    expect(matchedRoute('/knowledge/notes')).toBe('/knowledge/notes')
     expect(matchedRoute('/knowledge/SH/600000')).toBe('/knowledge/:market/:symbol')
+    // 笔记页是单段静态路由，不会被 `/:market/:symbol` 动态段吞成市场代码
+    expect(matchedRoute('/knowledge/notes')).not.toBe('/knowledge/:market/:symbol')
   })
 })

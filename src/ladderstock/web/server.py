@@ -101,6 +101,8 @@ from ladderstock.web.industry import build_router as build_industry_router
 from ladderstock.web.journal_write import build_router as build_journal_write_router
 from ladderstock.web.knowledge import KnowledgePlane
 from ladderstock.web.knowledge import build_router as build_knowledge_router
+from ladderstock.web.knowledge_write import build_router as build_knowledge_write_router
+from ladderstock.web.valuation_api import build_router as build_valuation_router
 from ladderstock.web.platform import build_platform_router, request_bound_port
 from ladderstock.web.radar import RadarPlane
 from ladderstock.web.radar import build_router as build_radar_router
@@ -2213,7 +2215,14 @@ def create_app(
     # 标的字典面（回环 + `Host`，纯数据面，不受 `LDST_CONTROL_ENABLED` 影响）；
     # 注册在 SPA 兜底之前。market 枚举与 symbol 形态在进路径解析前就拒（400）。
     knowledge = knowledge_plane if knowledge_plane is not None else KnowledgePlane(data_root=root)
+    # E 包 / DEC-091：笔记写入面 + 跨票检索（向量优先 → 本地 LIKE 降级）。
+    # 挂在既有读面之前：`/notes`、`/search` 是静态段，必须先于
+    # `/{market}/{symbol}` 动态段注册，否则 market 会把 "notes" 吞成市场代码。
+    app.include_router(build_knowledge_write_router(knowledge))
     app.include_router(build_knowledge_router(knowledge))
+
+    # E 包 / DEC-091：估值换算器（纯函数、不取数不写库；POST 写面语义同 table-export）。
+    app.include_router(build_valuation_router())
 
     # -------------------------------------------- 定时任务面（第④步前端入口）
     #

@@ -113,6 +113,9 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("analytics",), {6}),
     # B 包后半：周期报告（月/季/年）。临时数据目录里无流水也照出事实包（零已实现）→ 0。
     (("report", "--period", "month", "--of", "2026-11"), {0}),
+    # E 包（DEC-091）：估值换算器是纯函数，离线就能出结果 → 0（`research-batch`
+    # 不进矩阵，口径见 LEAF_PATHS 的注释）。
+    (("valuation", "pe", "--price", "10.5", "--eps", "2.1"), {0}),
     # 交易日志（M2 已实现）：只写本机临时数据目录，成功即 0
     (
         (
@@ -389,6 +392,11 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("verify", "capabilities"),
     ("news-archive",),
     ("peer", "serve"),
+    # E 包（DEC-091）：估值换算器（纯函数、离线可跑，pe 形态进矩阵）与批量研究队列。
+    # `research-batch` 与 `research` 同口径不进矩阵（真跑一票会进 AI 管线），
+    # 队列语义由 tests/unit/cli/test_research_batch.py 用假管线覆盖。叶子 113 → 115。
+    ("valuation",),
+    ("research-batch",),
 )
 
 
@@ -455,6 +463,9 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     ("service", "uninstall"),
     ("service", "status"),
     ("service", "tray", "--check"),
+    # E 包（DEC-091）：`valuation` 的 JSON 载荷离线可解析（calculator 纯函数）；
+    # `research-batch` 的载荷语义由 tests/unit/cli/test_research_batch.py 覆盖。
+    ("valuation", "pe", "--price", "10.5", "--eps", "2.1"),
 )
 
 # `--output` 的可选值必须与 docs/CLI.md §F 一字不差

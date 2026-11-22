@@ -87,7 +87,8 @@
 | **QUOT-533 增量（1，非 P0 基线）** | `sync industry`（行业缓存真实联网补齐，DEC-074） |
 | **F 批次增量（25，非 P0 基线，见 §T）** | `archive *`、`brief *`、`coverage *`、`debate *`、`verify *`、`news-archive`、`peer serve` |
 | **DEC-087 增量（11，非 P0 基线，见 §S）** | `alert rules *`、`alert channels *`、`alert run` |
-| **DEC-089 增量（1，非 P0 基线，见 §U）** | `analytics`（组合统计） |
+| **DEC-089 增量（2，非 P0 基线，见 §U）** | `analytics`（组合统计）、`report`（月/季/年报） |
+| **DEC-091 增量（2，非 P0 基线，见 §V）** | `valuation`（估值换算器）、`research-batch`（批量研究） |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -588,6 +589,21 @@ ldst position list --output json                         # realized.total_pnl（
 |---|---|---|---|---|
 | 102 | `ldst analytics` | 组合统计（指标/基准/归因/行为/错题本） | `--days`（默认 365） | 0；无流水或无日线 **6** |
 | 103 | `ldst report` | 月报/季报/年报（事实包 + 模板叙述，落 `data/report/`） | `--period month|quarter|year` / `--of` / `--dry-run` | 0；参数非法 **2** |
+
+## V. 知识库与换算（DEC-091 增量，2）
+
+> E 包两条命令，口径见 `docs/decisions/DEC-091-knowledge-write-and-search.md`。
+> **叶子 113 → 115**：`valuation` + `research-batch` 各 +1，登记进 `LEAF_PATHS`；
+> `valuation`（纯函数形态）进矩阵与 `JSON_PATHS`，`research-batch` 与 `research`
+> 同口径不进矩阵（真跑会进 AI 管线），队列语义由 `tests/unit/cli/test_research_batch.py`
+> 用假管线覆盖。Web 面：笔记 CRUD + 跨票检索挂在 `/api/knowledge/*`，
+> 换算器对应 `POST /api/valuation/estimate`（回环 + Host + POST 写面语义，
+> **不取数不写库**，DEC-025 红线不动：研究管线估值段的数字唯一来源仍是 facts）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 104 | `ldst valuation` | 估值换算器：PE / PB / PS / 股息率 / 盈利收益率 / 简化两段 DCF | `<kind>` + `--price / --eps / --bps / --sps / --dps / --pe`；DCF 另需 `--fcf / --growth / --terminal-growth / --discount / --periods` | 0；未知类型 / 缺参 / 护栏拒 **2**。输出恒带免责声明「这是换算器，不是估值判断」 |
+| 105 | `ldst research-batch` | 批量个股研究：串行逐票、逐票 checkpoint、单票失败不拖垮队列 | `<codes...>` 或 `--from-pool`（sync.yaml 的 `daily_k.codes`，二选一）；`--date` / `--retry-failed` | 全部干净 **0**；有票降级 **8** / **9**；单票失败 **1**；参数错（含非法代码）**2**。单批上限 30 票、重复代码去重（保序） |
 
 ## F. 全局约定
 

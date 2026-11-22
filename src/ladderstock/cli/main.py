@@ -28,6 +28,7 @@ from ladderstock.cli.brief import register as register_brief
 from ladderstock.cli.coverage import register as register_coverage
 from ladderstock.cli.debate import register as register_debate
 from ladderstock.cli.verify import register as register_verify
+from ladderstock.cli.valuation import register as register_valuation
 from ladderstock.cli.export import export as export_command
 from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
@@ -43,6 +44,7 @@ from ladderstock.cli.pool import register as register_pool
 from ladderstock.cli.peer import peer_app
 from ladderstock.cli.position import register as register_position
 from ladderstock.cli.research import research as research_command
+from ladderstock.cli.research_batch import register as register_research_batch
 from ladderstock.cli.review import register as register_review
 from ladderstock.cli.run import launch as launch_dashboard
 from ladderstock.cli.schedule import register as register_schedule
@@ -231,6 +233,9 @@ register_watchdog(app)
 
 # 单入口 supervisor（QUOT-523）：不进看板也能全起 / 全停 / 单模块重启。
 register_supervisor(app)
+# E 包（DEC-091）：批量研究队列 + 估值换算器
+register_research_batch(app)
+register_valuation(app)
 
 # 知识库投影（形态 2）：公告正文 → qdrant，可被脚本/监控调度。
 register_knowledge(app)
