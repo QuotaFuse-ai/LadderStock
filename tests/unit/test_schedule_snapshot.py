@@ -169,4 +169,6 @@ def test_schedule_schema_enum_contains_snapshot() -> None:
         "news_collect",
         "recall",
         "alert_check",
+        # B 包后半：月报/季报/年报（按日跑 + 每月 1 日内部守卫）
+        "report",
     ]

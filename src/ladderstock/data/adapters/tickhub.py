@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from ladderstock.core.boundary import NEWS_STREAM_DATASETS, owner_of
+from ladderstock.core.boundary import owner_of
 from ladderstock.core.models import Confidence, Freshness, LadderEnvelope
 from ladderstock.data.duckdb_store import record_code
 from ladderstock.errors import EXIT_SOURCE, LadderStockError
@@ -180,7 +180,10 @@ ROW_SHAPES: dict[str, RowShape] = {
         "announcements", passthrough=("code",), date_keys=("publish_time",)
     ),
     "news_eastmoney_stock": RowShape("news", passthrough=("code",), date_keys=("date",)),
-    "news_cctv": RowShape("items", require_code=False),
+    # 新闻联播：`data.date` 是**这批稿子的播出日**（行内只有时刻或什么都没有）。
+    # 头部日期必须透传到行——否则 `normalize_records` 展开 items 后 decoder 拿到的
+    # 是纯行列表，顶层 date 丢了，每条都会 published_at=None 掉进 dropped_undated。
+    "news_cctv": RowShape("items", passthrough=("date",), require_code=False),
 }
 
 #: `tdx_daily_package` 是 daily_k 的备源工具，形状按工具名登记（同数据集两种形状）

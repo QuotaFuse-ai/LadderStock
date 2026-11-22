@@ -442,6 +442,16 @@ def test_json_contract(
 ) -> None:
     data_dir = tmp_path / "data"
     monkeypatch.setenv("LDST_DATA_DIR", str(data_dir))
+    # 隔离配置目录（合法但无凭据）：conftest 只清进程环境变量，而 legacy 后端
+    # 还会读仓库 `config/ai.env`——开发机上有真实凭据，会把「未配置降级」
+    # 变成真拨模型（与 test_cli.py 的 data_dir 同一条修复）。
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "ai.yaml").write_text(
+        "ai:\n  backends: []\n  default_model: stub\n", encoding="utf-8"
+    )
+    (config_dir / "ai.env").write_text("", encoding="utf-8")
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(config_dir))
     monkeypatch.delenv("LDST_LLM_BASE_URL", raising=False)
     monkeypatch.delenv("LDST_LLM_API_KEY", raising=False)
 

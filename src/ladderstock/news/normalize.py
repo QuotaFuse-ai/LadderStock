@@ -205,8 +205,10 @@ def _cctv(data: Any, provenance: dict[str, Any]) -> list[NewsItem]:
             dataset="news_cctv",
             title=_text(row, "title"),
             url=_text(row, "url"),
-            # 新闻联播只给到「哪天」，没有时刻——保持日期粒度，不补 00:00
-            published_at=row.get("time") or day,
+            # 新闻联播只给到「哪天」，没有时刻——保持日期粒度，不补 00:00。
+            # 日期的优先级：行内 time（若有）→ 行内 date（适配器把头部播出日
+            # 透传到每一行）→ 顶层 date（未经适配器展开的原始形状）。
+            published_at=row.get("time") or _text(row, "date") or day,
             provenance=provenance,
         )
         if item is not None:
