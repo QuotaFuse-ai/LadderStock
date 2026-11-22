@@ -208,10 +208,17 @@ class SupervisorEngine:
         在听」判成 suspected_pid_reuse，页面就显示「假 down」——服务明明在听，
         状态却是 stopped，停止 / 启动按钮也跟着失效成长辈。
         这里只认适配器的端口证据：`identify()` 判 matched 的进程才认领。
+
+        2026-11-23 增补：**账本 pid 活着但指纹已换**（launcher 退出后 pid 被
+        复用占用）同样是漂移——只要适配器能从端口上认出真实工作者，就改指过去。
+        这修的是「20s 窗口内 launcher 未退出 → repoint 跳过 → 之后再无人救」的\n        窗口期漏洞。
         """
         pid = int(record.pid or 0)
         if pid and self._procs.alive(pid):
-            return
+            cmdline = self._procs.cmdline(pid) or ()
+            if not record.cmdline_hash or cmdline_hash(cmdline) == record.cmdline_hash:
+                return
+            # pid 活着但已不是我们的进程（被复用）：继续找真实监听者
         live = self._claimed_pid(adapter)
         if not live or live == pid:
             return
@@ -271,17 +278,71 @@ class SupervisorEngine:
         return sorted(victims)
 
     def _verify_pid(self, record: ModuleRecord) -> str:
-        """对账三态：alive / reuse / dead。无证据一律不认（失败关闭）。"""
+        """对账三态：alive / reuse / dead。无证据一律不认（失败关闭）。
+
+        reuse / dead 判定**不直接定罪**（QUOT-609 / 2026-11-23 生产事故）：
+        账本记的 pid 是 launcher（`peer serve` 包装层），它退出后（pid 消失或被
+        系统复用）老逻辑直接把模块标 stopped——而真实 worker 还活着、端口还
+        听着。判定前先按指纹全表找回真实工作者：找到 = 同一实例还在跑，自愈
+        改指（延迟 repoint）并回 alive；找不到才落 reuse / dead（失败关闭）。
+        这等价于把 `_repoint_to_live_listener` 的「wrapper 起完就退」场景
+        兜底到每一轮对账，20s 窗口期错过也能救回来。
+        """
         pid = record.pid
         if pid is None or not self._procs.alive(pid):
-            return "dead"
+            return self._recover_or_dead(record)
         cmdline = self._procs.cmdline(pid)
         if not cmdline:
-            # 活着但查不到命令行：无法证明还是我们拉的那个，按疑似复用处理，
-            # 不托管、不强杀（设计文档 §对账：无证据不认人）
-            return "reuse"
+            # 活着但查不到命令行：无法证明还是我们拉的那个。先按指纹自救
+            # （能找到说明工作者还在跑，只是账本 pid 摸不到命令行），找不到才疑似复用
+            return self._recover_or_reuse(record)
         if record.cmdline_hash and cmdline_hash(cmdline) != record.cmdline_hash:
+            # pid 还活着但指纹变了：两种可能——真复用，或账本记的 launcher 已被
+            # 别人顶着而真实工作者另有其 pid。按指纹找回能区分这两种场景。
+            return self._recover_or_reuse(record)
+        return "alive"
+
+    def _recover_or_dead(self, record: ModuleRecord) -> str:
+        """账本 pid 已死：先按指纹找回活着的真实工作者，找不到才是真 dead。"""
+        if not record.cmdline_hash:
+            return "dead" if record.pid is None else "dead"
+        find = getattr(self._procs, "find_by_hash", None)
+        recovered: int | None = None
+        if find is not None:
+            try:
+                recovered = find(record.cmdline_hash)
+            except Exception:  # noqa: BLE001 - 自救失败不影响对账主流程
+                recovered = None
+        if recovered is None or recovered == record.pid:
+            return "dead"
+        record.pid = int(recovered)
+        self._mark_spawned(record.module, int(recovered), record.cmdline_hash)
+        return "alive"
+
+    def _recover_or_reuse(self, record: ModuleRecord) -> str:
+        """按 cmdline 哈希全表找回真实进程：找到→自愈改指并回 alive，否则 reuse。
+
+        找回的就是账本 pid 自己（查询瞬时失败）时：进程活着且指纹在表内可证，
+        视为正常实例回 alive——无证据不认人的红线针对「证明不了是谁」，这里
+        有全表指纹佐证，不是无证据。
+        """
+        if not record.cmdline_hash:
             return "reuse"
+        find = getattr(self._procs, "find_by_hash", None)
+        recovered: int | None = None
+        if find is not None:
+            try:
+                recovered = find(record.cmdline_hash)
+            except Exception:  # noqa: BLE001 - 自救失败不影响对账主流程
+                recovered = None
+        if recovered is None:
+            return "reuse"
+        if recovered == record.pid:
+            # 找回的就是自己：cmdline 查询通道瞬时故障，实例完好
+            return "alive"
+        # 找回的是真实工作者：改指 + 重记本任 spawn 身份，与 repoint 同口径
+        record.pid = int(recovered)
+        self._mark_spawned(record.module, int(recovered), record.cmdline_hash)
         return "alive"
 
     # ------------------------------------------------------------------ 启动

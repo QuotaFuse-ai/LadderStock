@@ -99,6 +99,15 @@ class ProcessOps(Protocol):
     def kill_tree(self, root_pid: int) -> None:
         """整树强杀；杀完不回读（确认由引擎的 probe 负责）。"""
 
+    def find_by_hash(self, fingerprint: str) -> int | None:
+        """按 cmdline 哈希在**全表**找回真实进程 pid；找不到返回 None。
+
+        这是 PID 复用对账的自救通道（QUOT-609 / 2026-11-23 生产事故）：账本记的
+        pid 是 launcher（`peer serve` 包装层），它退出后 pid 被系统复用，老对账
+        直接判「疑似复用」把模块标 stopped——而真实工作者还活着、端口还听着。
+        按指纹全表扫一遍（进程数几百以内，psutil 毫秒级）就能找回。
+        空指纹返回 None（无证据不认人，失败关闭）。"""
+
 
 class WindowsProcessOps:
     """tasklist / Get-CimInstance / taskkill 的真实实现（本项目以 Windows 为主）。
@@ -110,6 +119,21 @@ class WindowsProcessOps:
 
     def self_pid(self) -> int:  # pragma: no cover - 平台直通
         return os.getpid()
+
+    def find_by_hash(self, fingerprint: str) -> int | None:  # pragma: no cover - 子进程查询
+        if not fingerprint or psutil is None:
+            return find_pid_by_hash_via_ops(self, fingerprint)
+        try:
+            for proc in psutil.process_iter(attrs=["pid", "cmdline"]):
+                try:
+                    argv = proc.info["cmdline"]
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                if argv and cmdline_hash(tuple(argv)) == fingerprint:
+                    return int(proc.info["pid"])
+        except (psutil.Error, OSError):
+            return find_pid_by_hash_via_ops(self, fingerprint)
+        return None
 
     def alive(self, pid: int) -> bool:  # pragma: no cover - 子进程查询
         if psutil is not None:
@@ -375,8 +399,54 @@ class PosixProcessOps:
             except OSError:
                 continue
 
+    def find_by_hash(self, fingerprint: str) -> int | None:  # pragma: no cover - 非 Windows
+        if not fingerprint:
+            return None
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            argv = self.cmdline(int(entry.name))
+            if argv and cmdline_hash(argv) == fingerprint:
+                return int(entry.name)
+        return None
+
 
 def default_process_ops() -> ProcessOps:
     if os.name == "nt":
         return WindowsProcessOps()
     return PosixProcessOps()  # pragma: no cover - 平台分流
+
+
+def find_pid_by_hash_via_ops(ops: ProcessOps, fingerprint: str) -> int | None:
+    """`find_by_hash` 的通用降级实现：逐 pid `cmdline()` 比对（不依赖 psutil）。
+
+    生产两个实现都优先 psutil 全表快照（毫秒级）；这个函数给：
+    1. 测试假件（FakeProcessOps 只实现基础四查，自动获得该能力）；
+    2. psutil 缺席 / 被拒时 Windows 实现的回落（逐 pid CIM 慢但可用，
+       对账低频 60 秒一轮，可接受）。
+    """
+    if not fingerprint:
+        return None
+    for pid in _iter_pids(ops):
+        argv = ops.cmdline(pid)
+        if argv and cmdline_hash(argv) == fingerprint:
+            return int(pid)
+    return None
+
+
+def _iter_pids(ops: ProcessOps) -> list[int]:
+    """当前全量 pid 清单（psutil 优先，其次 PowerShell tasklist CSV）。"""
+    if psutil is not None:
+        try:
+            return [int(proc.pid) for proc in psutil.process_iter(attrs=["pid"])]
+        except (psutil.Error, OSError):
+            pass
+    argv: list[str] = ["powershell", "-NoProfile", "-Command", "(Get-Process).Id"]
+    try:
+        result = subprocess.run(
+            argv, shell=False, timeout=QUERY_TIMEOUT_SEC, capture_output=True, text=True,
+            errors="replace",
+        )
+        return [int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()]
+    except (OSError, subprocess.SubprocessError):
+        return []
