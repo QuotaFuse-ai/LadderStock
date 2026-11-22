@@ -135,3 +135,6 @@ supervisor/
 
 # �Ự��ʱ������߹���Ŀ¼��������⣩
 .temp/
+
+# 端口记忆（QUOT-594/DEC-092）：每台机器自己的避让/偏好运行态，由 ldst run 写入
+config/ports.yaml
