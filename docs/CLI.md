@@ -584,11 +584,20 @@ ldst position list --output json                         # realized.total_pnl（
 > **不联网**；口径表见 `analytics/engine.py` 模块 docstring，页面与 CLI 共用一份。
 > Web 对应 `GET /api/analytics/summary`（回环 + Host + `no-store`）。
 > 「缺数就是 `null` + 原因」：无流水 / 无日线 → 退出码 **6**，不补 0。
+>
+> **AI 月报（2026-11-22 补账）**：`report` 的叙述层走 `analytics/period_ai.py`
+> ——配置了模型凭据时五段 AI 叙述（失败段落退模板、退出码 9，与 weekly 同口径；
+> 未配置凭据保持 B 包第一阶段的模板直出、退出码 0）。AI 形态与研究同口径
+> 不进矩阵；矩阵钉 `--no-ai` 形态。
 
 | # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
 |---|---|---|---|---|
-| 102 | `ldst analytics` | 组合统计（指标/基准/归因/行为/错题本） | `--days`（默认 365） | 0；无流水或无日线 **6** |
-| 103 | `ldst report` | 月报/季报/年报（事实包 + 模板叙述，落 `data/report/`） | `--period month|quarter|year` / `--of` / `--dry-run` | 0；参数非法 **2** |
+| 102 | `ldst analytics` | 组合统计（指标/基准/归因/行为/错题本） | `--days`（默认 365）；`--xlsx PATH` / `--pdf PATH` 落本地文件（DEC-090 §4，依赖缺席 exit 3 不换格式） | 0；无流水或无日线 **6** |
+| 103 | `ldst report` | 月报/季报/年报（事实包 + AI 叙述，模板兑底，落 `data/report/`） | `--period month|quarter|year` / `--of` / `--no-ai` / `--dry-run` | 0；AI 段落降级 **9**（与 weekly 同口径）；参数非法 **2** |
+
+> Web 对应 `GET /api/analytics/export?format=csv|xlsx|pdf`（C 包后续单已清：PDF 走
+> `review/export.py` 的 CJK 管线，依赖缺席 503 不换格式）；分享长图/链接在
+> `/analytics` 页（「分享」抽屉，与页面同源缺数写 `—`）。
 
 ## V. 知识库与换算（DEC-091 增量，2）
 

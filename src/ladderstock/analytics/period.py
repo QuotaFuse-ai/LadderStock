@@ -1,7 +1,8 @@
-"""周期报告（B 包后半）：月报 / 季报 / 年报。
+"""周期报告（B 包）：月报 / 季报 / 年报。
 
-口径：**期间事实包 + 模板叙述**，不调 AI（AI 叙述留给后续单；事实包先保证可复算）。
-原料全部本地只读：
+口径：**期间事实包 + AI 叙述（模板兑底）**——第二阶段起叙述层走
+`analytics/period_ai.py`（配置了模型凭据才调模型；未配置或段落失败时退回
+程序模板，事实包永远完整）。原料全部本地只读：
 
 - 组合账本 → 期间已实现 / 分红 / 费用 / 按标的归因 / 期间错题（`core.portfolio.replay`）；
 - 期间行为纪律 → 与 `analytics/engine` 同一套「买入价在当日振幅位置 → 前向 5 日」
@@ -227,11 +228,9 @@ def build_report(kind: str, of: str | None = None, *, root: Path | None = None) 
     }
 
 
-def render_markdown(report: dict[str, Any]) -> str:
-    """模板叙述（不调 AI）：五节——结论 / 组合 / 归因 / 纪律 / 市场宽度。"""
+def template_section_lines(section: str, report: dict[str, Any]) -> list[str]:
+    """五段模板要点（复述事实包，不写新数字）——AI 段落的降级文案。"""
     portfolio = report["portfolio"]
-    label = report["label"]
-    period_name = {"month": "月报", "quarter": "季报", "year": "年报"}[report["period"]]
 
     def pct(value: float | None) -> str:
         return "—" if value is None else f"{value * 100:.2f}%"
@@ -239,17 +238,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     def money(value: float | None) -> str:
         return "—" if value is None else f"{value:,.2f}"
 
-    lines: list[str] = [
-        f"# {label} {period_name}（{report['start']} → {report['end']}）",
-        "",
-        f"> 生成于 {report['generated_at']} · 纯本机事实包 + 模板叙述（不调 AI）",
-        "",
-        "## 一、一句话",
-        "",
-    ]
-    if portfolio["realized_count"] == 0:
-        lines.append("本期没有已实现交易（卖出落袋）；持仓浮盈浮亏请到「复盘统计」看实时口径。")
-    else:
+    if section == "overview":
+        if portfolio["realized_count"] == 0:
+            return ["本期没有已实现交易（卖出落袋）；持仓浮盈浮亏请到「复盘统计」看实时口径。"]
         tone = (
             "为正"
             if portfolio["realized_total"] > 0
@@ -257,64 +248,144 @@ def render_markdown(report: dict[str, Any]) -> str:
             if portfolio["realized_total"] < 0
             else "打平"
         )
-        lines.append(
+        return [
             f"本期 {portfolio['realized_count']} 笔已实现交易，"
             f"合计 {money(portfolio['realized_total'])}（{tone}），"
             f"胜率 {pct(portfolio['win_rate'])}"
             f"（{portfolio['wins']} 胜 / {portfolio['losses']} 负）。"
-        )
-    lines.extend(["", "## 二、组合结果（已实现）", ""])
-    lines.append(f"- 已实现盈亏合计：{money(portfolio['realized_total'])}")
-    lines.append(f"- 交易笔数：{portfolio['realized_count']} · 胜率：{pct(portfolio['win_rate'])}")
-    if not report["trades_available"]:
-        lines.append("- 本机没有组合账本流水（先在我的持仓页录入）。")
-
-    lines.extend(["", "## 三、按标的归因（已实现）", ""])
-    if not report["attribution"]:
-        lines.append("本期没有已实现归因。")
-    for row in report["attribution"]:
-        lines.append(f"- {row['symbol']}：{money(row['net'])}")
-
-    lines.extend(["", "## 四、买卖纪律", ""])
-    buckets = report["behavior"]["buckets"]
-    if not buckets:
-        reason = report["behavior"].get("reason") or "需要日线 high/low 与 5 个后续交易日"
-        lines.append(f"无可判定的买入（{reason}）。")
-    for row in buckets:
-        lines.append(
-            f"- {row['label']}：{row['count']} 笔 · 前向 {row['window_days']} 日均值 "
-            f"{pct(row['avg_forward_return'])} · 胜率 {pct(row['win_rate'])}"
-        )
-    if report["mistakes"]:
-        lines.extend(["", "### 本期错题（已实现亏损前 5）", ""])
-        for row in report["mistakes"]:
-            lines.append(f"- {row['date']} {row['symbol']}：{money(row['pnl'])}")
-
-    lines.extend(["", "## 五、市场情绪（期间复盘产物）", ""])
-    market = report["market"]
-    if not market.get("available"):
-        lines.append(f"不可用：{market.get('reason')}")
-    else:
+        ]
+    if section == "portfolio":
+        lines = [
+            f"- 已实现盈亏合计：{money(portfolio['realized_total'])}",
+            f"- 交易笔数：{portfolio['realized_count']} · 胜率：{pct(portfolio['win_rate'])}",
+        ]
+        if not report["trades_available"]:
+            lines.append("- 本机没有组合账本流水（先在我的持仓页录入）。")
+        return lines
+    if section == "attribution":
+        if not report["attribution"]:
+            return ["本期没有已实现归因。"]
+        return [f"- {row['symbol']}：{money(row['net'])}" for row in report["attribution"]]
+    if section == "discipline":
+        buckets = report["behavior"]["buckets"]
+        discipline_lines: list[str] = []
+        if not buckets:
+            reason = report["behavior"].get("reason") or "需要日线 high/low 与 5 个后续交易日"
+            discipline_lines.append(f"无可判定的买入（{reason}）。")
+        for row in buckets:
+            discipline_lines.append(
+                f"- {row['label']}：{row['count']} 笔 · 前向 {row['window_days']} 日均值 "
+                f"{pct(row['avg_forward_return'])} · 胜率 {pct(row['win_rate'])}"
+            )
+        if report["mistakes"]:
+            discipline_lines.append("本期错题（已实现亏损前 5）：")
+            for row in report["mistakes"]:
+                discipline_lines.append(f"- {row['date']} {row['symbol']}：{money(row['pnl'])}")
+        return discipline_lines
+    if section == "market":
+        market = report["market"]
+        if not market.get("available"):
+            return [f"不可用：{market.get('reason')}"]
+        market_lines: list[str] = []
         if market.get("limit_up_avg") is not None:
-            lines.append(f"- 涨停家数均值：{market['limit_up_avg']}")
+            market_lines.append(f"- 涨停家数均值：{market['limit_up_avg']}")
         if market.get("broken_avg") is not None:
-            lines.append(f"- 炸板家数均值：{market['broken_avg']}")
+            market_lines.append(f"- 炸板家数均值：{market['broken_avg']}")
         if market.get("promotion_avg") is not None:
-            lines.append(f"- 晋级率均值：{pct(market['promotion_avg'])}")
+            market_lines.append(f"- 晋级率均值：{pct(market['promotion_avg'])}")
         if market.get("seal_avg") is not None:
-            lines.append(f"- 封板率均值：{pct(market['seal_avg'])}")
-        lines.append(
+            market_lines.append(f"- 封板率均值：{pct(market['seal_avg'])}")
+        market_lines.append(
             f"- 有复盘产物的交易日：{market['covered_days']} 天"
             + (f" · 缺 {market['missing_days']} 天（不补数）" if market.get("missing_days") else "")
         )
+        return market_lines
+    raise LadderStockError(f"未知叙述段 {section!r}", 2)
 
-    lines.extend(["", "---", "", "口径与缺数语义见 `analytics/period.py`；本报告由程序模板生成。"])
+
+#: Markdown 节标题（与 AI 段名一一对应，顺序固定）
+SECTION_HEADINGS: dict[str, str] = {
+    "overview": "一、期间一句话",
+    "portfolio": "二、组合结果（已实现）",
+    "attribution": "三、按标的归因（已实现）",
+    "discipline": "四、买卖纪律",
+    "market": "五、市场情绪（期间复盘产物）",
+}
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    """事实包 + 叙述渲染：AI 段落优先，失败/未配置段落退回模板（同函数同产物）。"""
+    label = report["label"]
+    period_name = {"month": "月报", "quarter": "季报", "year": "年报"}[report["period"]]
+
+    ai_sections = {
+        str(item.get("name")): item
+        for item in ((report.get("ai") or {}).get("sections") or [])
+        if isinstance(item, dict)
+    }
+    ai_configured = bool((report.get("ai") or {}).get("configured"))
+    if ai_sections and ai_configured:
+        mode_line = "纯本机事实包 + AI 叙述（模板兑底：指标全部程序计算）"
+    else:
+        mode_line = "纯本机事实包 + 模板叙述（未配置 AI 或未启用）"
+
+    lines: list[str] = [
+        f"# {label} {period_name}（{report['start']} → {report['end']}）",
+        "",
+        f"> 生成于 {report['generated_at']} · {mode_line}",
+        "",
+    ]
+
+    for name, heading in SECTION_HEADINGS.items():
+        section = ai_sections.get(name) or {}
+        narrative = [str(line) for line in section.get("narrative") or [] if str(line).strip()]
+        degraded = bool(section.get("degraded"))
+        model = section.get("model")
+        lines.extend([f"## {heading}", ""])
+        if narrative:
+            lines.extend(narrative, )
+            lines.append("")
+            if degraded:
+                lines.append("> 本段 AI 生成失败，以上为程序模板要点；指标不受影响。")
+                lines.append("")
+            elif model:
+                lines.append(f"> 本段由模型 {model} 叙述；指标全部来自程序事实包。")
+                lines.append("")
+        else:
+            lines.extend(template_section_lines(name, report))
+            lines.append("")
+
+    lines.extend(["---", "", "口径与缺数语义见 `analytics/period.py`；数字全部由程序计算。"])
     return "\n".join(lines)
 
 
-def write_report(kind: str, of: str | None = None, *, root: Path | None = None) -> dict[str, Any]:
-    """生成并落盘 JSON + Markdown；返回 `{report, json_path, md_path}`。"""
+def write_report(
+    kind: str,
+    of: str | None = None,
+    *,
+    root: Path | None = None,
+    use_ai: bool = True,
+) -> dict[str, Any]:
+    """生成并落盘 JSON + Markdown；返回 `{report, json_path, md_path}`。
+
+    `use_ai=True`（缺省）时走 `period_ai.narrate()`：配置了模型凭据的五段 AI 叙述，
+    失败段落退模板并置 `ai.degraded=True`；未配置凭据整份模板（B 包第一阶段的
+    既有契约）。`--no-ai` 时跳过叙述层，纯模板直出。
+    """
     report = build_report(kind, of, root=root)
+    if use_ai:
+        from ladderstock.analytics import period_ai
+
+        narrated = period_ai.narrate(report, root=root)
+        report["ai"] = {
+            "configured": narrated["configured"],
+            "degraded": narrated["degraded"],
+            "failed": narrated["failed"],
+            "models": narrated["models"],
+            "chain": narrated["chain"],
+            "ai_failures": narrated["ai_failures"],
+            "sections": narrated["sections"],
+        }
     json_path = report_path(kind, report["tag"], suffix="json", root=root)
     md_path = report_path(kind, report["tag"], suffix="md", root=root)
     json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -327,9 +398,11 @@ def write_report(kind: str, of: str | None = None, *, root: Path | None = None) 
 
 __all__ = [
     "PERIODS",
+    "SECTION_HEADINGS",
     "build_report",
     "render_markdown",
     "report_path",
     "resolve_period",
+    "template_section_lines",
     "write_report",
 ]

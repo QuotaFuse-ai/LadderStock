@@ -106,3 +106,29 @@ def test_workbook_missing_openpyxl_reports_config_error(monkeypatch: pytest.Monk
         export.build_workbook(_payload())
     assert err.value.code == EXIT_CONFIG
     assert "openpyxl" in err.value.message
+
+
+def test_pdf_without_cjk_font_reports_config_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """字体探测被 LDST_CJK_FONT 钉死到不存在的文件 → ExportUnavailable（不静默换格式）。"""
+    monkeypatch.setenv("LDST_CJK_FONT", str(tmp_path / "no-such-font.ttf"))
+    with pytest.raises(export.ExportUnavailable) as err:
+        export.build_pdf_bytes(_payload())
+    assert err.value.code == EXIT_CONFIG
+    assert "中文字体" in err.value.message
+
+
+def test_pdf_bytes_start_with_pdf_magic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """reportlab + 真字体可用时产出真 PDF；字体缺席的机器上明确报配置错。"""
+    from ladderstock.review.export import register_cjk_font
+
+    monkeypatch.delenv("LDST_CJK_FONT", raising=False)
+    font, _reason = register_cjk_font()
+    if font is None:
+        with pytest.raises(export.ExportUnavailable):
+            export.build_pdf_bytes(_payload())
+        return
+    blob = export.build_pdf_bytes(_payload())
+    assert blob[:5] == b"%PDF-"
+    assert b"/Font" in blob

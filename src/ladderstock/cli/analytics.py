@@ -3,16 +3,22 @@
 一次输出「指标 / 基准 / 归因 / 行为 / 错题本」六块，与 Web
 `GET /api/analytics/summary` 同一个执行体（`analytics/engine.build_summary`）。
 纯本地：只读本机交易流水与 daily_k / index_daily 缓存，不联网。
+
+落文件（C 包 / DEC-090）：`--xlsx PATH` 写四张表的工作簿（openpyxl）；
+`--pdf PATH` 写 A4 竖版 PDF（reportlab + CJK 字体，复用 review/export.py 的
+探测管线）。依赖缺席时报人话 + 退出码 3，不静默换格式。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
 
 from ladderstock.analytics import engine
-from ladderstock.cli.output import OutputOption, emit, resolve_format
+from ladderstock.analytics.export import ExportUnavailable, build_pdf_bytes, build_workbook
+from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 
 
 def _pct(value: Any) -> str:
@@ -96,6 +102,13 @@ def _print_human(payload: dict[str, Any]) -> None:
 
 def analytics_command(
     days: Annotated[int, typer.Option("--days", help="回看自然日数")] = 365,
+    xlsx_path: Annotated[
+        Path | None,
+        typer.Option("--xlsx", help="把四张表（指标/归因/行为/错题本）写成本地 XLSX 文件"),
+    ] = None,
+    pdf_path: Annotated[
+        Path | None, typer.Option("--pdf", help="把统计写成本地 PDF（需要 reportlab + 中文字体）")
+    ] = None,
     output: OutputOption = None,
 ) -> None:
     """组合统计：指标 / 基准 / 归因 / 行为 / 错题本（只读本机，不联网）。"""
@@ -107,6 +120,23 @@ def analytics_command(
     if not payload.get("ok"):
         # 6 = 无结果（没有流水或日线）与全仓口径一致
         raise typer.Exit(code=6)
+
+    # 落文件（DEC-090）：依赖缺席 → 人话 + exit 3，不静默换格式
+    for suffix, builder, dest in (
+        ("xlsx", build_workbook, xlsx_path),
+        ("pdf", build_pdf_bytes, pdf_path),
+    ):
+        if dest is None:
+            continue
+        try:
+            content = builder(payload)
+        except ExportUnavailable as exc:
+            error(f"{suffix.upper()} 导出不可用：{exc.message}")
+            raise typer.Exit(code=3) from exc
+        dest = dest.with_suffix(f".{suffix}") if dest.suffix.lower() != f".{suffix}" else dest
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        typer.echo(f"已写出 {dest}（本机聚合结果，请自行保管）")
 
 
 def register(app: typer.Typer) -> None:

@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { Database, Search } from 'lucide-react'
+import { Database, Download, Search } from 'lucide-react'
 
 import {
   DIMENSION_TITLE,
@@ -32,6 +32,7 @@ import {
 } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { formatInt, MISSING } from '../../lib/format'
+import { useTableExport } from '../../lib/useTableExport'
 import { compareMetric, compactMetric, DIMENSION_METRICS, formatMetric, type MetricKind } from './metrics'
 import { HEAT_MAX_PERCENT, HEAT_MIN_PERCENT, levelHeatStyle, rankRatio, signedHeatStyle, MISSING_CELL_TITLE } from './heat'
 import { CardNote, EndpointMissingEmpty, KeyValueList, MissingNote } from './bits'
@@ -357,6 +358,24 @@ export default function IndustryMatrixScreen() {
     }
   }, [payload])
 
+  // C 包后续单（DEC-090 §4）：导出当前筛选后的行业矩阵视图（列随当前维度变化，
+  // 指标缺失导出空列不补 0；数据时点逐行带走，避免导出件无法溯源）。
+  const exportRows = visible.map((row) => ({
+    name: row.name,
+    l1_code: row.l1_code ?? '',
+    constituent_count: row.constituent_count ?? '',
+    ...Object.fromEntries(
+      DIMENSION_METRICS[dimension].map((spec) => [spec.path, row.metrics[spec.path] ?? '']),
+    ),
+    as_of: row.as_of[dimension] ?? '',
+    data_source_status: row.data_source_status,
+  }))
+  const exporter = useTableExport(
+    'industry-matrix',
+    exportRows,
+    ['name', 'l1_code', 'constituent_count', ...DIMENSION_METRICS[dimension].map((spec) => spec.path), 'as_of', 'data_source_status'],
+  )
+
   const header = (
     <PageHeader
       title="产业研究"
@@ -367,7 +386,22 @@ export default function IndustryMatrixScreen() {
         </span>
       }
       badge={<DemoStateBadge state={forced} />}
-      actions={<IndustrySyncPanel coverage={coverage} onCompleted={reload} />}
+      actions={
+        <>
+          {visible.length > 0 ? (
+            <Button
+              variant="secondary"
+              leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+              disabled={exporter.busyFormat !== null}
+              title="导出当前筛选后的行业矩阵（CSV；列随当前维度变化）"
+              onClick={() => void exporter.buttonProps('csv').onClick()}
+            >
+              导出 CSV
+            </Button>
+          ) : null}
+          <IndustrySyncPanel coverage={coverage} onCompleted={reload} />
+        </>
+      }
       refresh={{
         onClick: reload,
         disabled: state === 'loading',
@@ -433,6 +467,8 @@ export default function IndustryMatrixScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {exporter.error ? <Banner tone="warn" title="导出失败">{exporter.error}</Banner> : null}
 
       {state === 'partial' && (
         <Banner tone="danger" title="部分行业维度缺失">

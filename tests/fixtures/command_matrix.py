@@ -111,8 +111,9 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("alert", "run"), {0}),
     # B 包（DEC-089）：组合统计。矩阵在临时数据目录跑——没流水 → ok=False → 6。
     (("analytics",), {6}),
-    # B 包后半：周期报告（月/季/年）。临时数据目录里无流水也照出事实包（零已实现）→ 0。
-    (("report", "--period", "month", "--of", "2026-11"), {0}),
+    # B 包后半：周期报告（月/季/年）。AI 形态与研究同口径不进矩阵（真跑会调模型）——
+    # 矩阵钉的是 --no-ai 模板直出形态（临时数据目录零已实现也出包 → 0）。
+    (("report", "--period", "month", "--of", "2026-11", "--no-ai"), {0}),
     # E 包（DEC-091）：估值换算器是纯函数，离线就能出结果 → 0（`research-batch`
     # 不进矩阵，口径见 LEAF_PATHS 的注释）。
     (("valuation", "pe", "--price", "10.5", "--eps", "2.1"), {0}),
@@ -361,7 +362,8 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("alert", "run"),
     # B 包（DEC-089）：组合统计（只读本机隐私库的聚合面，不进 MCP / AI）
     ("analytics",),
-    # B 包后半：月报 / 季报 / 年报（模板叙述 + 事实包，落 data/report/）
+    # B 包后半：月报 / 季报 / 年报（AI 叙述 + 模板兑底，落 data/report/；
+    # AI 形态不进矩阵，模板形态用 --no-ai 钉住）
     ("report",),
     # 「对话模式与研究台」批次（2026-11-21 入库）的 25 条命令：archive / brief /
     # coverage / debate / verify 族、news-archive（资讯归档回看）与 peer serve

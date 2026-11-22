@@ -73,14 +73,26 @@ export interface BehaviorRow {
 
 // ---------------------------------------------------------------- 导出（DEC-090）
 
-export type ExportFormat = 'csv' | 'xlsx'
+export type ExportFormat = 'csv' | 'xlsx' | 'pdf'
 export type ExportSection = 'attribution' | 'behavior' | 'mistakes'
+
+const EXPORT_ACCEPT: Record<ExportFormat, string> = {
+  csv: 'text/csv',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pdf: 'application/pdf',
+}
+
+const EXPORT_FILENAME: Record<ExportFormat, string> = {
+  csv: '',
+  xlsx: 'analytics.xlsx',
+  pdf: 'analytics.pdf',
+}
 
 /**
  * 下载一个导出件（浏览器原生下载：`fetch` → blob → a[download]）。
  *
- * XLSX 缺 openpyxl 时后端回 503 + 安装提示——原样抛给页面说人话，
- * 不静默换格式（DEC-090 §1）。
+ * XLSX 缺 openpyxl / PDF 缺 reportlab 或中文字体时后端回 503 + 人话——原样抛
+ * 给页面说人话，不静默换格式（DEC-090 §1）。
  */
 export async function downloadAnalyticsExport(
   format: ExportFormat,
@@ -95,7 +107,7 @@ export async function downloadAnalyticsExport(
       signal: controller.signal,
       cache: 'no-store',
       credentials: 'same-origin',
-      headers: { accept: format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv' },
+      headers: { accept: EXPORT_ACCEPT[format] },
     })
     if (!response.ok) {
       let detail: string | null = null
@@ -116,7 +128,7 @@ export async function downloadAnalyticsExport(
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = format === 'xlsx' ? 'analytics.xlsx' : `analytics-${section}.csv`
+    anchor.download = format === 'csv' ? `analytics-${section}.csv` : EXPORT_FILENAME[format]
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()

@@ -26,6 +26,7 @@ import {
   type Column,
 } from '../../components/ui'
 import { formatBoards, formatInt, formatMoney, formatOneDecimal, localDateIso, MISSING } from '../../lib/format'
+import { useTableExport } from '../../lib/useTableExport'
 import { withParams } from '../industry/links'
 import { DEMO_POOL_DATE } from './demo'
 import { useDemoEnabled, usePoolView } from './useRadarView'
@@ -361,6 +362,27 @@ export default function PoolScreen() {
     ]
   }, [])
 
+  // C 包后续单（DEC-090 §4）：候选池 CSV 导出——与既有「导出本地文件」（JSON、
+  // 不经网络）并存；CSV 走同一张表格导出面，分项缺失导出空列不补 0。
+  const exportRows = (payload?.candidates ?? []).map((candidate) => ({
+    code: candidate.code,
+    name: candidate.name ?? '',
+    score: candidate.score ?? '',
+    ...Object.fromEntries(
+      POOL_PART_ORDER.map((part) => [
+        part,
+        candidate.absent_parts.includes(part) ? '' : (candidate.parts[part] ?? ''),
+      ]),
+    ) as Record<(typeof POOL_PART_ORDER)[number], number | ''>,
+    absent_parts: candidate.absent_parts.length > 0 ? candidate.absent_parts.join('、') : '',
+    theme_note: candidate.raw.theme_note ?? '',
+  }))
+  const exporter = useTableExport(
+    'candidate-pool',
+    exportRows,
+    ['code', 'name', 'score', ...POOL_PART_ORDER, 'absent_parts', 'theme_note'],
+  )
+
   const header = (
     <PageHeader
       title="候选池"
@@ -390,7 +412,22 @@ export default function PoolScreen() {
         disabled: state === 'loading',
         loading: refreshing,
       }}
-      actions={payload && payload.available ? <DownloadButton payload={payload} /> : undefined}
+      actions={
+        payload && payload.available ? (
+          <>
+            <Button
+              variant="secondary"
+              leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+              disabled={exporter.busyFormat !== null}
+              title="导出当前候选池视图（CSV，Excel 可直接打开；分数与分项照后端原值）"
+              onClick={() => void exporter.buttonProps('csv').onClick()}
+            >
+              导出 CSV
+            </Button>
+            <DownloadButton payload={payload} />
+          </>
+        ) : undefined
+      }
     />
   )
 
@@ -479,6 +516,8 @@ export default function PoolScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {exporter.error ? <Banner tone="warn" title="导出失败">{exporter.error}</Banner> : null}
 
       {refreshError !== null && (
         <Banner

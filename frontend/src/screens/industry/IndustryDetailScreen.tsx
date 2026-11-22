@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Database, Newspaper } from 'lucide-react'
+import { ArrowLeft, Database, Download, Newspaper } from 'lucide-react'
 
 import {
   DIMENSION_TITLE,
@@ -37,6 +37,7 @@ import {
   isFiniteNumber,
   shortDate,
 } from '../../lib/format'
+import { useTableExport } from '../../lib/useTableExport'
 import {
   compareMetric,
   DIMENSION_HEADLINE,
@@ -499,6 +500,25 @@ export default function IndustryDetailScreen() {
 
   const backLink = withParams('/industry', { demo: demo ? '1' : null, state: forced })
 
+  // C 包后续单（DEC-090 §4）：成分股快照导出（逐股指标缺失导出空列不补 0，
+  // 分类时点逐行带走）。
+  const constituentExportRows = (payload?.constituents ?? []).map((row) => ({
+    code: row.code,
+    name: row.name ?? '',
+    pe_ttm: row.pe_ttm ?? '',
+    pb: row.pb ?? '',
+    turnover_rate: row.turnover_rate ?? '',
+    revenue_yoy: row.revenue_yoy ?? '',
+    profit_yoy: row.profit_yoy ?? '',
+    main_net_nd: row.main_net_nd ?? '',
+    as_of: row.as_of ?? '',
+  }))
+  const exporter = useTableExport(
+    'industry-constituents',
+    constituentExportRows,
+    ['code', 'name', 'pe_ttm', 'pb', 'turnover_rate', 'revenue_yoy', 'profit_yoy', 'main_net_nd', 'as_of'],
+  )
+
   const header = (
     <PageHeader
       title={payload?.meta.name ?? name ?? '行业详情'}
@@ -618,9 +638,22 @@ export default function IndustryDetailScreen() {
               )
             }
             actions={
-              <Badge tone={payload.constituents.length > 0 ? 'info' : 'warn'}>
-                {formatInt(payload.constituents.length)} 行
-              </Badge>
+              <span className="inline-flex items-center gap-2">
+                <Badge tone={payload.constituents.length > 0 ? 'info' : 'warn'}>
+                  {formatInt(payload.constituents.length)} 行
+                </Badge>
+                {payload.constituents.length > 0 ? (
+                  <Button
+                    variant="secondary"
+                    leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+                    disabled={exporter.busyFormat !== null}
+                    title="导出成分股快照（CSV，Excel 可直接打开）"
+                    onClick={() => void exporter.buttonProps('csv').onClick()}
+                  >
+                    导出 CSV
+                  </Button>
+                ) : null}
+              </span>
             }
             bodyClassName="p-0"
           >
@@ -648,6 +681,7 @@ export default function IndustryDetailScreen() {
                 />
               }
             />
+            {exporter.error ? <p className="px-3 py-2 text-caption text-danger">{exporter.error}</p> : null}
           </SectionCard>
         </div>
 

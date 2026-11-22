@@ -11,9 +11,9 @@
  * 打印：`print:` 样式隐藏导航与按钮，指标卡按两列排（见 index.css 的 `@media print`）。
  */
 
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, BarChart3, Download, Frown, Loader2, PieChart, Printer, TrendingUp } from 'lucide-react'
+import { AlertTriangle, BarChart3, Download, FileText, Frown, Loader2, PieChart, Printer, Share2, TrendingUp } from 'lucide-react'
 
 import { describeApiError } from '../api'
 import {
@@ -27,6 +27,7 @@ import {
   Badge,
   Button,
   Card,
+  Drawer,
   EmptyState,
   ErrorBlock,
   SectionCard,
@@ -36,6 +37,13 @@ import {
 import { cn } from '../lib/cn'
 import { MISSING } from '../lib/format'
 import { useAsync } from '../lib/useAsync'
+import {
+  ANALYTICS_SHARE_SIZE,
+  analyticsShareSummary,
+  buildAnalyticsShareCard,
+  drawAnalyticsShareCard,
+  type AnalyticsShareCardData,
+} from '../lib/analyticsShareCard'
 
 const DAYS_OPTIONS = [
   { value: '90', label: '近 3 个月' },
@@ -71,8 +79,9 @@ function Metric({ label, value, sub, tone }: { label: string; value: string; sub
 
 export default function AnalyticsScreen() {
   const [days, setDays] = useState<(typeof DAYS_OPTIONS)[number]['value']>('365')
-  const [exporting, setExporting] = useState<ExportSection | 'xlsx' | null>(null)
+  const [exporting, setExporting] = useState<ExportSection | 'xlsx' | 'pdf' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
   const data = useAsync(
     async () => fetchAnalytics(Number(days)),
     [days],
@@ -80,12 +89,14 @@ export default function AnalyticsScreen() {
   const summary: AnalyticsSummary | null = data.data
   const errorText = data.status === 'error' ? describeApiError(data.error) : null
 
-  const onExport = async (kind: ExportSection | 'xlsx') => {
+  const onExport = async (kind: ExportSection | 'xlsx' | 'pdf') => {
     setExportError(null)
     setExporting(kind)
     try {
       if (kind === 'xlsx') {
         await downloadAnalyticsExport('xlsx', 'attribution', Number(days))
+      } else if (kind === 'pdf') {
+        await downloadAnalyticsExport('pdf', 'attribution', Number(days))
       } else {
         await downloadAnalyticsExport('csv', kind, Number(days))
       }
@@ -165,6 +176,30 @@ export default function AnalyticsScreen() {
               </Button>
               <Button
                 size="md"
+                variant="secondary"
+                onClick={() => onExport('pdf')}
+                disabled={exporting !== null || !summary?.ok}
+                title="下载 PDF（A4 竖版：指标 + 三张明细表；需要 reportlab 与中文字体）"
+              >
+                {exporting === 'pdf' ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <FileText size={14} />
+                )}
+                PDF
+              </Button>
+              <Button
+                size="md"
+                variant="secondary"
+                onClick={() => setShareOpen(true)}
+                disabled={!summary?.ok}
+                title="生成本页聚合的长图 / 文字 / 链接（与页面同源，缺数不补 0）"
+              >
+                <Share2 size={14} />
+                分享
+              </Button>
+              <Button
+                size="md"
                 variant="ghost"
                 onClick={() => window.print()}
                 title="打印 / 存 PDF（浏览器打印对话框）"
@@ -207,6 +242,12 @@ export default function AnalyticsScreen() {
 
       {data.status === 'ready' && summary?.ok && metrics ? (
         <div className="mt-4 flex flex-col gap-4">
+          <AnalyticsShareDrawer
+            open={shareOpen}
+            onClose={() => setShareOpen(false)}
+            summary={summary}
+            days={Number(days)}
+          />
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Metric
               label="总收益（TWR）"
@@ -353,5 +394,121 @@ export default function AnalyticsScreen() {
         </div>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * 分享抽屉（C 包第二半 / DEC-090 §2）：长图 / 文字 / 链接三选一。
+ *
+ * - 长图与文字都由 `lib/analyticsShareCard.ts` 从**当前渲染的 summary** 构建：
+ *   页面缺数卡片就写「—」+ 原因，两边永远一致；
+ * - 链接只复制本页地址（带 `?days=` 窗口参数），不含任何数据——数据在本机，
+ *   对方打开同地址读到的是**他自己机器**的账本；
+ * - canvas 在 jsdom 里拿不到 2D 上下文：`getContext` 返回 null 时静默跳过绘制，
+ *   测试环境只验证数据构建与文字版。
+ */
+function AnalyticsShareDrawer({
+  open,
+  onClose,
+  summary,
+  days,
+}: {
+  open: boolean
+  onClose: () => void
+  summary: AnalyticsSummary
+  days: number
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [feedback, setFeedback] = useState<string | null>(null)
+
+  const shareData: AnalyticsShareCardData | null = useMemo(
+    () => (summary.ok ? buildAnalyticsShareCard({ summary, days }) : null),
+    [summary, days],
+  )
+
+  useEffect(() => {
+    if (!open || !shareData) return
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx) return
+    drawAnalyticsShareCard(ctx, shareData)
+  }, [open, shareData])
+
+  if (!shareData) return null
+
+  const downloadPng = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setFeedback('长图生成失败：浏览器拒绝导出画布。')
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `ladderstock-analytics-${days}d.png`
+      anchor.click()
+      URL.revokeObjectURL(url)
+      setFeedback('长图已保存到下载目录。')
+    }, 'image/png')
+  }
+
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(analyticsShareSummary(shareData).join('\n'))
+      setFeedback('文字版已复制。')
+    } catch {
+      setFeedback('复制失败：浏览器剪贴板不可用，请手动选择文本。')
+    }
+  }
+
+  const copyLink = async () => {
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.set('days', String(days))
+      url.searchParams.delete('state')
+      url.searchParams.delete('demo')
+      await navigator.clipboard.writeText(url.toString())
+      setFeedback('链接已复制——只有地址，不含数据；对方打开看到的是他自己机器的账本。')
+    } catch {
+      setFeedback('复制失败：浏览器剪贴板不可用。')
+    }
+  }
+
+  return (
+    <Drawer open={open} onClose={onClose} title="分享本页统计" width="md">
+      <div className="flex flex-col gap-3">
+        <p className="text-caption leading-body text-text-muted">
+          长图与文字都取自本页已算出的聚合：缺数写「—」并给原因，不补 0、不重算；
+          不含持仓明细与交易流水。链接只含地址与窗口参数，不含数据。
+        </p>
+        <canvas
+          ref={canvasRef}
+          width={ANALYTICS_SHARE_SIZE.width}
+          height={ANALYTICS_SHARE_SIZE.height}
+          aria-label="复盘统计分享长图预览"
+          className="max-h-80 w-full rounded border border-border object-contain"
+        />
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" onClick={downloadPng}>
+            下载长图 PNG
+          </Button>
+          <Button variant="secondary" onClick={() => void copyText()}>
+            复制文字版
+          </Button>
+          <Button variant="secondary" onClick={() => void copyLink()}>
+            复制链接
+          </Button>
+        </div>
+        {feedback ? <p className="text-caption text-text-secondary">{feedback}</p> : null}
+        <details className="rounded border border-border bg-surface-2 p-2">
+          <summary className="cursor-pointer text-caption text-text-secondary">文字版预览</summary>
+          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-caption leading-body text-text-secondary">
+            {analyticsShareSummary(shareData).join('\n')}
+          </pre>
+        </details>
+      </div>
+    </Drawer>
   )
 }

@@ -38,9 +38,9 @@ DEC-015 / DEC-030（radar 面闸门先例）
 
 | 事项 | 去向 |
 |---|---|
-| PDF 导出（组合统计版） | 复用 `ldst export` 的 reportlab 管线，后续单 |
-| 分享长图 / 链接 | C 包第二半（前端为主） |
-| 龙虎榜 / 行业 / 候选池 / 周报的表格导出 | 逐页接同一面（后续单） |
+| ~~PDF 导出（组合统计版）~~ | ✅ 已清（2026-11-22）：`GET /api/analytics/export?format=pdf` + `ldst analytics --pdf PATH`，复用 `review/export.py` 的 CJK 管线；reportlab / 字体缺席 503（exit 3），不静默换格式 |
+| ~~分享长图 / 链接~~ | ✅ 已清（2026-11-22）：`/analytics` 页「分享」抽屉（长图 canvas + 文字版 + 仅地址链接；`lib/analyticsShareCard.ts` 与页面同源，缺数写 `—`） |
+| ~~龙虎榜 / 行业 / 候选池 / 周报的表格导出~~ | ✅ 已清（2026-11-22）：四页接 `useTableExport` 同一面（行业详情成分股表一并接上；候选池保留原 JSON 本地导出并与之并存） |
 | 导出任务的异步化（大结果集） | 当前聚合结果 <100 行，同步足够 |
 
 > AI生成
