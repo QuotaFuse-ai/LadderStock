@@ -1,4 +1,1 @@
-env: prod
-board: 1111
-modules: {}
-board_user: 1111
+﻿env: testboard: 5950modules:  tickhub_us:  - 18003
