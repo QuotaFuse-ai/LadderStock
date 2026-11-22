@@ -90,7 +90,9 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    # DEC-092 单窗口应用形态：双击不闪黑窗；stdout/stderr 在无控制台时由
+    # cli/windowed.ensure_windowed_sinks() 落盘（smoke/e2e 的重定向句柄照常有效）。
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

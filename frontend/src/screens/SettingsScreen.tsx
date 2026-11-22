@@ -1564,6 +1564,140 @@ function PortsSection({
   )
 }
 
+// ---------------------------------------------------------------- 关于·端口设置
+
+/**
+ * 端口设置卡（DEC-092）：读 / 改 / 还原看板端口。
+ *
+ * 三条边界：
+ * - **服务端校验为准**：范围 / 保留段 / 占用检测全部在后端做（PUT 返回 409/422
+ *   时把 detail 原样上屏），前端不自己猜规则；
+ * - **保存只写配置**：换端口必须重启应用，回复里说清楚，不给“立即生效”的幻想；
+ * - **输入本格式化**：非法输入置灰保存钮，不发无效请求。
+ */
+function BoardPortCard() {
+  const settings = useAsync((signal) => api.portSettings(signal), [])
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null)
+
+  const data = settings.status === 'ready' ? settings.data : null
+  const min = data?.min_port ?? 1024
+  const max = data?.max_port ?? 65535
+  const draftPort = Number.parseInt(draft, 10)
+  const valid =
+    draft.trim() !== '' &&
+    Number.isInteger(draftPort) &&
+    draftPort >= min &&
+    draftPort <= max &&
+    !(data?.reserved_ports ?? []).includes(draftPort)
+
+  const save = async () => {
+    if (!valid) return
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await api.portSettingsSave(draftPort)
+      setNotice({ tone: 'ok', text: result.detail })
+      setDraft('')
+      void settings.refresh()
+    } catch (error) {
+      // 409（端口被占，带占用者）/ 422（范围或保留段）：服务端 detail 已是人话
+      const described = describeApiError(error)
+      setNotice({ tone: 'danger', text: described.detail || described.title })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clear = async () => {
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await api.portSettingsClear()
+      setNotice({ tone: 'ok', text: result.detail })
+      void settings.refresh()
+    } catch (error) {
+      const described = describeApiError(error)
+      setNotice({ tone: 'danger', text: described.detail || described.title })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SectionCard title="端口设置" subtitle="看板访问端口；保存后重启应用生效">
+      {settings.status === 'loading' && <SkeletonText lines={2} />}
+      {settings.status === 'error' && (
+        <ErrorBlock {...describeApiError(settings.error)} variant="inline" onRetry={settings.reload} />
+      )}
+      {data && (
+        <div className="flex flex-col gap-3" data-testid="board-port-card">
+          <p className="text-caption text-text-secondary">
+            当前访问{' '}
+            <span className="ldst-num text-body text-text">
+              http://127.0.0.1:{data.current_board ?? MISSING}
+            </span>
+            {' · '}默认{' '}
+            <span className="ldst-num">{data.default_board}</span>
+            {data.user_board !== null && (
+              <>
+                {' · '}已设偏好 <span className="ldst-num">{data.user_board}</span>
+              </>
+            )}
+          </p>
+          <p className="text-caption text-text-muted">
+            端口被其它程序占用时应用会自动避让一个口；这里的“偏好”优先于避让，端口空闲时始终用你设置的口。
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="w-40">
+              <Field label="新端口" htmlFor="board-port-input" hint={`${min}–${max}，已占用或保留段会被拒绝`}>
+                <Input
+                  id="board-port-input"
+                  inputMode="numeric"
+                  placeholder={String(data.user_board ?? data.default_board)}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  data-testid="board-port-input"
+                />
+              </Field>
+            </div>
+            <Button
+              variant="primary"
+              onClick={() => void save()}
+              disabled={busy || !valid}
+              data-testid="board-port-save"
+            >
+              检测并保存
+            </Button>
+            {data.user_board !== null && (
+              <Button variant="secondary" onClick={() => void clear()} disabled={busy} data-testid="board-port-clear">
+                清除偏好
+              </Button>
+            )}
+          </div>
+          {notice && (
+            <p
+              role="status"
+              data-testid="board-port-notice"
+              className={cn(
+                'text-caption',
+                notice.tone === 'ok'
+                  ? 'text-emerald-600'
+                  : notice.tone === 'warn'
+                    ? 'text-warn'
+                    : 'text-danger',
+              )}
+            >
+              {notice.text}
+            </p>
+          )}
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
 // ---------------------------------------------------------------- 分区四：关于
 
 const THEME_OPTIONS: ReadonlyArray<{ value: ThemeChoice; label: string }> = [
@@ -1643,6 +1777,8 @@ function AboutSection({
           ))}
         </dl>
       </SectionCard>
+
+      <BoardPortCard />
 
       <SectionCard title="配置文件状态" subtitle="来自 /api/state/config；目录路径见上表">
         {stateConfig.status === 'ready' && stateConfig.data ? (

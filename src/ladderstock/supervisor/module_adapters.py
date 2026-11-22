@@ -1611,25 +1611,39 @@ def _panel_spawn_command(env: Mapping[str, str]) -> str:
 
 def resolve_panel_port(env: Mapping[str, str]) -> int:
     """看板实际端口单一真源：spawn-cmd `--port`、watchdog `--api`、自愈
-    engine 的 panel_url 三处共用，保证避让后三方同一端口。"""
+    engine 的 panel_url 三处共用，保证避让后三方同一端口。
+
+    解析顺序（QUOT-594 × DEC-092）：`LDST_PANEL_PORT`（显式注入）>
+    **ports.yaml 的 `board` 记录**（看板每次启动都会把实际落位端口同步进去，
+    是「现在到底跑在哪个口」的事实源）> `board_user`（用户偏好，首次启动前
+    记录尚无时的意图声明）> `panel_port(env)` 环境默认。test 环境任何路径
+    都不得回落到正式 5950。
+    """
 
     override = (env.get("LDST_PANEL_PORT") or "").strip()
     if override.isdigit():
         return int(override)
     try:
         from ladderstock.cli.paths import config_dir
-        from ladderstock.supervisor.port_allocator import load_board_override
+        from ladderstock.supervisor.port_allocator import (
+            load_board_override,
+            load_board_user_pref,
+        )
 
-        # 避让记录按**传入的**环境解析：显式给了 `LDST_CONFIG_DIR` 就用它，不再
+        # 记录按**传入的**环境解析：显式给了 `LDST_CONFIG_DIR` 就用它，不再
         # 退回 cwd 敏感的 `config_dir()`。两者混读的后果实测过：cwd 恰好是仓库根
         # 时，test 环境会读到开发机那份 config/ports.yaml（board=5950），把面板
         # 端口算成 5950、与正式服撞车（QUOT-597 的环境隔离就是被这条打穿的）。
         cfg_env = (env.get("LDST_CONFIG_DIR") or "").strip()
-        remembered = load_board_override(Path(cfg_env) if cfg_env else config_dir())
+        cfg_dir = Path(cfg_env) if cfg_env else config_dir()
+        remembered = load_board_override(cfg_dir)
+        if remembered:
+            return int(remembered)
+        user_pref = load_board_user_pref(cfg_dir)
+        if user_pref:
+            return int(user_pref)
     except Exception:  # noqa: BLE001 - 读配置失败回落环境默认
-        remembered = None
-    if remembered:
-        return int(remembered)
+        pass
     return panel_port(_env_name(env))
 
 

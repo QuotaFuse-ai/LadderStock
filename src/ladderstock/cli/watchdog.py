@@ -321,8 +321,14 @@ def _run_command(run: Callable[..., Any], argv: list[str], *, timeout: float) ->
     输出落临时文件而不是管道：重启脚本会拉起常驻子进程，它可能继承写端，
     管道永远等不到 EOF，`subprocess.run` 的 timeout 清理阶段会把整个请求拖死
     （实测 91s：30s 超时后仍阻塞到被拉起的 API 退出）。
+
+    Windows 上真实 `subprocess.run` 加 `CREATE_NO_WINDOW`（DEC-092 单窗口
+    形态）：看门狗重启看板时绝不再闪控制台；注入的测试假件不受影响。
     """
     handle, path = tempfile.mkstemp(prefix="ldst-restart-", suffix=".log")
+    extra: dict[str, Any] = {}
+    if os.name == "nt" and run is subprocess.run:
+        extra["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
     try:
         with os.fdopen(handle, "wb") as sink:
             try:
@@ -333,6 +339,7 @@ def _run_command(run: Callable[..., Any], argv: list[str], *, timeout: float) ->
                     timeout=timeout,
                     check=False,
                     shell=False,
+                    **extra,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 return 127, str(exc)[:300]

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -150,7 +151,13 @@ def serve(
     typer.echo(f"peer card -> {card}")
 
     try:
-        proc = subprocess.Popen(list(command))
+        # DEC-092 单窗口形态：peer serve 自身由 supervisor 以 CREATE_NO_WINDOW
+        # 拉起（无控制台可继承）；裸 Popen 会让 Windows 为 console 子进程
+        # **新分配一个可见控制台窗口**（实测 qdrant run_stack.py 弹黑窗）。
+        # 显式 CREATE_NO_WINDOW 阻断；POSIX 无此概念，start_new_session 不需要
+        # （peer serve 本来就在服务进程树里，随树整停的语义不变）。
+        flags = 0x08000000 if sys.platform.startswith("win") else 0  # CREATE_NO_WINDOW
+        proc = subprocess.Popen(list(command), creationflags=flags)
     except OSError as exc:
         discovery.card_path(root).unlink(missing_ok=True)
         typer.echo(f"启动失败：{exc}", err=True)

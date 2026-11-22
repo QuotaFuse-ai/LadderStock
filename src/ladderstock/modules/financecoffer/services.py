@@ -66,10 +66,20 @@ def _is_elevated() -> bool:
 
 
 def _start_as_basic_user(root: Path | None, cmd: list[str], log: Path) -> bool:
-    """用 `runas /trustlevel:0x20000`（基本用户令牌）拉起 PG。
+    """管理员会话下以基本用户令牌**静默**拉起 PG（postgres 拒绝管理员运行）。
 
-    实测：管理员会话下直接起 postgres 会被官方限制拒绝（"不能以具有管理员权限的用户运行"），
-    而低权限信任级别能正常起并监听端口。脚本落在模块自己的 `run/` 下，输出进 logs。
+    唯一可靠的无窗口降权路径：`runas /trustlevel:0x20000`（降权，不弹 UAC）
+    拉起 `wscript.exe`（GUI 子系统，天然无控制台），再由 wscript 的
+    `WshShell.Run(cmd, 0, False)` 把真正的 .cmd **完全隐藏**执行；runas
+    本身由 subprocess 以 CREATE_NO_WINDOW 拉起——全程零窗口（用户裁决
+    桌面应用不得出现任何终端，2026-11-23）。
+
+    弃用过的两条路（都弹窗，实测）：
+    - 直接 runas 跑 .cmd：闪一个 cmd 控制台（本函数的旧行为）；
+    - `schtasks /SC ONCE /IT`：交互式计划任务在用户会话里照样分配控制台。
+
+    脚本落在模块自己的 `run/` 下，输出进 logs。wscript 被组策略禁用的极端
+    情况退回直接 runas .cmd（有窗但 PG 能起，好过起不来）。
     """
     run_dir = layout.run_dir(root)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -78,17 +88,40 @@ def _start_as_basic_user(root: Path | None, cmd: list[str], log: Path) -> bool:
     script = run_dir / f"pg-lowpriv{layout.env_suffix()}.cmd"
     body = subprocess.list2cmdline(cmd)
     script.write_text("@echo off\r\n" + f'{body} >> "{log}" 2>&1\r\n', encoding="utf-8")
+    no_window = 0x08000000 if sys.platform.startswith("win") else 0  # CREATE_NO_WINDOW
+    # 首选：wscript 隐窗执行（VBS 里 "" = 一个字面引号）
+    launcher = script.with_suffix(".vbs")
+    launcher.write_text(
+        'CreateObject("WScript.Shell").Run "cmd.exe /d /c '
+        f'""{script}""", 0, False\n',
+        encoding="utf-8",
+    )
     try:
         out = subprocess.run(
+            ["runas", "/trustlevel:0x20000", f'wscript.exe "{launcher}"'],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+            creationflags=no_window,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if out.returncode == 0:
+        return True
+    # 兜底：wscript 不可用（极端组策略）→ 直接跑 .cmd，会闪一个窗口
+    try:
+        fallback = subprocess.run(
             ["runas", "/trustlevel:0x20000", str(script)],
             capture_output=True,
             text=True,
             timeout=20,
             check=False,
+            creationflags=no_window,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return out.returncode == 0
+    return fallback.returncode == 0
 
 
 def pg_port() -> int:

@@ -98,7 +98,7 @@ export function describeApiError(error: unknown): { title: string; detail: strin
 // ---------------------------------------------------------------- 传输
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT'
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   body?: unknown
   timeoutMs?: number
   signal?: AbortSignal
@@ -118,7 +118,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       // `POST /watch/refresh` 会现取一次数并写 minute_bars，同属写操作
       path.startsWith('/watch/') ||
       // 增强包的安装 / 卸载 / 启停都是真命令真落盘（DEC-086）
-      path.startsWith('/financecoffer/')) &&
+      path.startsWith('/financecoffer/') ||
+      // 端口偏好写入只改本机配置，但同属写面（DEC-092）
+      path.startsWith('/settings/')) &&
     method !== 'GET'
   try {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -591,6 +593,27 @@ export interface StateConfigPayload {
   state_index_present: boolean
   state_schema_version: number | null
   ports: { web: number; mcp: number }
+}
+
+/** 看板端口设置（DEC-092）：`/api/settings/port`，读写均同源 */
+export interface BoardPortSettings {
+  default_board: number
+  /** 用户手动设置的偏好端口；null = 未设置（走默认 + 自动避让） */
+  user_board: number | null
+  /** 当前实际监听口（从请求 scope 取得） */
+  current_board: number | null
+  reserved_ports: number[]
+  min_port: number
+  max_port: number
+  takes_effect: 'restart'
+}
+
+/** 保存 / 清除偏好后的结果；`detail` 是可直接上屏的人话 */
+export interface BoardPortSaved {
+  ok: boolean
+  board: number | null
+  action: 'saved' | 'cleared'
+  detail: string
 }
 
 export interface HealthPayload {
@@ -1539,6 +1562,11 @@ export const api = {
     }),
   health: (signal?: AbortSignal) => request<HealthPayload>('/health', { signal }),
   stateConfig: (signal?: AbortSignal) => request<StateConfigPayload>('/state/config', { signal }),
+  portSettings: (signal?: AbortSignal) => request<BoardPortSettings>('/settings/port', { signal }),
+  portSettingsSave: (board: number) =>
+    request<BoardPortSaved>('/settings/port', { method: 'PUT', body: { board }, timeoutMs: CONTROL_TIMEOUT_MS }),
+  portSettingsClear: () =>
+    request<BoardPortSaved>('/settings/port', { method: 'DELETE', timeoutMs: CONTROL_TIMEOUT_MS }),
   /** 本机交易日志聚合统计（DEC-015 Tier 1）：扁平 JSON，**不是** `LadderEnvelope` */
   journalStats: (query: JournalStatsQuery = {}, signal?: AbortSignal) => {
     const params = new URLSearchParams()

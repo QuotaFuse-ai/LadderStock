@@ -35,9 +35,41 @@ MAX_SHIFT = 100
 _KEY_BOARD = "board"
 _KEY_MODULES = "modules"
 _KEY_ENV = "env"
+#: 用户手动固定的看板端口（DEC-092）：与自动避让结果（board）分开存。
+#: 用户偏好的语义是「下次启动优先尝试这个口」，被占用时仍走避让但
+#: 偏好不丢，空闲后自动回用；环境切换时与 modules 同样整段失效。
+_KEY_BOARD_USER = "board_user"
 
 #: 在听即不避让的占用者分类（与 classify_port_owner 四分类同口径）
 _KEEP_OWNERS = ("own_child", "adopted_peer")
+
+#: 面板口（两环境）：看板避让不得落到任一环境的面板口上（DEC-092）
+_PANEL_PORTS = (5950, 5951)
+
+
+def reserved_app_ports() -> set[int]:
+    """看板端口避让 / 用户保存都要跳过的「自家保留段」。
+
+    = 当前环境全部模块端口 + MCP 面端口（prod=5951 / test=15951）+ 双环境
+    面板口。避让器不知道哪些口是自家的面，逐号扫描会把看板扔到 MCP 的
+    口上（2026-11-23 实测：旧实例未退净 → 5950 判占用 → 避让进 5951 →
+    与应用内 MCP 面对撞，看板起不来）。
+    """
+    from ladderstock.supervisor.modules import module_ports
+
+    reserved = set(_PANEL_PORTS)
+    try:
+        for ports in module_ports().values():
+            reserved.update(int(p) for p in ports)
+    except Exception:  # noqa: BLE001 - 端口表拿不到就只保面板口，宁可窄不能错
+        pass
+    try:
+        from ladderstock.web.app_mcp import choose_mcp_port
+
+        reserved.add(choose_mcp_port())
+    except Exception:  # noqa: BLE001 - MCP 面端口选不出不挡避让
+        pass
+    return reserved
 
 
 class AllocationFailed(RuntimeError):
@@ -152,13 +184,64 @@ def save_port_overrides(
     *,
     path: Path | None = None,
 ) -> Path:
-    """把看板 + 模块端口写入记录（临时文件 + 原子替换）。"""
+    """把看板 + 模块端口写入记录（临时文件 + 原子替换）。
+
+    `board_user`（用户手动偏好，DEC-092）不属于避让结果，这里读旧值原样
+    保留：自动避让不该吞掉用户显式设置的端口。
+    """
     resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
-    payload = {
+    previous = _read_payload(resolved)
+    user_pref = previous.get(_KEY_BOARD_USER)
+    if not isinstance(user_pref, int) or user_pref <= 0:
+        user_pref = None
+    payload: dict[str, Any] = {
         _KEY_ENV: current_env(),
         _KEY_BOARD: int(board),
         _KEY_MODULES: {name: list(ports) for name, ports in modules.items()},
     }
+    if user_pref is not None:
+        payload[_KEY_BOARD_USER] = user_pref
+    return _write_payload(resolved, payload)
+
+
+def load_board_user_pref(config_dir: Path, *, path: Path | None = None) -> int | None:
+    """读用户手动设置的看板端口；无记录 / 环境不符返回 None。
+
+    环境语义与 modules 段一致：`env` 与当前环境不符（prod ↔ test）视为
+    无偏好，避免 test 环境的偏好把正式版顶到错误端口上。
+    """
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    data = _read_payload(resolved)
+    env = str(data.get(_KEY_ENV) or "").strip().lower()
+    if env and env != current_env():
+        return None
+    user_pref = data.get(_KEY_BOARD_USER)
+    if isinstance(user_pref, int) and user_pref > 0:
+        return int(user_pref)
+    return None
+
+
+def save_board_user_pref(
+    config_dir: Path,
+    port: int,
+    *,
+    path: Path | None = None,
+) -> Path:
+    """写入 / 更新用户偏好端口（读旧改写，保留 board / modules 段）。"""
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    payload = _read_payload(resolved) or {}
+    payload[_KEY_ENV] = current_env()
+    payload[_KEY_BOARD_USER] = int(port)
+    return _write_payload(resolved, payload)
+
+
+def clear_board_user_pref(config_dir: Path, *, path: Path | None = None) -> Path:
+    """清除用户偏好（回到默认端口 + 自动避让）"""
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    payload = _read_payload(resolved)
+    if _KEY_BOARD_USER not in payload:
+        return resolved
+    del payload[_KEY_BOARD_USER]
     return _write_payload(resolved, payload)
 
 
@@ -281,7 +364,10 @@ __all__ = [
     "PortAllocation",
     "PortOverrideStore",
     "allocate_ports",
+    "clear_board_user_pref",
     "load_board_override",
+    "load_board_user_pref",
     "load_port_overrides",
+    "save_board_user_pref",
     "save_port_overrides",
 ]

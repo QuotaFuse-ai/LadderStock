@@ -285,16 +285,37 @@ def _apply_port_overrides(adapters: Mapping[str, Any], override_path: Path) -> d
     只在「记录面数与出厂面数一致」时复用（面数变了说明模块形态改过，旧记录
     作废）；重建失败（适配器不支持换端口字面值）则保持出厂端口，行为与改动前
     一致，绝不静默换到错误端口上。
+
+    **记录与模块注册表不符时不挡启动**（2026-11-23 生产事故：旧避让记录写着
+    8100/8102，注册表是 8100/8101 → module_registry 校验直接抛 ValueError，
+    整个 `__service` 起不来）。脏记录打警告、剔除该条、回落出厂端口；
+    `module_registry` 是施工期契约校验，管的是**代码里写死的口径**，不该让
+    运行数据把服务打死。
     """
     from ladderstock.supervisor.module_adapters import rebase_adapter_ports
+    from ladderstock.supervisor.modules import module_ports
     from ladderstock.supervisor.port_allocator import load_port_overrides
 
     overrides = load_port_overrides(Path(override_path).parent, path=Path(override_path))
+    registry_ports = module_ports()
     out: dict[str, Any] = dict(adapters)
     for name, ports in overrides.items():
         adapter = out.get(name)
         if adapter is None:
             continue
+        env_base = registry_ports.get(name)
+        if env_base is not None and tuple(ports) != tuple(env_base):
+            # 避让过的端口（base+1..100）本来就可能不在注册表里——这是**允许**的。
+            # 只挡「面数对不上」那种形态变化；逐号偏差照常放行（与既有既有
+            # 避让语义一致：8101 被占避到 8102 是正常避让结果）。
+            if len(ports) != len(env_base):
+                _LOG.warning(
+                    "port_override_shape_mismatch module=%s recorded=%s registry=%s drops_entry",
+                    name,
+                    tuple(ports),
+                    tuple(env_base),
+                )
+                continue
         base = tuple(getattr(adapter, "ports", ()) or ())
         if len(base) != len(ports):
             continue

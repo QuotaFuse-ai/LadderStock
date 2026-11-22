@@ -154,6 +154,35 @@ def _port_free(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) != 0
 
 
+def _fatal_dialog(title: str, message: str) -> None:
+    """无控制台形态（pythonw / windowed exe）启动失败时弹系统对话框。
+
+    装机包双击失败如果只 exit，用户什么都看不到（连黑窗口都没有）。
+    Windows 用 MessageBoxW、macOS 用 osascript；其它平台静默（stderr
+    已由 ensure_windowed_sinks 兜底落盘）。
+    """
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+        elif sys.platform == "darwin":
+            import subprocess as _sp
+
+            _sp.run(
+                ["osascript", "-e", f'display alert "{title}" message "{message}"'],
+                timeout=10,
+                check=False,
+            )
+    except Exception:  # noqa: BLE001 - 对话框失败不能盖掉真正的退出
+        pass
+
+
+def _windowed_mode() -> bool:
+    """是否无控制台形态：stdout/stderr 接管前判断（接了文件流之后就不准了）。"""
+    return sys.stdout is None or sys.stderr is None
+
+
 def _port_owner(port: int) -> str:
     """占用端口的本机进程（尽力而为）：Windows 读 netstat，POSIX 尝试 lsof。
 
@@ -498,19 +527,38 @@ def desktop_entry(
     host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = "127.0.0.1",
     output: OutputOption = None,
 ) -> None:
-    """PyInstaller / py2app 双击启动：等价 `ldst run` + 打开浏览器。"""
+    """打包双击入口：启动看板 + 托管全部子模块（DEC-092），端口就绪后打开浏览器。
+
+    与 `ldst run` 的差别只有两件事：
+    - `LDST_SUPERVISOR_OWN_PROCESSES=1`：子模块随应用冷启动、随应用退出（桌面
+      应用 = 唯一入口，不存在“另开终端手动起模块”的形态）；
+    - `LDST_APP_MCP=1`：MCP 面（默认 5951）随主进程拉起，外部工具直接可连。
+    端口占用 / 避让由 `launch()` 统一处理（QUOT-594），这里不提前打断它。
+    """
     del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
+    from ladderstock.cli.windowed import ensure_windowed_sinks
+
+    windowed = _windowed_mode()
+    ensure_windowed_sinks()
+    os.environ["LDST_SUPERVISOR_OWN_PROCESSES"] = "1"
+    os.environ["LDST_APP_MCP"] = "1"
     warn_legacy_port(port)
-    if not _port_free(port):
-        error(f"端口 {port} 已被占用；请用 --port 指定其他端口（不会自动换端口，见 DEC-004）")
-        raise typer.Exit(EXIT_CONFIG)
     # 冒烟/CI 环境置 LDST_NO_BROWSER=1，避免弹出真实浏览器窗口。
     open_browser = (os.environ.get("LDST_NO_BROWSER") or "").strip().lower() not in {
         "1",
         "true",
         "yes",
     }
-    launch_dashboard(host=host, port=port, open_browser=open_browser)
+    try:
+        launch_dashboard(host=host, port=port, open_browser=open_browser)
+    except SystemExit as exc:
+        if windowed and exc.code not in (0, None):
+            _fatal_dialog(
+                "LadderStock 启动失败",
+                "看板未能启动；详见 数据目录\\service\\logs\\app-stderr.log。\n"
+                "常见原因：偏好端口被其它程序占用（可在端口设置中更换）。",
+            )
+        raise
 
 
 @app.command(
@@ -523,13 +571,31 @@ def service_entry(
     host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = "127.0.0.1",
     output: OutputOption = None,
 ) -> None:
-    """OS 服务/开机自启实际执行的命令：看板 + 自愈 + 自有子进程，不打开浏览器。"""
+    """OS 服务/开机自启实际执行的命令：看板 + 自愈 + 自有子进程，不打开浏览器。
+
+    端口占用 / 避让由 `launch()` 统一处理（QUOT-594），这里不提前打断它。
+    """
     del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
+    from ladderstock.cli.windowed import ensure_windowed_sinks
+
+    windowed = _windowed_mode()
+    ensure_windowed_sinks()
     os.environ["LDST_SUPERVISOR_OWN_PROCESSES"] = "1"
+    os.environ["LDST_APP_MCP"] = "1"
     os.environ["LDST_NO_BROWSER"] = "1"
-    if not _port_free(port):
-        error(f"端口 {port} 已被占用；服务不会自动换端口（见 DEC-004）")
-        raise typer.Exit(EXIT_CONFIG)
+    try:
+        _service_run(port=port, host=host)
+    except SystemExit as exc:
+        if windowed and exc.code not in (0, None):
+            _fatal_dialog(
+                "LadderStock 服务启动失败",
+                "服务未能启动；详见 数据目录\\service\\logs\\app-stderr.log。",
+            )
+        raise
+
+
+def _service_run(*, port: int, host: str) -> None:
+    """`__service` 主体（拆出来便于无窗口异常时补弹窗）。"""
 
     from ladderstock.service.tray import (
         TrayController,

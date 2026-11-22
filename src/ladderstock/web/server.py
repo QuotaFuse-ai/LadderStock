@@ -2296,6 +2296,14 @@ def create_app(
     # 不触发任何采集（要跑数仍走「跑一次」或定时任务）。写入带备份与回滚。
     app.include_router(build_pool_router(root))
 
+    # `/api/settings/port`（DEC-092）：看板端口读 / 改 / 还原。保存只写
+    # config/ports.yaml 的 board_user，重启生效；改动前做占用与保留段校验。
+    from ladderstock.web.port_settings import build_port_settings_router
+
+    app.include_router(
+        build_port_settings_router(config_dir(), default_board=WEB_PORT)
+    )
+
     # ------------------------------------------- 自愈状态面（QUOT-491 / 482-C）
     #
     # `/api/supervisor/state`（GET 只读）+ `/api/supervisor/state/{module}/reset`

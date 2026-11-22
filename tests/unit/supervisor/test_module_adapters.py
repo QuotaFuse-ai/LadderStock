@@ -215,6 +215,10 @@ EXES = {
 
 def _make_peer_dirs(tmp_path: Path) -> dict[str, str]:
     env: dict[str, str] = {}
+    # 端口记录 / 用户偏好（DEC-092 board_user）都从 LDST_CONFIG_DIR 解析：
+    # 不隔离的话，开发机 config/ports.yaml 里的真实偏好会漏进测试断言
+    # （曾用 board=5950 的巧合掩盖了很久）。统一指到空目录，隔离所有适配器用例。
+    env["LDST_CONFIG_DIR"] = str(tmp_path / "config")
     for key, env_key in PEER_ENV_KEYS.items():
         peer = tmp_path / "peers" / key
         peer.mkdir(parents=True)
