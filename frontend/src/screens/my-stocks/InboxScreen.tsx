@@ -4,6 +4,7 @@ import {
   Bell,
   CheckCheck,
   Clock,
+  Download,
   Monitor,
   Send,
   Terminal,
@@ -29,6 +30,7 @@ import {
 import { cn } from '../../lib/cn'
 import { MISSING, countOrMissing, formatInboxTime } from '../../lib/format'
 import { useAsync } from '../../lib/useAsync'
+import { useTableExport } from '../../lib/useTableExport'
 
 /**
  * 提醒（`/inbox`）：本机收件箱 + 定时任务清单 + 本机投递渠道。
@@ -147,6 +149,20 @@ export default function InboxScreen() {
   const unread = payload?.unread ?? (payload ? items.filter((item) => !item.is_read).length : null)
   const hasUnread = (unread ?? 0) > 0
 
+  // C 包第二半（DEC-090）：导出当前已加载的提醒（含已读状态与生成时间；
+  // 正文 lines 拆成紧凑列，一格一值不塞 JSON）。
+  const exportRows = items.map((item) => ({
+    created_at: item.created_at,
+    job: item.job_label || item.job,
+    kind: item.kind,
+    title: item.title,
+    body: item.lines.join(' / '),
+    is_read: item.is_read,
+  }))
+  const exporter = useTableExport('inbox', exportRows, [
+    'created_at', 'job', 'kind', 'title', 'body', 'is_read',
+  ])
+
   const [busy, setBusy] = useState<string | null>(null)
   const [actError, setActError] = useState<string | null>(null)
 
@@ -199,15 +215,26 @@ export default function InboxScreen() {
       refresh={{ onClick: reload, disabled: view.status === 'loading' }}
       actions={
         payload ? (
-          <Button
-            variant="secondary"
-            leadingIcon={<CheckCheck className="size-3.5" aria-hidden="true" />}
-            disabled={!hasUnread || busy !== null}
-            loading={busy === 'all'}
-            onClick={() => void readAll()}
-          >
-            全部已读
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              leadingIcon={<CheckCheck className="size-3.5" aria-hidden="true" />}
+              disabled={!hasUnread || busy !== null}
+              loading={busy === 'all'}
+              onClick={() => void readAll()}
+            >
+              全部已读
+            </Button>
+            <Button
+              variant="secondary"
+              leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+              disabled={items.length === 0 || exporter.busyFormat !== null}
+              title="导出当前已加载的提醒列表（CSV，Excel 可直接打开）"
+              onClick={() => void exporter.buttonProps('csv').onClick()}
+            >
+              导出 CSV
+            </Button>
+          </div>
         ) : undefined
       }
     />

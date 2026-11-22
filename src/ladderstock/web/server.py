@@ -92,6 +92,7 @@ from ladderstock.web.financecoffer_api import build_financecoffer_router
 from ladderstock.web.inbox import build_router as build_inbox_router
 from ladderstock.web.alert_api import build_router as build_alert_router
 from ladderstock.web.analytics_api import build_router as build_analytics_router
+from ladderstock.web.table_export_api import build_router as build_table_export_router
 from ladderstock.web.brief import build_router as build_brief_router
 from ladderstock.web.verify import build_router as build_verify_router
 from ladderstock.web.coverage import build_router as build_coverage_router
@@ -2149,6 +2150,10 @@ def create_app(
     # `/api/analytics/summary`（B 包 / DEC-089）：组合指标 / 基准 / 归因 /
     # 行为 / 错题本。读本机隐私库的聚合面，按雷达同款闸门（回环 + Host + no-store）。
     app.include_router(build_analytics_router())
+
+    # `POST /api/table-export`（C 包第二半 / DEC-090）：把页面已读到的行集转成
+    # CSV / XLSX。回环 + Host + 同源来源证据（POST 写面语义），不做任何取数。
+    app.include_router(build_table_export_router())
 
     # -------------------------------------------- 简报面（F11 always-on 简报）
     #

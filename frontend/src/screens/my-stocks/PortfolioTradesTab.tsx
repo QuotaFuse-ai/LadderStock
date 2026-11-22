@@ -1,8 +1,9 @@
-import { Trash2 } from 'lucide-react'
+import { Download, Trash2 } from 'lucide-react'
 
 import type { PortfolioIssue, PortfolioMethod, PortfolioTrade } from '../../api/radar'
-import { Banner, DataTable, EmptyState, IconButton, type Column } from '../../components/ui'
+import { Banner, Button, DataTable, EmptyState, IconButton, type Column } from '../../components/ui'
 import { MISSING, formatTime } from '../../lib/format'
+import { useTableExport } from '../../lib/useTableExport'
 import { tradeDetail, tradeTypeLabel } from './portfolioForm'
 import { PrivacyText } from './PrivacyText'
 import { TradeCsvImport } from './TradeCsvImport'
@@ -130,8 +131,29 @@ export function PortfolioTradesTab({ trades, issues, method, onDelete, onImporte
     },
   ]
 
+  // C 包第二半（DEC-090）：导出的行 = 当前倒序视图的原始字段（列白名单固定，
+  // 不带内部字段）；隐私模式下的遮罩是显示层的事，导出走原始账目字段。
+  const exportRows = ordered.map((trade) => ({
+    id: trade.id,
+    date: trade.date,
+    symbol: trade.symbol,
+    name: nameOf(trade, names),
+    type: tradeTypeLabel(trade.type),
+    shares: trade.shares,
+    price: trade.price,
+    fee: trade.fee,
+    amount: trade.amount,
+    note: trade.note,
+  }))
+  const exporter = useTableExport('portfolio-trades', exportRows, [
+    'date', 'symbol', 'name', 'type', 'shares', 'price', 'fee', 'amount', 'note',
+  ])
+
   return (
     <div className="flex flex-col gap-3">
+      {exporter.error ? (
+        <Banner tone="warn" title="导出失败">{exporter.error}</Banner>
+      ) : null}
       {issues.length > 0 && (
         <Banner tone="warn" title={`有 ${issues.length} 笔流水的数据不对，没参与计算`}>
           <ul className="mt-1 flex flex-col gap-0.5 text-caption">
@@ -160,6 +182,17 @@ export function PortfolioTradesTab({ trades, issues, method, onDelete, onImporte
           />
         }
       />
+      <div className="no-print flex flex-wrap items-center gap-2">
+        <Button size="md" variant="secondary" {...exporter.buttonProps('csv')} disabled={ordered.length === 0}>
+          <Download size={14} /> 导出 CSV
+        </Button>
+        <Button size="md" variant="secondary" {...exporter.buttonProps('xlsx')} disabled={ordered.length === 0}>
+          <Download size={14} /> 导出 XLSX
+        </Button>
+        <span className="text-caption text-text-muted">
+          导出的是当前倒序视图的 {ordered.length} 笔（原始账目字段；文件落你自己的下载目录）。
+        </span>
+      </div>
       <p className="text-caption text-text-muted">
         删除是硬删（删前后端会先备份）。流水按日期倒序；金额与股数在隐私模式下遮罩。
       </p>

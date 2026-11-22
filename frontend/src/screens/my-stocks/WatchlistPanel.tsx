@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Eye, Plus, Trash2 } from 'lucide-react'
+import { Download, Eye, Plus, Trash2 } from 'lucide-react'
 
 import { isApiError } from '../../api'
 import {
@@ -35,6 +35,7 @@ import {
 } from '../../lib/format'
 import { useDensity } from '../../lib/prefs'
 import { useAsync } from '../../lib/useAsync'
+import { useTableExport } from '../../lib/useTableExport'
 import { planWatchBatch, type BatchPlan } from '../../lib/watchBatch'
 import { cn } from '../../lib/cn'
 
@@ -117,6 +118,21 @@ export function WatchlistPanel() {
     }
   }, [heldNonce])
 
+  // C 包第二半（DEC-090）：导出当前自选视图（含现价/涨跌/PE/PB/换手；
+  // 取不到的值就是空列，不补 0）。
+  const exportRows = items.map((item) => ({
+    code: item.code,
+    name: item.name,
+    held: held?.has(item.code) ?? '',
+    latest_price: item.latest_price,
+    change_pct: item.change_pct,
+    pe_ttm: item.pe_ttm,
+    pb: item.pb,
+    turnover_pct: item.turnover_pct,
+  }))
+  const exporter = useTableExport('watchlist', exportRows, [
+    'code', 'name', 'held', 'latest_price', 'change_pct', 'pe_ttm', 'pb', 'turnover_pct',
+  ])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState<BatchPlan | null>(null)
   const [adding, setAdding] = useState(false)
@@ -313,6 +329,19 @@ export function WatchlistPanel() {
         ) : undefined
       }
       refresh={{ onClick: refresh, disabled: view.status === 'loading' }}
+      actions={
+        items.length > 0 ? (
+          <Button
+            variant="secondary"
+            leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+            disabled={exporter.busyFormat !== null}
+            title="导出当前自选视图（CSV，Excel 可直接打开）"
+            onClick={() => void exporter.buttonProps('csv').onClick()}
+          >
+            导出 CSV
+          </Button>
+        ) : undefined
+      }
     />
   )
 
