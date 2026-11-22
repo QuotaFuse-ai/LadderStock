@@ -7,17 +7,25 @@
  * 页面不重算、不补 0：缺数显示「—」并给原因。
  *
  * 回看窗口 90/180/365/730 天可选；切窗口重新取数。
+ * 导出（DEC-090）：CSV 按节下载（归因/行为/错题本）+ XLSX 一簿四表；
+ * 打印：`print:` 样式隐藏导航与按钮，指标卡按两列排（见 index.css 的 `@media print`）。
  */
 
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, BarChart3, Frown, PieChart, TrendingUp } from 'lucide-react'
+import { AlertTriangle, BarChart3, Download, Frown, Loader2, PieChart, Printer, TrendingUp } from 'lucide-react'
 
 import { describeApiError } from '../api'
-import { fetchAnalytics, type AnalyticsSummary } from '../api/analytics'
+import {
+  downloadAnalyticsExport,
+  fetchAnalytics,
+  type AnalyticsSummary,
+  type ExportSection,
+} from '../api/analytics'
 import { OfflineBanner, PageHeader } from '../components/PageShell'
 import {
   Badge,
+  Button,
   Card,
   EmptyState,
   ErrorBlock,
@@ -63,12 +71,30 @@ function Metric({ label, value, sub, tone }: { label: string; value: string; sub
 
 export default function AnalyticsScreen() {
   const [days, setDays] = useState<(typeof DAYS_OPTIONS)[number]['value']>('365')
+  const [exporting, setExporting] = useState<ExportSection | 'xlsx' | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
   const data = useAsync(
     async () => fetchAnalytics(Number(days)),
     [days],
   )
   const summary: AnalyticsSummary | null = data.data
   const errorText = data.status === 'error' ? describeApiError(data.error) : null
+
+  const onExport = async (kind: ExportSection | 'xlsx') => {
+    setExportError(null)
+    setExporting(kind)
+    try {
+      if (kind === 'xlsx') {
+        await downloadAnalyticsExport('xlsx', 'attribution', Number(days))
+      } else {
+        await downloadAnalyticsExport('csv', kind, Number(days))
+      }
+    } catch (error) {
+      setExportError(describeApiError(error).detail)
+    } finally {
+      setExporting(null)
+    }
+  }
 
   const metrics = summary?.metrics
   const realized = metrics?.realized
@@ -87,14 +113,72 @@ export default function AnalyticsScreen() {
         title="复盘统计"
         subtitle="组合指标 · 基准对比 · 交易归因 · 行为统计 · 错题本（只读本机数据）"
         actions={
-          <Segmented
-            ariaLabel="回看窗口"
-            value={days}
-            onChange={(next) => setDays(next)}
-            options={DAYS_OPTIONS.map(({ value, label }) => ({ value, label }))}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Segmented
+              ariaLabel="回看窗口"
+              value={days}
+              onChange={(next) => setDays(next)}
+              options={DAYS_OPTIONS.map(({ value, label }) => ({ value, label }))}
+            />
+            <div className="no-print flex flex-wrap items-center gap-1">
+              <Button
+                size="md"
+                variant="secondary"
+                onClick={() => onExport('attribution')}
+                disabled={exporting !== null || !summary?.ok}
+                title="下载归因表 CSV"
+              >
+                {exporting === 'attribution' ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Download size={14} />
+                )}
+                归因 CSV
+              </Button>
+              <Button
+                size="md"
+                variant="secondary"
+                onClick={() => onExport('mistakes')}
+                disabled={exporting !== null || !summary?.ok}
+                title="下载错题本 CSV"
+              >
+                {exporting === 'mistakes' ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Download size={14} />
+                )}
+                错题 CSV
+              </Button>
+              <Button
+                size="md"
+                variant="secondary"
+                onClick={() => onExport('xlsx')}
+                disabled={exporting !== null || !summary?.ok}
+                title="下载 XLSX（指标 + 归因 + 行为 + 错题本四张表；需要 openpyxl）"
+              >
+                {exporting === 'xlsx' ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Download size={14} />
+                )}
+                XLSX
+              </Button>
+              <Button
+                size="md"
+                variant="ghost"
+                onClick={() => window.print()}
+                title="打印 / 存 PDF（浏览器打印对话框）"
+              >
+                <Printer size={14} />
+              </Button>
+            </div>
+          </div>
         }
       />
+
+      {exportError ? (
+        <p className="mt-2 text-caption text-danger">{exportError}</p>
+      ) : null}
 
       {errorText ? (
         <>

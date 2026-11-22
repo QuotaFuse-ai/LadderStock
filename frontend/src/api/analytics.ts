@@ -71,6 +71,67 @@ export interface BehaviorRow {
   window_days: number
 }
 
+// ---------------------------------------------------------------- 导出（DEC-090）
+
+export type ExportFormat = 'csv' | 'xlsx'
+export type ExportSection = 'attribution' | 'behavior' | 'mistakes'
+
+/**
+ * 下载一个导出件（浏览器原生下载：`fetch` → blob → a[download]）。
+ *
+ * XLSX 缺 openpyxl 时后端回 503 + 安装提示——原样抛给页面说人话，
+ * 不静默换格式（DEC-090 §1）。
+ */
+export async function downloadAnalyticsExport(
+  format: ExportFormat,
+  section: ExportSection,
+  days = 365,
+): Promise<void> {
+  const path = `/api/analytics/export?format=${format}&section=${section}&days=${days}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try {
+    const response = await fetch(path, {
+      signal: controller.signal,
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { accept: format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv' },
+    })
+    if (!response.ok) {
+      let detail: string | null = null
+      try {
+        const parsed = (await response.json()) as { detail?: unknown }
+        detail = typeof parsed.detail === 'string' ? parsed.detail : null
+      } catch {
+        detail = null
+      }
+      throw new ApiError(
+        'http',
+        `导出失败：HTTP ${response.status}${detail ? `：${detail}` : ''}`,
+        response.status,
+        detail,
+      )
+    }
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = format === 'xlsx' ? 'analytics.xlsx' : `analytics-${section}.csv`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    if (isApiError(error)) throw error
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('timeout', `导出超时（${TIMEOUT_MS}ms）`)
+    }
+    throw new ApiError('not-connected', '本机接口不可达：导出接口')
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export interface MistakeRow {
   symbol: string
   date: string
@@ -101,8 +162,7 @@ export interface AnalyticsSummary {
 
 // ---------------------------------------------------------------- 请求
 
-async function request<T>(path: string): Promise<T> {
-  const controller = new AbortController()
+async function request<T>(path: string): Promise<T> {  const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
     const response = await fetch(path, {

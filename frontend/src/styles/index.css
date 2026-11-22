@@ -232,6 +232,62 @@
       top: 50%;
     }
   }
+  /* ------------------------------------------------------------------ *
+   * 打印 / 存 PDF（C 包 / DEC-090）：复盘统计页与各内容页打印友好。
+   * 口径：侧栏 / 顶栏 / 导航 / 按钮一律不进纸面；内容满宽黑白两列；
+   * 卡片去阴影换细边框（省墨），表格换行不截断。
+   * ------------------------------------------------------------------ */
+  @media print {
+    :root {
+      color-scheme: light;
+    }
+
+    aside,
+    header,
+    .no-print {
+      display: none !important;
+    }
+
+    body {
+      background: #fff !important;
+    }
+
+    main {
+      width: 100% !important;
+      max-width: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+
+    .page-shell {
+      max-width: none !important;
+      margin: 0 !important;
+    }
+
+    .card {
+      box-shadow: none !important;
+      border: 1px solid #ddd !important;
+      break-inside: avoid;
+    }
+
+    .grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    table {
+      font-size: 11px;
+    }
+
+    td,
+    th {
+      word-break: break-all;
+    }
+
+    a {
+      text-decoration: none !important;
+      color: inherit !important;
+    }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .ldst-wf-dot {
