@@ -47,6 +47,9 @@ from ladderstock.web.supervisor_api import build_debate_probes, build_stage_prob
 # 固定一个工作日当「今天」：探针注入同一日期，测试不再随真实日历（周末/节假日）
 # 改变结论。11-20 是周五。
 TODAY = date(2026, 11, 20)
+#: 默认「今天」的收盘后时刻：未注入 now 时用它，避免盘前跑测试时被「当天尚未到收盘
+#: 同步」的豁免改掉结论（否则同一份用例在上午/下午跑可能给出不同结果）。
+TODAY_AFTER_CLOSE = datetime(2026, 11, 20, 16, 0)
 PEERS = ("senate", "tickhub", "tickhub_us", "wire")
 
 
@@ -64,6 +67,7 @@ def _probes(
     sync_yaml: Path | None = None,
     port_probe: Any = None,
     today: Any = None,
+    now: Any = None,
 ) -> dict[str, Any]:
     return build_stage_probes(
         root,
@@ -74,6 +78,7 @@ def _probes(
         # 不挡住就会把「死 pid」判成在线（判活口径已改成端口优先）。
         port_probe=port_probe if port_probe is not None else (lambda _port: []),
         today=today if today is not None else (lambda: TODAY),
+        now=now if now is not None else (lambda: TODAY_AFTER_CLOSE),
     )
 
 
@@ -273,6 +278,56 @@ def test_ingest_stages_on_closed_market_are_ok(tmp_path: Path) -> None:
     idempotent = probes["ingest_idempotent"]()
     assert idempotent.health == HEALTH_OK
     assert "休市" in idempotent.reason
+
+
+def test_collect_store_premarket_is_ok_not_degraded(tmp_path: Path) -> None:
+    """交易日盘前（周一 03:02）库里最新是上一交易日 → 正常，不是降级。"""
+    monday = date(2026, 11, 23)
+    premarket = datetime(2026, 11, 23, 3, 2)
+    root = _root(tmp_path, "store-premarket")
+    _seed_daily(root, date(2026, 11, 20))
+    sample = _probes(root, today=lambda: monday, now=lambda: premarket)["collect_store"]()
+    assert sample.health == HEALTH_OK
+    assert "收盘同步" in sample.reason
+    assert "2026-11-20" in sample.reason
+
+
+def test_collect_store_premarket_still_flags_real_stale(tmp_path: Path) -> None:
+    """盘前也要能看出「真断链」：库里超过一周没新记录仍报降级。"""
+    monday = date(2026, 11, 23)
+    premarket = datetime(2026, 11, 23, 3, 2)
+    root = _root(tmp_path, "store-premarket-stale")
+    _seed_daily(root, date(2026, 11, 1))
+    sample = _probes(root, today=lambda: monday, now=lambda: premarket)["collect_store"]()
+    assert sample.health == HEALTH_DOWN
+
+
+def test_collect_store_after_close_requires_today(tmp_path: Path) -> None:
+    """收盘同步点之后仍无当日数据 → 如实报降级（豁免只在盘前/盘中）。"""
+    monday = date(2026, 11, 23)
+    after_close = datetime(2026, 11, 23, 16, 0)
+    root = _root(tmp_path, "store-after-close")
+    _seed_daily(root, date(2026, 11, 20))
+    sample = _probes(root, today=lambda: monday, now=lambda: after_close)["collect_store"]()
+    assert sample.health == HEALTH_WARN
+    assert "还没有今天的记录" in sample.reason
+
+
+def test_ingest_stages_premarket_are_ok(tmp_path: Path) -> None:
+    """交易日盘前：水位停在上一交易日、当日无入库数据都是正常状态。"""
+    monday = date(2026, 11, 23)
+    premarket = datetime(2026, 11, 23, 3, 2)
+    root = _root(tmp_path, "ingest-premarket")
+    _seed_daily(root, date(2026, 11, 20))
+    _write_watermark(root, value="2026-11-20", runs=[_run("ok")])
+    probes = _probes(root, today=lambda: monday, now=lambda: premarket)
+
+    watermark = probes["ingest_watermark"]()
+    assert watermark.health == HEALTH_OK
+    assert "收盘同步" in watermark.reason
+
+    idempotent = probes["ingest_idempotent"]()
+    assert idempotent.health == HEALTH_OK
 
 
 # --------------------------------------------------------- collect_success

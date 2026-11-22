@@ -33,8 +33,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import threading
-import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -439,6 +437,11 @@ STAGE_STALE_DAYS = 7
 #: 最近一次同步成功但距今超过该时长 → warn（盘后同步的日常节奏，超过一天没跑就是陈旧）
 STAGE_RUN_STALE = timedelta(hours=24)
 
+#: 当日行情「应已落库」的时点（自 0 点起的分钟数），对齐收盘同步 15:35（DEC-047 / DEC-080）。
+#: 交易日在此刻之前（盘前、盘中）本就不该有当日数据，健康判定不得因「今天没落库」报
+#: warn（2026-11-23 周一盘前现场：README 里的黄条其实全是周末/盘前误报）。
+CLOSE_SYNC_READY_MINUTE = 15 * 60 + 35
+
 
 def _stage_sample(stage: str, health: str, reason: str) -> StageSample:
     """探针结论 → schema 样本（注册表口径补齐 module / module_class / phase）。"""
@@ -453,6 +456,7 @@ def build_stage_probes(
     sync_yaml: Path | None = None,
     port_probe: Callable[[int], object] | None = None,
     today: Callable[[], date] | None = None,
+    now: Callable[[], datetime] | None = None,
 ) -> dict[str, Callable[[], StageSample]]:
     """生产阶段探针（QUOT-562）：只读观测采集 → 入库七阶段，绝不触发采集。
 
@@ -476,11 +480,17 @@ def build_stage_probes(
     config_path = Path(sync_yaml) if sync_yaml is not None else None
     _probe_port = port_probe
     _today_provider = today
+    _now_provider = now
 
     def _today() -> date:
         if _today_provider is not None:
             return _today_provider()
         return datetime.now().astimezone().date()
+
+    def _now() -> datetime:
+        if _now_provider is not None:
+            return _now_provider()
+        return datetime.now().astimezone()
 
     def _store() -> WatermarkStore:
         # 每次新建（sync 是另一个进程在写盘，复用实例会读到陈旧缓存）
@@ -597,10 +607,46 @@ def build_stage_probes(
             reason += f"（最新到 {latest.isoformat()}）"
         return reason
 
+    def _no_today_requirement_reason() -> str | None:
+        """当日不要求「今天的行情数据」的理由；否则 None。
+
+        覆盖两类正常场景，避免把「本来就没数据」误报成降级：
+        - 休市（周末 / 节假日）；
+        - 交易日但还没到收盘同步点（盘前 / 盘中）——今天本就不该有当日行情。
+        但库里真的陈旧（超过 `STAGE_STALE_DAYS` 没新记录）或空库时不豁免，
+        仍交给下游如实报 warn / down，别把「真断链」也一起放行。
+        """
+        closed = _closed_market_reason()
+        if closed is not None:
+            return closed
+        try:
+            from ladderstock.core.trading_calendar import STATUS_TRADING, market_status
+
+            status = market_status(_today())
+        except Exception:  # noqa: BLE001 - 日历读不出来就退回原口径
+            return None
+        if status != STATUS_TRADING:
+            return None
+        moment = _now()
+        if moment.hour * 60 + moment.minute >= CLOSE_SYNC_READY_MINUTE:
+            return None
+        try:
+            latest = _latest_trade_date()
+        except LadderStockError:
+            return None
+        if latest is None or latest < _today() - timedelta(days=STAGE_STALE_DAYS):
+            return None
+        return (
+            f"{_today().isoformat()} 交易日尚未到收盘同步"
+            f"（{moment:%H:%M} 早于 15:35），今天不要求当日行情"
+            f"（最新到 {latest.isoformat()}）"
+        )
+
     def _probe_collect_store() -> StageSample:
-        # 休市日不产生日线：库里没有「今天」的记录是正常状态，报降级会天天误报
-        # （2026-11-21 周六现场）。交易日仍按原口径判「今天有没有落库」。
-        reason = _closed_market_reason()
+        # 休市 / 交易日尚未收盘：没有「今天」的记录是正常状态，报降级会天天误报
+        # （2026-11-21 周六现场、2026-11-23 周一盘前现场）。收盘同步点之后仍按
+        # 「今天有没有落库」判。
+        reason = _no_today_requirement_reason()
         if reason is not None:
             return _stage_sample(STAGE_COLLECT_STORE, HEALTH_OK, reason)
         try:
@@ -705,12 +751,12 @@ def build_stage_probes(
         stale_line = (_today() - timedelta(days=STAGE_STALE_DAYS)).isoformat()
         if value >= today:
             return _stage_sample(STAGE_INGEST_WATERMARK, HEALTH_OK, "入库水位已推进到最新")
-        closed = _closed_market_reason()
-        if closed is not None:
+        excuse = _no_today_requirement_reason()
+        if excuse is not None:
             return _stage_sample(
                 STAGE_INGEST_WATERMARK,
                 HEALTH_OK,
-                f"{closed}；入库水位停在最近交易日 {value}",
+                f"{excuse}；入库水位停在 {value}",
             )
         if value >= stale_line:
             return _stage_sample(
@@ -770,12 +816,12 @@ def build_stage_probes(
                 STAGE_INGEST_IDEMPOTENT, HEALTH_WARN, "今天的行情数据存在重复行，重跑没有正确去重"
             )
         if not total:
-            closed = _closed_market_reason()
-            if closed is not None:
+            excuse = _no_today_requirement_reason()
+            if excuse is not None:
                 return _stage_sample(
                     STAGE_INGEST_IDEMPOTENT,
                     HEALTH_OK,
-                    f"{closed}；当日无入库数据，无需幂等校验",
+                    f"{excuse}；当日无入库数据，无需幂等校验",
                 )
             return _stage_sample(
                 STAGE_INGEST_IDEMPOTENT, HEALTH_WARN, "今天还没有入库数据，幂等校验暂无可查对象"
