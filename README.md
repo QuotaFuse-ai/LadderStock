@@ -1,8 +1,8 @@
 <h1 align="center">LadderStock · 天梯股复盘台</h1>
 
 <p align="center">
-  <b>面向 A 股短线交易者的本地化复盘与跟踪工作台</b><br>
-  盯盘 → 复盘 → 明日验证 → 交易日志，闭环跑在本机
+  <b>面向 A 股短线交易者与个人研究者的本地化复盘、研究与跟踪工作台</b><br>
+  盯盘 → 复盘 → 明日验证 → 交易日志 → 个股研究，闭环跑在本机
 </p>
 
 <p align="center">
@@ -13,11 +13,15 @@
   复盘辅助与交易日志，不是投资建议 · 不接实盘 · 不托管账户
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/home-overview-2026-11.png" alt="LadderStock 本地工作台首页：左侧导航、对话区与数据来源卡" width="100%">
+</p>
+
 ---
 
-LadderStock 是 QuotaFuse 产品线里的**短线复盘工作台**：情绪温度、晋级率、连板天梯、梯队断层这些指标由确定性代码直出，AI 只负责把数字串成叙事；交易日志、持仓、自选只存本机 SQLite，不进 MCP、不进 AI 上下文。
+LadderStock 是 QuotaFuse 产品线里的**本地复盘 + 个股研究工作台**：情绪温度、晋级率、连板天梯、梯队断层这些指标由确定性代码直出，AI 只负责把数字串成叙事；个股研究走固定的六段管线（公司画像 → 财务 → 盈利预期 → 估值 → 风险 → 报告合成），AI 同样只写叙述，数字留在 `facts` 里；交易日志、持仓、自选只存本机 SQLite，不进 MCP、不进 AI 上下文。
 
-它不做行情采集，也不做多角色投研。行情与资金由 `TickHub-CN` 提供，资讯由 `QuotaFuse Wire` 提供，多角色分析与辩论交给 `StockSenate`；LadderStock 只负责短线交易者的日常复盘与纪律执行，并用统一 `LadderEnvelope` 与生态对齐。
+它不做行情采集，也不做多角色辩论。行情与资金由 `TickHub-CN` 提供，财报三表与口径由 `FinanceCoffer` 提供，资讯由 `QuotaFuse Wire` 提供，多角色分析与辩论交给 `StockSenate`；LadderStock 只负责交易者的日常复盘、纪律执行与单票研究，并用统一 `LadderEnvelope` 与生态对齐。
 
 - **程序算数、AI 解读**：指标全部确定性计算，AI 失败只降级叙事，不污染数字。
 - **状态可恢复**：Zustand persist → IndexedDB，刷新不丢复盘草稿与未提交验证条件。
@@ -42,7 +46,7 @@ LadderStock 是 QuotaFuse 产品线里的**短线复盘工作台**：情绪温�
 | MCP 工具 | 复盘 / 情绪 / 验证类 | 数据类 | 资讯类 | 分析类 |
 | 隐私数据本地存储 | ✅ 仅本机 | ❌ | ❌ | ❌ |
 
-数据、资讯、决策、复盘四层通过统一 envelope 与 MCP 工具解耦，互不重复建设。
+数据、资讯、决策、复盘四层通过统一 envelope 与 MCP 工具解耦，互不重复建设。数据侧另有 `FinanceCoffer`（财报三表与口径）与 `ProxyFleet`（出站代理池）：前者供财务数据，后者供各 peer 的出站请求，两者都不参与复盘层计算。
 
 ### 边界是可执行的，不只是写在文档里
 
@@ -62,6 +66,21 @@ LadderStock 是**第四层：复盘与纪律执行层**，只消费前三层。�
 python -X utf8 -m pytest tests/contract/test_ecosystem_boundary.py -q   # 29 条边界契约
 ldst doctor --output json     # boundary:no_collection / boundary:datasets
 ```
+
+## 个股研究（R1）
+
+单票研究是固定六段的顺序管线，每段产物落盘、可断点续跑：
+
+```text
+公司画像 → 财务 → 盈利预期 → 估值 → 风险 → 报告合成
+```
+
+- 本包只做**编排与落盘**，不联网检索（联网检索属 R4，需人类批准后才发起）。
+- AI 只写叙述，数字由程序计算并留在 `facts` 里，报告段只消费前五段的产物。
+- 引用可回溯：每条事实带来源与 `as_of`，数据源缺位时显式标注为兜底，不与自填引用混算。
+- 失败可续：某段失败只影响该段，重跑从断点继续，不重算已落盘的前序段。
+
+页面契约与溯源口径见 [docs/specs/SPEC-RESEARCH-PAGES.md](docs/specs/SPEC-RESEARCH-PAGES.md)、[docs/specs/SPEC-RESEARCH-PROVENANCE.md](docs/specs/SPEC-RESEARCH-PROVENANCE.md)。
 
 ## 架构
 
@@ -205,7 +224,7 @@ ldst doctor                       # 依赖、端口、缓存目录、数据源�
 | M1 状态连续性与体验修复 | IndexedDB 持久化；PDF 中文字体；AI 错误分类 | 刷新可恢复；PDF 中文正常；错误可行动 |
 | M2 增量数据层与源韧性 | DuckDB / Parquet 增量；Provider Registry；冷热分离 | 同步提速；单源故障不中断；历史可查 |
 | M3 AI 编排与生态集成 | 状态机；fallback 链；MCP 新工具；Envelope 对齐 | AI 可降级可恢复；MCP 可调用；字段对齐 |
-| M4 验证门禁与产品化 | 时间敏感实机清单；跨平台验收；Docker / 只读 API | 关键场景实机通过；一键部署；本机监听 |
+| M4 验证门禁与产品化 | 时间敏感实机清单；跨平台验收；裸机 supervisor / 只读 API | 关键场景实机通过；一键部署；本机监听 |
 
 ## 目录结构
 
@@ -214,7 +233,7 @@ ladderstock/
 ├── config/            # sources / sync / ai / state + schema
 ├── prompts/           # 五段式复盘 prompt
 ├── docs/              # 架构、配置、CLI、包名、MCP、迁移、发布清单
-├── src/ladderstock/   # core / data / ai / watch / review / journal / mcp / cli / web / config
+├── src/ladderstock/   # core / data / ai / research / review / journal / industry / knowledge / mcp / cli / web / config
 ├── frontend/          # stores / persist（IndexedDB）
 ├── compatibility/     # 旧启动方式委托新版
 ├── data/              # 运行数据（gitignore）：market.duckdb / journal.sqlite / archive/
