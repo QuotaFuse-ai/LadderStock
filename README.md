@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/home-overview-2026-11.png" alt="LadderStock 本地工作台首页：左侧导航、对话区与数据来源卡" width="100%">
+  <img src="docs/images/home-overview-2026-11.png" alt="LadderStock 本地工作台首页：左侧导航、对话区与数据来源卡" width="100%">
 </p>
 
 ---
