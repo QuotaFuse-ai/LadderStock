@@ -109,6 +109,18 @@ class ProcessOps(Protocol):
         空指纹返回 None（无证据不认人，失败关闭）。"""
 
 
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询/终止类子进程一律不带控制台（DEC-092 单窗口）。
+
+    缺了它，每次 tasklist / taskkill / powershell / wmic 都会在桌面弹一个瞬时
+    控制台窗口（2026-11-23 现场：tasklist.exe 黑窗堆四个）。POSIX 返回空 dict，
+    因为 creationflags 仅 Windows 支持，无条件传参会让 subprocess 抛 ValueError。
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
+
 class WindowsProcessOps:
     """tasklist / Get-CimInstance / taskkill 的真实实现（本项目以 Windows 为主）。
 
@@ -150,6 +162,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         return "No tasks" not in (result.stdout or "")
 
@@ -220,6 +233,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         if result.returncode == 0:
             return
@@ -242,6 +256,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         if result.returncode != 0:
             return None
@@ -263,6 +278,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         for line in (result.stdout or "").splitlines():
             text = line.strip()
@@ -297,6 +313,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         return _parse_pid_pairs(result.stdout or "")
 
@@ -444,8 +461,13 @@ def _iter_pids(ops: ProcessOps) -> list[int]:
     argv: list[str] = ["powershell", "-NoProfile", "-Command", "(Get-Process).Id"]
     try:
         result = subprocess.run(
-            argv, shell=False, timeout=QUERY_TIMEOUT_SEC, capture_output=True, text=True,
+            argv,
+            shell=False,
+            timeout=QUERY_TIMEOUT_SEC,
+            capture_output=True,
+            text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         return [int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()]
     except (OSError, subprocess.SubprocessError):

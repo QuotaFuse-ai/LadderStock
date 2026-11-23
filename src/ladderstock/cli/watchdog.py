@@ -147,6 +147,13 @@ def _split_port(address: str) -> int | None:
         return None
 
 
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询类子进程一律不带控制台（DEC-092 单窗口）。"""
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
+
 def pid_listening_on(port: int) -> int | None:
     """当前监听 `port` 的本机 PID；查不到返回 None（尽力而为，不抛）。"""
     try:
@@ -159,6 +166,7 @@ def pid_listening_on(port: int) -> int | None:
                 errors="replace",
                 timeout=5,
                 check=False,
+                **_no_window_kwargs(),
             ).stdout
             for line in listing.splitlines():
                 parts = line.split()
@@ -200,6 +208,7 @@ def process_image_name(pid: int) -> str:
                 errors="replace",
                 timeout=5,
                 check=False,
+                **_no_window_kwargs(),
             ).stdout
             for line in listing.splitlines():
                 if line.startswith('"'):

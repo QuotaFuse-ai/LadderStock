@@ -1280,7 +1280,7 @@ export interface SupervisorModule {
   pid: number | null
   /** 对外三值（stopped 折叠为 ok） */
   health: 'ok' | 'restarting' | 'needs_human'
-  /** 原始生命周期：starting / running / stopping / stopped / failed / restarting / needs_human / down / unknown */
+  /** 原始生命周期：starting / running / stopping / stopped / failed / restarting / needs_human / down / unknown；disabled = 按需模块（proxypool）未启用，无进程属正常 */
   state: string
   /** 近 5 分钟滑动窗口内的重启次数：**当前健康指标**，0 表示近期稳定 */
   restarts_5min: number

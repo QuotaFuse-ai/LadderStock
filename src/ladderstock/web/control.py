@@ -785,6 +785,17 @@ def _ai_working_dir() -> Path:
     return project_root()
 
 
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询/终止类子进程一律不带控制台（DEC-092 单窗口）。
+
+    与 proctree / module_adapters 同口径：缺了它每次 tasklist / netstat / wmic /
+    powershell 都会在桌面弹瞬时黑窗。POSIX 返回空 dict（creationflags 仅 Windows 支持）。
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
+
 def run_step(args: list[str], cwd: Path, timeout: float) -> StepResult:
     """参数数组 + `shell=False` + 显式超时（DEC-014 硬约束 2）。"""
     try:
@@ -823,6 +834,7 @@ def _wsl_listing() -> str:
             capture_output=True,
             timeout=WSL_PROBE_TIMEOUT_SEC,
             shell=False,
+            **_no_window_kwargs(),
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -888,6 +900,7 @@ def _process_name(pid: int) -> str | None:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):  # pragma: no cover - 环境异常
         return None
@@ -913,6 +926,7 @@ def probe_port(port: int | None) -> list[PortOwner]:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
             pids = _parse_netstat_listeners(proc.stdout or "", port)
             return [PortOwner(pid=pid, process=_process_name(pid)) for pid in pids]
@@ -4485,6 +4499,7 @@ def _pid_alive(pid: Any) -> bool:
         capture_output=True,
         text=True,
         errors="replace",
+        **_no_window_kwargs(),
     )
     return "No tasks" not in (proc.stdout or "")
 

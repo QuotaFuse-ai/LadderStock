@@ -1021,6 +1021,8 @@ def _pid_alive(pid: int) -> bool:
                 text=True,
                 timeout=5,
                 check=False,
+                # 模块进程可能是无控制台的 pythonw：查询类子进程不得弹黑窗（DEC-092）
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
             )
         except (OSError, subprocess.TimeoutExpired):
             return False

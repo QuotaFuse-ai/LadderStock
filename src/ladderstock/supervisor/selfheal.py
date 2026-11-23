@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ladderstock.supervisor.adapters import ON_DEMAND_MODULES
 from ladderstock.supervisor.health_events import (
     DEFAULT_PORT_PROBE_INTERVAL,
     OWNER_OWN_CHILD,
@@ -607,12 +608,15 @@ class SelfHealEngine:
         self, module: str, ports: tuple[int, ...], entry: LedgerEntry | None, now: float
     ) -> dict[str, Any]:
         if entry is None:
+            # 按需模块（proxypool）不在全启路径里、无映射时根本没有进程：
+            # state=unknown 会让页面像「出事了」，语义化成 disabled 如实标注。
+            on_demand = module in ON_DEMAND_MODULES
             return {
                 "module": module,
                 "ports": list(ports),
                 "pid": None,
                 "health": HEALTH_OK,
-                "state": "unknown",
+                "state": "disabled" if on_demand else "unknown",
                 "restarts_5min": 0,
                 "restart_count": 0,
                 "stopping_by_user": False,

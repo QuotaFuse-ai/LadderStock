@@ -17,7 +17,7 @@ import type {
 export type BadgeTone = 'neutral' | 'ok' | 'warn' | 'danger' | 'info' | 'flat'
 
 export interface OwnershipView {
-  label: '主程序托管' | '外部接管' | '非托管（观测）'
+  label: '主程序托管' | '外部接管' | '非托管（观测）' | '未启用（按需）'
   tone: BadgeTone
   hint: string
 }
@@ -73,6 +73,13 @@ export function ownershipView(module: SupervisorModule | null): OwnershipView {
       label: '非托管（观测）',
       tone: 'neutral',
       hint: '后端账本没有这个模块的记录：只观测，不代管',
+    }
+  }
+  if (module.state === 'disabled') {
+    return {
+      label: '未启用（按需）',
+      tone: 'neutral',
+      hint: '按需模块：没有启用的映射就没有进程，属正常状态，不是故障',
     }
   }
   if (module.ownership === 'external') {

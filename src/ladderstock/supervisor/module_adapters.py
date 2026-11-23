@@ -318,6 +318,17 @@ def _snapshots_from_json(raw: str) -> tuple[ProcessSnapshot, ...]:
     return tuple(snapshots)
 
 
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询/终止类子进程一律不带控制台（DEC-092 单窗口）。
+
+    与 proctree._no_window_kwargs 同口径：缺了它每次 taskkill / powershell /
+    netstat 都会弹瞬时黑窗。POSIX 返回空 dict（creationflags 仅 Windows 支持）。
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
+
 class WindowsHostPivot:
     """tasklist / CIM / taskkill / Popen 的真实实现（生产路径）。
 
@@ -411,6 +422,7 @@ class WindowsHostPivot:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
 
     def spawn(  # pragma: no cover - 子进程拉起
@@ -468,6 +480,7 @@ class WindowsHostPivot:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
         except subprocess.TimeoutExpired as exc:
             return CommandResult(
@@ -492,6 +505,7 @@ class WindowsHostPivot:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
         except (OSError, subprocess.TimeoutExpired):
             return ""
@@ -508,6 +522,7 @@ class WindowsHostPivot:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
         except (OSError, subprocess.TimeoutExpired):
             return ""
