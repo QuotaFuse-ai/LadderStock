@@ -22,6 +22,8 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   { prefix: '/intraday', pkg: 'a-share-tape' },
   { prefix: '/review', pkg: 'review-journal' },
   { prefix: '/weekly', pkg: 'review-journal' },
+  // B 包 / DEC-089：复盘统计是只读观测面（同 /data-assets），不绑技能包
+  { prefix: '/analytics', pkg: null },
   { prefix: '/pool', pkg: 'review-journal' },
   { prefix: '/journal', pkg: 'review-journal' },
   { prefix: '/validate', pkg: 'review-journal' },
@@ -31,6 +33,9 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   { prefix: '/my-stocks', pkg: 'portfolio-check' },
   { prefix: '/calendar', pkg: 'event-calendar' },
   { prefix: '/inbox', pkg: 'event-calendar' },
+  // DEC-087 提醒规则页：配置管理面（同 `/config` / `/settings`），只读规则与渠道、
+  // 不承接研究问答——不绑技能包，保持 page-channel 的 15 前缀契约不变。
+  { prefix: '/alert', pkg: null },
   { prefix: '/industry', pkg: 'sector-rotation' },
   { prefix: '/signals', pkg: 'sector-rotation' },
   { prefix: '/research', pkg: 'a-share-dossier' },
@@ -39,7 +44,16 @@ export const PAGE_SKILL_BINDINGS: PageSkillBinding[] = [
   // QUOT-567：知识库两页只读展示平台攒的档案，未绑技能包（开放域）；
   // 无档案空态由页内自行打开助手并预填问题
   { prefix: '/knowledge', pkg: null },
+  // 数据资产页（`/data-assets`）：知识库入库与覆盖的观测面，纯只读看板，不绑技能包
+  { prefix: '/data-assets', pkg: null },
   { prefix: '/settings', pkg: null },
+  // 采集进度页（`/config`）与账本页（`/ledger`）：都是只读观测/复核面，
+  // 页内没有技能包入口，按开放域显式登记（不登记会被守卫判成静默退回）。
+  { prefix: '/config', pkg: null },
+  { prefix: '/ledger', pkg: null },
+  // 首次安装向导（`navigate('/setup')` 在缺失项时自动跳转）：只读 setup 快照
+  // 并引导补全，没有对应的技能包，按开放域登记
+  { prefix: '/setup', pkg: null },
 ]
 
 export interface PageBinding {

@@ -27,6 +27,7 @@ from ladderstock.news.models import (
 # 标题归一化
 # --------------------------------------------------------------------------- #
 
+
 def test_title_key_ignores_layout_only_differences() -> None:
     """同一篇稿子在不同来源里的差别只有排版：排版不能把一条变成两条。"""
     assert normalize_title(
@@ -45,6 +46,7 @@ def test_title_key_normalises_fullwidth_text() -> None:
 # --------------------------------------------------------------------------- #
 # URL 规范化
 # --------------------------------------------------------------------------- #
+
 
 def test_canonical_url_drops_tracking_keeps_substance() -> None:
     assert canonical_url("HTTP://Example.COM/a/b/?utm_source=x&sk=1#frag") == (
@@ -65,6 +67,7 @@ def test_canonical_url_keeps_business_query() -> None:
 # --------------------------------------------------------------------------- #
 # 时间：给到哪天就说哪天，没给时刻就不编时刻
 # --------------------------------------------------------------------------- #
+
 
 def test_parse_published_at_epoch_seconds_are_beijing_time() -> None:
     assert parse_published_at(1_793_323_800) == "2026-10-30T09:30:00+08:00"
@@ -95,6 +98,7 @@ def test_publish_day_accepts_both_granularities() -> None:
 # 代码
 # --------------------------------------------------------------------------- #
 
+
 def test_normalize_code_accepts_the_shapes_upstream_sends() -> None:
     for raw in ("600519", "600519.SH", "sh600519", " 600519 ", "000001.SZ", "830799.BJ"):
         assert normalize_code(raw) in {"600519", "000001", "830799"}, raw
@@ -122,6 +126,7 @@ def test_extract_codes_does_not_repeat() -> None:
 # 稳定 id 与指纹
 # --------------------------------------------------------------------------- #
 
+
 def test_ids_are_derived_only_from_the_dedup_key() -> None:
     """id 只由去重键决定 → 同一 fixture 重跑必然同 id（幂等的根）。"""
     assert make_id("url:https://a/b") == make_id("url:https://a/b")
@@ -134,6 +139,7 @@ def test_ids_are_derived_only_from_the_dedup_key() -> None:
 # --------------------------------------------------------------------------- #
 # build_item：契约键集合与丢弃规则
 # --------------------------------------------------------------------------- #
+
 
 def _item(**overrides):
     params = {
@@ -186,6 +192,7 @@ def test_summary_is_capped_so_flashes_do_not_bloat_the_store() -> None:
 # --------------------------------------------------------------------------- #
 # 送模型的边界（issue 要求 4）
 # --------------------------------------------------------------------------- #
+
 
 def test_ai_payload_is_title_summary_url_only() -> None:
     item = _item(provenance={"trace_id": "t-1", "fetched_at": "2026-10-30T10:00:00+08:00"})

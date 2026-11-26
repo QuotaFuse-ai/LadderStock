@@ -51,6 +51,7 @@ def _load(name: str) -> dict[str, Any]:
 # 1. 数据集归属：没有归属就不许同步
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("name", sorted(DATASET_CATALOG))
 def test_catalog_entry_has_peer_and_tool(name: str) -> None:
     binding = DATASET_CATALOG[name]
@@ -83,6 +84,7 @@ def test_config_contains_no_vendor_hosts_or_collectors() -> None:
 # 2. 配置与目录必须一致：主备同 peer
 # --------------------------------------------------------------------------- #
 
+
 def test_sync_datasets_are_registered_and_match_catalog() -> None:
     datasets = _load("sync")["sync"]["datasets"]
     assert datasets, "sync.yaml 至少要同步一个数据集"
@@ -109,8 +111,9 @@ def test_peers_block_matches_ecosystem() -> None:
     assert set(peers) == set(PEERS)
     for key, peer in peers.items():
         assert peer["package"] == PEERS[key].package
-        assert peer["cli"] == PEERS[key].cli
-        assert peer["mcp_name"] == PEERS[key].mcp_name
+        # 库态 peer（memory）没有可执行入口，`cli` / `mcp_name` 允许缺省（None ≈ ''）
+        assert (peer.get("cli") or "") == (PEERS[key].cli or "")
+        assert peer.get("mcp_name") == PEERS[key].mcp_name
 
 
 # --------------------------------------------------------------------------- #

@@ -7,13 +7,13 @@
       * 原脚本 `start "..." cmd /c` 开两个【黑窗口】拉 schedule 与 web —— 已废除。
         现在统一走计划任务「LadderStock API」+「LadderStock Schedule」（Running 托管，
         watchdog 保活），【不弹任何控制台窗口】。
-      * REPO 统一为部署树 D:\QuotaFuseModules\LadderStock（原脚本写的
-        D:\workplace\LadderStock .venv\ldst.exe 是旧 tree，与 5950 实际运行体不符）。
+      * REPO 统一为部署树 D:\QuotaFuseModules\LadderStock（正式服 5950）。
       * data_dir 校验（验收项）：5950 已在跑但 data_dir 不是
         D:\QuotaFuseModules\LadderStock\data 时判错实例，拒绝接管，不杀进程。
 
-    启动链路就是「LadderStock API」任务：D:\QuotaFuseModules\LadderStock\ops\start_board_main.cmd 5950
-    （代码 PYTHONPATH=D:\workplace\LadderStock-app\src，venv 借 D:\workplace\LadderStock-main\.venv）。
+    启动链路就是「LadderStock API」任务：D:\QuotaFuseModules\LadderStock\ops\start_board_main.cmd 5950。
+    正式服代码/解释器/数据都在部署树内，与测试服 D:\workplace\LadderStock（5951）完全隔离；
+    原先借用 `LadderStock-app\src` + `LadderStock-main\.venv` 的临时口径已废止。
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File .\Start-LadderStockBoard.ps1

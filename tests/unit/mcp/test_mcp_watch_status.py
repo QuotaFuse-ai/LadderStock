@@ -41,6 +41,7 @@ runner = CliRunner()
 # 夹具
 # --------------------------------------------------------------------------- #
 
+
 @pytest.fixture()
 def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """把 `data_dir()` 钉在 tmp（CLI 侧）；MCP 侧用同一个目录当 root。"""
@@ -104,6 +105,7 @@ def _assert_contract(envelope: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 # 三态
 # --------------------------------------------------------------------------- #
+
 
 def test_running_status_exposes_real_events(data_home: Path, bars_file: Path) -> None:
     run_watch_start(bars_file)
@@ -240,7 +242,7 @@ def test_recent_events_truncated_like_cli(tmp_path: Path) -> None:
 
     assert watch["event_count"] == len(events)
     assert len(watch["recent_events"]) == status_file.STATUS_RECENT_EVENTS
-    assert watch["recent_events"] == events[-status_file.STATUS_RECENT_EVENTS:]
+    assert watch["recent_events"] == events[-status_file.STATUS_RECENT_EVENTS :]
 
 
 def test_declared_tool_still_read_only() -> None:

@@ -150,10 +150,11 @@ describe('QUOT-484 归属展示', () => {
     expect((await screen.findAllByText('主程序托管')).length).toBeGreaterThan(0)
     expect(screen.getAllByText('外部接管').length).toBeGreaterThan(0)
     expect(screen.getByText('非托管（观测）')).toBeTruthy()
-    // 自愈超限：卡片标红 + 文案 + 重试入口
+    // 自愈超限：卡片标红 + 文案 + 重试入口（分区合并后端口诊断面板也有「重试」，故限定在卡片内）
     expect(screen.getByText('需人工处理（已停止自愈）')).toBeTruthy()
-    expect(screen.getByTestId('peer-card-financecoffer').getAttribute('data-self-heal')).toBe('gave_up')
-    expect(screen.getByRole('button', { name: /重试/ })).toBeTruthy()
+    const card = screen.getByTestId('peer-card-financecoffer')
+    expect(card.getAttribute('data-self-heal')).toBe('gave_up')
+    expect(within(card).getByRole('button', { name: /重试/ })).toBeTruthy()
   })
 
   it('后端 ownership=external 时优先判为非托管，即使账本 origin 还是 spawned', async () => {

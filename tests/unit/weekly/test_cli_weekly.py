@@ -52,7 +52,19 @@ JSON_KEYS = {
 
 @pytest.fixture()
 def data_dir(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """仓库配置 + 临时数据目录 + 明确无凭据：离线可重复，不写仓库 `data/`。"""
+    """隔离配置 + 临时数据目录 + 明确无凭据：离线可重复，不写仓库 `data/`。
+
+    conftest 只清进程环境变量，而隐式回退的 legacy 后端会读仓库 `config/ai.env`
+    ——开发机上那里有真实凭据，会把「未配置降级」的用例变成真拨模型
+    （与 `tests/unit/research/test_cli.py` 同一条修复）。
+    """
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "ai.yaml").write_text(
+        "ai:\n  backends: []\n  default_model: stub\n", encoding="utf-8"
+    )
+    (config_dir / "ai.env").write_text("", encoding="utf-8")
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(config_dir))
     target = tmp_path / "data"
     monkeypatch.setenv("LDST_DATA_DIR", str(target))
     monkeypatch.delenv(URL_ENV, raising=False)
@@ -73,6 +85,7 @@ def _run(args: list[str]) -> Any:
 # --------------------------------------------------------------------------- #
 # 参数：非法周标签一律 2，且不产出任何文件
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "value",
@@ -95,6 +108,7 @@ def test_date_is_normalized_to_its_week(seeded_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 6：整周没有可用单日指标
 # --------------------------------------------------------------------------- #
+
 
 def test_empty_week_exits_not_found_but_keeps_artifacts(data_dir: Path) -> None:
     result = _run(["weekly", "--week", WEEK, "--output", "json"])
@@ -120,6 +134,7 @@ def test_payload_keys_are_stable(seeded_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 9：事实包有数、AI 段落降级
 # --------------------------------------------------------------------------- #
+
 
 def test_seeded_week_degrades_offline_and_lands_artifacts(seeded_dir: Path) -> None:
     result = _run(["weekly", "--week", WEEK, "--output", "json"])

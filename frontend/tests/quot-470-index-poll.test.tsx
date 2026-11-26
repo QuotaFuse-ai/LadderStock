@@ -152,8 +152,10 @@ describe('盘中 15 秒自动刷新', () => {
     expect(count).toBeGreaterThanOrEqual(7)
     expect(count).toBeLessThanOrEqual(9)
 
-    // 其余四块各只取一次，不跟指数节拍
-    const others = fetchMock.mock.calls.filter(([url]) => !String(url).includes('/api/indices')).length
+    // 其余四块各只取一次，不跟指数节拍（`/desk/history` 是研究台挂载时的回看读取，不计入）
+    const others = fetchMock.mock.calls.filter(
+      ([url]) => !String(url).includes('/api/indices') && !String(url).includes('/desk/history'),
+    ).length
     expect(others).toBe(4)
 
     expect(screen.getByText(`交易时段 · 每 ${INDICES_POLL_SECONDS} 秒刷新`)).toBeTruthy()
@@ -216,7 +218,10 @@ describe('休市停轮询', () => {
     await tick(0)
     await tick(120_000)
 
-    expect(fetchMock).not.toHaveBeenCalled()
+    // 演示态用固定夹具，不向远端取数；`/desk/history` 是研究台挂载时的回看读取，不算远端刷新
+    expect(
+      fetchMock.mock.calls.filter(([url]) => !String(url).includes('/desk/history')),
+    ).toEqual([])
     expect(screen.getByText(/休市 · 显示最近交易日读数|交易时段/)).toBeTruthy()
   })
 })

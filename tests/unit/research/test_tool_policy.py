@@ -113,7 +113,8 @@ def test_pipeline_takes_no_tool_arguments() -> None:
     params = inspect.signature(pipeline.ResearchPipeline.run).parameters
     assert not [name for name in params if "tool" in name]
     assert not [
-        name for name in inspect.signature(pipeline.ResearchPipeline.__init__).parameters
+        name
+        for name in inspect.signature(pipeline.ResearchPipeline.__init__).parameters
         if "tool" in name
     ]
 

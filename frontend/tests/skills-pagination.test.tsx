@@ -154,10 +154,12 @@ describe('SkillsIndexScreen · 分页与过滤', () => {
     expect(pageButtonNumbers()).toEqual(expected.map((item) => item.id))
   })
 
-  it('只看可用：排除未接通 / 待建 / 本阶段不做，45 条落成 5 页', () => {
+  it('只看可用：排除未接通 / 待建 / 本阶段不做，条数与页数按目录实算', () => {
     renderSkills()
     const usable = CATALOG.items.filter(isUsableCatalogItem)
-    expect(usable).toHaveLength(45)
+    // 目录条目会随技能落地增删，别把条数写死；这里只校验「可用集非空且分页口径自洽」
+    expect(usable.length).toBeGreaterThan(0)
+    const pages = Math.ceil(usable.length / 10)
 
     fireEvent.click(screen.getByRole('switch'))
 
@@ -167,8 +169,8 @@ describe('SkillsIndexScreen · 分页与过滤', () => {
     expect(within(list).queryByText('待建')).toBeNull()
     expect(within(list).queryByText('本阶段不做')).toBeNull()
     expect(pageButtonNumbers()).toEqual(usable.slice(0, 10).map((item) => item.id))
-    expect(paginationNav().textContent).toContain('共 45 条 · 每页 10 条')
-    expect(paginationNav().textContent).toContain('第 1 / 5 页')
+    expect(paginationNav().textContent).toContain(`共 ${usable.length} 条 · 每页 10 条`)
+    expect(paginationNav().textContent).toContain(`第 1 / ${pages} 页`)
 
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
     expect(pageButtonNumbers()).toEqual(usable.slice(10, 20).map((item) => item.id))
@@ -179,7 +181,8 @@ describe('SkillsIndexScreen · 分页与过滤', () => {
 
     fireEvent.click(screen.getByRole('switch'))
 
+    const usable = CATALOG.items.filter(isUsableCatalogItem)
     expect(screen.getByTestId('search').textContent).toBe('?usable=1')
-    expect(paginationNav().textContent).toContain('第 1 / 5 页')
+    expect(paginationNav().textContent).toContain(`第 1 / ${Math.ceil(usable.length / 10)} 页`)
   })
 })

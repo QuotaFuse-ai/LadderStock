@@ -48,7 +48,19 @@ JSON_KEYS = {
 
 @pytest.fixture()
 def data_dir(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """仓库配置 + 临时数据目录 + 明确无凭据：离线可重复，不写仓库 `data/`。"""
+    """隔离配置 + 临时数据目录 + 明确无凭据：离线可重复，不写仓库 `data/`。
+
+    配置目录指到临时目录并放一份「合法但无凭据」的 `ai.yaml` + 空 `ai.env`：
+    conftest 只清进程环境变量，而隐式回退的 legacy 后端会读仓库 `config/ai.env`
+    ——开发机上那里有真实凭据，会把「未配置降级」的用例变成真拨模型。
+    """
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "ai.yaml").write_text(
+        "ai:\n  backends: []\n  default_model: stub\n", encoding="utf-8"
+    )
+    (config_dir / "ai.env").write_text("", encoding="utf-8")
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(config_dir))
     target = tmp_path / "data"
     monkeypatch.setenv("LDST_DATA_DIR", str(target))
     monkeypatch.delenv(URL_ENV, raising=False)
@@ -68,6 +80,7 @@ def _payload(result: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 主路径：六段顺序跑通 + 产物落盘
 # --------------------------------------------------------------------------- #
+
 
 def test_first_run_walks_six_stages_and_lands_artifacts(data_dir: Path) -> None:
     result = _run(["research", CODE, "--date", DAY, "--output", "json"])
@@ -102,6 +115,7 @@ def test_date_is_always_normalized_to_iso(data_dir: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 断点续跑：只补缺失段
 # --------------------------------------------------------------------------- #
+
 
 def test_resume_only_fills_missing_stages(data_dir: Path) -> None:
     first = _payload(
@@ -150,10 +164,10 @@ def test_retry_failed_reruns_only_failed_stages(data_dir: Path) -> None:
     assert payload["failed"] == [], "重跑后 financial 变成就绪"
 
 
-
 # --------------------------------------------------------------------------- #
 # 用法与配置错误
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "args",
@@ -184,6 +198,7 @@ def test_missing_ai_config_exits_3(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 # --------------------------------------------------------------------------- #
 # 全局 --output 三档（docs/CLI.md §F）
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("fmt", ["json", "table", "csv"])
 def test_every_output_format_emits_a_result(data_dir: Path, fmt: str) -> None:

@@ -83,6 +83,13 @@ _REASONS: dict[str, str] = {
     EVENT_RECOVERED: "子模块已恢复运行",
 }
 
+#: 恢复但换绑了进程的白话原因：账本 pid 已死、端口由同服务的另一个进程在听。
+#: 不说"崩溃"——服务一直在，只是记账的 pid 陈旧了（判据是端口占用者 + 存活）。
+_RECOVERED_BY_SERVICE = (
+    "子模块已恢复运行：账本记录的进程（pid {old}）已退出，"
+    "但同一服务的 pid {new} 正在端口提供服务"
+)
+
 #: 端口冲突按占用者分类的白话原因（QUOT-557 / S4）：前端弹窗据此决定主操作——
 #: own_child 可安全重启恢复；adopted_peer / foreign 绝不终止，只能引导用户确认。
 _PORT_CONFLICT_REASONS: dict[str, str] = {
@@ -251,6 +258,9 @@ class PortObservation:
     listening: bool
     owner: str
     pid: int | None = None
+    #: 占用者与账本 pid 不等，但属于本模块同一份服务（venv 启动器 → 解释器这类
+    #: 多代进程的子孙、多面模块另一面的启动器）：本尊在听，不是残留冲突
+    same_service: bool = False
 
 
 #: 端口观测器：一次调用看全部托管模块（装配侧实现可做一次连接表扫描摊薄成本）。
@@ -318,14 +328,16 @@ class HealthEventMonitor:
             _log.warning("端口健康观测失败（已吞，本轮只看存活）", exc_info=True)
             self._port_obs = {}
 
-    def _observe_one(
-        self, entry: LedgerEntry, is_alive: Callable[[LedgerEntry], bool]
-    ) -> None:
+    def _observe_one(self, entry: LedgerEntry, is_alive: Callable[[LedgerEntry], bool]) -> None:
         alive = bool(is_alive(entry))
         obs = self._port_obs.get(entry.module) if self._inspector is not None else None
-        conflicts = self._conflict_observations(entry, obs)
-        condition = self._condition(entry, alive, obs, conflicts)
-        state = self._state(entry, alive)
+        # 账本 pid 陈旧（上一实例的子进程已退出）但端口由**同一服务**的新进程在听时，
+        # 按「服务仍在」处理：不报 crash、并让先前的坏事件收敛成 recovered。判据两条
+        # 缺一不可——端口在听、占用者此刻仍存活；拿不到探针就保守不认（宁可少报）。
+        served_by = None if alive else self._served_by(entry, obs)
+        conflicts = self._conflict_observations(entry, obs, served_by=served_by)
+        condition = self._condition(entry, alive or served_by is not None, obs, conflicts)
+        state = self._state(entry, alive or served_by is not None)
         health = entry.health if entry.health in PUBLIC_HEALTH else HEALTH_OK
         prev = self._prev.get(entry.module, "ok")
         if condition == prev:
@@ -336,12 +348,40 @@ class HealthEventMonitor:
             self._publish(entry, condition, health=health, state=state, conflicts=conflicts)
         elif condition == "ok" and entry.module in self._pending_recovery:
             self._pending_recovery.discard(entry.module)
-            self._publish(entry, EVENT_RECOVERED, health=health, state=state)
+            reason = None
+            if served_by is not None:
+                reason = _RECOVERED_BY_SERVICE.format(old=entry.pid or "（未知）", new=served_by)
+            self._publish(entry, EVENT_RECOVERED, health=health, state=state, reason=reason)
+
+    def _served_by(
+        self,
+        entry: LedgerEntry,
+        obs: Sequence[PortObservation] | None,
+    ) -> int | None:
+        """账本 pid 已死时，找出**同一服务**里正在端口提供服务的存活进程 pid。
+
+        只认 `same_service=True` 的观测（启动器 → 解释器这类多代进程、或多面模块的
+        另一面启动器）：这正是「本尊在听、但不是账本记的那个进程」的既有口径。
+        pid 不符又没被标成同一服务的 own_child / adopted_peer 仍是「残留进程占口」，
+        留给 `_conflict_observations` 报 port_conflict，不在这里抹平。
+        """
+        if obs is None or self._is_pid_alive is None or not entry.ports:
+            return None
+        for item in obs:
+            if not item.listening or item.pid is None or not item.same_service:
+                continue
+            if item.pid == entry.pid:
+                continue
+            if self._is_pid_alive(item.pid):
+                return item.pid
+        return None
 
     def _conflict_observations(
         self,
         entry: LedgerEntry,
         obs: Sequence[PortObservation] | None,
+        *,
+        served_by: int | None = None,
     ) -> tuple[PortObservation, ...]:
         """挑出「冲突端口」的观测（QUOT-557 / S4，失败关闭）。
 
@@ -361,11 +401,13 @@ class HealthEventMonitor:
         for item in obs:
             if not item.listening:
                 continue
+            if served_by is not None and item.pid == served_by:
+                continue  # 已确认是同一服务的新进程在提供服务，不是残留冲突
             if item.owner == OWNER_FOREIGN:
                 conflicts.append(item)
                 continue
             if item.owner in (OWNER_OWN_CHILD, OWNER_ADOPTED_PEER):
-                if item.pid is None or item.pid == entry.pid:
+                if item.pid is None or item.pid == entry.pid or item.same_service:
                     continue  # 旧口径 / 本尊在听（含已死本尊的旧观测）
                 if self._is_pid_alive is None or not self._is_pid_alive(item.pid):
                     continue  # 无探针 / 占用者已死：不是残留冲突
@@ -434,8 +476,9 @@ class HealthEventMonitor:
         health: str,
         state: str,
         conflicts: Sequence[PortObservation] = (),
+        reason: str | None = None,
     ) -> None:
-        reason = _REASONS[event]
+        reason = reason or _REASONS[event]
         detail: tuple[dict[str, Any], ...] = ()
         if event == EVENT_PORT_CONFLICT and conflicts:
             # S4：冲突事件带占用者分类（own/foreign/adopted）+ 按分类的白话原因。

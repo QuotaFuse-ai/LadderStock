@@ -83,6 +83,7 @@ def _wait_job(client: TestClient, job_id: str, *, timeout: float = 60.0) -> dict
 # 1. strategies：清单 + 默认值来自后端
 # --------------------------------------------------------------------------- #
 
+
 def test_strategies_shape_comes_from_backend(app_client: TestClient) -> None:
     response = app_client.get("/api/backtest/strategies")
     assert response.status_code == 200, response.text
@@ -125,6 +126,7 @@ def _repo_config_path() -> Path:
 # --------------------------------------------------------------------------- #
 # 2. run → jobs 生命周期
 # --------------------------------------------------------------------------- #
+
 
 def test_run_jobs_lifecycle(app_client: TestClient) -> None:
     response = app_client.post("/api/backtest/run", json=_run_body())
@@ -193,6 +195,7 @@ def test_cost_override_reaches_card(app_client: TestClient) -> None:
 # 3. 参数校验：4xx + 结构化错误
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize(
     ("overrides", "code"),
     [
@@ -234,6 +237,7 @@ def test_missing_body_fields_is_422(app_client: TestClient) -> None:
 # --------------------------------------------------------------------------- #
 # 4. 闸门：非回环 / 坏 Origin / 缺来源证据
 # --------------------------------------------------------------------------- #
+
 
 def test_non_loopback_client_is_rejected(tmp_path: Path) -> None:
     write_daily_k(tmp_path, "600000", _bars())

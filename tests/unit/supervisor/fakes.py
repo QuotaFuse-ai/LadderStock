@@ -59,17 +59,20 @@ class FakeProcs:
         ports: tuple[int, ...] = (),
         depth: int = 1,
     ) -> list[int]:
-        """spawn 一串进程 `cmd → python → worker`（最后一个绑端口），返回整链。"""
+        """spawn 一串进程 `cmd → python → worker`（最后一个绑端口），返回整链。
+
+        同一条链上的所有进程共享同一命令行（真实形态：`ldst peer serve ...
+        -- proxyfleet.exe serve` 整链同一条命令；QUOT-609 自救按指纹全表找回
+        依赖这一点）。要模拟「worker 换了命令行」的场景，测试自行覆盖
+        `procs.processes[pid].cmdline`。
+        """
         parent = ppid
         chain: list[int] = []
         for index in range(depth):
             self._next_pid += 1
             pid = self._next_pid
-            # 入口进程的命令行必须与 spawn 时记录的一致（账本哈希可比）；
-            # 后续 worker 才带自己的参数后缀
-            actual = cmdline if index == 0 else cmdline + (f"#w{index}",)
             bound = ports if index == depth - 1 else ()
-            self.processes[pid] = FakeProcess(pid=pid, cmdline=actual, ppid=parent, ports=bound)
+            self.processes[pid] = FakeProcess(pid=pid, cmdline=cmdline, ppid=parent, ports=bound)
             chain.append(pid)
             parent = pid
         return chain
@@ -108,6 +111,13 @@ class FakeProcs:
         self.killed_trees.append(root_pid)
         for pid in self.tree_pids(root_pid):
             self.processes.pop(pid, None)
+
+    def find_by_hash(self, fingerprint: str) -> int | None:
+        """按 cmdline 哈希全表找回（与真实 ProcessOps.find_by_hash 同语义）。"""
+        for proc in self.processes.values():
+            if cmdline_hash(proc.cmdline) == fingerprint:
+                return proc.pid
+        return None
 
     def listening_ports(self) -> set[int]:
         bound: set[int] = set()

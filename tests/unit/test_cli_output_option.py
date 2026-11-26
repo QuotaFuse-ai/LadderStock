@@ -67,6 +67,7 @@ class _ScriptedSupervisorEngine:
 # 注册表遍历
 # --------------------------------------------------------------------------- #
 
+
 def leaves(cmd: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], Any]]:
     """遍历 typer 注册表，产出「真正可执行」的路径。
 
@@ -89,11 +90,7 @@ def output_param(cmd: Any) -> Any | None:
 
 def missing_output(registered: dict[tuple[str, ...], Any]) -> list[str]:
     """漏声明 `--output` 的命令路径（空列表 = 契约成立）。"""
-    return [
-        " ".join(path)
-        for path, cmd in registered.items()
-        if output_param(cmd) is None
-    ]
+    return [" ".join(path) for path, cmd in registered.items() if output_param(cmd) is None]
 
 
 LEAVES = dict(leaves(get_command(app)))
@@ -119,6 +116,7 @@ def _offline_data_layer(repo, tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 # 1. 矩阵：每条叶子命令都声明了 --output
 # --------------------------------------------------------------------------- #
+
 
 def test_registered_leaves_match_baseline() -> None:
     """注册表与基线矩阵必须一一对应（多一条/少一条都要有人来补契约）。"""
@@ -169,6 +167,7 @@ def test_checker_flags_missing_output() -> None:
 # 2. 可解析性：已实现命令的 stdout
 # --------------------------------------------------------------------------- #
 
+
 def _ids(path: tuple[str, ...]) -> str:
     return " ".join(path)
 
@@ -178,17 +177,13 @@ def _argv_id(value: Any) -> str:
 
 
 @pytest.mark.parametrize(("argv", "expected"), OUTPUT_MATRIX, ids=_argv_id)
-def test_output_json_is_never_a_usage_error(
-    argv: tuple[str, ...], expected: set[int]
-) -> None:
+def test_output_json_is_never_a_usage_error(argv: tuple[str, ...], expected: set[int]) -> None:
     """31 条命令逐条带 `--output json`：退出码按各自语义，绝不是 2。"""
     result = runner.invoke(app, list(argv))
     assert "No such option" not in result.stderr, (
         f"{' '.join(argv)} 仍在报 No such option\nstderr={result.stderr}"
     )
-    assert result.exit_code != 2, (
-        f"{' '.join(argv)} 退出码 2（参数错误）\nstderr={result.stderr}"
-    )
+    assert result.exit_code != 2, f"{' '.join(argv)} 退出码 2（参数错误）\nstderr={result.stderr}"
     assert result.exit_code in expected, (
         f"{' '.join(argv)} 退出码 {result.exit_code}，期望 {sorted(expected)}\n"
         f"stdout={result.stdout}\nstderr={result.stderr}"
@@ -218,6 +213,7 @@ def test_implemented_commands_accept_csv(argv: tuple[str, ...]) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 默认值：交互 table、管道 json（docs/CLI.md §F）
 # --------------------------------------------------------------------------- #
+
 
 class _Tty(io.StringIO):
     """伪装成交互终端。"""
@@ -252,6 +248,7 @@ def test_doctor_defaults_to_json_when_captured() -> None:
 # --------------------------------------------------------------------------- #
 # 4. 已实现命令：`--output` 三档都要出结构化结果
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("fmt", OUTPUT_FORMATS)
 def test_migrate_emits_structured_plan_in_every_format(fmt: str) -> None:

@@ -214,9 +214,7 @@ def _compute(ctx: ToolContext, args: Mapping[str, Any]) -> str:
     """确定性算术：数字一律由这里算，模型不许心算（DEC-006 闸门 5）。"""
     op = str(args.get("op") or "")
     if op not in COMPUTE_OPS:
-        raise ToolRefusal(
-            "unknown_op", f"compute 只支持 {'、'.join(COMPUTE_OPS)}，收到 {op!r}"
-        )
+        raise ToolRefusal("unknown_op", f"compute 只支持 {'、'.join(COMPUTE_OPS)}，收到 {op!r}")
     left = _decimal(args.get("a"), field="a")
     right = _decimal(args.get("b"), field="b")
     if op == "add":
@@ -267,9 +265,7 @@ def _write_report(ctx: ToolContext, args: Mapping[str, Any]) -> str:
     if not isinstance(md, str) or not md.strip():
         raise ToolRefusal("empty_report", "write_report 需要非空 Markdown 正文")
     if len(md) > MAX_PAYLOAD_CHARS:
-        raise ToolRefusal(
-            "report_too_large", f"报告正文超过 {MAX_PAYLOAD_CHARS} 字上限"
-        )
+        raise ToolRefusal("report_too_large", f"报告正文超过 {MAX_PAYLOAD_CHARS} 字上限")
     run_dir = _require_dir(ctx)
     file_name = f"report{DRAFT_SEPARATOR}{REPORT_DRAFT_NAME}.md"
     path = _resolve_inside(run_dir, file_name, allow_new=True)
@@ -454,9 +450,7 @@ def _artifact_names(run_dir: Path) -> list[str]:
     return sorted(
         path.name
         for path in run_dir.iterdir()
-        if path.is_file()
-        and path.name != AUDIT_FILENAME
-        and path.suffix.lstrip(".") in _EXTENSIONS
+        if path.is_file() and path.name != AUDIT_FILENAME and path.suffix.lstrip(".") in _EXTENSIONS
     )
 
 
@@ -581,9 +575,7 @@ TOOLS: dict[str, ToolSpec] = {
 }
 
 
-def validate_allowed(
-    names: Sequence[str], *, registry: Any = None
-) -> tuple[str, ...]:
+def validate_allowed(names: Sequence[str], *, registry: Any = None) -> tuple[str, ...]:
     """白名单表自检：每一项都得是注册表里的名字（供 stages.py 与测试用）。
 
     给了执行器时，它名下的注册表工具也算「已登记」。
@@ -597,9 +589,7 @@ def validate_allowed(
     return tuple(names)
 
 
-def tool_descriptors(
-    names: Sequence[str], *, registry: Any = None
-) -> list[dict[str, Any]]:
+def tool_descriptors(names: Sequence[str], *, registry: Any = None) -> list[dict[str, Any]]:
     """OpenAI 兼容的 `tools` 数组：只描述本段白名单里的工具。
 
     `registry`（`ToolContext.registry`）非空时，常量表里没有的名字交给执行器的

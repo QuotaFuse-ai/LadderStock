@@ -94,20 +94,36 @@ def batch_payload(
         },
     }
     if failed or partial:
-        payload["meta"].update(
-            {"partial": True, "error_code": "QFSD-8001", "retryable": True}
-        )
+        payload["meta"].update({"partial": True, "error_code": "QFSD-8001", "retryable": True})
     return payload
 
 
 def _flows() -> dict[str, dict[str, Any]]:
     return {
-        "002696": {"code": "002696", "name": "百洋股份", "price": 11.12,
-                   "change_pct": -10.03, "main_net": -171530812.0, "main_net_pct": -30.63},
-        "600261": {"code": "600261", "name": "阳光照明", "price": 4.35,
-                   "change_pct": -2.1, "main_net": -126896430.0, "main_net_pct": -19.61},
-        "600715": {"code": "600715", "name": "文投控股", "price": 2.18,
-                   "change_pct": 1.4, "main_net": -27577456.0, "main_net_pct": -1.54},
+        "002696": {
+            "code": "002696",
+            "name": "百洋股份",
+            "price": 11.12,
+            "change_pct": -10.03,
+            "main_net": -171530812.0,
+            "main_net_pct": -30.63,
+        },
+        "600261": {
+            "code": "600261",
+            "name": "阳光照明",
+            "price": 4.35,
+            "change_pct": -2.1,
+            "main_net": -126896430.0,
+            "main_net_pct": -19.61,
+        },
+        "600715": {
+            "code": "600715",
+            "name": "文投控股",
+            "price": 2.18,
+            "change_pct": 1.4,
+            "main_net": -27577456.0,
+            "main_net_pct": -1.54,
+        },
     }
 
 
@@ -125,9 +141,7 @@ def _run(root: Path, *, payload: dict[str, Any], calls: list[dict[str, Any]]) ->
     transport = FakeTransport(
         handlers={
             "stock_fund_flow_batch": handler,
-            "stock_fund_flow": lambda p: pytest.fail(
-                "批量数据集不该调用逐只工具 stock_fund_flow"
-            ),
+            "stock_fund_flow": lambda p: pytest.fail("批量数据集不该调用逐只工具 stock_fund_flow"),
             "limit_up_pool": lambda _p: {"ok": True, "data": {"items": []}, "meta": {}},
         }
     )
@@ -169,8 +183,13 @@ def test_partial_failure_keeps_the_good_batch(data_home: Path) -> None:
     payload = batch_payload(
         good,
         batches=1,
-        failures=[{"batch": 1, "codes": ["600261", "600715"],
-                   "error": {"code": "QFSD-7001", "message": "paced"}}],
+        failures=[
+            {
+                "batch": 1,
+                "codes": ["600261", "600715"],
+                "error": {"code": "QFSD-7001", "message": "paced"},
+            }
+        ],
         partial=True,
     )
     calls: list[dict[str, Any]] = []
@@ -185,9 +204,7 @@ def test_peer_outage_replays_todays_batch_slot(data_home: Path) -> None:
     """QUOT-422：批量路径全挂时按当日盘中槽回放，不再误报「无缓存可回放」。"""
     _run(data_home, payload=batch_payload(_flows()), calls=[])
 
-    down = FakeTransport(
-        errors={"stock_fund_flow_batch": ConnectionError("peer unreachable")}
-    )
+    down = FakeTransport(errors={"stock_fund_flow_batch": ConnectionError("peer unreachable")})
     registry = make_registry(down, root=data_home, sources=SOURCES, sync=SYNC)
     out = sync_module.run_sync(
         registry,

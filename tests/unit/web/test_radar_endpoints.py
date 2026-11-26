@@ -86,6 +86,7 @@ ENVELOPE_KEYS = {
 # 桩
 # --------------------------------------------------------------------------- #
 
+
 def _registry(root: Path, *, failing: tuple[str, ...] = ()) -> ProviderRegistry:
     transport = FakeTransport(handlers=news_handlers(failing=failing), tools=news_tools())
     return make_news_registry(transport, root)
@@ -119,8 +120,13 @@ def _pool_snapshot(dataset: str, day: Any, root: Any = None) -> tuple[list[dict[
     if dataset == "limit_pool":
         return (
             [
-                {"code": CODE, "name": "贵州茅台", "boards": 3, "turnover_rate": 8.0,
-                 "hot_topic": "白酒"},
+                {
+                    "code": CODE,
+                    "name": "贵州茅台",
+                    "boards": 3,
+                    "turnover_rate": 8.0,
+                    "hot_topic": "白酒",
+                },
                 {"code": "000001", "name": "平安银行", "boards": 1, "turnover_rate": 2.0},
             ],
             "fixture",
@@ -142,9 +148,11 @@ OK_SOURCES = [dataset for dataset in ALL_SOURCES if dataset != "research_report"
 
 def test_news_success_envelope_and_item_shape(tmp_path: Path) -> None:
     _seed_news(tmp_path)
-    body = _client(tmp_path).get(
-        "/api/news", params={"date": START, "until": END, "source": OK_SOURCES}
-    ).json()
+    body = (
+        _client(tmp_path)
+        .get("/api/news", params={"date": START, "until": END, "source": OK_SOURCES})
+        .json()
+    )
 
     assert set(body) == ENVELOPE_KEYS
     assert body["domain"] == "news" and body["topic"] == "news_stream"
@@ -158,8 +166,17 @@ def test_news_success_envelope_and_item_shape(tmp_path: Path) -> None:
     assert payload["items"], "语料里 10-29→10-31 有稿子，投影不该给空数组"
     item = payload["items"][0]
     assert set(item) == {
-        "id", "source", "title", "url", "published_at", "related_codes", "summary",
-        "content_hash", "origins", "provenance", "industries",
+        "id",
+        "source",
+        "title",
+        "url",
+        "published_at",
+        "related_codes",
+        "summary",
+        "content_hash",
+        "origins",
+        "provenance",
+        "industries",
     }
     assert item["origins"] and "dataset" in item["origins"][0]
     assert item["industries"] == []  # SPEC §7 缺口 2：R6 不产出行业标签，键给空数组
@@ -178,9 +195,9 @@ def test_news_success_envelope_and_item_shape(tmp_path: Path) -> None:
 def test_news_column_without_rows_in_window_is_empty_not_failed(tmp_path: Path) -> None:
     """库里这一栏本窗口 0 行 = `empty` + 去哪个命令补；SPEC §3：有非 ok 栏目 → partial。"""
     _seed_news(tmp_path)
-    payload = _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()[
-        "payload"
-    ]
+    payload = (
+        _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()["payload"]
+    )
 
     rows = {row["dataset"]: row for row in payload["sources_status"]}
     assert [row["dataset"] for row in payload["sources_status"]] == ALL_SOURCES
@@ -197,9 +214,9 @@ def test_news_column_without_rows_in_window_is_empty_not_failed(tmp_path: Path) 
 def test_news_summary_matches_the_ledger_and_keeps_unanswerable_nulls(tmp_path: Path) -> None:
     """`summary` 里能问到的数取自取数账本，问不到的**置 null**，不拿窗口条数冒充。"""
     seeded = _seed_news(tmp_path)
-    payload = _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()[
-        "payload"
-    ]
+    payload = (
+        _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()["payload"]
+    )
     summary = payload["summary"]
 
     assert summary["fetched"] == seeded.fetched
@@ -238,9 +255,9 @@ def test_news_get_does_not_write(tmp_path: Path) -> None:
 def test_news_replays_failed_columns_from_the_ledger(tmp_path: Path) -> None:
     """某一路挂了：条目照常出，栏目账本如实回放 `failed` + 原因，状态降级 partial。"""
     _seed_news(tmp_path, failing=("cls_telegraph", "wallstreetcn_lives"))
-    payload = _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()[
-        "payload"
-    ]
+    payload = (
+        _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()["payload"]
+    )
 
     rows = {row["dataset"]: row for row in payload["sources_status"]}
     failed = [key for key, row in rows.items() if row["status"] == "failed"]
@@ -256,9 +273,11 @@ def test_news_replays_failed_columns_from_the_ledger(tmp_path: Path) -> None:
 def test_news_empty_columns_say_no_rows_not_failed(tmp_path: Path) -> None:
     """查过但本窗口没有行 = `empty`（说清去哪个命令补），与打不通 = `failed` 是两件事。"""
     _seed_news(tmp_path)
-    payload = _client(tmp_path).get(
-        "/api/news", params={"date": "2026-01-05", "until": "2026-01-06"}
-    ).json()["payload"]
+    payload = (
+        _client(tmp_path)
+        .get("/api/news", params={"date": "2026-01-05", "until": "2026-01-06"})
+        .json()["payload"]
+    )
 
     assert payload["items"] == [] and payload["events"] == []
     assert payload["data_source_status"] == "missing"
@@ -302,9 +321,9 @@ def test_news_filters_by_source_code_and_limit(tmp_path: Path) -> None:
         assert CODE in item["related_codes"]
 
     whole = client.get("/api/news", params={"date": START, "until": END}).json()["payload"]
-    limited = client.get(
-        "/api/news", params={"date": START, "until": END, "limit": 2}
-    ).json()["payload"]
+    limited = client.get("/api/news", params={"date": START, "until": END, "limit": 2}).json()[
+        "payload"
+    ]
     assert len(limited["items"]) == 2
     assert [row["id"] for row in limited["items"]] == [r["id"] for r in whole["items"][:2]]
     # 展示条数变了，栏目账本的计数不变（那是「库里有多少」，不是「这一屏给几条」）
@@ -337,9 +356,9 @@ def test_news_undated_rows_are_counted_not_shown(tmp_path: Path) -> None:
     finally:
         news_store.close(conn)
 
-    payload = _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()[
-        "payload"
-    ]
+    payload = (
+        _client(tmp_path).get("/api/news", params={"date": START, "until": END}).json()["payload"]
+    )
     assert payload["summary"]["dropped_undated"] == 1
     assert "undated-1" not in {item["id"] for item in payload["items"]}
 
@@ -370,6 +389,7 @@ def test_news_invalid_params_are_422(tmp_path: Path, params: dict[str, str]) -> 
 # --------------------------------------------------------------------------- #
 # §4 GET /api/events
 # --------------------------------------------------------------------------- #
+
 
 def test_events_success_keeps_the_five_fixed_sections(tmp_path: Path) -> None:
     body = _client(tmp_path).get("/api/events", params={"month": MONTH, "code": CODE}).json()
@@ -403,9 +423,11 @@ def test_events_extracted_events_are_evidence_backed_rows_from_the_store(
 ) -> None:
     """公告正文里真写了日期的那部分走规则抽取：每条带原文片段 + url，落款 rule_extracted。"""
     _seed_news(tmp_path)
-    payload = _client(tmp_path).get(
-        "/api/events", params={"month": MONTH, "code": CODE}
-    ).json()["payload"]
+    payload = (
+        _client(tmp_path)
+        .get("/api/events", params={"month": MONTH, "code": CODE})
+        .json()["payload"]
+    )
 
     assert payload["extracted_events"], "语料里有股东会通知，抽取不该为空"
     for event in payload["extracted_events"]:
@@ -417,9 +439,11 @@ def test_events_extracted_events_are_evidence_backed_rows_from_the_store(
 
 
 def test_events_all_sources_down_is_200_with_declared_gaps(tmp_path: Path) -> None:
-    body = _client(tmp_path, failing=("lockup_expiry", "earnings_forecast")).get(
-        "/api/events", params={"month": MONTH, "code": CODE}
-    ).json()
+    body = (
+        _client(tmp_path, failing=("lockup_expiry", "earnings_forecast"))
+        .get("/api/events", params={"month": MONTH, "code": CODE})
+        .json()
+    )
 
     assert body["data_as_of"] is None
     payload = body["payload"]
@@ -453,6 +477,7 @@ def test_events_invalid_params_are_422(tmp_path: Path, params: dict[str, str]) -
 # --------------------------------------------------------------------------- #
 # §5 GET /api/pool
 # --------------------------------------------------------------------------- #
+
 
 def test_pool_success_projects_scores_without_recomputing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -489,8 +514,9 @@ def test_pool_without_cache_is_200_missing(tmp_path: Path) -> None:
     assert payload["counts"]["limit_pool_rows"] == 0
 
 
-@pytest.mark.parametrize("params", [{"date": "2026-13-01"}, {"date": "x"}, {"limit": "0"},
-                                    {"limit": "1001"}])
+@pytest.mark.parametrize(
+    "params", [{"date": "2026-13-01"}, {"date": "x"}, {"limit": "0"}, {"limit": "1001"}]
+)
 def test_pool_invalid_params_are_422(tmp_path: Path, params: dict[str, str]) -> None:
     response = _client(tmp_path).get("/api/pool", params=params)
     assert response.status_code == 422, response.text
@@ -501,14 +527,25 @@ def test_pool_invalid_params_are_422(tmp_path: Path, params: dict[str, str]) -> 
 # §6.1 GET /api/positions
 # --------------------------------------------------------------------------- #
 
+
 def _seed_positions(root: Path) -> None:
     position_module.add_position(
-        CODE, 12.34, 1000.0, entry_date="2026-09-01", industry="白酒",
-        note=SENTINEL, root=root,
+        CODE,
+        12.34,
+        1000.0,
+        entry_date="2026-09-01",
+        industry="白酒",
+        note=SENTINEL,
+        root=root,
     )
     position_module.add_position(
-        "000001", 10.0, 500.0, entry_date="2026-09-02", industry="银行",
-        note="另一条", root=root,
+        "000001",
+        10.0,
+        500.0,
+        entry_date="2026-09-02",
+        industry="银行",
+        note="另一条",
+        root=root,
     )
 
 
@@ -674,6 +711,7 @@ def test_positions_invalid_date_is_422(tmp_path: Path, params: dict[str, str]) -
 # 只读 / 数据面 / 隐私面：四条共用
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("path", ["/api/news", "/api/events", "/api/pool"])
 def test_write_methods_are_not_registered(tmp_path: Path, path: str) -> None:
     """三个公开读接口连方法都不提供。"""
@@ -741,6 +779,7 @@ def test_enveloped_payloads_are_strip_private_identity(
 # 内部错误 → 500（不冒成 200 空态，也不冒成 422）
 # --------------------------------------------------------------------------- #
 
+
 def _boom(error: Exception) -> Any:
     def call(*_args: Any, **_kwargs: Any) -> Any:
         raise error
@@ -751,11 +790,15 @@ def _boom(error: Exception) -> Any:
 @pytest.mark.parametrize(
     ("path", "holder", "attribute", "error", "params"),
     [
-        ("/api/news", news_store, "load_items", sqlite3.OperationalError("database is locked"),
-         {"date": START, "until": END}),
+        (
+            "/api/news",
+            news_store,
+            "load_items",
+            sqlite3.OperationalError("database is locked"),
+            {"date": START, "until": END},
+        ),
         ("/api/events", radar, "build_calendar", OSError("日历读不动"), {"month": MONTH}),
-        ("/api/pool", pool_module, "compute_pool", RuntimeError("archive damaged"),
-         {"date": END}),
+        ("/api/pool", pool_module, "compute_pool", RuntimeError("archive damaged"), {"date": END}),
         ("/api/positions", radar, "list_positions", sqlite3.DatabaseError("journal corrupt"), {}),
     ],
 )

@@ -94,6 +94,10 @@ def test_gateway_down_falls_to_env(monkeypatch) -> None:
 def test_all_fail_degrades_with_friendly_errors(monkeypatch) -> None:
     """全失败：ok=False，来源落 none，错误是白话而不是裸 4xx/连接拒绝。"""
     _mock_http(monkeypatch, models_ok=False)
+    # 本机若有手填通道（config/ai.yaml 有 base_url + key），`current_source` 会是
+    # manual——那是「已配置但本轮自动探测全失败」的真实状态，与该断言要验证的
+    # 「一条通道都没有」不是同一件事。这里显式摘掉，保证断言只看降级本身。
+    monkeypatch.setattr(discovery, "_manual_channel", lambda: False)
     document = discovery.discover()
     assert document["ok"] is False
     assert document["current_source"] == "none"

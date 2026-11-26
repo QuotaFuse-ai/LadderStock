@@ -69,6 +69,7 @@ POOL = ["ai", "semiconductor"]
 # 离线桩：Wire 目录 / qfw 子进程 / wire_get_digest 传输
 # --------------------------------------------------------------------------- #
 
+
 def _wire_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, installed: bool = True) -> Path:
     """把 peer 目录解析钉在 tmp；installed=True 时造出 qfw 入口文件。"""
     wire_dir = tmp_path / "wire-peer"
@@ -144,6 +145,7 @@ def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # 1. 注册面
 # --------------------------------------------------------------------------- #
 
+
 def test_schema_accepts_wire_news_kind() -> None:
     validate_table(_default_table())  # 不抛即通过（新 kind 已进 enum）
 
@@ -159,7 +161,7 @@ def test_schedule_schema_enum_contains_wire_news() -> None:
 
 
 def test_default_table_declares_wire_news_first_at_0730() -> None:
-    assert len(DEFAULT_JOBS) == 15
+    assert len(DEFAULT_JOBS) == 18  # 16 + recall_due + alert_close（DEC-087）
     assert DEFAULT_JOBS[0]["id"] == "wire_news_daily"
     jobs = [job for job in _default_table()["jobs"] if job.get("kind") == "wire_news"]
     assert len(jobs) == 1
@@ -182,6 +184,7 @@ def test_structural_self_check_knows_wire_news() -> None:
 # --------------------------------------------------------------------------- #
 # 2. 采集面：qfw run 子进程契约
 # --------------------------------------------------------------------------- #
+
 
 def test_collect_skips_when_wire_not_installed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -288,6 +291,7 @@ def test_collect_spawn_error_is_failed(tmp_path: Path, monkeypatch: pytest.Monke
 # --------------------------------------------------------------------------- #
 # 3. 分发面：两段状态合成（sync_one 用桩替换，只验接线）
 # --------------------------------------------------------------------------- #
+
 
 def _sync_row(status: str) -> dict[str, Any]:
     """按 `sync_one` 的真实行形状造桩——字段名对不上就该让测试红。"""
@@ -418,6 +422,7 @@ def test_run_job_wire_absent_skips_without_registry(
 # 4. 落库面：真 sync_one + 离线桩，水位 / 分区 / 幂等 / 诚实降级
 # --------------------------------------------------------------------------- #
 
+
 def test_auto_run_lands_partition_and_advances_watermark(
     data_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -515,6 +520,7 @@ def test_weekend_auto_run_lands_weekend_digest(
 # --------------------------------------------------------------------------- #
 # 5. 验收模拟：调度自动跑 → 水位=当日 → /api/market/theme available=true
 # --------------------------------------------------------------------------- #
+
 
 def test_acceptance_scheduled_run_feeds_theme_api_without_manual_sync(
     data_home: Path, monkeypatch: pytest.MonkeyPatch

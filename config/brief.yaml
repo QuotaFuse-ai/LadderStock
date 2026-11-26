@@ -1,0 +1,4 @@
+brief:
+  notify: false
+  channel: console
+  threshold: 5.0

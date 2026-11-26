@@ -78,10 +78,7 @@ class StageHealthMonitor:
         节流窗口内直接返回——`_latest` 仍保有上一轮结果，快照照常可用。
         """
         now = self._clock()
-        if (
-            self._checked_at is not None
-            and now - self._checked_at < self._probe_interval
-        ):
+        if self._checked_at is not None and now - self._checked_at < self._probe_interval:
             return
         self._checked_at = now
         for stage in STAGE_ORDER:
@@ -89,17 +86,13 @@ class StageHealthMonitor:
                 sample = self._probe(stage)
             except Exception:  # noqa: BLE001 - 探针失败如实报 down，不拖垮其余阶段
                 _log.exception("阶段 %s 观测异常（按 down 兜底上报）", stage)
-                sample = StageSample.of(
-                    stage, health=HEALTH_DOWN, reason=REASON_PROBE_FAILED
-                )
+                sample = StageSample.of(stage, health=HEALTH_DOWN, reason=REASON_PROBE_FAILED)
             self._publish_if_changed(sample)
 
     def _probe(self, stage: str) -> StageSample:
         probe = self._probes.get(stage)
         if probe is None:
-            return StageSample.of(
-                stage, health=HEALTH_DOWN, reason=REASON_PROBE_MISSING
-            )
+            return StageSample.of(stage, health=HEALTH_DOWN, reason=REASON_PROBE_MISSING)
         return probe()
 
     def _publish_if_changed(self, sample: StageSample) -> None:

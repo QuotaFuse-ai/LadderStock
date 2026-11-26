@@ -10,15 +10,26 @@ import {
   type TurnStatus,
   type TurnSuccess,
 } from '../../../api/conversation'
+import {
+  describePolicyError,
+  fetchDataPolicy,
+  needsConfirm,
+  saveDataPolicy,
+  type ConfirmPolicy,
+  type PolicyDescribe,
+} from '../../../api/dataPolicy'
 import { researchHref } from '../../../lib/searchRoutes'
 import { normalizeQuery } from '../../../lib/searchIntent'
 import { useIsMobile } from '../../../lib/mediaQuery'
 import { useAsync } from '../../../lib/useAsync'
 import { BlockRenderer } from '../../../components/answer-blocks'
-import { Badge, Button, ErrorBlock, IconButton, Textarea } from '../../../components/ui'
+import { DataPolicyPicker, policyHint, policyLabel } from '../../../components/DataPolicyPicker'
+import { ScheduleDock } from '../../../components/ScheduleDock'
+import { Badge, Button, ConfirmDialog, ErrorBlock, IconButton, Textarea } from '../../../components/ui'
 import { ActivityFeed } from './ActivityFeed'
+import { PlanCard } from './PlanCard'
+import { createLiveStatusFeed } from './liveStatusFeed'
 import { RENAME_EVENT, type RenameDetail } from './renameSessionEvent'
-import { createMockStatusFeed } from './turnStatusMock'
 import type { TurnStatusFeed } from './turnStatus'
 
 /**
@@ -67,6 +78,9 @@ export const SUGGESTIONS = [
 
 const WELCOME =
   '问一句就行：股票名或代码、板块、或者一个你想核实的观点。助手会先给结论，再列出用到的数据和可以点开的页面。'
+
+/** F2：短于这个长度的问题直接答。问个数、问个概念不需要一张计划卡。 */
+const PLAN_MIN_CHARS = 12
 
 export function statusLabel(status: TurnStatus): string {
   switch (status) {
@@ -127,7 +141,15 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   const isMobile = useIsMobile()
 
   const [draft, setDraft] = useState('')
+  // F2：等用户确认的研究计划（问题 + 可编辑步骤）；非空时输入区上方多一张计划卡
+  const [planDraft, setPlanDraft] = useState<{
+    question: string
+    steps: string[]
+    maxSteps: number
+  } | null>(null)
   const [pending, setPending] = useState<PendingTurn | null>(null)
+  /** 流式期间已到达的正文（累积全文，整段替换） */
+  const [liveText, setLiveText] = useState('')
   const [appendTurns, setAppendTurns] = useState<PaneData['turns']>([])
   const [failure, setFailure] = useState<{ detail: string; retryable: boolean } | null>(null)
   const [failedQuestion, setFailedQuestion] = useState<string | null>(null)
@@ -138,6 +160,13 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   const [renamingBusy, setRenamingBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
   const [recoveryAttempts, setRecoveryAttempts] = useState(0)
+  // F6：数据权限档（输入框底行）+ 发问前的确认弹窗
+  const [policy, setPolicy] = useState<ConfirmPolicy>('ask_on_risk')
+  const [policyDescribe, setPolicyDescribe] = useState<PolicyDescribe | null>(null)
+  const [policyBusy, setPolicyBusy] = useState(false)
+  const [policyError, setPolicyError] = useState<string | null>(null)
+  /** 等用户确认的那一句问题；非空时弹 ConfirmDialog */
+  const [confirmAsk, setConfirmAsk] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const requestSeqRef = useRef(0)
@@ -187,12 +216,36 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   }, [activeSessionId])
 
   // 「新对话」：首问还没发出去前先算作一条排队中的会话（不发请求、不建空会话）；
-  // 等 `activeSessionId` 真的变成 null 才清，避免首问的回跳把临时条目弄丢
+  // 等 `activeSessionId` 真的变成 null 才清，避免首问的回跳把临时条目弄丢。
+  // 2026-11-18：同时清掉输入框里的草稿，否则「新对话」回到空态后仍留着上一问的文字。
   useEffect(() => {
-    if (activeSessionId === null) setLocalSession(null)
+    if (activeSessionId === null) {
+      setLocalSession(null)
+      setDraft('')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId])
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // F6：权限档只在挂载时读一次。读不出来不阻塞对话——保留默认档，原因挂在选择器 title 上。
+  useEffect(() => {
+    let alive = true
+    fetchDataPolicy()
+      .then((state) => {
+        if (!alive) return
+        setPolicy(state.confirm_policy)
+        setPolicyDescribe(state.describe)
+        setPolicyError(null)
+      })
+      .catch((error) => {
+        if (!alive) return
+        setPolicyError(describePolicyError(error))
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // 左侧列表菜单改了名（QUOT-602）：只换会话不重载，标题行要跟着走
   useEffect(() => {
@@ -280,7 +333,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   }, [reloadPane])
 
   const ask = useCallback(
-    async (raw: string) => {
+    async (raw: string, options?: { plan?: string[] }) => {
       const question = raw.trim()
       if (!question || pending) return
 
@@ -298,7 +351,9 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         ...prev,
         { seq: 0, question, blocks: null, status: 'streaming', created_at: '', updated_at: '', localId },
       ])
-      setPending({ localId, status: 'streaming', startedAt: performance.now(), feed: createMockStatusFeed() })
+      const feed = createLiveStatusFeed()
+      setPending({ localId, status: 'streaming', startedAt: performance.now(), feed })
+      setLiveText('')
       setDraft('')
       setFailure(null)
       setFailedQuestion(null)
@@ -306,12 +361,29 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       setRenaming(false)
 
       try {
-        const reply = await httpConversation.sendTurn(
+        const reply = await httpConversation.sendTurnStream(
           {
             message: question,
             session_id: activeSessionId ?? undefined,
             // 契约（D3）：不带 history，会话历史由服务端从 chat.sqlite 读；首页没有页级数据可塞
             context: { page: 'home' },
+            ...(options?.plan && options.plan.length > 0 ? { plan: options.plan } : {}),
+          },
+          {
+            // 过程帧直接喂等待态流水账；正文帧驱动下面的虚线框逐字预览
+            onStatus: (status) => {
+              feed.emitStatus({
+                action: status.action,
+                item: status.item,
+                state: status.state,
+                item_id: status.item_id,
+                elapsed_ms: status.elapsed_ms,
+              })
+            },
+            onText: (text) => {
+              if (requestSeqRef.current !== seq) return
+              setLiveText(text)
+            },
           },
           controller.signal,
         )
@@ -334,12 +406,16 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         setFailure({ detail: info.detail, retryable: info.retryable })
         setFailedQuestion(question)
         setPending(null)
+        setLiveText('')
         // 连不上 / 超时：服务端可能已经落了一行，重新拉一次按真实状态显示
         if (error instanceof ConversationError && (error.kind === 'not-connected' || error.kind === 'timeout')) {
           resync()
         }
       } finally {
-        if (requestSeqRef.current === seq) abortRef.current = null
+        if (requestSeqRef.current === seq) {
+          abortRef.current = null
+          feed.close()
+        }
       }
     },
     [activeSessionId, onFirstRoundStarted, onRoundComplete, pending, resync],
@@ -354,6 +430,8 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
       ),
     )
     setPending(null)
+    // 结构化终态已落地，逐字预览让位给 BlockRenderer
+    setLiveText('')
     if (reply.session_id !== activeSessionId) {
       // 首问：会话 id 是新的，标题由服务端按首问截 40 码位生成，读回前先留空
       setLocalSession({ id: reply.session_id, title: '' })
@@ -369,6 +447,80 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
     if (failedQuestion) void ask(failedQuestion)
   }, [ask, failedQuestion])
 
+  // F2：先出计划再执行。短问题（问个数、问个概念）直接答——多一张卡片只是挡路。
+  // 拿不到计划也直接答：不能让一张「可选」的卡片把提问卡住。
+  const beginAsk = useCallback(
+    async (raw: string) => {
+      const question = raw.trim()
+      if (!question || pending) return
+      if ([...question].length < PLAN_MIN_CHARS) {
+        setPlanDraft(null)
+        void ask(question)
+        return
+      }
+      try {
+        const draftPlan = await httpConversation.fetchPlan({
+          message: question,
+          context: { page: 'home' },
+        })
+        if (draftPlan.steps.length < 2) {
+          void ask(question)
+          return
+        }
+        setPlanDraft({
+          question,
+          steps: draftPlan.steps.map((step) => step.title),
+          maxSteps: draftPlan.max_steps,
+        })
+        setDraft('')
+      } catch {
+        void ask(question)
+      }
+    },
+    [ask, pending],
+  )
+
+  /**
+   * F6：发问前按权限档决定要不要先弹确认。
+   *
+   * 这是**前置**的一层，不改 `ask()` 与后端契约：`always_ask` 每问必确认；
+   * `ask_on_risk` 只在问题带采集类动作时确认；`allow_all` 直接发。
+   * 确认框里显示的档位说明来自服务端 `describe`，不在这里另写一份文案。
+   */
+  const requestAsk = useCallback(
+    (raw: string) => {
+      const question = raw.trim()
+      if (!question || pending) return
+      if (needsConfirm(policy, question)) {
+        setConfirmAsk(question)
+        return
+      }
+      void beginAsk(question)
+    },
+    [beginAsk, pending, policy],
+  )
+
+  /** 切换权限档：乐观更新 + 失败回滚（写面要 `X-LDST-Client`，客户端已带）。 */
+  const changePolicy = useCallback(
+    async (next: ConfirmPolicy) => {
+      const previous = policy
+      setPolicy(next)
+      setPolicyBusy(true)
+      setPolicyError(null)
+      try {
+        const saved = await saveDataPolicy(next)
+        setPolicy(saved.confirm_policy)
+        setPolicyDescribe(saved.describe)
+      } catch (error) {
+        setPolicy(previous)
+        setPolicyError(describePolicyError(error))
+      } finally {
+        setPolicyBusy(false)
+      }
+    },
+    [policy],
+  )
+
   const stop = useCallback(() => {
     abortRef.current?.abort()
   }, [])
@@ -376,7 +528,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
     event.preventDefault()
-    void ask(draft)
+    requestAsk(draft)
   }
 
   const copyStopped = useCallback(async () => {
@@ -448,13 +600,32 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
     activeSessionId === null && !hasConversation && !recoverable && !failure && !failedQuestion && !stoppedQuestion
 
   const composer = (
-    <form
+    <div className="flex min-w-0 flex-col gap-2">
+      {planDraft ? (
+        <PlanCard
+          question={planDraft.question}
+          steps={planDraft.steps}
+          maxSteps={planDraft.maxSteps}
+          onStart={(steps) => {
+            const question = planDraft.question
+            setPlanDraft(null)
+            void ask(question, { plan: steps })
+          }}
+          onSkip={() => {
+            const question = planDraft.question
+            setPlanDraft(null)
+            void ask(question)
+          }}
+          onCancel={() => setPlanDraft(null)}
+        />
+      ) : null}
+      <form
       aria-label="对话输入区"
       data-testid="composer"
       className="flex shrink-0 flex-col gap-2 rounded-2xl border border-border-strong bg-surface p-2 transition-colors duration-fast ease-ldst"
       onSubmit={(event) => {
         event.preventDefault()
-        void ask(draft)
+        requestAsk(draft)
       }}
     >
       <Textarea
@@ -468,7 +639,17 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
         onKeyDown={onKeyDown}
         className="min-w-0 resize-none !border-0 bg-transparent px-1.5 pt-0.5 focus-visible:!border-transparent focus-visible:!shadow-none"
       />
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <ScheduleDock />
+          <DataPolicyPicker
+            value={policy}
+            describe={policyDescribe}
+            busy={policyBusy}
+            error={policyError}
+            onChange={(next) => void changePolicy(next)}
+          />
+        </div>
         {busy ? (
           <IconButton
             label="停止"
@@ -491,7 +672,28 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
           />
         )}
       </div>
-    </form>
+      </form>
+      <ConfirmDialog
+        open={confirmAsk !== null}
+        title="确认本轮数据权限"
+        description={
+          <div className="flex flex-col gap-1.5">
+            <p>
+              当前档位「{policyLabel(policy, policyDescribe)}」：{policyHint(policy, policyDescribe)}
+            </p>
+            <p className="text-text-muted">本轮问题：{confirmAsk}</p>
+          </div>
+        }
+        confirmLabel="继续发送"
+        cancelLabel="再想想"
+        onConfirm={() => {
+          const question = confirmAsk
+          setConfirmAsk(null)
+          if (question) void beginAsk(question)
+        }}
+        onCancel={() => setConfirmAsk(null)}
+      />
+    </div>
   )
 
   if (emptyStage) {
@@ -505,7 +707,7 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
               <button
                 key={text}
                 type="button"
-                onClick={() => void ask(text)}
+                onClick={() => requestAsk(text)}
                 className="inline-flex max-w-full items-center rounded-pill border border-border bg-accent-soft px-3 py-1.5 text-left text-13px leading-tight text-text transition-colors duration-fast hover:border-border-strong hover:bg-surface-3"
               >
                 {text}
@@ -610,12 +812,15 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
                     {statusLabel(turn.status) && (
                       <p className="text-caption text-text-muted">{statusLabel(turn.status)}</p>
                     )}
-                    <BlockRenderer
-                      blocks={turn.blocks}
-                      onRetry={retry}
-                      onNavigate={navigateTarget}
-                      onOpenStatus={() => navigate('/settings')}
-                    />
+                    {/* 流式进行中这一轮的 blocks 还是空的：跳过渲染，免得画「没有可展示的答案块」 */}
+                    {!(pending && pending.localId === turn.localId) && (
+                      <BlockRenderer
+                        blocks={turn.blocks}
+                        onRetry={retry}
+                        onNavigate={navigateTarget}
+                        onOpenStatus={() => navigate('/settings')}
+                      />
+                    )}
                   </div>
                 </li>
               ))}
@@ -626,6 +831,16 @@ export function ChatPane({ activeSessionId, onOpenResearch, onAskDesk, onRoundCo
                     startedAt={pending.startedAt}
                     compact={false}
                   />
+                  {liveText && (
+                    <div
+                      className="rounded border border-dashed border-border bg-surface-2 px-3 py-2 text-body leading-body whitespace-pre-wrap text-text"
+                      aria-live="polite"
+                      aria-busy="true"
+                    >
+                      {liveText}
+                      <span className="ml-0.5 inline-block animate-pulse text-text-muted">▍</span>
+                    </div>
+                  )}
                 </li>
               )}
             </ol>

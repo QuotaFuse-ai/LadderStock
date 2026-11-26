@@ -76,6 +76,25 @@ DOCUMENTED_GROUPS = {
     "config",
     "schedule",
     "doctor",
+    # 2026-11-18 增量：标的字典与知识库投影，见 docs/CLI.md §Q / §R
+    "symbol",
+    "knowledge",
+    # 「对话模式与研究台」批次（2026-11-21 入库）：六族 25 条命令，见 §T
+    "archive",
+    "brief",
+    "coverage",
+    "debate",
+    "verify",
+    "news-archive",
+    "peer",
+    # DEC-087 提醒引擎（2026-11-22）：11 条命令，见 §S
+    "alert",
+    # DEC-089 组合统计（2026-11-22）：`analytics`（统计）+ `report`（月/季/年报），见 §U
+    "analytics",
+    "report",
+    # E 包 / DEC-091（2026-11-22）：估值换算器 + 批量研究队列，见 §V
+    "valuation",
+    "research-batch",
 }
 
 #: 文档承诺「只打印迁移提示」的旧端口（DEC-004）。

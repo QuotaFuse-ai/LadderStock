@@ -173,5 +173,3 @@ def test_mcp_http_refuses_non_loopback_without_token(monkeypatch: pytest.MonkeyP
     missing = runner.invoke(app, ["mcp", "http", "--host", "0.0.0.0", "--port", "5998"])
     assert missing.exit_code == 3
     assert mcp_cli.REMOTE_TOKEN_ENV in missing.output
-
-

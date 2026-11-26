@@ -57,9 +57,7 @@ def _openai_reply(text: str, *, finish_reason: str = "stop") -> httpx.Response:
     return httpx.Response(
         200,
         json={
-            "choices": [
-                {"index": 0, "finish_reason": finish_reason, "message": {"content": text}}
-            ]
+            "choices": [{"index": 0, "finish_reason": finish_reason, "message": {"content": text}}]
         },
     )
 
@@ -67,6 +65,7 @@ def _openai_reply(text: str, *, finish_reason: str = "stop") -> httpx.Response:
 # --------------------------------------------------------------------------- #
 # Anthropic 协议
 # --------------------------------------------------------------------------- #
+
 
 def test_anthropic_request_shape_and_json_instruction(env: None) -> None:
     seen: list[httpx.Request] = []
@@ -132,6 +131,7 @@ def test_anthropic_max_tokens_is_classified_truncated(env: None) -> None:
 # OpenAI 协议
 # --------------------------------------------------------------------------- #
 
+
 def test_openai_request_shape(env: None) -> None:
     seen: list[httpx.Request] = []
 
@@ -156,9 +156,7 @@ def test_openai_request_shape(env: None) -> None:
 
 
 def test_openai_length_finish_is_classified_truncated(env: None) -> None:
-    transport = httpx.MockTransport(
-        lambda request: _openai_reply("半截", finish_reason="length")
-    )
+    transport = httpx.MockTransport(lambda request: _openai_reply("半截", finish_reason="length"))
     with pytest.raises(Exception) as caught:
         provider_for("openai").complete(
             _target("openai"), "s", "u", json_mode=False, transport=transport
@@ -169,6 +167,7 @@ def test_openai_length_finish_is_classified_truncated(env: None) -> None:
 # --------------------------------------------------------------------------- #
 # 错误映射
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     ("status", "kind"),
@@ -193,9 +192,11 @@ def test_missing_credentials_is_unconfigured(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.delenv(KEY_ENV, raising=False)
     with pytest.raises(UnconfiguredError):
         provider_for("openai").complete(
-            _target("openai"), "s", "u", json_mode=False, transport=httpx.MockTransport(
-                lambda request: _openai_reply("never")
-            )
+            _target("openai"),
+            "s",
+            "u",
+            json_mode=False,
+            transport=httpx.MockTransport(lambda request: _openai_reply("never")),
         )
 
 
@@ -207,6 +208,7 @@ def test_unknown_provider_kind_rejected() -> None:
 # --------------------------------------------------------------------------- #
 # 配置解析：backends[] / 链式标签 / 旧配置兼容
 # --------------------------------------------------------------------------- #
+
 
 def _write_ai(tmp_path, body: str) -> None:
     (tmp_path / "ai.yaml").write_text(body, encoding="utf-8")

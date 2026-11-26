@@ -249,7 +249,10 @@ def test_restart_only_touches_the_named_module() -> None:
 # -------------------------------------------------------------------- 生命周期
 
 
-def test_attached_mode_never_starts_or_stops_child_processes() -> None:
+def test_attached_mode_never_starts_or_stops_child_processes(monkeypatch: Any) -> None:
+    # 向量库「随应用起落」是应用自带依赖，会额外 start 一次 qdrant；这条只验
+    # 附加模式不碰**外部模块**，所以把 qdrant 自启关掉（它由专测覆盖）。
+    monkeypatch.setenv("LDST_AUTOSTART_QDRANT", "0")
     processes = FakeProcesses()
     client, heal = _client(processes, own=False)
 
@@ -261,8 +264,9 @@ def test_attached_mode_never_starts_or_stops_child_processes() -> None:
     assert processes.calls == []
 
 
-def test_own_mode_starts_on_startup_and_stops_owned_on_shutdown() -> None:
+def test_own_mode_starts_on_startup_and_stops_owned_on_shutdown(monkeypatch: Any) -> None:
     """QUOT-527：退出走 stop_owned（adopted peer 不碰），不是 stop_all。"""
+    monkeypatch.setenv("LDST_AUTOSTART_QDRANT", "0")
     processes = FakeProcesses()
     client, heal = _client(processes, own=True)
 

@@ -54,6 +54,7 @@ def _seed(tmp_path: Path) -> TestClient:
 # 1. 有产物
 # --------------------------------------------------------------------------- #
 
+
 def test_returns_envelope_with_weekly_report(tmp_path: Path) -> None:
     body = _seed(tmp_path).get("/api/weekly", params={"week": WEEK}).json()
 
@@ -86,6 +87,7 @@ def test_fact_pack_leaks_no_model_narrative(tmp_path: Path) -> None:
 # 2. 没有产物
 # --------------------------------------------------------------------------- #
 
+
 def test_missing_artifact_is_not_a_404(tmp_path: Path) -> None:
     body = _client(tmp_path).get("/api/weekly", params={"week": WEEK})
 
@@ -113,6 +115,7 @@ def test_empty_week_report_is_reported_as_missing(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 参数：非法与穿越
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     "params",
@@ -148,6 +151,7 @@ def test_lowercase_label_is_normalized(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 4. 坏文件不静默
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("content", ["{not json", json.dumps(["不是对象"])])
 def test_unreadable_artifact_is_500(tmp_path: Path, content: Any) -> None:

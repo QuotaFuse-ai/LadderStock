@@ -1,0 +1,46 @@
+# DEC-090：导出面授权（C 包）——聚合结果的 CSV / XLSX 下载
+
+日期：2026-11-22
+关联：DEC-089（组合统计面——导出的数据源就是它算出的聚合）、DEC-006（隐私边界）、
+DEC-015 / DEC-030（radar 面闸门先例）
+状态：已定稿（用户 2026-11-22 指令："C 包开"，导出与分享为 C 包第一半）
+
+## 1. 结论摘要
+
+| 项 | 结论 |
+|---|---|
+| 导出面 | `GET /api/analytics/export?format=csv|xlsx&section=&days=`（回环 + Host + `no-store`，同 DEC-089 闸门） |
+| 导出的内容 | **只导 B 包已算出的聚合结果**：指标 + 基准 + 归因 / 行为 / 错题本（CSV 按节一个文件；XLSX 一簿四表） |
+| 不导的东西 | 原始交易流水、持仓明细、自选清单——它们各有自己的页面与 DEC，导出面不新增出口 |
+| CSV | 恒可用（标准库 csv）；UTF-8 带 BOM，Excel 双击不乱码 |
+| XLSX | 需要 `ladderstock[export]`（openpyxl）；缺包 → HTTP **503** + 安装提示，**不静默降级 CSV**（用户点了 xlsx 就要 xlsx，静默换格式会造成「下载到的东西和按钮写的不一样」） |
+| 文件名 | ASCII only（`analytics-<section>.csv` / `analytics.xlsx`）；中文文件名在部分浏览器 Content-Disposition 会被转义 |
+
+## 2. 与「导出与分享」包其余部分的关系
+
+| 部分 | 本 DEC 覆盖 | 去向 |
+|---|---|---|
+| 组合统计导出（CSV/XLSX） | ✅ 本 DEC | — |
+| 前端「导出」按钮 + 打印样式 | 前端实现细节，无需新 DEC（复用本面） | 本包 |
+| 复盘 PDF / 研究档案导出 | 既有能力（`ldst export` / `ldst archive export`） | 已存在 |
+| 其他页面（龙虎榜/行业/候选池等）的表格导出 | 同一口径逐页接（后续单） | 后续 |
+
+## 3. 边界与红线
+
+- 请求层：`format` 只收 `csv|xlsx`（FastAPI `Query(pattern=…)` 校验，非法 422）；
+  `section` 只收登记过的节（未知 → 400 人话）；
+- 数据层：`summary` 算不出（无流水/无日线）→ **409** + 原因，不下一个空文件冒充导出件；
+- 响应头：`no-store`（导出结果即时生成，不缓存）；`attachment`（浏览器下载不内联）；
+- 隐私：聚合结果与「复盘统计」页面同级（DEC-089 家族）；不进 `LadderEnvelope` / MCP / AI；
+  导出件落在用户自己的下载目录，属用户自担保管的本地文件。
+
+## 4. 未做 / 留给后续
+
+| 事项 | 去向 |
+|---|---|
+| ~~PDF 导出（组合统计版）~~ | ✅ 已清（2026-11-22）：`GET /api/analytics/export?format=pdf` + `ldst analytics --pdf PATH`，复用 `review/export.py` 的 CJK 管线；reportlab / 字体缺席 503（exit 3），不静默换格式 |
+| ~~分享长图 / 链接~~ | ✅ 已清（2026-11-22）：`/analytics` 页「分享」抽屉（长图 canvas + 文字版 + 仅地址链接；`lib/analyticsShareCard.ts` 与页面同源，缺数写 `—`） |
+| ~~龙虎榜 / 行业 / 候选池 / 周报的表格导出~~ | ✅ 已清（2026-11-22）：四页接 `useTableExport` 同一面（行业详情成分股表一并接上；候选池保留原 JSON 本地导出并与之并存） |
+| 导出任务的异步化（大结果集） | 当前聚合结果 <100 行，同步足够 |
+
+> AI生成

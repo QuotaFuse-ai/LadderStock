@@ -155,9 +155,49 @@ def _as_date(value: Any) -> date | None:
     return None
 
 
+def stamp_partition_day(records: list[dict[str, Any]], day: date) -> list[dict[str, Any]]:
+    """把每条记录的分区日钉成 `day`，原数据日抄进 `data_as_of`。
+
+    只给 `partition_by: local_day` 的数据集用。原来写的是 `trade_date`/`date`，
+    这两个键 `duckdb_store.record_day` 会优先读，所以必须替换；替换前把原值
+    存到 `data_as_of`——「这条资讯讲的是哪天的市场」不能因为分区需要而丢掉。
+    """
+    stamped: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            stamped.append(record)
+            continue
+        source_day = record.get("data_as_of") or record.get("trade_date") or record.get("date")
+        item = dict(record)
+        item["trade_date"] = day.isoformat()
+        if source_day and not item.get("data_as_of"):
+            item["data_as_of"] = str(source_day)[:10]
+        stamped.append(item)
+    return stamped
+
+
+def apply_partition_day(
+    declared: dict[str, Any],
+    records: list[dict[str, Any]],
+    fallback: date | None,
+) -> tuple[list[dict[str, Any]], date | None]:
+    """按 `partition_by` 定分区日：`local_day` 时钉成本地采集日，其余原样沿用。
+
+    两条落库路径（单次 `sync_one` 和按赛道扇出的 `sync_topic_pool`）共用这一份判断，
+    避免只在其中一条上生效——`theme_news` 走的正是扇出那条。
+    """
+    if str(declared.get("partition_by") or "").strip() != "local_day":
+        return records, fallback
+    from ladderstock.core import intraday
+
+    day = intraday.local_moment(None, None).date()
+    return stamp_partition_day(records, day), day
+
+
 # --------------------------------------------------------------------------- #
 # 记录与水位
 # --------------------------------------------------------------------------- #
+
 
 def envelope_records(envelope: LadderEnvelope) -> list[dict[str, Any]]:
     """从信封取待落库记录。
@@ -203,6 +243,7 @@ def watermark_value(
 # --------------------------------------------------------------------------- #
 # 代码池（QUOT-233：`code` 必填的工具必须有池子可填）
 # --------------------------------------------------------------------------- #
+
 
 def clean_codes(values: Any) -> list[str]:
     """把 `--codes 600000,000001` 与 yaml 列表统一成去重保序的代码列表。"""
@@ -330,6 +371,7 @@ def industry_request_budget(codes: int) -> int:
 # 单个数据集
 # --------------------------------------------------------------------------- #
 
+
 def _skip_row(
     dataset: str,
     *,
@@ -404,14 +446,13 @@ def sync_code_pool(
         items=codes,
         pool_desc=f"代码池 {len(codes)} 只（{pool_source}）",
         unit="只",
-        params_for=lambda code: tool_params(
-            dataset, code=code, since=None if full else before
-        ),
+        params_for=lambda code: tool_params(dataset, code=code, since=None if full else before),
         empty_detail=(
             f"代码池为空（本次来源：{pool_source}）：`--codes` / config/sync.yaml 的 "
             f"sync.datasets.{dataset}.codes / codes_from / 本机自选均为空，未发起调用"
             f"（{binding.tool} 的 code 必填，空参实测回 QFSD-9001）"
         ),
+        declared=declared,
     )
 
 
@@ -560,8 +601,7 @@ def sync_batch_pool(
             detail += "；本分钟槽已存在，按先到先得未覆盖"
         if outcome.from_cache:
             detail += (
-                f"；{envelope.source_detail}"
-                "（上游不可用，已按当日盘中槽回放，槽内数据非本轮实测）"
+                f"；{envelope.source_detail}（上游不可用，已按当日盘中槽回放，槽内数据非本轮实测）"
             )
         elif degraded:
             detail += f"；{envelope.source_detail}（部分批次未取到，已按降级落槽）"
@@ -606,6 +646,7 @@ def _batch_request_count(envelope: LadderEnvelope) -> int | None:
 # --------------------------------------------------------------------------- #
 # 赛道池（QUOT-328：`topic` 必填的 Wire 数据集）
 # --------------------------------------------------------------------------- #
+
 
 def resolve_topic_pool(declared: dict[str, Any]) -> list[str]:
     """`config/sync.yaml` 里该数据集的 `topics`：Wire 认的是**赛道 slug**。
@@ -676,6 +717,7 @@ def sync_topic_pool(
             f"未发起调用（{tool} 的 topic 必填，空参实测回 `topic Field required` 校验错误；"
             "取值为 Wire 的赛道 slug，不是中文赛道名）"
         ),
+        declared=declared,
     )
 
 
@@ -694,6 +736,7 @@ def sync_per_item(
     unit: str,
     params_for: Callable[[str], dict[str, Any]],
     empty_detail: str,
+    declared: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """「一个元素一次工具调用」的数据集：逐项取数、合并、一次事务落库。
 
@@ -807,16 +850,19 @@ def sync_per_item(
             from_cache=bool(cache_hits),
         )
 
+    rows, partition_day = apply_partition_day(
+        declared or {},
+        rows,
+        _as_date(last_envelope.data_as_of) if last_envelope else None,
+    )
     result = duckdb_store.write_dataset(
         dataset,
         rows,
         mode=binding.mode,
         source=",".join(dict.fromkeys(sources)),
-        default_trade_date=_as_date(last_envelope.data_as_of) if last_envelope else None,
+        default_trade_date=partition_day,
     )
-    value = (
-        watermark_value(dataset, rows, last_envelope) if last_envelope is not None else None
-    )
+    value = watermark_value(dataset, rows, last_envelope) if last_envelope is not None else None
     if result.empty or not value:
         status = "empty"
         after = before
@@ -864,7 +910,6 @@ def sync_per_item(
     }
 
 
-
 def result_source(sources: list[str]) -> str:
     return ",".join(dict.fromkeys(sources)) or "-"
 
@@ -875,6 +920,58 @@ def _one_line(exc: BaseException) -> str:
 
 def _clip(text: str, limit: int = 240) -> str:
     return text if len(text) <= limit else f"{text[:limit]}…"
+
+
+#: 涨停池的「原因」只有同花顺源给得到：主源 `limit_up_pool` 的返回里根本没有这类
+#: 字段（实测 payload 只有 code/name/price/seal_amount/industry 等）。主源成功就
+#: 不会走备源，所以这里在主源写库前补调一次同花顺，按代码把原因并进来（QUOT-621）。
+LIMIT_POOL_REASON_TOOL = "ths_limit_up_pool"
+LIMIT_POOL_REASON_TIMEOUT_SEC = 30.0
+
+
+def borrow_limit_pool_reason(
+    registry: ProviderRegistry, records: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], str | None]:
+    """给涨停池记录补「涨停原因」；补不到只留一句说明，主源数据照常落库。
+
+    只填主源留空的 `reason`，不覆盖主源已有值。同花顺的 `high_days`（「2天2板」）
+    和 `board_type`（「换手板」）是另一套口径的字符串，**不往主源的 streak 里塞**——
+    两种口径混成一条，就成了看着有数、其实对不上的假数据。
+    """
+    if not records:
+        return records, None
+    peer = registry.peers.get("tickhub")
+    transport = getattr(registry, "transport", None)
+    if peer is None or transport is None:
+        return records, None
+    try:
+        payload = transport.call(
+            peer, LIMIT_POOL_REASON_TOOL, {}, timeout=LIMIT_POOL_REASON_TIMEOUT_SEC
+        )
+    except Exception as exc:  # noqa: BLE001 - 补字段失败不是同步失败
+        return records, f"同花顺涨停池补原因未取到：{_one_line(exc)}"
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return records, "同花顺涨停池返回空，原因列仍为空"
+    reason_by_code: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("code") or "").strip()
+        reason = row.get("reason")
+        if code and isinstance(reason, str) and reason.strip():
+            reason_by_code[code] = reason.strip()
+    if not reason_by_code:
+        return records, "同花顺涨停池没带原因字段"
+    filled = 0
+    for record in records:
+        if not isinstance(record, dict) or record.get("reason"):
+            continue
+        reason = reason_by_code.get(str(record.get("code") or "").strip())
+        if reason:
+            record["reason"] = reason
+            filled += 1
+    return records, f"同花顺补涨停原因 {filled}/{len(records)} 只"
 
 
 def sync_one(
@@ -1011,12 +1108,26 @@ def sync_one(
         )
 
     records = envelope_records(envelope)
+    borrow_note: str | None = None
+    if dataset == "limit_pool":
+        records, borrow_note = borrow_limit_pool_reason(registry, records)
+
+    # 分区日口径（`partition_by: local_day`）：一些数据集的上游只给「数据是哪天的」，
+    # 但**采集发生在哪一天**才是分区的真正含义。`theme_news` 就踩过这个坑：它按
+    # `data_as_of`（11-18）定日 + replace 整日覆盖，于是今天采的 2,188 条被写进
+    # 11-18 的目录里，11-20 永远没有分区，看目录像是断档两天。
+    # 这里把分区钉成本地采集日，原数据日挪到 `data_as_of` 字段（事实不丢），
+    # 下游要「这条资讯属于哪天」仍然读得到。
+    records, partition_day = apply_partition_day(
+        declared, records, _as_date(envelope.data_as_of)
+    )
+
     result = duckdb_store.write_dataset(
         dataset,
         records,
         mode=binding.mode,
         source=outcome.source,
-        default_trade_date=_as_date(envelope.data_as_of),
+        default_trade_date=partition_day,
     )
 
     value = watermark_value(dataset, records, envelope)
@@ -1033,6 +1144,8 @@ def sync_one(
         detail = f"{result.rows} 行 / {len(result.days)} 天，分区 {len(result.partitions)} 个"
         if outcome.used_fallback:
             detail += "（主源不可用，已切同 peer 备源）"
+        if borrow_note:
+            detail += f"；{borrow_note}"
 
     _log(f"  {dataset} {status}：{detail}，水位 {before or '-'} → {after or '-'}")
     store.record_run(
@@ -1113,6 +1226,7 @@ def run_sync(
 # --------------------------------------------------------------------------- #
 # 命令
 # --------------------------------------------------------------------------- #
+
 
 def _targets(registry: ProviderRegistry, dataset: str | None) -> list[str]:
     declared = list(registry.datasets)
@@ -1205,9 +1319,7 @@ def sync_industry_command(
     registry = ProviderRegistry()
     store = watermark.WatermarkStore(root=registry.root)
     with writer_lock(holder="ldst sync industry"):
-        payload = run_sync(
-            registry, store, list(INDUSTRY_SYNC_DATASETS), full=full, codes=pool
-        )
+        payload = run_sync(registry, store, list(INDUSTRY_SYNC_DATASETS), full=full, codes=pool)
     payload["industry_scope"] = {
         "datasets": list(INDUSTRY_SYNC_DATASETS),
         "code_pool": {

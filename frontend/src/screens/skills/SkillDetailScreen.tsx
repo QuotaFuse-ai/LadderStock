@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Check, Copy, Sparkles } from 'lucide-react'
+import { ArrowLeft, Check, Copy, Play, Sparkles } from 'lucide-react'
+
+import { api, type SenateTaskView } from '../../api'
 
 import { DemoStateBadge, PageHeader } from '../../components/PageShell'
 import { useAssistantShell } from '../../lib/assistant/shell'
@@ -168,8 +170,196 @@ function StepCard({
   )
 }
 
-function Missing({ detail, code }: { detail: string; code: string }) {
+/** StockSenate「真跑」：输入 6 位代码 → 发起一次合议 → 按 task_id 轮询进度。 */
+export function SenateRunner() {
+  const [symbol, setSymbol] = useState('')
+  const [task, setTask] = useState<SenateTaskView | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!task || task.status !== 'running') return undefined
+    const timer = window.setInterval(() => {
+      void api.senate
+        .analysisStatus(task.task_id)
+        .then(setTask)
+        .catch((err: unknown) => setNote(err instanceof Error ? err.message : String(err)))
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [task])
+
+  const start = async () => {
+    const value = symbol.trim()
+    if (!/^\d{6}$/.test(value)) {
+      setNote('请输入 6 位 A 股代码，例如 600000')
+      return
+    }
+    setBusy(true)
+    setNote(null)
+    try {
+      setTask(await api.senate.analysisStart({ code: value, hitl: false }))
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const facts = useMemo(() => {
+    const out: { label: string; value: string }[] = []
+    const result = task?.result
+    if (result && typeof result === 'object') {
+      const rec = result as Record<string, unknown>
+      const wanted: readonly (readonly [string, string])[] = [
+        ['code', '标的'],
+        ['date', '交易日'],
+        ['rating', '研究评级'],
+        ['quality_score', '质量分'],
+        ['verdict', '结论'],
+      ]
+      for (const [key, label] of wanted) {
+        const value = rec[key]
+        if (typeof value === 'string' || typeof value === 'number') {
+          out.push({ label, value: String(value) })
+        }
+      }
+    }
+    return out
+  }, [task])
+
   return (
+    <Card>
+      <CardHeader
+        title="真跑一次合议"
+        subtitle="走 Senate 的 stock_senate_analysis：7 分析师 → 多空辩论 → 研究经理 → 交易员 → 风控 → 终审。分钟级，别重复点。"
+        actions={
+          <span className="ldst-num text-caption text-text-muted">
+            {task
+              ? `${task.status === 'running' ? `阶段 ${task.steps_done}/${task.steps_total}` : task.status} · ${task.elapsed_sec}s`
+              : '未运行'}
+          </span>
+        }
+      />
+      <CardBody className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={symbol}
+            onChange={(event) => setSymbol(event.target.value)}
+            placeholder="600000"
+            inputMode="numeric"
+            aria-label="标的代码"
+            className="ldst-num w-32 rounded border border-border bg-surface px-2 py-1.5 text-body text-text placeholder:text-text-muted focus-visible:outline-none"
+          />
+          <Button
+            variant="primary"
+            onClick={() => void start()}
+            disabled={busy || task?.status === 'running'}
+            leadingIcon={<Play className="size-3.5" aria-hidden="true" />}
+          >
+            {task?.status === 'running' ? '运行中…' : '发起合议'}
+          </Button>
+          {note && <span className="text-caption text-danger">{note}</span>}
+        </div>
+
+        {(task?.status === 'running' || task?.status === 'done') && (
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-stretch gap-1.5">
+              {task.stages.map((stage, index) => {
+                const next = task.stages[index + 1]
+                const reachedAt = task.stage_log.find((row) => row.stage === stage.name)
+                const done = next ? task.steps_done >= next.from_steps : task.status === 'done'
+                const active = !done && stage.name === task.stage_label
+                return (
+                  <div
+                    key={stage.name}
+                    className={cn(
+                      'min-w-[7.2rem] flex-1 rounded border px-2 py-1.5',
+                      done && 'border-accent/40 bg-accent-soft',
+                      active && 'border-accent bg-surface-2',
+                      !done && !active && 'border-border bg-surface',
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          'size-1.5 rounded-pill',
+                          done && 'bg-accent',
+                          active && 'bg-accent animate-pulse',
+                          !done && !active && 'bg-border-strong',
+                        )}
+                        aria-hidden="true"
+                      />
+                      <span
+                        className={cn(
+                          'text-caption',
+                          done ? 'text-text' : active ? 'text-text' : 'text-text-muted',
+                        )}
+                      >
+                        {stage.name}
+                      </span>
+                    </div>
+                    <div className="ldst-num text-caption text-text-muted">
+                      {reachedAt
+                        ? `进入 ${Math.round(reachedAt.at_sec)}s · ${reachedAt.steps} 次`
+                        : done
+                          ? '已完成'
+                          : active
+                            ? '进行中'
+                            : '等待'}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex items-center justify-between text-caption text-text-secondary">
+              <span>{task.stage_label}</span>
+              <span className="ldst-num">
+                {task.steps_done}/{task.steps_total} 次模型往返 · {Math.round(task.elapsed_sec)}s
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-2">
+              <div
+                className="h-full rounded-pill bg-accent transition-all duration-slow"
+                style={{
+                  width: `${Math.min(100, Math.max(4, (task.steps_done / Math.max(1, task.steps_total)) * 100))}%`,
+                }}
+              />
+            </div>
+            <p className="text-caption text-text-muted">
+              环节与进入时刻来自 Senate 进程日志的真实模型往返计数（每完成一次调用记一笔），
+              环节名按次数推断；不是估算的假进度。
+            </p>
+          </div>
+        )}
+
+        {task?.error && (
+          <Banner tone="danger" title="这次没跑通">
+            {task.error}
+          </Banner>
+        )}
+        {facts.length > 0 && (
+          <div className="flex flex-wrap gap-3 border-t border-border pt-2">
+            {facts.map((fact) => (
+              <span key={fact.label} className="text-caption text-text-secondary">
+                {fact.label} <span className="text-body font-medium text-text">{fact.value}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {task?.status === 'done' && (
+          <details className="text-caption text-text-secondary">
+            <summary className="cursor-pointer">原始返回（Senate 原文，未改写）</summary>
+            <pre className="ldst-num mt-2 max-h-64 overflow-auto rounded border border-border bg-surface-2 p-2 text-caption">
+              {JSON.stringify(task.result, null, 2)}
+            </pre>
+          </details>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
+function Missing({ detail, code }: { detail: string; code: string }) {  return (
     <div className="flex flex-col gap-5">
       <PageHeader title="研究工具" subtitle="未找到这条研究方向" />
       <ErrorBlock variant="panel" title="没有这条研究方向" detail={detail} code={code} />
@@ -243,8 +433,9 @@ export default function SkillDetailScreen() {
         }
       />
 
-      {!canViewSteps ? (
-        <Banner tone={item.status === 'not_supported' ? 'danger' : 'info'} title="这条方向不由 skill 承载">
+      {skill?.name === 'senate-desk' && <SenateRunner />}
+
+      {!canViewSteps ? (        <Banner tone={item.status === 'not_supported' ? 'danger' : 'info'} title="这条方向不由 skill 承载">
           {item.note ||
             (item.status === 'existing_page'
               ? '这条已由现有页面承载，无需 skill。'

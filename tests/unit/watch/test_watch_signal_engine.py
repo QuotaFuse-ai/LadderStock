@@ -44,6 +44,7 @@ def kinds(events: list[WatchEvent]) -> list[str]:
 # 阈值命中 / 未命中
 # --------------------------------------------------------------------------- #
 
+
 def test_threshold_up_fires_once_on_crossing() -> None:
     """10 → 10.4（相对 3 分钟前 +4%）只报一次，之后持续越阈不重复。"""
     events = detect_signals(series(10.0, 10.0, 10.0, 10.4, 10.45, 10.5), threshold=3.0)
@@ -66,9 +67,7 @@ def test_threshold_down_carries_negative_value() -> None:
 
 def test_recross_after_pullback_reports_again() -> None:
     """回落到阈值下再冲上去，是新的一次越阈（不是刷屏，也不是吞掉）。"""
-    events = detect_signals(
-        series(10.0, 10.0, 10.0, 10.4, 10.0, 10.0, 10.0, 10.5), threshold=3.0
-    )
+    events = detect_signals(series(10.0, 10.0, 10.0, 10.4, 10.0, 10.0, 10.0, 10.5), threshold=3.0)
     ups = [event for event in events if event.kind == KIND_THRESHOLD_UP]
     assert len(ups) == 2
     assert [event.minute for event in ups] == [
@@ -85,6 +84,7 @@ def test_threshold_must_be_positive() -> None:
 # --------------------------------------------------------------------------- #
 # 3 分钟窗口：必须恰好相差 3 分钟
 # --------------------------------------------------------------------------- #
+
 
 def test_window_is_exactly_three_minutes() -> None:
     events = detect_signals(series(10.0, 10.0, 10.0, 10.4), threshold=3.0)
@@ -113,6 +113,7 @@ def test_missing_base_bar_suppresses_event() -> None:
 # --------------------------------------------------------------------------- #
 # 封板 / 开板
 # --------------------------------------------------------------------------- #
+
 
 def test_seal_then_open() -> None:
     bars = [
@@ -155,6 +156,7 @@ def test_first_bar_already_sealed_is_reported() -> None:
 # 去重：同 code 同 kind 同分钟只报一次
 # --------------------------------------------------------------------------- #
 
+
 def test_duplicate_pushes_in_same_minute_collapse() -> None:
     bars = [
         MinuteBar(ts=BASE, code="600000", price=10.0),
@@ -162,9 +164,7 @@ def test_duplicate_pushes_in_same_minute_collapse() -> None:
         MinuteBar(ts=BASE + timedelta(minutes=2), code="600000", price=10.0),
         MinuteBar(ts=BASE + timedelta(minutes=3), code="600000", price=10.4),
         # 同一分钟多路推送：后到覆盖先到，且不会多出一条事件
-        MinuteBar(
-            ts=BASE + timedelta(minutes=3, seconds=40), code="600000", price=10.41
-        ),
+        MinuteBar(ts=BASE + timedelta(minutes=3, seconds=40), code="600000", price=10.41),
     ]
     events = detect_signals(bars, threshold=3.0)
     assert len(events) == 1
@@ -192,6 +192,7 @@ def test_events_carry_five_field_contract() -> None:
 # --------------------------------------------------------------------------- #
 # 样本装载与校验
 # --------------------------------------------------------------------------- #
+
 
 def test_parse_bars_rejects_missing_code() -> None:
     with pytest.raises(SignalInputError):

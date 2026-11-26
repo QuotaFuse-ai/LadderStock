@@ -49,7 +49,7 @@ REASON_KEYS: tuple[str, ...] = ("reason", "limit_up_reason", "涨停原因", "�
 #: `duckdb_store._decode`），历史行也可能用中文键，按别名容忍。
 TRADE_DATE_KEYS: tuple[str, ...] = ("trade_date", "交易日期", "date")
 
-NO_ROWS_EMPTY = "涨停池为空，当日尚未同步（先运行 ldst sync）"
+NO_ROWS_EMPTY = "当日涨停池还没有数据：交易日 15:35 收盘后自动同步，历史日期打开页面会自动补取"
 NO_ROWS_NO_BOARD = "涨停池记录缺少可解析的连板数，无法给出涨停样本"
 
 

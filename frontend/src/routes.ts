@@ -25,8 +25,14 @@ export const ROUTE_PATHS = [
   '/review/ai',
   // AI 周报 = 按周聚合的叙述与事实包，`?week=YYYY-Www`
   '/weekly',
+  // B 包 / DEC-089：复盘统计（组合指标 / 基准 / 归因 / 行为 / 错题本），只读本机
+  '/analytics',
   '/journal',
   '/validate',
+  // F9 观点账本：判断落一笔、到期回访判对错，与「验证」组同族但不与 `/validate` 共屏
+  '/ledger',
+  // 运行配置：定时任务 / 数据同步池 / 历史回填的只读可视化（写操作仍走文件与 /api/schedule）
+  '/config',
   // QUOT-534：策略回测（只读运行卡）挂在「验证」组，`?run=bt_xxxxxxxx` 深链
   '/backtest',
   '/limit-up',
@@ -37,12 +43,18 @@ export const ROUTE_PATHS = [
   '/my-stocks',
   // QUOT-435：提醒（本机收件箱 + 定时任务 + 本机投递渠道），「我的股票」组第三项
   '/inbox',
+  // DEC-087：提醒规则（自定义规则 × 出站渠道），「我的股票」组第四项。
+  // 与 /inbox 分工：inbox 是「收到了什么」，这里是「在盯什么、怎么推」。
+  '/alert',
   '/watchlist',
   '/positions',
   '/industry',
   '/industry/:name',
   '/signals',
   '/settings',
+  // 首次配置 / 子模块安装向导：便携包首次启动缺模块时由 App 引导跳转，
+  // 也可从设置页手动进入。普通用户的主要入口，但不在侧栏常驻。
+  '/setup',
   '/research',
   '/research/:code',
   '/research/:code/report',
@@ -56,6 +68,11 @@ export const ROUTE_PATHS = [
   // 档案页直接读后端 `GET /api/knowledge/:market/:symbol`；深链形如 `/knowledge/SH/600000`。
   '/knowledge',
   '/knowledge/:market/:symbol',
+  // E 包 / DEC-091：笔记与检索（自己记的看法 + 跨票搜档案 + 估值换算器）。
+  // 静态段 `/notes` 由具体路由精确命中，不会被 `/:market/:symbol` 吞掉（少一段）。
+  '/knowledge/notes',
+  // 数据资产：本地库里有哪些票、几期财报、几条公告正文（读 `/api/data/assets*`）
+  '/data-assets',
   '/index.html',
   '*',
 ] as const
@@ -66,6 +83,8 @@ export type RoutePath = (typeof ROUTE_PATHS)[number]
 export const NON_PAGE_ROUTES: readonly RoutePath[] = [
   '*',
   '/index.html',
+  // 首次配置向导：由首次启动拦截或设置页链入，不进侧栏
+  '/setup',
   // QUOT-431：旧深链保留可用，但落点是 `/my-stocks?tab=watch|hold`，不再单独挂屏
   '/watchlist',
   '/positions',

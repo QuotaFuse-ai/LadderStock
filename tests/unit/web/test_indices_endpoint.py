@@ -73,12 +73,20 @@ US_PRICES = {"DJI": 51570.0898, "IXIC": 24707.8101}
 #: tencent 源；行情时间是交易所当地时间，不带时区）
 HK_QUOTES: dict[str, dict[str, Any]] = {
     "HSI.HK": {
-        "name": "恒生指数", "price": 24315.92, "prev_close": 24557.04,
-        "change": -241.12, "change_pct": -0.98, "timestamp": "2026-11-11 18:31:03",
+        "name": "恒生指数",
+        "price": 24315.92,
+        "prev_close": 24557.04,
+        "change": -241.12,
+        "change_pct": -0.98,
+        "timestamp": "2026-11-11 18:31:03",
     },
     "HSTECH.HK": {
-        "name": "恒生科技指数", "price": 4027.06, "prev_close": 4084.45,
-        "change": -57.39, "change_pct": -1.41, "timestamp": "2026-11-11 16:08:28",
+        "name": "恒生科技指数",
+        "price": 4027.06,
+        "prev_close": 4084.45,
+        "change": -57.39,
+        "change_pct": -1.41,
+        "timestamp": "2026-11-11 16:08:28",
     },
 }
 
@@ -136,15 +144,21 @@ def _quote_for(symbol: str) -> dict[str, Any]:
         q = HK_QUOTES[symbol]
         return us_quote_payload(
             symbol,
-            price=q["price"], prev_close=q["prev_close"],
-            change=q["change"], change_pct=q["change_pct"],
-            source="tencent", market="HK", currency="HKD",
-            name=q["name"], timestamp=q["timestamp"],
+            price=q["price"],
+            prev_close=q["prev_close"],
+            change=q["change"],
+            change_pct=q["change_pct"],
+            source="tencent",
+            market="HK",
+            currency="HKD",
+            name=q["name"],
+            timestamp=q["timestamp"],
             warnings=["腾讯行情 属 Tier C：商用需事先书面许可，当前为非商用调用。"],
         )
     price = US_PRICES.get(symbol, 100.0)
-    return us_quote_payload(symbol, price=price, prev_close=price - 10.0, change=10.0,
-                            change_pct=0.1)
+    return us_quote_payload(
+        symbol, price=price, prev_close=price - 10.0, change=10.0, change_pct=0.1
+    )
 
 
 def _us_handler(overrides: dict[str, dict[str, Any]] | None = None):
@@ -192,9 +206,7 @@ def _client(
         transport, tmp_path, sources=_sources_doc(), sync=copy.deepcopy(SYNC_DOC)
     )
     plane = RadarPlane(data_root=tmp_path, registry=registry)
-    app = create_app(
-        data_root=tmp_path, dist_dir=tmp_path / "no-dist", radar_plane=plane
-    )
+    app = create_app(data_root=tmp_path, dist_dir=tmp_path / "no-dist", radar_plane=plane)
     return TestClient(app, client=client), transport
 
 
@@ -205,6 +217,7 @@ def _cells(body: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 # 成功路径
 # --------------------------------------------------------------------------- #
+
 
 def test_indices_return_eight_cells_in_whitelist_order(tmp_path: Path) -> None:
     client, _ = _client(tmp_path)
@@ -293,8 +306,11 @@ def test_indices_call_index_quote_and_us_quote_with_expected_params(tmp_path: Pa
     client, transport = _client(tmp_path)
     client.get("/api/indices")
     assert transport.tools_called == [
-        "index_quote", "th_us_get_quote", "th_us_get_quote",
-        "th_us_get_quote", "th_us_get_quote",
+        "index_quote",
+        "th_us_get_quote",
+        "th_us_get_quote",
+        "th_us_get_quote",
+        "th_us_get_quote",
     ]
     assert transport.calls[0].params == {"codes": "sh000001,sh000300,sz399001,sz399006"}
     symbols = [call.params["symbol"] for call in transport.calls[1:]]
@@ -312,6 +328,7 @@ def test_indices_us_request_budget_is_four_per_fetch(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 三个实测坑
 # --------------------------------------------------------------------------- #
+
 
 def test_stock_row_with_same_code_is_not_taken_as_index(tmp_path: Path) -> None:
     """裸 `000001` / `000001.SH` 的静默回错票：`(market, code)` 不匹配就不认。
@@ -427,6 +444,7 @@ def test_hk_single_cell_failure_does_not_touch_other_blocks(tmp_path: Path) -> N
 # --------------------------------------------------------------------------- #
 # 门面与信封
 # --------------------------------------------------------------------------- #
+
 
 def test_indices_are_enveloped_public_data(tmp_path: Path) -> None:
     """公开行情面：套 `LadderEnvelope`，**不加回环独占**（同 `/api/pool`）。"""

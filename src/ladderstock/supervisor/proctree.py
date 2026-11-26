@@ -14,9 +14,14 @@ import json
 import os
 import signal
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Protocol
+
+try:  # psutil 是可选依赖：缺了就全走 tasklist / CIM 子进程通道
+    import psutil
+except ImportError:  # pragma: no cover - 依赖探测
+    psutil = None  # type: ignore[assignment]
 
 #: 进程查询类子进程的兜底超时（与 control.PROCESS_QUERY_TIMEOUT_SEC 同档）
 QUERY_TIMEOUT_SEC = 10.0
@@ -83,17 +88,73 @@ class ProcessOps(Protocol):
     def tree_pids(self, root_pid: int) -> list[int]:
         """root 及全部子孙（含隔代）；root 已死返回空表。"""
 
+    def descendants(self, root_pids: Iterable[int]) -> set[int]:
+        """多个根的子树并集：一次父子表快照，不做逐节点存活反查。
+
+        与 `tree_pids` 的差别是成本：Windows 上 `tree_pids` 对每个节点都要开一次
+        PowerShell 查存活（十几个节点就是十几秒），多根多次调用足以把控制面拖死。
+        归属判定只需要「某 pid 在不在本方集合里」，一次快照在内存算完整棵即可。
+        """
+
     def kill_tree(self, root_pid: int) -> None:
         """整树强杀；杀完不回读（确认由引擎的 probe 负责）。"""
 
+    def find_by_hash(self, fingerprint: str) -> int | None:
+        """按 cmdline 哈希在**全表**找回真实进程 pid；找不到返回 None。
+
+        这是 PID 复用对账的自救通道（QUOT-609 / 2026-11-23 生产事故）：账本记的
+        pid 是 launcher（`peer serve` 包装层），它退出后 pid 被系统复用，老对账
+        直接判「疑似复用」把模块标 stopped——而真实工作者还活着、端口还听着。
+        按指纹全表扫一遍（进程数几百以内，psutil 毫秒级）就能找回。
+        空指纹返回 None（无证据不认人，失败关闭）。"""
+
+
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询/终止类子进程一律不带控制台（DEC-092 单窗口）。
+
+    缺了它，每次 tasklist / taskkill / powershell / wmic 都会在桌面弹一个瞬时
+    控制台窗口（2026-11-23 现场：tasklist.exe 黑窗堆四个）。POSIX 返回空 dict，
+    因为 creationflags 仅 Windows 支持，无条件传参会让 subprocess 抛 ValueError。
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
 
 class WindowsProcessOps:
-    """tasklist / Get-CimInstance / taskkill 的真实实现（本项目以 Windows 为主）。"""
+    """tasklist / Get-CimInstance / taskkill 的真实实现（本项目以 Windows 为主）。
+
+    查询先走 psutil（进程内 API，毫秒级）；每次 tasklist / PowerShell 都要起一个
+    子进程（约 0.15s / 1s），`/state` 每模块要查好几次，串起来就是几十秒。psutil
+    缺失或被拒（权限）时才退回子进程通道。
+    """
 
     def self_pid(self) -> int:  # pragma: no cover - 平台直通
         return os.getpid()
 
+    def find_by_hash(self, fingerprint: str) -> int | None:  # pragma: no cover - 子进程查询
+        if not fingerprint or psutil is None:
+            return find_pid_by_hash_via_ops(self, fingerprint)
+        try:
+            for proc in psutil.process_iter(attrs=["pid", "cmdline"]):
+                try:
+                    argv = proc.info["cmdline"]
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                if argv and cmdline_hash(tuple(argv)) == fingerprint:
+                    return int(proc.info["pid"])
+        except (psutil.Error, OSError):
+            return find_pid_by_hash_via_ops(self, fingerprint)
+        return None
+
     def alive(self, pid: int) -> bool:  # pragma: no cover - 子进程查询
+        if psutil is not None:
+            try:
+                return bool(psutil.Process(int(pid)).is_running())
+            except psutil.NoSuchProcess:
+                return False
+            except (psutil.Error, OSError):
+                pass
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
             shell=False,
@@ -101,10 +162,20 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         return "No tasks" not in (result.stdout or "")
 
     def cmdline(self, pid: int) -> tuple[str, ...] | None:  # pragma: no cover - 子进程查询
+        if psutil is not None:
+            try:
+                argv = psutil.Process(int(pid)).cmdline()
+            except psutil.NoSuchProcess:
+                return None
+            except (psutil.Error, OSError):
+                argv = []
+            if argv:
+                return tuple(argv)
         raw = self._cim_query(
             f'(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").CommandLine'
         )
@@ -135,6 +206,25 @@ class WindowsProcessOps:
             queue.extend(children.get(current, []))
         return tree
 
+    def descendants(self, root_pids: Iterable[int]) -> set[int]:  # pragma: no cover - 子进程查询
+        edges = self._parent_edges()
+        roots = {int(pid) for pid in root_pids}
+        if not edges:
+            # 拿不到父子表：保守只认根本身，绝不把别的进程当成本方
+            return roots
+        children: dict[int, list[int]] = {}
+        for child, parent in edges:
+            children.setdefault(parent, []).append(child)
+        out: set[int] = set()
+        queue = list(roots)
+        while queue:
+            current = queue.pop()
+            if current in out:
+                continue
+            out.add(current)
+            queue.extend(children.get(current, []))
+        return out
+
     def kill_tree(self, root_pid: int) -> None:  # pragma: no cover - 子进程终止
         result = subprocess.run(
             ["taskkill", "/PID", str(root_pid), "/T", "/F"],
@@ -143,6 +233,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         if result.returncode == 0:
             return
@@ -165,6 +256,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         if result.returncode != 0:
             return None
@@ -186,6 +278,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         for line in (result.stdout or "").splitlines():
             text = line.strip()
@@ -195,7 +288,17 @@ class WindowsProcessOps:
         return None
 
     def _parent_edges(self) -> list[tuple[int, int]]:  # pragma: no cover - 子进程查询
-        """全系统 (child_pid, parent_pid) 表：CIM 优先，wmic /format:csv 兜底。"""
+        """全系统 (child_pid, parent_pid) 表：psutil 优先，CIM、wmic /format:csv 兜底。"""
+        if psutil is not None:
+            try:
+                edges = [
+                    (int(proc.info["pid"]), int(proc.info["ppid"] or 0))
+                    for proc in psutil.process_iter(["pid", "ppid"])
+                ]
+            except (psutil.Error, OSError):
+                edges = []
+            if edges:
+                return edges
         raw = self._cim_query(
             "Get-CimInstance Win32_Process | "
             'ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }'
@@ -210,6 +313,7 @@ class WindowsProcessOps:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
         return _parse_pid_pairs(result.stdout or "")
 
@@ -279,6 +383,29 @@ class PosixProcessOps:
             queue.extend(children.get(current, []))
         return tree
 
+    def descendants(self, root_pids: Iterable[int]) -> set[int]:  # pragma: no cover - 非 Windows
+        children: dict[int, list[int]] = {}
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat_text = (entry / "stat").read_text(errors="replace")
+            except OSError:
+                continue
+            tail = stat_text.rsplit(")", 1)[-1].split()
+            if len(tail) < 2:
+                continue
+            children.setdefault(int(tail[1]), []).append(int(entry.name))
+        out: set[int] = set()
+        queue = [int(pid) for pid in root_pids]
+        while queue:
+            current = queue.pop()
+            if current in out:
+                continue
+            out.add(current)
+            queue.extend(children.get(current, []))
+        return out
+
     def kill_tree(self, root_pid: int) -> None:  # pragma: no cover - 非 Windows
         # SIGKILL 是 POSIX 专属常量（Windows 的 signal 模块没有）；这个方法只在
         # 非 Windows 走到，回退值仅为让跨平台静态检查通过，运行时不会用到
@@ -289,8 +416,59 @@ class PosixProcessOps:
             except OSError:
                 continue
 
+    def find_by_hash(self, fingerprint: str) -> int | None:  # pragma: no cover - 非 Windows
+        if not fingerprint:
+            return None
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            argv = self.cmdline(int(entry.name))
+            if argv and cmdline_hash(argv) == fingerprint:
+                return int(entry.name)
+        return None
+
 
 def default_process_ops() -> ProcessOps:
     if os.name == "nt":
         return WindowsProcessOps()
     return PosixProcessOps()  # pragma: no cover - 平台分流
+
+
+def find_pid_by_hash_via_ops(ops: ProcessOps, fingerprint: str) -> int | None:
+    """`find_by_hash` 的通用降级实现：逐 pid `cmdline()` 比对（不依赖 psutil）。
+
+    生产两个实现都优先 psutil 全表快照（毫秒级）；这个函数给：
+    1. 测试假件（FakeProcessOps 只实现基础四查，自动获得该能力）；
+    2. psutil 缺席 / 被拒时 Windows 实现的回落（逐 pid CIM 慢但可用，
+       对账低频 60 秒一轮，可接受）。
+    """
+    if not fingerprint:
+        return None
+    for pid in _iter_pids(ops):
+        argv = ops.cmdline(pid)
+        if argv and cmdline_hash(argv) == fingerprint:
+            return int(pid)
+    return None
+
+
+def _iter_pids(ops: ProcessOps) -> list[int]:
+    """当前全量 pid 清单（psutil 优先，其次 PowerShell tasklist CSV）。"""
+    if psutil is not None:
+        try:
+            return [int(proc.pid) for proc in psutil.process_iter(attrs=["pid"])]
+        except (psutil.Error, OSError):
+            pass
+    argv: list[str] = ["powershell", "-NoProfile", "-Command", "(Get-Process).Id"]
+    try:
+        result = subprocess.run(
+            argv,
+            shell=False,
+            timeout=QUERY_TIMEOUT_SEC,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            **_no_window_kwargs(),
+        )
+        return [int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()]
+    except (OSError, subprocess.SubprocessError):
+        return []

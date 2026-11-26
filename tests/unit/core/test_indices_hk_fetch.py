@@ -14,31 +14,55 @@ from ladderstock.core.indices import fetch_indices
 
 CN_ROWS = [
     {
-        "code": code, "market": market, "is_index": True,
-        "price": 3608.1, "change": -29.86, "change_pct": -0.82, "prev_close": 3637.96,
+        "code": code,
+        "market": market,
+        "is_index": True,
+        "price": 3608.1,
+        "change": -29.86,
+        "change_pct": -0.82,
+        "prev_close": 3637.96,
         "timestamp": "20261103161500",
     }
     for code, market in (
-        ("000001", "SH"), ("000300", "SH"), ("399001", "SZ"), ("399006", "SZ"),
+        ("000001", "SH"),
+        ("000300", "SH"),
+        ("399001", "SZ"),
+        ("399006", "SZ"),
     )
 ]
 US_ROWS = [
     {
-        "symbol": symbol, "price": 51570.09, "change": 47.03,
-        "change_pct": 0.09, "prev_close": 51523.06, "timestamp": "2026-11-06T22:10:00+08:00",
+        "symbol": symbol,
+        "price": 51570.09,
+        "change": 47.03,
+        "change_pct": 0.09,
+        "prev_close": 51523.06,
+        "timestamp": "2026-11-06T22:10:00+08:00",
     }
     for symbol in ("DJI", "IXIC")
 ]
 HK_ROWS = {
     "HSI.HK": {
-        "symbol": "HSI.HK", "market": "HK", "name": "恒生指数",
-        "price": 24315.92, "change": -241.12, "change_pct": -0.98,
-        "prev_close": 24557.04, "currency": "HKD", "timestamp": "2026-11-11 18:31:03",
+        "symbol": "HSI.HK",
+        "market": "HK",
+        "name": "恒生指数",
+        "price": 24315.92,
+        "change": -241.12,
+        "change_pct": -0.98,
+        "prev_close": 24557.04,
+        "currency": "HKD",
+        "timestamp": "2026-11-11 18:31:03",
     },
     "HSTECH.HK": {
-        "symbol": "HSTECH.HK", "market": "HK", "name": "恒生科技指数",
-        "price": 4027.06, "change": -57.39, "change_pct": -1.41,
-        "prev_close": 4084.45, "currency": "HKD", "timestamp": "2026-11-11 16:08:28",
+        "symbol": "HSTECH.HK",
+        "market": "HK",
+        "name": "恒生科技指数",
+        "price": 4027.06,
+        "change": -57.39,
+        "change_pct": -1.41,
+        "prev_close": 4084.45,
+        "currency": "HKD",
+        "timestamp": "2026-11-11 16:08:28",
     },
 }
 WARNINGS = ["腾讯行情 属 Tier C：商用需事先书面许可，当前为非商用调用。"]

@@ -82,9 +82,7 @@ def _pe(*, method: str, market_cap: float, profit: float, profit_field: str) -> 
         return CalcResult.not_meaningful(
             RESULT_LIMITED, details={"market_cap": market_cap, "profit": profit}
         )
-    return _multiple(
-        value, method=method, details={"market_cap": market_cap, profit_field: profit}
-    )
+    return _multiple(value, method=method, details={"market_cap": market_cap, profit_field: profit})
 
 
 def pe_ttm(*, market_cap: float, net_profit_ttm: float) -> CalcResult:

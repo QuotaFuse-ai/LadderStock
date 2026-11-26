@@ -2,16 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "schedule.yaml",
   "type": "object",
-  "required": ["scheduler", "jobs"],
+  "required": [
+    "scheduler",
+    "jobs"
+  ],
   "additionalProperties": false,
   "properties": {
     "scheduler": {
       "type": "object",
-      "required": ["timezone", "misfire_grace_seconds"],
+      "required": [
+        "timezone",
+        "misfire_grace_seconds"
+      ],
       "additionalProperties": false,
       "properties": {
-        "timezone": { "type": "string", "minLength": 1 },
-        "misfire_grace_seconds": { "type": "integer", "minimum": 0 }
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "misfire_grace_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "jobs": {
@@ -19,11 +31,23 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "name", "kind", "trigger", "enabled"],
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "trigger",
+          "enabled"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-          "name": { "type": "string", "minLength": 1 },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
           "kind": {
             "enum": [
               "notify",
@@ -33,35 +57,175 @@
               "snapshot_fast",
               "sync_batch",
               "digest",
+              "brief",
               "wire_news",
-              "knowledge_refresh"
+              "knowledge_refresh",
+              "agent_research",
+              "watch_alert",
+              "watch_live",
+              "sentiment_live",
+              "plan_tick",
+              "sync_evening",
+              "news_collect",
+              "recall",
+              "alert_check",
+              "report"
             ]
           },
           "trigger": {
             "type": "string",
             "pattern": "^(([01][0-9]|2[0-3]):[0-5][0-9]|[1-9][0-9]*s)$"
           },
-          "enabled": { "type": "boolean" },
-          "channel": { "enum": ["console", "desktop"] },
-          "message": { "type": "string" },
-          "summary": { "enum": ["premarket", "close", "watch"] },
-          "dataset": { "type": "string", "minLength": 1 },
-          "daily_limit": { "type": "integer", "minimum": 1 }
+          "enabled": {
+            "type": "boolean"
+          },
+          "channel": {
+            "enum": [
+              "console",
+              "desktop"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "summary": {
+            "enum": [
+              "premarket",
+              "close",
+              "watch",
+              "morning",
+              "close_review",
+              "position_alerts"
+            ]
+          },
+          "dataset": {
+            "type": "string",
+            "minLength": 1
+          },
+          "datasets": {
+            "type": "string",
+            "minLength": 1,
+            "description": "sync_evening：逗号分隔的数据集清单（缺省 dragon_tiger,dragon_tiger_seats）"
+          },
+          "daily_limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "batch_size": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "news_collect：公告/研报按代码池分批的批大小（默认 100 只/批）"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "news_collect：每个栏目单次取数上限（默认 100 条）"
+          },
+          "candidate_filter": {
+            "type": "boolean",
+            "description": "news_collect：公告两源只查「池 ∪ 当日异动」（默认 true；无行情快照自动回退全池）"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "symbols": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 6
+            }
+          },
+          "alert_pct": {
+            "type": "number",
+            "minimum": 0.1
+          },
+          "move_pct": {
+            "type": "number",
+            "minimum": 0.1,
+            "description": "盘中盯盘：较上一次快照的变动阈值（百分比）"
+          },
+          "min_gap_min": {
+            "type": "number",
+            "minimum": 1,
+            "description": "盘中盯盘：同一只票两次提醒的最小间隔（分钟）"
+          },
+          "auto_research": {
+            "type": "boolean",
+            "description": "盘中盯盘：命中阈值后自动起一轮 agent 研究（条件触发）"
+          },
+          "auto_research_question": {
+            "type": "string",
+            "minLength": 1,
+            "description": "自动研究的提问；不填用内置模板（发生了什么/可能原因/接下来盯什么）"
+          },
+          "auto_research_max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "一次异动最多自动研究几只（默认 2）"
+          },
+          "auto_research_cooldown_min": {
+            "type": "number",
+            "minimum": 1,
+            "description": "同一只票两次自动研究的最小间隔（分钟，默认 60）"
+          },
+          "allow_plan_create": {
+            "type": "boolean",
+            "description": "跨轮任务推进：这一轮的回答是否允许再建新任务（默认 false，防止推进自我繁殖）"
+          }
         },
         "allOf": [
           {
             "if": {
-              "properties": { "kind": { "const": "sync_batch" } },
-              "required": ["kind"]
+              "properties": {
+                "kind": {
+                  "const": "sync_batch"
+                }
+              },
+              "required": [
+                "kind"
+              ]
             },
-            "then": { "required": ["dataset"] }
+            "then": {
+              "required": [
+                "dataset"
+              ]
+            }
           },
           {
             "if": {
-              "properties": { "kind": { "const": "digest" } },
-              "required": ["kind"]
+              "properties": {
+                "kind": {
+                  "const": "digest"
+                }
+              },
+              "required": [
+                "kind"
+              ]
             },
-            "then": { "required": ["summary"] }
+            "then": {
+              "required": [
+                "summary"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "agent_research"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "question"
+              ]
+            }
           }
         ]
       }

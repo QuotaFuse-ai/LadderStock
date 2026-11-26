@@ -68,6 +68,7 @@ _force_utf8()
 # 单元格格式化
 # --------------------------------------------------------------------------- #
 
+
 def _text(value: Any) -> str:
     """把任意值转成一行的可读文本；嵌套结构用紧凑 JSON 表达。"""
     if value is None:
@@ -127,9 +128,7 @@ def _records(records: list[dict[str, Any]]) -> list[list[Any]]:
 # --------------------------------------------------------------------------- #
 
 #: 形如 `sk-xxxx` / `ghp_xxxx` / `AKIAxxxx` 的密钥
-_KEY_VALUE = re.compile(
-    r"(?i)\b(?:sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9]{16,}|akia[0-9a-z]{12,})\b"
-)
+_KEY_VALUE = re.compile(r"(?i)\b(?:sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9]{16,}|akia[0-9a-z]{12,})\b")
 #: `Authorization: Bearer xxxx`
 _BEARER = re.compile(r"(?i)(bearer\s+)[a-z0-9._\-]+")
 #: `api_key=xxx` / `token: xxx` / `password=xxx`
@@ -175,6 +174,7 @@ def redact(text: str) -> str:
 # --------------------------------------------------------------------------- #
 # 三种格式
 # --------------------------------------------------------------------------- #
+
 
 def _as_table(data: Any) -> str:
     # 结果集：列表套记录

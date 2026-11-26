@@ -147,7 +147,8 @@ def _build_card(
             "backtest_run_card", {**base, "params": dict(params)}, data_fp=series.data_fp
         ),
         "data": calc_fingerprint(
-            "backtest_data", {"symbol": symbol, "adjust": series.adjust, **period},
+            "backtest_data",
+            {"symbol": symbol, "adjust": series.adjust, **period},
             data_fp=series.data_fp,
         ),
         "gate": calc_fingerprint(

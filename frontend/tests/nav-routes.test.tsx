@@ -107,11 +107,12 @@ describe('路由表 → 侧栏入口', () => {
 const REVIEW_PAGES = NAV_SECTIONS.find((section) => section.key === 'review')?.pages ?? []
 
 describe('复盘组三独立入口（QUOT-344 / DEC-046）', () => {
-  it('复盘组是 每日复盘 / AI复盘 / AI周报 / 候选池 四项，顺序与文案在册', () => {
+  it('复盘组是 每日复盘 / AI复盘 / AI周报 / 复盘统计 / 候选池 五项，顺序与文案在册', () => {
     expect(REVIEW_PAGES.map((page) => [page.to, page.label])).toEqual([
       ['/review', '每日复盘'],
       ['/review/ai', 'AI复盘'],
       ['/weekly', 'AI周报'],
+      ['/analytics', '复盘统计'],
       ['/pool', '候选池'],
     ])
   })
@@ -124,13 +125,14 @@ describe('复盘组三独立入口（QUOT-344 / DEC-046）', () => {
     }
   })
 
-  // 冷导入整张路由表（含全部屏幕）在慢机上会超过默认 5s，这里只放宽这一条的预算。
+  // 冷导入整张路由表（含全部屏幕）在慢机上会超过默认 5s；全量并发跑时单条能到 11s 上下，
+  // 这里预留到 30s，避免并行跑批时把「组件不同」这条断言误判成失败。
   it('`/review` 与 `/review/ai` 挂的不是同一个组件', async () => {
     stubMatchMedia()
     const { ROUTE_ELEMENTS } = await import('../src/App')
     expect(ROUTE_ELEMENTS['/review'].type).not.toBe(ROUTE_ELEMENTS['/review/ai'].type)
     expect(ROUTE_ELEMENTS['/review/ai'].type).toBeTruthy()
-  }, 15000)
+  }, 30000)
 })
 
 /** QUOT-431：旧收藏夹里的 `/watchlist`、`/positions` 不能 404，统一落到合并后的两标签页。 */
@@ -199,11 +201,17 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
     ])
   })
 
-  it('「我的股票」= 一页两标签 + 事件日历 + 提醒（QUOT-431 / QUOT-435）', () => {
+  it('「我的股票」= 一页两标签 + 事件日历 + 提醒 + 提醒规则（QUOT-431 / QUOT-435 / DEC-087）', () => {
     const group = NAV_SECTIONS.find((section) => section.key === 'my-stocks')
     // 自选 / 持仓合成 `/my-stocks?tab=watch|hold`，侧栏只留一颗入口；旧地址只做重定向；
-    // 提醒（`/inbox`）是 QUOT-435 补上的组内第三项
-    expect(group?.pages.map((page) => page.to)).toEqual(['/my-stocks', '/calendar', '/inbox'])
+    // 提醒（`/inbox`）是 QUOT-435 补上的组内第三项；提醒规则（`/alert`）是 DEC-087
+    // 补上的组内第四项——收件箱看「收到了什么」，规则页管「在盯什么、往哪推」。
+    expect(group?.pages.map((page) => page.to)).toEqual([
+      '/my-stocks',
+      '/calendar',
+      '/inbox',
+      '/alert',
+    ])
     const other = NAV_SECTIONS.filter((section) => section.key !== 'my-stocks')
     const moved = other.flatMap((section) => section.pages.map((page) => page.to))
     expect(moved).not.toContain('/watchlist')
@@ -257,13 +265,17 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
   })
 
   it('单页组不挂二级（`pages.length > 1` 才展开）：持仓移出后日志只剩交易日志', () => {
+    // QUOT-567 之后「知识库」组是两页（个股档案 + 数据资产），不再是单页组
     const single = NAV_SECTIONS.filter((section) => section.pages.length === 1).map((section) => section.key)
-    expect(single).toEqual(['home', 'journal', 'knowledge'])
+    expect(single).toEqual(['home', 'journal'])
   })
 
   it('设置沉底、不参与分组展开，其余页面都在分组里', () => {
     expect(NAV_SECTIONS.flatMap((section) => section.pages.map((page) => page.to))).not.toContain('/settings')
-    expect(PINNED_NAV.map((page) => page.to)).toEqual(['/settings'])
+    // 运行配置（`/config`）与设置同属"工具面"，都放固定项：它跨调度与取数两侧，
+    // 塞进任何一组都会让那组的语义变模糊。固定项因此是两项，不只有设置。
+    expect(PINNED_NAV.map((page) => page.to)).toEqual(['/config', '/settings'])
+    expect(NAV_SECTIONS.flatMap((section) => section.pages.map((page) => page.to))).not.toContain('/config')
   })
 
   it('渲染出来的侧栏默认就带着全部入口（不用先点展开，DOM 顺序即视觉顺序）', () => {
@@ -300,18 +312,25 @@ describe('侧栏顺序与渲染（docs/UI-SPEC.md）', () => {
 
 /**
  * QUOT-567：「知识库」是新增的第 10 组（不是在研究工具组里加一项）。
- * 单页组规则同首页 / 日志——侧栏没有代码可带，档案页由落地页提交或深链进入。
+ * E 包 / DEC-091：组内从两页变三页——个股档案 + 笔记与检索 + 数据资产。
  */
-describe('「知识库」组（QUOT-567）', () => {
-  it('第 10 组 key 是 `knowledge`，单页入口 `/knowledge`', () => {
+describe('「知识库」组（QUOT-567 / DEC-091）', () => {
+  it('第 10 组 key 是 `knowledge`，组内是 个股档案 + 笔记与检索 + 数据资产 三页', () => {
     expect(NAV_SECTIONS.at(-1)?.key).toBe('knowledge')
     const group = NAV_SECTIONS.find((section) => section.key === 'knowledge')
     expect(group?.label).toBe('知识库')
-    expect(group?.pages.map((page) => [page.to, page.label])).toEqual([['/knowledge', '知识库']])
+    expect(group?.pages.map((page) => [page.to, page.label])).toEqual([
+      ['/knowledge', '个股档案'],
+      ['/knowledge/notes', '笔记与检索'],
+      ['/data-assets', '数据资产'],
+    ])
   })
 
-  it('落地页与档案页各命中自己的路由，档案深链不被落地页吞掉', () => {
+  it('落地页、笔记页与档案页各命中自己的路由，档案深链不被吞掉', () => {
     expect(matchedRoute('/knowledge')).toBe('/knowledge')
+    expect(matchedRoute('/knowledge/notes')).toBe('/knowledge/notes')
     expect(matchedRoute('/knowledge/SH/600000')).toBe('/knowledge/:market/:symbol')
+    // 笔记页是单段静态路由，不会被 `/:market/:symbol` 动态段吞成市场代码
+    expect(matchedRoute('/knowledge/notes')).not.toBe('/knowledge/:market/:symbol')
   })
 })

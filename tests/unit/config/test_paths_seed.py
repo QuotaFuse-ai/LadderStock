@@ -59,6 +59,7 @@ def _needs_repo_config() -> None:
 # 路径解析
 # --------------------------------------------------------------------------- #
 
+
 def test_installed_config_dir_under_user_data_root(clean_home: Path, tmp_path: Path) -> None:
     # 不含 cwd/config 的干净目录 → 落到用户数据目录
     tmp_cwd = tmp_path / "elsewhere"
@@ -101,6 +102,7 @@ def test_user_data_root_has_no_hardcoded_production_path() -> None:
 # --------------------------------------------------------------------------- #
 # 首跑 seed
 # --------------------------------------------------------------------------- #
+
 
 def test_seed_fills_clean_dir(clean_home: Path) -> None:
     _needs_repo_config()
@@ -222,9 +224,36 @@ def test_seed_if_needed_only_in_install_mode(
     assert not custom.exists()
 
 
+def test_seed_if_needed_covers_portable_frozen_layout(
+    clean_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """冻结包恒便携：config 落在 `install_root/config`，首跑同样要 seed。
+
+    此前判定只认 platformdirs 那一处落点，于是「装到任意目录」的冻结包首跑一个 yaml
+    都没有——`sources.yaml` 缺了首页自选直接 500（实机装完复现）。冻结态一律算安装态。
+    """
+    _needs_repo_config()
+    from ladderstock.config import seed as seed_module
+
+    install_root = tmp_path / "installed"
+    install_root.mkdir()
+    monkeypatch.setattr("ladderstock.core.runtime.is_frozen", lambda: True)
+    monkeypatch.setattr(seed_module, "config_dir", lambda: install_root / "config")
+    monkeypatch.setattr(seed_module, "bundle_config_dir", lambda: REPO_CONFIG)
+
+    report = seed_if_needed()
+
+    assert report is not None
+    assert (install_root / "config" / "sources.yaml").is_file()
+    # 显式指定配置目录时仍然不塞文件（即使用户在冻结包里这么做）
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(tmp_path / "mine"))
+    assert seed_if_needed() is None
+
+
 # --------------------------------------------------------------------------- #
 # 红线：无硬编码路径 / 密钥不进模板
 # --------------------------------------------------------------------------- #
+
 
 def test_bundle_config_has_no_absolute_drive_paths() -> None:
     _needs_repo_config()
@@ -265,14 +294,26 @@ def test_bundle_templates_inside_package() -> None:
 
 
 def test_packaged_templates_match_repo_config() -> None:
-    """包内副本与仓库 `config/` 同步：两处各改一份就会让开发态与安装态漂移。"""
+    """包内副本与仓库 `config/` 同步：两处各改一份就会让开发态与安装态漂移。
+
+    `ports.yaml` 不在模板里——它由 `ldst run` 在启动成功后写入（端口避让记录），
+    属于运行时状态而非随包模板；`ai.env` 同理（本地密钥文件，`.gitignore` 已排），
+    比较时一并排除。
+    """
     _needs_repo_config()
     packaged = Path(paths.__file__).resolve().parents[1] / "assets" / "config"
-    repo_files = {p.relative_to(REPO_CONFIG) for p in REPO_CONFIG.rglob("*") if p.is_file()}
+    runtime_only = {Path("ports.yaml"), Path("ai.env")}
+    repo_files = {
+        p.relative_to(REPO_CONFIG) for p in REPO_CONFIG.rglob("*") if p.is_file()
+    } - runtime_only
     pkg_files = {p.relative_to(packaged) for p in packaged.rglob("*") if p.is_file()}
     assert repo_files == pkg_files
     for rel in sorted(repo_files):
-        assert (REPO_CONFIG / rel).read_bytes() == (packaged / rel).read_bytes(), rel
+        # 换行不算漂移：同一份 git 内容在 Windows 检出时可能是 CRLF、Linux 是 LF，
+        # 比字节会在两台机器上给出相反结论。这里比「归一换行后的文本」。
+        repo_text = (REPO_CONFIG / rel).read_text(encoding="utf-8").replace("\r\n", "\n")
+        pkg_text = (packaged / rel).read_text(encoding="utf-8").replace("\r\n", "\n")
+        assert repo_text == pkg_text, rel
 
 
 def test_platformdirs_layout_per_platform(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -93,9 +93,7 @@ def token_matches(supplied: str, expected: str) -> bool:
 
 def _headers(scope: Mapping[str, Any]) -> dict[str, str]:
     pairs = scope.get("headers") or []
-    return {
-        key.decode("latin-1").lower(): value.decode("latin-1") for key, value in pairs
-    }
+    return {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in pairs}
 
 
 async def _send_json(

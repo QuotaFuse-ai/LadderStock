@@ -100,7 +100,14 @@ def grep_occurrences(var: str) -> list[str]:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*")):
-            if not path.is_file() or path.suffix not in {".py", ".yaml", ".yml", ".sh", ".example", ""}:
+            if not path.is_file() or path.suffix not in {
+                ".py",
+                ".yaml",
+                ".yml",
+                ".sh",
+                ".example",
+                "",
+            }:
                 continue
             if any(part in SCAN_SKIP for part in path.parts):
                 continue
@@ -120,20 +127,21 @@ def main() -> None:
     compose = parse_compose_app_env()
     print(f"Config.model_fields 共 {len(fields)} 字段；x-app-env 段共 {len(compose)} 个 FC_ 键\n")
 
-    autostart_gated = {
-        name: grep_field_consumers(name) for name in AUTOSTART_GATED
-    }
+    autostart_gated = {name: grep_field_consumers(name) for name in AUTOSTART_GATED}
     print("## autostart 门控判定（消费点必须只落在本地进程形态）")
     for name, hits in autostart_gated.items():
         non_local = [
-            h for h in hits
+            h
+            for h in hits
             if "ops/minio_process.py" not in h.replace("\\", "/")
             and "cli/commands/serve.py" not in h.replace("\\", "/")
             and "core/config.py" not in h.replace("\\", "/")
         ]
         ok = not non_local
-        print(f"  {name}: 消费点 {len(hits)} 处，非本地进程消费 {'有 ' + str(non_local) if non_local else '无'}"
-              f" -> {'autostart 门控成立' if ok else '门控判定失败，不得按 no-op 排除'}")
+        print(
+            f"  {name}: 消费点 {len(hits)} 处，非本地进程消费 {'有 ' + str(non_local) if non_local else '无'}"
+            f" -> {'autostart 门控成立' if ok else '门控判定失败，不得按 no-op 排除'}"
+        )
     print()
 
     header = f"{'env 键':34} {'Config 字段':28} {'config.py':11} {'compose 形态':14} 结论"
@@ -172,9 +180,16 @@ def main() -> None:
         print(f"  {var}")
 
     print("\n## 抽查 8 键的源码出现位置（非注释行）")
-    for var in ("FC_EMBEDDING_PROVIDER", "FC_MINIO_BUCKET", "FC_ETL_BATCH_SIZE",
-                "FC_METRICS_PROFILE", "FC_LOG_LEVEL", "FC_RATE_LIMIT_PER_MINUTE",
-                "FC_MINIO_AUTOSTART", "FC_REDIS_URL"):
+    for var in (
+        "FC_EMBEDDING_PROVIDER",
+        "FC_MINIO_BUCKET",
+        "FC_ETL_BATCH_SIZE",
+        "FC_METRICS_PROFILE",
+        "FC_LOG_LEVEL",
+        "FC_RATE_LIMIT_PER_MINUTE",
+        "FC_MINIO_AUTOSTART",
+        "FC_REDIS_URL",
+    ):
         print(f"  {var}: {grep_occurrences(var) or '（无出现！）'}")
 
 

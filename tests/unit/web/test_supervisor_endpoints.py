@@ -154,9 +154,7 @@ def test_reset_clears_needs_human(tmp_path: Path) -> None:
     ledger.update("senate", pid=202, health=HEALTH_NEEDS_HUMAN, restart_count=3)
     ledger.get("senate").restart_window = [1000.0, 1010.0, 1020.0]
 
-    response = _client(tmp_path).post(
-        "/api/supervisor/state/senate/reset", headers=WRITE_HEADERS
-    )
+    response = _client(tmp_path).post("/api/supervisor/state/senate/reset", headers=WRITE_HEADERS)
 
     assert response.status_code == 200, response.text
     body = response.json()

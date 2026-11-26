@@ -92,6 +92,7 @@ def _all_ok(model: str, section: str, user: str, json_mode: bool) -> str:
 # 成功路径
 # --------------------------------------------------------------------------- #
 
+
 def test_generate_all_sections_ok(seeded, configured) -> None:
     client = ScriptedClient(_all_ok)
     report, run, pack = pipeline.generate(WEEK, root=seeded, config=make_config(), client=client)
@@ -139,6 +140,7 @@ def test_section_metrics_kept_verbatim(seeded, configured) -> None:
 # --------------------------------------------------------------------------- #
 # 降级路径（要求 4）
 # --------------------------------------------------------------------------- #
+
 
 def test_model_failure_still_writes_both_artifacts(seeded, configured) -> None:
     client = ScriptedClient(lambda model, section, user, json_mode: httpx.ConnectError("boom"))
@@ -197,6 +199,7 @@ def test_empty_week_skips_model_and_still_writes(seeded, configured) -> None:
 # 断点续跑
 # --------------------------------------------------------------------------- #
 
+
 def test_second_run_reuses_checkpoint(seeded, configured) -> None:
     first = ScriptedClient(_all_ok)
     pipeline.generate(WEEK, root=seeded, config=make_config(), client=first)
@@ -215,6 +218,7 @@ def test_second_run_reuses_checkpoint(seeded, configured) -> None:
 # --------------------------------------------------------------------------- #
 # Markdown 渲染
 # --------------------------------------------------------------------------- #
+
 
 def test_render_markdown_covers_every_section(seeded, configured) -> None:
     client = ScriptedClient(_all_ok)

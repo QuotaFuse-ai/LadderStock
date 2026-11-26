@@ -187,7 +187,11 @@ class _CalcPlane:
         raw_fp = body.get("data_fingerprint", "none")
         if not isinstance(raw_fp, str) or not raw_fp.strip():
             return _error_response(
-                400, op, None, _BAD_ARGUMENT, "data_fingerprint 必须是非空字符串",
+                400,
+                op,
+                None,
+                _BAD_ARGUMENT,
+                "data_fingerprint 必须是非空字符串",
                 field="data_fingerprint",
             )
         data_fp = raw_fp.strip()

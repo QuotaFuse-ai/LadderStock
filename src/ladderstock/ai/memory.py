@@ -114,16 +114,27 @@ BAAI_MODEL_DIRNAME = "bge-small-zh-v1.5-baai"
 
 
 def _install_models_dir() -> Path:
-    """安装包内预置模型根：install_root/file/models/。LDST_MEMORY_MODELS_DIR 可覆盖。"""
+    """模型根：随包预置 → 用户下载目录 → 数据目录旁。LDST_MEMORY_MODELS_DIR 可覆盖。
+
+    默认安装包不带权重（274MB 太重），首次启用记忆时由 `ai/model_fetch.py`
+    下载到用户数据目录；这里只按顺序找现成的，绝不联网。
+    """
+    from ladderstock.ai import model_fetch
     from ladderstock.cli.paths import data_dir
-    from ladderstock.core.runtime import install_root
+    from ladderstock.core.runtime import install_root, project_root
 
     env = os.environ.get(ENV_MODELS_DIR, "").strip()
     if env:
         return Path(env)
-    candidate = install_root() / "file" / MODELS_DIRNAME
-    if candidate.is_dir():
-        return candidate
+    # 三套布局都要认：安装包 <install_root>/file/models、源码树 <repo>/file/models、
+    # 用户后下载目录（便携包默认路径）。谁先齐用谁，避免半装目录盖掉完好副本。
+    for candidate in (
+        install_root() / "file" / MODELS_DIRNAME,
+        project_root() / "file" / MODELS_DIRNAME,
+        model_fetch.download_root(),
+    ):
+        if (candidate / BAAI_MODEL_DIRNAME).is_dir():
+            return candidate
     # 兜底：数据目录旁的 models/（便携布局 / 测试）
     return data_dir().parent / MODELS_DIRNAME
 
@@ -303,7 +314,8 @@ def _verify_model_integrity(models_dir: Path) -> None:
             bad.append(f"{rel}（哈希不一致）")
     if bad:
         raise MemoryUnavailable(
-            "模型文件完整性校验失败：" + "；".join(bad)
+            "模型文件完整性校验失败："
+            + "；".join(bad)
             + f"。安装包 {models_dir} 内文件损坏或被改动，请重新安装（SHA256SUMS 为随包清单）。"
         )
 
@@ -374,9 +386,7 @@ def _build_memory(models_dir: Path, state_dir: Path) -> Any:
     from ladderstock.ai.fallback import load_config
 
     config = load_config()
-    target = next(
-        (t for t in config.targets if t.backend.configured), None
-    )
+    target = next((t for t in config.targets if t.backend.configured), None)
     if target is None:
         raise MemoryUnavailable(
             "记忆引擎初始化失败：本地 LLM 网关未配置"
@@ -411,8 +421,7 @@ def _build_memory(models_dir: Path, state_dir: Path) -> Any:
         raise
     except Exception as exc:  # noqa: BLE001 - qdrant 本地锁冲突等，统一显式失败
         raise MemoryUnavailable(
-            f"记忆引擎初始化失败：{exc.__class__.__name__}: {exc}"
-            f"（qdrant 路径 {qdrant_path}）"
+            f"记忆引擎初始化失败：{exc.__class__.__name__}: {exc}（qdrant 路径 {qdrant_path}）"
         ) from None
 
     config = MemoryConfig(
@@ -490,9 +499,7 @@ def engine_health() -> dict[str, Any]:
         return {
             "engine": "in-process",
             "branch": getattr(_engine, "engine_branch", "unknown"),
-            "embedder": getattr(
-                _engine, "embedder_info", {"engine": "sentence-transformers"}
-            ),
+            "embedder": getattr(_engine, "embedder_info", {"engine": "sentence-transformers"}),
             "ok": True,
         }
     if _engine_error is not None:
@@ -1006,9 +1013,7 @@ KNOWLEDGE_END = "<<<KNOWLEDGE_END>>>"
 
 MEMORY_SECTION_HEADER = "【对话记忆（可能过时，仅作线索）】"
 KNOWLEDGE_SECTION_HEADER = "【标的档案（带 as_of，优先于对话记忆）】"
-EMPTY_KNOWLEDGE_NOTE = (
-    "（该标的没有可用档案；档案缺失时以页级数据为准，不要引用记忆补全。）"
-)
+EMPTY_KNOWLEDGE_NOTE = "（该标的没有可用档案；档案缺失时以页级数据为准，不要引用记忆补全。）"
 
 MEMORY_CONFLICT_RULE = (
     "若【对话记忆】与【标的档案】或【页级上下文】冲突，以档案与页级数据为准，"

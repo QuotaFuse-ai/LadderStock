@@ -15,6 +15,10 @@
 export const API_BASE = '/api'
 const DEFAULT_TIMEOUT_MS = 5000
 const CONTROL_TIMEOUT_MS = 15000
+//: supervisor 的 /state 要现场扫连接表 + 进程证据（含 WSL 侧归属），实测 17s 上下；
+//: 用 CONTROL 的 15s 会稳定超时，页面随即把全部模块标成「归属未知（supervisor 未接入）」。
+//: 单独放宽到 30s：宁可等一次，也不要误判成未接入。
+const SUPERVISOR_TIMEOUT_MS = 30000
 /** 控制面写请求的来源证据（QUOT-178）：服务端要求 Origin 同源或这个显式头 */
 const CONTROL_CLIENT_HEADER = 'X-LDST-Client'
 
@@ -94,7 +98,7 @@ export function describeApiError(error: unknown): { title: string; detail: strin
 // ---------------------------------------------------------------- 传输
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT'
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   body?: unknown
   timeoutMs?: number
   signal?: AbortSignal
@@ -110,7 +114,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const isControlWrite =
     (path.startsWith('/control/') ||
       path.startsWith('/supervisor/') ||
-      path.startsWith('/journal/')) &&
+      path.startsWith('/journal/') ||
+      // `POST /watch/refresh` 会现取一次数并写 minute_bars，同属写操作
+      path.startsWith('/watch/') ||
+      // 增强包的安装 / 卸载 / 启停都是真命令真落盘（DEC-086）
+      path.startsWith('/financecoffer/') ||
+      // 端口偏好写入只改本机配置，但同属写面（DEC-092）
+      path.startsWith('/settings/')) &&
     method !== 'GET'
   try {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -193,16 +203,20 @@ export interface SentimentResult {
   date: string
   available: boolean
   reason: string | null
+  /** `live` = 盘中实时读数（当日 archive 归档还没生成），缺省 = 收盘归档口径 */
+  mode?: 'live'
   temperature: number | null
   promotion_rate: number | null
   seal_rate: number | null
   limit_up_count: number
   broken_count: number
-  yesterday_limit_up_count: number
-  promoted_count: number
+  limit_down_count?: number | null
+  yesterday_limit_up_count: number | null
+  promoted_count: number | null
   max_board: number | null
   gap: boolean
   gap_levels: number[]
+  leaders?: { code: string; name: string; streak: number | null }[]
   missing: string[]
   formula?: string
   source_detail?: string
@@ -234,6 +248,9 @@ export interface LadderResult {
   gap_levels: number[]
   leader_candidates: LadderStock[]
   unknown_board: number
+  /** 盘中实时快照拼出的部分梯队：个股与最高板是真的，每一档家数不是全量 */
+  partial?: boolean
+  leader_only?: boolean
 }
 
 /** 标的字典的一条命中（QUOT-405，字段对齐参考库 `symbolSearch`）。 */
@@ -513,6 +530,22 @@ export interface WatchSnapshotPayload {
   rows: WatchSnapshotRow[]
 }
 
+/** `POST /api/watch/refresh` 的返回：取数结果 + 分钟样本写入情况（盘后 `skipped`）。 */
+export interface WatchRefreshResult {
+  ok: boolean
+  status: string | null
+  detail: string | null
+  minute_bars: {
+    written?: number
+    total?: number
+    rejected?: number
+    path?: string
+    detail?: string
+    rejected_detail?: string[]
+  } | null
+  alerted: number | null
+}
+
 export interface ValidationCondition {
   /** 盘上条件不一定带标的代码：`server.py:_validation_conditions` 对缺失值恒给 `null` */
   code: string | null
@@ -560,6 +593,27 @@ export interface StateConfigPayload {
   state_index_present: boolean
   state_schema_version: number | null
   ports: { web: number; mcp: number }
+}
+
+/** 看板端口设置（DEC-092）：`/api/settings/port`，读写均同源 */
+export interface BoardPortSettings {
+  default_board: number
+  /** 用户手动设置的偏好端口；null = 未设置（走默认 + 自动避让） */
+  user_board: number | null
+  /** 当前实际监听口（从请求 scope 取得） */
+  current_board: number | null
+  reserved_ports: number[]
+  min_port: number
+  max_port: number
+  takes_effect: 'restart'
+}
+
+/** 保存 / 清除偏好后的结果；`detail` 是可直接上屏的人话 */
+export interface BoardPortSaved {
+  ok: boolean
+  board: number | null
+  action: 'saved' | 'cleared'
+  detail: string
 }
 
 export interface HealthPayload {
@@ -799,6 +853,8 @@ export interface PeerSnapshot {
   open_url: string | null
   actions: {
     can_install: boolean
+    /** 容器化模块目录还不存在时可「一键接入」（后端必返；旧夹具可不填） */
+    can_scaffold?: boolean
     can_start: boolean
     can_stop: boolean
     can_open: boolean
@@ -895,8 +951,13 @@ export interface ConfigEntry {
 export interface PeerConfig {
   peer: string
   env_file: string
+  env_layers?: { file: string; role: string }[]
   exists: boolean
-  /** 后端判定是否可编辑（白名单非空 + env 父目录存在）；前端只按它渲染 */
+  /** 后端探到的「模块是否可用」（.venv 在不在）；未安装不给写入入口 */
+  installed?: boolean
+  /** 保存后怎么生效：restart / task / external / unavailable（后端给原文，前端只显示） */
+  apply?: { mode: string; text: string }
+  /** 后端判定是否可编辑（白名单非空 + env 父目录存在 + 已安装）；前端只按它渲染 */
   editable: boolean
   keys: string[]
   values: Record<string, ConfigEntry>
@@ -1079,10 +1140,33 @@ export interface SenateProvider {
 export interface SenateRoleStatus {
   role: string
   label: string
+  /** StockSenate `agent_roles` 的分组（analyst / researcher / manager / trader / risk / judge）。 */
+  kind?: string
+  /** 角色简介：这个角色负责看什么。 */
+  description?: string
+  /** 该角色挂载的技能名（对应 Senate 的 skills/*.toml）。 */
+  skills?: string[]
   configured: boolean
   provider: string | null
   model: string | null
   api_key_env: string | null
+  /** 角色级模型地址（为空则用 provider 默认）。 */
+  backend_url?: string | null
+  /** 角色级 key 是否已配置（不回显明文）。 */
+  api_key_set?: boolean
+}
+
+export interface SenateSkillEntry {
+  name: string
+  description: string
+}
+
+export interface SenateMemoryStats {
+  backend: string
+  enabled: boolean
+  count: number
+  path: string
+  mem0_url?: string | null
 }
 
 export interface SenateEngine {
@@ -1115,6 +1199,10 @@ export interface SenateRoleModelsPayload {
   global: SenateGlobal
   providers: SenateProvider[]
   aliases: Record<string, string>
+  /** 可勾选的技能库（来自 Senate 的 skills/*.toml）。 */
+  skill_library?: SenateSkillEntry[]
+  /** 记忆条数与后端。 */
+  memory?: SenateMemoryStats
   directory_exists?: boolean
   config_exists?: boolean
   env_file?: string
@@ -1126,11 +1214,15 @@ export interface SenateRoleModelsPayload {
   api_key_env_written?: boolean
 }
 
-/** PUT 请求体里的单个角色：只允许 provider / model / 变量名。 */
+/** PUT 请求体里的单个角色：provider / model 必填，地址与密钥可选（逐角色一套反代）。 */
 export interface SenateRoleEntry {
   provider: string
   model: string
   api_key_env?: string
+  /** 该角色自己的网关地址；留空则回落到全局 `[llm].backend_url` / provider 默认。 */
+  backend_url?: string
+  /** 该角色自己的密钥明文（写进 llm_config.toml 的角色条目）。 */
+  api_key?: string
 }
 
 /** `POST /control/peers/senate/role-models/test`：失败也是 200，按 `ok` 区分。 */
@@ -1188,9 +1280,11 @@ export interface SupervisorModule {
   pid: number | null
   /** 对外三值（stopped 折叠为 ok） */
   health: 'ok' | 'restarting' | 'needs_human'
-  /** 原始生命周期：starting / running / stopping / stopped / failed / restarting / needs_human / down / unknown */
+  /** 原始生命周期：starting / running / stopping / stopped / failed / restarting / needs_human / down / unknown；disabled = 按需模块（proxypool）未启用，无进程属正常 */
   state: string
+  /** 近 5 分钟滑动窗口内的重启次数：**当前健康指标**，0 表示近期稳定 */
   restarts_5min: number
+  /** 生命周期累计重启次数：**永不清零、仅供诊断**，不是「正在崩溃」的证据 */
   restart_count: number
   stopping_by_user: boolean
   origin: SupervisorOrigin
@@ -1345,6 +1439,72 @@ export interface ProxySetUpstreamRequest {
 
 // ---------------------------------------------------------------- 端点
 
+/** 增强包组件行（体积按**解压后实测**，DEC-086 决策 3）。 */
+export interface FcComponent {
+  key: string
+  label: string
+  size_mb: number
+  required: boolean
+  note: string
+}
+
+export interface FcServiceState {
+  ok: boolean
+  state: string
+  detail?: string
+  [key: string]: unknown
+}
+
+export interface FcSummary {
+  ok: boolean
+  module_root: string
+  installed: string | null
+  state:
+    | {
+        state: string
+        detail?: string
+        updated_at?: string
+        with_embedding?: boolean
+        components?: string[]
+      }
+    | null
+  sizes: { core_mb: number; full_mb: number; embedding_mb: number }
+  components: { core: FcComponent[]; full: FcComponent[] }
+  consequences: string[]
+  redis: {
+    current: string
+    host: string
+    platforms: Record<string, { dir: string; installed: boolean }>
+  }
+  doctor: {
+    ready: number
+    total: number
+    /** 可选件（目前只有 embedding）：未装不影响结构化查询 */
+    optional?: string[]
+    missing_required?: string[]
+    /** 必需件都就绪才算「能用」；embedding 未起不算不可用 */
+    usable?: boolean
+    services: Record<string, FcServiceState>
+    ports: Record<string, number>
+  }
+  job: FcJob | null
+}
+
+export interface FcJob {
+  kind: string
+  status: 'running' | 'done' | 'failed' | 'busy'
+  started_at?: number
+  finished_at?: number | null
+  progress: { at: number; text: string }[]
+  result: {
+    ok?: boolean
+    status?: string
+    detail?: string
+    total_mb?: number
+    [key: string]: unknown
+  } | null
+}
+
 export const api = {
   // 数据面
   review: (date: string, signal?: AbortSignal) =>
@@ -1363,6 +1523,18 @@ export const api = {
     }),
   watchSnapshot: (signal?: AbortSignal) =>
     request<LadderEnvelope<WatchSnapshotPayload>>('/watch/snapshot', { signal }),
+  /**
+   * `POST /api/watch/refresh`：现取一次盘中实时价并落 `minute_bars`。
+   *
+   * 「立即取数」按钮此前只把 GET 重发一遍，后端什么都没做。这条接口让它真的取一次：
+   * 交易时段返回 `ok`（附写入条数），盘后如实回 `skipped`（收盘价不能冒充盘中信号）。
+   */
+  watchRefresh: (signal?: AbortSignal) =>
+    request<WatchRefreshResult>('/watch/refresh', {
+      method: 'POST',
+      timeoutMs: CONTROL_TIMEOUT_MS,
+      signal,
+    }),
   /**
    * 近 N 日情绪温度序列（Q172-8 缺口）。后端未上线时抛 `http` 404，
    * 调用方用 `isEndpointMissing` 判成「未接入」，不当作页面错误。
@@ -1392,6 +1564,11 @@ export const api = {
     }),
   health: (signal?: AbortSignal) => request<HealthPayload>('/health', { signal }),
   stateConfig: (signal?: AbortSignal) => request<StateConfigPayload>('/state/config', { signal }),
+  portSettings: (signal?: AbortSignal) => request<BoardPortSettings>('/settings/port', { signal }),
+  portSettingsSave: (board: number) =>
+    request<BoardPortSaved>('/settings/port', { method: 'PUT', body: { board }, timeoutMs: CONTROL_TIMEOUT_MS }),
+  portSettingsClear: () =>
+    request<BoardPortSaved>('/settings/port', { method: 'DELETE', timeoutMs: CONTROL_TIMEOUT_MS }),
   /** 本机交易日志聚合统计（DEC-015 Tier 1）：扁平 JSON，**不是** `LadderEnvelope` */
   journalStats: (query: JournalStatsQuery = {}, signal?: AbortSignal) => {
     const params = new URLSearchParams()
@@ -1414,6 +1591,33 @@ export const api = {
   journalWriteInfo: (signal?: AbortSignal) =>
     request<JournalWriteInfo>(`/journal/write-info`, { signal }),
 
+  // 增强包向导面（DEC-086）：体积明细 / embedding 勾选 / 安装任务 / 启停 / 卸载
+  financecoffer: {
+    summary: (signal?: AbortSignal) =>
+      request<FcSummary>('/financecoffer', { signal, timeoutMs: CONTROL_TIMEOUT_MS }),
+    install: (body: { with_embedding: boolean; confirm: boolean; allow_system_drive?: boolean }) =>
+      request<FcJob>('/financecoffer/install', {
+        method: 'POST',
+        body,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    job: (signal?: AbortSignal) =>
+      request<{ ok: boolean; job: FcJob | null }>('/financecoffer/job', {
+        signal,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    services: (action: 'start' | 'stop') =>
+      request<{ ok: boolean; action: string; services: Record<string, FcServiceState>; doctor: FcSummary['doctor'] }>(
+        '/financecoffer/services',
+        { method: 'POST', body: { action }, timeoutMs: CONTROL_TIMEOUT_MS },
+      ),
+    uninstall: () =>
+      request<{ ok: boolean; status: string; detail: string; data_destroyed?: boolean }>(
+        '/financecoffer/uninstall',
+        { method: 'POST', body: { confirm: true }, timeoutMs: CONTROL_TIMEOUT_MS },
+      ),
+  },
+
   // 控制面
   control: {
     board: (signal?: AbortSignal) =>
@@ -1435,6 +1639,16 @@ export const api = {
         body: {},
         timeoutMs: CONTROL_TIMEOUT_MS,
       }),
+    /** 一键接入：目录还不存在时生成 compose + .env（已有文件不覆盖），之后才可安装/启动 */
+    scaffold: (id: string) =>
+      request<{ peer: string; directory: string; created: string[]; kept: string[] }>(
+        `/control/peers/${encodeURIComponent(id)}/scaffold`,
+        {
+          method: 'POST',
+          body: {},
+          timeoutMs: CONTROL_TIMEOUT_MS,
+        },
+      ),
     start: (id: string) =>
       request<JobHandle>(`/control/peers/${encodeURIComponent(id)}/start`, {
         method: 'POST',
@@ -1547,12 +1761,46 @@ export const api = {
         timeoutMs: CONTROL_TIMEOUT_MS,
       }),
     /** 校验后原子写 `llm_config.toml`；`expected_revision` 不符回 `SENATE_STALE`。 */
-    saveSenateRoleModels: (roles: Record<string, SenateRoleEntry>, expectedRevision: string | null) =>
+    saveSenateRoleModels: (
+      roles: Record<string, SenateRoleEntry>,
+      expectedRevision: string | null,
+      globalKeyEnv?: string | null,
+    ) =>
       request<SenateRoleModelsPayload>('/control/peers/senate/role-models', {
         method: 'PUT',
-        body: { roles, ...(expectedRevision ? { expected_revision: expectedRevision } : {}) },
+        body: {
+          roles,
+          ...(expectedRevision ? { expected_revision: expectedRevision } : {}),
+          ...(globalKeyEnv ? { global_key_env: globalKeyEnv } : {}),
+        },
         timeoutMs: CONTROL_TIMEOUT_MS,
       }),
+    /** 某角色当前的系统提示词正文。 */
+    senateRolePrompt: (role: string) =>
+      request<{ role: string; path: string | null; exists: boolean; text: string; chars: number; skills: string[] }>(
+        `/control/peers/senate/role-prompt?role=${encodeURIComponent(role)}`,
+        { timeoutMs: CONTROL_TIMEOUT_MS },
+      ),
+    /** 写回角色提示词（自动留 `.bak`）。 */
+    saveSenateRolePrompt: (role: string, text: string) =>
+      request<{ role: string; path: string; chars: number; backup: string | null; revision: string }>(
+        '/control/peers/senate/role-prompt',
+        {
+          method: 'PUT',
+          body: { role, text },
+          timeoutMs: CONTROL_TIMEOUT_MS,
+        },
+      ),
+    /** 保存单个角色勾选的技能，写回 `agent_roles.toml` 的 `roles.<role>.skills`。 */
+    saveSenateRoleSkills: (role: string, skills: string[]) =>
+      request<{ role: string; skills: string[]; revision: string }>(
+        '/control/peers/senate/role-skills',
+        {
+          method: 'PUT',
+          body: { role, skills },
+          timeoutMs: CONTROL_TIMEOUT_MS,
+        },
+      ),
     /** 对单个角色发一次最小 chat 探测；失败也是 200，按 `ok` / `error_code` 区分。 */
     testSenateRoleModel: (body: {
       role: string
@@ -1640,7 +1888,7 @@ export const api = {
     state: (signal?: AbortSignal) =>
       request<SupervisorStatePayload>('/supervisor/state', {
         signal,
-        timeoutMs: CONTROL_TIMEOUT_MS,
+        timeoutMs: SUPERVISOR_TIMEOUT_MS,
       }),
     /**
      * peer 级健康事件轮询（QUOT-556，S5 弹窗订阅源）：`since` = 上次见过的最大
@@ -1710,4 +1958,49 @@ export const api = {
         timeoutMs: CONTROL_TIMEOUT_MS,
       }),
   },
+
+  // StockSenate 动作面：真发起一次合议 / 回测（不是读「已经存在的报告」）。
+  // 任务跑在服务端后台线程，POST 立刻回 task_id，前端按 id 轮询进度。
+  senate: {
+    capability: () =>
+      request<{
+        ok: boolean
+        url: string
+        server?: string | null
+        version?: string | null
+        tools: string[]
+        error?: string | null
+      }>('/senate/capability', { timeoutMs: SUPERVISOR_TIMEOUT_MS }),
+    analysisStart: (body: { code: string; date?: string | null; hitl?: boolean }) =>
+      request<SenateTaskView>('/senate/analysis', {
+        method: 'POST',
+        body,
+        timeoutMs: CONTROL_TIMEOUT_MS,
+      }),
+    analysisStatus: (taskId: string) =>
+      request<SenateTaskView>(`/senate/analysis/${taskId}`, { timeoutMs: CONTROL_TIMEOUT_MS }),
+  },
+}
+
+/** `POST /api/senate/analysis|backtest` 与轮询返回的任务视图。 */
+export interface SenateTaskView {
+  ok: boolean
+  task_id: string
+  kind: 'analysis' | 'backtest'
+  tool: string
+  status: 'running' | 'done' | 'error'
+  arguments: Record<string, unknown>
+  elapsed_sec: number
+  /** 已完成的大模型往返次数（真实计数，来自 Senate 进程日志） */
+  steps_done: number
+  /** 一条合议的往返总量粗口径（用于进度条分母） */
+  steps_total: number
+  /** 按往返次数推断的环节名：准备取数 / 分析师集群 / 多空辩论 / 研究经理裁决 / 交易员方案 / 风控与终审 */
+  stage_label: string
+  /** 环节顺序与各自起始往返次数（画辩论过程用） */
+  stages: Array<{ name: string; from_steps: number }>
+  /** 每个环节的真实进入时刻（相对任务开始的秒数） */
+  stage_log: Array<{ stage: string; steps: number; at_sec: number }>
+  result: unknown
+  error: string | null
 }

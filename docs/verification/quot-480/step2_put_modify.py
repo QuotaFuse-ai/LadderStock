@@ -9,6 +9,7 @@ step1 已用 PUT 从无到有创建 deploy/.env（现网等值 15 键）；本�
 - 125 这个值同时留给 #4「端到端生效」证据用（随后会还原 120）。
 密钥行一律打码后才落盘/输出。
 """
+
 import json
 import subprocess
 import urllib.request
@@ -47,7 +48,12 @@ def mask(text: str) -> str:
 
 def icacls_snapshot() -> str:
     proc = subprocess.run(
-        ["icacls", str(ENV_FILE)], capture_output=True, text=True, errors="replace", timeout=15, check=False
+        ["icacls", str(ENV_FILE)],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=15,
+        check=False,
     )
     return (proc.stdout or "") + (proc.stderr or "")
 
@@ -55,7 +61,9 @@ def icacls_snapshot() -> str:
 assert ENV_FILE.exists(), "deploy/.env 应已由 step1 创建"
 if "FC_RATE_LIMIT_PER_MINUTE=125" in ENV_FILE.read_text(encoding="utf-8"):
     status, _ = request(
-        "PUT", "/api/control/peers/financecoffer/config", {"values": {"FC_RATE_LIMIT_PER_MINUTE": "120"}}
+        "PUT",
+        "/api/control/peers/financecoffer/config",
+        {"values": {"FC_RATE_LIMIT_PER_MINUTE": "120"}},
     )
     assert status == 200
     print("重跑：先恢复基线 120")
@@ -70,13 +78,17 @@ status, before_get = request("GET", "/api/control/peers/financecoffer/config")
 print(f"GET(before) status={status} exists={before_get['exists']}")
 
 status, put_resp = request(
-    "PUT", "/api/control/peers/financecoffer/config", {"values": {"FC_RATE_LIMIT_PER_MINUTE": "125"}}
+    "PUT",
+    "/api/control/peers/financecoffer/config",
+    {"values": {"FC_RATE_LIMIT_PER_MINUTE": "125"}},
 )
 (OUT / "put_modify_response.json").write_text(
     json.dumps({"status": status, "body": put_resp}, ensure_ascii=False, indent=2),
     encoding="utf-8",
 )
-print(f"PUT status={status} updated={put_resp.get('updated') if isinstance(put_resp, dict) else put_resp}")
+print(
+    f"PUT status={status} updated={put_resp.get('updated') if isinstance(put_resp, dict) else put_resp}"
+)
 assert status == 200, put_resp
 
 status, after_get = request("GET", "/api/control/peers/financecoffer/config")
@@ -117,7 +129,9 @@ getcontent = OUT / "env_getcontent_raw.txt"
 ps = f"Get-Content -Raw -Encoding utf8 '{ENV_FILE}' | Out-File -Encoding utf8 -NoNewline '{getcontent}'"
 subprocess.run(
     ["powershell.exe", "-NoProfile", "-Command", ps],
-    capture_output=True, timeout=60, check=True,
+    capture_output=True,
+    timeout=60,
+    check=True,
 )
 # PS 5.1 的 Out-File -Encoding utf8 会写 BOM，剥掉再比对
 gc_text = getcontent.read_text(encoding="utf-8-sig")
@@ -141,6 +155,11 @@ report = {
     json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
 )
 body = put_resp if isinstance(put_resp, dict) else {}
-plain_keys = [k for k, v in (body.get("values") or {}).items() if isinstance(v, dict) and "value" in v]
+plain_keys = [
+    k for k, v in (body.get("values") or {}).items() if isinstance(v, dict) and "value" in v
+]
 print("PUT 响应里带明文 value 的键（密钥必须缺席）:", plain_keys)
-print("密钥键样例:", json.dumps((body.get("values") or {}).get("FC_MINIO_SECRET_KEY"), ensure_ascii=False))
+print(
+    "密钥键样例:",
+    json.dumps((body.get("values") or {}).get("FC_MINIO_SECRET_KEY"), ensure_ascii=False),
+)

@@ -199,9 +199,7 @@ def test_report_stage_cannot_write_a_stage_artifact(tmp_path: Path) -> None:
 
 def test_unauthorized_stage_does_not_affect_the_others(tmp_path: Path) -> None:
     """越权只判那一段：前序成果还在，后续段照常跑（report 缺输入是既有语义）。"""
-    client = ToolClient(
-        {"financial": [{"calls": [{"name": "write_report", "args": {"md": "x"}}]}]}
-    )
+    client = ToolClient({"financial": [{"calls": [{"name": "write_report", "args": {"md": "x"}}]}]})
     run = run_pipeline(tmp_path, client)
 
     assert run.failed == ["financial", "report"]

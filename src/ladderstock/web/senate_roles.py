@@ -86,6 +86,34 @@ ROLE_ALIASES: dict[str, str] = {
     "unlock": "lockup",
 }
 
+#: 16 个角色在 StockSenate `agent_roles` 里的 `kind` 分组（2026-11-17 经
+#: `stock_senate_config_query({})` 实测取到），供页面按层折叠而不是 16 条平铺。
+#: 角色键与 `ROLE_LLM_KEYS` 一一对应；`role_kind()` 对未知键回落 "other"。
+ROLE_KINDS: dict[str, str] = {
+    "market": "analyst",
+    "social": "analyst",
+    "news": "analyst",
+    "fundamentals": "analyst",
+    "policy": "analyst",
+    "hot_money": "analyst",
+    "lockup": "analyst",
+    "bull": "researcher",
+    "bear": "researcher",
+    "research_manager": "manager",
+    "trader": "trader",
+    "risk_aggressive": "risk",
+    "risk_neutral": "risk",
+    "risk_conservative": "risk",
+    "quality_gate": "judge",
+    "portfolio_manager": "manager",
+}
+
+
+def role_kind(role: str) -> str:
+    """返回角色的 `kind`；未知角色回落 "other"（页面按「其他」组展示）。"""
+    return ROLE_KINDS.get(role, "other")
+
+
 #: 真实 7 个 provider（`roles/llm.py` 起）；`offline` 另有单独条目（不发网络）
 PROVIDERS: tuple[str, ...] = (
     "minimax",
@@ -136,9 +164,17 @@ MODEL_SUGGESTIONS: dict[str, list[str]] = {
 #: `[llm]` 下允许被本接口改写的全局键；其余全局键只读、原样保留
 GLOBAL_WRITABLE_KEYS: tuple[str, ...] = ("llm_provider", "deep_think_llm", "quick_think_llm")
 
-#: `[llm.role_llms.<role>]` 的合法字段（StockSenate `schema._LLM_ROLE_ENTRY` 只认
-#: provider / model；`role_llms` 层没有 `api_key_env`，密钥变量名是 `[llm]` 全局键）
-ROLE_ENTRY_FIELDS = frozenset({"provider", "model"})
+#: `[llm.role_llms.<role>]` 的合法字段。StockSenate 1.0.4 起
+#: `schema._LLM_ROLE_ENTRY` 为 {provider, model, api_key, api_key_env, backend_url}，
+#: 但 **明文密钥永不落盘**：LS 这一侧只写环境变量名（`api_key_env`）与网关地址
+#: （`backend_url`），`api_key` 一律拒收（`SENATE_SECRET_REJECTED`）。
+ROLE_ENTRY_FIELDS = frozenset({"provider", "model", "api_key_env", "backend_url"})
+
+#: 逐角色可选字段（允许不写；写了才落 TOML）
+ROLE_OPTIONAL_FIELDS = ("api_key_env", "backend_url")
+
+#: 允许出现在请求里、但绝不允许写进 TOML 的字段（明文密钥）。
+SECRET_FIELDS = frozenset({"api_key"})
 
 
 # --------------------------------------------------------------------------- #
@@ -356,6 +392,11 @@ def _render_entry(entry: dict[str, str]) -> str:
         f"provider = {_toml_string(entry['provider'])}",
         f"model = {_toml_string(entry['model'])}",
     ]
+    # 逐角色可选的地址 / 密钥：只有配置了才写进去，避免把空值写成一堆空串。
+    for field_name in ROLE_OPTIONAL_FIELDS:
+        value = entry.get(field_name)
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{field_name} = {_toml_string(value.strip())}")
     return "{ " + ", ".join(parts) + " }"
 
 
@@ -415,6 +456,47 @@ def _replace_global_key_env(text: str, key_env: str, existing: Any) -> tuple[str
             return "\n".join(lines) + "\n", True
     lines.insert(start + 1, rendered)
     return "\n".join(lines) + "\n", True
+
+
+def _replace_role_skills(text: str, role: str, skills: list[str]) -> str:
+    """只改 `[roles.<role>]` 段里的 `skills`，其余行（含注释）原样保留。"""
+    lines = text.splitlines()
+    header = f"[roles.{role}]"
+    start: int | None = None
+    for index, line in enumerate(lines):
+        if line.strip() == header:
+            start = index
+            break
+    if start is None:
+        raise SenateError("SENATE_INVALID_VALUE", f"agent_roles.toml 里没有角色 {role}")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            end = index
+            break
+
+    body: list[str] = []
+    depth = 0
+    skipping = False
+    for line in lines[start + 1 : end]:
+        stripped = line.strip()
+        if skipping:
+            depth += stripped.count("[") - stripped.count("]")
+            if depth <= 0:
+                skipping = False
+            continue
+        if stripped.startswith("skills"):
+            depth = stripped.count("[") - stripped.count("]")
+            if depth > 0:
+                skipping = True
+            continue
+        body.append(line)
+
+    entry = "skills = [" + ", ".join(_toml_string(name) for name in skills) + "]"
+    body.append(entry)
+    new_lines = lines[: start + 1] + body + lines[end:]
+    return "\n".join(new_lines) + "\n"
 
 
 def _render_new_config(entries: dict[str, dict[str, str]], key_env: str | None = None) -> str:
@@ -508,7 +590,26 @@ class SenateRoleModels:
 
     @property
     def config_dir(self) -> Path:
-        return Path(self.ctl.directory) / "config"
+        """配置目录：LS 自带子模块优先，产品项目目录兜底。
+
+        `LDST_SENATE_CONFIG_DIR` 显式指定时直接采用；否则若本平台
+        `file/modules/senate/config` 已有 TOML（说明 Senate 由 LS 部署），
+        就写这里，不再写用户的产品项目目录。
+        """
+        override = os.environ.get("LDST_SENATE_CONFIG_DIR", "").strip()
+        if override:
+            return Path(override)
+        explicit = Path(self.ctl.directory)
+        # 调用方给的 Senate 目录存在（默认就是 LS 自带的 file/modules/senate）：
+        # 配置就落在它自己的 config/ 下。只有目录不存在时，才回落到仓库里那份
+        # 已内置的 config，避免把一份配置写到与部署无关的地方。
+        if explicit.is_dir():
+            return explicit / "config"
+        module = Path(__file__).resolve().parents[3] / "file" / "modules" / "senate" / "config"
+        for name in (LLM_CONFIG_FILE, "agent_roles.toml"):
+            if (module / name).is_file():
+                return module
+        return explicit / "config"
 
     @property
     def config_path(self) -> Path:
@@ -528,6 +629,155 @@ class SenateRoleModels:
 
     # ------------------------------------------------------------------ GET
 
+    def _memory_stats(self, config_dir: Path) -> dict[str, Any]:
+        """记忆条数：读 workflow.toml 的 memory 段，再数实际 JSONL 行数。"""
+        settings: dict[str, Any] = {}
+        workflow_file = config_dir / "workflow.toml"
+        if workflow_file.is_file():
+            settings = dict(read_toml(workflow_file).get("memory") or {})
+        home = config_dir.parent
+        rel = str(settings.get("path") or "memory/reflections.jsonl").replace("\\", "/")
+        target = home / rel
+        result: dict[str, Any] = {
+            "backend": str(settings.get("backend") or "local"),
+            "enabled": settings.get("enabled", True) is not False,
+            "count": 0,
+            "path": str(target),
+            "mem0_url": str(settings.get("mem0_url") or "") or None,
+        }
+        if target.is_file():
+            try:
+                text = target.read_text(encoding="utf-8")
+            except OSError:
+                return result
+            result["count"] = len([line for line in text.splitlines() if line.strip()])
+        return result
+
+    def _skill_library(self, config_dir: Path) -> list[dict[str, Any]]:
+        """技能库：config 同级的 skills/*.toml，只回名称与一句说明。"""
+        root = config_dir.parent / "skills"
+        items: list[dict[str, Any]] = []
+        if not root.is_dir():
+            return items
+        for file in sorted(root.glob("*.toml")):
+            section = dict(read_toml(file).get("skill") or {})
+            items.append(
+                {
+                    "name": str(section.get("name") or file.stem),
+                    "description": str(section.get("description") or ""),
+                }
+            )
+        return items
+
+    def save_role_skills(self, role: str, skills: list[str]) -> dict[str, Any]:
+        """把角色勾选的技能写回 `agent_roles.toml` 的 `roles.<role>.skills`。"""
+        config_dir = self.config_path.parent
+        roles_file = config_dir / "agent_roles.toml"
+        if not roles_file.is_file():
+            raise SenateError("SENATE_WRITE_FAILED", "agent_roles.toml 不存在，无法保存技能")
+        known = {item["name"] for item in self._skill_library(config_dir)}
+        cleaned: list[str] = []
+        for raw in skills:
+            name = str(raw).strip()
+            if not name:
+                continue
+            if name not in known:
+                raise SenateError("SENATE_INVALID_VALUE", f"技能库中没有：{name}")
+            if name not in cleaned:
+                cleaned.append(name)
+        text = roles_file.read_text(encoding="utf-8")
+        new_text = _replace_role_skills(text, role, cleaned)
+        _write_config(roles_file, new_text, self._validate_roles)
+        return {"role": role, "skills": cleaned, "revision": revision_of(roles_file)}
+
+    def _role_meta(self, role: str) -> dict[str, Any]:
+        """读 `agent_roles.toml` 里某角色的元数据行（简介 / 技能 / prompt 相对路径）。"""
+        roles_file = self.config_path.parent / "agent_roles.toml"
+        if not roles_file.is_file():
+            return {}
+        row = dict(read_toml(roles_file).get("roles") or {}).get(role)
+        return dict(row) if isinstance(row, dict) else {}
+
+    def _prompt_path(self, role: str) -> Path | None:
+        """角色提示词文件：`agent_roles.toml` 的 `prompt` 相对 `prompts/` 的上一级。"""
+        rel = str(self._role_meta(role).get("prompt") or "").strip()
+        if not rel:
+            return None
+        root = self.config_path.parent.parent
+        path = Path(rel)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            path.resolve().relative_to((root / "prompts").resolve())
+        except ValueError:
+            return None
+        return path
+
+    def role_prompt(self, role: str) -> dict[str, Any]:
+        """某角色当前的系统提示词正文（含文件路径与技能摘要）。"""
+        contract, _ = self._contract()
+        if role not in contract.canonical_keys():
+            raise SenateError("SENATE_INVALID_VALUE", f"未知角色键：{role}")
+        path = self._prompt_path(role)
+        text = ""
+        exists = False
+        if path is not None and path.is_file():
+            exists = True
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise SenateError("SENATE_UNAVAILABLE", f"读取提示词失败：{exc}") from exc
+        meta = self._role_meta(role)
+        return {
+            "role": role,
+            "path": str(path) if path is not None else None,
+            "exists": exists,
+            "text": text,
+            "chars": len(text),
+            "skills": [str(item) for item in (meta.get("skills") or [])],
+            "description": str(meta.get("description") or ""),
+        }
+
+    def save_prompt(self, role: str, text: str) -> dict[str, Any]:
+        """写回角色提示词；只允许落在 `prompts/` 目录内，写前留一份 `.bak`。"""
+        contract, _ = self._contract()
+        if role not in contract.canonical_keys():
+            raise SenateError("SENATE_INVALID_VALUE", f"未知角色键：{role}")
+        path = self._prompt_path(role)
+        if path is None:
+            raise SenateError(
+                "SENATE_INVALID_VALUE",
+                f"角色 {role} 没有可写的提示词文件（agent_roles.toml 未声明 prompt）",
+            )
+        body = str(text or "")
+        if len(body) > 40000:
+            raise SenateError("SENATE_INVALID_VALUE", "提示词过长（上限 40000 字符）")
+        if not path.parent.is_dir():
+            path.parent.mkdir(parents=True, exist_ok=True)
+        backup = path.with_suffix(path.suffix + ".bak")
+        try:
+            if path.is_file():
+                backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            path.write_text(body, encoding="utf-8")
+        except OSError as exc:
+            raise SenateError("SENATE_UNAVAILABLE", f"写入提示词失败：{exc}") from exc
+        return {
+            "role": role,
+            "path": str(path),
+            "chars": len(body),
+            "backup": str(backup) if backup.is_file() else None,
+            "revision": revision_of(path),
+        }
+
+    @staticmethod
+    def _validate_roles(path: Path) -> None:
+        data = read_toml(path)
+        if not isinstance(data.get("roles"), dict) or not data["roles"]:
+            raise SenateError("SENATE_WRITE_FAILED", "agent_roles.toml 解析后缺少 [roles]")
+        for name in data["roles"]:
+            if not isinstance(data["roles"][name], dict):
+                raise SenateError("SENATE_WRITE_FAILED", f"角色 {name} 不是表")
+
     def status(self) -> dict[str, Any]:
         contract, authoritative = self._contract()
         path = self.config_path
@@ -544,7 +794,18 @@ class SenateRoleModels:
 
         roles: list[dict[str, Any]] = []
         unconfigured: list[str] = []
+        # 角色层的简介与技能来自 agent_roles.toml，与模型配置分开读，
+        # 这样页面能同时看到「这个角色是干什么的」和「它挂了哪些技能」。
+        role_meta: dict[str, Any] = {}
+        roles_file = path.parent / "agent_roles.toml"
+        if roles_file.is_file():
+            roles_data = read_toml(roles_file)
+            role_meta = dict(roles_data.get("roles") or {})
         for role in contract.roles:
+            meta_row = role_meta.get(role)
+            meta_row = meta_row if isinstance(meta_row, dict) else {}
+            description = str(meta_row.get("description") or "")
+            skills = [str(item) for item in (meta_row.get("skills") or [])]
             entry = role_llms.get(role)
             if not (isinstance(entry, dict) and entry.get("provider") and entry.get("model")):
                 unconfigured.append(role)
@@ -552,10 +813,15 @@ class SenateRoleModels:
                     {
                         "role": role,
                         "label": contract.role_labels.get(role, role),
+                        "kind": role_kind(role),
+                        "description": description,
+                        "skills": skills,
                         "configured": False,
                         "provider": None,
                         "model": None,
                         "api_key_env": None,
+                        "backend_url": None,
+                        "api_key_set": False,
                     }
                 )
                 continue
@@ -563,10 +829,16 @@ class SenateRoleModels:
                 {
                     "role": role,
                     "label": contract.role_labels.get(role, role),
+                    "kind": role_kind(role),
+                    "description": description,
+                    "skills": skills,
                     "configured": True,
                     "provider": str(entry["provider"]),
                     "model": str(entry["model"]),
-                    "api_key_env": global_key_env,
+                    # 角色级密钥与地址（StockSenate 1.0.4 起支持）
+                    "api_key_env": entry.get("api_key_env") or global_key_env,
+                    "backend_url": entry.get("backend_url") or None,
+                    "api_key_set": bool(entry.get("api_key")),
                 }
             )
 
@@ -635,6 +907,8 @@ class SenateRoleModels:
             "roles": roles,
             "unconfigured_roles": unconfigured,
             "role_count": len(roles),
+            "skill_library": self._skill_library(path.parent),
+            "memory": self._memory_stats(path.parent),
             "global": global_block,
             "providers": providers,
             "aliases": dict(contract.aliases),
@@ -647,7 +921,12 @@ class SenateRoleModels:
 
     # ------------------------------------------------------------------ PUT
 
-    def update(self, roles: Any, expected_revision: str | None = None) -> dict[str, Any]:
+    def update(
+        self,
+        roles: Any,
+        expected_revision: str | None = None,
+        global_key_env: str | None = None,
+    ) -> dict[str, Any]:
         if not Path(self.ctl.directory).is_dir():
             raise SenateError(
                 "SENATE_UNAVAILABLE",
@@ -659,7 +938,17 @@ class SenateRoleModels:
         canonical_keys = contract.canonical_keys()
 
         clean: dict[str, dict[str, str]] = {}
+        # 全局密钥变量名单独传：页面顶部那个输入框属于所有角色共用的回落项，
+        # 角色自己的 api_key_env 写在各自条目里。
         clean_key_env: str | None = None
+        if global_key_env is not None and str(global_key_env).strip():
+            env_name = str(global_key_env).strip()
+            if not _is_variable_name(env_name):
+                raise SenateError(
+                    "SENATE_INVALID_VALUE",
+                    "global_key_env 只接受环境变量名（例如 OPENAI_API_KEY）",
+                )
+            clean_key_env = env_name
         for raw_role, instruction in roles.items():
             role = str(raw_role).strip()
             if role not in canonical_keys:
@@ -672,13 +961,18 @@ class SenateRoleModels:
                 raise SenateError("SENATE_INVALID_VALUE", f"角色 {role} 的值必须是对象")
             for field_name, value in instruction.items():
                 canonical_field = str(field_name)
-                if canonical_field not in {"provider", "model", "api_key_env"}:
+                if canonical_field in SECRET_FIELDS:
+                    # 明文密钥是硬红线：不校验长度、不截断，直接拒收并说清替代做法。
                     raise SenateError(
-                        "SENATE_SECRET_REJECTED"
-                        if _looks_like_secret(canonical_field)
-                        else "SENATE_INVALID_VALUE",
+                        "SENATE_SECRET_REJECTED",
+                        f"角色 {role}.{canonical_field} 不接受明文密钥；"
+                        f"请改用 api_key_env（只写环境变量名，如 OPENAI_API_KEY）",
+                    )
+                if canonical_field not in ROLE_ENTRY_FIELDS:
+                    raise SenateError(
+                        "SENATE_INVALID_VALUE",
                         f"角色 {role} 不接受字段 {canonical_field}"
-                        "（只允许 provider / model / api_key_env）",
+                        f"（只允许 {' / '.join(sorted(ROLE_ENTRY_FIELDS))}）",
                     )
                 if isinstance(value, (dict, list, tuple)) or value is None:
                     raise SenateError(
@@ -693,18 +987,32 @@ class SenateRoleModels:
                 "provider": str(instruction["provider"]).strip().lower(),
                 "model": str(instruction["model"]).strip(),
             }
-            # StockSenate 的 `role_llms` 条目只认 provider / model；`api_key_env` 是
-            # `[llm]` 全局键。这里只收变量名并把它写进 `[llm].api_key_env`，
-            # 不塞进角色条目（否则 schema.validate_dir 会判非法键）。
-            key_env = instruction.get("api_key_env")
-            if key_env is not None and str(key_env).strip():
-                env_name = str(key_env).strip()
-                if not _is_variable_name(env_name):
+            # 逐角色地址 / 密钥：写进 `[llm.role_llms.<role>]` 条目本体。
+            # StockSenate 1.0.4 起 `schema._LLM_ROLE_ENTRY` 认这三个键，
+            # 取值链是 角色级 → 全局 `[llm]` → provider 默认变量。
+            for field_name in ROLE_OPTIONAL_FIELDS:
+                raw_value = instruction.get(field_name)
+                if raw_value is None:
+                    continue
+                text = str(raw_value).strip()
+                if not text:
+                    continue
+                if field_name == "api_key_env" and not _is_variable_name(text):
+                    # 「NAME=真实密钥」这种把值塞进变量名槽的写法按密钥违规报，
+                    # 别混成普通格式错误——调用方要能一眼看出这是红线。
+                    code = "SENATE_SECRET_REJECTED" if "=" in text else "SENATE_INVALID_VALUE"
                     raise SenateError(
-                        "SENATE_SECRET_REJECTED",
-                        "api_key_env 只接受环境变量名（例如 MINIMAX_API_KEY），不接受密钥内容",
+                        code,
+                        f"角色 {role}.api_key_env 只接受环境变量名（例如 OPENAI_API_KEY），"
+                        "不接受「变量名=值」的赋值写法",
                     )
-                clean_key_env = env_name
+                if field_name == "backend_url":
+                    if not text.lower().startswith(("http://", "https://")):
+                        raise SenateError(
+                            "SENATE_INVALID_VALUE",
+                            f"角色 {role}.backend_url 必须以 http:// 或 https:// 开头",
+                        )
+                entry[field_name] = text
             clean[role] = entry
 
         path = self.config_path
@@ -727,9 +1035,9 @@ class SenateRoleModels:
             if canonical not in canonical_keys or not isinstance(entry, dict):
                 continue
             normalised = {
-                name: str(entry[name])
-                for name in ("provider", "model")
-                if isinstance(entry.get(name), str)
+                name: str(entry[name]).strip()
+                for name in ROLE_ENTRY_FIELDS
+                if isinstance(entry.get(name), str) and str(entry[name]).strip()
             }
             if set(entry) - ROLE_ENTRY_FIELDS:  # 存量里的非法字段不跟着写回去
                 continue

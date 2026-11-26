@@ -76,6 +76,7 @@ STATE_HEADER = """\
 # 计划
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class Step:
     """一条迁移动作；`id` 稳定，供测试与日志引用。"""
@@ -204,9 +205,7 @@ def _add_legacy_steps(plan: MigrationPlan) -> None:
         return
     plan.legacy_data = legacy_data
     sources = [
-        str(legacy_data / name)
-        for name in LEGACY_DATA_MARKERS
-        if (legacy_data / name).exists()
+        str(legacy_data / name) for name in LEGACY_DATA_MARKERS if (legacy_data / name).exists()
     ]
     plan.steps.append(
         Step(
@@ -253,6 +252,7 @@ def _find_legacy_data_dir() -> Path | None:
 # 执行
 # --------------------------------------------------------------------------- #
 
+
 def run_migration(
     *,
     dry_run: bool = False,
@@ -293,9 +293,7 @@ def apply_plan(plan: MigrationPlan) -> list[str]:
     return backups
 
 
-def _migrate_state_file(
-    plan: MigrationPlan, rollback: _Rollback, backups: list[str]
-) -> None:
+def _migrate_state_file(plan: MigrationPlan, rollback: _Rollback, backups: list[str]) -> None:
     path = plan.config_root / STATE_FILENAME
     payload = _load_state(path)
     if payload is None:  # 计划阶段已告警；执行阶段再确认一次，不凭空造文件
@@ -306,9 +304,7 @@ def _migrate_state_file(
     _atomic_write(path, render_state_yaml(upgrade_state_payload(payload)))
 
 
-def _upgrade_sqlite(
-    plan: MigrationPlan, rollback: _Rollback, backups: list[str]
-) -> None:
+def _upgrade_sqlite(plan: MigrationPlan, rollback: _Rollback, backups: list[str]) -> None:
     from ladderstock.data import sqlite_store
 
     db = plan.data_root / sqlite_store.DB_FILENAME
@@ -324,9 +320,7 @@ def _upgrade_sqlite(
         conn.close()
 
 
-def _import_legacy_data(
-    plan: MigrationPlan, rollback: _Rollback, backups: list[str]
-) -> None:
+def _import_legacy_data(plan: MigrationPlan, rollback: _Rollback, backups: list[str]) -> None:
     if plan.legacy_data is None:
         return
     source = plan.legacy_data
@@ -351,9 +345,7 @@ def _write_marker(plan: MigrationPlan, backups: list[str]) -> None:
         "backups": backups,
         "legacy_data": str(plan.legacy_data) if plan.legacy_data else None,
     }
-    marker.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    marker.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _report(
@@ -383,6 +375,7 @@ def _report(
 # --------------------------------------------------------------------------- #
 # 首启动钩子（源文档 §6.5）
 # --------------------------------------------------------------------------- #
+
 
 def ensure_migrated(
     *, config_root: Path | None = None, data_root: Path | None = None
@@ -415,6 +408,7 @@ def _notify(message: str) -> None:
 # --------------------------------------------------------------------------- #
 # 备份与回滚
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class _Rollback:
@@ -477,6 +471,7 @@ def backup_sqlite_file(
 # --------------------------------------------------------------------------- #
 # state.yaml 结构升级
 # --------------------------------------------------------------------------- #
+
 
 def upgrade_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """把 v1 分片结构升级成 v2：四类分片齐全、`watch_snapshot` 有合法 TTL。"""
@@ -549,6 +544,7 @@ def _store_entries(raw: Any) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 # 小工具
 # --------------------------------------------------------------------------- #
+
 
 def _load_state(path: Path) -> dict[str, Any] | None:
     if not path.is_file():

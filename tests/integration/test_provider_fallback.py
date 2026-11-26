@@ -39,6 +39,7 @@ def _ok_kline(_params: dict) -> dict:
 # 降级链
 # --------------------------------------------------------------------------- #
 
+
 def test_primary_timeout_falls_back_to_same_peer_tool(tmp_path) -> None:
     transport = FakeTransport(
         handlers={"tdx_daily_package": _ok_kline},
@@ -97,9 +98,7 @@ def test_retries_are_bounded_before_switching(tmp_path) -> None:
 
 
 def test_all_tools_fail_replays_local_cache(tmp_path) -> None:
-    duckdb_store.write_dataset(
-        "daily_k", kline_records(), source="tickhub_kline", root=tmp_path
-    )
+    duckdb_store.write_dataset("daily_k", kline_records(), source="tickhub_kline", root=tmp_path)
     transport = FakeTransport(
         errors={
             "tencent_kline": TimeoutError("timed out"),
@@ -148,6 +147,7 @@ def test_cache_replay_can_be_disabled(tmp_path) -> None:
 # 格式漂移（peer 活着但返回形状变了）
 # --------------------------------------------------------------------------- #
 
+
 def test_malformed_primary_payload_switches_to_same_peer_fallback(tmp_path) -> None:
     """主源返回 `ok: true` 但没有 `data`（形状漂移）→ 按失败处理并切同 peer 备源。
 
@@ -157,9 +157,7 @@ def test_malformed_primary_payload_switches_to_same_peer_fallback(tmp_path) -> N
     def broken(_params: dict) -> dict:
         return {"ok": True, "data": None, "meta": {"source": "stub"}}
 
-    transport = FakeTransport(
-        handlers={"tencent_kline": broken, "tdx_daily_package": _ok_kline}
-    )
+    transport = FakeTransport(handlers={"tencent_kline": broken, "tdx_daily_package": _ok_kline})
     registry = make_registry(transport, tmp_path)
 
     outcome = registry.fetch("daily_k")
@@ -186,18 +184,14 @@ def test_peer_reports_ok_false_is_an_error_not_an_empty_result(tmp_path) -> None
             "suggestion": "稍后重试",
         }
 
-    transport = FakeTransport(
-        handlers={"tencent_kline": refused, "tdx_daily_package": _ok_kline}
-    )
+    transport = FakeTransport(handlers={"tencent_kline": refused, "tdx_daily_package": _ok_kline})
     registry = make_registry(transport, tmp_path)
 
     outcome = registry.fetch("daily_k")
 
     assert outcome.source == "tickhub_tdx_package"
     assert "tickhub_kline/tencent_kline:unavailable" in outcome.trail
-    detail = " ".join(
-        event.get("detail") or "" for event in registry.health.events()
-    )
+    detail = " ".join(event.get("detail") or "" for event in registry.health.events())
     assert "上游超时" in detail
 
 
@@ -222,6 +216,7 @@ def test_all_sources_malformed_replays_cache_instead_of_writing_garbage(tmp_path
 # --------------------------------------------------------------------------- #
 # 跨 peer 备源
 # --------------------------------------------------------------------------- #
+
 
 def test_cross_peer_fallback_is_a_boundary_violation(tmp_path) -> None:
     """备源只能是同 peer 的另一个工具；跨 peer 等于换供应商采集（DEC-006 闸门 3）。"""
@@ -253,6 +248,7 @@ def test_cross_peer_fallback_is_a_boundary_violation(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 # 治理：in-flight 合并 / TTL 缓存
 # --------------------------------------------------------------------------- #
+
 
 def test_concurrent_requests_are_merged(tmp_path) -> None:
     started = threading.Event()
@@ -322,6 +318,7 @@ def test_different_params_do_not_share_cache(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 # 检视面
 # --------------------------------------------------------------------------- #
+
 
 def test_describe_marks_chain_and_tool_registration(tmp_path) -> None:
     registry = make_registry(FakeTransport(), tmp_path)

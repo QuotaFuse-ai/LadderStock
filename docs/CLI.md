@@ -85,6 +85,10 @@
 | **QUOT-523 增量（4，非 P0 基线）** | `supervisor start`、`supervisor stop`、`supervisor restart`、`supervisor status` |
 | **QUOT-543 增量（1，非 P0 基线）** | `ai tools list` |
 | **QUOT-533 增量（1，非 P0 基线）** | `sync industry`（行业缓存真实联网补齐，DEC-074） |
+| **F 批次增量（25，非 P0 基线，见 §T）** | `archive *`、`brief *`、`coverage *`、`debate *`、`verify *`、`news-archive`、`peer serve` |
+| **DEC-087 增量（11，非 P0 基线，见 §S）** | `alert rules *`、`alert channels *`、`alert run` |
+| **DEC-089 增量（2，非 P0 基线，见 §U）** | `analytics`（组合统计）、`report`（月/季/年报） |
+| **DEC-091 增量（2，非 P0 基线，见 §V）** | `valuation`（估值换算器）、`research-batch`（批量研究） |
 
 ## A. 启动、复盘与核心指标（9）
 
@@ -473,6 +477,143 @@ ldst position list --output json                         # realized.total_pnl（
 `stop_owned()` 再优雅关闭 uvicorn。它无结构化 stdout，不进 argv 矩阵，生命周期由
 `tests/unit/cli/test_service.py` 与 `tests/unit/service/test_tray.py` 覆盖。
 
+## Q. 标的字典（2026-11-18 增量，3）
+
+> 与本机缓存同源：`symbol_basic`（全市场字典，代码段穷举 + 批量报价，约 6000 只）
+> 并上带名称字段的榜单数据集。只读、不触发 sync、不写库。看板侧的
+> `GET /api/symbols/search` 复用同一套口径（`src/ladderstock/web/symbols.py`）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 61 | `ldst symbol refresh` | 刷新全市场标的字典（代码段穷举 + 批量报价），写回 `symbol_basic` | `--output` | 成功 0 + 行数报告；数据源不可用 **4** |
+| 62 | `ldst symbol status` | 看字典现状：行数、最近刷新日 | `--output` | 成功 0；无字典 0 + `available=false` |
+| 63 | `ldst symbol lookup` | 按检索口径查一次字典（代码精确 + 名称包含 + 拼音首字母） | `q`（位置参数）、`--limit`、`--output` | 成功 0；查无此标的 **6** |
+
+## R. 知识库投影（2026-11-18 增量，2）
+
+> qdrant 侧投影：把 `dwd` 公告正文写进集合 `ladderstock_knowledge`，
+> 向量名 `fast-bge-small-zh-v1.5`（512 维 Cosine）。投影是幂等的，
+> 重跑覆盖同 `event_id` 的点。检索面由 Qdrant 模块的 MCP（`qdrant-find`）提供。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 64 | `ldst knowledge sync-announcements` | 把 dwd 公告正文投影进 qdrant（幂等重跑覆盖） | `--since` / `--limit` / `--output` | 成功 0；qdrant 不可用 **4** |
+| 65 | `ldst knowledge status` | 投影现状：qdrant 点数 vs dwd 行数 | `--output` | 始终 0 + `{points, rows, lag}` |
+
+## S. 提醒引擎（DEC-087 增量，11）
+
+> 自定义规则 × 出站渠道。规则 7 类：`price_above / price_below / ma_break_down /
+> ma_break_up / volume_spike / pnl_drop / pnl_gain`；渠道 7 种：`console / desktop /
+> email / webhook / dingtalk / feishu / wecom`（后五种出站是对 DEC-006 旧红线的
+> 显式推翻，口径见 `docs/decisions/DEC-087-alert-rules-and-outbound-channels.md`）。
+> 存储 `data/alerts.sqlite`（独立于隐私库）；触发必落收件箱（`kind="alert"`），
+> 渠道只是投递。语义「越线报一次」：触发进冷却，条件离开才重臂。
+>
+> **CLI 计数口径更新（DEC-087）**：基线 31 条不变；叶子在 `LEAF_PATHS` 75 个基础上
+> +11（alert rules 6 + alert channels 4 + alert run 1），当前 **86** 个叶子；矩阵
+> 新增 3 条只读 argv（`rules list` / `channels list` / `run`），其余 8 条只做参数
+> 校验与本地库读写、不真投递，由 `tests/unit/alert/` 覆盖（CLI 计数仍以
+> `tests/fixtures/command_matrix.py` 为准）。
+>
+> **2026-11-22 补齐（`--output` 契约）**：「对话模式与研究台」批次的 25 条命令
+> （archive / brief / coverage / debate / verify 族、news-archive、peer serve）
+> 统一接入全局 `--output json|table|csv` 并登记进基线——`LEAF_PATHS` 86 → **111**
+> （DEC-089 的 `analytics` 再 +1 → **112**，B 包后半 `report` 再 +1 → **113**），
+> `test_registered_leaves_match_baseline` 转绿。`peer serve` 是长驻包裹层，
+> 只保留选项占位（与 `run` / `watchdog` 同口径）。
+>
+> 调度面：`kind: alert_check`（schema 已放开），默认种子任务 `alert_close`
+> （15:05，`enabled: false`）；盘中巡检可把 trigger 改成间隔形态（如 `300s`）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 66 | `ldst alert rules add` | 加一条规则 | `--kind / --symbol / --threshold / --window / --cooldown-min / --channels / --note` | 成功 0 + 新规则；参数非法 **2** |
+| 67 | `ldst alert rules list` | 规则清单 | `--enabled` | 始终 0（空库也 0） |
+| 68 | `ldst alert rules show` | 单条规则 + 运行态 | `rule_id` | 成功 0；不存在 **6** |
+| 69 | `ldst alert rules rm` | 删规则（连同运行态） | `rule_id` | 成功 0；不存在 **6** |
+| 70 | `ldst alert rules toggle` | 启停规则 | `rule_id` + `--off` | 成功 0；不存在 **6** |
+| 71 | `ldst alert rules update` | 改阈值 / 窗口 / 冷却 / 渠道 / 备注 | `rule_id` + 各 `--option` | 成功 0；非法组合 **2** |
+| 72 | `ldst alert channels add` | 配一个出站渠道 | `channel_id` + `--kind` + `--config JSON` | 成功 0（**回包 URL 打码**）；配置缺字段 **2** |
+| 73 | `ldst alert channels list` | 渠道清单（URL 打码） | — | 始终 0 |
+| 74 | `ldst alert channels rm` | 删渠道 | `channel_id` | 成功 0；不存在 **6** |
+| 75 | `ldst alert channels test` | 向渠道真发一条测试消息 | `channel_id` | 成功 0；投递失败 **4** |
+| 76 | `ldst alert run` | 手动跑一轮（与调度 / Web 同一个执行体） | — | 全部干净 0；有缺数 / 投递降级 **8**；没配规则 0 + `skipped` |
+
+`email` 渠道的 SMTP 密码只从环境变量读（默认 `LDST_ALERT_SMTP_PASSWORD`），
+`--config` 里写的是 `password_env` 这个**名字**，值永不落库、永不回显。
+
+## T. 「对话模式与研究台」批次（2026-11-21 入库，25）
+
+> 研究档案 / 简报 / 数据覆盖 / 多空对照 / 查证 / 服务发现六族。全部只读或只写本机，
+> 不新增采集；2026-11-22 统一接入全局 `--output json|table|csv` 并登记 `LEAF_PATHS`
+> （86 → 111）。退出码仍沿用 §F 总口径；各命令「找不到对象」一档当前为 1（历史现场
+> 值），与 §F 的 6 并存，脚本侧按需兼容。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 77 | `ldst archive list` | 研究档案体检表 | `--limit` | 0 |
+| 78 | `ldst archive show <code>` | 某标的某天档案逐段状态 | `--date` | 0；无档案 **1** |
+| 79 | `ldst archive export <code>` | 导出档案（md 交付件 / json 结构化） | `--date` / `--out` / `--format` | 0；失败 **1** |
+| 80 | `ldst archive search <keyword>` | 按代码 / 日期 / 正文检索档案 | `--limit` | 0 |
+| 81 | `ldst brief morning` | 晨报（只打印） | `--threshold` | 0 |
+| 82 | `ldst brief close` | 收盘复盘（只打印） | `--threshold` | 0 |
+| 83 | `ldst brief alerts` | 持仓异动（只打印） | `--threshold` | 0 |
+| 84 | `ldst brief today` | 三类各一份 | `--threshold` | 0 |
+| 85 | `ldst brief run <kind>` | 生成 → 去重 → 收件箱 →（可选）投递 | `--notify/--no-notify` / `--channel` / `--dry-run` | 0；未知 kind **2** |
+| 86 | `ldst brief history` | 最近几天推送状态 | `--limit` | 0 |
+| 87 | `ldst brief config` | 看 / 改通知开关（写 `config/brief.yaml`） | `--notify` / `--channel` / `--threshold` | 0；非法 **2** |
+| 88 | `ldst coverage board` | 62 个数据集落盘情况 | `--dataset` / `--gaps` | 0 |
+| 89 | `ldst coverage gaps` | 只看缺口（按严重度） | — | 0 |
+| 90 | `ldst coverage plan <dataset>` | 补采计划（不发请求） | `--codes` / `--max-codes` | 0；非法 **2** |
+| 91 | `ldst coverage backfill <dataset>` | 受控补采（默认 dry-run） | `--execute` / `--codes` / `--max-codes` | 0；失败 / 丢失 **1**；非法 **2** |
+| 92 | `ldst debate run <code>` | 真跑一次合议（分钟级、烧 token） | `--date` / `--timeout` / `--root` | 0；没跑成 **1** |
+| 93 | `ldst debate show <code>` | 读报告 + 质量门控 | `--date` / `--root` / `--min-quality` / `--min-points` | 0；无报告 **1** |
+| 94 | `ldst debate list` | 已保存的合议报告 | `--limit` | 0 |
+| 95 | `ldst debate last <code>` | 最近一份报告 | `--root` | 0；无报告 **1** |
+| 96 | `ldst debate status` | 能不能跑（CLI / 配置 / 报告数） | — | 0 |
+| 97 | `ldst verify capabilities` | 本机能做什么（PDF / vision / OCR） | — | 0 |
+| 98 | `ldst verify file <path>` | 查证 PDF / 截图：抽取 → 对账 | `--code` / `--root` / `--no-save` | 0；识别失败 **2** |
+| 99 | `ldst verify history` | 最近查证记录 | `--limit` / `--root` | 0 |
+| 100 | `ldst news-archive` | 把 news.sqlite 已有资讯补进归档与历史库（不重采） | `--dataset` / `--dry-run` / `--data-root` | 0；部分失败 **8** |
+| 101 | `ldst peer serve` | 模块启动包裹层：先登记自述卡再执行原命令 | `--module` / `--mcp` / `--web` / `--face` / `--port` / `--extra` / `--card-root` | 长驻（透传子进程退出码）；`--output` 仅占位 |
+
+## U. 组合统计（DEC-089 增量，1）
+
+> 一次输出「组合指标 / 基准对比 / 交易归因 / 行为统计 / 错题本」。
+> 只读本机：组合账本（`portfolio_trades`）+ `daily_k` + `index_daily`（沪深300），
+> **不联网**；口径表见 `analytics/engine.py` 模块 docstring，页面与 CLI 共用一份。
+> Web 对应 `GET /api/analytics/summary`（回环 + Host + `no-store`）。
+> 「缺数就是 `null` + 原因」：无流水 / 无日线 → 退出码 **6**，不补 0。
+>
+> **AI 月报（2026-11-22 补账）**：`report` 的叙述层走 `analytics/period_ai.py`
+> ——配置了模型凭据时五段 AI 叙述（失败段落退模板、退出码 9，与 weekly 同口径；
+> 未配置凭据保持 B 包第一阶段的模板直出、退出码 0）。AI 形态与研究同口径
+> 不进矩阵；矩阵钉 `--no-ai` 形态。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 102 | `ldst analytics` | 组合统计（指标/基准/归因/行为/错题本） | `--days`（默认 365）；`--xlsx PATH` / `--pdf PATH` 落本地文件（DEC-090 §4，依赖缺席 exit 3 不换格式） | 0；无流水或无日线 **6** |
+| 103 | `ldst report` | 月报/季报/年报（事实包 + AI 叙述，模板兑底，落 `data/report/`） | `--period month|quarter|year` / `--of` / `--no-ai` / `--dry-run` | 0；AI 段落降级 **9**（与 weekly 同口径）；参数非法 **2** |
+
+> Web 对应 `GET /api/analytics/export?format=csv|xlsx|pdf`（C 包后续单已清：PDF 走
+> `review/export.py` 的 CJK 管线，依赖缺席 503 不换格式）；分享长图/链接在
+> `/analytics` 页（「分享」抽屉，与页面同源缺数写 `—`）。
+
+## V. 知识库与换算（DEC-091 增量，2）
+
+> E 包两条命令，口径见 `docs/decisions/DEC-091-knowledge-write-and-search.md`。
+> **叶子 113 → 115**：`valuation` + `research-batch` 各 +1，登记进 `LEAF_PATHS`；
+> `valuation`（纯函数形态）进矩阵与 `JSON_PATHS`，`research-batch` 与 `research`
+> 同口径不进矩阵（真跑会进 AI 管线），队列语义由 `tests/unit/cli/test_research_batch.py`
+> 用假管线覆盖。Web 面：笔记 CRUD + 跨票检索挂在 `/api/knowledge/*`，
+> 换算器对应 `POST /api/valuation/estimate`（回环 + Host + POST 写面语义，
+> **不取数不写库**，DEC-025 红线不动：研究管线估值段的数字唯一来源仍是 facts）。
+
+| # | 命令 | 作用 | 关键参数 | 输出 / 退出码 |
+|---|---|---|---|---|
+| 104 | `ldst valuation` | 估值换算器：PE / PB / PS / 股息率 / 盈利收益率 / 简化两段 DCF | `<kind>` + `--price / --eps / --bps / --sps / --dps / --pe`；DCF 另需 `--fcf / --growth / --terminal-growth / --discount / --periods` | 0；未知类型 / 缺参 / 护栏拒 **2**。输出恒带免责声明「这是换算器，不是估值判断」 |
+| 105 | `ldst research-batch` | 批量个股研究：串行逐票、逐票 checkpoint、单票失败不拖垮队列 | `<codes...>` 或 `--from-pool`（sync.yaml 的 `daily_k.codes`，二选一）；`--date` / `--retry-failed` | 全部干净 **0**；有票降级 **8** / **9**；单票失败 **1**；参数错（含非法代码）**2**。单批上限 30 票、重复代码去重（保序） |
+
 ## F. 全局约定
 
 - **stdout / stderr 分离**：结构化结果写 stdout，日志写 stderr；`ldst mcp stdio` 的 stdout 只输出 MCP 协议报文。
@@ -509,3 +650,5 @@ ldst position list --output json                         # realized.total_pnl（
 | 行业五维字段要么有值要么显式 `null`、可复算 | `industry list` / `industry show`（每字段带 R3 溯源，手算对照 `SPEC-INDUSTRY-METRICS.md` §7） |
 | 周报事实包稳定可复算、AI 失败仍出事实包 + 模板 | `weekly`（`SPEC-WEEKLY.md` §4 / §7 / §8；`--week` 非法 2、整周无读数 6、段落降级 9） |
 | 旧启动方式与旧数据目录过渡可用 | `config migrate` + 兼容脚本 |
+
+> AI生成

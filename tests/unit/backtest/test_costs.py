@@ -42,6 +42,7 @@ def _config(**overrides: object) -> BacktestConfig:
 # 1. 成本模型本身：佣金双边、印花税只卖出、滑点方向
 # --------------------------------------------------------------------------- #
 
+
 def test_commission_is_charged_on_both_sides() -> None:
     costs = CostModel(commission=0.001, slippage=0.0, stamp_duty=0.0)
     assert costs.buy_cost(10_000.0) == pytest.approx(10.0)
@@ -86,6 +87,7 @@ def test_default_rates_match_spec_units() -> None:
 # --------------------------------------------------------------------------- #
 # 1b. 真实佣金金样例：单笔 max(额×率, 下限) + 过户费双边 + 印花税单边
 # --------------------------------------------------------------------------- #
+
 
 def test_commission_floor_and_fees_gold_sample() -> None:
     """金样例（手算）：成交额 10,000，万0.9 + 最低 5 元 + 过户费万0.1 + 印花税万5。
@@ -193,6 +195,7 @@ def test_buy_sizing_never_overspends_with_floor(tmp_path: Path) -> None:
 # 2. 三档真的重跑：佣金越高收益越低
 # --------------------------------------------------------------------------- #
 
+
 def _wavy(count: int = 160) -> list[Bar]:
     """有波段、能反复开平的序列（纯趋势/纯随机都会让某个策略一次都不成交）。"""
     bars: list[Bar] = []
@@ -276,6 +279,7 @@ def test_card_cost_tiers_are_three_and_replace_only_commission(tmp_path: Path) -
 # --------------------------------------------------------------------------- #
 # 3. 校验门标红（三闸各一条）
 # --------------------------------------------------------------------------- #
+
 
 def _run_card(tmp_path: Path, *, min_trades: int = 20, commission: float | None = None):
     data_root = tmp_path / "data"
@@ -388,9 +392,8 @@ def test_split_index_is_time_ordered_and_never_empty() -> None:
 # 4. 零成本是被禁止的（默认值必须非 0）
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize(
-    "field", ["commission", "slippage", "stamp_duty"]
-)
+
+@pytest.mark.parametrize("field", ["commission", "slippage", "stamp_duty"])
 def test_overriding_cost_to_zero_is_rejected(field: str) -> None:
     with pytest.raises(BacktestConfigError):
         _config(**{field: 0.0})

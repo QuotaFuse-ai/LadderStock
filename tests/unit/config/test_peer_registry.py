@@ -45,10 +45,12 @@ def test_yaml_peers_block_registers_financecoffer() -> None:
     assert fc["product"] == "FinanceCoffer"
     assert fc["package"] == "financecoffer"
     assert fc["cli"] == "fc"
-    assert fc["mcp_name"] is None  # 没有 MCP 面，探测走 HTTP
-    assert fc["url_env"] == "LDST_FINANCECOFFER_URL"
+    # 2026-11-18：登记了 FC 的 MCP 面（`fcoffer mcp http`，8101）——
+    # 8100 是 REST API（/v1/* 本机回 500，未修），8101 才是 MCP。
+    assert fc["mcp_name"] == "financecoffer"
+    assert fc["url_env"] == "LDST_FINANCECOFFER_MCP_URL"
     assert fc["health_path"] == "/health"
-    assert fc["default_port"] == 8100
+    assert fc["default_port"] == 8101
     assert fc["repo"] == "QuotaFuse-ai/FinanceCoffer"
 
 
@@ -75,9 +77,11 @@ def test_all_registered_peers_have_repo_for_version_check() -> None:
     qdrant 同理（QUOT-488）：部署单元在 LadderStock 仓的部署目录
     D:\\QuotaFuseModules\\Qdrant（镜像 qdrant/qdrant + 本地 build 的 mcp 镜像），
     版本真源是 compose 里的镜像 tag，同样豁免。
+    memory 豁免（QUOT-611）：库态子模块（`library_only: true`），版本跟 LadderStock
+    自身走、没有独立发布物，无 repo 可检测。
     """
     for key, item in _sources_doc()["peers"].items():
-        if key in ("proxyfleet", "qdrant"):
+        if key in ("proxyfleet", "qdrant", "memory"):
             assert item.get("repo") is None
             continue
         assert item.get("repo"), f"peers.{key} 缺 repo 字段"
@@ -96,9 +100,9 @@ def test_boundary_peers_match_yaml_block() -> None:
 
 def test_boundary_peers_include_financecoffer() -> None:
     fc = PEERS["financecoffer"]
-    assert fc.mcp_name is None
+    assert fc.mcp_name == "financecoffer"
     assert fc.health_path == "/health"
-    assert fc.default_port == 8100
+    assert fc.default_port == 8101
     assert fc.repo == "QuotaFuse-ai/FinanceCoffer"
 
 
@@ -141,7 +145,7 @@ def test_build_peers_falls_back_when_block_missing() -> None:
     for block in (None, {}, "not-a-mapping"):
         peers, warnings = build_peers(block)
         assert peers == build_peers(None)[0]
-        assert len(peers) == len(build_peers(None)[0]) == 7
+        assert len(peers) == len(build_peers(None)[0]) == 8
         assert warnings and "回退内置默认" in warnings[0]
 
 
@@ -210,11 +214,16 @@ def test_yaml_fields_backfill_from_fallbacks() -> None:
 def test_financecoffer_control_metadata() -> None:
     ctl = PEER_CONTROL["financecoffer"]
     assert ctl.repo == "QuotaFuse-ai/FinanceCoffer"
-    assert ctl.mcp_port == 8100
-    assert ctl.web_port is None
+    # 8101 是 MCP 面（`fcoffer mcp http`），8100 是 REST API：两者都由
+    # `modules/financecoffer/services.py` 按 base + port_offset() 管理。
+    assert ctl.mcp_port == 8101
+    assert ctl.web_port == 8100
+    assert ctl.web_port_label == "REST API"
     assert ctl.health_path == "/health"
-    assert ctl.start_commands == ()  # WSL 服务：控制面不接管启停
-    assert ctl.managed is False
+    # 没有 `.venv/Scripts/` 入口：启停由 services.py 承担，不在 start_commands 里。
+    assert ctl.start_commands == ()
+    # FC 已是 LadderStock 的本地增益包（file/modules/financecoffer），控制面纳管。
+    assert ctl.managed is True
     assert PEER_DIR_ENV["financecoffer"] == "LDST_PEER_DIR_FINANCECOFFER"
 
 

@@ -89,6 +89,7 @@ def _one_line(exc: BaseException) -> str:
 # 配置
 # --------------------------------------------------------------------------- #
 
+
 def load_backfill_config(path: Path | None = None) -> dict[str, Any]:
     """读 `config/backfill.yaml` 并按同目录 schema 校验。"""
     target = Path(path) if path is not None else config_dir() / "backfill.yaml"
@@ -129,9 +130,7 @@ def apply_source_policy(sync_doc: dict[str, Any], source: str) -> dict[str, Any]
     doc = copy.deepcopy(sync_doc)
     datasets = doc.setdefault("sync", {}).setdefault("datasets", {})
     for dataset, (primary, fallback) in chains.items():
-        entry = datasets.setdefault(
-            dataset, {"watermark_field": "trade_date", "mode": "append"}
-        )
+        entry = datasets.setdefault(dataset, {"watermark_field": "trade_date", "mode": "append"})
         entry["primary"] = primary
         entry["fallback"] = list(fallback)
         entry.setdefault("watermark_field", "trade_date")
@@ -162,9 +161,7 @@ def ensure_sources_registered(source: str) -> None:
         )
 
 
-def _resolve_universe(
-    cfg: dict[str, Any], codes: list[str] | None
-) -> list[dict[str, Any]]:
+def _resolve_universe(cfg: dict[str, Any], codes: list[str] | None) -> list[dict[str, Any]]:
     configured = [dict(item) for item in cfg["universe"]]
     if not codes:
         return configured
@@ -184,7 +181,7 @@ def _bench_rows(root: Path | None, code: str) -> list[dict[str, Any]]:
     bare = code.strip().lower()
     for prefix in ("sh", "sz"):
         if bare.startswith(prefix):
-            wanted.add(bare[len(prefix):].upper())
+            wanted.add(bare[len(prefix) :].upper())
     return [
         row
         for row in duckdb_store.query_dataset("index_daily", root=root)
@@ -202,6 +199,7 @@ def _report_base(cfg: dict[str, Any], root: Path | None) -> Path:
 # --------------------------------------------------------------------------- #
 # 运行
 # --------------------------------------------------------------------------- #
+
 
 def _failure_payload(*, stage: str, source: str, message: str) -> dict[str, Any]:
     return {
@@ -331,9 +329,7 @@ def run_backfill(
     for position, item in enumerate(universe):
         if consecutive >= max_consecutive:
             not_attempted = [rest["code"] for rest in universe[position:]]
-            _log(
-                f"  连续 {max_consecutive} 只失败，止损；剩余 {len(not_attempted)} 只未发起调用"
-            )
+            _log(f"  连续 {max_consecutive} 只失败，止损；剩余 {len(not_attempted)} 只未发起调用")
             break
         code = item["code"]
         try:
@@ -506,6 +502,7 @@ def run_backfill(
 # --------------------------------------------------------------------------- #
 # 命令
 # --------------------------------------------------------------------------- #
+
 
 def backfill_command(
     codes: Annotated[

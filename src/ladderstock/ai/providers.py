@@ -71,9 +71,7 @@ class ProviderError(RuntimeError):
 def _credentials(target: ModelTarget) -> tuple[str, str]:
     backend = target.backend
     if not backend.base_url or not backend.api_key:
-        raise UnconfiguredError(
-            f"未配置模型凭据（{backend.base_url_env} / {backend.api_key_env}）"
-        )
+        raise UnconfiguredError(f"未配置模型凭据（{backend.base_url_env} / {backend.api_key_env}）")
     return backend.base_url, backend.api_key
 
 
@@ -119,7 +117,7 @@ def _sse_deltas(lines: AsyncIterator[str]) -> AsyncIterator[str]:
             line = line.strip()
             if not line.startswith("data:"):
                 continue
-            data = line[len("data:"):].strip()
+            data = line[len("data:") :].strip()
             if not data or data == "[DONE]":
                 continue
             try:
@@ -130,9 +128,7 @@ def _sse_deltas(lines: AsyncIterator[str]) -> AsyncIterator[str]:
                 continue
             if event.get("type") == "error":
                 message = event.get("error")
-                detail = (
-                    message.get("message") if isinstance(message, Mapping) else str(message)
-                )
+                detail = message.get("message") if isinstance(message, Mapping) else str(message)
                 raise ProviderError(f"上游流式错误：{detail}", status_code=529)
             delta = event.get("delta") if isinstance(event, dict) else None
             chunk: Any = None
@@ -191,7 +187,6 @@ class OpenAiProvider:
         if isinstance(first, dict) and first.get("finish_reason") == "length":
             raise ProviderError("finish_reason=length（输出达到长度上限）")
         return _require_text(text, "choices[0].message.content")
-
 
     async def aiter_text(
         self,
@@ -374,9 +369,7 @@ class AnthropicProvider:
         base = base_url.rstrip("/")
         url = f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
         system_text, body = _anthropic_messages(messages)
-        instructions = (
-            f"{system_text}\n\n{JSON_ONLY_INSTRUCTION}" if json_mode else system_text
-        )
+        instructions = f"{system_text}\n\n{JSON_ONLY_INSTRUCTION}" if json_mode else system_text
         payload: dict[str, Any] = {
             "model": target.model,
             "max_tokens": DEFAULT_MAX_TOKENS,

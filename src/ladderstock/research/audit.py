@@ -58,9 +58,7 @@ def audit_document(document: Mapping[str, Any]) -> list[str]:
         if key not in _NON_METRIC_KEYS and numeric_value(value) is not None and key not in values
     )
     if unbacked and slot.get("unverified") is not True:
-        problems.append(
-            "以下数值字段没有 provenance，却把整件标成已核实：" + "、".join(unbacked)
-        )
+        problems.append("以下数值字段没有 provenance，却把整件标成已核实：" + "、".join(unbacked))
     return problems
 
 
@@ -116,7 +114,8 @@ def audit_stage(
     }
     if not ok:
         payload["reason"] = (
-            "报告审计不通过：" + f"{len(result['findings'])} 处数字引用不合格"
+            "报告审计不通过："
+            + f"{len(result['findings'])} 处数字引用不合格"
             + ("" if not problems else f"，{len(problems)} 处产物自洽问题")
         )
     return payload

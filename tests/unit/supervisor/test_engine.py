@@ -216,14 +216,20 @@ def test_stop_skips_stopped_records_without_touching_the_port(tmp_path: Path) ->
     engine.start_all()
     stranger = adapters["wire"].entry_pid()
     assert stranger is not None
-    procs.processes[stranger].cmdline = ("C:/Windows/notepad.exe",)
+    # 真复用：整链命令行全部换掉（QUOT-609 后指纹全表能找回同指纹 worker 就
+    # 不算复用；要让自助找回失败，必须链上没有任何同指纹进程活着）
+    for pid in adapters["wire"].chain_pids():
+        proc = procs.processes.get(pid)
+        if proc is not None:
+            proc.cmdline = ("C:/Windows/notepad.exe", f"#{pid}")
     engine.reconcile()
     stop_calls_before = adapters["wire"].stop_calls
     report = engine.stop_all()
     assert report["ok"] is True
     assert adapters["wire"].stop_calls == stop_calls_before
-    assert stranger not in procs.killed_trees
-    assert stranger in procs.processes
+    for pid in adapters["wire"].chain_pids():
+        assert pid not in procs.killed_trees
+        assert pid in procs.processes
 
 
 # --------------------------------------------------------------------- 重启
@@ -291,12 +297,18 @@ def test_state_reports_external_when_port_taken_by_stranger(tmp_path: Path) -> N
 
 
 def test_state_reports_cmdline_mismatch_on_pid_reuse(tmp_path: Path) -> None:
-    """PID 被复用（命令行对不上）：external + cmdline_mismatch，不认人。"""
+    """PID 被复用（命令行对不上）：external + cmdline_mismatch，不认人。
+
+    真复用 = 整链无任何同指纹进程活着（QUOT-609 自救找回失败）。
+    """
     engine, adapters, procs, _clock = build_engine(tmp_path)
     engine.start_all()
     stranger = adapters["wire"].entry_pid()
     assert stranger is not None
-    procs.processes[stranger].cmdline = ("C:/Windows/System32/notepad.exe",)
+    for pid in adapters["wire"].chain_pids():
+        proc = procs.processes.get(pid)
+        if proc is not None:
+            proc.cmdline = ("C:/Windows/System32/notepad.exe", f"#{pid}")
     report = engine.state()
     wire = report["modules"]["wire"]
     assert wire["ownership"] == "external"

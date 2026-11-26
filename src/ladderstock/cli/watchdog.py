@@ -147,6 +147,13 @@ def _split_port(address: str) -> int | None:
         return None
 
 
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询类子进程一律不带控制台（DEC-092 单窗口）。"""
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
+
 def pid_listening_on(port: int) -> int | None:
     """当前监听 `port` 的本机 PID；查不到返回 None（尽力而为，不抛）。"""
     try:
@@ -159,6 +166,7 @@ def pid_listening_on(port: int) -> int | None:
                 errors="replace",
                 timeout=5,
                 check=False,
+                **_no_window_kwargs(),
             ).stdout
             for line in listing.splitlines():
                 parts = line.split()
@@ -200,6 +208,7 @@ def process_image_name(pid: int) -> str:
                 errors="replace",
                 timeout=5,
                 check=False,
+                **_no_window_kwargs(),
             ).stdout
             for line in listing.splitlines():
                 if line.startswith('"'):
@@ -321,8 +330,14 @@ def _run_command(run: Callable[..., Any], argv: list[str], *, timeout: float) ->
     输出落临时文件而不是管道：重启脚本会拉起常驻子进程，它可能继承写端，
     管道永远等不到 EOF，`subprocess.run` 的 timeout 清理阶段会把整个请求拖死
     （实测 91s：30s 超时后仍阻塞到被拉起的 API 退出）。
+
+    Windows 上真实 `subprocess.run` 加 `CREATE_NO_WINDOW`（DEC-092 单窗口
+    形态）：看门狗重启看板时绝不再闪控制台；注入的测试假件不受影响。
     """
     handle, path = tempfile.mkstemp(prefix="ldst-restart-", suffix=".log")
+    extra: dict[str, Any] = {}
+    if os.name == "nt" and run is subprocess.run:
+        extra["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
     try:
         with os.fdopen(handle, "wb") as sink:
             try:
@@ -333,6 +348,7 @@ def _run_command(run: Callable[..., Any], argv: list[str], *, timeout: float) ->
                     timeout=timeout,
                     check=False,
                     shell=False,
+                    **extra,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 return 127, str(exc)[:300]
@@ -588,9 +604,7 @@ def watchdog_command(
             help="直接拉起看板的 argv（JSON 字符串数组）；被 supervisor 托管时由它给出",
         ),
     ] = "",
-    probe_interval: Annotated[
-        float, typer.Option("--probe-interval", help="探活间隔（秒）")
-    ] = 2.0,
+    probe_interval: Annotated[float, typer.Option("--probe-interval", help="探活间隔（秒）")] = 2.0,
     output: OutputOption = None,
 ) -> None:
     """无端口自愈监控器：探活主服务，确认中断后自动重启。不监听任何端口。"""

@@ -214,6 +214,7 @@ def _default_timeout_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # 1. 有 plain：原样透传
 # --------------------------------------------------------------------------- #
 
+
 def test_status_carries_plain_and_disclaimer_verbatim(tmp_path: Path) -> None:
     _seed(tmp_path)
     registry = _FakeRegistry(_senate_envelope(PLAIN_SAMPLE))
@@ -252,6 +253,7 @@ def test_plain_omits_disclaimer_when_senate_did_not_send_one(tmp_path: Path) -> 
 # --------------------------------------------------------------------------- #
 # 2. 降级：不可达 / 无 plain —— 照常 200，只是没有 plain
 # --------------------------------------------------------------------------- #
+
 
 def test_status_degrades_when_senate_unreachable(tmp_path: Path) -> None:
     _seed(tmp_path)
@@ -293,6 +295,7 @@ def test_status_degrades_on_unexpected_registry_error(tmp_path: Path) -> None:
 # 3. 预算：显式、可配、有边界
 # --------------------------------------------------------------------------- #
 
+
 def test_timeout_env_override_and_clamp(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(SENATE_PLAIN_TIMEOUT_ENV, "1.5")
     assert senate_plain_timeout() == 1.5
@@ -329,6 +332,7 @@ def test_plane_timeout_injection_wins(tmp_path: Path, monkeypatch: pytest.Monkey
 # --------------------------------------------------------------------------- #
 # 4. 真 MCP 读取路径：适配器只摘 sections.plain，不带整份 sections
 # --------------------------------------------------------------------------- #
+
 
 class _RecordingTransport:
     """记录 `tools/call` 入参的传输层；返回 Senate `stock_senate_report_query` 真形状。"""

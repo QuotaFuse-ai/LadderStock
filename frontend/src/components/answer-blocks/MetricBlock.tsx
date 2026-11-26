@@ -49,6 +49,10 @@ export function MetricBlock({ payload }: { payload: MetricBlockPayload }) {
       {payload.items.map((item) => {
         const direction = item.direction
         const ratio = count === 2 ? 'sm:col-span-2' : 'sm:col-span-1'
+        // F4 数字溯源：出处族 + 接口，能拼就拼；只有一项也照常显示。
+        // 前端不补来源——后端没给就整行不画，不写「来源未知」占位。
+        const sourceLine = [item.source, item.endpoint].filter(Boolean).join(' · ')
+        const sourceTitle = item.fetched_at ? `${sourceLine} · ${item.fetched_at}` : sourceLine
         return (
           <li key={`${item.label}-${item.as_of ?? ''}`} className={cn('min-w-0 rounded-xs bg-surface-2 p-3', ratio)}>
             <p className="truncate text-caption text-text-secondary">{item.label}</p>
@@ -64,10 +68,20 @@ export function MetricBlock({ payload }: { payload: MetricBlockPayload }) {
                 </span>
               )}
             </p>
-            {item.as_of && (
-              <p className="mt-0.5 flex items-center gap-1 truncate text-caption text-text-muted">
-                <Minus aria-hidden="true" className="size-3 shrink-0" />
-                <span className="ldst-num">{item.as_of}</span>
+            {(item.as_of || sourceLine) && (
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1 truncate text-caption text-text-muted">
+                {item.as_of && (
+                  <>
+                    <Minus aria-hidden="true" className="size-3 shrink-0" />
+                    <span className="ldst-num">{item.as_of}</span>
+                  </>
+                )}
+                {sourceLine && (
+                  <>
+                    {item.as_of && <span aria-hidden="true">·</span>}
+                    <span title={sourceTitle}>{sourceLine}</span>
+                  </>
+                )}
               </p>
             )}
           </li>

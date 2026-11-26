@@ -233,8 +233,18 @@ def test_disabled_job_stays_in_table_and_toggleable(repo: Path) -> None:
     target = next(item for item in table["jobs"] if item["id"] == "knowledge_refresh")
     target["enabled"] = False
     validate_table(table)
-    others = [job for job in table["jobs"] if job["id"] != "knowledge_refresh"]
+    others = [
+        job
+        for job in table["jobs"]
+        if job["id"] not in {"knowledge_refresh", "news_radar", "alert_close"}
+    ]
     assert all(job["enabled"] for job in others)
+    # `news_radar`（公告/研报/快讯批量采集）出厂就是关闭的：先接代码、不真采。
+    news_radar = next(job for job in table["jobs"] if job["id"] == "news_radar")
+    assert news_radar["enabled"] is False
+    # `alert_close`（DEC-087 提醒引擎终检）同样是出厂关闭：先让用户手动跑顺再开定时。
+    alert_close = next(job for job in table["jobs"] if job["id"] == "alert_close")
+    assert alert_close["enabled"] is False
 
     table_path = repo / "config" / "schedule.yaml"
     table, warnings, _source = load_schedule(table_path)

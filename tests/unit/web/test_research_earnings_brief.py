@@ -128,6 +128,7 @@ def _seed_full(root: Path) -> None:
 # 1. 有数：一致预期 + 最近 6 期明细（默认值、排序、实际/预期对应）
 # --------------------------------------------------------------------------- #
 
+
 def test_earnings_brief_returns_consensus_and_six_periods(tmp_path: Path) -> None:
     _seed_full(tmp_path)
 
@@ -192,9 +193,11 @@ def test_earnings_brief_returns_consensus_and_six_periods(tmp_path: Path) -> Non
 def test_earnings_brief_periods_param_truncates(tmp_path: Path) -> None:
     _seed_full(tmp_path)
 
-    payload = _client(tmp_path).get(
-        f"/api/research/{CODE}/earnings-brief", params={"periods": 2}
-    ).json()["payload"]
+    payload = (
+        _client(tmp_path)
+        .get(f"/api/research/{CODE}/earnings-brief", params={"periods": 2})
+        .json()["payload"]
+    )
 
     assert payload["periods"] == 2
     assert [item["report_date"] for item in payload["earnings"]] == [
@@ -208,6 +211,7 @@ def test_earnings_brief_periods_param_truncates(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 2. 缺数：各块独立 null + reason，不补 0、不编造
 # --------------------------------------------------------------------------- #
+
 
 def test_earnings_brief_missing_everything_is_200_missing_state(tmp_path: Path) -> None:
     response = _client(tmp_path).get(f"/api/research/{CODE}/earnings-brief")
@@ -257,6 +261,7 @@ def test_earnings_brief_without_consensus_keeps_earnings(tmp_path: Path) -> None
 # --------------------------------------------------------------------------- #
 # 3. 参数与代码校验
 # --------------------------------------------------------------------------- #
+
 
 def test_earnings_brief_unknown_code_is_404(tmp_path: Path) -> None:
     response = _client(tmp_path).get("/api/research/999999/earnings-brief")

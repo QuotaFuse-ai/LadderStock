@@ -103,6 +103,7 @@ STATE_KEYS = {
     "completed_at",
 }
 
+
 #: 一级（结构化 JSON）各段脚本返回
 def _scripted(stage: str) -> str:
     title = checkpoint.STAGE_TITLES[stage]
@@ -360,9 +361,7 @@ def test_all_failed_exit_9(tmp_path: Path, configured: None) -> None:
     # 前五段没有产物，报告段直接判「缺输入」而不是重新取数（一次模型调用都不发）
     assert client_c.stages("report") == []
     directory_c = artifacts.artifact_dir(CODE, DAY, worst)
-    assert not directory_c.exists() or not list(directory_c.glob("*")), list(
-        directory_c.glob("*")
-    )
+    assert not directory_c.exists() or not list(directory_c.glob("*")), list(directory_c.glob("*"))
 
     checkpoint_c = json.loads(
         Path(checkpoint.checkpoint_path(CODE, DAY, worst)).read_text(encoding="utf-8")
@@ -414,9 +413,7 @@ def test_artifact_shape(tmp_path: Path, configured: None) -> None:
         assert len(markdown.strip()) > len(f"# {title}") + len("## 叙述")
 
     # checkpoint：六段一条不少不多，顺序即 STAGES，每条状态字段形状固定
-    raw = json.loads(
-        Path(checkpoint.checkpoint_path(CODE, DAY, root)).read_text(encoding="utf-8")
-    )
+    raw = json.loads(Path(checkpoint.checkpoint_path(CODE, DAY, root)).read_text(encoding="utf-8"))
     assert list(raw["stages"]) == list(STAGES)
     assert raw["code"] == CODE and raw["date"] == DAY and raw["version"] == 1
     for name, state in raw["stages"].items():
@@ -445,6 +442,16 @@ def test_json_contract(
 ) -> None:
     data_dir = tmp_path / "data"
     monkeypatch.setenv("LDST_DATA_DIR", str(data_dir))
+    # 隔离配置目录（合法但无凭据）：conftest 只清进程环境变量，而 legacy 后端
+    # 还会读仓库 `config/ai.env`——开发机上有真实凭据，会把「未配置降级」
+    # 变成真拨模型（与 test_cli.py 的 data_dir 同一条修复）。
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "ai.yaml").write_text(
+        "ai:\n  backends: []\n  default_model: stub\n", encoding="utf-8"
+    )
+    (config_dir / "ai.env").write_text("", encoding="utf-8")
+    monkeypatch.setenv("LDST_CONFIG_DIR", str(config_dir))
     monkeypatch.delenv("LDST_LLM_BASE_URL", raising=False)
     monkeypatch.delenv("LDST_LLM_API_KEY", raising=False)
 

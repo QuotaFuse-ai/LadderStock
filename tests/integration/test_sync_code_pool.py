@@ -96,6 +96,7 @@ def _watchlist(root: Path, codes: list[str]) -> None:
 # 扇出：一只代码一次调用，合并落库
 # --------------------------------------------------------------------------- #
 
+
 def test_pool_fans_out_one_call_per_code_and_merges_rows(data_home) -> None:
     transport = _pool_transport()
     registry = make_registry(transport, data_home, sync=_sync_doc(POOL))
@@ -146,6 +147,7 @@ def test_full_mode_omits_start(data_home) -> None:
 # 池子来源与优先级
 # --------------------------------------------------------------------------- #
 
+
 def test_cli_codes_override_configured_pool(data_home) -> None:
     transport = _pool_transport()
     registry = make_registry(transport, data_home, sync=_sync_doc(POOL))
@@ -190,6 +192,7 @@ def test_watchlist_codes_tolerate_a_missing_private_db(tmp_path) -> None:
 # 空池 / 超限 / 空返回
 # --------------------------------------------------------------------------- #
 
+
 def test_empty_pool_calls_nothing_and_fails(data_home) -> None:
     transport = _pool_transport()
     registry = make_registry(transport, data_home, sync=_sync_doc([]))
@@ -221,9 +224,7 @@ def test_pool_over_cap_is_a_usage_error(data_home) -> None:
 
 def test_rows_without_code_are_not_written(data_home) -> None:
     """上游回空 `code`：行级代码补不出来，整批丢弃 → 状态 empty，不覆盖已有数据。"""
-    duckdb_store.write_dataset(
-        "daily_k", [{"code": "600000", "trade_date": DAY1}], root=data_home
-    )
+    duckdb_store.write_dataset("daily_k", [{"code": "600000", "trade_date": DAY1}], root=data_home)
     before = duckdb_store.dataset_rows("daily_k")
 
     transport = FakeTransport(handlers={"tencent_kline": lambda _p: kline_tool_payload("", [DAY2])})
@@ -237,6 +238,7 @@ def test_rows_without_code_are_not_written(data_home) -> None:
 # --------------------------------------------------------------------------- #
 # 部分失败与缓存回放
 # --------------------------------------------------------------------------- #
+
 
 def test_one_code_failing_does_not_drop_the_others(data_home) -> None:
     transport = _pool_transport(fail_codes=("000001",))
@@ -279,6 +281,7 @@ def test_all_codes_failed_replays_local_cache(data_home) -> None:
 # 非代码池数据集不受影响
 # --------------------------------------------------------------------------- #
 
+
 def test_datasets_without_code_pool_still_send_no_code(data_home) -> None:
     transport = _pool_transport()
     registry = make_registry(transport, data_home, sync=_sync_doc(POOL))
@@ -292,15 +295,14 @@ def test_datasets_without_code_pool_still_send_no_code(data_home) -> None:
 # CLI 接线
 # --------------------------------------------------------------------------- #
 
+
 def test_cli_accepts_comma_separated_codes(repo, data_home, monkeypatch) -> None:
     transport = _pool_transport()
     monkeypatch.setattr(
         "ladderstock.data.provider_registry.build_transport", lambda _peers: transport
     )
 
-    result = CliRunner().invoke(
-        app, ["sync", "--dataset", "daily_k", "--codes", "600000,000001"]
-    )
+    result = CliRunner().invoke(app, ["sync", "--dataset", "daily_k", "--codes", "600000,000001"])
 
     assert result.exit_code == 0, result.stderr
     assert [call.params["code"] for call in transport.calls] == ["600000", "000001"]

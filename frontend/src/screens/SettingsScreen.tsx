@@ -64,6 +64,7 @@ import {
   type ToastItem,
 } from '../components/ui'
 import AiConnectDialog from '../components/AiConnectDialog'
+import FinanceCofferPanel from './financecoffer/FinanceCofferPanel'
 import DiscoveryPanel from '../components/DiscoveryPanel'
 import { SenateRoleModels } from '../components/SenateRoleModels'
 import { StopListDialog } from '../components/supervisor/StopListDialog'
@@ -78,6 +79,7 @@ import {
   selfHealView,
   ownershipView,
   avoidanceNote,
+  restartWindowNote,
   type SelfHealView,
   type StopCandidate,
 } from '../lib/supervisorView'
@@ -89,19 +91,19 @@ import { cn } from '../lib/cn'
  * 设置页（P-07 / DESIGN-SPEC §4.8 + PRD-SETTINGS-CONTROL-PLANE）。
  *
  * 四个分区（左侧 176px 二级菜单，`?tab=` 深链）：
- *   子模块   —— 模块卡（生态 peer + 工具组件）+ 模块注册表；状态**只**取后端
+ *   子模块   —— 模块卡（生态 peer + 工具组件）+ 模块注册表 + 端口诊断/占用表；状态**只**取后端
  *              `status` / `status_label`，前端不推断。模块清单与数量一律来自后端
  *              注册表（唯一真源是 config/sources.yaml 的 peers 块，QUOT-403/420）。
+ *              （原「数据与端口」分区已并入本页；`?tab=ports` 深链保留，落到本页。）
+ *   增强包   —— 投研数据体积明细 / embedding / 安装启停。
  *   AI 接入  —— 端点 / 模型 / 密钥；密钥只写不读回（只显示 `set` + `preview`）。
- *   数据与端口 —— 端口诊断 + 安全自愈面板（QUOT-548，四分类白话诊断 + 一键安全修复）
- *              + 端口占用表（✅ 空闲 / ⚠️ 被占用含 PID+进程 / ❌ 越界）。
- *   关于     —— 版本、数据目录、DEC-006 边界、主题与密度（与侧栏同一状态）。
+ *   关于     —— 版本、数据目录、配置目录与配置文件状态（只读）、DEC-006 边界、主题与密度。
  *
  * 控制面未接入时：卡片退化为静态目录表 + 全按钮禁用 + 可见原因（§4.8 占位要求），
  * 不编造「已安装 / 运行中」。安装/启动/停止只经后端任务，前端 1s 轮询 job，不执行任何命令。
  */
 
-type Section = 'peers' | 'ai' | 'ports' | 'about'
+type Section = 'peers' | 'financecoffer' | 'ai' | 'about'
 
 interface SectionMeta {
   value: Section
@@ -111,17 +113,19 @@ interface SectionMeta {
 
 const SECTIONS: readonly SectionMeta[] = [
   { value: 'peers', label: '子模块', hint: '模块清单来自 config/sources.yaml 的 peers: 块' },
+  // DEC-086：增强包（FinanceCoffer）的体积明细 / embedding 勾选 / 安装 / 启停 / 卸载
+  { value: 'financecoffer', label: '增强包', hint: '投研数据：PG · Redis · MinIO（+ 可选 embedding）' },
   { value: 'ai', label: 'AI 接入', hint: '端点 · 模型 · 密钥' },
-  { value: 'ports', label: '数据与端口', hint: '端口占用与配置存在性' },
   { value: 'about', label: '关于', hint: '版本与边界声明' },
 ]
 
 function isSection(value: string | null): value is Section {
-  return value === 'peers' || value === 'ai' || value === 'ports' || value === 'about'
+  return value === 'peers' || value === 'financecoffer' || value === 'ai' || value === 'about'
 }
 
 const PEER_STATUS_LABEL: Record<PeerStatus, string> = {
-  unconfigured: '未配置',
+  // 与后端 STATUS_LABELS 同词：「未接入」= 目录不存在/未登记，「未安装」= 目录在但包不可用
+  unconfigured: '未接入',
   not_installed: '未安装',
   installed: '已安装',
   starting: '启动中',
@@ -292,6 +296,7 @@ function PeerCard({
   stoppedExternal,
   acting,
   onInstall,
+  onScaffold,
   onStart,
   onStop,
   onLogs,
@@ -308,6 +313,8 @@ function PeerCard({
   stoppedExternal: boolean
   acting: string | null
   onInstall: () => void
+  /** 一键接入：容器化模块目录还不存在时，由控制面生成 compose + .env */
+  onScaffold: () => void
   onStart: () => void
   onStop: () => void
   onLogs: () => void
@@ -322,6 +329,8 @@ function PeerCard({
   const jobActive = job?.status === 'queued' || job?.status === 'running'
   const ownership = ownershipView(supervisor)
   const heal: SelfHealView | null = selfHealView(supervisor)
+  // 只呈现「近 5 分钟」窗口值，不展示生命周期累计重启数（累计值易被误读为频繁崩溃）
+  const restartNote = restartWindowNote(supervisor)
 
   return (
     <li
@@ -399,19 +408,26 @@ function PeerCard({
         )}
 
         <p className="text-caption text-text-secondary">
-          MCP <span className="ldst-num">{peer.ports.mcp}</span> · {peer.ports.web_label}{' '}
-          <span className="ldst-num">{peer.ports.web ?? MISSING}</span> ·{' '}
-          {peer.installed ? '已安装' : '未安装'} · {statusLabel}
           {uptime && (
             <>
-              {' · 运行 '}
+              {'运行 '}
               <span className="ldst-num">{uptime}</span>
+              {' · '}
             </>
           )}
+          {restartNote && (
+            <>
+              <span className="ldst-num text-warn">{restartNote}</span>
+              {' · '}
+            </>
+          )}
+          端口实时占用与诊断见本页下方「端口诊断」
         </p>
 
         {peer.port_conflicts.length > 0 && (
-          <ul className="flex flex-col gap-1">
+          <>
+            <p className="text-caption text-text-muted">端口告警（占用明细见本页下方「端口占用」）</p>
+            <ul className="flex flex-col gap-1">
             {peer.port_conflicts.map((conflict) => {
               const info = conflict.severity === 'info'
               return (
@@ -436,7 +452,8 @@ function PeerCard({
                 </li>
               )
             })}
-          </ul>
+            </ul>
+          </>
         )}
 
         {job && (
@@ -471,6 +488,17 @@ function PeerCard({
         {!controlReady && <p className="text-caption text-text-muted">{CONTROL_ABSENT_NOTE}</p>}
 
         <div className="flex flex-wrap items-center gap-2">
+          {peer.actions.can_scaffold && (
+            <Button
+              variant="primary"
+              disabled={!controlReady || acting === `${peer.id}:scaffold`}
+              loading={acting === `${peer.id}:scaffold`}
+              onClick={onScaffold}
+              leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+            >
+              一键接入
+            </Button>
+          )}
           {peer.actions.can_install && (
             <Button
               variant="secondary"
@@ -586,8 +614,7 @@ function ComponentCard({
         </div>
 
         <p className="text-caption text-text-secondary">
-          控制台 <span className="ldst-num">{component.ports.console}</span> · 网关{' '}
-          <span className="ldst-num">{component.ports.gateway ?? MISSING}</span> · {statusLabel}
+          控制台与网关的实时占用、越界与占用者诊断，统一见本页下方「端口占用」
         </p>
         {heal && (
           <p className={cn('text-caption', heal.failed ? 'font-medium text-danger' : 'text-text-secondary')}>
@@ -751,10 +778,11 @@ const REGISTRY_COLUMNS: Array<Column<RegistryEntry>> = [
     header: '安装状态',
     width: '96px',
     render: (row) => {
-      // 「已安装」只看后端 install 探测；WSL 托管（只读观测）等服务可能未装 venv 却在运行，
-      // 如实写「运行中」，不冒充已安装。
+      // 与卡片同源：「未接入」（目录不存在/未登记）≠「未安装」（目录在但包不可用），
+      // 三态各自成词，避免同一模块一处说未安装、一处说未配置。
       if (row.installed) return <Badge tone="ok">已安装</Badge>
       if (row.status === 'running') return <Badge tone="ok">运行中</Badge>
+      if (row.status === 'unconfigured') return <Badge tone="flat">未接入</Badge>
       return <Badge tone="warn">未安装</Badge>
     },
   },
@@ -983,6 +1011,19 @@ function ConfigDrawer({
                 <li key={note}>{note}</li>
               ))}
             </ul>
+          )}
+          {data.apply && (
+            <p
+              className={cn(
+                'rounded border px-2 py-2 text-caption',
+                data.apply.mode === 'unavailable'
+                  ? 'border-warn text-warn'
+                  : 'border-border bg-surface-2 text-text-secondary',
+              )}
+              data-testid="config-apply-hint"
+            >
+              {data.apply.text}
+            </p>
           )}
           {!data.editable ? (
             // QUOT-480：白名单为空（或 env 目录不存在）= 本机无可写配置。
@@ -1456,15 +1497,15 @@ function AiSection({
 // ---------------------------------------------------------------- 分区三：端口与目录
 
 /**
- * `?tab=ports` 的内容。控制面未启用时也要渲染本段（§11.18「每段有自身
- * loading/empty/error」），端口取不到就逐行 `—`，不显示假定默认值。
- * QUOT-548：顶部新增「端口诊断 + 安全自愈」面板（消费 QUOT-547 诊断 API）；
+ * 原「数据与端口」分区的内容，现已并入「子模块」页（页末）；`?tab=ports` 深链仍可直达。
+ * 控制面未启用时也要渲染本段（§11.18「每段有自身 loading/empty/error」），
+ * 端口取不到就逐行 `—`，不显示假定默认值。
+ * QUOT-548：「端口诊断 + 安全自愈」面板（消费 QUOT-547 诊断 API）；
  * 原「一键体检」占位按钮由面板的「重新诊断」取代（体检接口已落地）。
  */
 function PortsSection({
   board,
   portRows,
-  stateConfig,
   controlReady,
   productOf,
   push,
@@ -1473,7 +1514,6 @@ function PortsSection({
 }: {
   board: AsyncResult<BoardPayload>
   portRows: PortRow[]
-  stateConfig: AsyncResult<StateConfigPayload>
   controlReady: boolean
   productOf: (peerId: string) => string
   push: (message: string, tone?: ToastItem['tone']) => void
@@ -1529,35 +1569,141 @@ function PortsSection({
           empty={<EmptyState compact title="后端没有返回任何端口" description="端口清单来自 /api/control/board；控制面未接入时本表没有行可展示。" />}
         />
       </SectionCard>
-
-      <SectionCard title="配置与数据目录" subtitle="来自 /api/state/config">
-        {stateConfig.status === 'ready' && stateConfig.data ? (
-          <div className="flex flex-col gap-2">
-            <p className="text-caption text-text-secondary">
-              配置目录 <span className="ldst-num break-all">{stateConfig.data.config_dir}</span>
-            </p>
-            <p className="text-caption text-text-secondary">
-              数据目录 <span className="ldst-num break-all">{stateConfig.data.data_dir}</span>
-            </p>
-            <ul className="mt-half flex flex-wrap gap-2">
-              {stateConfig.data.files.map((file) => (
-                <li key={file.file}>
-                  <Badge tone={file.present ? 'ok' : 'warn'}>
-                    {file.present ? '有' : '缺'} <span className="ldst-num">{file.file}</span>
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : stateConfig.status === 'error' ? (
-          <ErrorBlock {...describeApiError(stateConfig.error)} variant="inline" onRetry={stateConfig.reload} />
-        ) : stateConfig.status === 'loading' ? (
-          <SkeletonText lines={2} />
-        ) : (
-          <EmptyState compact title="没有读到配置目录" description="/api/state/config 返回为空；确认本机服务已启动过一次。" />
-        )}
-      </SectionCard>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------- 关于·端口设置
+
+/**
+ * 端口设置卡（DEC-092）：读 / 改 / 还原看板端口。
+ *
+ * 三条边界：
+ * - **服务端校验为准**：范围 / 保留段 / 占用检测全部在后端做（PUT 返回 409/422
+ *   时把 detail 原样上屏），前端不自己猜规则；
+ * - **保存只写配置**：换端口必须重启应用，回复里说清楚，不给“立即生效”的幻想；
+ * - **输入本格式化**：非法输入置灰保存钮，不发无效请求。
+ */
+function BoardPortCard() {
+  const settings = useAsync((signal) => api.portSettings(signal), [])
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'danger'; text: string } | null>(null)
+
+  const data = settings.status === 'ready' ? settings.data : null
+  const min = data?.min_port ?? 1024
+  const max = data?.max_port ?? 65535
+  const draftPort = Number.parseInt(draft, 10)
+  const valid =
+    draft.trim() !== '' &&
+    Number.isInteger(draftPort) &&
+    draftPort >= min &&
+    draftPort <= max &&
+    !(data?.reserved_ports ?? []).includes(draftPort)
+
+  const save = async () => {
+    if (!valid) return
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await api.portSettingsSave(draftPort)
+      setNotice({ tone: 'ok', text: result.detail })
+      setDraft('')
+      void settings.refresh()
+    } catch (error) {
+      // 409（端口被占，带占用者）/ 422（范围或保留段）：服务端 detail 已是人话
+      const described = describeApiError(error)
+      setNotice({ tone: 'danger', text: described.detail || described.title })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clear = async () => {
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await api.portSettingsClear()
+      setNotice({ tone: 'ok', text: result.detail })
+      void settings.refresh()
+    } catch (error) {
+      const described = describeApiError(error)
+      setNotice({ tone: 'danger', text: described.detail || described.title })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SectionCard title="端口设置" subtitle="看板访问端口；保存后重启应用生效">
+      {settings.status === 'loading' && <SkeletonText lines={2} />}
+      {settings.status === 'error' && (
+        <ErrorBlock {...describeApiError(settings.error)} variant="inline" onRetry={settings.reload} />
+      )}
+      {data && (
+        <div className="flex flex-col gap-3" data-testid="board-port-card">
+          <p className="text-caption text-text-secondary">
+            当前访问{' '}
+            <span className="ldst-num text-body text-text">
+              http://127.0.0.1:{data.current_board ?? MISSING}
+            </span>
+            {' · '}默认{' '}
+            <span className="ldst-num">{data.default_board}</span>
+            {data.user_board !== null && (
+              <>
+                {' · '}已设偏好 <span className="ldst-num">{data.user_board}</span>
+              </>
+            )}
+          </p>
+          <p className="text-caption text-text-muted">
+            端口被其它程序占用时应用会自动避让一个口；这里的“偏好”优先于避让，端口空闲时始终用你设置的口。
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="w-40">
+              <Field label="新端口" htmlFor="board-port-input" hint={`${min}–${max}，已占用或保留段会被拒绝`}>
+                <Input
+                  id="board-port-input"
+                  inputMode="numeric"
+                  placeholder={String(data.user_board ?? data.default_board)}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  data-testid="board-port-input"
+                />
+              </Field>
+            </div>
+            <Button
+              variant="primary"
+              onClick={() => void save()}
+              disabled={busy || !valid}
+              data-testid="board-port-save"
+            >
+              检测并保存
+            </Button>
+            {data.user_board !== null && (
+              <Button variant="secondary" onClick={() => void clear()} disabled={busy} data-testid="board-port-clear">
+                清除偏好
+              </Button>
+            )}
+          </div>
+          {notice && (
+            <p
+              role="status"
+              data-testid="board-port-notice"
+              className={cn(
+                'text-caption',
+                notice.tone === 'ok'
+                  ? 'text-emerald-600'
+                  : notice.tone === 'warn'
+                    ? 'text-warn'
+                    : 'text-danger',
+              )}
+            >
+              {notice.text}
+            </p>
+          )}
+        </div>
+      )}
+    </SectionCard>
   )
 }
 
@@ -1639,6 +1785,28 @@ function AboutSection({
             </div>
           ))}
         </dl>
+      </SectionCard>
+
+      <BoardPortCard />
+
+      <SectionCard title="配置文件状态" subtitle="来自 /api/state/config；目录路径见上表">
+        {stateConfig.status === 'ready' && stateConfig.data ? (
+          <ul className="flex flex-wrap gap-2">
+            {stateConfig.data.files.map((file) => (
+              <li key={file.file}>
+                <Badge tone={file.present ? 'ok' : 'warn'}>
+                  {file.present ? '有' : '缺'} <span className="ldst-num">{file.file}</span>
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : stateConfig.status === 'error' ? (
+          <ErrorBlock {...describeApiError(stateConfig.error)} variant="inline" onRetry={stateConfig.reload} />
+        ) : stateConfig.status === 'loading' ? (
+          <SkeletonText lines={2} />
+        ) : (
+          <EmptyState compact title="没有读到配置目录" description="/api/state/config 返回为空；确认本机服务已启动过一次。" />
+        )}
       </SectionCard>
 
       <SectionCard title="边界声明" subtitle="DEC-006">
@@ -1743,7 +1911,8 @@ export default function SettingsScreen() {
   )
 
   const tabParam = params.get('tab')
-  const section: Section = isSection(tabParam) ? tabParam : 'peers'
+  // `?tab=ports` 是旧深链（分享/截图里存在）：分区已并入子模块，这里保留回落。
+  const section: Section = tabParam === 'ports' ? 'peers' : isSection(tabParam) ? tabParam : 'peers'
 
   const changeSection = useCallback(
     (next: Section) => {
@@ -1836,6 +2005,21 @@ export default function SettingsScreen() {
       board.reload()
     } catch (error) {
       push(`操作失败：${describeApiError(error).detail}`, 'danger')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const runScaffold = async (peer: PeerSnapshot): Promise<void> => {
+    setActing(`${peer.id}:scaffold`)
+    try {
+      const result = await api.control.scaffold(peer.id)
+      const created = result.created.length > 0 ? result.created.join('、') : '无新增文件'
+      const kept = result.kept.length > 0 ? `；保留已有：${result.kept.join('、')}` : ''
+      push(`已生成部署文件：${created}${kept}`, 'ok')
+      board.reload()
+    } catch (error) {
+      push(`接入失败：${describeApiError(error).detail}`, 'danger')
     } finally {
       setActing(null)
     }
@@ -2019,11 +2203,10 @@ export default function SettingsScreen() {
       <div className="flex flex-col gap-4">
         <ErrorBlock {...describeApiError(controlError)} onRetry={board.reload} />
         {section === 'ai' && <AiSection controlReady={false} push={push} />}
-        {section === 'ports' && (
+        {section === 'peers' && (
           <PortsSection
             board={board}
             portRows={portRows}
-            stateConfig={stateConfig}
             controlReady={false}
             productOf={productOf}
             push={push}
@@ -2031,6 +2214,7 @@ export default function SettingsScreen() {
             supervisorState={supervisor.data}
           />
         )}
+        {section === 'financecoffer' && <FinanceCofferPanel />}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
     )
@@ -2043,25 +2227,25 @@ export default function SettingsScreen() {
           </>
         </Banner>
         {section === 'peers' && (
-          <ul className="flex flex-col gap-3">
-            {STATIC_PEERS.map((peer) => (
-              <StaticPeerCard key={peer.id} peer={peer} reason="控制面未启用：模块状态无法探测。" />
-            ))}
-          </ul>
+          <>
+            <ul className="flex flex-col gap-3">
+              {STATIC_PEERS.map((peer) => (
+                <StaticPeerCard key={peer.id} peer={peer} reason="控制面未启用：模块状态无法探测。" />
+              ))}
+            </ul>
+            <PortsSection
+              board={board}
+              portRows={portRows}
+              controlReady={false}
+              productOf={productOf}
+              push={push}
+              onHealed={() => void board.refresh()}
+              supervisorState={supervisor.data}
+            />
+          </>
         )}
         {section === 'ai' && <AiSection controlReady={false} push={push} />}
-        {section === 'ports' && (
-          <PortsSection
-            board={board}
-            portRows={portRows}
-            stateConfig={stateConfig}
-            controlReady={false}
-            productOf={productOf}
-            push={push}
-            onHealed={() => void board.refresh()}
-            supervisorState={supervisor.data}
-          />
-        )}
+        {section === 'financecoffer' && <FinanceCofferPanel />}
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>
     )
@@ -2082,6 +2266,8 @@ export default function SettingsScreen() {
               : '其余分区仍可正常查看。'}
           </Banner>
         )}
+
+        {section === 'financecoffer' && <FinanceCofferPanel />}
 
         {section === 'peers' && (
           <>
@@ -2107,7 +2293,7 @@ export default function SettingsScreen() {
                 columns={REGISTRY_COLUMNS}
                 rows={registry}
                 rowKey={(row) => row.id}
-                caption="模块注册表：id / product / package / 端口 / 职责 / 是否已安装"
+                caption="模块注册表：id / product / package / 声明端口 / 职责 / 是否已安装（实时占用见本页下方）"
                 density="compact"
                 loading={board.status === 'loading'}
                 empty={
@@ -2122,7 +2308,7 @@ export default function SettingsScreen() {
 
             <SectionCard
               title="子模块"
-              subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；前端不推断"
+              subtitle="状态只来自后端探测（目录 → 已安装 → 端口 + health）；端口实时占用与诊断见本页下方"
               bodyClassName="p-0"
               actions={
                 <>
@@ -2198,6 +2384,7 @@ export default function SettingsScreen() {
                         setInstallError(null)
                         setInstallPeer(peer)
                       }}
+                      onScaffold={() => void runScaffold(peer)}
                       onStart={() => void runAction(peer, 'start')}
                       onStop={() => {
                         if (supervisorReady && supervised) {
@@ -2260,27 +2447,25 @@ export default function SettingsScreen() {
               {supervisor.data?.configured === false &&
                 ' 当前启停引擎尚未接线（482-B）：清单可查看，停止动作以后端真实返回为准，未接入时页面不会假装已停。'}
             </p>
+
+            {/* 原「数据与端口」分区并入此处：端口诊断 + 安全自愈 + 端口占用表 */}
+            <PortsSection
+              board={board}
+              portRows={portRows}
+              controlReady={controlReady}
+              productOf={productOf}
+              push={push}
+              onHealed={() => {
+                // 静默重取：reload 会整屏回 loading 骨架，把自愈结果横幅连同面板一起卸载掉。
+                void board.refresh()
+                void supervisor.refresh()
+              }}
+              supervisorState={supervisor.data}
+            />
           </>
         )}
 
         {section === 'ai' && <AiSection controlReady={controlReady} push={push} />}
-
-        {section === 'ports' && (
-          <PortsSection
-            board={board}
-            portRows={portRows}
-            stateConfig={stateConfig}
-            controlReady={controlReady}
-            productOf={productOf}
-            push={push}
-            onHealed={() => {
-              // 静默重取：reload 会整屏回 loading 骨架，把自愈结果横幅连同面板一起卸载掉。
-              void board.refresh()
-              void supervisor.refresh()
-            }}
-            supervisorState={supervisor.data}
-          />
-        )}
 
         {section === 'about' && <AboutSection health={health} stateConfig={stateConfig} />}
       </div>

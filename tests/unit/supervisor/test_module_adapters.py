@@ -202,6 +202,7 @@ PEER_ENV_KEYS = {
     "wire": "LDST_PEER_DIR_WIRE",
     "senate": "LDST_PEER_DIR_SENATE",
     "financecoffer": "LDST_PEER_DIR_FINANCECOFFER",
+    "qdrant": "LDST_PEER_DIR_QDRANT",
 }
 
 EXES = {
@@ -214,10 +215,21 @@ EXES = {
 
 def _make_peer_dirs(tmp_path: Path) -> dict[str, str]:
     env: dict[str, str] = {}
+    # 端口记录 / 用户偏好（DEC-092 board_user）都从 LDST_CONFIG_DIR 解析：
+    # 不隔离的话，开发机 config/ports.yaml 里的真实偏好会漏进测试断言
+    # （曾用 board=5950 的巧合掩盖了很久）。统一指到空目录，隔离所有适配器用例。
+    env["LDST_CONFIG_DIR"] = str(tmp_path / "config")
     for key, env_key in PEER_ENV_KEYS.items():
         peer = tmp_path / "peers" / key
         peer.mkdir(parents=True)
-        if key in EXES:
+        if key == "qdrant":
+            # Qdrant 的两个启动面：venv 解释器 + run_stack.py（`_venv_exe` 固定 Scripts，
+            # 不随平台切 bin/，这里必须与生产一致，否则 CI 上会判成缺入口）。
+            scripts = peer / ".venv" / "Scripts"
+            scripts.mkdir(parents=True)
+            (scripts / "python.exe").write_bytes(b"")
+            (peer / "run_stack.py").write_bytes(b"")
+        elif key in EXES:
             scripts = peer / ".venv" / "Scripts"
             scripts.mkdir(parents=True)
             (scripts / EXES[key]).write_bytes(b"")
@@ -225,9 +237,22 @@ def _make_peer_dirs(tmp_path: Path) -> dict[str, str]:
     return env
 
 
-def _adapters(tmp_path: Path, host: FakeHost | None = None) -> tuple[FakeHost, dict[str, Any]]:
+def _adapters(
+    tmp_path: Path,
+    host: FakeHost | None = None,
+    *,
+    fc_form: str | None = None,
+) -> tuple[FakeHost, dict[str, Any]]:
+    """构造全部适配器。
+
+    `fc_form` 显式声明 financecoffer 的运行形态（`bundle` / `wsl`）。形态不再
+    隐式回落：容器形态的老用例必须传 `fc_form="wsl"`，否则适配器按「未声明」
+    失败关闭——这正是便携包要的语义。
+    """
     fake = host or FakeHost()
     env = _make_peer_dirs(tmp_path)
+    if fc_form is not None:
+        env["LDST_FINANCECOFFER_FORM"] = fc_form
     built = build_default_adapters(
         host=fake,
         env=env,
@@ -384,7 +409,7 @@ def _fc_host() -> FakeHost:
 
 
 def test_financecoffer_probe_needs_both_windows_port_and_wsl_api_container(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}", "932"), ports=(8100,))
     assert fc.probe() is True
@@ -398,7 +423,7 @@ def test_financecoffer_probe_needs_both_windows_port_and_wsl_api_container(tmp_p
 
 
 def test_financecoffer_start_runs_compose_then_keeps_an_anchor(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     spawned = fc.start()
 
@@ -414,7 +439,7 @@ def test_financecoffer_start_refuses_foreign_port_owner_without_side_effects(
     tmp_path: Path,
 ) -> None:
     """QUOT-516：Windows 侧占口 → 拒绝启动，绝不先把 WSL 容器拉起来。"""
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     # 模块未运行（WSL 内无 api 容器）而端口被外部占住 = 真冲突形态
     host.responses = [
         (needle, result)
@@ -435,7 +460,7 @@ def test_financecoffer_start_refuses_foreign_port_owner_without_side_effects(
 def test_financecoffer_start_proceeds_when_own_container_already_listening(
     tmp_path: Path,
 ) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
     spawned = fc.start()
@@ -455,7 +480,7 @@ def test_financecoffer_distro_override_wins_over_wsl_list(tmp_path: Path) -> Non
 
 
 def test_financecoffer_stop_reads_back_container_gone(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     fc.start()
     host.port_owner.clear()
@@ -469,26 +494,46 @@ def test_financecoffer_stop_reads_back_container_gone(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_proxyfleet_start_and_stop_go_through_the_scheduled_task(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
-    host.respond(
-        "schtasks.exe /run",
-        CommandResult(returncode=0, stdout="SUCCESS"),
-    )
-    # /run 之后任务拉起的 pfctl 进程（计划任务垫片 → python pfctl.py run）
-    host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
-        ports=(8788, 8789),
+def test_proxyfleet_start_spawns_the_venv_service(tmp_path: Path) -> None:
+    """2026-11-18 用户裁决：ProxyFleet 从 SYSTEM 计划任务垫片改成 venv 服务。
+
+    start = 直接 spawn `.venv/Scripts/proxyfleet.exe serve`，端口由
+    `PF_API_PORT` / `PF_GATEWAY_PORT` 环境变量给定（跟随 MODULE_PORTS 环境表）；
+    stop = 整树终止。两者都不再调 `schtasks.exe`。
+    """
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    peer = tmp_path / "proxyfleet"
+    scripts = peer / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "proxyfleet.exe").write_bytes(b"")
+    env["LDST_PEER_DIR_PROXYFLEET"] = str(peer)
+
+    pf = cast(
+        BaseAdapter,
+        build_default_adapters(
+            host=host, env=env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+        )["proxyfleet"],
     )
     spawned = pf.start()
+
+    argv, _cwd, child_env = host.spawns[0]
+    # 2026-11-21：没有自带自述卡的模块由控制面套 `ldst peer serve` 包装层，
+    # 先登记真实端口再执行原命令；原命令原样留在 `--` 之后。
+    assert Path(argv[0]).name in {"python.exe", "python"}
+    assert tuple(argv[1:5]) == ("-m", "ladderstock", "peer", "serve")
+    assert "--" in argv
+    tail = list(argv)[list(argv).index("--") + 1 :]
+    assert Path(tail[0]).name == "proxyfleet.exe"
+    assert tuple(tail[1:]) == ("serve",)
+    expected = MODULE_PORTS["proxyfleet"]
+    assert child_env["PF_API_PORT"] == str(expected[0])
+    assert child_env["PF_GATEWAY_PORT"] == str(expected[1])
     assert spawned.pid in host.procs
-    assert any("/enable" in argv for argv in host.runs)
+    assert all(Path(argv2[0]).name != "schtasks.exe" for argv2 in host.runs if argv2)
 
     pf.stop()
-    ended = [" ".join(argv) for argv in host.runs]
-    assert any("/disable" in line for line in ended)
-    assert any("/end" in line for line in ended)
+    assert all(Path(argv2[0]).name != "schtasks.exe" for argv2 in host.runs if argv2)
 
 
 def test_proxyfleet_start_refuses_foreign_port_owner_without_triggering_task(
@@ -504,15 +549,30 @@ def test_proxyfleet_start_refuses_foreign_port_owner_without_triggering_task(
     assert all(argv[0] != "schtasks.exe" for argv in host.runs)
 
 
-def test_proxyfleet_start_proceeds_when_own_pfctl_already_listening(tmp_path: Path) -> None:
-    host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
-    host.respond("schtasks.exe /run", CommandResult(returncode=0, stdout="SUCCESS"))
-    host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
-        ports=(8788, 8789),
+def test_proxyfleet_start_proceeds_when_own_service_already_listening(tmp_path: Path) -> None:
+    """自己的 `proxyfleet.exe serve` 已在听：不算「外部占用」，start 不拒绝。
+
+    计划任务形态下这条测的是「/run 之后垫片已经拉起」；venv 形态下同一个语义
+    落在 `_foreign_occupant()` 上——cmdline 命中本模块即放行。
+    """
+    host = FakeHost()
+    env = _make_peer_dirs(tmp_path)
+    peer = tmp_path / "proxyfleet"
+    scripts = peer / ".venv" / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "proxyfleet.exe").write_bytes(b"")
+    env["LDST_PEER_DIR_PROXYFLEET"] = str(peer)
+
+    pf = cast(
+        BaseAdapter,
+        build_default_adapters(
+            host=host, env=env, log_dir=tmp_path / "logs", evidence_cache_sec=0.0
+        )["proxyfleet"],
     )
+    host.add_process((str(scripts / "proxyfleet.exe"), "serve"), ports=(8788, 8789))
+
     spawned = pf.start()
+
     assert spawned.pid in host.procs
 
 
@@ -530,7 +590,7 @@ def test_proxyfleet_probe_is_false_for_a_foreign_listener(tmp_path: Path) -> Non
 
 def test_financecoffer_identify_port_returns_single_port_evidence(tmp_path: Path) -> None:
     """带 port 调用返回单端口 PortEvidence（供 page_boot._identify 认领），不再是聚合。"""
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     pid = host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
 
@@ -545,7 +605,7 @@ def test_financecoffer_identify_port_returns_single_port_evidence(tmp_path: Path
 
 def test_financecoffer_identify_no_arg_returns_aggregate(tmp_path: Path) -> None:
     """无参 identify() 仍返回聚合 Identification，.matched / .ports 口径不变。"""
-    host, adapters = _adapters(tmp_path, _fc_host())
+    host, adapters = _adapters(tmp_path, _fc_host(), fc_form="wsl")
     fc = cast(FinanceCofferAdapter, adapters["financecoffer"])
     host.add_process(("C:/windows/system32/lxss/wslhost.exe", "{guid}"), ports=(8100,))
 
@@ -571,9 +631,12 @@ def test_financecoffer_identify_port_not_listening_fails_closed(tmp_path: Path) 
 
 def test_proxyfleet_identify_port_returns_single_port_evidence(tmp_path: Path) -> None:
     host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    pf = cast(BaseAdapter, adapters["proxyfleet"])
     pid = host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        (
+            "D:/workplace/LadderStock/file/modules/proxyfleet/.venv/Scripts/proxyfleet.exe",
+            "serve",
+        ),
         ports=(8788, 8789),
     )
 
@@ -588,9 +651,12 @@ def test_proxyfleet_identify_port_returns_single_port_evidence(tmp_path: Path) -
 
 def test_proxyfleet_identify_no_arg_returns_aggregate(tmp_path: Path) -> None:
     host, adapters = _adapters(tmp_path)
-    pf = cast(ProxyFleetAdapter, adapters["proxyfleet"])
+    pf = cast(BaseAdapter, adapters["proxyfleet"])
     host.add_process(
-        ("D:/workplace/ruanjian/python312/python.exe", "D:/workplace/ProxyFleet/pfctl.py", "run"),
+        (
+            "D:/workplace/LadderStock/file/modules/proxyfleet/.venv/Scripts/proxyfleet.exe",
+            "serve",
+        ),
         ports=(8788, 8789),
     )
 
@@ -917,6 +983,9 @@ def test_watch_is_test_env_scoped_to_5951(tmp_path: Path) -> None:
     launcher = _watch_launcher(tmp_path)
     env["LDST_LAUNCHER"] = launcher[0]
     env["LDST_ENV"] = "test"
+    # 仓库根 config/ports.yaml 里有开发机的避让记录（board=5950）：不隔离配置目录
+    # 的话这条「test 必须 5951」的断言会读到正式端口，假红。
+    env["LDST_CONFIG_DIR"] = str(tmp_path / "config")
 
     _build_watch(host, tmp_path, env).start()
     argv, _cwd, _child_env = host.spawns[0]
@@ -1074,6 +1143,9 @@ def _watch_pair(tmp_path: Path) -> tuple[Any, Any]:
     host = FakeHost()
     env = _make_peer_dirs(tmp_path)
     env["LDST_LAUNCHER"] = launcher[0]
+    # 同 `test_watch_is_test_env_scoped_to_5951`：隔离开发机的避让记录，否则
+    # prod/test 两个看门狗会读到同一个 board=5950、互认对方的实例。
+    env["LDST_CONFIG_DIR"] = str(tmp_path / "config")
     prod = cast(
         Any,
         build_default_adapters(
@@ -1336,3 +1408,22 @@ def test_preflight_never_falls_back_to_hardcoded_workplace_paths(tmp_path: Path)
             assert text.startswith(str(root))
     # 各 peer 缺的是安装根下的同级目录，而不是某个旧部署路径
     assert str(root / "TickHub-CN") in _item(report, "tickhub").detail
+
+
+def test_environment_points_cards_at_module_dir(tmp_path: Path, monkeypatch) -> None:
+    """控制面拉起模块时必须告诉它「卡往哪写」。
+
+    2026-11-21 服务发现：模块的自述卡写在 `<安装目录>/.runtime/peer.json`，
+    面板按安装目录读。模块自己的仓库根和安装目录常常不是同一处（editable 安装），
+    不注入 `LDST_PEER_CARD_ROOT` 就会把卡写到源码仓库里，面板永远读不到。
+    """
+    _host, adapters = _adapters(tmp_path)
+    wire = _wire(adapters)
+
+    env = wire._environment()
+
+    assert env["LDST_PEER_CARD_ROOT"] == str(wire.faces[0].cwd)
+
+    # 部署方已显式指定落点时不得被覆盖
+    monkeypatch.setenv("LDST_PEER_CARD_ROOT", r"D:\cards")
+    assert wire._environment()["LDST_PEER_CARD_ROOT"] == r"D:\cards"

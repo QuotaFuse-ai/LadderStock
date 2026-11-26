@@ -165,10 +165,7 @@ def compensate(text: str) -> dict[str, Any] | None:
             parsed = None
         if isinstance(parsed, dict):
             narrative = _strings(parsed.get("narrative")) or _strings(parsed.get("text"))
-            extra = {
-                key: _strings(parsed.get(key))
-                for key in ("highlights", "risks", "evidence")
-            }
+            extra = {key: _strings(parsed.get(key)) for key in ("highlights", "risks", "evidence")}
             if narrative:
                 payload = {"narrative": narrative}
                 payload.update({k: v for k, v in extra.items() if v})

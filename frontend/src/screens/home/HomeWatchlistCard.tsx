@@ -52,7 +52,7 @@ const COLUMNS: Array<Column<WatchlistItem>> = [
   {
     key: 'price',
     header: '现价',
-    width: '88px',
+    width: '96px',
     numeric: true,
     sort: (a, b) => (a.latest_price ?? Number.NEGATIVE_INFINITY) - (b.latest_price ?? Number.NEGATIVE_INFINITY),
     render: (row) => (
@@ -64,7 +64,9 @@ const COLUMNS: Array<Column<WatchlistItem>> = [
   {
     key: 'change',
     header: '涨跌',
-    width: '88px',
+    // 88px 装不下「+1.86% ↑」：箭头会被挤到第二行。加宽到 104px 并禁止换行，
+    // 涨跌恒为一行；名称列是弹性列，会相应让出这 16px。
+    width: '104px',
     numeric: true,
     sort: (a, b) => (a.change_pct ?? Number.NEGATIVE_INFINITY) - (b.change_pct ?? Number.NEGATIVE_INFINITY),
     render: (row) => {

@@ -68,8 +68,7 @@ def add_watch(code: str, *, root: Path | None = None) -> dict[str, Any]:
     assert conn is not None  # create=True 时不会返回 None
     try:
         conn.execute(
-            "INSERT INTO watchlist (code, created_at) VALUES (?, ?)"
-            " ON CONFLICT(code) DO NOTHING",
+            "INSERT INTO watchlist (code, created_at) VALUES (?, ?) ON CONFLICT(code) DO NOTHING",
             (clean, sqlite_store.now_iso()),
         )
         row = conn.execute(_SELECT + " WHERE code = ?", (clean,)).fetchone()

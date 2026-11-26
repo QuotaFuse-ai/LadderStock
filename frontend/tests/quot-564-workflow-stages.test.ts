@@ -15,7 +15,7 @@ import {
  *
  * 锁死三件事：
  * 1. schema 字段/枚举严格校验，非法条目丢弃、绝不补默认值（不编数）；
- * 2. 两种信封（stage_events 快照 / events 类型化事件流）都能消费，非 stage 事件忽略；
+ * 2. 三种信封（stages 快照 / stage_events 快照 / events 类型化事件流）都能消费，非 stage 事件忽略；
  * 3. 健康翻译与粒子驱动是纯映射：ok 来自后端才流动，前端不推断、不聚合。
  */
 
@@ -46,6 +46,35 @@ describe('extractStageEvents 信封与校验', () => {
     expect(events[0]).toEqual(event())
     expect(events[1].health).toBe('down')
     expect(events[1].reason).toBe('采集进程未运行')
+  })
+
+  it('stages 快照信封（生产实况）：/api/supervisor/state 直接下发即可渲染，不依赖新到事件', () => {
+    // 回归护栏：页面打开时后端只有历史快照（无 events 流），此前只认 stage_events/events
+    // 导致面板永远「等待事件」。
+    const events = extractStageEvents({
+      ok: true,
+      events_latest: 12,
+      stages: [
+        event(),
+        event({ module: 'collect', stage: 'collect_process', phase: '2' }),
+        event({ module: 'ingest', stage: 'ingest_watermark', health: 'warn', reason: '水位落后 2 天' }),
+        event({ module: 'debate', module_class: 'cog', stage: 'debate_speak', phase: '1' }),
+      ],
+    })
+    expect(events).toHaveLength(4)
+    expect(eventsOfModule(events, 'collect').map((e) => e.stage)).toEqual(['collect_script', 'collect_process'])
+    expect(eventsOfModule(events, 'ingest')[0].health).toBe('warn')
+    expect(eventsOfModule(events, 'debate')).toHaveLength(1)
+  })
+
+  it('三种信封并存时按 stages → stage_events → events 顺序去重（同模块同阶段只留第一条）', () => {
+    const events = extractStageEvents({
+      stages: [event({ reason: '快照原话' })],
+      stage_events: [event({ reason: '旧契约副本' })],
+      events: [{ type: 'stage', ...event({ reason: '事件流副本' }) }],
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0].reason).toBe('快照原话')
   })
 
   it('events 类型化信封：只收 type=stage，平铺与 payload 嵌套都认', () => {

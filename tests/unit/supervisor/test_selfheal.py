@@ -234,9 +234,7 @@ def test_intentional_stop_never_self_heals(tmp_path: Path) -> None:
 def test_notifier_exception_is_swallowed_and_heal_continues(tmp_path: Path) -> None:
     notifier = RecordingNotifier()
     notifier.raise_on = "failure"
-    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(
-        tmp_path, notifier=notifier
-    )
+    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(tmp_path, notifier=notifier)
     ledger.ensure("tickhub", ports=(8000,))
     ledger.update("tickhub", pid=123)
     restarter.fail = True  # 重拉必失败 → 触发 failure 通知
@@ -296,9 +294,7 @@ def test_log_roll_keeps_only_the_cap(tmp_path: Path) -> None:
 
 def test_engine_log_dir_also_rolls(tmp_path: Path) -> None:
     log_dir = tmp_path / "logs"
-    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(
-        tmp_path, log_dir=log_dir
-    )
+    engine, ledger, _clock, _sleeper, restarter, _notifier = _engine(tmp_path, log_dir=log_dir)
     ledger.ensure("tickhub", ports=(8000,))
     ledger.update("tickhub", pid=123)
 
@@ -353,3 +349,35 @@ def test_start_stop_lifecycle(tmp_path: Path) -> None:
     assert engine.running
     engine.stop(timeout=2.0)
     assert not engine.running
+
+
+# --------------------------------------------------------- 共用主实例（2026-11-21）
+
+
+def test_shared_instance_serving_skips_restart(tmp_path: Path) -> None:
+    """本机没有自有副本，但共用实例在服务 → 不拉起、不空转「第 N/3 次」。"""
+    engine, ledger, _clock, sleeper, restarter, _notifier = _engine(tmp_path)
+    ledger.ensure("tickhub", ports=(18000, 18787))  # 测试服平移口径
+    ledger.update("tickhub", pid=None)  # 从没记账过自有副本
+    restarter.alive = False
+    restarter.serves_module = lambda module, ports=None: True  # 共用实例跑在 8000/8787
+
+    engine.tick()
+
+    assert restarter.restarts == []
+    assert sleeper.naps == []
+    assert ledger.get("tickhub").health == HEALTH_OK
+
+
+def test_shared_probe_missing_keeps_old_behaviour(tmp_path: Path) -> None:
+    """重拉通道没有 serves_module（旧实现）→ 照旧走重拉，语义不静默改变。"""
+    engine, ledger, _clock, sleeper, restarter, _notifier = _engine(tmp_path)
+    ledger.ensure("tickhub", ports=(8000,))
+    ledger.update("tickhub", pid=123)
+    _kill(restarter)
+
+    engine.tick()
+
+    assert sleeper.naps == [5.0]
+    assert restarter.restarts == ["tickhub"]
+

@@ -26,6 +26,7 @@ import {
   type Column,
 } from '../../components/ui'
 import { formatBoards, formatInt, formatMoney, formatOneDecimal, localDateIso, MISSING } from '../../lib/format'
+import { useTableExport } from '../../lib/useTableExport'
 import { withParams } from '../industry/links'
 import { DEMO_POOL_DATE } from './demo'
 import { useDemoEnabled, usePoolView } from './useRadarView'
@@ -72,16 +73,26 @@ function fundStampLabel(payload: CandidatePoolPayload): string {
   return MISSING
 }
 
-function PartCell({ value, compact = false }: { value: number | null; compact?: boolean }) {
+/** 分项单元格：缺项写 `—` 并带上「为什么缺」，缺项不是零（UI-SPEC §8）。 */
+function PartCell({
+  value,
+  compact = false,
+  hint = null,
+}: {
+  value: number | null
+  compact?: boolean
+  hint?: string | null
+}) {
   if (value === null) {
+    const label = hint ?? '无数据（未核实）'
     if (compact) {
       return (
-        <span className="text-text-muted" title="无数据（未核实）：该分项没有数据，不补 0">
-          —<span className="sr-only">无数据（未核实）</span>
+        <span className="text-text-muted" title={`${label}：该分项没有数据，不补 0`}>
+          —<span className="sr-only">{label}</span>
         </span>
       )
     }
-    return <span className="text-caption text-text-muted">无数据（未核实）</span>
+    return <span className="text-caption text-text-muted">{label}</span>
   }
   return <span className="ldst-num text-body text-text">{formatOneDecimal(value)}</span>
 }
@@ -102,8 +113,11 @@ function rawFor(part: PoolPart, candidate: PoolCandidate, height: number | null)
   }
   if (part === 'theme') {
     const tags = raw.theme_tags.length > 0 ? raw.theme_tags.join(' / ') : '无题材标签'
-    const change = raw.theme_board_change_pct === null ? MISSING : `${formatOneDecimal(raw.theme_board_change_pct)}%`
-    return `${tags} · 板块涨幅 ${change}`
+    if (raw.theme_board_change_pct === null) {
+      // 题材分为空不是「没数」一句话能盖住的：先把原因说清，再保留归属标签
+      return raw.theme_note ? `${tags} · ${raw.theme_note}` : `${tags} · 板块涨幅 ${MISSING}`
+    }
+    return `${tags} · 板块涨幅 ${formatOneDecimal(raw.theme_board_change_pct)}%`
   }
   return raw.turnover_rate === null ? MISSING : `换手率 ${formatOneDecimal(raw.turnover_rate)}%`
 }
@@ -230,6 +244,7 @@ function BreakdownDrawer({
             <Banner tone="warn" title="有分项没有数据">
               {candidate.absent_parts.map((part) => POOL_PART_LABEL[part] ?? part).join('、')}
               缺少数据，按口径不计入分母；页面不补 0，也不重新算总分。
+              {candidate.raw.theme_note ? `题材原因：${candidate.raw.theme_note}。` : ''}
             </Banner>
           )}
 
@@ -275,7 +290,13 @@ export default function PoolScreen() {
       align: 'right',
       width: '96px',
       sort: (a, b) => compareNumber(a.parts[part], b.parts[part]),
-      render: (row) => <PartCell value={row.parts[part]} compact />,
+      render: (row) => (
+        <PartCell
+          value={row.parts[part]}
+          compact
+          hint={part === 'theme' && row.raw.theme_note ? '未进当日概念榜' : null}
+        />
+      ),
     }))
     return [
       {
@@ -308,12 +329,18 @@ export default function PoolScreen() {
         header: '缺失分项',
         align: 'center',
         width: '120px',
-        render: (row) =>
-          row.absent_parts.length === 0 ? (
-            <span className="text-caption text-text-muted">齐全</span>
-          ) : (
-            <Badge tone="warn">{row.absent_parts.map((part) => POOL_PART_LABEL[part] ?? part).join('、')}</Badge>
-          ),
+        render: (row) => {
+          if (row.absent_parts.length === 0) {
+            return <span className="text-caption text-text-muted">齐全</span>
+          }
+          const onlyThemeExplained =
+            row.raw.theme_note !== null && row.absent_parts.every((part) => part === 'theme')
+          const labels = row.absent_parts.map((part) =>
+            part === 'theme' && row.raw.theme_note ? '题材·未进榜' : POOL_PART_LABEL[part] ?? part,
+          )
+          // 题材是「所属板块当日没进概念涨幅榜」，不是本机没取到 → 中性色，不报错
+          return <Badge tone={onlyThemeExplained ? 'neutral' : 'warn'}>{labels.join('、')}</Badge>
+        },
       },
       {
         key: 'action',
@@ -334,6 +361,27 @@ export default function PoolScreen() {
       },
     ]
   }, [])
+
+  // C 包后续单（DEC-090 §4）：候选池 CSV 导出——与既有「导出本地文件」（JSON、
+  // 不经网络）并存；CSV 走同一张表格导出面，分项缺失导出空列不补 0。
+  const exportRows = (payload?.candidates ?? []).map((candidate) => ({
+    code: candidate.code,
+    name: candidate.name ?? '',
+    score: candidate.score ?? '',
+    ...Object.fromEntries(
+      POOL_PART_ORDER.map((part) => [
+        part,
+        candidate.absent_parts.includes(part) ? '' : (candidate.parts[part] ?? ''),
+      ]),
+    ) as Record<(typeof POOL_PART_ORDER)[number], number | ''>,
+    absent_parts: candidate.absent_parts.length > 0 ? candidate.absent_parts.join('、') : '',
+    theme_note: candidate.raw.theme_note ?? '',
+  }))
+  const exporter = useTableExport(
+    'candidate-pool',
+    exportRows,
+    ['code', 'name', 'score', ...POOL_PART_ORDER, 'absent_parts', 'theme_note'],
+  )
 
   const header = (
     <PageHeader
@@ -364,7 +412,22 @@ export default function PoolScreen() {
         disabled: state === 'loading',
         loading: refreshing,
       }}
-      actions={payload && payload.available ? <DownloadButton payload={payload} /> : undefined}
+      actions={
+        payload && payload.available ? (
+          <>
+            <Button
+              variant="secondary"
+              leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+              disabled={exporter.busyFormat !== null}
+              title="导出当前候选池视图（CSV，Excel 可直接打开；分数与分项照后端原值）"
+              onClick={() => void exporter.buttonProps('csv').onClick()}
+            >
+              导出 CSV
+            </Button>
+            <DownloadButton payload={payload} />
+          </>
+        ) : undefined
+      }
     />
   )
 
@@ -453,6 +516,8 @@ export default function PoolScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {exporter.error ? <Banner tone="warn" title="导出失败">{exporter.error}</Banner> : null}
 
       {refreshError !== null && (
         <Banner

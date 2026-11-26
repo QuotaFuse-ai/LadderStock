@@ -129,6 +129,7 @@ def make_registry(
 # 真实形状与计数
 # --------------------------------------------------------------------------- #
 
+
 def test_discovery_mirrors_peer_tools_list(tmp_path: Path) -> None:
     registry, _, catalog = make_registry(tmp_path)
     snapshot = registry.query(ToolNamespace(AGENT, SCOPE), refresh=True)
@@ -208,6 +209,7 @@ def test_snapshot_is_written_only_under_declared_namespace(tmp_path: Path) -> No
 # 命名空间隔离
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize(
     ("agent_id", "kb_scope"),
     [("", SCOPE), (AGENT, ""), ("../escape", SCOPE), (AGENT, "../escape"), ("a b", SCOPE)],
@@ -246,9 +248,7 @@ def test_cross_namespace_snapshot_is_refused(tmp_path: Path) -> None:
     # 把 A 的快照拷到 B 的路径：文档里的命名空间对不上，读取必须拒绝
     target = registry.snapshot_path(ToolNamespace("ladderstock-wire", "wire"))
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        registry.snapshot_path(source).read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    target.write_text(registry.snapshot_path(source).read_text(encoding="utf-8"), encoding="utf-8")
 
     with pytest.raises(ToolRegistryError) as excinfo:
         registry.load(ToolNamespace("ladderstock-wire", "wire"))
@@ -269,6 +269,7 @@ def test_corrupt_snapshot_is_reported_not_guessed(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 检索
 # --------------------------------------------------------------------------- #
+
 
 def test_query_filters_by_text_source_and_limit(tmp_path: Path) -> None:
     registry, _, _ = make_registry(tmp_path)
@@ -312,6 +313,7 @@ def test_query_uses_snapshot_until_refresh(tmp_path: Path) -> None:
 # CLI
 # --------------------------------------------------------------------------- #
 
+
 @pytest.fixture()
 def cli_env(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeCatalog:
     """CLI 走真实 `config/sources.yaml` 的 peer 名，但传输换成假目录。"""
@@ -325,11 +327,16 @@ def test_cli_lists_tools_as_json(cli_env: FakeCatalog, tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "ai", "tools", "list",
-            "--agent-id", AGENT,
-            "--kb-scope", SCOPE,
+            "ai",
+            "tools",
+            "list",
+            "--agent-id",
+            AGENT,
+            "--kb-scope",
+            SCOPE,
             "--refresh",
-            "--output", "json",
+            "--output",
+            "json",
         ],
     )
     assert result.exit_code == 0, result.stderr
@@ -353,11 +360,17 @@ def test_cli_table_view_hides_full_schema(cli_env: FakeCatalog) -> None:
     result = runner.invoke(
         app,
         [
-            "ai", "tools", "list",
-            "--agent-id", AGENT,
-            "--kb-scope", SCOPE,
-            "--source", "tickhub",
-            "--output", "table",
+            "ai",
+            "tools",
+            "list",
+            "--agent-id",
+            AGENT,
+            "--kb-scope",
+            SCOPE,
+            "--source",
+            "tickhub",
+            "--output",
+            "table",
         ],
     )
     assert result.exit_code == 0, result.stderr

@@ -33,9 +33,8 @@ def _clear_cwd_config_data(monkeypatch: pytest.MonkeyPatch, cwd: Path) -> None:
 # 便携判定
 # --------------------------------------------------------------------------- #
 
-def test_frozen_is_always_portable(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+
+def test_frozen_is_always_portable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     assert runtime.is_portable() is True
 
@@ -59,6 +58,7 @@ def test_source_tree_with_marker_is_portable(
 # --------------------------------------------------------------------------- #
 # 便携模式下 config/data 落安装根内
 # --------------------------------------------------------------------------- #
+
 
 def test_portable_config_data_resolve_inside_install_root(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -92,6 +92,7 @@ def test_portable_frozen_config_data_inside_install_root(
 # 非便携兜底不变
 # --------------------------------------------------------------------------- #
 
+
 def test_non_portable_source_still_prefers_cwd(
     clean_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -118,6 +119,7 @@ def test_non_portable_frozen_falls_back_to_user_data(
 # 显式覆盖永远最高优先（含便携模式）
 # --------------------------------------------------------------------------- #
 
+
 def test_explicit_env_override_wins_over_portable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -136,6 +138,7 @@ def test_explicit_env_override_wins_over_portable(
 # --------------------------------------------------------------------------- #
 # install_root 新 onedir 布局（exe 在 bin/LadderStock/ 下）
 # --------------------------------------------------------------------------- #
+
 
 def test_install_root_new_onedir_bin_layout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -156,9 +159,7 @@ def test_install_root_legacy_onedir_layout_still_works(
 ) -> None:
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
-    monkeypatch.setattr(
-        sys, "executable", str(tmp_path / "LadderStock" / "LadderStock.exe")
-    )
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "LadderStock" / "LadderStock.exe"))
 
     assert runtime.install_root() == tmp_path.resolve()
 
@@ -166,6 +167,7 @@ def test_install_root_legacy_onedir_layout_still_works(
 # --------------------------------------------------------------------------- #
 # 启动器无绝对路径
 # --------------------------------------------------------------------------- #
+
 
 def test_launchers_have_no_absolute_drive_paths() -> None:
     repo = Path(__file__).resolve().parents[3]

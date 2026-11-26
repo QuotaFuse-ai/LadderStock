@@ -58,6 +58,7 @@ def _get(client: TestClient, path: str, **params: str) -> dict[str, Any]:
 # 1. 冷启动自动补取 → 当日数，无手动指引
 # --------------------------------------------------------------------------- #
 
+
 def test_theme_cold_start_auto_refetch(data_root: Path) -> None:
     transport = ensure_transport(DAY)
     registry = make_ensure_registry(transport, data_root, datasets=["theme_news"])
@@ -132,9 +133,7 @@ def test_industry_cold_start_auto_refetch(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setenv("LDST_DATA_DIR", str(data))
 
     transport = ensure_transport(DAY)
-    registry = make_ensure_registry(
-        transport, data, datasets=INDUSTRY_DATASETS, codes=ENSURE_CODES
-    )
+    registry = make_ensure_registry(transport, data, datasets=INDUSTRY_DATASETS, codes=ENSURE_CODES)
     app = create_app(
         data_root=data,
         dist_dir=tmp_path / "dist",
@@ -160,6 +159,7 @@ def test_industry_cold_start_auto_refetch(tmp_path: Path, monkeypatch: pytest.Mo
 # 2. 冷却：连续打开只打一轮上游
 # --------------------------------------------------------------------------- #
 
+
 def test_cooldown_bounds_upstream_across_opens(data_root: Path) -> None:
     # 上游挂 → 数据始终陈旧：第二次打开应命中冷却，不再打上游。
     transport = ensure_transport(DAY, failing=("wire_get_digest",))
@@ -176,6 +176,7 @@ def test_cooldown_bounds_upstream_across_opens(data_root: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 3. 上游失败如实空态，不回落演示
 # --------------------------------------------------------------------------- #
+
 
 def test_theme_failure_is_honest_empty_not_demo(data_root: Path) -> None:
     transport = ensure_transport(DAY, failing=("wire_get_digest",))
@@ -210,6 +211,7 @@ def test_news_failure_is_honest_empty_not_demo(data_root: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 4. 缺省不接线：行为与改造前逐字节一致（回归守卫）
 # --------------------------------------------------------------------------- #
+
 
 def test_disabled_by_default_keeps_legacy_empty_state(data_root: Path) -> None:
     transport = ensure_transport(DAY)

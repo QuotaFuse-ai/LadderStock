@@ -77,9 +77,7 @@ class CostModel:
         if notional <= 0:
             return 0.0
         return (
-            self.commission_on(notional)
-            + notional * self.transfer_fee
-            + notional * self.stamp_duty
+            self.commission_on(notional) + notional * self.transfer_fee + notional * self.stamp_duty
         )
 
 
@@ -322,11 +320,7 @@ class Engine:
                             notional = sell_notional
                             cost = sell_cost
                             # 平仓盈亏 = 价差 + 开仓成本 + 平仓成本
-                            pnl = (
-                                (executed_price - open_avg_price) * n
-                                - open_open_cost
-                                - sell_cost
-                            )
+                            pnl = (executed_price - open_avg_price) * n - open_open_cost - sell_cost
                             result.trades.append(
                                 Trade(
                                     open_date=open_date,

@@ -6,14 +6,12 @@
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import socket
 import subprocess
 import sys
 import threading
-from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -21,20 +19,32 @@ import typer
 
 from ladderstock import __version__
 from ladderstock.cli.ai import register as register_ai
+from ladderstock.cli.alert import register as register_alert
+from ladderstock.cli.analytics import register as register_analytics
 from ladderstock.cli.backfill import register as register_backfill
 from ladderstock.cli.backtest import register as register_backtest
+from ladderstock.cli.archive import register as register_archive
+from ladderstock.cli.brief import register as register_brief
+from ladderstock.cli.coverage import register as register_coverage
+from ladderstock.cli.debate import register as register_debate
+from ladderstock.cli.verify import register as register_verify
+from ladderstock.cli.valuation import register as register_valuation
 from ladderstock.cli.export import export as export_command
 from ladderstock.cli.industry import register as register_industry
 from ladderstock.cli.journal import register as register_journal
+from ladderstock.cli.knowledge import register as register_knowledge
 from ladderstock.cli.legacy_ports import warn_legacy_port
 from ladderstock.cli.mcp import register as register_mcp
-from ladderstock.cli.news import events_command, news_command
+from ladderstock.cli.news import events_command, news_archive_command, news_command
 from ladderstock.cli.notify import register as register_notify
+from ladderstock.cli.report import register as register_report
 from ladderstock.cli.output import OutputOption, emit, error, resolve_format
 from ladderstock.cli.paths import CONFIG_FILES, config_dir, data_dir
 from ladderstock.cli.pool import register as register_pool
+from ladderstock.cli.peer import peer_app
 from ladderstock.cli.position import register as register_position
 from ladderstock.cli.research import research as research_command
+from ladderstock.cli.research_batch import register as register_research_batch
 from ladderstock.cli.review import register as register_review
 from ladderstock.cli.run import launch as launch_dashboard
 from ladderstock.cli.schedule import register as register_schedule
@@ -42,6 +52,7 @@ from ladderstock.cli.service import register as register_service
 from ladderstock.cli.sources import register as register_sources
 from ladderstock.cli.state import register as register_state
 from ladderstock.cli.supervisor import register as register_supervisor
+from ladderstock.cli.symbol import register as register_symbol
 from ladderstock.cli.sync import register as register_sync
 from ladderstock.cli.watch import register as register_watch
 from ladderstock.cli.watchdog import register as register_watchdog
@@ -79,6 +90,7 @@ watch_app = typer.Typer(
     no_args_is_help=True, help="盘中盯盘（start|status|stop）与我的自选（add|rm|list）"
 )
 notify_app = typer.Typer(no_args_is_help=True, help="通知与提醒")
+alert_app = typer.Typer(no_args_is_help=True, help="提醒引擎（自定义规则 + 出站渠道，DEC-087）")
 journal_app = typer.Typer(no_args_is_help=True, help="交易日志（仅本机 SQLite）")
 position_app = typer.Typer(no_args_is_help=True, help="我的持仓（仅本机 SQLite，不经 MCP）")
 state_app = typer.Typer(no_args_is_help=True, help="前端持久化状态")
@@ -89,7 +101,19 @@ mcp_app = typer.Typer(no_args_is_help=True, help="MCP Server")
 tools_app = typer.Typer(no_args_is_help=True, help="MCP 工具枚举")
 config_app = typer.Typer(no_args_is_help=True, help="配置")
 schedule_app = typer.Typer(no_args_is_help=True, help="定时调度")
+# 标的字典（代码 ↔ 名称）：全市场 `symbol_basic` 表的刷新与查询，实现体在 cli/symbol.py
+symbol_app = typer.Typer(no_args_is_help=True, help="标的字典（代码 ↔ 名称）")
 backtest_app = typer.Typer(no_args_is_help=True, help="回测（A 股日频策略，M1）")
+#: F7 多空对照：StockSenate 桥 + 质量门控（run/show/last/list/status），实现体在 cli/debate.py
+debate_app = typer.Typer(no_args_is_help=True, help="多空对照（StockSenate 合议）")
+#: F8 研究档案：list/show/export/search，见 cli/archive.py；只读本地落盘产物，不烧 token
+archive_app = typer.Typer(no_args_is_help=True, help="研究档案（检索与导出）")
+#: F11 always-on 简报：morning/close/alerts/today/run/history/config，见 cli/brief.py
+brief_app = typer.Typer(no_args_is_help=True, help="简报（晨报 / 收盘复盘 / 持仓异动）")
+#: F10 截图/PDF 查证：capabilities/file/history，见 cli/verify.py；PDF 走文本层，图片走可插拔 vision
+verify_app = typer.Typer(no_args_is_help=True, help="截图 / PDF 查证（抽取 → 对账）")
+#: F12 数据覆盖看板 + 受控补采：board/gaps/plan/backfill，见 cli/coverage.py
+coverage_app = typer.Typer(no_args_is_help=True, help="数据覆盖看板（落盘 / 缺口 / 补采）")
 
 for parent, child, name in (
     (app, review_app, "review"),
@@ -101,6 +125,7 @@ for parent, child, name in (
     (app, sources_app, "sources"),
     (app, watch_app, "watch"),
     (app, notify_app, "notify"),
+    (app, alert_app, "alert"),
     (app, journal_app, "journal"),
     (app, position_app, "position"),
     (app, state_app, "state"),
@@ -111,7 +136,14 @@ for parent, child, name in (
     (mcp_app, tools_app, "tools"),
     (app, config_app, "config"),
     (app, schedule_app, "schedule"),
+    (app, symbol_app, "symbol"),
     (app, backtest_app, "backtest"),
+    (app, debate_app, "debate"),
+    (app, archive_app, "archive"),
+    (app, brief_app, "brief"),
+    (app, verify_app, "verify"),
+    (app, coverage_app, "coverage"),
+    (app, peer_app, "peer"),
 ):
     parent.add_typer(child, name=name)
 
@@ -120,6 +152,35 @@ def _port_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _fatal_dialog(title: str, message: str) -> None:
+    """无控制台形态（pythonw / windowed exe）启动失败时弹系统对话框。
+
+    装机包双击失败如果只 exit，用户什么都看不到（连黑窗口都没有）。
+    Windows 用 MessageBoxW、macOS 用 osascript；其它平台静默（stderr
+    已由 ensure_windowed_sinks 兜底落盘）。
+    """
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+        elif sys.platform == "darwin":
+            import subprocess as _sp
+
+            _sp.run(
+                ["osascript", "-e", f'display alert "{title}" message "{message}"'],
+                timeout=10,
+                check=False,
+            )
+    except Exception:  # noqa: BLE001 - 对话框失败不能盖掉真正的退出
+        pass
+
+
+def _windowed_mode() -> bool:
+    """是否无控制台形态：stdout/stderr 接管前判断（接了文件流之后就不准了）。"""
+    return sys.stdout is None or sys.stderr is None
 
 
 def _port_owner(port: int) -> str:
@@ -201,6 +262,12 @@ register_watchdog(app)
 
 # 单入口 supervisor（QUOT-523）：不进看板也能全起 / 全停 / 单模块重启。
 register_supervisor(app)
+# E 包（DEC-091）：批量研究队列 + 估值换算器
+register_research_batch(app)
+register_valuation(app)
+
+# 知识库投影（形态 2）：公告正文 → qdrant，可被脚本/监控调度。
+register_knowledge(app)
 
 # 跨平台服务/开机自启/托盘（QUOT-527）：三平台原生机制 + dry-run 安装面。
 register_service(app)
@@ -219,6 +286,8 @@ register_weekly(app)
 # 实现体在 cli/sync.py / cli/sources.py；此处只做注册（DEC-003 命令名不变）
 register_sync(sync_app)
 register_sources(sources_app)
+# 全市场标的字典（代码 ↔ 名称）：`symbol refresh|status|lookup`，实现体在 cli/symbol.py
+register_symbol(symbol_app)
 
 # 历史日线回补 + 缺口报表（QUOT-501）：票池与窗口在 config/backfill.yaml，
 # 实现体在 cli/backfill.py + data/backfill.py（缺口口径见 docs/CLI.md §N）
@@ -234,6 +303,13 @@ register_watch(watch_app)
 # 写面只落本机 SQLite，不经 HTTP（DEC-052 §2.3）
 register_watchlist(watch_app)
 register_notify(notify_app)
+# 组合统计（B 包 / DEC-089）：指标 / 基准 / 归因 / 行为 / 错题本，纯本地只读。
+register_analytics(app)
+# 周期报告（B 包后半）：月报 / 季报 / 年报，事实包 + 模板叙述。
+register_report(app)
+# 提醒引擎（DEC-087）：自定义规则（价格/均线/放量/浮盈亏）× 出站渠道（邮件/webhook/IM）。
+# 出站渠道是对 watch/notifier 旧红线的显式推翻，实现体在 alert/ 包，收件箱仍是源头记录。
+register_alert(alert_app)
 
 
 # ---------------------------------------------------------------- 交易日志
@@ -292,6 +368,10 @@ app.command("news", help="资讯雷达：聚合公告/研报/快讯/政策，规
 app.command("events", help="事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口")(
     events_command
 )
+app.command(
+    "news-archive",
+    help="补归档：把 news.sqlite 已有资讯补进 data/archive 与历史库（不重新采集）",
+)(news_archive_command)
 
 
 # ---------------------------------------------------------------- MCP
@@ -386,59 +466,8 @@ def config_migrate(
     raise typer.Exit(EXIT_OK)
 
 
-# 实现体在 cli/schedule.py（APScheduler；任务表见 config/schedule.yaml）
-# `schedule run` 看退出标记自退（见 `_stop_when_marked`）
-def _stop_when_marked(command: Callable[..., Any]) -> Callable[..., Any]:
-    """`schedule run` 的收尾：看板写的退出标记出现就让调度器停下，长驻进程自行退出。
-
-    Windows 上无控制台的 python 收不到优雅终止（taskkill 只能 /F），
-    所以由看板写标记、这里每 2 秒看一眼，走正常收尾再退。
-    """
-
-    def wrapped(*args: Any, **kwargs: Any) -> Any:
-        from apscheduler.schedulers.base import BaseScheduler  # type: ignore[import-untyped]
-
-        from ladderstock.supervisor.page_boot import CHILD_STOP_ARG_ENV
-
-        raw = os.environ.get(CHILD_STOP_ARG_ENV)
-        marker = Path(raw) if raw else None
-        if marker is None:
-            return command(*args, **kwargs)
-        wake = threading.Event()
-        original_start = BaseScheduler.start
-
-        def start(scheduler: BaseScheduler) -> None:
-            scheduler.add_job(
-                lambda: wake.set(),
-                "interval",
-                seconds=2,
-                id="page-boot-stop",
-                replace_existing=True,
-            )
-
-            def watch() -> None:
-                wake.wait()
-                scheduler.shutdown(wait=False)
-
-            threading.Thread(target=watch, name="page-boot-stop", daemon=True).start()
-            original_start(scheduler)
-
-        BaseScheduler.start = start  # type: ignore[method-assign, unused-ignore]
-        try:
-            return command(*args, **kwargs)
-        finally:
-            BaseScheduler.start = original_start  # type: ignore[method-assign, unused-ignore]
-
-    functools.update_wrapper(wrapped, command)
-    return wrapped
-
-
-# 页面自启拉起的 `schedule run` 看退出标记自退（见 `_stop_when_marked`）
-for _entry in schedule_app.registered_commands:
-    if _entry.name == "run" and _entry.callback is not None:
-        _entry.callback = _stop_when_marked(_entry.callback)
-
-
+# 实现体在 cli/schedule.py（APScheduler；任务表见 config/schedule.yaml）；
+# 页面自启拉起的 `schedule run` 看退出标记 / 看板存活自退，见 `start_daemon`
 register_schedule(schedule_app)
 
 
@@ -447,6 +476,26 @@ register_schedule(schedule_app)
 # 实现体在 cli/backtest.py + backtest/ 包（feed/universe/strategy/match/score/guard/card/runner）：
 # 只读本机 daily_k，运行卡落 <data_dir>/backtests/<run_id>/；口径见 docs/specs/SPEC-BACKTEST.md
 register_backtest(backtest_app)
+
+# F7 多空对照（StockSenate 桥 + 质量门控）：`debate run|show|last|list|status`，
+# 实现体在 cli/debate.py；只读报告、不触发辩论的那几个动作不会烧 token
+register_debate(debate_app)
+
+# F8 研究档案（scan/export/search，纯本地读写）：`archive list|show|export|search`，
+# 实现体在 cli/archive.py + research/archive.py
+register_archive(archive_app)
+
+# F11 always-on 简报（组合模板 + 指纹去重 + 开关）：`brief morning|close|alerts|today|run|history|config`，
+# 实现体在 cli/brief.py + watch/brief.py；`morning/close/alerts/today` 只打印不落库
+register_brief(brief_app)
+
+# F10 截图/PDF 查证（抽取 → 关键数字 → 与本机数据对账）：`verify capabilities|file|history`，
+# 实现体在 cli/verify.py + research/verify.py；PDF 走 pypdf 文本层，图片走可插拔 vision 后端
+register_verify(verify_app)
+
+# F12 数据覆盖看板 + 受控补采：`coverage board|gaps|plan|backfill`，
+# 实现体在 data/coverage_board.py + cli/coverage.py；补采默认 dry-run，复用 cli/sync.py 通道
+register_coverage(coverage_app)
 
 
 # ---------------------------------------------------------------- 体检
@@ -478,19 +527,38 @@ def desktop_entry(
     host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = "127.0.0.1",
     output: OutputOption = None,
 ) -> None:
-    """PyInstaller / py2app 双击启动：等价 `ldst run` + 打开浏览器。"""
+    """打包双击入口：启动看板 + 托管全部子模块（DEC-092），端口就绪后打开浏览器。
+
+    与 `ldst run` 的差别只有两件事：
+    - `LDST_SUPERVISOR_OWN_PROCESSES=1`：子模块随应用冷启动、随应用退出（桌面
+      应用 = 唯一入口，不存在“另开终端手动起模块”的形态）；
+    - `LDST_APP_MCP=1`：MCP 面（默认 5951）随主进程拉起，外部工具直接可连。
+    端口占用 / 避让由 `launch()` 统一处理（QUOT-594），这里不提前打断它。
+    """
     del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
+    from ladderstock.cli.windowed import ensure_windowed_sinks
+
+    windowed = _windowed_mode()
+    ensure_windowed_sinks()
+    os.environ["LDST_SUPERVISOR_OWN_PROCESSES"] = "1"
+    os.environ["LDST_APP_MCP"] = "1"
     warn_legacy_port(port)
-    if not _port_free(port):
-        error(f"端口 {port} 已被占用；请用 --port 指定其他端口（不会自动换端口，见 DEC-004）")
-        raise typer.Exit(EXIT_CONFIG)
     # 冒烟/CI 环境置 LDST_NO_BROWSER=1，避免弹出真实浏览器窗口。
     open_browser = (os.environ.get("LDST_NO_BROWSER") or "").strip().lower() not in {
         "1",
         "true",
         "yes",
     }
-    launch_dashboard(host=host, port=port, open_browser=open_browser)
+    try:
+        launch_dashboard(host=host, port=port, open_browser=open_browser)
+    except SystemExit as exc:
+        if windowed and exc.code not in (0, None):
+            _fatal_dialog(
+                "LadderStock 启动失败",
+                "看板未能启动；详见 数据目录\\service\\logs\\app-stderr.log。\n"
+                "常见原因：偏好端口被其它程序占用（可在端口设置中更换）。",
+            )
+        raise
 
 
 @app.command(
@@ -503,13 +571,31 @@ def service_entry(
     host: Annotated[str, typer.Option(help="监听地址，默认仅回环")] = "127.0.0.1",
     output: OutputOption = None,
 ) -> None:
-    """OS 服务/开机自启实际执行的命令：看板 + 自愈 + 自有子进程，不打开浏览器。"""
+    """OS 服务/开机自启实际执行的命令：看板 + 自愈 + 自有子进程，不打开浏览器。
+
+    端口占用 / 避让由 `launch()` 统一处理（QUOT-594），这里不提前打断它。
+    """
     del output  # 长驻进程没有结构化输出；保留参数是为了全局 --output 契约
+    from ladderstock.cli.windowed import ensure_windowed_sinks
+
+    windowed = _windowed_mode()
+    ensure_windowed_sinks()
     os.environ["LDST_SUPERVISOR_OWN_PROCESSES"] = "1"
+    os.environ["LDST_APP_MCP"] = "1"
     os.environ["LDST_NO_BROWSER"] = "1"
-    if not _port_free(port):
-        error(f"端口 {port} 已被占用；服务不会自动换端口（见 DEC-004）")
-        raise typer.Exit(EXIT_CONFIG)
+    try:
+        _service_run(port=port, host=host)
+    except SystemExit as exc:
+        if windowed and exc.code not in (0, None):
+            _fatal_dialog(
+                "LadderStock 服务启动失败",
+                "服务未能启动；详见 数据目录\\service\\logs\\app-stderr.log。",
+            )
+        raise
+
+
+def _service_run(*, port: int, host: str) -> None:
+    """`__service` 主体（拆出来便于无窗口异常时补弹窗）。"""
 
     from ladderstock.service.tray import (
         TrayController,
@@ -539,9 +625,7 @@ def service_entry(
             available, detail = False, str(exc)
         else:
             threading.Thread(
-                target=lambda: backend.run(
-                    TrayController(quit_handler, panel_url=panel_url)
-                ),
+                target=lambda: backend.run(TrayController(quit_handler, panel_url=panel_url)),
                 name="ldst-tray",
                 daemon=True,
             ).start()
@@ -554,9 +638,7 @@ def service_entry(
         own_processes_on_lifecycle=True,
         open_ensure=OpenEnsure(),
     )
-    launch_dashboard(
-        host=host, port=port, open_browser=False, app=app, stop_event=stop_event
-    )
+    launch_dashboard(host=host, port=port, open_browser=False, app=app, stop_event=stop_event)
 
 
 @app.command(
@@ -754,6 +836,12 @@ def doctor(
 
 
 def main() -> None:
+    # 记忆子模块（mem0/torch）随包分发在 `file/modules/memory/site-packages`，
+    # 必须在解析任何子命令之前上 sys.path：源码态与便携包同一相对路径，
+    # 因此启动脚本不再需要写 PYTHONPATH。
+    from ladderstock.core import runtime
+
+    runtime.install_memory_path()
     try:
         app()
     except LadderStockError as exc:

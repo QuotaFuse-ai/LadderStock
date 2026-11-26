@@ -58,6 +58,7 @@ RECORDED_AT_DT = datetime(2026, 10, 29, 0, 0, 0, tzinfo=UTC)
 # 夹具：临时 peer 目录 + 可控的探测原语
 # --------------------------------------------------------------------------- #
 
+
 class FakeRuntime:
     """记录被调用的命令，并按脚本返回结果（绝不真的执行任何东西）。"""
 
@@ -85,6 +86,12 @@ def peer_dirs(tmp_path: Path) -> dict[str, Path]:
     alpha.mkdir(parents=True)
     beta.mkdir(parents=True)
     gamma.mkdir(parents=True)
+    # 「配置可编辑」现在以「模块已安装」为前提（.venv 里有解释器）：测试里显式造占位，
+    # 与真实机器形态一致；不造就等于「未安装」，配置入口本应关闭（本轮修掉的误放行）。
+    for directory in (alpha, beta, gamma):
+        bin_dir = directory / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        bin_dir.mkdir(parents=True)
+        (bin_dir / ("python.exe" if os.name == "nt" else "python")).touch()
     return {"alpha": alpha, "beta": beta, "gamma": gamma}
 
 
@@ -172,9 +179,9 @@ def _plane(
         process_started=process_started or (lambda pid: RECORDED_AT_DT),
         resolve=resolve
         or (
-            lambda host: ["127.0.0.1"]
-            if host in {"127.0.0.1", "localhost", "::1"}
-            else ["93.184.216.34"]
+            lambda host: (
+                ["127.0.0.1"] if host in {"127.0.0.1", "localhost", "::1"} else ["93.184.216.34"]
+            )
         ),
     )
 
@@ -187,10 +194,13 @@ def _venv_bin(peer_dir: Path) -> Path:
 def _venv(peer_dir: Path) -> Path:
     scripts = _venv_bin(peer_dir)
     scripts.mkdir(parents=True, exist_ok=True)
-    (scripts / ("python.exe" if os.name == "nt" else "python")).write_text(
-        "", encoding="utf-8"
-    )
+    (scripts / ("python.exe" if os.name == "nt" else "python")).write_text("", encoding="utf-8")
     return peer_dir / ".venv"
+
+
+def _unvenv(peer_dir: Path) -> None:
+    """撤掉 fixture 默认给的「已安装」形态：本用例要验证未安装 / 首次安装路径。"""
+    shutil.rmtree(peer_dir / ".venv", ignore_errors=True)
 
 
 def _venv_script(peer_dir: Path, name: str) -> Path:
@@ -211,9 +221,11 @@ def _wait(plane: ControlPlane, job_id: str, timeout: float = 5.0) -> Job:
 # 1. 状态判定 5 级
 # --------------------------------------------------------------------------- #
 
+
 def test_status_unconfigured_when_directory_missing(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
+    _unvenv(peer_dirs["alpha"])
     plane = _plane(tmp_path, peer_dirs)
     # alpha 目录存在且未装 venv → 未安装
     assert plane.snapshot("alpha")["status"] == control.STATUS_NOT_INSTALLED
@@ -234,6 +246,7 @@ def test_status_unconfigured_when_not_registered(
 
 
 def test_status_not_installed_without_venv(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    _unvenv(peer_dirs["alpha"])
     plane = _plane(tmp_path, peer_dirs)
     snapshot = plane.snapshot("alpha")
     assert snapshot["status"] == control.STATUS_NOT_INSTALLED
@@ -255,6 +268,7 @@ def test_status_running_requires_port_and_health(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
     _venv(peer_dirs["alpha"])
+
     def ports(port: int) -> list[PortOwner]:
         return [PortOwner(pid=999, process="python.exe")] if port == 8002 else []
 
@@ -268,6 +282,7 @@ def test_status_running_requires_port_and_health(
 
 def test_status_failed_when_health_down(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     _venv(peer_dirs["alpha"])
+
     def ports(port: int) -> list[PortOwner]:
         return [PortOwner(pid=999, process="python.exe")] if port == 8002 else []
 
@@ -309,6 +324,7 @@ def test_status_stopped_after_recorded_process_exits(
 # 2. 端口冲突：只报告，不换端口、不终止
 # --------------------------------------------------------------------------- #
 
+
 def test_port_conflicts_reported_for_known_avoided_ports(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
@@ -335,9 +351,7 @@ def test_port_conflicts_reported_for_known_avoided_ports(
     assert "8002" in reported[8001]["note"]
 
 
-def test_start_refuses_when_port_occupied(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_start_refuses_when_port_occupied(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     _venv(peer_dirs["alpha"])
     spawned: list[Any] = []
     plane = _plane(
@@ -359,6 +373,7 @@ def test_foreign_occupier_marks_failed_without_killing(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
     """未安装的 peer 端口被别人听着：如实说「被占用」，状态失败，绝不杀占用者。"""
+    _unvenv(peer_dirs["alpha"])
     runtime = FakeRuntime()
     plane = _plane(
         tmp_path,
@@ -378,9 +393,7 @@ def test_foreign_occupier_marks_failed_without_killing(
     assert runtime.calls == []  # 看一眼而已，没执行任何子进程
 
 
-def test_stop_refuses_to_kill_foreign_process(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_stop_refuses_to_kill_foreign_process(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     runtime = FakeRuntime()
     plane = _plane(
         tmp_path,
@@ -399,9 +412,9 @@ def test_stop_refuses_to_kill_foreign_process(
 # 3. 安装任务：成功 / 失败（mock 子进程）
 # --------------------------------------------------------------------------- #
 
-def test_install_job_success_uses_local_wheel(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+
+def test_install_job_success_uses_local_wheel(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    _unvenv(peer_dirs["alpha"])
     (peer_dirs["alpha"] / "dist").mkdir()
     wheel = peer_dirs["alpha"] / "dist" / "alpha-1.0.0-py3-none-any.whl"
     wheel.write_text("", encoding="utf-8")
@@ -448,9 +461,7 @@ def test_install_job_failure_keeps_last_lines_and_no_retry_storm(
     assert len(pip_calls) == 2
 
 
-def test_job_store_exposes_queue_running_ok(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_job_store_exposes_queue_running_ok(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     plane = _plane(tmp_path, peer_dirs)
     job = plane.create_job("alpha", "install")
     view = plane.get_job(job.id).view()
@@ -473,6 +484,7 @@ def test_job_store_exposes_queue_running_ok(
 # --------------------------------------------------------------------------- #
 # 4. 配置：白名单 / 脱敏 / 空串不修改 / clear 才删
 # --------------------------------------------------------------------------- #
+
 
 def test_config_get_masks_secrets_and_never_returns_plaintext(
     tmp_path: Path, peer_dirs: dict[str, Path]
@@ -497,9 +509,7 @@ def test_config_get_masks_secrets_and_never_returns_plaintext(
     assert SENTINEL_KEY not in json.dumps(payload, ensure_ascii=False)
 
 
-def test_config_put_rejects_non_whitelisted_key(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_config_put_rejects_non_whitelisted_key(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     app = create_app(
         data_root=tmp_path,
         dist_dir=tmp_path / "missing",
@@ -570,9 +580,7 @@ def test_config_put_empty_string_means_unchanged_and_clear_deletes(
     assert plane.read_config("alpha")["values"]["ALPHA_API_KEY"]["set"] is False
 
 
-def test_config_put_rejects_newlines(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_config_put_rejects_newlines(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     from fastapi import HTTPException
 
     plane = _plane(tmp_path, peer_dirs)
@@ -584,6 +592,7 @@ def test_config_put_rejects_newlines(
 # --------------------------------------------------------------------------- #
 # 4b. QUOT-480：空白名单模块不出「可编辑配置」入口 / FC 白名单口径
 # --------------------------------------------------------------------------- #
+
 
 def _blank_whitelist_peer(directory: Path, **kwargs: Any) -> Any:
     from ladderstock.core.boundary import PeerControl
@@ -636,8 +645,11 @@ def test_can_config_false_when_env_parent_directory_missing(
     nested.mkdir(parents=True)
     plane = _plane(tmp_path, peer_dirs)
     plane.peers["nested"] = _blank_whitelist_peer(
-        nested, key="nested", mcp_port=8796,
-        config_keys=("NESTED_URL",), env_filename="deploy/.env",
+        nested,
+        key="nested",
+        mcp_port=8796,
+        config_keys=("NESTED_URL",),
+        env_filename="deploy/.env",
     )
 
     assert plane.snapshot("nested")["actions"]["can_config"] is False
@@ -716,15 +728,20 @@ def test_financecoffer_whitelist_matches_config_model_and_compose() -> None:
         "FC_MINIO_CONSOLE_ENDPOINT",
     ):
         assert dead not in fc.config_keys
-    # 部署形态：WSL 内 docker compose 的 environment_file 实测路径、不接管启停
+    # 部署形态：2026-11-18 用户裁决——FinanceCoffer 从 WSL compose 收敛为本地增益包，
+    # 启停归 LS 托管（managed=True）；env 文件仍是 deploy/.env。
     assert fc.env_filename == "deploy/.env"
-    assert fc.managed is False
-    assert fc.start_commands == () and fc.web_port is None
+    assert fc.managed is True
+    # 本地增益包自己监听 REST 8100 / MCP 8101，但起停命令由层装配（start_command_faces），
+    # 不走 boundary 的 start_commands 字段。
+    assert fc.web_port == 8100
+    assert fc.start_commands == ()
 
 
 # --------------------------------------------------------------------------- #
 # 5. 开关 / 来源 / 未知资源
 # --------------------------------------------------------------------------- #
+
 
 def test_control_disabled_returns_404_and_data_plane_unaffected(
     tmp_path: Path, peer_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
@@ -745,9 +762,7 @@ def test_control_disabled_returns_404_and_data_plane_unaffected(
     assert client.get("/api/state/config").status_code == 200
 
 
-def test_non_loopback_source_is_rejected(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_non_loopback_source_is_rejected(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=_plane(tmp_path, peer_dirs)
     )
@@ -758,9 +773,7 @@ def test_non_loopback_source_is_rejected(
     assert remote.get("/api/health").status_code == 200
 
 
-def test_unknown_peer_and_job_are_404(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_unknown_peer_and_job_are_404(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=_plane(tmp_path, peer_dirs)
     )
@@ -780,9 +793,7 @@ def test_unknown_api_path_still_404_not_swallowed_by_control(
     assert client.get("/api/controlx").status_code == 404
 
 
-def test_endpoints_return_expected_shapes(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_endpoints_return_expected_shapes(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=_plane(tmp_path, peer_dirs)
     )
@@ -811,26 +822,31 @@ def test_endpoints_return_expected_shapes(
     assert ai.json()["ok"] is True
 
 
-def test_ai_test_rejects_bad_input(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_ai_test_rejects_bad_input(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     app = create_app(
         data_root=tmp_path, dist_dir=tmp_path / "missing", control_plane=_plane(tmp_path, peer_dirs)
     )
     client = TestClient(app, client=LOOPBACK, headers=WRITE_HEADERS)
-    assert client.post(
-        "/api/control/ai/test",
-        json={"peer": "alpha", "base_url": "ftp://x", "model": "m"},
-    ).status_code == 400
-    assert client.post(
-        "/api/control/ai/test",
-        json={"peer": "nope", "base_url": "http://127.0.0.1", "model": "m"},
-    ).status_code == 404
+    assert (
+        client.post(
+            "/api/control/ai/test",
+            json={"peer": "alpha", "base_url": "ftp://x", "model": "m"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/control/ai/test",
+            json={"peer": "nope", "base_url": "http://127.0.0.1", "model": "m"},
+        ).status_code
+        == 404
+    )
 
 
 # --------------------------------------------------------------------------- #
 # 6. 脱敏 & 元数据
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
@@ -882,9 +898,7 @@ def test_probe_health_ignores_system_proxy(monkeypatch: pytest.MonkeyPatch) -> N
     assert detail == "HTTP 200"
 
 
-def test_logs_endpoint_masks_stored_secret(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_logs_endpoint_masks_stored_secret(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     (peer_dirs["alpha"] / ".env.local").write_text(
         f"ALPHA_API_KEY={SENTINEL_KEY}\n", encoding="utf-8"
     )
@@ -951,12 +965,14 @@ def _legacy_component(directory: Path) -> Any:
     )
 
 
-def test_proxyfleet_is_a_managed_task_peer() -> None:
-    """QUOT-485：ProxyFleet 升级为纳管 peer（Windows 计划任务生命周期），不再是组件。"""
+def test_proxyfleet_is_a_managed_service_peer() -> None:
+    """QUOT-485 + 2026-11-18 用户裁决：ProxyFleet 仍是纳管 peer，但生命周期已从
+    Windows 计划任务改成 venv 服务（`.venv/Scripts/proxyfleet.exe serve`），
+    所以不再有 task_name。"""
     from ladderstock.core.boundary import COMPONENTS, PEER_SIBLING_DIRS, PEERS, resolve_peer_control
 
     ctl = PEER_CONTROL["proxyfleet"]
-    assert ctl.task_name == "ProxyFleet"
+    assert ctl.task_name is None
     assert ctl.mcp_port == 8788
     assert ctl.web_port == 8788
     assert ctl.extra_ports == (8789,)
@@ -969,17 +985,13 @@ def test_proxyfleet_is_a_managed_task_peer() -> None:
     assert "proxyfleet" not in COMPONENTS  # 升级：从组件表迁出（机制保留，表可为空）
 
 
-def test_component_snapshot_running_from_health(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_component_snapshot_running_from_health(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     component = _legacy_component(peer_dirs["alpha"])
     plane = _plane(
         tmp_path,
         peer_dirs,
         components={"legacy": component},
-        ports=lambda port: [PortOwner(pid=7, process="python.exe")]
-        if port in (8788, 8789)
-        else [],
+        ports=lambda port: [PortOwner(pid=7, process="python.exe")] if port in (8788, 8789) else [],
         health=lambda url, timeout: (True, "HTTP 200"),
     )
 
@@ -1040,9 +1052,8 @@ def test_board_includes_components(tmp_path: Path, peer_dirs: dict[str, Path]) -
 # 6a. QUOT-403：模块卡由 sources.yaml peers 块驱动 + FinanceCoffer 只读观测
 # --------------------------------------------------------------------------- #
 
-def test_board_peer_cards_follow_sources_yaml(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+
+def test_board_peer_cards_follow_sources_yaml(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     """yaml 里删掉一段（重启后）对应卡消失；peers 块读不到时回退全表不许变空。"""
     plane = _plane(tmp_path, peer_dirs, registered=("alpha",))
     payload = plane.board()
@@ -1056,9 +1067,7 @@ def test_board_peer_cards_follow_sources_yaml(
     assert [item["id"] for item in payload_empty["peers"]] == ["alpha", "beta", "gamma"]
 
 
-def test_unmanaged_peer_has_no_action_buttons(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_unmanaged_peer_has_no_action_buttons(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     """FinanceCoffer（WSL，QUOT-403）：面板出卡、探健康，但不出安装/启停按钮。"""
     from dataclasses import replace as dc_replace
 
@@ -1262,9 +1271,7 @@ def test_config_notes_flag_keys_that_do_not_take_effect() -> None:
     assert any("llm_config.toml" in note for note in PEER_CONTROL["senate"].config_notes)
 
 
-def test_read_config_reports_env_file_and_notes(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_read_config_reports_env_file_and_notes(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     (peer_dirs["alpha"] / ".env.local").write_text("MCP_HTTP_PORT=8002\n", encoding="utf-8")
     plane = _plane(tmp_path, peer_dirs)
     payload = plane.read_config("alpha")
@@ -1277,6 +1284,7 @@ def test_read_config_reports_env_file_and_notes(
 # 7. QUOT-123 安全回归：Host / Origin / PID 归属 / SSRF / 开关全 404
 # --------------------------------------------------------------------------- #
 
+
 def _loopback_client(tmp_path: Path, peer_dirs: dict[str, Path], **kwargs: Any) -> TestClient:
     """监听地址也是回环的客户端（`scope["server"]=("127.0.0.1", 5950)`）。"""
     app = create_app(
@@ -1287,9 +1295,7 @@ def _loopback_client(tmp_path: Path, peer_dirs: dict[str, Path], **kwargs: Any) 
     return TestClient(app, base_url="http://127.0.0.1:5950", client=LOOPBACK)
 
 
-def test_host_header_outside_whitelist_is_403(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_host_header_outside_whitelist_is_403(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     """B5：来源是回环但 Host 是攻击者域名（DNS rebinding）→ 403。"""
     client = _loopback_client(tmp_path, peer_dirs)
     host = {"Host": "attacker.test:5950"}
@@ -1330,9 +1336,7 @@ def test_cross_site_write_is_rejected_before_any_work(
     assert client.post("/api/control/peers/alpha/start", headers=same).status_code == 200
 
 
-def test_write_requires_positive_evidence(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_write_requires_positive_evidence(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     """QUOT-178：写方法必须「Origin 同源」或「X-LDST-Client: 1」，双缺席 403。"""
     runtime = FakeRuntime()
     spawned: list[Any] = []
@@ -1375,9 +1379,7 @@ def test_write_requires_positive_evidence(
     )
 
 
-def test_start_records_pid_metadata(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_start_records_pid_metadata(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     """P0-2：`_start` 落盘 `{pid, exe, started_at}`，不再只写裸 PID。"""
     _venv(peer_dirs["alpha"])
     _venv_script(peer_dirs["alpha"], "alpha").write_text("", encoding="utf-8")
@@ -1473,17 +1475,13 @@ def test_stop_kills_only_when_ownership_confirmed(
         runtime=runtime,
         process_info=lambda pid, cwd: (str(exe), "python.exe"),
     )
-    plane._peer_state("alpha")["pids"] = [
-        {"pid": 5555, "exe": str(exe), "started_at": RECORDED_AT}
-    ]
+    plane._peer_state("alpha")["pids"] = [{"pid": 5555, "exe": str(exe), "started_at": RECORDED_AT}]
     job = plane.create_job("alpha", "stop")
     finished = _wait(plane, job.id)
     assert finished.status == "ok", finished.error
     # 终止命令跟平台走：Windows 是 taskkill，POSIX 是 kill -TERM（control.py 里同一分支）
     expected_stop = (
-        ["taskkill", "/PID", "5555", "/T", "/F"]
-        if os.name == "nt"
-        else ["kill", "-TERM", "5555"]
+        ["taskkill", "/PID", "5555", "/T", "/F"] if os.name == "nt" else ["kill", "-TERM", "5555"]
     )
     assert expected_stop in runtime.calls
     entry = plane._peer_state("alpha")
@@ -1494,6 +1492,7 @@ def test_stop_kills_only_when_ownership_confirmed(
 # --------------------------------------------------------------------------- #
 # QUOT-177 P1-2：同目录不同 exe、PID 复用（创建时间不符）都必须拒绝
 # --------------------------------------------------------------------------- #
+
 
 def _stop_with(
     tmp_path: Path,
@@ -1578,9 +1577,7 @@ def test_stop_allows_when_creation_time_within_tolerance(
     )
     assert finished.status == "ok", finished.error
     expected_stop = (
-        ["taskkill", "/PID", "17136", "/T", "/F"]
-        if os.name == "nt"
-        else ["kill", "-TERM", "17136"]
+        ["taskkill", "/PID", "17136", "/T", "/F"] if os.name == "nt" else ["kill", "-TERM", "17136"]
     )
     assert expected_stop in runtime.calls
     entry = plane._peer_state("alpha")
@@ -1881,6 +1878,7 @@ def test_control_disabled_all_methods_are_spa_shaped_404(
 # 8. AI 生成 / 重试任务（QUOT-236）：复用 Job 模型，不新增 peer
 # --------------------------------------------------------------------------- #
 
+
 def test_ai_generate_job_runs_review_cli(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     runtime = FakeRuntime()
     runtime.default = StepResult(0, '{"ok": true, "degraded": false}\n')
@@ -1991,6 +1989,7 @@ def test_ai_job_is_exclusive(tmp_path: Path, peer_dirs: dict[str, Path]) -> None
 # 7. 页面一键命令（QUOT-200）
 # --------------------------------------------------------------------------- #
 
+
 def test_page_commands_cover_routes_and_resolve_date(
     tmp_path: Path, peer_dirs: dict[str, Path]
 ) -> None:
@@ -2023,9 +2022,7 @@ def test_page_commands_cover_routes_and_resolve_date(
     )
 
 
-def test_page_command_runs_whitelisted_argv(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_page_command_runs_whitelisted_argv(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     runtime = FakeRuntime()
     plane = _plane(tmp_path, peer_dirs, runtime=runtime)
 
@@ -2082,9 +2079,7 @@ def test_watch_notify_selftest_reports_delivered_and_undelivered(
     assert "通知链路自检失败" in (broken.error or "")
 
 
-def test_page_command_exit_codes_map_to_status(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_page_command_exit_codes_map_to_status(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     runtime = FakeRuntime()
     runtime.default = StepResult(9, "degraded\n")
     plane = _plane(tmp_path, peer_dirs, runtime=runtime)
@@ -2123,9 +2118,7 @@ def test_page_command_is_exclusive_and_rejects_unknown(
     assert _wait(plane, first.id).status == "ok"
 
 
-def test_command_endpoints_expose_whitelist(
-    tmp_path: Path, peer_dirs: dict[str, Path]
-) -> None:
+def test_command_endpoints_expose_whitelist(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
     client = TestClient(
         create_app(
             data_root=tmp_path,
@@ -2259,9 +2252,9 @@ def test_can_start_false_when_all_faces_listening(
         tmp_path,
         peer_dirs,
         registered=GAMMA_REGISTERED,
-        ports=lambda port: [PortOwner(pid=999, process="python.exe")]
-        if port in {8765, 8786}
-        else [],
+        ports=lambda port: (
+            [PortOwner(pid=999, process="python.exe")] if port in {8765, 8786} else []
+        ),
     )
     assert plane.snapshot("gamma")["actions"]["can_start"] is False
 
@@ -2324,9 +2317,7 @@ def test_stop_skips_dead_pids_and_stops_live_one(
     finished = _wait(plane, job.id)
     assert finished.status == "ok", finished.error
     expected_stop = (
-        ["taskkill", "/PID", "222", "/T", "/F"]
-        if os.name == "nt"
-        else ["kill", "-TERM", "222"]
+        ["taskkill", "/PID", "222", "/T", "/F"] if os.name == "nt" else ["kill", "-TERM", "222"]
     )
     assert expected_stop in runtime.calls
     assert not any("111" in " ".join(call) for call in runtime.calls)
@@ -2334,3 +2325,104 @@ def test_stop_skips_dead_pids_and_stops_live_one(
     entry = plane._peer_state("gamma")
     assert entry["pids"] == []
     assert entry["last_stop_at"]
+
+
+# --------------------------------------------------------------------------- #
+# 一键接入（容器化模块：目录不存在时生成 compose + .env）
+# --------------------------------------------------------------------------- #
+
+
+def _qdrant_plane(tmp_path: Path, directory: Path) -> ControlPlane:
+    from dataclasses import replace
+
+    ctl = replace(PEER_CONTROL["qdrant"], directory=str(directory))
+    runtime = FakeRuntime()
+    return ControlPlane(
+        data_root=tmp_path,
+        peers={"qdrant": ctl},
+        components={},
+        sources_loader=lambda: {"qdrant": {"product": "Qdrant"}},
+        run=runtime.run,
+        port_probe=lambda port: [],
+        health_probe=lambda url, timeout: (True, "HTTP 200"),
+        spawn=lambda args, *, cwd, log_path: SimpleNamespace(pid=4242),
+        http_post=lambda url, payload, headers, timeout: (200, "{}"),
+        process_info=lambda pid, cwd: (None, None),
+        process_started=lambda pid: RECORDED_AT_DT,
+        resolve=lambda host: ["127.0.0.1"],
+    )
+
+
+def test_scaffold_creates_qdrant_config_and_env(tmp_path: Path) -> None:
+    """目录不存在时生成部署文件，并让该模块从「未接入」变成可配置。
+
+    2026-11-18 用户裁决：Qdrant 彻底去 Docker（不再有 qf-qdrant 容器），
+    接入产物从 docker-compose.yml 改成单体二进制读的原生 config.yaml。
+    """
+    qdrant_dir = tmp_path / "Qdrant"
+    plane = _qdrant_plane(tmp_path, qdrant_dir)
+
+    result = plane.scaffold("qdrant")
+
+    assert result["directory"] == str(qdrant_dir)
+    assert result["created"] == ["config.yaml", ".env"]
+    assert result["kept"] == []
+    cfg = (qdrant_dir / "config.yaml").read_text(encoding="utf-8")
+    assert "http_port: 6333" in cfg
+    assert "grpc_port: 6334" in cfg
+    assert "host: 127.0.0.1" in cfg
+    assert "storage_path: ./storage" in cfg
+    # 不再有容器部署结构（注释里说明「不走 docker」不算，只查真正的 compose 键）
+    assert "services:" not in cfg
+    assert "image:" not in cfg
+    assert "qf-qdrant" not in cfg
+    # 生成的 .env 必须是这个模块真会读的那个文件（env_filename=.env）
+    assert (qdrant_dir / ".env").is_file()
+
+    config = plane.read_config("qdrant")
+    assert config["exists"] is True
+    # 没有 .venv 也没有 compose：按接入产物在位判定「已装」（否则配置入口死掉）
+    assert config["installed"] is True
+    assert config["editable"] is True
+
+
+def test_scaffold_never_overwrites_existing_files(tmp_path: Path) -> None:
+    """已有 config.yaml / .env 一律保留：覆盖一次就可能毁掉手工调过的端口或密钥。"""
+    qdrant_dir = tmp_path / "Qdrant"
+    qdrant_dir.mkdir(parents=True)
+    cfg = qdrant_dir / "config.yaml"
+    env = qdrant_dir / ".env"
+    cfg.write_text("http_port: 7333\n", encoding="utf-8")
+    env.write_text("QDRANT_URL=http://127.0.0.1:7333\n", encoding="utf-8")
+    plane = _qdrant_plane(tmp_path, qdrant_dir)
+
+    result = plane.scaffold("qdrant")
+
+    assert result["created"] == []
+    assert result["kept"] == ["config.yaml", ".env"]
+    assert cfg.read_text(encoding="utf-8") == "http_port: 7333\n"
+    assert env.read_text(encoding="utf-8") == "QDRANT_URL=http://127.0.0.1:7333\n"
+
+
+def test_scaffold_resolves_placeholder_directory(tmp_path: Path, monkeypatch) -> None:
+    """占位符不能当目录名：`[modules-path]\\Qdrant` 会建到进程 CWD 下的字面目录里。"""
+    real = tmp_path / "Qdrant-real"
+    monkeypatch.setenv("LDST_PEER_DIR_QDRANT", str(real))
+    plane = _qdrant_plane(tmp_path, Path("[modules-path]") / "Qdrant")
+
+    result = plane.scaffold("qdrant")
+
+    assert result["directory"] == str(real)
+    assert (real / "config.yaml").is_file()
+    # 关键：不能在进程 CWD 下建出一个叫 [modules-path] 的目录（占位符不是路径）
+    assert not (Path.cwd() / "[modules-path]").exists()
+
+
+def test_scaffold_rejects_peer_without_template(tmp_path: Path, peer_dirs: dict[str, Path]) -> None:
+    """只有登记了模板的容器化模块能一键接入；venv 形态没有部署物可生成。"""
+    plane = _plane(tmp_path, peer_dirs)
+
+    with pytest.raises(HTTPException) as exc:
+        plane.scaffold("alpha")
+
+    assert exc.value.status_code == 400

@@ -68,6 +68,7 @@ import { reportHref } from './links'
 import { useResearchView, type ResearchView } from './useResearchView'
 import { useAsync } from '../../lib/useAsync'
 import OverviewTab from './OverviewTab'
+import DebateTab from './DebateTab'
 
 /**
  * `/research/:code` 个股深挖（R8 / QUOT-448）。
@@ -567,13 +568,20 @@ function DetailSkeleton() {
   )
 }
 
-/** 深挖页的两个视角（QUOT-400）：概览（走势 + 财报，不依赖六段）与深度研究（六段）。 */
-type DeepDiveTab = 'overview' | 'research'
+/** 深挖页的三个视角（QUOT-400 + F7）：概览（走势 + 财报）、深度研究（六段）、多空对照（合议）。 */
+type DeepDiveTab = 'overview' | 'research' | 'debate'
 
 const DEEP_DIVE_TABS = [
   { value: 'overview' as const, label: '概览' },
   { value: 'research' as const, label: '深度研究' },
+  { value: 'debate' as const, label: '多空对照' },
 ]
+
+function readTab(value: string | null): DeepDiveTab {
+  if (value === 'research') return 'research'
+  if (value === 'debate') return 'debate'
+  return 'overview'
+}
 
 export default function ResearchDetailScreen() {
   const view = useResearchView()
@@ -582,8 +590,8 @@ export default function ResearchDetailScreen() {
   const [params, setParams] = useSearchParams()
   const [drawer, setDrawer] = useState<DrawerState>(null)
 
-  // tab 记在地址里（?tab=research），刷新、后退都还在；缺省概览（QUOT-400）
-  const tab: DeepDiveTab = params.get('tab') === 'research' ? 'research' : 'overview'
+  // tab 记在地址里（?tab=research / ?tab=debate），刷新、后退都还在；缺省概览（QUOT-400）
+  const tab: DeepDiveTab = readTab(params.get('tab'))
   const pickTab = (next: DeepDiveTab) => {
     const query = new URLSearchParams(params)
     if (next === 'overview') query.delete('tab')
@@ -679,7 +687,14 @@ export default function ResearchDetailScreen() {
   const displayName = view.name ?? overviewRequest.data?.name ?? null
   // QUOT-475：把当前标的登记给顶栏「问 AI」，从顶栏打开时开场里能填上名称而不是留占位
   useRegisterAssistantObject({ code: view.code, name: displayName, date: view.date, tab })
-  const symbolBar = <ResearchSymbolBar code={view.code} name={displayName} onOpen={openResearch} />
+  const symbolBar = (
+    <ResearchSymbolBar
+      code={view.code}
+      name={displayName}
+      onOpen={openResearch}
+      onDebate={view.code ? () => pickTab('debate') : undefined}
+    />
+  )
 
   const header = (
     <PageHeader
@@ -781,6 +796,18 @@ export default function ResearchDetailScreen() {
           reload={overviewRequest.reload}
         />
         {pageTail}
+      </div>
+    )
+  }
+
+  // F7 多空对照：只读 StockSenate 已落盘的合议报告；六段跑没跑过都不影响这个视角
+  if (tab === 'debate') {
+    return (
+      <div className="flex flex-col gap-5">
+        {header}
+        {symbolBar}
+        {tabsBar}
+        <DebateTab code={view.code} date={view.date} />
       </div>
     )
   }

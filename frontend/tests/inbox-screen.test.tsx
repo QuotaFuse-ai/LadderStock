@@ -208,8 +208,9 @@ describe('/inbox 定时任务与渠道', () => {
     expect(within(jobs).getByText('已启用')).toBeTruthy()
     expect(within(jobs).getByText('15:40 收盘摘要')).toBeTruthy()
     expect(within(jobs).getByText('已停用')).toBeTruthy()
-    expect(screen.queryAllByRole('switch')).toHaveLength(0)
-    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    // 只读说的是「定时任务区」：简报卡上的通知开关不属于这一区，不能算进来
+    expect(within(jobs).queryAllByRole('switch')).toHaveLength(0)
+    expect(within(jobs).queryAllByRole('checkbox')).toHaveLength(0)
   })
 
   it('渠道只列 console / desktop，没有发送测试按钮', async () => {

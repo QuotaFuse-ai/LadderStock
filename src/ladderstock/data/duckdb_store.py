@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -67,6 +68,12 @@ CONFLICT_HINTS: tuple[str, ...] = (
     "进程无法访问",
     "无法锁定",
 )
+
+#: DuckDB 硬限制：同一个库文件在**一个进程内**不能同时以只读和读写两种配置打开，
+#: 报错是 `Can't open a connection to same database file with a different configuration
+#: than existing connections`。它跟跨进程锁冲突不是一回事——重试永远等不到结果，
+#: 必须先关掉另一种配置的连接（或把写任务拆到独立进程）才可能成功。
+CONFIG_MISMATCH_HINTS: tuple[str, ...] = ("different configuration",)
 
 #: 有界重试：最多 `CONNECT_ATTEMPTS` 次、总等待不超过约 1.5s，够让一次
 #: 秒级同步落地后释放文件锁；拿不到就明确报错，绝不无界重试拖死调度任务。
@@ -97,6 +104,74 @@ def is_lock_conflict(exc: BaseException) -> bool:
     return any(hint in text for hint in CONFLICT_HINTS)
 
 
+def is_config_mismatch(exc: BaseException) -> bool:
+    """异常文案是否指向「同进程内只读/读写两种配置混用」。"""
+    text = str(exc).lower()
+    return any(hint in text for hint in CONFIG_MISMATCH_HINTS)
+
+
+# --------------------------------------------------------------------------- #
+# 进程内连接模式协调
+#
+# DuckDB 的硬限制：同一个库文件在**一个进程内**不能同时存在只读和读写两种配置
+# （报 "different configuration"），而且这条错误**不是**因为它坏了，重试也等不到。
+#
+# 症状就是这样来的：web 进程里 OpenEnsure 顺手跑一轮 `sync_one`（读写），同时页面
+# 的 GET 在读同一条库（只读），15:40 的收盘摘要再要一条只读连接——直接炸，调度器
+# 记成 failed，用户看到一屏红色。
+#
+# 这里不搞读写锁（漏关连接就会整站等待），只做**单向收敛**：进程里已经有一条读写
+# 连接活着时，后续的只读请求改成用读写方式打开。读写连接读同一个库没有任何问题，
+# 于是配置永远只有一个；而「只读活着、请求读写」才是真正不允许的组合，那才报错。
+#
+# 计数只影响「要不要升级」，即使某条路径漏关导致计数偏高，代价也只是后来的读连接
+# 以读写方式打开，不会阻塞、不会死锁。
+# --------------------------------------------------------------------------- #
+
+_PROCESS_GUARD = threading.RLock()
+_PROCESS_REFS: dict[str, int] = {}
+_PROCESS_READ_ONLY: dict[str, bool] = {}
+_PROCESS_HANDLES: dict[int, str] = {}
+
+
+def _process_key(target: Path) -> str:
+    try:
+        resolved = target.resolve()
+    except OSError:  # pragma: no cover - 路径不可解析时退回字面量
+        resolved = target
+    return str(resolved).lower()
+
+
+def _register(conn: duckdb.DuckDBPyConnection, key: str, read_only: bool) -> None:
+    with _PROCESS_GUARD:
+        refs = _PROCESS_REFS.get(key, 0)
+        if refs == 0:
+            _PROCESS_READ_ONLY[key] = read_only
+        _PROCESS_REFS[key] = refs + 1
+        _PROCESS_HANDLES[id(conn)] = key
+
+
+def _unregister(conn: duckdb.DuckDBPyConnection) -> None:
+    with _PROCESS_GUARD:
+        key = _PROCESS_HANDLES.pop(id(conn), None)
+        if key is None:
+            return
+        refs = _PROCESS_REFS.get(key, 0) - 1
+        if refs <= 0:
+            _PROCESS_REFS.pop(key, None)
+            _PROCESS_READ_ONLY.pop(key, None)
+        else:
+            _PROCESS_REFS[key] = refs
+
+
+def _effective_read_only(key: str, read_only: bool) -> bool:
+    """同进程已有读写连接时，把这次只读请求收敛成读写。"""
+    with _PROCESS_GUARD:
+        if read_only and _PROCESS_REFS.get(key, 0) > 0 and not _PROCESS_READ_ONLY.get(key, True):
+            return False
+        return read_only
+
+
 def connect(
     path: Path | None = None, *, read_only: bool = False, attempts: int = CONNECT_ATTEMPTS
 ) -> duckdb.DuckDBPyConnection:
@@ -109,12 +184,25 @@ def connect(
     target = Path(path) if path is not None else db_path()
     if not read_only:
         target.parent.mkdir(parents=True, exist_ok=True)
+    key = _process_key(target)
     delay = CONNECT_BACKOFF_BASE
     for attempt in range(1, max(1, attempts) + 1):
+        effective_read_only = _effective_read_only(key, read_only)
         try:
-            return duckdb.connect(str(target), read_only=read_only)
+            conn = duckdb.connect(str(target), read_only=effective_read_only)
         except Exception as exc:  # noqa: BLE001 - 开库口子只有一种正确结局：连上，或带码报错
-            if not is_lock_conflict(exc):
+            if read_only and is_config_mismatch(exc):
+                # 计数没覆盖到的读写连接（别处直接 `conn.close()` 或漏关）：只读请求本
+                # 就可以让位，用读写方式再开一次，别把整条读链路拖成失败。
+                try:
+                    conn = duckdb.connect(str(target), read_only=False)
+                except Exception:  # noqa: BLE001 - 让位失败就回到原本的错误处理
+                    pass
+                else:
+                    _register(conn, key, False)
+                    return conn
+            config_mismatch = is_config_mismatch(exc)
+            if not (config_mismatch or is_lock_conflict(exc)):
                 raise LadderStockError(
                     f"历史库打不开：{target}\n{type(exc).__name__}: {_one_line(exc)}\n"
                     "提示：这不是并发问题。确认数据目录可写；库文件损坏时先手工备份"
@@ -122,6 +210,17 @@ def connect(
                     EXIT_CONFIG,
                 ) from exc
             if attempt >= attempts:
+                if config_mismatch:
+                    # 同进程只读/读写混用：重试等不到结果，但绝不能判成「库坏了」。
+                    raise LadderStockError(
+                        f"历史库连接配置冲突：{target}\n"
+                        f"{type(exc).__name__}: {_one_line(exc)}\n"
+                        f"本次要开的是 {'只读' if read_only else '读写'}连接，但同一进程里"
+                        "已经开着另一种配置的连接——DuckDB 不允许同一个库文件混用两种配置。\n"
+                        "提示：这不是库损坏，也不要删库重建。关掉那条长期持有的连接"
+                        "（读路径统一 read_only=True 并 close，写路径串行或放到独立进程）后重跑",
+                        EXIT_DB_BUSY,
+                    ) from exc
                 raise LadderStockError(
                     f"历史库被其他进程占用，已重试 {attempt} 次仍不可用：{target}\n"
                     f"{type(exc).__name__}: {_one_line(exc)}\n"
@@ -131,6 +230,9 @@ def connect(
                 ) from exc
             time.sleep(delay)
             delay = min(delay * 2, CONNECT_BACKOFF_CAP)
+            continue
+        _register(conn, key, effective_read_only)
+        return conn
     raise AssertionError("connect() 重试循环不应走到这里")  # pragma: no cover
 
 
@@ -144,11 +246,14 @@ def close(conn: duckdb.DuckDBPyConnection | None) -> None:
             conn.close()
         except Exception:  # noqa: BLE001 - 关闭失败不影响主流程
             pass
+        finally:
+            _unregister(conn)
 
 
 # --------------------------------------------------------------------------- #
 # 记录规整
 # --------------------------------------------------------------------------- #
+
 
 def record_day(record: dict[str, Any], default: date | None = None) -> date | None:
     """从记录里取交易日；取不到就用 `default`，都没有则返回 None。"""
@@ -193,6 +298,7 @@ def _as_date(value: Any) -> date | None:
 # --------------------------------------------------------------------------- #
 # 写入
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class WriteResult:
@@ -285,6 +391,8 @@ def _normalize(
     """规整记录并生成幂等键。
 
     - `append`（daily_k）按 `(code, trade_date)` 去重，重跑行数不增长；
+    - 资讯类记录额外带 `content_hash`：同一只票同一天可能有多篇研报/公告，
+      只按 `(code, trade_date)` 折叠会静默丢稿，所以有哈希时键里带上它；
     - `replace` 整日覆盖，**不按 code 折叠**——席位、龙虎榜这类一天可能多行，折叠会丢数据。
     """
     staged: dict[tuple[str, str], dict[str, Any]] = {}
@@ -297,7 +405,10 @@ def _normalize(
             raise ValueError(f"第 {index} 条记录缺少交易日")
         code = record_code(record)
         if mode == "append":
-            if code:
+            content_hash = str(record.get("content_hash") or "").strip()
+            if content_hash:
+                key = (f"{code}|{content_hash}" if code else content_hash, day.isoformat())
+            elif code:
                 key = (code, day.isoformat())
             else:  # 无代码的追加记录用整条内容区分，避免同批多行被折叠
                 key = (
@@ -324,7 +435,7 @@ def _write_rows(
     source: str,
 ) -> None:
     conn.execute(
-        f'CREATE TABLE IF NOT EXISTS {table} '
+        f"CREATE TABLE IF NOT EXISTS {table} "
         "(code VARCHAR, trade_date DATE, ingested_at TIMESTAMP, source VARCHAR, payload VARCHAR)"
     )
     conn.execute(
@@ -334,8 +445,7 @@ def _write_rows(
     _stage_rows(conn, rows, source=source)
     if mode == "replace":
         conn.execute(
-            f"DELETE FROM {table} WHERE trade_date IN "
-            "(SELECT DISTINCT trade_date FROM _ldst_stage)"
+            f"DELETE FROM {table} WHERE trade_date IN (SELECT DISTINCT trade_date FROM _ldst_stage)"
         )
     else:
         conn.execute(
@@ -344,8 +454,7 @@ def _write_rows(
             "WHERE s.code = t.code AND s.trade_date = t.trade_date)"
         )
     conn.execute(
-        f"INSERT INTO {table} ({', '.join(COLUMNS)}) "
-        f"SELECT {', '.join(COLUMNS)} FROM _ldst_stage"
+        f"INSERT INTO {table} ({', '.join(COLUMNS)}) SELECT {', '.join(COLUMNS)} FROM _ldst_stage"
     )
 
 
@@ -377,6 +486,7 @@ def _transaction(conn: duckdb.DuckDBPyConnection, body: Any) -> None:
 # --------------------------------------------------------------------------- #
 # Parquet 分区
 # --------------------------------------------------------------------------- #
+
 
 def partition_path(dataset: str, day: date | str, *, root: Path | None = None) -> Path:
     owner_of(dataset)  # 未登记数据集不许落分区
@@ -422,6 +532,7 @@ def _export_partition(
 # 读取
 # --------------------------------------------------------------------------- #
 
+
 def query_dataset(
     dataset: str,
     day: date | None = None,
@@ -453,8 +564,7 @@ def query_dataset(
         clause = f" WHERE {' AND '.join(where)}" if where else ""
         tail = f" LIMIT {int(limit)}" if limit else ""
         rows = conn.execute(
-            f"SELECT {', '.join(COLUMNS)} FROM {table}{clause} "
-            f"ORDER BY trade_date, code{tail}",
+            f"SELECT {', '.join(COLUMNS)} FROM {table}{clause} ORDER BY trade_date, code{tail}",
             params,
         ).fetchall()
     finally:
@@ -468,9 +578,7 @@ def dataset_rows(dataset: str, *, root: Path | None = None) -> int:
     return _count_rows(None, _table(dataset), root)
 
 
-def _count_rows(
-    conn: duckdb.DuckDBPyConnection | None, table: str, root: Path | None
-) -> int:
+def _count_rows(conn: duckdb.DuckDBPyConnection | None, table: str, root: Path | None) -> int:
     owns = conn is None
     if conn is None:
         path = db_path(root)

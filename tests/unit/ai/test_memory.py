@@ -320,9 +320,7 @@ def test_recall_sorts_and_caps_top_k() -> None:
 
 def test_recall_rejects_cross_namespace_memories() -> None:
     engine = FakeEngine(
-        search_results=[
-            {"memory": "别人的记忆", "score": 0.9, "metadata": {"user_id": "u-other"}}
-        ]
+        search_results=[{"memory": "别人的记忆", "score": 0.9, "metadata": {"user_id": "u-other"}}]
     )
     hits = memory.recall("问题", symbol=None, settings=_settings(), client=_client(engine))
     assert hits == []
@@ -332,9 +330,7 @@ def test_recall_sends_engine_contract_payload() -> None:
     """锁死引擎契约：query + top_k（2 倍预取）+ 命名空间参数，infer 永远 True。"""
     engine = FakeEngine()
     memory.reset_runtime_state()
-    memory.recall(
-        "问题", symbol=None, settings=_settings(top_k=3), client=_client(engine)
-    )
+    memory.recall("问题", symbol=None, settings=_settings(top_k=3), client=_client(engine))
 
     assert len(engine.search_calls) == 1
     call = engine.search_calls[0]
@@ -464,9 +460,7 @@ def test_render_block_long_knowledge_not_clipped_by_memory_budget() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_load_settings_reads_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_load_settings_reads_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv(memory.ENV_USER_ID, "zhang-local")
     monkeypatch.setenv(memory.ENV_TOP_K, "3")
     monkeypatch.setenv(memory.ENV_SCORE_THRESHOLD, "0.6")

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database } from 'lucide-react'
+import { Database, Download } from 'lucide-react'
 
 import { isLimitPoolEndpointMissing, type LimitPoolRow } from '../../api/limitPool'
 import { DemoStateBadge, OfflineBanner, PageHeader } from '../../components/PageShell'
@@ -18,6 +18,7 @@ import {
   type Column,
 } from '../../components/ui'
 import { formatBoards, formatInt, formatSealTime, formatTime, localDateIso, MISSING } from '../../lib/format'
+import { useTableExport } from '../../lib/useTableExport'
 import { DEMO_LIMIT_POOL_DATE } from './demo'
 import { useLimitPoolDemoEnabled, useLimitUpView } from './useLimitUpView'
 
@@ -79,6 +80,20 @@ export default function LimitUpScreen() {
 
   const { forced, state, payload, error, reload } = useLimitUpView({ date })
 
+  // C 包后续单（DEC-090 §4）：导出当前涨停样本视图（封板时间导出与页面同口径的
+  // HH:mm:ss；缺失值导出空列，不补 0）。
+  const exportRows = (payload?.rows ?? []).map((row) => ({
+    code: row.code,
+    name: row.name ?? '',
+    streak: row.streak ?? '',
+    first_seal_time: row.first_seal_time === null ? '' : formatSealTime(row.first_seal_time),
+    last_seal_time: row.last_seal_time === null ? '' : formatSealTime(row.last_seal_time),
+    reason: row.reason ?? '',
+  }))
+  const exporter = useTableExport('limit-pool', exportRows, [
+    'code', 'name', 'streak', 'first_seal_time', 'last_seal_time', 'reason',
+  ])
+
   const columns = useMemo<Array<Column<LimitPoolRow>>>(
     () => [
       {
@@ -138,7 +153,13 @@ export default function LimitUpScreen() {
         truncate: true,
         cellTitle: (row) => row.reason ?? '',
         render: (row) =>
-          row.reason === null ? <MissingCell reason="后端未提供涨停原因" /> : row.reason,
+          row.reason === null ? (
+            // 说清是谁没给：tickhub_limit_pool 这一版返回里没有涨停原因字段，
+            // 不是本机解析漏了；同花顺备源带这个字段，补同步后才会有值
+            <MissingCell reason="上游 tickhub_limit_pool 不返回涨停原因字段（同花顺备源 ths_limit_up_pool 带此字段）" />
+          ) : (
+            row.reason
+          ),
       },
     ],
     [],
@@ -178,6 +199,19 @@ export default function LimitUpScreen() {
         onClick: reload,
         disabled: state === 'loading',
       }}
+      actions={
+        exportRows.length > 0 ? (
+          <Button
+            variant="secondary"
+            leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+            disabled={exporter.busyFormat !== null}
+            title="导出当前涨停样本（CSV，Excel 可直接打开）"
+            onClick={() => void exporter.buttonProps('csv').onClick()}
+          >
+            导出 CSV
+          </Button>
+        ) : undefined
+      }
     />
   )
 
@@ -261,6 +295,8 @@ export default function LimitUpScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {exporter.error ? <Banner tone="warn" title="导出失败">{exporter.error}</Banner> : null}
 
       {state === 'partial' && (
         <Banner tone="danger" title="部分涨停池数据缺失">

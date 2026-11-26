@@ -21,9 +21,17 @@ SERVICE_SUBCOMMAND = "__service"
 
 
 def entry_argv(subcommand: str = SERVICE_SUBCOMMAND) -> tuple[str, ...]:
-    """当前形态下可被 OS 服务直接执行的绝对命令。"""
+    """当前形态下可被 OS 服务直接执行的绝对命令。
+
+    `__service` 在 Windows 上优先 `pythonw.exe`：服务随登录触发时不想再闪一个
+    控制台窗口（DEC-092 单窗口应用形态）；无 pythonw 的环境回落 ldst.exe。
+    """
     if runtime.is_frozen():
         return (str(runtime.executable()), subcommand)
+    if os.name == "nt" and subcommand == SERVICE_SUBCOMMAND:
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if pythonw.is_file():
+            return (str(pythonw), "-m", "ladderstock.cli.main", subcommand)
     console_name = "ldst.exe" if os.name == "nt" else "ldst"
     console = Path(sys.executable).with_name(console_name)
     if console.is_file():

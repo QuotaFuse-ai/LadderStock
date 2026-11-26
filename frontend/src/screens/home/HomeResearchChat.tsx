@@ -9,7 +9,7 @@ import {
 import { Link } from 'react-router-dom'
 import { Loader2, Send, Sparkles, Square, TextCursorInput, Trash2 } from 'lucide-react'
 
-import { askHomeAssistant } from '../../api/research'
+import { askHomeAssistant, clearDeskHistory, loadDeskHistory } from '../../api/research'
 import { cn } from '../../lib/cn'
 import { Button, ErrorBlock, Textarea } from '../../components/ui'
 import {
@@ -62,6 +62,44 @@ interface ChatTurn {
   /** 仅 assistant：这一轮实际发给模型的数据来源快照 */
   sources?: HomeContextSource[]
   stopped?: boolean
+}
+
+/**
+ * 落库的 `blocks` → 回看用的纯文本。
+ *
+ * 刷新后恢复的是「问题 + 回答」这段文字，不是在线的答案块卡片：卡片依赖当轮的工具
+ * 产出与来源快照，隔一次刷新已经不在内存里，硬拼只会拼出半截结构。结论 / 指标 /
+ * 说明三类按原顺序取文本，数字仍来自服务端落库的那一份，不在前端重算。
+ */
+function blocksToText(blocks: unknown[]): string {
+  const lines: string[] = []
+  for (const raw of blocks) {
+    if (!raw || typeof raw !== 'object') continue
+    const block = raw as { type?: unknown; payload?: unknown }
+    const payload =
+      block.payload && typeof block.payload === 'object'
+        ? (block.payload as Record<string, unknown>)
+        : {}
+    if (block.type === 'conclusion') {
+      const text = typeof payload.text === 'string' ? payload.text.trim() : ''
+      if (text) lines.push(text)
+    } else if (block.type === 'metric') {
+      const items = Array.isArray(payload.items) ? payload.items : []
+      const parts: string[] = []
+      for (const item of items) {
+        if (!item || typeof item !== 'object') continue
+        const record = item as Record<string, unknown>
+        const label = typeof record.label === 'string' ? record.label : ''
+        const value = record.value
+        if (label && value !== null && value !== undefined) parts.push(`${label} ${String(value)}`)
+      }
+      if (parts.length > 0) lines.push(`- ${parts.join('，')}`)
+    } else if (block.type === 'notice') {
+      const message = typeof payload.message === 'string' ? payload.message.trim() : ''
+      if (message) lines.push(message)
+    }
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -137,6 +175,33 @@ export function HomeResearchChat({
   )
 
   useEffect(() => () => abortRef.current?.abort(), [])
+
+  // 刷新回看：首页研究台的每轮问答落在本机 `chat_turn`（固定会话 `desk:home`），
+  // 组件重新挂载时读回。只在嵌入态（研究面板）做——独立形态不落库。
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (!embedded || restoredRef.current) return
+    restoredRef.current = true
+    let cancelled = false
+    void loadDeskHistory().then((rows) => {
+      if (cancelled || rows.length === 0) return
+      setTurns((prev) => {
+        const restored: ChatTurn[] = []
+        for (const row of rows) {
+          restored.push({ id: row.seq * 2 - 1, role: 'user', text: row.question })
+          restored.push({ id: row.seq * 2, role: 'assistant', text: blocksToText(row.blocks) })
+        }
+        // 历史在前、本轮在后：读回之前用户可能已经发了新的一问
+        return [...restored, ...prev]
+      })
+      // id 由 seq 派生，续问要从历史最大 seq 往后排，否则新轮 id 会撞上恢复的那些
+      const lastSeq = rows[rows.length - 1]?.seq ?? 0
+      if (lastSeq > seqRef.current) seqRef.current = lastSeq
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [embedded])
 
   // 新回答到达后把对话滚到底；用户回头翻旧对话时不打扰（只在条数变化时触发）
   useEffect(() => {
@@ -224,6 +289,8 @@ export function HomeResearchChat({
     setFailure(null)
     setFailedQuestion(null)
     setPending(false)
+    // 画面清掉的同时把本机那份也清掉，否则下次刷新会把刚清掉的问答又读回来
+    if (embedded) void clearDeskHistory()
     if (embedded) onFocusInput?.()
     else inputRef.current?.focus()
   }, [embedded, onFocusInput])
@@ -247,7 +314,9 @@ export function HomeResearchChat({
   const hasTurns = turns.length > 0
 
   return (
-    <div className={cn('flex flex-col gap-3', className)}>
+    // 嵌入态要吃掉页签区全部可用高度：卡片里回答只占上方一小块、下面一大片空白，
+    // 就是这里没有 `h-full` + 内层 `flex-1` 的链，高度退回内容高度。
+    <div className={cn('flex flex-col gap-3', embedded && 'h-full min-h-0', className)}>
       {embedded ? (
         /* 嵌入态：标题在面板卡头，这里只留停止 / 清空工具条（有事才出现） */
         (hasTurns || pending) && (
@@ -306,8 +375,12 @@ export function HomeResearchChat({
         role="log"
         aria-live="polite"
         aria-label="研究对话"
-        className={cn('flex flex-col gap-3 overflow-y-auto', !embedded && 'max-h-96')}
-        style={embedded ? { maxHeight: '128px' } : undefined}
+        // 嵌入态：`flex-1 min-h-0` 撑满页签区，滚动留在这一层（不再写死 176px 上限——
+        // 那是修重叠时的临时手段，真正防重叠的是下面按钮的 `truncate` 单行截断）。
+        className={cn(
+          'flex flex-col gap-3 overflow-y-auto',
+          embedded ? 'min-h-0 flex-1' : 'max-h-96',
+        )}
       >
         {!hasTurns && !pending && !failure && (
           <div className="flex flex-col gap-2">
@@ -320,13 +393,14 @@ export function HomeResearchChat({
                   aria-label={text}
                   title={label}
                   onClick={() => pickSuggestion(text)}
-                  className="group inline-flex max-w-full items-center gap-1.5 rounded-pill border border-border bg-accent-soft px-3 py-1.5 text-left text-13px leading-tight text-text transition-colors duration-fast ease-ldst hover:border-accent hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  className="group inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-pill border border-border bg-accent-soft px-3 py-1.5 text-left text-13px leading-tight text-text transition-colors duration-fast ease-ldst hover:border-accent hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   <TextCursorInput
                     className="size-3.5 shrink-0 text-accent transition-colors duration-fast group-hover:text-accent-hover"
                     aria-hidden="true"
                   />
-                  <span className="whitespace-normal">{text}</span>
+                  {/* 单行截断：换行会让卡片高度与同排不同，文字压在下一张卡上（截图里的重叠）。 */}
+                  <span className="truncate">{text}</span>
                 </button>
               ))}
             </div>

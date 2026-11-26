@@ -41,6 +41,7 @@ def _events(items):
 # 库文件与schema
 # --------------------------------------------------------------------------- #
 
+
 def test_db_lives_in_its_own_file_next_to_nothing_privacy(tmp_path: Path) -> None:
     assert news_store.DB_FILENAME == "news.sqlite"
     assert "journal" not in news_store.DB_FILENAME
@@ -103,6 +104,7 @@ def test_paths_follow_the_data_dir_env(tmp_path: Path, monkeypatch: pytest.Monke
 # --------------------------------------------------------------------------- #
 # 幂等写
 # --------------------------------------------------------------------------- #
+
 
 def test_upsert_is_idempotent_on_rows_and_ids(tmp_path: Path) -> None:
     items = [_item(1), _item(2)]
@@ -178,6 +180,7 @@ def test_empty_upserts_are_no_ops(tmp_path: Path) -> None:
 # 读回来的形状
 # --------------------------------------------------------------------------- #
 
+
 def test_round_trip_preserves_the_item_exactly(tmp_path: Path) -> None:
     item = _item()
     conn = news_store.connect(tmp_path)
@@ -240,11 +243,14 @@ def test_undated_items_stay_in_the_candidate_set(tmp_path: Path) -> None:
 
 
 def test_list_events_filters_by_month_and_type(tmp_path: Path) -> None:
-    items = [_item(1), _item(
-        2,
-        url="https://www.cls.cn/detail/2",
-        title="国务院常务会议部署稳经济",
-    )]
+    items = [
+        _item(1),
+        _item(
+            2,
+            url="https://www.cls.cn/detail/2",
+            title="国务院常务会议部署稳经济",
+        ),
+    ]
     conn = news_store.connect(tmp_path)
     try:
         news_store.upsert_events(conn, _events(items))
@@ -286,6 +292,7 @@ def test_limit_is_respected(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # 运行记录
 # --------------------------------------------------------------------------- #
+
 
 def test_record_run_keeps_the_source_ledger(tmp_path: Path) -> None:
     conn = news_store.connect(tmp_path)
@@ -334,6 +341,7 @@ def test_runs_accumulate_across_reruns(tmp_path: Path) -> None:
 # 隐私：库里没有隐私列
 # --------------------------------------------------------------------------- #
 
+
 def test_no_column_name_collides_with_private_keys(tmp_path: Path) -> None:
     from ladderstock.core.privacy import PRIVATE_KEYS
 
@@ -341,9 +349,7 @@ def test_no_column_name_collides_with_private_keys(tmp_path: Path) -> None:
     try:
         columns: list[str] = []
         for table in news_store.TABLES:
-            columns.extend(
-                str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")
-            )
+            columns.extend(str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})"))
     finally:
         news_store.close(conn)
     lowered = {name.lower() for name in columns}

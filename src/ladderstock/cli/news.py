@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -32,6 +33,7 @@ from ladderstock.cli.output import OutputOption, emit, error
 from ladderstock.errors import (
     EXIT_AI_DEGRADED,
     EXIT_OK,
+    EXIT_PARTIAL,
     EXIT_USAGE,
     LadderStockError,
 )
@@ -121,9 +123,7 @@ def events_command(
         list[str] | None,
         typer.Option("--code", help="按代码过滤（可重复 / 逗号分隔）；解禁栏目必需"),
     ] = None,
-    limit: Annotated[
-        int, typer.Option("--limit", help="每节条数上限（默认 200）")
-    ] = 200,
+    limit: Annotated[int, typer.Option("--limit", help="每节条数上限（默认 200）")] = 200,
     fetch: Annotated[
         bool,
         typer.Option(
@@ -135,9 +135,7 @@ def events_command(
 ) -> None:
     """事件日历：财报披露日 / 解禁日 / 股东大会 / 政策发布窗口。"""
     try:
-        result = build_calendar(
-            month, codes=list(code or []), fetch=fetch, limit=limit
-        )
+        result = build_calendar(month, codes=list(code or []), fetch=fetch, limit=limit)
     except LadderStockError as exc:
         error(str(exc))
         raise typer.Exit(exc.code) from None
@@ -146,4 +144,36 @@ def events_command(
     raise typer.Exit(result.exit_code)
 
 
-__all__ = ["events_command", "news_command"]
+def news_archive_command(
+    dataset: Annotated[
+        list[str] | None,
+        typer.Option("--dataset", help="只补指定栏目（可重复 / 逗号分隔）；默认全部"),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="只统计待补条数，不写归档与历史库")
+    ] = False,
+    data_root: Annotated[
+        str | None, typer.Option("--data-root", help="数据根（默认 <项目>/data）")
+    ] = None,
+    output: OutputOption = None,
+) -> None:
+    """补归档：把 news.sqlite 里已有资讯补进 data/archive 与历史库（不重新采集）。"""
+    names = []
+    for value in dataset or []:
+        names.extend(part.strip() for part in str(value).split(",") if part.strip())
+    try:
+        payload = news_stream.backfill_archive(
+            root=Path(data_root) if data_root else None,
+            datasets=names,
+            dry_run=dry_run,
+        )
+    except LadderStockError as exc:
+        error(str(exc))
+        raise typer.Exit(exc.code) from None
+
+    emit(payload, output)
+    failed = int(payload.get("errors") and len(payload["errors"]) or 0)
+    raise typer.Exit(EXIT_PARTIAL if failed else EXIT_OK)
+
+
+__all__ = ["events_command", "news_archive_command", "news_command"]

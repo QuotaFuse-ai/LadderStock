@@ -49,7 +49,12 @@ except ImportError:  # pragma: no cover - 依赖探测
     psutil = None  # type: ignore[assignment]
 
 from ladderstock.core import runtime
-from ladderstock.core.boundary import PEER_DIR_ENV, PEER_SIBLING_DIRS
+from ladderstock.core.boundary import (
+    PEER_CONTAINER_DIRS,
+    PEER_DIR_ENV,
+    PEER_SIBLING_DIRS,
+    modules_root,
+)
 from ladderstock.supervisor.adapters import (
     MODULE_ORDER,
     ON_DEMAND_MODULES,
@@ -86,6 +91,16 @@ LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: 宿主配置（LdstHostConfig.psd1）覆盖变量与默认相对路径（仓库根下）
 HOST_CONFIG_ENV = "LDST_HOST_CONFIG"
 HOST_CONFIG_REL = Path("ops") / "host" / "LdstHostConfig.psd1"
+
+#: FinanceCoffer 运行形态的**显式声明**开关，取值见 `FINANCECOFFER_FORMS`。
+#: 便携包只发 bundle（Windows 原生 pg/redis/minio），终端用户机器上没有 WSL；
+#: 形态必须被显式声明出来，声明缺失时处置动作一律失败关闭，绝不静默回落到
+#: WSL / docker compose —— 那会在没装 WSL 的机器上把「起不来」伪装成「在启动」。
+FINANCECOFFER_FORM_ENV = "LDST_FINANCECOFFER_FORM"
+#: 允许的形态字面值：bundle = 本地原生包；wsl = 老的容器形态（需显式声明）
+FINANCECOFFER_FORMS = ("bundle", "wsl")
+#: bundle 形态的声明标记：安装器写的状态文件，在位即声明为 bundle
+FINANCECOFFER_BUNDLE_MARKER = "install_state.json"
 
 #: peer 根覆盖：`LDST_PEER_ROOT/<同级名>`，空 = `<安装根>/<同级名>`（bundle 相对）
 DEFAULT_PEER_ROOT_ENV = "LDST_PEER_ROOT"
@@ -303,6 +318,17 @@ def _snapshots_from_json(raw: str) -> tuple[ProcessSnapshot, ...]:
     return tuple(snapshots)
 
 
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询/终止类子进程一律不带控制台（DEC-092 单窗口）。
+
+    与 proctree._no_window_kwargs 同口径：缺了它每次 taskkill / powershell /
+    netstat 都会弹瞬时黑窗。POSIX 返回空 dict（creationflags 仅 Windows 支持）。
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
+
 class WindowsHostPivot:
     """tasklist / CIM / taskkill / Popen 的真实实现（生产路径）。
 
@@ -396,6 +422,7 @@ class WindowsHostPivot:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
 
     def spawn(  # pragma: no cover - 子进程拉起
@@ -453,6 +480,7 @@ class WindowsHostPivot:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
         except subprocess.TimeoutExpired as exc:
             return CommandResult(
@@ -477,6 +505,7 @@ class WindowsHostPivot:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
         except (OSError, subprocess.TimeoutExpired):
             return ""
@@ -493,6 +522,7 @@ class WindowsHostPivot:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
         except (OSError, subprocess.TimeoutExpired):
             return ""
@@ -536,11 +566,17 @@ class PsutilHostPivot(WindowsHostPivot):
         return None
 
     def _snapshot_of(self, proc: Any) -> ProcessSnapshot | None:  # pragma: no cover
+        # cmdline 单独读并单独兜：Windows 上读系统进程的命令行会抛
+        # ERROR_PARTIAL_COPY，psutil 在 _pswindows 里对此有重试装饰器，
+        # 全量扫描时会被放大成分钟级阻塞（2026-11-18 定位到 5951 卡 startup 的真因）。
         try:
-            info = proc.as_dict(attrs=["pid", "ppid", "name", "cmdline"])
+            info = proc.as_dict(attrs=["pid", "ppid", "name"])
         except psutil.Error:
             return None
-        raw = info.get("cmdline") or []
+        try:
+            raw = proc.cmdline()
+        except (psutil.Error, OSError, PermissionError):
+            return None
         return ProcessSnapshot(
             pid=int(info["pid"]),
             parent_pid=int(info["ppid"]) if info.get("ppid") is not None else None,
@@ -581,7 +617,26 @@ class PsutilHostPivot(WindowsHostPivot):
         if not needle:
             return ()
         found: list[ProcessSnapshot] = []
-        for proc in psutil.process_iter(["pid"]):
+        # 只对「名字已经和 needle 沾边」或「解释器/运行时」读命令行：读全量 cmdline
+        # 在 Windows 上会被 ERROR_PARTIAL_COPY 重试拖死（见 _snapshot_of 注释）。
+        runtime_names = {
+            "python.exe",
+            "python",
+            "pythonw.exe",
+            "pythonw",
+            "py.exe",
+            "node.exe",
+            "node",
+            "qdrant.exe",
+            "qdrant",
+        }
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                name = str(proc.info.get("name") or "").lower()
+            except (psutil.Error, OSError):
+                continue
+            if name not in runtime_names and name not in needle:
+                continue
             snap = self._snapshot_of(proc)
             if snap is None:
                 continue
@@ -629,6 +684,50 @@ def default_host_pivot() -> HostPivot:
 # 模块启动面
 # --------------------------------------------------------------------------- #
 
+#: 没有自带自述卡的模块：控制面套 `ldst peer serve` 包装层，登记真实端口后再起
+#: （2026-11-21 用户口径）。tickhub / tickhub_us / wire / senate 自己会写卡，
+#: 再包一层只会多一个常驻解释器，不加。
+PEER_WRAP_MODULES = frozenset({"financecoffer", "proxyfleet", "qdrant", "memory"})
+
+
+def _peer_card_root(module: str, face: StartFace) -> str:
+    """卡片落点：与面板读卡口径一致的安装目录（PEER_CONTROL 解析结果）。"""
+    try:
+        from ladderstock.core.boundary import resolve_peer_control
+
+        ctl = resolve_peer_control().get(module)
+        if ctl is not None and ctl.directory:
+            return str(ctl.directory)
+    except Exception:  # noqa: BLE001 - 解析失败退回 cwd，不阻塞启动
+        pass
+    return str(face.cwd)
+
+
+def wrap_peer_argv(module: str, face: StartFace) -> list[str]:
+    """把模块启动命令套进包装层；不该包的模块原样返回。"""
+    argv = [str(part) for part in face.argv]
+    if module not in PEER_WRAP_MODULES:
+        return argv
+    if os.environ.get("LDST_PEER_WRAP", "1") != "1":
+        return argv
+    return [
+        sys.executable,
+        "-m",
+        "ladderstock",
+        "peer",
+        "serve",
+        "--module",
+        module,
+        "--face",
+        face.face,
+        "--port",
+        str(face.port),
+        "--card-root",
+        _peer_card_root(module, face),
+        "--",
+        *argv,
+    ]
+
 
 @dataclass(frozen=True)
 class StartFace:
@@ -648,6 +747,11 @@ class StartFace:
     alt_match: tuple[str, ...] = ()
     #: 额外备用关键字组（打包后 `LadderStock.exe <子命令>` 等第三形态，QUOT-525）
     alt_matches: tuple[tuple[str, ...], ...] = ()
+    #: 同一个进程还监听的其它端口（proxyfleet 的出口网关、qdrant 的 gRPC 面）。
+    #: 这些端口没有单独的启动命令，但归属同一个 cmdline：不登记进来的话，
+    #: `_match_tokens()` 会在这些端口上返回空组，把自家进程判成「外部占用」，
+    #: start() 直接拒绝启动（QUOT-597 实测）。
+    extra_ports: tuple[int, ...] = ()
 
 
 def _norm_tokens(tokens: Sequence[str]) -> tuple[str, ...]:
@@ -713,10 +817,16 @@ def default_peer_dir(key: str, env: Mapping[str, str] | None = None) -> Path:
     override = (values.get(PEER_DIR_ENV[key]) or "").strip()
     if override:
         return Path(override)
-    sibling_name = PEER_SIBLING_DIRS[key]
     root = (values.get(DEFAULT_PEER_ROOT_ENV) or "").strip()
-    base = Path(root) if root else _install_root_from(values)
-    return base / sibling_name
+    if root:
+        # 显式给了 peer 根：沿用老口径（根 + 同级历史名），不做容器化。
+        return Path(root) / PEER_SIBLING_DIRS[key]
+    container = modules_root(values) / PEER_CONTAINER_DIRS[key]
+    if container.is_dir():
+        # 容器态（便携包）：`<安装根>/file/modules/<规范名>`
+        return container
+    # 开发态：`<安装根>/<历史名>`，仓库 clone 到 LadderStock 旁边即可
+    return _install_root_from(values) / PEER_SIBLING_DIRS[key]
 
 
 def _ldst_repo_root() -> Path:
@@ -858,7 +968,15 @@ def preflight(
             )
             continue
 
-        peer = default_peer_dir(name, values)
+        # preflight 只报「按安装根该在哪」：`preflight(env=...)` 是脱离进程状态的
+        # 自检，此时不能让 peer 目录跟着当前进程的源码/容器位置漂移。
+        peer_override = (values.get(PEER_DIR_ENV[name]) or "").strip()
+        if peer_override:
+            peer = Path(peer_override)
+        else:
+            peer_root_env = (values.get(DEFAULT_PEER_ROOT_ENV) or "").strip()
+            peer_root = Path(peer_root_env) if peer_root_env else _install_root_from(values)
+            peer = peer_root / PEER_SIBLING_DIRS[name]
         if name == "financecoffer":
             deploy = peer / "deploy"
             ok = deploy.is_dir()
@@ -948,7 +1066,7 @@ class BaseAdapter:
             if not exe.is_file():
                 raise SupervisorError(f"{self.name} 的入口不存在：{exe}")
             pid = self._host.spawn(
-                face.argv,
+                wrap_peer_argv(self.name, face),
                 cwd=face.cwd,
                 env=self._environment(),
                 log_path=self._log_dir / face.log_name,
@@ -1047,7 +1165,7 @@ class BaseAdapter:
 
     def _match_tokens(self, port: int) -> tuple[tuple[str, ...], ...]:
         for face in self.faces:
-            if face.port == port:
+            if face.port == port or port in face.extra_ports:
                 groups = [_norm_tokens(face.match)]
                 if face.alt_match:
                     groups.append(_norm_tokens(face.alt_match))
@@ -1056,7 +1174,10 @@ class BaseAdapter:
         return ()
 
     def _inherit_chain(self, port: int) -> bool:
-        return any(face.port == port and face.inherit_chain for face in self.faces)
+        return any(
+            (face.port == port or port in face.extra_ports) and face.inherit_chain
+            for face in self.faces
+        )
 
     @classmethod
     def _match_chain(
@@ -1129,6 +1250,11 @@ class BaseAdapter:
             env.update(load_env_file(path))
         env.update(self._env_overrides)
         env.setdefault("PYTHONUNBUFFERED", "1")
+        # 自述卡落点（2026-11-21 服务发现）：模块把「我在哪个端口」写进安装目录的
+        # `.runtime/peer.json`，面板按这张卡找地址，不再按「基础端口 + 偏移」推算。
+        # 不给明确目录时，模块会按自己的仓库根写，面板在 peer 目录里读不到。
+        if self.faces:
+            env.setdefault("LDST_PEER_CARD_ROOT", str(self.faces[0].cwd))
         return env
 
 
@@ -1150,6 +1276,19 @@ def _command_adapters(
     tickhub_us = default_peer_dir("tickhub_us", env)
     wire = default_peer_dir("wire", env)
     senate = default_peer_dir("senate", env)
+    # ProxyFleet 改为 venv 服务（用户裁决 2026-11-18）：容器内 .venv 的
+    # `proxyfleet.exe serve`，端口由 PF_API_PORT / PF_GATEWAY_PORT 环境变量指定，
+    # 跟随 MODULE_PORTS 的环境表（prod 8788/8789，test 18788/18789），不再走计划任务。
+    proxyfleet_dir = default_peer_dir("proxyfleet", env)
+    pf_ports = tuple(MODULE_PORTS["proxyfleet"])
+    pf_api_port = pf_ports[0] if pf_ports else 8788
+    pf_gateway_port = pf_ports[1] if len(pf_ports) > 1 else 8789
+    # Qdrant（2026-11-18 用户裁决）：本地单体二进制 runtime\qdrant.exe，不用 Docker。
+    # 端口由 QDRANT__SERVICE__* 环境变量给定，跟随 MODULE_PORTS 环境表。
+    qdrant_dir = default_peer_dir("qdrant", env)
+    qdrant_ports = tuple(MODULE_PORTS["qdrant"])
+    qdrant_api_port = qdrant_ports[0] if qdrant_ports else 6333
+    qdrant_grpc_port = qdrant_ports[1] if len(qdrant_ports) > 1 else 6334
 
     tickhub_env_files = _tickhub_env_files(env)
     return {
@@ -1310,6 +1449,74 @@ def _command_adapters(
             clock=clock,
             sleep=sleep,
         ),
+        # Qdrant 栈（2026-11-18 用户裁决：本地单体二进制，不用 Docker）。
+        # 一个 peer 一个入口：`run_stack.py` 是父进程，同时拉起
+        # `runtime\qdrant.exe`（REST/gRPC）与 MCP 面（mcp/run_mcp.py）；
+        # 父进程活着 = 栈活着，父进程退出时一并收掉子进程。
+        # 端口由 LDST_QDRANT_* 显式注入（不靠子脚本自推导，避免双份口径）；
+        # 识别用 `qdrant.exe` 作 alt_match——监听端口的是子进程，单靠
+        # `run_stack.py` 认不出它，_reap_stale 就清不掉上一代残留。
+        "qdrant": BaseAdapter(
+            "qdrant",
+            qdrant_ports,
+            (
+                StartFace(
+                    face="stack",
+                    argv=(
+                        str(_venv_exe(qdrant_dir, "python.exe")),
+                        str(qdrant_dir / "run_stack.py"),
+                    ),
+                    cwd=qdrant_dir,
+                    port=qdrant_api_port,
+                    match=("run_stack.py",),
+                    alt_match=("qdrant.exe",),
+                    inherit_chain=True,
+                    extra_ports=(qdrant_grpc_port,),
+                    log_name="qdrant-stack.log",
+                ),
+            ),
+            host=host,
+            env_files=(qdrant_dir / ".env",),
+            env_overrides={
+                "LDST_QDRANT_WEB_PORT": str(qdrant_api_port),
+                "LDST_QDRANT_GRPC_PORT": str(qdrant_grpc_port),
+                # MCP 面 = 9300 + offset，与 web 面固定差 2967（run_stack.py 同口径）
+                "LDST_QDRANT_MCP_PORT": str(qdrant_api_port + 2967),
+            },
+            log_dir=log_dir,
+            evidence_cache_sec=evidence_cache_sec,
+            clock=clock,
+            sleep=sleep,
+        ),
+        "proxyfleet": BaseAdapter(
+            "proxyfleet",
+            pf_ports,
+            (
+                StartFace(
+                    face="api",
+                    argv=(
+                        str(_venv_exe(proxyfleet_dir, "proxyfleet.exe")),
+                        "serve",
+                    ),
+                    cwd=proxyfleet_dir,
+                    port=pf_api_port,
+                    match=("proxyfleet", "serve"),
+                    log_name="proxyfleet-serve.log",
+                    # 同一个 serve 进程还常驻出口网关：登记归属，否则 8789 上的
+                    # 自家实例会被 `_foreign_occupant()` 判成外部占用。
+                    extra_ports=(pf_gateway_port,),
+                ),
+            ),
+            host=host,
+            env_overrides={
+                "PF_API_PORT": str(pf_api_port),
+                "PF_GATEWAY_PORT": str(pf_gateway_port),
+            },
+            log_dir=log_dir,
+            evidence_cache_sec=evidence_cache_sec,
+            clock=clock,
+            sleep=sleep,
+        ),
         # 看门狗（QUOT-589 重修）：无端口自愈监控器，不再监听 5952——probe/stop
         # 全按 cmdline 扫描（WatchdogAdapter）。被 supervisor 拉起后它只认
         # `--spawn-cmd` 直接拉起看板，不经 schtasks 复活（supervised 环境变量）。
@@ -1334,29 +1541,35 @@ def _command_adapters(
     }
 
 
-def rebase_adapter_ports(
-    adapter: BaseAdapter, ports: tuple[int, ...]
-) -> BaseAdapter:
-    """按避让后的实际端口重建命令行型适配器（QUOT-594 端口自动避让）。
+def rebase_adapter_ports(adapter: BaseAdapter, ports: tuple[int, ...]) -> BaseAdapter:
+    """按避让后的实际端口重建适配器（QUOT-594 端口自动避让）。
 
-    `_command_adapters()` 构造时端口硬编码在 `StartFace.argv`（`--port NNNN`）
-    与 `face.port` 里；避让只换基准表中同位置端口的字面值，argv 其余部分、
-    匹配关键字里的端口号、env / 日志配置原样保留。face 顺序即端口表顺序
-    （构造处保证），逐位替换。匹配关键字（match/alt_match 等）里内嵌的
-    端口号是**基准端口**——避让后监听者 cmdline 用新端口，关键字仍能命中
-    exe / 子命令片段（判定不依赖端口字面值），不影响认领与对账。
+    两类适配器分别处理：
+
+    - **命令行型**（有 `faces`）：端口硬编码在 `StartFace.argv`（`--port NNNN`）
+      与 `face.port` 里，逐位替换字面值，argv 其余部分 / 匹配关键字 / env / 日志原样保留。
+    - **观测型**（无 `faces`，如 FinanceCoffer）：进程不由本适配器拉起，换端口
+      = 换观测端口，走它自己的 `with_ports()`。此前这里无条件访问 `.faces`，
+      对 FinanceCoffer 抛 AttributeError 又被上层吞掉，端口记录因此完全失效。
     """
-    if len(ports) != len(adapter.faces):
+    faces = getattr(adapter, "faces", None)
+    if faces is None:
+        with_ports = getattr(adapter, "with_ports", None)
+        if with_ports is None:
+            raise SupervisorError(
+                f"{adapter.name} 既无启动面（faces）也不支持 with_ports，无法应用端口记录"
+            )
+        return with_ports(tuple(ports))
+    if len(ports) != len(faces):
         raise SupervisorError(
-            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数"
-            f"（{len(adapter.faces)}）不符"
+            f"{adapter.name} 避让端口数（{len(ports)}）与启动面数（{len(faces)}）不符"
         )
-    faces = []
-    for face, port in zip(adapter.faces, ports, strict=True):
+    rebased = []
+    for face, port in zip(faces, ports, strict=True):
         old = str(face.port)
         new = str(port)
         argv = tuple(new if token == old else token for token in face.argv)
-        faces.append(
+        rebased.append(
             replace(
                 face,
                 argv=argv,
@@ -1364,15 +1577,14 @@ def rebase_adapter_ports(
                 match=tuple(_rebase_match(m, old, new) for m in face.match),
                 alt_match=tuple(_rebase_match(m, old, new) for m in face.alt_match),
                 alt_matches=tuple(
-                    tuple(_rebase_match(m, old, new) for m in group)
-                    for group in face.alt_matches
+                    tuple(_rebase_match(m, old, new) for m in group) for group in face.alt_matches
                 ),
             )
         )
     return BaseAdapter(
         adapter.name,
         tuple(ports),
-        faces,
+        rebased,
         host=adapter._host,
         env_files=adapter._env_files,
         env_overrides=dict(adapter._env_overrides),
@@ -1414,20 +1626,39 @@ def _panel_spawn_command(env: Mapping[str, str]) -> str:
 
 def resolve_panel_port(env: Mapping[str, str]) -> int:
     """看板实际端口单一真源：spawn-cmd `--port`、watchdog `--api`、自愈
-    engine 的 panel_url 三处共用，保证避让后三方同一端口。"""
+    engine 的 panel_url 三处共用，保证避让后三方同一端口。
+
+    解析顺序（QUOT-594 × DEC-092）：`LDST_PANEL_PORT`（显式注入）>
+    **ports.yaml 的 `board` 记录**（看板每次启动都会把实际落位端口同步进去，
+    是「现在到底跑在哪个口」的事实源）> `board_user`（用户偏好，首次启动前
+    记录尚无时的意图声明）> `panel_port(env)` 环境默认。test 环境任何路径
+    都不得回落到正式 5950。
+    """
 
     override = (env.get("LDST_PANEL_PORT") or "").strip()
     if override.isdigit():
         return int(override)
     try:
         from ladderstock.cli.paths import config_dir
-        from ladderstock.supervisor.port_allocator import load_board_override
+        from ladderstock.supervisor.port_allocator import (
+            load_board_override,
+            load_board_user_pref,
+        )
 
-        remembered = load_board_override(config_dir())
+        # 记录按**传入的**环境解析：显式给了 `LDST_CONFIG_DIR` 就用它，不再
+        # 退回 cwd 敏感的 `config_dir()`。两者混读的后果实测过：cwd 恰好是仓库根
+        # 时，test 环境会读到开发机那份 config/ports.yaml（board=5950），把面板
+        # 端口算成 5950、与正式服撞车（QUOT-597 的环境隔离就是被这条打穿的）。
+        cfg_env = (env.get("LDST_CONFIG_DIR") or "").strip()
+        cfg_dir = Path(cfg_env) if cfg_env else config_dir()
+        remembered = load_board_override(cfg_dir)
+        if remembered:
+            return int(remembered)
+        user_pref = load_board_user_pref(cfg_dir)
+        if user_pref:
+            return int(user_pref)
     except Exception:  # noqa: BLE001 - 读配置失败回落环境默认
-        remembered = None
-    if remembered:
-        return int(remembered)
+        pass
     return panel_port(_env_name(env))
 
 
@@ -1477,9 +1708,10 @@ class FinanceCofferAdapter:
         readback_wait_sec: float = 15.0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        ports: tuple[int, ...] | None = None,
     ) -> None:
         self.name = "financecoffer"
-        self.ports = MODULE_PORTS["financecoffer"]
+        self.ports = MODULE_PORTS["financecoffer"] if ports is None else tuple(ports)
         self._peer = peer_dir
         self._deploy = peer_dir / "deploy"
         self._host = host or default_host_pivot()
@@ -1494,9 +1726,143 @@ class FinanceCofferAdapter:
         self._distro_cache: str | None = None
         self._fc_cache: tuple[float, str] = (0.0, "")
 
+    def with_ports(self, ports: tuple[int, ...]) -> FinanceCofferAdapter:
+        """按端口记录重建本适配器（QUOT-594）。
+
+        本适配器不是命令行型（没有 `faces`）：bundle 形态下进程由安装器拉起，
+        适配器只负责按端口认领与体检。所以「换端口」= 换观测端口，不改 argv。
+        此前 `rebase_adapter_ports` 直接访问 `.faces` 抛 AttributeError，又被
+        上层静默吞掉，导致 financecoffer 的端口记录完全不生效。
+        """
+        if len(ports) != len(self.ports):
+            raise SupervisorError(
+                f"{self.name} 避让端口数（{len(ports)}）与观测端口数（{len(self.ports)}）不符"
+            )
+        return FinanceCofferAdapter(
+            peer_dir=self._peer,
+            host=self._host,
+            log_dir=self._log_dir,
+            env=self._env,
+            evidence_cache_sec=self._cache_sec,
+            readback_wait_sec=self._readback_wait,
+            clock=self._clock,
+            sleep=self._sleep,
+            ports=tuple(ports),
+        )
+
+    def _form(self) -> str | None:
+        """解析运行形态；**未声明返回 None，绝不猜**。
+
+        声明来源按优先级：
+        1. 机器级 `LDST_FINANCECOFFER_FORM`（`bundle` / `wsl`）——老的容器机器
+           必须显式写 `wsl` 才会走 compose 路径；
+        2. 安装器写的 `install_state.json` 在位 → 声明为 `bundle`
+           （2026-11-18 起 pg / redis / minio / api 都是 `runtime/` 下的 Windows
+           原生二进制，由 `modules.financecoffer.services` 启停）。
+
+        两者都没有 = 形态未声明。历史实现在这里默认回落 compose，导致便携包
+        漏打标记文件时，在没有 WSL 的用户机器上静默走容器路径再失败，报错还
+        指向 WSL，完全误导。现在改为显式报错（见 `_require_form`）。
+        """
+        declared = str(self._env.get(FINANCECOFFER_FORM_ENV) or "").strip().lower()
+        if declared in FINANCECOFFER_FORMS:
+            return declared
+        if (self._peer / FINANCECOFFER_BUNDLE_MARKER).is_file():
+            return "bundle"
+        return None
+
+    def _form_error(self) -> SupervisorError:
+        """形态未声明 / 声明非法时的统一报错（处置动作用，失败关闭）。"""
+        declared = str(self._env.get(FINANCECOFFER_FORM_ENV) or "").strip()
+        if declared and declared.lower() not in FINANCECOFFER_FORMS:
+            return SupervisorError(
+                f"financecoffer 运行形态声明非法：{FINANCECOFFER_FORM_ENV}={declared!r}，"
+                f"只接受 {' / '.join(FINANCECOFFER_FORMS)}；拒绝猜测形态"
+            )
+        return SupervisorError(
+            "financecoffer 运行形态未声明，拒绝启动 / 停止："
+            f"{self._peer} 下没有 {FINANCECOFFER_BUNDLE_MARKER}（bundle 安装标记），"
+            f"也没有设置 {FINANCECOFFER_FORM_ENV}。"
+            "本地原生包请重新执行安装生成该标记；"
+            f"确要用老的 WSL 容器形态请显式设置 {FINANCECOFFER_FORM_ENV}=wsl。"
+            "（不静默回落 WSL：便携包用户机器上通常没有 WSL）"
+        )
+
+    def _require_form(self) -> str:
+        """处置动作（start / stop / kill）取形态：未声明即抛，失败关闭。"""
+        form = self._form()
+        if form is None:
+            raise self._form_error()
+        return form
+
+    def _start_bundle(self) -> SpawnedProcess:
+        """本地 bundle 启动：pg → minio → api（pg 是 api 的硬依赖，必须串行）。"""
+        from ladderstock.modules.financecoffer import services
+
+        for port in self.ports:
+            evidence = self._build_evidence(port)
+            if evidence.listening and not evidence.matched:
+                raise SupervisorError(
+                    f"financecoffer 的端口 {port} 已被非本模块进程占用"
+                    f"（pid={evidence.pid} cmd={' '.join(evidence.cmdline)[:160]}），拒绝启动"
+                )
+        pg = services.start_pg()
+        if not pg.get("ok"):
+            raise SupervisorError(f"financecoffer 的 PostgreSQL 起不来：{pg.get('detail')}")
+        # minio 不可用只影响对象存储面，API 仍可对外，不因此拒绝启动
+        services.start_minio()
+        api = services.start_api(wait_seconds=10.0)
+        pid = 0
+        try:
+            pid = int((self._peer / "run" / "fc-api.pid").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pid = 0
+        if not api.get("ok") and pid <= 0:
+            raise SupervisorError(f"financecoffer API 起不来：{api.get('detail')}")
+        if pid:
+            self._roots.append(pid)
+        self._cache.clear()
+        self._fc_cache = (0.0, "")
+        # 必须回真实命令行：引擎用 cmdline_hash 做 PID 复用对账，若这里给逻辑名
+        # （"financecoffer serve api"），与实际 `python -m financecoffer serve api`
+        # 哈希对不上 → reconcile 判 suspected_pid_reuse 把刚起来的模块记成 stopped
+        # （进程仍在监听，状态与事实自相矛盾）。
+        cmdline: tuple[str, ...] = ("financecoffer", "serve", "api")
+        if pid:
+            try:
+                snap = self._host.snapshot(pid)
+            except Exception:
+                snap = None
+            if snap is not None and getattr(snap, "cmdline", None):
+                cmdline = tuple(snap.cmdline)
+        return SpawnedProcess(
+            pid=pid,
+            parent_pid=os.getpid(),
+            cmdline=cmdline,
+        )
+
+    def _stop_bundle(self) -> None:
+        from ladderstock.modules.financecoffer import services
+
+        try:
+            services.stop_all()
+        finally:
+            # 兜底：services 侧半停（pid 文件失真 / 某一步抛异常）时，按本适配器
+            # 已知的根进程强杀整树，保证端口一定释放——否则引擎 `_await_quiet`
+            # 超时，整个模块被记成 failed，停止按钮永远失败。
+            for root_pid in list(self._roots):
+                try:
+                    self._host.terminate_tree(root_pid, force=True)
+                except Exception:
+                    pass
+            self._roots.clear()
+            self._cache.clear()
+
     # ------------------------------------------------------------------ 协议
 
     def start(self) -> SpawnedProcess:
+        if self._require_form() == "bundle":
+            return self._start_bundle()
         # Windows 侧冲突预检（QUOT-516）：端口被非本模块进程占住时拒绝启动，
         # 否则容器会在 WSL 内照常拉起，Windows 侧却永远连不上（静默假成功）。
         for port in self.ports:
@@ -1544,6 +1910,9 @@ class FinanceCofferAdapter:
 
     def stop(self, pid: int | None = None, timeout: float | None = None) -> None:
         del pid, timeout
+        if self._require_form() == "bundle":
+            self._stop_bundle()
+            return
         distro = self.distro()
         self._wsl(distro, self._stop_script(), timeout=WSL_COMMAND_TIMEOUT_SEC)
         for root in self._roots:
@@ -1553,6 +1922,9 @@ class FinanceCofferAdapter:
         self._cache.clear()
 
     def kill(self) -> None:
+        if self._require_form() == "bundle":
+            self._stop_bundle()
+            return
         distro = self.distro()
         self._wsl(distro, self._kill_script(), timeout=WSL_COMMAND_TIMEOUT_SEC)
         for root in self._roots:
@@ -1586,6 +1958,48 @@ class FinanceCofferAdapter:
             return PortEvidence(port=port, listening=False, detail="Windows 侧端口未监听")
         pid = self._host.owner_pid(port)
         chain = self._host.parent_chain(pid) if pid else ()
+        form = self._form()
+        snap = chain[0] if chain else None
+        if form is None:
+            # 形态未声明：不猜归属，也不在这里抛（巡检要能继续跑完其它模块）。
+            # 明确报「未声明」而不是回落容器判据 —— 回落会把本机原生进程说成
+            # 「WSL 内没有容器」，把用户引向根本不存在的 WSL 问题。
+            return PortEvidence(
+                port=port,
+                listening=True,
+                matched=False,
+                pid=pid,
+                name=snap.name if snap else "",
+                cmdline=snap.cmdline if snap else (),
+                parent_chain=chain,
+                detail=(
+                    f"运行形态未声明（缺 {FINANCECOFFER_BUNDLE_MARKER}，"
+                    f"未设 {FINANCECOFFER_FORM_ENV}），无法判定端口归属；"
+                    "请重新安装生成本地包标记，或显式声明 "
+                    f"{FINANCECOFFER_FORM_ENV}=wsl"
+                ),
+            )
+        if form == "bundle":
+            # 本地 bundle 形态没有 WSL 容器可查，归属证据只能是「占用端口的进程
+            # 就是 runtime/api 起的 financecoffer serve」。沿用容器判据会让
+            # probe 永远 False → 引擎判「30s 内端口无监听」并整树终止。
+            cmd_text = " ".join(snap.cmdline) if snap else ""
+            matched = "financecoffer" in cmd_text
+            detail = (
+                f"本地 bundle api 在监听（pid={pid}）"
+                if matched
+                else f"端口由非本模块进程监听（pid={pid} cmd={cmd_text[:120]}）"
+            )
+            return PortEvidence(
+                port=port,
+                listening=True,
+                matched=matched,
+                pid=pid,
+                name=snap.name if snap else "",
+                cmdline=snap.cmdline if snap else (),
+                parent_chain=chain,
+                detail=detail,
+            )
         containers = self._fc_api_containers()
         matched = bool(containers)
         detail = (
@@ -1593,7 +2007,6 @@ class FinanceCofferAdapter:
             if containers
             else "WSL 内没有 running 的 financecoffer api 容器（端口可能是残留转发）"
         )
-        snap = chain[0] if chain else None
         return PortEvidence(
             port=port,
             listening=True,
@@ -2111,11 +2524,7 @@ class ProxyPoolAdapter:
             argv = self._forwarder_argv(mapping)
             pid = self._host.spawn(
                 argv,
-                cwd=(
-                    runtime.app_dir()
-                    if runtime.is_frozen()
-                    else Path(__file__).resolve().parent
-                ),
+                cwd=(runtime.app_dir() if runtime.is_frozen() else Path(__file__).resolve().parent),
                 env=self._environment(),
                 log_path=self._log_dir / f"proxypool-{_safe_log_name(mapping.mapping_id)}.log",
             )
@@ -2585,6 +2994,13 @@ def build_default_adapters(
 
     if current_env() != "prod":
         for name, adapter in adapters.items():
+            # ProxyFleet 是单进程双端口（serve 同时起 api 与 gateway），端口由
+            # PF_API_PORT / PF_GATEWAY_PORT 注入、构造时已按环境表算好，faces 数
+            # 与端口数天然不等，不能走「逐面重建 --port」那套（会误报数量不符）。
+            # ProxyFleet / Qdrant 都是单进程多端口，端口由 env 注入、构造时已按
+            # 环境表算好，faces 数与端口数天然不等，不走「逐面重建 --port」那套。
+            if name in ("proxyfleet", "qdrant"):
+                continue
             if isinstance(adapter, BaseAdapter) and tuple(adapter.ports) != tuple(
                 face.port for face in adapter.faces
             ):
@@ -2598,13 +3014,9 @@ def build_default_adapters(
         clock=clock,
         sleep=sleep,
     )
-    adapters["proxyfleet"] = ProxyFleetAdapter(
-        host=pivot,
-        task_name=(values.get(PROXYFLEET_TASK_ENV) or DEFAULT_PROXYFLEET_TASK).strip(),
-        evidence_cache_sec=evidence_cache_sec,
-        clock=clock,
-        sleep=sleep,
-    )
+    # ProxyFleet 不再由 ProxyFleetAdapter（SYSTEM 计划任务垫片）接管：
+    # 已在 `_command_adapters` 里按 venv 服务装配（端口跟随 MODULE_PORTS 环境表）。
+    # 原 SYSTEM 计划任务（正式服 8788/8789）保留不动，与本适配器互不干扰。
     adapters["proxypool"] = ProxyPoolAdapter(
         config=load_proxypool_config(host=pivot, path=_host_config_path(values)),
         host=pivot,

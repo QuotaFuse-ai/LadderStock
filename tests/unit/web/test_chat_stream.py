@@ -71,9 +71,7 @@ def _client(tmp_path: Path) -> TestClient:
 
 
 def _ok_channel() -> chat_channel.Channel:
-    return chat_channel.Channel(
-        kind="cli", label="cli_codex:default", config=None, target=None
-    )
+    return chat_channel.Channel(kind="cli", label="cli_codex:default", config=None, target=None)
 
 
 def _parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
@@ -84,7 +82,7 @@ def _parse_sse(text: str) -> list[tuple[str, dict[str, Any]]]:
         assert lines[0].startswith("event: "), chunk
         assert lines[1].startswith("data: "), chunk
         assert len(lines) == 2, chunk
-        frames.append((lines[0][len("event: "):], json.loads(lines[1][len("data: "):])))
+        frames.append((lines[0][len("event: ") :], json.loads(lines[1][len("data: ") :])))
     return frames
 
 
@@ -120,6 +118,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, reply: str) -> None:
 # 开关
 # --------------------------------------------------------------------------- #
 
+
 def test_default_request_stays_non_streaming(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -151,9 +150,7 @@ def test_accept_event_stream_switches_to_sse(
 ) -> None:
     _stub(monkeypatch, "量能温和放大。")
 
-    response = _client(tmp_path).post(
-        CHAT, json={"message": "你好"}, headers=SSE_HEADERS
-    )
+    response = _client(tmp_path).post(CHAT, json={"message": "你好"}, headers=SSE_HEADERS)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -174,6 +171,7 @@ def test_wants_stream_parses_accept_list() -> None:
 # 事件层：seq / last_seq / completed
 # --------------------------------------------------------------------------- #
 
+
 def test_block_events_carry_monotonic_seq_on_event_layer() -> None:
     blocks = chat_channel.answer_block_payloads(ai=FAKE_AI, metrics=PROVENANCE_METRICS)
 
@@ -191,14 +189,10 @@ def test_block_events_carry_monotonic_seq_on_event_layer() -> None:
         assert "seq" not in data["payload"]
 
 
-def test_stream_seq_and_done_last_seq(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stream_seq_and_done_last_seq(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub(monkeypatch, "量能温和放大。")
 
-    response = _client(tmp_path).post(
-        CHAT, json={"message": "你好"}, headers=SSE_HEADERS
-    )
+    response = _client(tmp_path).post(CHAT, json={"message": "你好"}, headers=SSE_HEADERS)
 
     frames = _parse_sse(response.text)
     blocks = _blocks(frames)
@@ -213,9 +207,8 @@ def test_stream_seq_and_done_last_seq(
 # 顺序与内容（任务书 6.3 / 6.4）
 # --------------------------------------------------------------------------- #
 
-def test_stream_order_with_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+
+def test_stream_order_with_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub(monkeypatch, "今天量能比昨日放大。")
 
     response = _client(tmp_path).post(
@@ -256,9 +249,7 @@ def test_stream_without_sources_ends_with_missing_data_notice(
 ) -> None:
     _stub(monkeypatch, "建议关注量能变化。")
 
-    response = _client(tmp_path).post(
-        CHAT, json={"message": "随便聊聊"}, headers=SSE_HEADERS
-    )
+    response = _client(tmp_path).post(CHAT, json={"message": "随便聊聊"}, headers=SSE_HEADERS)
 
     blocks = _blocks(_parse_sse(response.text))
     assert blocks[0]["type"] == "conclusion"
@@ -303,9 +294,7 @@ def test_conclusion_text_has_no_numbers() -> None:
 
 
 def test_metric_block_only_from_program_metrics() -> None:
-    blocks = chat_channel.answer_block_payloads(
-        ai=FAKE_AI, metrics=PROVENANCE_METRICS
-    )
+    blocks = chat_channel.answer_block_payloads(ai=FAKE_AI, metrics=PROVENANCE_METRICS)
     types = [block["type"] for block in blocks]
     metric = blocks[types.index("metric")]["payload"]["items"]
 
@@ -315,10 +304,7 @@ def test_metric_block_only_from_program_metrics() -> None:
 
 
 def test_block_count_never_exceeds_six_with_many_sources() -> None:
-    sources = [
-        {"name": f"来源{i}", "fetched_at": "2026-11-07T09:20:00+08:00"}
-        for i in range(20)
-    ]
+    sources = [{"name": f"来源{i}", "fetched_at": "2026-11-07T09:20:00+08:00"} for i in range(20)]
 
     blocks = chat_channel.answer_block_payloads(
         ai=FAKE_AI, sources=sources, metrics=PROVENANCE_METRICS
@@ -334,10 +320,7 @@ def test_block_count_with_many_sources_over_http(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub(monkeypatch, "量能温和放大。")
-    sources = [
-        {"name": f"来源{i}", "fetched_at": "2026-11-07T09:20:00+08:00"}
-        for i in range(20)
-    ]
+    sources = [{"name": f"来源{i}", "fetched_at": "2026-11-07T09:20:00+08:00"} for i in range(20)]
 
     response = _client(tmp_path).post(
         CHAT,
@@ -355,6 +338,7 @@ def test_block_count_with_many_sources_over_http(
 # 一致性：流式块 vs 非流式返回
 # --------------------------------------------------------------------------- #
 
+
 def test_stream_blocks_match_non_streaming_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -371,9 +355,7 @@ def test_stream_blocks_match_non_streaming_payload(
 
     one_shot = _client(tmp_path).post(CHAT, json=body, headers=WRITE_HEADERS).json()
     chat_channel.reset_sessions()
-    frames = _parse_sse(
-        _client(tmp_path).post(CHAT, json=body, headers=SSE_HEADERS).text
-    )
+    frames = _parse_sse(_client(tmp_path).post(CHAT, json=body, headers=SSE_HEADERS).text)
 
     done = _done(frames)
     stream_blocks = _blocks(frames)
@@ -411,9 +393,7 @@ def test_stream_done_strips_source_note_already_sent_as_block(
 
     one_shot = _client(tmp_path).post(CHAT, json=body, headers=WRITE_HEADERS).json()
     chat_channel.reset_sessions()
-    frames = _parse_sse(
-        _client(tmp_path).post(CHAT, json=body, headers=SSE_HEADERS).text
-    )
+    frames = _parse_sse(_client(tmp_path).post(CHAT, json=body, headers=SSE_HEADERS).text)
 
     done = _done(frames)
     note = answer_blocks.SOURCE_NOTE_WITHOUT_DATA
@@ -432,9 +412,7 @@ def test_stream_done_strips_source_note_already_sent_as_block(
 def test_stream_metrics_match_build_blocks_assembly() -> None:
     """同一份 metrics / ai / sources，流式吐的块与直接调 `build_blocks` 逐字相同。"""
     sources = [{"name": "腾讯行情快照", "fetched_at": "2026-11-07T09:20:00+08:00"}]
-    expected = answer_blocks.build_blocks(
-        dict(PROVENANCE_METRICS), FAKE_AI, sources
-    )
+    expected = answer_blocks.build_blocks(dict(PROVENANCE_METRICS), FAKE_AI, sources)
 
     actual = chat_channel.answer_block_payloads(
         ai=FAKE_AI, sources=sources, metrics=PROVENANCE_METRICS
@@ -446,6 +424,7 @@ def test_stream_metrics_match_build_blocks_assembly() -> None:
 # --------------------------------------------------------------------------- #
 # 失败与中断
 # --------------------------------------------------------------------------- #
+
 
 def test_no_channel_failure_is_single_stage_a_notice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -481,6 +460,7 @@ def test_no_channel_failure_is_single_stage_a_notice(
 # --------------------------------------------------------------------------- #
 # 失败半流（拍板 B）：已发块保留、不追加 notice、done{completed:false, reason}
 # --------------------------------------------------------------------------- #
+
 
 def test_midstream_disconnect_keeps_generating_and_completes(
     monkeypatch: pytest.MonkeyPatch,
@@ -624,14 +604,13 @@ def test_stream_logs_no_memory_on_abort(monkeypatch: pytest.MonkeyPatch) -> None
 # 6.4 第 5 条：只约束非流式路径
 # --------------------------------------------------------------------------- #
 
+
 def test_non_streaming_failure_stays_single_notice_with_empty_reply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub(monkeypatch, "   ")
 
-    response = _client(tmp_path).post(
-        CHAT, json={"message": "你好"}, headers=WRITE_HEADERS
-    )
+    response = _client(tmp_path).post(CHAT, json={"message": "你好"}, headers=WRITE_HEADERS)
 
     body = response.json()
     assert response.status_code == 502
@@ -647,6 +626,7 @@ def test_non_streaming_failure_stays_single_notice_with_empty_reply(
 # --------------------------------------------------------------------------- #
 # QUOT-581 真流式：增量消费 + model_error 半流 + 心跳（monkeypatch 注入，零环境开关）
 # --------------------------------------------------------------------------- #
+
 
 def _http_channel() -> chat_channel.Channel:
     return chat_channel.Channel(
@@ -773,7 +753,7 @@ def test_slow_model_heartbeat_keeps_gaps_under_two_seconds(
             except TimeoutError:
                 stamps.append(("consumer-timeout-10s", _time.monotonic() - started))
                 continue
-            event = frame.split("\n", 1)[0][len("event: "):]
+            event = frame.split("\n", 1)[0][len("event: ") :]
             stamps.append((event, _time.monotonic() - started))
         return stamps
 
@@ -790,7 +770,7 @@ def test_incremental_blocks_match_non_streaming_payload(
 ) -> None:
     """流式增量块与非流式三路由的对外值同源（done.reply 与非流式 reply 一致）。"""
     reply = "今天量能比昨日温和放大。高位板接力不顺。"
-    _stub_incremental(monkeypatch, [reply[i:i + 5] for i in range(0, len(reply), 5)])
+    _stub_incremental(monkeypatch, [reply[i : i + 5] for i in range(0, len(reply), 5)])
 
     async def collect() -> list[str]:
         return [
@@ -817,6 +797,7 @@ def test_incremental_blocks_match_non_streaming_payload(
 # --------------------------------------------------------------------------- #
 # QUOT-598 C2 工具环：真实调用 → cog 事件 + status 流水账里的 "tool" 动作
 # --------------------------------------------------------------------------- #
+
 
 class _FakeBus:
     def __init__(self) -> None:
@@ -872,9 +853,7 @@ def _run_turn(session_id: str, registry: Any, bus: Any) -> list[tuple[str, dict[
 
 
 def _tool_status(frames: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
-    return [
-        data for event, data in frames if event == "status" and data.get("action") == "tool"
-    ]
+    return [data for event, data in frames if event == "status" and data.get("action") == "tool"]
 
 
 def test_tool_call_emits_one_cog_sample_and_a_status_pair(

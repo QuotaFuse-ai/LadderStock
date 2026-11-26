@@ -102,9 +102,7 @@ def add_position(
     conn = sqlite_store.connect(root=root, create=True)
     assert conn is not None  # create=True 时不会返回 None
     try:
-        exists = conn.execute(
-            "SELECT 1 FROM positions WHERE code = ?", (clean_code,)
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM positions WHERE code = ?", (clean_code,)).fetchone()
         if exists and not upsert:
             raise LadderStockError(
                 f"{clean_code} 已在本机持仓里；要改请用 ldst position update --code {clean_code}",
@@ -155,9 +153,7 @@ def add_position(
     return dict(row)
 
 
-def list_positions(
-    *, code: str | None = None, root: Path | None = None
-) -> list[dict[str, Any]]:
+def list_positions(*, code: str | None = None, root: Path | None = None) -> list[dict[str, Any]]:
     """查本机持仓；库不存在时返回空列表（不建库）。按建仓日 + 代码排序，结果可复算。"""
     conn = sqlite_store.connect(root=root, create=False)
     if conn is None:
@@ -168,9 +164,7 @@ def list_positions(
         if code and code.strip():
             where = " WHERE code = ?"
             params.append(code.strip().upper())
-        rows = conn.execute(
-            f"{_SELECT}{where} ORDER BY entry_date, code", params
-        ).fetchall()
+        rows = conn.execute(f"{_SELECT}{where} ORDER BY entry_date, code", params).fetchall()
         return sqlite_store.rows_to_dicts(rows)
     finally:
         sqlite_store.close(conn)
@@ -225,9 +219,7 @@ def update_position(
     conn = sqlite_store.connect(root=root, create=True)
     assert conn is not None
     try:
-        found = conn.execute(
-            "SELECT 1 FROM positions WHERE code = ?", (clean_code,)
-        ).fetchone()
+        found = conn.execute("SELECT 1 FROM positions WHERE code = ?", (clean_code,)).fetchone()
         if not found:
             raise LadderStockError(
                 f"本机持仓里没有 {clean_code}（先 ldst position add）", EXIT_NOT_FOUND
@@ -262,6 +254,7 @@ def remove_position(code: str, *, root: Path | None = None) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # 本地计算（盈亏 / 集中度 / 行业分布）
 # --------------------------------------------------------------------------- #
+
 
 def _pct(value: float) -> float:
     return round(value * 100.0, 1)
@@ -303,9 +296,7 @@ def _shares(rows: list[dict[str, Any]], weights: list[float]) -> list[dict[str, 
     ]
 
 
-def _concentration(
-    rows: list[dict[str, Any]], weights: list[float], basis: str
-) -> dict[str, Any]:
+def _concentration(rows: list[dict[str, Any]], weights: list[float], basis: str) -> dict[str, Any]:
     total = sum(weights)
     if not rows or total <= 0:
         return {
@@ -547,9 +538,7 @@ def _daily_pnl(
     return round(float(change) * qty, 2), DAILY_OK, None
 
 
-def _daily_summary(
-    items: list[dict[str, Any]], *, provided: bool
-) -> dict[str, Any]:
+def _daily_summary(items: list[dict[str, Any]], *, provided: bool) -> dict[str, Any]:
     """汇总三格（QUOT-380 拍板口径 5）：**只有人民币单一口径，不做币种汇总**。
 
     总数只在「每条持仓都算得出」时给——半截总数比缺席更容易被当成全账户的当日盈亏。

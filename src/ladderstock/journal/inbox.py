@@ -39,9 +39,7 @@ MAX_LINE_CHARS = 500
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 
-_COLUMNS = (
-    "id, job, job_label, kind, title, lines_json, link, dedupe_key, read_at, created_at"
-)
+_COLUMNS = "id, job, job_label, kind, title, lines_json, link, dedupe_key, read_at, created_at"
 
 
 def _usage(message: str) -> LadderStockError:
@@ -99,9 +97,7 @@ def _item_from_row(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def _select(conn: sqlite3.Connection, item_id: str) -> sqlite3.Row | None:
-    return conn.execute(
-        f"SELECT {_COLUMNS} FROM {INBOX_TABLE} WHERE id = ?", (item_id,)
-    ).fetchone()
+    return conn.execute(f"SELECT {_COLUMNS} FROM {INBOX_TABLE} WHERE id = ?", (item_id,)).fetchone()
 
 
 def _connect_read(root: Path | None) -> sqlite3.Connection | None:
@@ -192,6 +188,7 @@ def add_item(
 # 读 / 已读
 # --------------------------------------------------------------------------- #
 
+
 def list_items(limit: int = DEFAULT_LIMIT, *, root: Path | None = None) -> list[dict[str, Any]]:
     """按 `created_at DESC` 读出提醒；库不存在 / 没这张表时返回空列表（不建库）。"""
     size = int(limit)
@@ -202,8 +199,7 @@ def list_items(limit: int = DEFAULT_LIMIT, *, root: Path | None = None) -> list[
         return []
     try:
         rows = conn.execute(
-            f"SELECT {_COLUMNS} FROM {INBOX_TABLE}"
-            " ORDER BY created_at DESC, id DESC LIMIT ?",
+            f"SELECT {_COLUMNS} FROM {INBOX_TABLE} ORDER BY created_at DESC, id DESC LIMIT ?",
             (size,),
         ).fetchall()
         return [_item_from_row(row) for row in rows]
@@ -217,9 +213,7 @@ def unread_count(*, root: Path | None = None) -> int:
     if conn is None:
         return 0
     try:
-        row = conn.execute(
-            f"SELECT COUNT(*) FROM {INBOX_TABLE} WHERE read_at IS NULL"
-        ).fetchone()
+        row = conn.execute(f"SELECT COUNT(*) FROM {INBOX_TABLE} WHERE read_at IS NULL").fetchone()
         return int(row[0]) if row else 0
     finally:
         sqlite_store.close(conn)

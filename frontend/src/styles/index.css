@@ -93,21 +93,15 @@
     display: none;
   }
 
-  /* ── 壳层版面（QUOT-397）────────────────────────────────────────────────────
-     `.page-shell` 是主内容栏：上限 1440px、两侧等宽留白、宽屏下居中。
-     1440 是版面承诺（对照参考实现顶栏 + 内容区的对称留白），不属于主题色 / 尺寸令牌，
-     所以留在这里的组件层而不是 tokens.css。窄屏（<1024）留白收到 16px。 */
+  /* ── 壳层版面（QUOT-397 / 间距统一）────────────────────────────────────────
+     `.page-shell` 是主内容栏。原先这里是「上限 1440px + 两侧等宽留白 + 宽屏居中」，
+     在 1440 以上的视口里就是两条空带：内容缩进一大截，与研究台（已放开这层、
+     只留 16px 内边距 + 页内 12px）的密度对不上。
+     现在口径与首页/研究台统一：**不限宽、不居中**，只保留内边距，
+     宽屏时内容贴着侧栏走，右边不留空带。 */
   .page-shell {
-    max-width: 1440px;
-    margin-inline: auto;
     padding-inline: 16px;
     padding-block: 20px;
-  }
-
-  @media (min-width: 1024px) {
-    .page-shell {
-      padding-inline: 24px;
-    }
   }
 
   /* QUOT-457：页面标题条已取消（全平台只留顶栏一条横栏），
@@ -236,6 +230,62 @@
     .ldst-wf-dot-static {
       left: var(--wf-pos, 50%);
       top: 50%;
+    }
+  }
+  /* ------------------------------------------------------------------ *
+   * 打印 / 存 PDF（C 包 / DEC-090）：复盘统计页与各内容页打印友好。
+   * 口径：侧栏 / 顶栏 / 导航 / 按钮一律不进纸面；内容满宽黑白两列；
+   * 卡片去阴影换细边框（省墨），表格换行不截断。
+   * ------------------------------------------------------------------ */
+  @media print {
+    :root {
+      color-scheme: light;
+    }
+
+    aside,
+    header,
+    .no-print {
+      display: none !important;
+    }
+
+    body {
+      background: #fff !important;
+    }
+
+    main {
+      width: 100% !important;
+      max-width: none !important;
+      padding: 0 !important;
+      overflow: visible !important;
+    }
+
+    .page-shell {
+      max-width: none !important;
+      margin: 0 !important;
+    }
+
+    .card {
+      box-shadow: none !important;
+      border: 1px solid #ddd !important;
+      break-inside: avoid;
+    }
+
+    .grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    table {
+      font-size: 11px;
+    }
+
+    td,
+    th {
+      word-break: break-all;
+    }
+
+    a {
+      text-decoration: none !important;
+      color: inherit !important;
     }
   }
 

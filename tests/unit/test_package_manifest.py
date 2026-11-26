@@ -37,9 +37,7 @@ def test_all_resource_destinations_are_relative(manifest: ModuleType) -> None:
         assert ".." not in Path(dest).parts
 
 
-def test_collect_datas_keeps_relative_destinations(
-    manifest: ModuleType, tmp_path: Path
-) -> None:
+def test_collect_datas_keeps_relative_destinations(manifest: ModuleType, tmp_path: Path) -> None:
     for src_rel, _dest in manifest.RESOURCE_DIRS:
         (tmp_path / src_rel).mkdir(parents=True)
 
@@ -49,9 +47,7 @@ def test_collect_datas_keeps_relative_destinations(
     manifest.assert_relative_destinations(datas)
 
 
-def test_collect_datas_fails_on_missing_resource(
-    manifest: ModuleType, tmp_path: Path
-) -> None:
+def test_collect_datas_fails_on_missing_resource(manifest: ModuleType, tmp_path: Path) -> None:
     missing_rel, _dest = manifest.RESOURCE_DIRS[-1]
     for src_rel, _dest in manifest.RESOURCE_DIRS[:-1]:
         (tmp_path / src_rel).mkdir(parents=True)
@@ -60,6 +56,19 @@ def test_collect_datas_fails_on_missing_resource(
         manifest.collect_datas(tmp_path)
 
     assert missing_rel in str(excinfo.value)
+
+
+def test_models_are_optional_by_default(manifest: ModuleType, tmp_path: Path) -> None:
+    """模型 274MB 不该进安装包：默认只收三个必需资源，显式才带 models。"""
+    for src_rel, _dest in manifest.RESOURCE_DIRS:
+        (tmp_path / src_rel).mkdir(parents=True)
+    (tmp_path / "file" / "models").mkdir(parents=True)
+
+    datas = manifest.collect_datas(tmp_path)
+    assert [dest for _src, dest in datas] == [dest for _src, dest in manifest.RESOURCE_DIRS]
+
+    with_models = manifest.collect_datas(tmp_path, include_models=True)
+    assert [dest for _src, dest in with_models][-1] == "file/models"
 
 
 @pytest.mark.parametrize(

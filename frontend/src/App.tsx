@@ -1,5 +1,8 @@
-import { Link, Navigate, Route, Routes } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
+
+import { getStatus } from './api/setup'
 
 import Layout from './components/Layout'
 import AiReviewScreen from './screens/AiReviewScreen'
@@ -12,8 +15,11 @@ import LimitUpScreen from './screens/limitup/LimitUpScreen'
 import JournalScreen from './screens/JournalScreen'
 import KnowledgeDetailScreen from './screens/knowledge/KnowledgeDetailScreen'
 import KnowledgeEntryScreen from './screens/knowledge/KnowledgeEntryScreen'
+import KnowledgeNotesScreen from './screens/knowledge/KnowledgeNotesScreen'
+import DataAssetsScreen from './screens/DataAssetsScreen'
 import MarketScreen from './screens/MarketScreen'
 import InboxScreen from './screens/my-stocks/InboxScreen'
+import AlertRulesScreen from './screens/AlertRulesScreen'
 import MyStocksScreen from './screens/my-stocks/MyStocksScreen'
 import CalendarScreen from './screens/radar/CalendarScreen'
 import NewsScreen from './screens/radar/NewsScreen'
@@ -23,13 +29,17 @@ import ResearchEntryScreen from './screens/research/ResearchEntryScreen'
 import ResearchReportScreen from './screens/research/ResearchReportScreen'
 import ReviewScreen from './screens/ReviewScreen'
 import SettingsScreen from './screens/SettingsScreen'
+import SetupScreen from './screens/setup/SetupScreen'
 import SignalsScreen from './screens/signals/SignalsScreen'
 import SkillDetailScreen from './screens/skills/SkillDetailScreen'
 import SkillPackageScreen from './screens/skills/SkillPackageScreen'
 import SkillsIndexScreen from './screens/skills/SkillsIndexScreen'
 import ValidateScreen from './screens/ValidateScreen'
+import LedgerScreen from './screens/LedgerScreen'
+import ConfigScreen from './screens/ConfigScreen'
 import WatchScreen from './screens/WatchScreen'
 import WeeklyScreen from './screens/WeeklyScreen'
+import AnalyticsScreen from './screens/AnalyticsScreen'
 import { ROUTE_PATHS, type RoutePath } from './routes'
 
 /**
@@ -80,8 +90,14 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/review/ai': <AiReviewScreen />,
   // R11 AI周报（QUOT-149 交付，导航标签 QUOT-344 更名）：`?week=YYYY-Www`，缺省本周
   '/weekly': <WeeklyScreen />,
+  // B 包 / DEC-089：复盘统计（组合指标 / 基准 / 归因 / 行为 / 错题本）
+  '/analytics': <AnalyticsScreen />,
   '/journal': <JournalScreen />,
   '/validate': <ValidateScreen />,
+  // F9：观点账本——已落账判断与命中率（只读 chat.sqlite 的 research_record 表）
+  '/ledger': <LedgerScreen />,
+  // 运行配置：定时任务 / 数据同步池 / 历史回填，只读展示 config/*.yaml 与磁盘分区
+  '/config': <ConfigScreen />,
   // QUOT-534：策略回测，三区（参数 / 结果 / 证据）只读本机运行卡
   '/backtest': <BacktestScreen />,
   // 涨停样本：「验证」分组下的二级入口，支持 `?date=YYYY-MM-DD` 深链
@@ -95,6 +111,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/my-stocks': <MyStocksScreen />,
   // QUOT-435：提醒 = 本机收件箱 + 只读定时任务 + 本机投递渠道（DEC-058 后端）
   '/inbox': <InboxScreen />,
+  // DEC-087：提醒规则 = 自定义规则（价格/均线/放量/浮盈亏）× 出站渠道（邮件/IM/webhook）
+  '/alert': <AlertRulesScreen />,
   // 旧深链保留可用：只重定向，不再单独挂屏（`routes.ts` 的 `NON_PAGE_ROUTES` 同步）
   '/watchlist': <Navigate to="/my-stocks?tab=watch" replace />,
   '/positions': <Navigate to="/my-stocks?tab=hold" replace />,
@@ -103,6 +121,8 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   '/industry/:name': <IndustryDetailScreen />,
   '/signals': <SignalsScreen />,
   '/settings': <SettingsScreen />,
+  // 首次配置 / 子模块安装向导（便携包首次启动拦截到这一屏）
+  '/setup': <SetupScreen />,
   // QUOT-146：个股深挖入口是落地页（填 6 位代码），深挖与报告页由它链入
   '/research': <ResearchEntryScreen />,
   '/research/:code': <ResearchDetailScreen />,
@@ -114,12 +134,38 @@ export const ROUTE_ELEMENTS: Record<RoutePath, ReactElement> = {
   // QUOT-567：「知识库」= 落地页收 6 位代码 → 档案页读 `GET /api/knowledge/:market/:symbol`
   '/knowledge': <KnowledgeEntryScreen />,
   '/knowledge/:market/:symbol': <KnowledgeDetailScreen />,
+  // E 包 / DEC-091：笔记与检索（笔记 CRUD + 跨票检索 + 估值换算器）
+  '/knowledge/notes': <KnowledgeNotesScreen />,
+  // 数据资产：本地库的票 / 财报期数 / 公告条数（读 `/api/data/assets*`）
+  '/data-assets': <DataAssetsScreen />,
   // 旧入口：此前首页重定向到复盘；带查询串保留（`?state=` 演示态）
   '/index.html': <Navigate to="/" replace />,
   '*': <NotFound />,
 }
 
 export default function App() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [probeDone, setProbeDone] = useState(false)
+
+  /**
+   * 首次启动拦截：便携包不带子模块，缺任何一项都意味着某些功能会静默不可用。
+   * 这里只探一次，且**失败即放行**——后端没起来时把人锁死在向导页比不引导更糟。
+   */
+  useEffect(() => {
+    if (probeDone) return
+    if (location.pathname === '/setup') {
+      setProbeDone(true)
+      return
+    }
+    getStatus()
+      .then((snapshot) => {
+        setProbeDone(true)
+        if (snapshot.missing_count > 0) navigate('/setup', { replace: true })
+      })
+      .catch(() => setProbeDone(true))
+  }, [probeDone, location.pathname, navigate])
+
   return (
     <Routes>
       <Route element={<Layout />}>

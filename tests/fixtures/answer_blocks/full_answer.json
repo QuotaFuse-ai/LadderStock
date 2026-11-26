@@ -105,19 +105,28 @@
             "label": "情绪温度",
             "value": 62.0,
             "unit": "",
-            "as_of": "2026-11-11"
+            "as_of": "2026-11-11",
+            "source": "computed",
+            "endpoint": "review.pipeline.collect_metrics",
+            "fetched_at": "2026-11-11T15:02:01+08:00"
           },
           {
             "label": "晋级率",
             "value": 41.5,
             "unit": "%",
-            "as_of": "2026-11-11"
+            "as_of": "2026-11-11",
+            "source": "computed",
+            "endpoint": "review.pipeline.collect_metrics",
+            "fetched_at": "2026-11-11T15:02:01+08:00"
           },
           {
             "label": "涨停家数",
             "value": 53.0,
             "unit": "家",
-            "as_of": "2026-11-11"
+            "as_of": "2026-11-11",
+            "source": "computed",
+            "endpoint": "review.pipeline.collect_metrics",
+            "fetched_at": "2026-11-11T15:02:01+08:00"
           }
         ]
       }
@@ -173,7 +182,7 @@
     {
       "type": "notice",
       "payload": {
-        "kind": "degraded",
+        "kind": "note",
         "section": "风险提示",
         "message": "跌破三十八元支撑"
       }

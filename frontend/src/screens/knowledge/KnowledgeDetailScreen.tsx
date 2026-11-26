@@ -66,6 +66,10 @@ function asOfText(dossier: KnowledgeDossier): string {
 function DossierCard({ dossier }: { dossier: KnowledgeDossier }) {
   const index = useMemo(() => buildCitationIndex(null), [])
   const stale = dossier.status !== 'fresh' ? STALE_BANNER[dossier.status] : null
+  // 空壳档案：生成时上游快照没数据，正文只剩「快照未提供」的框架，来源清单也是空的。
+  // 这种档案不能当「平台已经了解这只票」展示，要明说是空的、并给下一步。
+  const skeletonOnly =
+    dossier.sources.length === 0 && (dossier.body.match(/快照未提供/g)?.length ?? 0) >= 3
 
   return (
     <div className="flex flex-col gap-4">
@@ -75,9 +79,18 @@ function DossierCard({ dossier }: { dossier: KnowledgeDossier }) {
         </Banner>
       )}
 
+      {skeletonOnly && (
+        <Banner tone="info" title="这份档案还没有实质数据">
+          <p className="max-w-measure">
+            生成时上游快照是空的，所以正文只有段落框架，没有任何价格、财务数字或出处。
+            可以回研究台让「个股深挖」针对这只票跑一轮，或等「知识库刷新」任务补齐后再来；平台不会用常识补写一份看起来像真的档案。
+          </p>
+        </Banner>
+      )}
+
       <Card>
         <CardHeader
-          title={dossier.name}
+          title={dossier.name || `${MARKET_LABEL[dossier.market]} ${dossier.symbol}`}
           subtitle={`${MARKET_LABEL[dossier.market]} · ${dossier.symbol}`}
           actions={
             <span className="flex flex-wrap items-center gap-1">

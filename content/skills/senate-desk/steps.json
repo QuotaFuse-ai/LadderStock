@@ -7,9 +7,9 @@
     "action": "open_ai_dock",
     "auto_send": false
   },
-  "status": "unconnected",
-  "blocked_by": "StockSenate MCP（127.0.0.1:8765）未接进 LadderStock；须 POST 握手，约 20s",
-  "offline_notice": "投研链路未接通：本包只提供步骤，执行时返回未接通，不输出任何论点或回测结果。",
+  "status": "ready",
+  "blocked_by": "",
+  "offline_notice": "",
   "tools_allow": [
     "stock_senate_analysis",
     "stock_senate_backtest",

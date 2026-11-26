@@ -52,6 +52,7 @@ def _search(root: Path, q: str, **params: Any) -> Any:
 # 1. 代码命中
 # --------------------------------------------------------------------------- #
 
+
 def test_code_query_returns_real_name(tmp_path: Path) -> None:
     _seed(
         tmp_path,
@@ -86,6 +87,7 @@ def test_code_query_with_market_affix_normalizes(tmp_path: Path) -> None:
 # 2. 中文名称命中
 # --------------------------------------------------------------------------- #
 
+
 def test_chinese_name_query_hits(tmp_path: Path) -> None:
     _seed(
         tmp_path,
@@ -113,9 +115,47 @@ def test_name_query_is_case_insensitive_and_prefix_ranks_first(tmp_path: Path) -
     assert body["payload"]["matches"][0]["symbol"] == "600809"
 
 
+def test_symbol_basic_dictionary_answers_name_query(tmp_path: Path) -> None:
+    """全市场字典（`symbol_basic`）是名称检索的权威源。
+
+    这条钉住「普通人说茅台就能出 600519」这个功能的落点：字典表一进，
+    检索必须命中，且名称来自表里的 `name` 字段（不是按代码猜的）。
+    """
+    duckdb_store.write_dataset(
+        "symbol_basic",
+        [
+            {
+                "code": "600519",
+                "name": "贵州茅台",
+                "market": "SH",
+                "price": 1438.55,
+                "prev_close": 1410.0,
+                "volume": 12000,
+                "active": True,
+                "trade_date": STAMP,
+            }
+        ],
+        root=tmp_path,
+    )
+    matches = _search(tmp_path, "茅台")["payload"]["matches"]
+    assert [(item["symbol"], item["name"]) for item in matches] == [("600519", "贵州茅台")]
+
+
+def test_name_with_inner_spaces_is_folded(tmp_path: Path) -> None:
+    """上游名称里夹着全角空格（「万  科Ａ」），用户敲「万科」也必须命中。"""
+    duckdb_store.write_dataset(
+        "symbol_basic",
+        [{"code": "000002", "name": "万  科Ａ", "market": "SZ", "trade_date": STAMP}],
+        root=tmp_path,
+    )
+    matches = _search(tmp_path, "万科")["payload"]["matches"]
+    assert matches and matches[0]["symbol"] == "000002"
+
+
 # --------------------------------------------------------------------------- #
 # 3. 空结果：查无此代码不许编名称
 # --------------------------------------------------------------------------- #
+
 
 def test_unknown_code_returns_empty_matches(tmp_path: Path) -> None:
     _seed(tmp_path, [{"code": "600000", "name": "浦发银行", "trade_date": STAMP}])
@@ -138,14 +178,13 @@ def test_empty_cache_reports_missing_source(tmp_path: Path) -> None:
 # 4. 参数与闸门
 # --------------------------------------------------------------------------- #
 
+
 def test_blank_query_is_422(tmp_path: Path) -> None:
     assert _client(tmp_path).get("/api/symbols/search", params={"q": "  "}).status_code == 422
     assert _client(tmp_path).get("/api/symbols/search").status_code == 422
 
 
-def test_non_loopback_and_bad_host_are_403(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_non_loopback_and_bad_host_are_403(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _seed(tmp_path, [{"code": "600000", "name": "浦发银行", "trade_date": STAMP}])
     monkeypatch.setenv("LDST_WEB_ALLOW_REMOTE", "1")
     monkeypatch.setenv("LDST_WEB_TOKEN", "0123456789abcdef0123")
@@ -158,6 +197,4 @@ def test_non_loopback_and_bad_host_are_403(
         "/api/symbols/search", params={"q": "600000"}, headers={"host": "evil.example.com"}
     )
     assert rebinding.status_code == 403
-    assert (
-        _client(tmp_path).get("/api/symbols/search", params={"q": "600000"}).status_code == 200
-    )
+    assert _client(tmp_path).get("/api/symbols/search", params={"q": "600000"}).status_code == 200

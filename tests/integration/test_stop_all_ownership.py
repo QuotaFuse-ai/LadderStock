@@ -245,10 +245,10 @@ def test_previous_supervisor_spawned_process_is_still_stopped_by_stop_all(world:
 
     engine_b, ledger_b, _adapters_b = world.new_session()
     summary = engine_b.reconcile()
-    assert summary["wire"] == "adopted:still_running"
+    assert summary["wire"] == "alive:spawned_prev_session"
     record_b = ledger_b.record("wire")
     assert record_b is not None
-    assert record_b.origin == "adopted" and record_b.adopted_peer is False
+    assert record_b.origin == "spawned" and record_b.adopted_peer is False
 
     outcome = engine_b.stop_all()
 

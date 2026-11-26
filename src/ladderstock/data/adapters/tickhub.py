@@ -133,6 +133,9 @@ ROW_SHAPES: dict[str, RowShape] = {
     # 盘中快照（QUOT-286）：`tencent_quote_batch` 的 `quotes` 是按 code 索引的对象，
     # 取值即记录行（见 `normalize_records` 对 Mapping 的处理）；行内只有 `timestamp`。
     "spot_quote": RowShape("quotes"),
+    # 全市场标的字典：与 `spot_quote` 同一个工具、同一种 `{code: row}` 形状，
+    # 区别只在用途——这份整表落库当「代码 + 名称」字典，供名称↔代码检索。
+    "symbol_basic": RowShape("quotes"),
     # 逐只归属（QUOT-362）：一行 = 「这只股票挂在这个板块」，股票维度，`require_code`。
     # `boards[].name` 改成 `board_name` 是与板块榜（`concept_board`）同一套列名，
     # `boards[].code`（东财板块码）改成 `board_code` 是给 `data.code`（股票代码）让位。
@@ -164,6 +167,23 @@ ROW_SHAPES: dict[str, RowShape] = {
     # 指数日线：`data.klines` 与 daily_k 同形状，但指数行没有 `period/adjust`
     # 这类口径字段可透传；`code` 从 `data.code` 透传（000300）。
     "index_daily": RowShape("klines", passthrough=("code",), date_keys=("date",)),
+    # 资讯雷达四栏目（2026-11-21 真实调用取样）：
+    # - 公告两源与备源 announcements_backup 同形状 `{code, announcements:[…]}`，
+    #   行内 publish_time 是「YYYY-MM-DD HH:MM:SS」，取前 10 位成交易日；
+    # - 东财个股新闻 `{code, news:[…]}`，行内 date 同样是日期时间串；
+    # - 新闻联播 `{date, items:[…]}` 没有个股维度，require_code=False，
+    #   日期由 data.date（HEADER_DATE_KEYS）透传成 trade_date。
+    "announcement_cninfo": RowShape(
+        "announcements", passthrough=("code",), date_keys=("publish_time",)
+    ),
+    "announcement_szse": RowShape(
+        "announcements", passthrough=("code",), date_keys=("publish_time",)
+    ),
+    "news_eastmoney_stock": RowShape("news", passthrough=("code",), date_keys=("date",)),
+    # 新闻联播：`data.date` 是**这批稿子的播出日**（行内只有时刻或什么都没有）。
+    # 头部日期必须透传到行——否则 `normalize_records` 展开 items 后 decoder 拿到的
+    # 是纯行列表，顶层 date 丢了，每条都会 published_at=None 掉进 dropped_undated。
+    "news_cctv": RowShape("items", passthrough=("date",), require_code=False),
 }
 
 #: `tdx_daily_package` 是 daily_k 的备源工具，形状按工具名登记（同数据集两种形状）
@@ -200,6 +220,12 @@ CODE_POOL_DATASETS: frozenset[str] = frozenset(
         "share_buyback",
         "lockup_calendar",
         "index_daily",
+        # 资讯雷达三个 code 必填栏目（2026-11-21 实测 inputSchema：required=["code"]）。
+        # 此前裸 sync 发空参被上游拒，才一直 skipped；纳入代码池后逐只扇出。
+        # cninfo 主源当前上游 407（出口代理要认证），备源 announcements_backup 实测可接管。
+        "announcement_cninfo",
+        "announcement_szse",
+        "news_eastmoney_stock",
     }
 )
 
@@ -223,8 +249,13 @@ FIXED_PARAMS: dict[str, dict[str, Any]] = {
 
 #: 增量水位在各工具里的入参名。`tencent_kline` 没有 `since`，只有 `start`（含当日，
 #: 重叠那天由 `(code, trade_date)` upsert 折叠，不会重复增长）。
+#: 公告两源的 `start` 同语义（YYYY-MM-DD，含当日；2026-11-21 实测带 start/end 可取）。
 #: 其余按日整批替换的数据集（涨停池 / 板块 / 情绪）本来就只回当天，没有增量入参。
-SINCE_PARAM: dict[str, str] = {"daily_k": "start"}
+SINCE_PARAM: dict[str, str] = {
+    "daily_k": "start",
+    "announcement_cninfo": "start",
+    "announcement_szse": "start",
+}
 
 
 def needs_code(dataset: str) -> bool:
@@ -312,8 +343,10 @@ def from_tool_response(
         # `ok=false` + `meta.partial=true`，但 `data.flows` 里仍然有另一批的结果。
         # 一律按整体失败抛，等于把取到的那半也丢了（QUOT-371 第 4 条）。
         # 只在「明确标了 partial 且确实带回了记录」时放行，其余仍然抛，不吞真失败。
-        recoverable = meta_probe.get("partial") is True and isinstance(data_probe, dict) and any(
-            data_probe.get(key) for key in ("records", "flows", "items", "quotes")
+        recoverable = (
+            meta_probe.get("partial") is True
+            and isinstance(data_probe, dict)
+            and any(data_probe.get(key) for key in ("records", "flows", "items", "quotes"))
         )
         if not recoverable:
             raise classify_failure(actual, response)
@@ -330,9 +363,7 @@ def from_tool_response(
     freshness: Freshness = "cached" if meta.get("cache_hit") else "realtime"
     partial = meta.get("partial") is True
     failed_codes = meta.get("failed") or (data.get("failed") if isinstance(data, dict) else None)
-    partial_note = (
-        f"partial@{failed_codes}只未取到" if partial else ""
-    )
+    partial_note = f"partial@{failed_codes}只未取到" if partial else ""
     # 批量工具的「这一轮上游往返了几次」由工具自报（`data.batches` 成功 +
     # `data.failures` 失败），是老板验收「一次刷新 ≤2 个请求」唯一的取数口。
     # 不是所有工具都有这批键，没有就留 None，不猜（QUOT-371 / QUOT-374）。
@@ -357,8 +388,12 @@ def from_tool_response(
         topic=topic or binding.dataset,
         event_id=meta.get("trace_id"),
         data_as_of=as_of,
-        payload={"dataset": dataset, "tool": actual, "records": records,
-                 "batch_requests": batch_requests},
+        payload={
+            "dataset": dataset,
+            "tool": actual,
+            "records": records,
+            "batch_requests": batch_requests,
+        },
         source="tickhub_cn",
         source_detail=f"{actual}@{upstream}{'/' + partial_note if partial_note else ''}",
         fetched_at=fetched_at,
@@ -369,9 +404,7 @@ def from_tool_response(
     )
 
 
-def normalize_records(
-    dataset: str, tool: str, data: Any
-) -> tuple[Any, date | None]:
+def normalize_records(dataset: str, tool: str, data: Any) -> tuple[Any, date | None]:
     """真实 `data` → 待落库记录（列表或快照对象）+ payload 自己声明的日期。
 
     - 列表：**登记了形状**的按形状处理（行内日期归一、代码必填、标记字段），
@@ -423,7 +456,11 @@ def normalize_records(
             continue
         rows.extend(
             _shape_rows(
-                shape, extra, defaults, header_date, header_date,
+                shape,
+                extra,
+                defaults,
+                header_date,
+                header_date,
                 tag=(field, value),
             )
         )
@@ -462,6 +499,7 @@ def _shape_rows(
 # --------------------------------------------------------------------------- #
 # 内部
 # --------------------------------------------------------------------------- #
+
 
 def classify_failure(tool: str, response: dict[str, Any]) -> LadderStockError:
     """`ok: false` → 异常类型。

@@ -17,7 +17,7 @@ import type {
 export type BadgeTone = 'neutral' | 'ok' | 'warn' | 'danger' | 'info' | 'flat'
 
 export interface OwnershipView {
-  label: '主程序托管' | '外部接管' | '非托管（观测）'
+  label: '主程序托管' | '外部接管' | '非托管（观测）' | '未启用（按需）'
   tone: BadgeTone
   hint: string
 }
@@ -75,6 +75,13 @@ export function ownershipView(module: SupervisorModule | null): OwnershipView {
       hint: '后端账本没有这个模块的记录：只观测，不代管',
     }
   }
+  if (module.state === 'disabled') {
+    return {
+      label: '未启用（按需）',
+      tone: 'neutral',
+      hint: '按需模块：没有启用的映射就没有进程，属正常状态，不是故障',
+    }
+  }
   if (module.ownership === 'external') {
     // 后端 cmdline 指纹对不上（cmdline_mismatch / port_taken_by_unknown）：
     // 归属结论优先于账本里可能过期的 origin。
@@ -126,6 +133,16 @@ export function selfHealView(module: SupervisorModule | null): SelfHealView | nu
     return { label: `正在重拉（第 ${attempts}/${max} 次）`, tone: 'warn', failed: false }
   }
   return null
+}
+
+/**
+ * 近 5 分钟重启提示（窗口值）：>0 才给文案，绝不展示生命周期累计值——
+ * 累计 `restart_count` 会一路涨到几十上百（senate 80、watch 92…），
+ * 直接展示容易被误读为「频繁崩溃」。当前健康看 `restarts_5min`。
+ */
+export function restartWindowNote(module: SupervisorModule | null): string | null {
+  const count = module?.restarts_5min ?? 0
+  return count > 0 ? `近 5 分钟重启 ${count} 次` : null
 }
 
 function originLabel(origin: SupervisorOrigin): string {

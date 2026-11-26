@@ -60,9 +60,7 @@ def compress_ranges(days: Iterable[str], *, limit: int = 3) -> dict[str, Any]:
             ranges[-1][1] = day
         else:
             ranges.append([day, day])
-    shown = [
-        first if first == last else f"{first}~{last}" for first, last in ranges[:limit]
-    ]
+    shown = [first if first == last else f"{first}~{last}" for first, last in ranges[:limit]]
     return {
         "ranges": shown,
         "total_ranges": len(ranges),
@@ -123,17 +121,12 @@ def code_stats(
     )
 
     window_rows = [
-        row for row in rows
-        if (day := _iso(row.get("trade_date"))) and day in actual_set
+        row for row in rows if (day := _iso(row.get("trade_date"))) and day in actual_set
     ]
     amount_missing = sum(1 for row in window_rows if _amount_missing(row))
     amount_missing_rate = amount_missing / len(window_rows) if window_rows else 0.0
     sources = sorted(
-        {
-            str(row.get("_source") or row.get("source") or "").strip()
-            for row in window_rows
-        }
-        - {""}
+        {str(row.get("_source") or row.get("source") or "").strip() for row in window_rows} - {""}
     )
 
     return {
@@ -175,8 +168,7 @@ def explain_gap(row: dict[str, Any], *, stage: str) -> str:
         )
     if row.get("tail_missing"):
         notes.append(
-            f"{row['tail_missing']} 个预期交易日在其后（{row['last_date']}），"
-            "待最新交易日数据补齐"
+            f"{row['tail_missing']} 个预期交易日在其后（{row['last_date']}），待最新交易日数据补齐"
         )
     if row.get("missing_days_in_span"):
         notes.append(
@@ -246,9 +238,7 @@ def build_report(
             ),
         },
         "codes": codes,
-        "top_gaps": [
-            {**row, "explanation": explain_gap(row, stage=stage)} for row in top
-        ],
+        "top_gaps": [{**row, "explanation": explain_gap(row, stage=stage)} for row in top],
         "failures": failures,
         "not_attempted": not_attempted,
         "dedupe": dedupe,
@@ -425,8 +415,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(
             _md_table(
                 [
-                    "代码", "名称", "缺口率", "窗口缺口", "头缺",
-                    "尾缺", "区间缺口", "覆盖年数", "解释",
+                    "代码",
+                    "名称",
+                    "缺口率",
+                    "窗口缺口",
+                    "头缺",
+                    "尾缺",
+                    "区间缺口",
+                    "覆盖年数",
+                    "解释",
                 ],
                 [
                     [
@@ -460,10 +457,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append("取数失败：无。")
     lines.append("")
     if report["not_attempted"]:
-        lines.append(
-            "连续失败止损后未发起的标的："
-            + "、".join(report["not_attempted"])
-        )
+        lines.append("连续失败止损后未发起的标的：" + "、".join(report["not_attempted"]))
     else:
         lines.append("止损未发起：无。")
     lines.append("")

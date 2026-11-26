@@ -104,6 +104,19 @@ COMMAND_MATRIX: tuple[Any, ...] = (
     (("watch", "list"), {0}),
     (("watch", "rm", "--code", "600999"), {6}),
     (("notify", "test"), {0}),
+    # DEC-087 提醒引擎：rules/channels 的 list 是只读视图（空库即 0）；run 在没配规则时
+    # skipped 也按 0（真实触发与状态机由 tests/unit/alert/ 覆盖，不跑真行情）。
+    (("alert", "rules", "list"), {0}),
+    (("alert", "channels", "list"), {0}),
+    (("alert", "run"), {0}),
+    # B 包（DEC-089）：组合统计。矩阵在临时数据目录跑——没流水 → ok=False → 6。
+    (("analytics",), {6}),
+    # B 包后半：周期报告（月/季/年）。AI 形态与研究同口径不进矩阵（真跑会调模型）——
+    # 矩阵钉的是 --no-ai 模板直出形态（临时数据目录零已实现也出包 → 0）。
+    (("report", "--period", "month", "--of", "2026-11", "--no-ai"), {0}),
+    # E 包（DEC-091）：估值换算器是纯函数，离线就能出结果 → 0（`research-batch`
+    # 不进矩阵，口径见 LEAF_PATHS 的注释）。
+    (("valuation", "pe", "--price", "10.5", "--eps", "2.1"), {0}),
     # 交易日志（M2 已实现）：只写本机临时数据目录，成功即 0
     (
         (
@@ -326,7 +339,68 @@ LEAF_PATHS: tuple[tuple[str, ...], ...] = (
     ("service", "uninstall"),
     ("service", "status"),
     ("service", "tray"),
+    # QUOT-597 符号检索与知识库运维：名称搜索交给本地符号索引（600202 直达）、
+    # 公告知识库按需增量刷新。五条叶子都实现了全局 `--output`，故登记进基线。
+    ("symbol", "lookup"),
+    ("symbol", "refresh"),
+    ("symbol", "status"),
+    ("knowledge", "status"),
+    ("knowledge", "sync-announcements"),
+    # DEC-087 提醒引擎（不计入 31 条基线，见 docs/CLI.md §S）：11 条叶子全部
+    # 实现 --output；add/show/rm/toggle/update/test 只做参数校验与本地库读写，
+    # 真实触发 / 投递不在矩阵里跑（会发网络请求）。基线 75 → 86。
+    ("alert", "rules", "add"),
+    ("alert", "rules", "list"),
+    ("alert", "rules", "show"),
+    ("alert", "rules", "rm"),
+    ("alert", "rules", "toggle"),
+    ("alert", "rules", "update"),
+    ("alert", "channels", "add"),
+    ("alert", "channels", "list"),
+    ("alert", "channels", "rm"),
+    ("alert", "channels", "test"),
+    ("alert", "run"),
+    # B 包（DEC-089）：组合统计（只读本机隐私库的聚合面，不进 MCP / AI）
+    ("analytics",),
+    # B 包后半：月报 / 季报 / 年报（AI 叙述 + 模板兑底，落 data/report/；
+    # AI 形态不进矩阵，模板形态用 --no-ai 钉住）
+    ("report",),
+    # 「对话模式与研究台」批次（2026-11-21 入库）的 25 条命令：archive / brief /
+    # coverage / debate / verify 族、news-archive（资讯归档回看）与 peer serve
+    # （长驻包裹层，与 run/watchdog 同口径只保留 OutputOption 占位）。
+    # 2026-11-22 回合随全局 --output 契约补齐统一登记（86 → 111）。
+    ("archive", "search"),
+    ("archive", "list"),
+    ("archive", "show"),
+    ("archive", "export"),
+    ("brief", "morning"),
+    ("brief", "close"),
+    ("brief", "alerts"),
+    ("brief", "today"),
+    ("brief", "history"),
+    ("brief", "config"),
+    ("brief", "run"),
+    ("coverage", "board"),
+    ("coverage", "gaps"),
+    ("coverage", "plan"),
+    ("coverage", "backfill"),
+    ("debate", "run"),
+    ("debate", "show"),
+    ("debate", "list"),
+    ("debate", "last"),
+    ("debate", "status"),
+    ("verify", "file"),
+    ("verify", "history"),
+    ("verify", "capabilities"),
+    ("news-archive",),
+    ("peer", "serve"),
+    # E 包（DEC-091）：估值换算器（纯函数、离线可跑，pe 形态进矩阵）与批量研究队列。
+    # `research-batch` 与 `research` 同口径不进矩阵（真跑一票会进 AI 管线），
+    # 队列语义由 tests/unit/cli/test_research_batch.py 用假管线覆盖。叶子 113 → 115。
+    ("valuation",),
+    ("research-batch",),
 )
+
 
 def _with_output_json(entry: Any) -> Any:
     """同一条 argv 带上 `--output json`：退出码期望不变，且**绝不能是 2**
@@ -391,6 +465,9 @@ JSON_PATHS: tuple[tuple[str, ...], ...] = (
     ("service", "uninstall"),
     ("service", "status"),
     ("service", "tray", "--check"),
+    # E 包（DEC-091）：`valuation` 的 JSON 载荷离线可解析（calculator 纯函数）；
+    # `research-batch` 的载荷语义由 tests/unit/cli/test_research_batch.py 覆盖。
+    ("valuation", "pe", "--price", "10.5", "--eps", "2.1"),
 )
 
 # `--output` 的可选值必须与 docs/CLI.md §F 一字不差

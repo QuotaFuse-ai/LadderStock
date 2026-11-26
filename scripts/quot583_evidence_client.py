@@ -1,6 +1,6 @@
 """QUOT-583 真服务器验收脚本：10 次 curl 中途断开 + 落库读回。
 
-    python scripts/quot583_evidence_client.py
+python scripts/quot583_evidence_client.py
 """
 
 from __future__ import annotations
@@ -19,8 +19,21 @@ URL = "http://127.0.0.1:5973/ai/chat"
 def probe(index: int) -> bool:
     body = json.dumps({"message": f"第 {index} 轮断开测试", "session_id": f"sess-evidence-{index}"})
     proc = subprocess.Popen(
-        ["curl", "-sN", "-X", "POST", URL, "-H", "Content-Type: application/json",
-         "-H", "Accept: text/event-stream", "--data-raw", body, "--max-time", "30"],
+        [
+            "curl",
+            "-sN",
+            "-X",
+            "POST",
+            URL,
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            "Accept: text/event-stream",
+            "--data-raw",
+            body,
+            "--max-time",
+            "30",
+        ],
         stdout=subprocess.PIPE,
     )
     got_frame = False
@@ -47,10 +60,13 @@ def read_rows() -> list[dict]:
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     try:
-        rows = [dict(r) for r in conn.execute(
-            "SELECT session_id, seq, status, updated_at, length(blocks_json) AS blocks_len"
-            " FROM chat_turn ORDER BY seq"
-        )]
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT session_id, seq, status, updated_at, length(blocks_json) AS blocks_len"
+                " FROM chat_turn ORDER BY seq"
+            )
+        ]
     finally:
         conn.close()
     return rows
@@ -71,8 +87,7 @@ def main() -> int:
     rows = read_rows()
     for r in rows:
         print(
-            f"  {r['session_id']} seq={r['seq']} status={r['status']}"
-            f" blocks_len={r['blocks_len']}",
+            f"  {r['session_id']} seq={r['seq']} status={r['status']} blocks_len={r['blocks_len']}",
             flush=True,
         )
     n_done = sum(1 for r in rows if r["status"] == "done")

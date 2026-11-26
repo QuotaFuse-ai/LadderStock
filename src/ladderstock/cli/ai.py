@@ -58,6 +58,7 @@ def _parse_date(value: str) -> str:
 # ai status
 # --------------------------------------------------------------------------- #
 
+
 def ai_status(output: OutputOption = None) -> None:
     """模型链与最近调用状态（未配置时也能正常输出）。"""
     config = _load_config()
@@ -97,6 +98,7 @@ def _recent_checkpoint() -> dict[str, Any] | None:
 # --------------------------------------------------------------------------- #
 # ai retry
 # --------------------------------------------------------------------------- #
+
 
 def ai_retry(
     date: Annotated[str, typer.Option(help="交易日 YYYY-MM-DD")],
@@ -140,6 +142,7 @@ def ai_retry(
 # --------------------------------------------------------------------------- #
 # ai chain test
 # --------------------------------------------------------------------------- #
+
 
 def ai_chain_test(
     model: Annotated[str | None, typer.Option(help="只测指定模型（标签或 backend:model）")] = None,
@@ -227,6 +230,7 @@ def ai_chain_test(
 # 平台工具注册表（C1 / QUOT-543）
 # --------------------------------------------------------------------------- #
 
+
 def ai_tools_list(
     agent_id: Annotated[
         str, typer.Option("--agent-id", help="命名空间 agent_id（必填，与 kb_scope 成对）")
@@ -291,9 +295,7 @@ def _tools_document(snapshot: tool_registry.ToolSnapshot, fmt: str) -> dict[str,
                 "source": entry.source,
                 "kind": kind,
                 "params": (
-                    ",".join(str(item) for item in required)
-                    if isinstance(required, list)
-                    else "-"
+                    ",".join(str(item) for item in required) if isinstance(required, list) else "-"
                 ),
                 "description": entry.description,
             }
@@ -305,6 +307,7 @@ def _tools_document(snapshot: tool_registry.ToolSnapshot, fmt: str) -> dict[str,
 # --------------------------------------------------------------------------- #
 # 注册
 # --------------------------------------------------------------------------- #
+
 
 def ai_memory_clear(
     yes: Annotated[bool, typer.Option("--yes", help="跳过确认直接清空")] = False,
@@ -352,9 +355,7 @@ def ai_memory_clear(
     raise typer.Exit(EXIT_OK)
 
 
-def register(
-    ai_app: typer.Typer, chain_app: typer.Typer, tools_app: typer.Typer
-) -> None:
+def register(ai_app: typer.Typer, chain_app: typer.Typer, tools_app: typer.Typer) -> None:
     """把 AI 子命令挂到 main.py 已建好的 Typer 组上。"""
     ai_app.command("status", help="模型链与最近调用状态")(ai_status)
     ai_app.command("retry", help="重试指定日期失败段落（成功段落不重跑）")(ai_retry)

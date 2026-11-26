@@ -155,6 +155,7 @@ def _seed_cache(root: Path, *, kline: list[dict[str, Any]] | None = None) -> Non
 # 1. 有数：K 线 ≥120 根 + 实时报价 + 财务指标
 # --------------------------------------------------------------------------- #
 
+
 def test_overview_returns_kline_live_quote_and_financials(tmp_path: Path) -> None:
     duckdb_store.write_dataset("daily_k", _seed_days(130), root=tmp_path)
     duckdb_store.write_dataset(
@@ -269,6 +270,7 @@ def test_overview_works_without_any_research_artifacts(tmp_path: Path) -> None:
 # 2. 缺数：null + reason，不补 0、不编造
 # --------------------------------------------------------------------------- #
 
+
 def test_overview_missing_everything_is_200_missing_state(tmp_path: Path) -> None:
     """缓存全空 + 实时链路不可用 → 200 + missing 态：quote/financials null + reason，不补 0。"""
     client, _ = _unavailable_client(tmp_path)
@@ -359,9 +361,7 @@ def test_overview_unknown_code_is_404(tmp_path: Path) -> None:
 def test_overview_bad_date_is_422(tmp_path: Path) -> None:
     client, _ = _unavailable_client(tmp_path)
 
-    response = client.get(
-        f"/api/research/{CODE}/overview", params={"date": "20261030"}
-    )
+    response = client.get(f"/api/research/{CODE}/overview", params={"date": "20261030"})
 
     assert response.status_code == 422
     assert "YYYY-MM-DD" in response.json()["detail"]

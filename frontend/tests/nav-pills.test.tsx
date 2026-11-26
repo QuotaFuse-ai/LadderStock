@@ -110,13 +110,14 @@ describe('NavPills · ?tab= 归组', () => {
 })
 
 describe('SectionNavPills · 挂在页头下方的导航用法', () => {
-  it('复盘组：取 NAV_SECTIONS 的复盘四项，顺序与文案跟侧栏同源', () => {
+  it('复盘组：取 NAV_SECTIONS 的复盘五项，顺序与文案跟侧栏同源', () => {
     renderAt('/review/ai')
     const nav = screen.getByRole('navigation', { name: '页内导航' })
     expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
       '每日复盘',
       'AI复盘',
       'AI周报',
+      '复盘统计',
       '候选池',
     ])
     expect(within(nav).getAllByRole('link', { current: 'page' })).toHaveLength(1)

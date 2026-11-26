@@ -4,6 +4,8 @@ import { Building2, Radio, Search } from 'lucide-react'
 
 import { normalizeResearchCode } from '../../api/research'
 import { DemoStateBadge, PageHeader } from '../../components/PageShell'
+import ResearchArchivePanel from '../../components/research/ResearchArchivePanel'
+import VerifyPanel from '../../components/research/VerifyPanel'
 import { LinkButton } from '../../components/research/bits'
 import { Button, Card, CardBody, CardHeader, Field, Input } from '../../components/ui'
 
@@ -91,6 +93,11 @@ export default function ResearchEntryScreen() {
           </p>
         </CardBody>
       </Card>
+
+      <ResearchArchivePanel />
+
+      {/* F10 截图 / PDF 查证：上传 → 抽数字 → 与本机数据对账；OCR 不可用会如实说明 */}
+      <VerifyPanel />
 
       <div className="flex flex-wrap items-center gap-2">
         <LinkButton to="/industry" variant="secondary" leadingIcon={<Building2 className="size-3.5" aria-hidden="true" />}>

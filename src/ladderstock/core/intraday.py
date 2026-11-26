@@ -49,10 +49,12 @@ from __future__ import annotations
 
 import json
 import os
+import time as time_module
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ladderstock.core.ladder import BOARD_KEYS, CODE_KEYS, NAME_KEYS, as_float, as_int, pick
 
@@ -264,12 +266,26 @@ def record_status(
     data["updated_at"] = moment.isoformat(timespec="seconds")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, default=str) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(tmp, path)
+    # `status.json` 也是多进程同写（调度器 + 盯盘守护）：临时名必须唯一，否则
+    # `os.replace` 会撞 `WinError 32`，把一条本来正常的时点记录写成抓取失败。
+    tmp = path.with_name(f"{path.name}.{os.getpid()}-{uuid4().hex[:8]}.tmp")
+    payload = json.dumps(data, ensure_ascii=False, indent=2, default=str) + "\n"
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        for attempt, delay in enumerate((0.02, 0.05, 0.12, 0.3)):
+            try:
+                os.replace(tmp, path)
+                return path
+            except OSError:
+                if attempt == 3:
+                    raise
+                time_module.sleep(delay)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        path.write_text(payload, encoding="utf-8")
     return path
 
 
@@ -516,18 +532,37 @@ def _one_to_two(registry: Any, day: date, yesterday: Sequence[dict[str, Any]]) -
             "available": False,
             "reason": "昨日涨停池没有首板（上游未给 y_streak / 全为高位板）",
         }
+    # 当日涨停池已经由 `sentiment_live` 每 60s 落盘（`data/live/limit_pool/<date>.json`）；
+    # 有就直接用——页面每次刷新不必再打一次上游，也不会因为一次写日志失败就把这一格判成「取不到」。
+    rows: list[dict[str, Any]] = []
+    detail = ""
     try:
-        outcome = registry.fetch("limit_pool", params={"date": day.isoformat()})
-    except Exception as exc:  # noqa: BLE001 - 单项缺失只降级这一块
-        return {"available": False, "reason": f"limit_pool 取数失败：{_one_line(exc)}"}
-    if outcome.envelope.data_as_of != day:
-        return {
-            "available": False,
-            "reason": f"limit_pool 数据日 {outcome.envelope.data_as_of} 不是今天 {day}",
-        }
+        from ladderstock.core import live_limit_pool
+
+        snapshot = live_limit_pool.read_snapshot(day, getattr(registry, "root", None))
+        rows = live_limit_pool.rows_of(snapshot)
+        if rows:
+            detail = (
+                f"当日实时涨停池 {(snapshot or {}).get('source') or 'limit_up_pool'}"
+                f" @ {(snapshot or {}).get('fetched_at') or ''}"
+            )
+    except Exception:  # noqa: BLE001 - 快照坏了就走接口
+        rows = []
+    if not rows:
+        try:
+            outcome = registry.fetch("limit_pool", params={"date": day.isoformat()})
+        except Exception as exc:  # noqa: BLE001 - 单项缺失只降级这一块
+            return {"available": False, "reason": f"limit_pool 取数失败：{_one_line(exc)}"}
+        if outcome.envelope.data_as_of != day:
+            return {
+                "available": False,
+                "reason": f"limit_pool 数据日 {outcome.envelope.data_as_of} 不是今天 {day}",
+            }
+        rows = _records(outcome.envelope)
+        detail = "limit_pool 接口"
     second = {
         str(pick(row, CODE_KEYS) or "").strip()
-        for row in _records(outcome.envelope)
+        for row in rows
         if as_int(pick(row, BOARD_KEYS)) == 2
     }
     promoted = first & second
@@ -537,6 +572,7 @@ def _one_to_two(registry: Any, day: date, yesterday: Sequence[dict[str, Any]]) -
         "today_second_board": len(second),
         "promoted": len(promoted),
         "rate_pct": round(len(promoted) / len(first) * 100, 1),
+        "source_detail": detail,
     }
 
 
@@ -638,9 +674,7 @@ def capture(
         # 有今天的数据时 degraded=null、pool_as_of 就是今天——两者都不缺，不靠消费方猜。
         "meta": {
             "degraded": DEGRADED_STALE_CACHE if pool_stale is not None else None,
-            "pool_as_of": (
-                pool_stale["as_of"] if pool_stale is not None else day.isoformat()
-            ),
+            "pool_as_of": (pool_stale["as_of"] if pool_stale is not None else day.isoformat()),
         },
         "price_field": "open" if slot == AUCTION_SLOT else "price",
         "source": {
@@ -724,7 +758,19 @@ def run_slot(
 
     target = snapshot_path(slot, day, root)
     if target.is_file():
-        detail = f"快照已存在，不覆盖：{target.name}"
+        # 快照只创建不覆盖（保窗口内第一次落的值）。但**状态不能因此被降级**：
+        # 之前这里无条件写 STATUS_ALREADY，把上一次的 ok/degraded 覆盖成「已存在·未覆盖」，
+        # 页面就读不出「这一时点其实已经成功写过」——文件与读数都在，只是本轮不重写。
+        existing = (read_status(day, root).get("slots") or {}).get(slot) or {}
+        existing_status = str(existing.get("status") or "")
+        if existing_status in (STATUS_OK, STATUS_DEGRADED):
+            return {
+                **base,
+                "status": existing_status,
+                "detail": f"{existing.get('detail') or '快照已写入'}（本轮不重写 {target.name}）",
+                "file": target.name,
+            }
+        detail = f"快照文件已存在，但不是本轮写入，不覆盖：{target.name}"
         record_status(
             day, slot, STATUS_ALREADY, detail=detail, root=root, at=moment, file=target.name
         )
@@ -792,9 +838,7 @@ def fast_snapshot_dir(day: date, root: Path | None = None) -> Path:
     return base / SNAPSHOT_DIR / day.isoformat() / FAST_DIR
 
 
-def fast_snapshot_path(
-    moment: datetime, day: date, root: Path | None = None
-) -> Path:
+def fast_snapshot_path(moment: datetime, day: date, root: Path | None = None) -> Path:
     return fast_snapshot_dir(day, root) / f"{moment.strftime('%H%M%S')}.json"
 
 
@@ -980,9 +1024,7 @@ def write_batch_slot(
     return {"slot": slot, "path": path, "written": written, "rows": len(records)}
 
 
-def latest_batch_slot(
-    dataset: str, day: date, root: Path | None = None
-) -> dict[str, Any] | None:
+def latest_batch_slot(dataset: str, day: date, root: Path | None = None) -> dict[str, Any] | None:
     """读某天最新一条槽；没有该数据集的槽目录或全读不了时回 None。"""
     directory = batch_slot_dir(dataset, day, root)
     if not directory.is_dir():

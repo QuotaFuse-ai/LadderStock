@@ -299,9 +299,7 @@ def test_only_force_rerun_touches_single_stage(tmp_path: Path) -> None:
     for stage in checkpoint.STAGES:
         if stage == "financial":
             continue
-        assert (
-            directory / f"{stage}.json"
-        ).read_bytes() == before[stage][0], stage
+        assert (directory / f"{stage}.json").read_bytes() == before[stage][0], stage
         assert (directory / f"{stage}.md").read_bytes() == before[stage][1], stage
     # 状态也不动
     for stage in ("company", "forecast", "valuation", "risk", "report"):

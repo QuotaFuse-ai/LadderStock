@@ -72,13 +72,15 @@ peers:
     product: FinanceCoffer
     package: financecoffer
     cli: fc
-    mcp_name: null            # FC 当前没有 MCP 面，写 null，探测走 HTTP
-    url_env: LDST_FINANCECOFFER_URL
-    default_url: http://127.0.0.1:8100
-    timeout_sec: 10
+    # 2026-11-18：FC 本来就有 MCP 面（`fcoffer mcp http`），此前的 null 是登记遗漏。
+    # 8100 是 REST API（/v1/* 在本机回 500，未修），8101 是 MCP（容器 fc-mcp）。
+    mcp_name: financecoffer
+    url_env: LDST_FINANCECOFFER_MCP_URL
+    default_url: http://127.0.0.1:8101/mcp
+    timeout_sec: 30
     health_path: /health
-    default_port: 8100
-    role: 数据存储：结构化宽表 / 公告检索 / 风险
+    default_port: 8101
+    role: 数据存储：结构化财报 / 公告语义检索 / 风险事件
     repo: QuotaFuse-ai/FinanceCoffer
   # ProxyFleet（QUOT-485）：生态基础设施（出口代理池），从「工具组件只读观测」
   # 升级为纳管 peer——但同 FinanceCoffer / mem0 口径：不是取数通道，sources 不允许
@@ -115,6 +117,15 @@ peers:
     health_path: /collections
     default_port: 6333
     role: 知识库向量层：档案向量存储 / 语义检索（REST 6333 · MCP 9300）
+  # LS 自身记忆（QUOT-611）：库态子模块，随包分发、进程内 import。
+  # 没有服务、没有端口、不进 sources 取数通道（sources 不允许 via 它）；
+  # 这里登记只为让控制面出一张只读卡，与 Multica 独立部署的 mem0 无关。
+  memory:
+    product: Mem0（LS 自身记忆）
+    package: mem0
+    role: 助手长期记忆：进程内 mem0 SDK（qdrant local + fastembed，512 维）
+    # 库态：没有可执行入口、没有端口、没有健康路径（schema 走 library_only 分支）
+    library_only: true
 
 sources:
   # ---------------- 行情与短线数据：TickHub-CN ----------------
@@ -225,6 +236,23 @@ sources:
     cooldown_sec: 60
     weight: 1.0
 
+  # 全市场标的字典（QUOT-6xx）：与 `spot_quote` 同一个批量报价工具，但**要落库**——
+  # 名称 ↔ 代码检索靠这份整表回答（生态里没有「按名称查代码」的工具，
+  # `stock_profile` / `baostock_stock_basic` 都要先给代码，`iwencai_search` 要 key）。
+  # 候选号码由本机代码段生成（`data/symbol_universe.py`），按 50 只一批问 peer，
+  # 有效代码才进表。**不进 sync.yaml**：3.5 万个号码 ≈ 700 次往返，按需刷新
+  # （`ldst symbol refresh`），不是每日增量。
+  - id: tickhub_symbol_basic
+    dataset: symbol_basic
+    via: tickhub
+    tool: tencent_quote_batch
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
   # 首页指数条（QUOT-380）：与 `spot_quote` 同构的实时报价——**不进 sync.yaml / 不进台账**，
   # 非交易时段 peer 照旧回上一交易日收盘（`as_of` 如实带出），不需要日更。
   # 无备源：同 peer 的 `index_list` 是「按涨幅排序的 100 条榜」（实测不含这四个指数、
@@ -269,6 +297,260 @@ sources:
     timeout_sec: 10
     retries: 2
     cooldown_sec: 60
+    weight: 1.0
+
+  # ---------------------------------------------------------------- TickHub-US 个股与宏观
+  # us-dossier（9 条方向）与 cross-market / macro-crossasset 的美股侧取数（QUOT-471 后半段）。
+  # 此前只绑了首页 2 个指数格，因此那 9 条方向的工具白名单在数据层**没有落地**——
+  # 页面标「未接通」是如实反映，不是标签问题。这里把工具逐条绑成数据集：
+  #   * tool 名即 MCP 工具名（TickHub-US 1.1.0，18002/mcp 实测 41 个工具）；
+  #   * symbol / 日期等入参由调用方 `fetch(params=...)` 传，本表不写死；
+  #   * `commercial_use=false` 由调用方带（非商用声明，TickHub-US 全部工具必填）；
+  #   * 无备源：同 peer 的其他工具不是同口径换源（DEC-006 主备同口径）。
+  # 不进 sync.yaml / 不进台账：按需取，不批量落盘。
+  - id: tickhub_us_cik_lookup
+    dataset: us_cik_lookup
+    via: tickhub_us
+    tool: th_us_lookup_cik
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_stock_quote
+    dataset: us_stock_quote
+    via: tickhub_us
+    tool: th_us_get_quote
+    primary: true
+    fallback: []
+    timeout_sec: 15
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_fundamentals
+    dataset: us_fundamentals
+    via: tickhub_us
+    tool: th_us_get_fundamentals
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_financials
+    dataset: us_financials
+    via: tickhub_us
+    tool: th_us_get_financial_statements
+    primary: true
+    fallback: []
+    timeout_sec: 25
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_key_indicators
+    dataset: us_key_indicators
+    via: tickhub_us
+    tool: th_us_get_key_indicators
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_xbrl_facts
+    dataset: us_xbrl_facts
+    via: tickhub_us
+    tool: th_us_get_xbrl_facts
+    primary: true
+    fallback: []
+    timeout_sec: 25
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_insider_trades
+    dataset: us_insider_trades
+    via: tickhub_us
+    tool: th_us_get_insider_trades
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_13f
+    dataset: us_13f
+    via: tickhub_us
+    tool: th_us_get_13f_holdings
+    primary: true
+    fallback: []
+    timeout_sec: 25
+    retries: 2
+    cooldown_sec: 90
+    weight: 1.0
+
+  - id: tickhub_us_filings_search
+    dataset: us_filings_search
+    via: tickhub_us
+    tool: th_us_search_filings
+    primary: true
+    fallback: []
+    timeout_sec: 25
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_filing_feed
+    dataset: us_filing_feed
+    via: tickhub_us
+    tool: th_us_get_filing_feed
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_fulltext_search
+    dataset: us_fulltext_search
+    via: tickhub_us
+    tool: th_us_fulltext_search
+    primary: true
+    fallback: []
+    timeout_sec: 25
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_options_flow
+    dataset: us_options_flow
+    via: tickhub_us
+    tool: th_us_get_options_flow
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_options_chain
+    dataset: us_options_chain
+    via: tickhub_us
+    tool: th_us_get_options_chain
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_short_interest
+    dataset: us_short_interest
+    via: tickhub_us
+    tool: th_us_get_short_interest
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_short_volume
+    dataset: us_short_volume
+    via: tickhub_us
+    tool: th_us_get_short_volume
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_volatility
+    dataset: us_volatility
+    via: tickhub_us
+    tool: th_us_get_volatility
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_analyst_estimates
+    dataset: us_analyst_estimates
+    via: tickhub_us
+    tool: th_us_get_analyst_estimates
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_market_list
+    dataset: us_market_list
+    via: tickhub_us
+    tool: th_us_get_market_list
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  - id: tickhub_us_market_data
+    dataset: us_market_data
+    via: tickhub_us
+    tool: th_us_get_market_data
+    primary: true
+    fallback: []
+    timeout_sec: 20
+    retries: 2
+    cooldown_sec: 60
+    weight: 1.0
+
+  # 美债期限结构 / 全球政策利率：macro-crossasset 的「美债与全球政策利率」一步、
+  # cross-market 的「宏观传导链」一步都点名这两个工具，这里落成数据集。
+  - id: tickhub_us_treasury_curve
+    dataset: us_treasury_curve
+    via: tickhub_us
+    tool: th_us_get_treasury_yield_curve
+    primary: true
+    fallback: []
+    timeout_sec: 30
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  - id: tickhub_us_policy_rates
+    dataset: us_policy_rates
+    via: tickhub_us
+    tool: th_us_get_policy_rates
+    primary: true
+    fallback: []
+    timeout_sec: 25
+    retries: 2
+    cooldown_sec: 120
+    weight: 1.0
+
+  # 期货持仓排名（macro-crossasset 的「期货持仓排名」方向）：CFTC COT。
+  - id: tickhub_us_cot
+    dataset: us_cot
+    via: tickhub_us
+    tool: th_us_get_cot
+    primary: true
+    fallback: []
+    timeout_sec: 25
+    retries: 2
+    cooldown_sec: 120
     weight: 1.0
 
   - id: tickhub_dragon_tiger

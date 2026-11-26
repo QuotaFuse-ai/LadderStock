@@ -18,6 +18,12 @@ export interface ConclusionBlockPayload {
   tone: ConclusionTone
   /** 0–1；载荷没给时为 `null`，如实显示「未提供」而不是猜一个 */
   confidence: number | null
+  /**
+   * F5：翻转条件（「什么情况下这条结论是错的」）。可选：载荷没给时整段不渲染，
+   * 也不补一个空字符串——空着比写一句「暂无」像研究员。用可选键而不是 `| null`，
+   * 是为了让旧载荷（只有 text/tone/confidence）解析后形状仍是原样。
+   */
+  falsifier?: string
 }
 
 export interface MetricItem {
@@ -26,6 +32,12 @@ export interface MetricItem {
   unit?: string
   direction?: MetricDirection
   as_of?: string
+  /** F4：出处族（如 `tencent`）；后端没给就不显示 */
+  source?: string
+  /** F4：取数接口（如 `quote`），与 source 一起拼成一行小字 */
+  endpoint?: string
+  /** F4：取数时间，悬停提示里用 */
+  fetched_at?: string
 }
 
 export interface MetricBlockPayload {
@@ -92,6 +104,15 @@ export interface ActionBlockPayload {
   items: ActionItem[]
 }
 
+/**
+ * `narrative`：对话正文块。没调工具的那一轮（问候 / 能力说明 / 概念解释）整段
+ * 回答原样展示，不切句、不折叠、不剥数字——与服务端 `ai/answer_blocks.py`
+ * 的 `BLOCK_NARRATIVE` 同源。
+ */
+export interface NarrativeBlockPayload {
+  text: string
+}
+
 interface BlockBase {
   /** 服务端给块 id 时用作 React key；没有则按位置 */
   id?: string
@@ -106,6 +127,7 @@ export type AnswerBlock = BlockBase &
     | { type: 'citation'; payload: CitationBlockPayload }
     | { type: 'notice'; payload: NoticeBlockPayload }
     | { type: 'action'; payload: ActionBlockPayload }
+    | { type: 'narrative'; payload: NarrativeBlockPayload }
   )
 
 /** 载荷结构不合法时的兜底：块照样占位，但明确说「这块没画出来」，不静默消失。 */
@@ -116,7 +138,16 @@ export interface InvalidBlock {
 
 export type RenderedBlock = AnswerBlock | InvalidBlock
 
-export const BLOCK_TYPES = ['conclusion', 'metric', 'chart', 'table', 'citation', 'notice', 'action'] as const
+export const BLOCK_TYPES = [
+  'conclusion',
+  'metric',
+  'chart',
+  'table',
+  'citation',
+  'notice',
+  'action',
+  'narrative',
+] as const
 
 export type BlockType = (typeof BLOCK_TYPES)[number]
 
@@ -161,10 +192,12 @@ function conclusionPayload(raw: unknown): ConclusionBlockPayload | InvalidBlock 
     ? (record.tone as ConclusionTone)
     : 'neutral'
   const confidence = finite(record.confidence)
+  const falsifier = text(record.falsifier)
   return {
     text: body,
     tone,
     confidence: confidence === null ? null : Math.min(1, Math.max(0, confidence)),
+    ...(falsifier ? { falsifier } : {}),
   }
 }
 
@@ -186,6 +219,9 @@ function metricPayload(raw: unknown): MetricBlockPayload | InvalidBlock {
         ? (item.direction as MetricDirection)
         : undefined,
       as_of: text(item.as_of) ?? undefined,
+      source: text(item.source) ?? undefined,
+      endpoint: text(item.endpoint) ?? undefined,
+      fetched_at: text(item.fetched_at) ?? undefined,
     })
   }
   if (items.length === 0) return { type: 'invalid', reason: '指标块没有可展示的数值' }
@@ -298,6 +334,13 @@ function actionPayload(raw: unknown): ActionBlockPayload | InvalidBlock {
   return { items }
 }
 
+function narrativePayload(raw: unknown): NarrativeBlockPayload | InvalidBlock {
+  const record = asRecord(raw)
+  const body = record && text(record.text)
+  if (!body) return { type: 'invalid', reason: '正文块缺少 text' }
+  return { text: body }
+}
+
 const PARSERS = {
   conclusion: conclusionPayload,
   metric: metricPayload,
@@ -306,6 +349,7 @@ const PARSERS = {
   citation: citationPayload,
   notice: noticePayload,
   action: actionPayload,
+  narrative: narrativePayload,
 } as const
 
 /** 单个块的「类型 → 载荷」校验；`type` 不认识时返回 `invalid`，页面据此显示未识别块。 */

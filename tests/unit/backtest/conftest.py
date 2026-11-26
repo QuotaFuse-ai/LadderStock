@@ -113,8 +113,7 @@ def write_daily_k(
     conn = duckdb_store.connect(path)
     try:
         conn.execute(
-            'CREATE TABLE IF NOT EXISTS "daily_k" ('
-            "code VARCHAR, trade_date DATE, payload VARCHAR)"
+            'CREATE TABLE IF NOT EXISTS "daily_k" (code VARCHAR, trade_date DATE, payload VARCHAR)'
         )
         # 同一 symbol 重复写入 = 覆盖（同一天只能一行）；否则「写两遍再回测」会撞重复日期
         conn.execute('DELETE FROM "daily_k" WHERE code = ?', [symbol])

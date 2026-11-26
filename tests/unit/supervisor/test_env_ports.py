@@ -29,8 +29,11 @@ _PROD_EXPECTED = {
     "tickhub_us": (8002,),
     "wire": (8790, 8791),
     "senate": (8765, 8786),
-    "financecoffer": (8100,),
+    # FC 现在是本地增益包（不再由 WSL compose 托管）：8100 REST / 8101 MCP 两个面都探测。
+    "financecoffer": (8100, 8101),
     "proxyfleet": (8788, 8789),
+    # Qdrant 本地单体二进制：6333 REST/Dashboard + 6334 gRPC。
+    "qdrant": (6333, 6334),
     # QUOT-589 重修：看门狗无端口化（全机只留 5950/5951），不占 5952。
     "watch": (),
     "proxypool": (),
@@ -40,8 +43,10 @@ _TEST_EXPECTED = {
     "tickhub_us": (18002,),
     "wire": (18790, 18791),
     "senate": (18765, 18786),
-    "financecoffer": (18100,),
+    # 与 prod 同口径 +10000：18100 REST / 18101 MCP。
+    "financecoffer": (18100, 18101),
     "proxyfleet": (18788, 18789),
+    "qdrant": (16333, 16334),
     # 同上：测试环境亦无端口，不占 15952。
     "watch": (),
     "proxypool": (),
@@ -101,6 +106,7 @@ class TestEnvTables:
             "tickhub_us",
             "wire",
             "senate",
+            "qdrant",
             "financecoffer",
             "proxyfleet",
             "watch",
@@ -128,9 +134,7 @@ class TestEnvDetection:
 
     def test_env_yaml_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
         monkeypatch.delenv("LDST_ENV", raising=False)
-        (tmp_path / "env.yaml").write_text(
-            yaml.safe_dump({"env": "test"}), encoding="utf-8"
-        )
+        (tmp_path / "env.yaml").write_text(yaml.safe_dump({"env": "test"}), encoding="utf-8")
         monkeypatch.setattr(modules_module, "config_dir", lambda: tmp_path, raising=False)
         assert current_env() == "test"
 
@@ -142,9 +146,7 @@ class TestEnvDetection:
 
     def test_ldst_env_beats_env_yaml(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
         monkeypatch.setenv("LDST_ENV", "prod")
-        (tmp_path / "env.yaml").write_text(
-            yaml.safe_dump({"env": "test"}), encoding="utf-8"
-        )
+        (tmp_path / "env.yaml").write_text(yaml.safe_dump({"env": "test"}), encoding="utf-8")
         monkeypatch.setattr(modules_module, "config_dir", lambda: tmp_path, raising=False)
         assert current_env() == "prod"
 
@@ -182,16 +184,12 @@ class TestRegistryValidation:
         monkeypatch.setenv("LDST_ENV", "test")
         module_registry(_fake_adapters(module_ports("test")))  # type: ignore[arg-type]
 
-    def test_registry_rejects_prod_adapters_under_test_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_registry_rejects_prod_adapters_under_test_env(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("LDST_ENV", "test")
         with pytest.raises(ValueError, match="端口"):
             module_registry(_fake_adapters(module_ports("prod")))  # type: ignore[arg-type]
 
-    def test_registry_rejects_test_adapters_under_prod_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_registry_rejects_test_adapters_under_prod_env(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("LDST_ENV", "prod")
         with pytest.raises(ValueError, match="端口"):
             module_registry(_fake_adapters(module_ports("test")))  # type: ignore[arg-type]

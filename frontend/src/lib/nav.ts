@@ -8,10 +8,12 @@ import {
   CalendarRange,
   CandlestickChart,
   ClipboardCheck,
+  Database,
   FlaskConical,
   Flame,
   Gauge,
   Home,
+  BellRing,
   Layers,
   ListChecks,
   Microscope,
@@ -20,7 +22,9 @@ import {
   Radio,
   Radar,
   ScrollText,
+  Scale,
   Settings,
+  SlidersHorizontal,
   Star,
   Timer,
   TrendingUp,
@@ -106,6 +110,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/review/ai', label: 'AI复盘', icon: Bot },
       // R11（QUOT-149）：事实包聚合 + 五段 AI 叙述，`?week=YYYY-Www`
       { to: '/weekly', label: 'AI周报', icon: CalendarRange },
+      // B 包 / DEC-089：组合指标 / 基准 / 归因 / 行为 / 错题本（只读本机）
+      { to: '/analytics', label: '复盘统计', icon: BarChart3 },
       { to: '/pool', label: '候选池', icon: ListChecks },
     ],
   },
@@ -127,6 +133,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/my-stocks', label: '我的股票', icon: Star },
       { to: '/calendar', label: '事件日历', icon: CalendarDays },
       { to: '/inbox', label: '提醒', icon: Bell },
+      // DEC-087：提醒规则（自定义规则 × 出站渠道）。与「提醒」的分工：
+      // 收件箱看「收到了什么」，这里管「在盯什么、往哪推」。
+      { to: '/alert', label: '提醒规则', icon: BellRing },
     ],
   },
   {
@@ -138,6 +147,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // QUOT-534：策略回测只读运行卡（参数 / 结果 / 证据三区）
       { to: '/backtest', label: '策略回测', icon: FlaskConical },
       { to: '/limit-up', label: '涨停样本', icon: Flame },
+      // F9：判断落账 + 到期回访，回答「之前那些判断后来对了吗」
+      { to: '/ledger', label: '观点账本', icon: Scale },
     ],
   },
   // QUOT-300：R9 产业研究两页已交付却进不去，补一级入口（新组排在验证之后、设置之前）
@@ -165,17 +176,27 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   // QUOT-567：第 10 组「知识库」——平台平时自动攒下来的个股档案。
-  // 单页组：`/knowledge` 是收代码的落地页，档案页 `/knowledge/:market/:symbol` 由它和深链进入。
+  // E 包 / DEC-091：组内新增第三页「笔记与检索」——平台攒的是档案，
+  // 这里放的是用户自己记的东西（笔记 CRUD / 跨票检索 / 估值换算器）。
   {
     key: 'knowledge',
     label: '知识库',
     icon: BookOpen,
-    pages: [{ to: '/knowledge', label: '知识库', icon: BookOpen }],
+    pages: [
+      { to: '/knowledge', label: '个股档案', icon: BookOpen },
+      { to: '/knowledge/notes', label: '笔记与检索', icon: NotebookPen },
+      { to: '/data-assets', label: '数据资产', icon: Database },
+    ],
   },
 ]
 
 /** 侧栏底部固定项：不进 `NAV_SECTIONS`（不参与展开分组），但仍是一等入口，一致性测试要覆盖。 */
-export const PINNED_NAV: NavPage[] = [{ to: '/settings', label: '设置', icon: Settings }]
+export const PINNED_NAV: NavPage[] = [
+  // 运行配置：定时任务 / 数据同步池 / 历史回填。此前这些只存在于 config/*.yaml，
+  // 界面上一个都看不到——放进固定项而不是塞进某一组，因为它跨"调度 + 取数"两侧。
+  { to: '/config', label: '运行配置', icon: SlidersHorizontal },
+  { to: '/settings', label: '设置', icon: Settings },
+]
 
 /** 侧栏品牌图标（顶栏/抽屉复用时取同一枚，避免各写一套）。 */
 export const BRAND_ICON = TrendingUp

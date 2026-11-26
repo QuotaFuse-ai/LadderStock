@@ -272,9 +272,7 @@ def _validate(stage: str, payload: dict[str, Any]) -> dict[str, Any]:
         key=lambda err: list(err.path),
     )
     if errors:
-        raise structured_output.StructuredOutputError(
-            f"不符合 {stage} Schema：{errors[0].message}"
-        )
+        raise structured_output.StructuredOutputError(f"不符合 {stage} Schema：{errors[0].message}")
     narrative = _strings(payload.get("narrative"))
     if not narrative:
         raise structured_output.StructuredOutputError("narrative 不能为空")

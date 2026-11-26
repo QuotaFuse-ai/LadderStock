@@ -101,6 +101,17 @@ sync:
         - "002352"  # 顺丰控股
         - "002078"  # 太阳纸业（轻工制造 anchor）
         - "603816"  # 顾家家居（轻工制造 anchor）
+        # 纺织服饰 / 传媒 / 环保 / 美容护理 四个申万一级行业在池子里一只成分股都没有，
+        # 行业矩阵因此整行「未取到」。补各行业自己的 anchor，让五维（景气/资金/估值/
+        # 动量/拥挤度）跟着一起有数——只补归属不补其余四个输入，行仍然算不出来。
+        - "600398"  # 海澜之家（纺织服饰 anchor）
+        - "002293"  # 罗莱生活（纺织服饰 anchor）
+        - "002027"  # 分众传媒（传媒 anchor）
+        - "300413"  # 芒果超媒（传媒 anchor）
+        - "600008"  # 首创环保（环保 anchor）
+        - "603568"  # 伟明环保（环保 anchor）
+        - "603605"  # 珀莱雅（美容护理 anchor）
+        - "300740"  # 水羊股份（美容护理 anchor）
 
     limit_pool:
       primary: tickhub_limit_pool
@@ -227,14 +238,16 @@ sync:
     # ---------------- 资讯雷达（R6 / QUOT-144）----------------
     # 全部 `optional: true`：资讯是「按需按时间窗」的（`ldst news`），
     # 定时增量只是顺带归档。取不到只记 skipped，不把整轮 sync 的退出码拖成 8/4。
-    # 三个 code 必填的栏目（巨潮 / 深交所 / 东财个股新闻）在裸 `ldst sync` 里
-    # 必然被 peer 拒（上游要求 code），这是预期行为，不是链路故障。
+    # 三个 code 必填的栏目（巨潮 / 深交所 / 东财个股新闻）自 2026-11-21 起带
+    # base_pool 逐只扇出（真实 inputSchema required=["code"]，空参必被拒）；
+    # 巨潮主源上游出口代理 407 时由备源 announcements_backup（东财）接管。
     announcement_cninfo:
       primary: tickhub_announce_cninfo
       fallback: [tickhub_announce_cninfo_backup]
       watermark_field: data_as_of
       mode: append
       optional: true
+      codes: *base_pool
 
     announcement_szse:
       primary: tickhub_announce_szse
@@ -242,6 +255,7 @@ sync:
       watermark_field: data_as_of
       mode: append
       optional: true
+      codes: *base_pool
 
     research_report:
       primary: tickhub_research_report
@@ -256,6 +270,7 @@ sync:
       watermark_field: data_as_of
       mode: append
       optional: true
+      codes: *base_pool
 
     news_cctv:
       primary: tickhub_news_cctv
@@ -366,6 +381,12 @@ sync:
       fallback: []
       watermark_field: data_as_of
       mode: replace
+      # 分区按**本地采集日**，不按上游 data_as_of。理由：07:30 这轮采的是当天早上的
+      # 资讯，但上游 `wire_get_digest` 的 data_as_of 是它最后算出摘要的那天（常常是前一
+      # 天）。按 data_as_of 定分区 + replace，就会每天把前一天的整块覆盖掉，当天目录
+      # 永远是空的，看目录像断档。`data_as_of` 仍写进每条记录的字段（事实不丢），
+      # `mode: replace` 保持「同日重跑整块覆盖」的幂等语义。
+      partition_by: local_day
       optional: true
       topics:
         - ai

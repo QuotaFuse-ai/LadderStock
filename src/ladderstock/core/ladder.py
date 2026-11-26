@@ -130,8 +130,10 @@ def cache_meta(datasets: list[str], day: date | str, *, root: Any = None) -> dic
             meta["backend"] = snapshot.backend
             if snapshot.records:
                 meta["data_as_of"] = snapshot.as_of
-        if snapshot.records and snapshot.cached_at is not None and (
-            meta["cached_at"] is None or snapshot.cached_at > meta["cached_at"]
+        if (
+            snapshot.records
+            and snapshot.cached_at is not None
+            and (meta["cached_at"] is None or snapshot.cached_at > meta["cached_at"])
         ):
             meta["cached_at"] = snapshot.cached_at
     return meta
@@ -193,8 +195,9 @@ def compute_ladder(
         return {
             "date": str(day),
             "available": False,
-            "reason": "涨停池没有可解析的连板数据（可能尚未同步）" if not records else
-            "涨停池记录缺少连板数字段",
+            "reason": "涨停池没有可解析的连板数据（可能尚未同步）"
+            if not records
+            else "涨停池记录缺少连板数字段",
             "source_detail": detail,
             "height": None,
             "count": 0,

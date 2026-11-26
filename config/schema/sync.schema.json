@@ -42,6 +42,11 @@
                 "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{1,31}$" },
                 "maxItems": 100,
                 "default": []
+              },
+              "partition_by": {
+                "enum": ["local_day"],
+                "description": "分区日口径。`local_day` = 分区按**本地采集日**，上游数据日仍写进每条记录的 `data_as_of` 字段（不丢事实）。适合「上游只给数据日、但采集发生在当天」的数据集（theme_news：按 data_as_of 定日 + replace 会把当天内容写进前一天目录，天天整块覆盖前一天）。",
+                "default": ""
               }
             }
           }

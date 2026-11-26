@@ -123,7 +123,5 @@ def _wait_quiet(adapters, *, expect_listening: bool = False) -> None:
         if all(ports) if expect_listening else not any(ports):
             return
         if time.monotonic() >= deadline:
-            pytest.fail(
-                f"端口状态未收敛（expect_listening={expect_listening}，ports={ports}）"
-            )
+            pytest.fail(f"端口状态未收敛（expect_listening={expect_listening}，ports={ports}）")
         time.sleep(POLL_INTERVAL_SEC)

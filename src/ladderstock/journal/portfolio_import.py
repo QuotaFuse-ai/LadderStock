@@ -61,9 +61,7 @@ def _usage(message: str) -> LadderStockError:
 def _method(raw: Any) -> core_portfolio.CostMethod:
     value = "average" if raw is None or raw == "" else str(raw).strip().lower()
     if value not in core_portfolio.COST_METHODS:
-        raise _usage(
-            f"成本法只能是 {' / '.join(core_portfolio.COST_METHODS)}，收到 {raw!r}"
-        )
+        raise _usage(f"成本法只能是 {' / '.join(core_portfolio.COST_METHODS)}，收到 {raw!r}")
     return cast(core_portfolio.CostMethod, value)
 
 
@@ -97,9 +95,7 @@ def _body(
             "请分成几份导入"
         )
     if len(records) > MAX_IMPORT_ROWS:
-        raise _usage(
-            f"一次最多导入 {MAX_IMPORT_ROWS} 行，这份有 {len(records)} 行：请分成几份"
-        )
+        raise _usage(f"一次最多导入 {MAX_IMPORT_ROWS} 行，这份有 {len(records)} 行：请分成几份")
     return method, records, selected
 
 
@@ -283,9 +279,7 @@ def _report(problems: Sequence[tuple[int, str]], total: int) -> LadderStockError
 
 def import_rows(raw: Any, *, root: Path | None = None) -> dict[str, Any]:
     """再次校验 → 备份 → 事务内批量写入；任何一行失败整批不写。"""
-    _, records, cleaned, problems, duplicates, _ = _validate(
-        raw, allow_selected=False, root=root
-    )
+    _, records, cleaned, problems, duplicates, _ = _validate(raw, allow_selected=False, root=root)
     failures: list[tuple[int, str]] = []
     for index, fields in enumerate(cleaned):
         if fields is None:

@@ -1,4 +1,4 @@
-"""对话会话库：`chat.sqlite`（QUOT-580 / 任务书阶段 C，D1 拍板「另建独立库」）。
+﻿"""对话会话库：`chat.sqlite`（QUOT-580 / 任务书阶段 C，D1 拍板「另建独立库」）。
 
 布局::
 
@@ -41,7 +41,7 @@ DB_FILENAME = "chat.sqlite"
 #: 会话库 schema 版本；与 `config/schema` 的整数版本号同口径。
 #: v1 = 会话 + 轮次（成功后才写一行）；v2 = 轮次加 `status` / `updated_at`，
 #: 支持「边到达边 upsert」（见 `migrate()` 里 v2 分支的注释）。
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_META_TABLE = "schema_meta"
 
@@ -181,6 +181,9 @@ def migrate(conn: sqlite3.Connection) -> int:
             #   aborted   = 用户主动停止，内容定格，可作为下一问上下文
             #   failed    = 服务端失败（模型/数据错，done{completed:false}）
             conn.execute("UPDATE chat_turn SET status = ?", (DONE,))
+        if version < 3:
+            for statement in _split_statements(_SCHEMA_V3):
+                conn.execute(statement)
         conn.execute(
             f"INSERT INTO {SCHEMA_META_TABLE} (key, value) VALUES ('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -233,6 +236,36 @@ CREATE INDEX IF NOT EXISTS idx_chat_turn_created ON chat_turn(session_id, create
 _SCHEMA_V2 = """
 ALTER TABLE chat_turn ADD COLUMN status TEXT NOT NULL DEFAULT 'streaming';
 ALTER TABLE chat_turn ADD COLUMN updated_at TEXT;
+"""
+
+#: v2 → v3：研究档案 / 观点账本（F8 + F9 共用的那张表）。
+#:
+#: 为什么不建在 `journal.sqlite`：`journal` 的定位是「交易日志 / 持仓 / 自选」（DEC-006），
+#: 一条研究记录既不是交易也不是持仓，它挂在**一轮问答**上（session_id + seq），
+#: 和 `chat_turn` 同源同生命周期，所以放会话库。
+#:
+#: `status` 五态：open（未到期）/ hit（方向应验）/ miss（方向未应验）/
+#: flipped（翻转条件先被触发，本条自动失效）/ undecided（缺基准价或有指标类阈值判不了）。
+_SCHEMA_V3 = """
+CREATE TABLE IF NOT EXISTS research_record (
+    record_id    TEXT PRIMARY KEY,
+    session_id   TEXT,
+    seq          INTEGER,
+    symbol       TEXT,
+    question     TEXT NOT NULL,
+    direction    TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    base_price   REAL,
+    base_date    TEXT,
+    falsifier    TEXT,
+    due_date     TEXT,
+    status       TEXT NOT NULL,
+    outcome_json TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_research_record_due ON research_record(status, due_date);
+CREATE INDEX IF NOT EXISTS idx_research_record_symbol ON research_record(symbol, created_at DESC);
 """
 
 
@@ -394,8 +427,7 @@ def _insert_turn(
         else:
             title = str(row["title"])
             last = conn.execute(
-                "SELECT MAX(seq) AS seq, MAX(created_at) AS at FROM chat_turn "
-                "WHERE session_id = ?",
+                "SELECT MAX(seq) AS seq, MAX(created_at) AS at FROM chat_turn WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
             seq = int(last["seq"] or 0) + 1
@@ -487,11 +519,24 @@ def _evict(conn: sqlite3.Connection, *, keep: str, max_sessions: int) -> list[st
 
 
 def list_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """会话列表：最近更新的在前，附轮数。"""
+    """会话列表：最近更新的在前，附轮数。
+
+    只列「真有内容」的会话：至少有一轮落到 `done` / `streaming`。
+    此前不过滤，一次失败的探针、一次中断、甚至只建了行没发问的空会话
+    都会留在「最近对话」里，列表被同题的空壳会话灌满（用户看到「今天
+    没有聊这么多，却有一堆重复条目」就是这个）。失败轮次仍然保留在库里，
+    点进去看得到，只是不作为会话出现在列表上。
+    """
     rows = conn.execute(
         "SELECT s.session_id, s.title, s.created_at, s.updated_at, "
         "       (SELECT COUNT(*) FROM chat_turn t WHERE t.session_id = s.session_id) AS turns "
-        "FROM chat_session s ORDER BY s.updated_at DESC, s.session_id DESC"
+        "FROM chat_session s "
+        "WHERE EXISTS ("
+        "  SELECT 1 FROM chat_turn t WHERE t.session_id = s.session_id "
+        "  AND t.status IN (?, ?)"
+        ") "
+        "ORDER BY s.updated_at DESC, s.session_id DESC",
+        (DONE, STREAMING),
     ).fetchall()
     return [
         {
@@ -507,8 +552,7 @@ def list_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def get_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT session_id, title, created_at, updated_at FROM chat_session "
-        "WHERE session_id = ?",
+        "SELECT session_id, title, created_at, updated_at FROM chat_session WHERE session_id = ?",
         (session_id,),
     ).fetchone()
     if row is None:
@@ -552,6 +596,150 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
         (name,),
     ).fetchone()
     return row is not None
+
+
+# --------------------------------------------------------------------------- #
+# 研究记录（F8 档案 / F9 账本）：一轮判断落一行，到期后回访补齐结果
+# --------------------------------------------------------------------------- #
+
+RECORD_OPEN = "open"
+RECORD_HIT = "hit"
+RECORD_MISS = "miss"
+RECORD_FLIPPED = "flipped"
+RECORD_UNDECIDED = "undecided"
+RECORD_STATUSES = (RECORD_OPEN, RECORD_HIT, RECORD_MISS, RECORD_FLIPPED, RECORD_UNDECIDED)
+
+
+def insert_record(
+    conn: sqlite3.Connection,
+    *,
+    record_id: str,
+    question: str,
+    direction: str,
+    horizon_days: int,
+    session_id: str | None = None,
+    seq: int | None = None,
+    symbol: str | None = None,
+    base_price: float | None = None,
+    base_date: str | None = None,
+    falsifier: str | None = None,
+    due_date: str | None = None,
+    moment: str | None = None,
+) -> dict[str, Any]:
+    """落一条研究记录（status 初始 `open`）。
+
+    `base_price` / `base_date` 允许为空：判断发生在没有行情的轮次时，宁可不判，
+    也不要拿「今天收盘」当「那天收盘」——那正是 F6 想防的那类错误。
+    """
+    now = moment or now_iso()
+    conn.execute(
+        "INSERT INTO research_record (record_id, session_id, seq, symbol, question, direction,"
+        " horizon_days, base_price, base_date, falsifier, due_date, status, outcome_json,"
+        " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            record_id,
+            session_id,
+            seq,
+            symbol,
+            question,
+            direction,
+            int(horizon_days),
+            base_price,
+            base_date,
+            falsifier,
+            due_date,
+            RECORD_OPEN,
+            None,
+            now,
+            now,
+        ),
+    )
+    return {
+        "record_id": record_id,
+        "status": RECORD_OPEN,
+        "created_at": now,
+    }
+
+
+def due_records(conn: sqlite3.Connection, as_of: str, *, limit: int = 200) -> list[dict[str, Any]]:
+    """到期仍未判的记录（`status=open` 且 `due_date <= as_of`）。"""
+    rows = conn.execute(
+        "SELECT * FROM research_record WHERE status = ? AND due_date IS NOT NULL"
+        " AND due_date <= ? ORDER BY due_date ASC LIMIT ?",
+        (RECORD_OPEN, as_of, int(limit)),
+    ).fetchall()
+    return [_record_row(row) for row in rows]
+
+
+def close_record(
+    conn: sqlite3.Connection,
+    record_id: str,
+    *,
+    status: str,
+    outcome: dict[str, Any] | None = None,
+    moment: str | None = None,
+) -> None:
+    if status not in RECORD_STATUSES:
+        raise LadderStockError(f"未知的研究记录状态 {status!r}")
+    conn.execute(
+        "UPDATE research_record SET status = ?, outcome_json = ?, updated_at = ? WHERE record_id = ?",
+        (status, json.dumps(outcome, ensure_ascii=False) if outcome else None, moment or now_iso(), record_id),
+    )
+
+
+def list_records(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+    symbol: str | None = None,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """最近的记录（默认全部状态），给「研究档案 / 观点账本」列表用。"""
+    sql = "SELECT * FROM research_record"
+    clauses: list[str] = []
+    params: list[Any] = []
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(int(limit))
+    return [_record_row(row) for row in conn.execute(sql, tuple(params)).fetchall()]
+
+
+def record_stats(conn: sqlite3.Connection) -> dict[str, Any]:
+    """账本汇总：已判多少条、命中多少、翻转多少。
+
+    只统计**已判**的（hit / miss / flipped）；`open` 与 `undecided` 不进分母——
+    把一个还没到期的判断算进准确率，等于自欺。
+    """
+    rows = conn.execute(
+        "SELECT status, COUNT(*) AS n FROM research_record GROUP BY status"
+    ).fetchall()
+    counts = {str(row["status"]): int(row["n"]) for row in rows}
+    judged = counts.get(RECORD_HIT, 0) + counts.get(RECORD_MISS, 0) + counts.get(RECORD_FLIPPED, 0)
+    hit = counts.get(RECORD_HIT, 0)
+    return {
+        "total": sum(counts.values()),
+        "open": counts.get(RECORD_OPEN, 0),
+        "hit": hit,
+        "miss": counts.get(RECORD_MISS, 0),
+        "flipped": counts.get(RECORD_FLIPPED, 0),
+        "undecided": counts.get(RECORD_UNDECIDED, 0),
+        "judged": judged,
+        "hit_rate": round(hit / judged, 4) if judged else None,
+    }
+
+
+def _record_row(row: sqlite3.Row) -> dict[str, Any]:
+    payload = {key: row[key] for key in row.keys()}
+    raw = payload.pop("outcome_json", None)
+    payload["outcome"] = json.loads(raw) if raw else None
+    return payload
 
 
 __all__ = [

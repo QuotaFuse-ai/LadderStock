@@ -108,15 +108,22 @@ def _avoid_board_port(base: int, host: str) -> int | None:
 
     成功即写 config/ports.yaml（下次启动复用；看门狗重启看板也读它）。
     用户显式 `--port` 的调用方不经过这里（显式指定 = 用户意图，不覆盖）。
+    避让必须跳过自家保留段（模块端口 + MCP 面端口 + 面板口，DEC-092）——
+    否则旧实例未退净时会把看板扔到 MCP 面的口上，两个面对撞双输
+    （2026-11-23 实测：5950 未退净 → 避让进 5951 → 看板绑不上起不来）。
     """
     from ladderstock.cli.paths import config_dir
     from ladderstock.supervisor.port_allocator import (
         MAX_SHIFT,
         load_port_overrides,
+        reserved_app_ports,
         save_port_overrides,
     )
 
+    skip = reserved_app_ports()
     for candidate in range(base + 1, base + MAX_SHIFT + 1):
+        if candidate in skip:
+            continue
         if port_free(candidate, host):
             try:
                 save_port_overrides(
@@ -155,15 +162,28 @@ def launch(
 
     # QUOT-594：用户未显式指定端口（默认口径）时先复用上次避让结果；
     # 显式 --port 是用户意图，绝不覆盖（连上次避让的记录也不动）。
-    if port == DEFAULT_PORT:
+    # `auto_port` 同时是「结束时把最终端口同步进记录」的开关（ DEC-092）：
+    # 看门狗 / spawn-cmd 读的就是这条记录，不同步就会探错口、
+    # 以为看板挂了然后没完没了地重新拉看板（每拉一个弹一个终端窗口）。
+    auto_port = port == DEFAULT_PORT
+    user_pref: int | None = None
+    if auto_port:
         try:
             from ladderstock.cli.paths import config_dir
-            from ladderstock.supervisor.port_allocator import load_board_override
+            from ladderstock.supervisor.port_allocator import (
+                load_board_override,
+                load_board_user_pref,
+            )
 
+            # DEC-092：用户在「关于」页手动设置的端口优先于自动避让结果
+            user_pref = load_board_user_pref(config_dir())
             remembered = load_board_override(config_dir())
         except Exception:  # noqa: BLE001 - 读配置失败按无记录处理
+            user_pref = None
             remembered = None
-        if remembered is not None and remembered != DEFAULT_PORT:
+        if user_pref is not None:
+            port = user_pref
+        elif remembered is not None and remembered != DEFAULT_PORT:
             port = remembered
 
     if not port_free(port, host if host in LOOPBACK_HOSTS else DEFAULT_HOST):
@@ -175,13 +195,36 @@ def launch(
         )
         if avoided is None:
             error(
-                f"端口 {DEFAULT_PORT} 已被占用且无法避让；请用 --port 指定其他端口"
+                f"端口 {port} 已被占用且无法避让；请用 --port 指定其他端口"
                 "（不会自动换端口，见 DEC-004）"
             )
-            raise typer.Exit(EXIT_CONFIG)
+            raise typer.Exit(EXIT_CONFIG) from None
+        if user_pref is not None:
+            _log(
+                f"偏好端口 {user_pref} 被占用，本次避让到 {avoided}"
+                "（偏好保留，端口空闲后下次启动自动回用）"
+            )
+        else:
+            _log(f"端口 {port} 被其它程序占用，已自动避让到 {avoided}")
         port = avoided
-        if port != DEFAULT_PORT:
-            _log(f"默认端口 {DEFAULT_PORT} 被其它程序占用，已自动避让到 {port}")
+
+    # DEC-092：把**实际落位**的端口同步进记录（含「无冲突、直接用偏好」的情形
+    # ——这正是失步重灾区：偏好 1111 生效、记录还写着 5950）。看门狗探活、
+    # spawn-cmd 重拉、platform 重启三处都以这条记录为事实源。显式 --port 不写
+    # （开发态意图，维持旧行为）。
+    if auto_port:
+        try:
+            from ladderstock.cli.paths import config_dir
+            from ladderstock.supervisor.port_allocator import (
+                load_board_override,
+                load_port_overrides,
+                save_port_overrides,
+            )
+
+            if load_board_override(config_dir()) != port:
+                save_port_overrides(config_dir(), port, load_port_overrides(config_dir()))
+        except Exception:  # noqa: BLE001 - 记录失败不挡启动
+            pass
 
     # DEC-071：干净用户目录首跑从随包模板补齐完整配置（含 schema），已存在不覆盖。
     # 先 seed 再迁移——迁移要读 state.yaml，seed 之前它还不存在。
@@ -219,6 +262,38 @@ def launch(
             error(str(exc))
             raise typer.Exit(EXIT_CONFIG) from None
     _log(f"看板已启动 http://{host}:{port}（只读 API + 静态页面；Ctrl+C 退出）")
+    # 定时研究 / 盯盘随服务一起跑：普通人只开一个服务就有定时能力，不必再起
+    # `ldst schedule serve`。只挂研究/盯盘三类；快照与同步仍归独立调度进程。
+    # `LDST_SCHEDULE_IN_WEB=0` 可整体关掉（测试与排障用）。
+    from ladderstock.web.schedule_runner import get_runner, start_runner
+
+    runner = start_runner()
+    if runner is not None:
+        state = runner.status()
+        _log("定时调度已随服务启动（" + ("、".join(state["jobs"]) or "没有启用中的任务") + "）")
+    # 增益包守护：模块监控线程。为什么挂这里而不是系统服务——便携包要
+    # win/mac/linux 同一套行为，daemon 线程随主进程生死，不需要计划任务、
+    # `.vbs` 或管理员权限。`LDST_MODULES_MONITOR=0` 可整体关掉。
+    from ladderstock.modules import monitor
+
+    monitor_state = monitor.start()
+    if monitor_state.get("started"):
+        interval = int(float(monitor_state.get("interval_sec") or 0))
+        _log(f"模块监控已启动（每 {interval} 秒自愈一轮；LDST_MODULES_MONITOR=0 可关）")
+    else:
+        _log(f"模块监控未启动：{monitor_state.get('reason')}")
+
+    # DEC-092：应用内 MCP 面（`__desktop` / `__service` 置 LDST_APP_MCP=1）。
+    # 端口被占不挡看板启动；`ldst run` 开发态默认不带上。
+    from ladderstock.web.app_mcp import app_mcp_enabled, start_mcp_face
+
+    if app_mcp_enabled():
+        face = start_mcp_face()
+        if face.get("started"):
+            _log(f"MCP 面已随应用启动 http://127.0.0.1:{face['port']}/mcp")
+        else:
+            _log(f"MCP 面未启动：{face.get('detail')}")
+
     if open_browser:
         threading.Thread(
             target=_open_when_ready,
@@ -246,6 +321,15 @@ def launch(
         raise typer.Exit(EXIT_CONFIG) from None
     finally:
         _restore_break_handler(previous_break)
+        try:
+            from ladderstock.modules import monitor as monitor_module
+
+            monitor_module.stop()
+        except Exception:  # noqa: BLE001 - 收尾失败不该盖掉真正的退出原因
+            pass
+        runner_now = get_runner()
+        if runner_now is not None:
+            runner_now.shutdown()
         _log("看板已停止，端口已释放")
     raise typer.Exit(EXIT_OK)
 

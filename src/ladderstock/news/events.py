@@ -29,9 +29,7 @@ from ladderstock.news.models import NewsItem, normalize_title, publish_day
 EVIDENCE_RADIUS = 60
 
 #: 只有日期粒度的条目也允许出事件，但日历段会按天展示，所以不做时刻推测
-_DATE_IN_TEXT_RE = re.compile(
-    r"(20\d{2})\s*[-/年]\s*(\d{1,2})\s*[-/月]\s*(\d{1,2})\s*日?"
-)
+_DATE_IN_TEXT_RE = re.compile(r"(20\d{2})\s*[-/年]\s*(\d{1,2})\s*[-/月]\s*(\d{1,2})\s*日?")
 
 
 @dataclass(frozen=True)
@@ -59,17 +57,38 @@ EVENT_RULES: tuple[EventRule, ...] = (
     EventRule(
         key="earnings_preview",
         label="业绩预告",
-        groups=(("业绩预告", "业绩预增", "业绩预减", "预增", "预减", "扭亏", "首亏", "续亏",
-                 "业绩快报", "业绩预计"),),
+        groups=(
+            (
+                "业绩预告",
+                "业绩预增",
+                "业绩预减",
+                "预增",
+                "预减",
+                "扭亏",
+                "首亏",
+                "续亏",
+                "业绩快报",
+                "业绩预计",
+            ),
+        ),
         note="口径收紧：只认「预告 / 快报」这类字眼。只提「净利润」的业绩新闻不算预告——"
-             "真预告另有结构化源 earnings_preview（notice_date 就是它的披露日）",
+        "真预告另有结构化源 earnings_preview（notice_date 就是它的披露日）",
     ),
     EventRule(
         key="shareholder_reduction",
         label="股东减持",
         groups=(("减持",),),
-        negations=("不减持", "未减持", "无减持", "暂无减持", "没有减持", "不会减持",
-                   "终止减持", "中止减持", "提前结束减持"),
+        negations=(
+            "不减持",
+            "未减持",
+            "无减持",
+            "暂无减持",
+            "没有减持",
+            "不会减持",
+            "终止减持",
+            "中止减持",
+            "提前结束减持",
+        ),
     ),
     EventRule(
         key="shareholder_increase",
@@ -87,28 +106,83 @@ EVENT_RULES: tuple[EventRule, ...] = (
     EventRule(
         key="ma_restructuring",
         label="并购重组",
-        groups=(("并购", "重大资产重组", "重组", "收购", "发行股份购买资产", "吸收合并",
-                 "要约收购", "控制权"),),
-        negations=("终止重大资产重组", "不构成重大资产重组", "未构成重大资产重组",
-                   "取消本次重组", "暂停重组"),
+        groups=(
+            (
+                "并购",
+                "重大资产重组",
+                "重组",
+                "收购",
+                "发行股份购买资产",
+                "吸收合并",
+                "要约收购",
+                "控制权",
+            ),
+        ),
+        negations=(
+            "终止重大资产重组",
+            "不构成重大资产重组",
+            "未构成重大资产重组",
+            "取消本次重组",
+            "暂停重组",
+        ),
     ),
     EventRule(
         key="contract_award",
         label="中标合同",
-        groups=(("中标", "中选", "重大合同", "签订合同", "签署合同", "框架协议",
-                 "日常经营重大合同"),),
+        groups=(
+            ("中标", "中选", "重大合同", "签订合同", "签署合同", "框架协议", "日常经营重大合同"),
+        ),
         note="「订单」不进关键词：实测「订单充足」是调研描述而非中标事件（漏抽见抽查表）",
     ),
     EventRule(
         key="policy",
         label="政策发布",
         groups=(
-            ("国务院", "国务院办公厅", "央行", "中国人民银行", "证监会", "中国证监会",
-             "中国证券监督管理委员会", "发改委", "国家发展改革委", "财政部", "工信部",
-             "金融监管总局", "银保监会", "上交所", "深交所", "北交所", "交易所",
-             "商务部", "市场监管总局", "国资委", "税务总局", "住建", "人社部"),
-            ("政策", "新规", "通知", "办法", "规定", "规则", "意见", "规划", "方案",
-             "会议", "发布会", "座谈会", "部署", "降息", "降准", "LPR", "印花税", "利率"),
+            (
+                "国务院",
+                "国务院办公厅",
+                "央行",
+                "中国人民银行",
+                "证监会",
+                "中国证监会",
+                "中国证券监督管理委员会",
+                "发改委",
+                "国家发展改革委",
+                "财政部",
+                "工信部",
+                "金融监管总局",
+                "银保监会",
+                "上交所",
+                "深交所",
+                "北交所",
+                "交易所",
+                "商务部",
+                "市场监管总局",
+                "国资委",
+                "税务总局",
+                "住建",
+                "人社部",
+            ),
+            (
+                "政策",
+                "新规",
+                "通知",
+                "办法",
+                "规定",
+                "规则",
+                "意见",
+                "规划",
+                "方案",
+                "会议",
+                "发布会",
+                "座谈会",
+                "部署",
+                "降息",
+                "降准",
+                "LPR",
+                "印花税",
+                "利率",
+            ),
         ),
         note="必须同时命中「发布主体」与「政策动作」，否则公司公告里的『通知』二字会全算成政策",
     ),
@@ -173,10 +247,18 @@ class NewsEvent:
 
     def with_ai_note(self, note: str) -> NewsEvent:
         return NewsEvent(
-            id=self.id, type=self.type, label=self.label, rule_id=self.rule_id,
-            event_date=self.event_date, title=self.title, codes=self.codes,
-            evidence=dict(self.evidence), item_id=self.item_id, date_basis=self.date_basis,
-            extractor=self.extractor, ai_note=note,
+            id=self.id,
+            type=self.type,
+            label=self.label,
+            rule_id=self.rule_id,
+            event_date=self.event_date,
+            title=self.title,
+            codes=self.codes,
+            evidence=dict(self.evidence),
+            item_id=self.item_id,
+            date_basis=self.date_basis,
+            extractor=self.extractor,
+            ai_note=note,
         )
 
 
@@ -252,7 +334,7 @@ def _match_rule(rule: EventRule, text: str) -> dict[str, Any] | None:
         hits.append(located)
     start = min(hit[0] for hit in hits)
     end = max(hit[1] for hit in hits)
-    window = text[max(0, start - EVIDENCE_RADIUS): end + EVIDENCE_RADIUS]
+    window = text[max(0, start - EVIDENCE_RADIUS) : end + EVIDENCE_RADIUS]
     negation = next((term for term in rule.negations if term in window), "")
     return {
         "start": start,

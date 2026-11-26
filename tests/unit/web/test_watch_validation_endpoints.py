@@ -102,6 +102,7 @@ def _assert_no_private(text: str) -> None:
 # GET /api/watch/snapshot
 # --------------------------------------------------------------------------- #
 
+
 def test_watch_snapshot_ok_maps_status_file(client: TestClient, tmp_path: Path) -> None:
     document = _status_document()
     _write_status(tmp_path, document)
@@ -244,6 +245,7 @@ def test_watch_snapshot_strips_private_keys(client: TestClient, tmp_path: Path) 
 # GET /api/validation?date
 # --------------------------------------------------------------------------- #
 
+
 def _validation_document() -> dict[str, Any]:
     return {
         "date": "2026-10-27",
@@ -340,6 +342,7 @@ def test_validation_strips_private_keys(client: TestClient, tmp_path: Path) -> N
 # --------------------------------------------------------------------------- #
 # 兜底与只读
 # --------------------------------------------------------------------------- #
+
 
 def test_unknown_api_still_404_and_new_routes_are_read_only(client: TestClient) -> None:
     # 未实现的 /api/* 仍走 404，不被新增路由或 SPA 兜底吞掉

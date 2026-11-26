@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import shutil
@@ -44,7 +45,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -55,11 +56,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ladderstock.ai import ai_yaml_edit, checkpoint, cli_provider, discovery, fallback
 from ladderstock.ai.error_taxonomy import classify_error
 from ladderstock.cli.paths import config_dir, project_root
+
+logger = logging.getLogger(__name__)
 from ladderstock.core.boundary import (
     PEER_DIR_ENV,
     BoundaryViolation,
     ComponentControl,
     PeerControl,
+    peer_directory,
     port_offset,
     resolve_components,
     resolve_peer_control,
@@ -79,6 +83,7 @@ from ladderstock.core.validation import load_validation, validation_path, write_
 from ladderstock.errors import EXIT_AI_DEGRADED, EXIT_OK
 from ladderstock.supervisor import MODULE_ORDER, SupervisorEngine
 from ladderstock.supervisor.ledger import ModuleRecord
+from ladderstock.supervisor.modules import panel_port
 from ladderstock.supervisor.proctree import default_process_ops
 from ladderstock.web import chat as chat_channel
 from ladderstock.web import peer_registry, senate_roles
@@ -123,6 +128,12 @@ PROCESS_QUERY_TIMEOUT_SEC = 10.0
 #: 两者天然有子秒级差；5s 足够覆盖落盘/取时开销，又小于常见的 PID 复用窗口（QUOT-177 P1-2）
 PROCESS_START_TOLERANCE_SEC = 5.0
 
+#: 端口就绪宽限期（秒）。子模块启动是 wrapper → venv → serve 多层，`spawn` 返回时
+#: 只有最外层起来，真正绑端口的孙子进程还要几秒。这段窗口里「进程在、端口没起」
+#: 是正常启动过程；立刻判 FAILED 会让页面弹出「进程还在但服务端口没有监听」的
+#: 假故障（并连带后续模块）。超过宽限期仍未监听才如实报故障。
+PORT_READY_GRACE_SEC = 30.0
+
 #: 任何情况下都不终止的进程（PID 复用时的最后一道闸，QUOT-123 P0-2）
 DENY_PROCESS_NAMES = frozenset(
     {
@@ -151,7 +162,9 @@ STATUS_STOPPED = "stopped"
 STATUS_FAILED = "failed"
 
 STATUS_LABELS: dict[str, str] = {
-    STATUS_UNCONFIGURED: "未配置",
+    # 「未配置」曾被用来指「目录不存在 / 未登记」，但同页还有「编辑配置」，
+    # 用户会读成「配置项没填」。改成「未接入」，与「未安装（目录在但包不可用）」区分。
+    STATUS_UNCONFIGURED: "未接入",
     STATUS_NOT_INSTALLED: "未安装",
     STATUS_INSTALLED: "已安装",
     STATUS_STARTING: "启动中",
@@ -162,6 +175,42 @@ STATUS_LABELS: dict[str, str] = {
 
 #: 任务日志里向前端暴露的尾部行数（PRD §4）
 JOB_TAIL_LINES = 20
+
+#: 「一键接入」模板：compose 形态的 peer 目录还不存在时，由控制面生成的部署文件。
+#: 只生成 compose 与 .env，不下载镜像、不建卷、不拉数据——接入 = 让这台机器具备可部署
+#: 形态，真正的启动仍走 `docker compose up -d`（幂等，已有容器原地保留）。
+#: 模板里的端口必须与 PEER_CONTROL 的口径一致（qdrant 是外部托管，不参与 +offset 平移）。
+PEER_SCAFFOLDS: dict[str, dict[str, str]] = {
+    "qdrant": {
+        "config.yaml": """\
+# 由 LadderStock 控制面生成（一键接入）。
+# 2026-11-18 起 Qdrant 不再走 Docker：由 LS 直接拉本机单体二进制
+# `runtime/qdrant.exe`（Windows）跑，本文件是它读的原生配置。
+# 端口随环境平移：测试服由 QDRANT__SERVICE__HTTP_PORT / __GRPC_PORT 覆盖为
+# 16333 / 16334，这里的 6333 / 6334 是正式服默认值。
+log_level: INFO
+
+storage:
+  # 与各子模块同构：数据留在模块目录内，不散落到系统盘。
+  storage_path: ./storage
+
+service:
+  host: 127.0.0.1
+  http_port: 6333
+  grpc_port: 6334
+
+telemetry_disabled: true
+""",
+        ".env": """\
+# 由 LadderStock 控制面生成（一键接入）。
+QDRANT_URL=http://127.0.0.1:6333
+COLLECTION_NAME=ladderstock_memories
+EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+# 模板默认不开鉴权（仅绑 127.0.0.1）。要让别的机器访问，先在这里设 QDRANT_API_KEY。
+# QDRANT_API_KEY=
+""",
+    },
+}
 
 #: AI 生成 / 重试任务（QUOT-236）：复用同一套 Job 模型，不新增 peer
 AI_JOB_PEER = "ldst"
@@ -246,15 +295,14 @@ CONTROL_STATE_FILE = "peer_state.json"
 
 #: 历史默认端口里**已经确认踩过坑**的那些：只报告占用者，不改端口（DEC-013 / DEC-014 §3）
 KNOWN_AVOIDED_PORTS: dict[str, tuple[tuple[int, str], ...]] = {
-    "tickhub_us": (
-        (8001, "TickHub-US 默认 MCP 端口：被 WSL 转发服务占用，改用 8002"),
-    ),
+    "tickhub_us": ((8001, "TickHub-US 默认 MCP 端口：被 WSL 转发服务占用，改用 8002"),),
 }
 
 
 # --------------------------------------------------------------------------- #
 # 开关与来源判定
 # --------------------------------------------------------------------------- #
+
 
 def control_enabled() -> bool:
     """`LDST_CONTROL_ENABLED` 默认开启；显式写 `0/false/no/off` 才关闭。"""
@@ -279,9 +327,7 @@ def is_loopback_host(host: str) -> bool:
 
 
 #: 除 stdlib 自带判定外，额外拒绝的网段（QUOT-123 C10）
-_EXTRA_BLOCKED_NETWORKS: tuple[
-    ipaddress.IPv4Network | ipaddress.IPv6Network, ...
-] = (
+_EXTRA_BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.ip_network("100.64.0.0/10"),  # CGNAT / 运营商级 NAT
     ipaddress.ip_network("fc00::/7"),  # IPv6 唯一本地地址
     ipaddress.ip_network("fe80::/10"),  # IPv6 链路本地（stdlib 也判，双保险）
@@ -496,10 +542,7 @@ async def _guard(request: Request) -> None:
         if site is not None and site.strip().lower() not in SAME_ORIGIN_SITES:
             raise HTTPException(
                 status_code=403,
-                detail=(
-                    f"跨站来源被拒绝：Sec-Fetch-Site={site}"
-                    "（只接受 same-origin / none）"
-                ),
+                detail=(f"跨站来源被拒绝：Sec-Fetch-Site={site}（只接受 same-origin / none）"),
             )
 
 
@@ -634,13 +677,9 @@ def parse_validation_request(
     if not isinstance(raw_conditions, list):
         raise _invalid("conditions 必须是数组")
     if len(raw_conditions) > MAX_CONDITIONS:
-        raise _invalid(
-            f"conditions 超过 {MAX_CONDITIONS} 条（{len(raw_conditions)}）"
-        )
+        raise _invalid(f"conditions 超过 {MAX_CONDITIONS} 条（{len(raw_conditions)}）")
 
-    conditions = [
-        _parse_condition(raw, index) for index, raw in enumerate(raw_conditions)
-    ]
+    conditions = [_parse_condition(raw, index) for index, raw in enumerate(raw_conditions)]
     return trade_date, conditions, mode
 
 
@@ -690,15 +729,14 @@ def mask_secrets(text: str, extra: Iterable[str] = ()) -> str:
         if len(candidate) >= 6:
             masked = masked.replace(candidate, secret_preview(candidate))
     masked = _SK_TOKEN.sub(lambda m: secret_preview(m.group(0)), masked)
-    masked = _KV_SECRET.sub(
-        lambda m: f"{m.group(1)}{m.group(2)}{m.group(3) or ''}***", masked
-    )
+    masked = _KV_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3) or ''}***", masked)
     return masked
 
 
 # --------------------------------------------------------------------------- #
 # 探测原语
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class StepResult:
@@ -747,6 +785,17 @@ def _ai_working_dir() -> Path:
     return project_root()
 
 
+def _no_window_kwargs() -> dict[str, int]:
+    """GUI 进程（pythonw）发起的查询/终止类子进程一律不带控制台（DEC-092 单窗口）。
+
+    与 proctree / module_adapters 同口径：缺了它每次 tasklist / netstat / wmic /
+    powershell 都会在桌面弹瞬时黑窗。POSIX 返回空 dict（creationflags 仅 Windows 支持）。
+    """
+    if os.name != "nt":
+        return {}
+    return {"creationflags": int(getattr(subprocess, "CREATE_NO_WINDOW", 0))}
+
+
 def run_step(args: list[str], cwd: Path, timeout: float) -> StepResult:
     """参数数组 + `shell=False` + 显式超时（DEC-014 硬约束 2）。"""
     try:
@@ -785,11 +834,14 @@ def _wsl_listing() -> str:
             capture_output=True,
             timeout=WSL_PROBE_TIMEOUT_SEC,
             shell=False,
+            **_no_window_kwargs(),
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
-    text = raw.decode("utf-16-le", errors="ignore") if b"\x00" in raw else raw.decode(
-        "utf-8", errors="ignore"
+    text = (
+        raw.decode("utf-16-le", errors="ignore")
+        if b"\x00" in raw
+        else raw.decode("utf-8", errors="ignore")
     )
     return text.replace("\x00", "").replace("\r\n", "\n")
 
@@ -848,6 +900,7 @@ def _process_name(pid: int) -> str | None:
             capture_output=True,
             text=True,
             errors="replace",
+            **_no_window_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):  # pragma: no cover - 环境异常
         return None
@@ -873,6 +926,7 @@ def probe_port(port: int | None) -> list[PortOwner]:
                 capture_output=True,
                 text=True,
                 errors="replace",
+                **_no_window_kwargs(),
             )
             pids = _parse_netstat_listeners(proc.stdout or "", port)
             return [PortOwner(pid=pid, process=_process_name(pid)) for pid in pids]
@@ -1082,6 +1136,7 @@ def read_env_layered(ctl: PeerControl) -> tuple[dict[str, str], dict[str, str]]:
 # 任务
 # --------------------------------------------------------------------------- #
 
+
 class JobFailure(RuntimeError):
     """任务在某个步骤上失败（带步骤名，直接进入 `error` 字段）。"""
 
@@ -1149,6 +1204,7 @@ def _now_iso() -> str:
 # --------------------------------------------------------------------------- #
 # 进程归属（QUOT-123 P0-2：终止前必须证明「这个 PID 是本 peer 的」）
 # --------------------------------------------------------------------------- #
+
 
 def _abs_path(path: Path | str) -> str:
     """绝对路径（`resolve()` 失败时退回 `absolute()`）。"""
@@ -1263,7 +1319,7 @@ def process_image(pid: int, cwd: Path) -> tuple[str | None, str | None]:
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            f"(Get-CimInstance Win32_Process -Filter \"ProcessId={number}\").ExecutablePath",
+            f'(Get-CimInstance Win32_Process -Filter "ProcessId={number}").ExecutablePath',
         ],
         [
             "wmic",
@@ -1400,7 +1456,7 @@ def process_created_at(pid: int) -> datetime | None:
             "-NonInteractive",
             "-Command",
             (
-                f"$p = Get-CimInstance Win32_Process -Filter \"ProcessId={number}\"; "
+                f'$p = Get-CimInstance Win32_Process -Filter "ProcessId={number}"; '
                 'if ($p) { $p.CreationDate.ToUniversalTime().ToString("o") }'
             ),
         ],
@@ -1428,6 +1484,7 @@ def process_created_at(pid: int) -> datetime | None:
 # 控制面
 # --------------------------------------------------------------------------- #
 
+
 class ControlPlane:
     """控制面的全部实现；依赖全部可注入，测试用 mock 顶掉子进程/端口/HTTP。"""
 
@@ -1452,20 +1509,21 @@ class ControlPlane:
         supervisor: SupervisorEngine | None = None,
         cmdline_probe: Callable[[int], tuple[str, ...] | None] | None = None,
         mcp_probe: Callable[[str, float], tuple[bool, str]] | None = None,
+        tree_probe: Callable[[int], list[int]] | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         # 看板自己的 AI 配置目录（与 peer 配置分开）；默认走 LDST_CONFIG_DIR / cwd/config
         self.config_root = Path(config_root) if config_root is not None else config_dir()
         self.peers: dict[str, PeerControl] = dict(peers or resolve_peer_control())
+        # 显式注入的 peers（测试假件）不做快照时的动态重解析：注入即最终口径。
+        self._peers_injected = peers is not None
         # 工具组件只读观测，不参与 peer 的数据边界与启停任务
         self.components: dict[str, ComponentControl] = dict(
             components if components is not None else resolve_components()
         )
         # 启动即校验 peer 目录（QUOT-194 P1-3）：共享盘上的 peer 等于把执行权
         # 交给别人，命中即抛 SharedPeerDirectoryError，不进入任何动作。
-        require_local_peer_directories(
-            {key: ctl.directory for key, ctl in self.peers.items()}
-        )
+        require_local_peer_directories({key: ctl.directory for key, ctl in self.peers.items()})
         self._sources_loader = sources_loader or load_sources_peers
         self._run = run or run_step
         self._port_probe = port_probe or probe_port
@@ -1473,6 +1531,9 @@ class ControlPlane:
         # QUOT-547：实时命令行（PID 复用判定）与 MCP 协议存活探测都可注入，
         # 测试给假件；生产走 proctree 的 CIM/wmic 与回环 MCP GET。
         self._cmdline_probe = cmdline_probe or default_process_ops().cmdline
+        # 进程树（QUOT-XXX 多代进程归属）：账本只记根 PID，监听端口的是它的子孙
+        # （ProxyFleet 的 proxyfleet.exe → serve 子进程）。归属判定需要这条证据。
+        self._tree_probe = tree_probe or default_process_ops().tree_pids
         self._mcp_probe = mcp_probe or probe_mcp_alive
         self._http_post = http_post or _post_json
         self._spawn = spawn or _spawn_process
@@ -1508,6 +1569,10 @@ class ControlPlane:
             sorted({ctl.repo for ctl in self.peers.values() if ctl.repo}),
         )
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ldst-control")
+        #: 探测专用池（`board()` 里每个 peer 的端口/进程/health/版本探测都是阻塞的
+        #: subprocess 或 HTTP，串行会把列表页拖到十几秒——前端 15s 就超时）。
+        #: 与 `_executor` 分开，长任务（启停/安装）不会把探测线程占满。
+        self._probe_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ldst-probe")
 
     # ---------------------------------------------------------------- 状态文件
 
@@ -1532,9 +1597,7 @@ class ControlPlane:
         tmp = self._state_path.with_name(f"{self._state_path.name}.tmp")
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(
-                json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            tmp.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
             self._harden_acl(tmp)
             os.replace(tmp, self._state_path)
         except AclError as exc:
@@ -1575,13 +1638,29 @@ class ControlPlane:
         return peers if isinstance(peers, Mapping) else {}
 
     @staticmethod
+    def _runtime_binary(directory: Path) -> Path | None:
+        """便携单体二进制的实际可执行文件（Win 带 .exe，其余不带）。
+
+        目录名 `runtime` 是约定：组件自带的原生二进制都放这里，不落系统 PATH、
+        不依赖外部解释器或容器。返回第一个命中的候选，全部缺失返回 None。
+        """
+        runtime = directory / "runtime"
+        for name in ("qdrant.exe", "qdrant"):
+            candidate = runtime / name
+            if candidate.is_file():
+                return candidate
+        return None
+
+    @staticmethod
     def _venv_dir(ctl: PeerControl) -> Path:
         return Path(ctl.directory) / ".venv"
 
     def _venv_python(self, ctl: PeerControl) -> Path:
         venv = self._venv_dir(ctl)
-        return venv / ("Scripts" if os.name == "nt" else "bin") / (
-            "python.exe" if os.name == "nt" else "python"
+        return (
+            venv
+            / ("Scripts" if os.name == "nt" else "bin")
+            / ("python.exe" if os.name == "nt" else "python")
         )
 
     def _venv_script(self, ctl: PeerControl, name: str) -> Path:
@@ -1617,9 +1696,96 @@ class ControlPlane:
 
     # ---------------------------------------------------------------- 快照
 
+    def _with_effective_ports(
+        self, ctl: PeerControl, *, library_only: bool
+    ) -> tuple[PeerControl, dict[int, int]]:
+        """把声明端口换成实际在监听的端口（仅回退到基础端口）。
+
+        测试服按 `LDST_PORT_OFFSET` 平移端口，但一台机器上的子模块通常只有一份
+        **共用实例**，跑在 `config/sources.yaml` 写的基础端口。按平移口径逐个去
+        敲，就会把「正在跑」判成「已停止」——「8 个模块 · 运行中 1」即此根因。
+        这里只在**声明端口无人监听**时才回退一次「端口 − 偏移」；命中后仍用真实
+        端口做健康检查与归属判定。启动命令不跟着改：要起自有副本时依旧按声明口径
+        起，规则不破。偏移为 0 时完全不介入（零改动、零回归）。
+        """
+        if library_only:
+            return ctl, {}
+        offset = port_offset()
+        if offset <= 0:
+            return ctl, {}
+        probed: dict[int, bool] = {}
+
+        def listening(port: int | None) -> bool:
+            if not port:
+                return False
+            if port not in probed:
+                probed[port] = bool(self._port_probe(port))
+            return probed[port]
+
+        mapping: dict[int, int] = {}
+
+        def pick(port: int | None) -> int | None:
+            if not port or listening(port):
+                return port
+            base = port - offset
+            if base > 0 and listening(base):
+                mapping[port] = base
+                return base
+            return port
+
+        changes: dict[str, Any] = {}
+        live_mcp = pick(ctl.mcp_port)
+        if live_mcp != ctl.mcp_port:
+            changes["mcp_port"] = live_mcp
+        if ctl.web_port:
+            live_web = pick(ctl.web_port)
+            if live_web != ctl.web_port:
+                changes["web_port"] = live_web
+        if ctl.extra_ports:
+            shifted = tuple(int(pick(port) or port) for port in ctl.extra_ports)
+            if shifted != tuple(ctl.extra_ports):
+                changes["extra_ports"] = shifted
+        if not mapping:
+            return ctl, {}
+        return (replace(ctl, **changes) if changes else ctl), mapping
+
     def snapshot(self, key: str) -> dict[str, Any]:
         """单个 peer 的探测结果（状态判定顺序严格按 PRD §3.1）。"""
         ctl = self.peers[key]
+        # 自述卡是「谁在服务谁说了算」：模块可能在面板起来之后才启动 / 重启 / 换端口，
+        # 启动时算一次会把「刚登记的新地址」永久定格成「没卡」。这里每轮快照重解析
+        # 一次，`core.discovery` 自带 2 秒缓存，不会把 8 个模块探成 8 次阻塞。
+        try:
+            if self._peers_injected:
+                card = None
+            else:
+                from ladderstock.core import discovery as discovery_card
+
+                card = discovery_card.read_card(self.peers[key].directory)
+        except Exception:  # noqa: BLE001 - 卡解析失败不许影响面板
+            card = None
+        if card:
+            # 卡是否成立用**面板同一套端口探测**（`_port_probe`）：页面判「有没有人监听」
+            # 与「卡能不能用」必须一个口径，不能用 socket 另一套判活。
+            card_ports = [
+                port
+                for port in (card.get("mcp"), card.get("web"), *(card.get("extra") or ()))
+                if port
+            ]
+            if any(self._port_probe(port) for port in card_ports):
+                changes: dict[str, Any] = {
+                    "discovered": True,
+                    "card_path": card.get("path"),
+                }
+                if card.get("mcp") and int(card["mcp"]) != ctl.mcp_port:
+                    changes["mcp_port"] = int(card["mcp"])
+                if card.get("web") and int(card["web"]) != ctl.web_port:
+                    changes["web_port"] = int(card["web"])
+                card_extra = tuple(int(port) for port in card.get("extra") or ())
+                if card_extra and card_extra != tuple(ctl.extra_ports):
+                    changes["extra_ports"] = card_extra
+                self.peers[key] = replace(self.peers[key], **changes)
+                ctl = self.peers[key]
         directory = Path(ctl.directory)
         dir_exists = directory.is_dir()
         registry = self._sources_peers()
@@ -1637,11 +1803,37 @@ class ControlPlane:
             # pip 分发，目录在位即视为已安装（与 compose 分支同构）；版本无单一
             # 真源（服务由 SYSTEM 垫片拉起），如实回 None。
             installed = dir_exists
+        elif getattr(ctl, "library_only", False):
+            # 库态子模块（LS 自身记忆，QUOT-611）：没有 .venv、没有服务面，
+            # 包体在 site-packages 随包分发；目录在位即视为已安装。
+            installed = dir_exists
+        elif key in PEER_SCAFFOLDS and all(
+            (directory / name).is_file() for name in PEER_SCAFFOLDS[key]
+        ):
+            # 便携二进制形态的接入产物（2026-11-18 Qdrant 去 Docker 化）：scaffold
+            # 已把 config.yaml 与 .env 落位，配置入口应当可用；二进制本身单独下载，
+            # 在不在位由启动阶段的入口检查报出来，不在这里冒充「装好了」。
+            installed = True
+        elif (directory / "runtime").is_dir() and self._runtime_binary(directory) is not None:
+            # 便携二进制形态（2026-11-18 Qdrant 去 Docker 化）：既没有 compose、没有
+            # 计划任务、没有 .venv、也没有 install_state.json，判据只能是「单体可执行
+            # 文件在不在位」。三平台同一口径：runtime/qdrant.exe（Win）或 runtime/qdrant。
+            installed = True
+        elif (directory / "install_state.json").is_file():
+            # bundle 形态（FinanceCoffer 本地增益包）：没有 .venv 也没有 pip 分发，
+            # 安装状态真源是 `<directory>/install_state.json` 的 state——目录好几 GB
+            # 也可能只是 pgdata/redisdata 堆出来的，装没装全只能看这个标记。
+            installed = self._bundle_ready(directory)
         elif dir_exists and self._venv_python(ctl).exists():
             version = self.import_version(ctl)
             installed = version is not None
 
-        mcp_owners = self._port_probe(ctl.mcp_port)
+        library_only = bool(getattr(ctl, "library_only", False))
+        # 平移口径（测试服 +10000）探不到时回退到基础端口：同一台机器上的子模块
+        # 往往只有一份共用实例，平移口径会去敲一个空端口，把「正在跑」报成
+        # 「已停止」（2026-11-21「8 个模块 · 运行中 1」就是这个根因）。
+        ctl, live_ports = self._with_effective_ports(ctl, library_only=library_only)
+        mcp_owners = [] if library_only else self._port_probe(ctl.mcp_port)
         web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
         # QUOT-485：额外端口（ProxyFleet 的 8789 出口网关）也探归属并计入「是否
         # 监听」，但不出「打开」按钮——网关不是能点的站点。
@@ -1649,7 +1841,11 @@ class ControlPlane:
             port: self._port_probe(port) for port in ctl.extra_ports
         }
         listening = bool(mcp_owners or web_owners or any(extra_owners.values()))
-        conflicts = self._port_conflicts(key, ctl, mcp_owners, web_owners, extra_owners)
+        conflicts = (
+            []
+            if library_only
+            else self._port_conflicts(key, ctl, mcp_owners, web_owners, extra_owners)
+        )
 
         health: dict[str, Any] = {"ok": None, "detail": ""}
         if listening:  # 有监听就探一次：占用者到底是不是本方 peer，靠健康检查说话
@@ -1664,19 +1860,24 @@ class ControlPlane:
             health_ok=health["ok"],
             health_detail=health["detail"],
             foreign_ports=[c["port"] for c in conflicts if c.get("foreign")],
+            library_only=library_only,
         )
 
         # 模块已在正常服务、占用的又是它自己的声明端口：这不是冲突，只是「控制面没
         # 亲手拉起它」（手动启动很常见，如 CN 要先加载代理 env）。降级成归属提示，
         # 保留 PID/进程名与「不接管」的事实，避免整页全红。
         if status == STATUS_RUNNING:
+            if live_ports:
+                pairs = "、".join(
+                    f"{declared}→{actual}" for declared, actual in sorted(live_ports.items())
+                )
+                detail = f"{detail}；共用主实例探测（{pairs}）"
             own_ports = {ctl.mcp_port, ctl.web_port, *ctl.extra_ports}
             for conflict in conflicts:
                 if conflict.get("foreign") and conflict["port"] in own_ports:
                     conflict["severity"] = "info"
                     conflict["note"] = (
-                        "端口由控制面之外的进程监听（手动启动）；"
-                        "控制面不接管启停，也不会终止它"
+                        "端口由控制面之外的进程监听（手动启动）；控制面不接管启停，也不会终止它"
                     )
 
         last_job = self._last_job.get(key)
@@ -1713,6 +1914,13 @@ class ControlPlane:
                 "web_label": ctl.web_port_label,
                 # 额外端口（QUOT-485，ProxyFleet 的 8789 出口网关）：探测归属，不打开
                 "extra": list(ctl.extra_ports),
+                # 非空表示这些面是按「共用主实例」的实际端口探测的（声明→实际）。
+                "live": {str(k): v for k, v in sorted(live_ports.items())},
+                "shared_instance": bool(live_ports),
+                # 端口来自模块自述卡（.runtime/peer.json）而不是偏移推算。
+                "discovered": bool(getattr(ctl, "discovered", False)),
+                # 生效卡文件（没读到卡为 None）：页面说明「按哪张卡确认」。
+                "card": getattr(ctl, "card_path", None),
             },
             "listening": {
                 "mcp": [owner.as_dict() for owner in mcp_owners],
@@ -1735,6 +1943,9 @@ class ControlPlane:
                 # 未托管的服务（如 WSL 里的 FinanceCoffer，QUOT-403）一律不出
                 # 安装/启停按钮：Windows 侧没有它的进程归属证据，也不能杀。
                 "can_install": ctl.managed and dir_exists and registered and not installed,
+                # 目录还没有、但这是有接入模板的模块：给「一键接入」，由控制面
+                # 生成部署文件（qdrant 已从 compose 改成 config.yaml + .env）。
+                "can_scaffold": key in PEER_SCAFFOLDS and not dir_exists,
                 # 按面判定（QUOT-481 缺陷 3）：只要存在未监听的服务面就允许补跑
                 # 启动（如 Wire 的 web 面挂了、mcp 面还活着），不再要求全部端口
                 # 先停下来；启动也只补跑那些面（见 _start）。
@@ -1747,11 +1958,13 @@ class ControlPlane:
                 # 按「本控制面记录过 PID」判定（QUOT-481 缺陷 3）：外部手工拉起的
                 # 进程即使占着端口也不显示可停（DEC-014 硬约束 3：绝不终止非本
                 # 控制面启动的进程；面板上如实把它显示成运行中即可）。
-                "can_stop": ctl.managed and bool(state_pids(self._peer_state(key))),
+                "can_stop": ctl.managed
+                and (bool(state_pids(self._peer_state(key))) or self._supervised_own(key)),
                 "can_open": open_url is not None,
                 #  config_keys 为空 = 没有可写键（未配白名单的模块）：页面据此置灰
                 # 「编辑配置」，不给空抽屉与「保存后创建」的假承诺（QUOT-480）。
-                "can_config": bool(ctl.config_keys) and env_parent.is_dir(),
+                # 未安装（.venv 不在，如 WSL 里的 FinanceCoffer）同样置灰：写了没人读。
+                "can_config": bool(ctl.config_keys) and env_parent.is_dir() and installed,
             },
         }
 
@@ -1801,6 +2014,7 @@ class ControlPlane:
         health_ok: bool | None,
         health_detail: str,
         foreign_ports: list[int] | None = None,
+        library_only: bool = False,
     ) -> tuple[str, str]:
         if not dir_exists:
             hint = PEER_DIR_ENV.get(key)
@@ -1808,6 +2022,17 @@ class ControlPlane:
             return STATUS_UNCONFIGURED, f"目录不存在：{self.peers[key].directory}{suffix}"
         if not registered:
             return STATUS_UNCONFIGURED, "未在 config/sources.yaml 的 peers 登记"
+        if library_only:
+            # 库态子模块（LS 自身记忆，QUOT-611）：没有服务与端口，「已安装/未启动」
+            # 的语义不适用；如实说清它是随包分发、进程内 import 的包体。
+            ctl = self.peers[key]
+            if not installed:
+                return STATUS_NOT_INSTALLED, f"包体缺失：{ctl.directory}"
+            return (
+                STATUS_INSTALLED,
+                "库形态：包体随应用分发（file/modules/memory/site-packages），"
+                "进程内 import，无独立服务与端口",
+            )
 
         last = self._last_job.get(key)
         active_job = last is not None and last.status in {"queued", "running"}
@@ -1823,6 +2048,11 @@ class ControlPlane:
                     f"端口 {ports} 被其他进程占用（不是本控制面启动的），且健康检查失败："
                     f"{health_detail or '未知'}；不会终止占用者",
                 )
+            # 端口在监听、HTTP 也有响应，只是服务自报未就绪（ProxyFleet 的 /readyz
+            # 在 biz_ok=0 时回 503）：这是「在跑但没准备好」，不是控制面故障。把它
+            # 报成「异常」会和旁边「端口正在监听」自相矛盾。
+            if "HTTP " in (health_detail or ""):
+                return STATUS_RUNNING, f"端口已监听，就绪检查未通过（{health_detail}）"
             return STATUS_FAILED, f"端口已监听但健康检查失败（{health_detail or '未知'}）"
         if active_job and last is not None and last.action == "start":
             return STATUS_STARTING, f"启动中：{last.step or '准备中'}"
@@ -1832,12 +2062,34 @@ class ControlPlane:
         if pids and not any(_pid_alive(pid) for pid in pids):
             return STATUS_STOPPED, "进程已退出，端口无监听"
         if pids:
+            # 刚 spawn 的进程要先经 wrapper → venv → serve 才绑端口，中间有几秒
+            # 「进程在、端口没起」的正常窗口；不满宽限期照实报「启动中」，
+            # 超时才判故障（否则一屏假告警）。
+            started = _parse_state_time(self._peer_state(key).get("last_start_at"))
+            if started is not None:
+                elapsed = (datetime.now(UTC) - started).total_seconds()
+                if 0 <= elapsed < PORT_READY_GRACE_SEC:
+                    return STATUS_STARTING, "启动中：进程已起，端口尚未监听"
             return STATUS_FAILED, "进程仍在但端口无监听（保留进程日志）"
         if not installed:
             return STATUS_NOT_INSTALLED, self._not_installed_detail(key)
         if self._peer_state(key).get("last_stop_at"):
             return STATUS_STOPPED, "已按控制面停止"
         return STATUS_INSTALLED, "已安装，未启动"
+
+    @staticmethod
+    def _bundle_ready(directory: Path) -> bool:
+        """bundle 安装态：`install_state.json` 的 `state == "ready"` 才算装好。
+
+        读不到 / 解析失败时退回「文件在位」——既不误报未安装，也不假装就绪；
+        真正的组件明细在 `components` 里，面板展示时另行读取。
+        """
+        marker = directory / "install_state.json"
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return marker.is_file()
+        return str(data.get("state") or "").strip().lower() == "ready"
 
     def _not_installed_detail(self, key: str) -> str:
         ctl = self.peers[key]
@@ -1859,6 +2111,72 @@ class ControlPlane:
                 return ledger.records()
         return {}
 
+    def _supervised_own(self, key: str) -> bool:
+        """该 peer 是否由 supervisor 引擎持有归属（本会话亲手拉起）。
+
+        `LDST_SUPERVISOR_OWN_PROCESSES=1` 时模块由 supervisor 冷启动，控制面自己
+        的账本（`_peer_state`）里没有记录——启停判据必须认这层归属，否则页面
+        显示「运行中」却永远不给停止按钮。origin 不再限制：adopt 只在命令行
+        命中本模块识别规则时写账本，认领态同样是本平台程序，必须可停可重启。
+        真正的外部程序不会进账本（端口诊断里走 foreign，绝不终止）。
+        """
+        if self.supervisor is None:
+            return False
+        record = self._ledger_records().get(key)
+        if record is None or record.adopted_peer:
+            return False
+        if record.state not in {"starting", "running"}:
+            return False
+        pid = getattr(record, "pid", None)
+        return pid is not None and _pid_alive(int(pid))
+
+    def _own_tree_pids(self, record: ModuleRecord | None) -> set[int]:
+        """账本进程的全部子孙 PID（含根）。
+
+        多代进程模块（`proxyfleet.exe serve` 的 venv 启动器再拉起真正的 serve）
+        只把根 PID 记账，监听端口的是子孙；这条证据让「同一份服务」不被 PID
+        不等误判成外部进程。查不到就返回空集（失败关闭，退回只比 PID）。
+        """
+        pid = getattr(record, "pid", None)
+        if record is None or pid is None:
+            return set()
+        try:
+            pids = self._tree_probe(int(pid))
+        except Exception:  # noqa: BLE001 - 查询失败等于没有证据，绝不据此放宽归属
+            return set()
+        return {int(item) for item in pids or ()}
+
+    def _launcher_tree_pids(
+        self, key: str, ctl: PeerControl, owners: Iterable[int | None], known: set[int]
+    ) -> set[int]:
+        """本控制面拉起的启动器的整棵进程树（只在有解释不了的占用者时才查）。
+
+        多面 peer（StockSenate 的 mcp + webui）每个面一个 venv 启动器，真正监听端口
+        的是启动器拉起的解释器子孙；账本只记一个根，另一面的监听者会被判成
+        foreign → 自愈不停拉替代实例。启动器必须先过 `_ownership_refusal`
+        （exe 逐字相符 + 创建时间相符），PID 复用的进程绝不会因此被认成自有。
+        """
+        unexplained = {int(pid) for pid in owners if pid is not None} - known
+        if not unexplained:
+            return set()
+        # supervisor 引擎拉起的面同样挂在本看板进程树下（账本只记主面）
+        try:
+            tree = {int(item) for item in self._tree_probe(os.getpid()) or ()}
+        except Exception:  # noqa: BLE001 - 查询失败等于没有证据，不放宽归属
+            tree = set()
+        if unexplained <= tree:
+            return tree
+        for record in pid_records(self._peer_state(key)):
+            if self._ownership_refusal(ctl, record) is not None:
+                continue
+            try:
+                tree |= {int(item) for item in self._tree_probe(int(record["pid"])) or ()}
+            except Exception:  # noqa: BLE001 - 查询失败等于没有证据，不放宽归属
+                continue
+            if unexplained <= tree:
+                break
+        return tree
+
     def _port_conflicts(
         self,
         key: str,
@@ -1879,6 +2197,13 @@ class ControlPlane:
         conflicts: list[dict[str, Any]] = []
         mine = set(state_pids(self._peer_state(key)))
         record = self._ledger_records().get(key)
+        own_tree = self._own_tree_pids(record)
+        listeners = [
+            owner.pid
+            for owners in (mcp_owners, web_owners, *(extra_owners or {}).values())
+            for owner in owners
+        ]
+        mine |= self._launcher_tree_pids(key, ctl, listeners, mine | own_tree)
         for port, note in KNOWN_AVOIDED_PORTS.get(key, ()):  # 历史坑位
             for owner in self._port_probe(port):
                 conflicts.append(
@@ -1900,7 +2225,10 @@ class ControlPlane:
         for bound_port in sorted(bound):
             for owner in bound[bound_port]:
                 classification, reason = classify_port_owner(
-                    pid=owner.pid, mine_pids=mine, record=record
+                    pid=owner.pid,
+                    mine_pids=mine,
+                    record=record,
+                    own_tree_pids=own_tree,
                 )
                 if classification == OWN_CHILD:
                     continue
@@ -1944,9 +2272,16 @@ class ControlPlane:
         item = raw_item if isinstance(raw_item, Mapping) else {}
         record = self._ledger_records().get(key)
         mine = set(state_pids(self._peer_state(key)))
+        own_tree = self._own_tree_pids(record)
         mcp_owners = self._port_probe(ctl.mcp_port)
         web_owners = self._port_probe(ctl.web_port) if ctl.web_port else []
         extra_owners = {port: self._port_probe(port) for port in ctl.extra_ports}
+        listeners = [
+            owner.pid
+            for owners in (mcp_owners, web_owners, *extra_owners.values())
+            for owner in owners
+        ]
+        mine |= self._launcher_tree_pids(key, ctl, listeners, mine | own_tree)
         listening = bool(mcp_owners or web_owners or any(extra_owners.values()))
         health = (
             self._health_snapshot(ctl, item=item, mcp_listening=bool(mcp_owners))
@@ -1984,6 +2319,7 @@ class ControlPlane:
                     mine_pids=mine,
                     record=record,
                     live_cmdline=live_cmdline,
+                    own_tree_pids=own_tree,
                 )
                 ports.append(
                     {
@@ -1993,9 +2329,7 @@ class ControlPlane:
                         "pid": owner.pid,
                         "process": owner.process,
                         "cmdline": (
-                            [mask_secrets(part) for part in live_cmdline]
-                            if live_cmdline
-                            else None
+                            [mask_secrets(part) for part in live_cmdline] if live_cmdline else None
                         ),
                         "listening": True,
                         "reason": reason,
@@ -2029,9 +2363,9 @@ class ControlPlane:
     def heal_ports(self, key: str) -> dict[str, Any]:
         """`POST /api/control/ports/heal`：按占用分类的安全自愈（QUOT-547）。
 
-        动作优先级（绝不终止 adopted_peer / foreign，复用 QUOT-545 adopt-only 边界）：
-        - adopted_peer → 只认领 + 健康复检（`engine.adopt_module`），绝不终止 / 重启；
-        - own_child → 停止并重拉（`engine.restart_module`，引擎对 adopted_peer 仍跳过）；
+        动作优先级（按客观证据处置，不再「认领即永不停止」）：
+        - own_child（含 `origin="adopted"` 的认领实例）→ 停止并重拉；
+        - adopted_peer（旧账本遗留的硬标记）→ 只认领 + 健康复检，绝不终止 / 重启；
         - foreign → 只报告 + 引导，绝不自动杀（DEC-004 不换端口 / DEC-014 不终止）；
         - free → 无动作。
         """
@@ -2048,7 +2382,7 @@ class ControlPlane:
             "health": diag["health"],
         }
 
-        if ADOPTED_PEER in classes or (record is not None and record.adopted_peer):
+        if record is not None and record.adopted_peer:
             result["action"] = "adopt"
             if engine is not None:
                 try:
@@ -2111,9 +2445,7 @@ class ControlPlane:
         directory = Path(ctl.directory)
         dir_exists = directory.is_dir()
         console_owners = self._port_probe(ctl.console_port)
-        gateway_owners = (
-            self._port_probe(ctl.gateway_port) if ctl.gateway_port else []
-        )
+        gateway_owners = self._port_probe(ctl.gateway_port) if ctl.gateway_port else []
         listening = bool(console_owners or gateway_owners)
 
         health: dict[str, Any] = {"ok": None, "detail": ""}
@@ -2226,6 +2558,7 @@ class ControlPlane:
             "open_url": None,
             "actions": {
                 "can_install": False,
+                "can_scaffold": False,
                 "can_start": False,
                 "can_stop": False,
                 "can_open": False,
@@ -2246,7 +2579,12 @@ class ControlPlane:
         # 直读 sources.yaml 的 default_port 原值，导致测试服里表格显示生产端口、
         # 卡片显示测试端口，同一页出现两套号。偏移量非 0 时才动，0 档零回归。
         offset = port_offset()
-        if port and offset:
+        live = (snapshot.get("ports") or {}).get("mcp") if snapshot else None
+        if live:
+            # 卡片按「共用主实例」的实际端口探测时，注册表这一行也跟同一口径，
+            # 否则同一页又会出现两套号（QUOT-618 的老毛病）。
+            port = int(live)
+        elif port and offset:
             port += offset
         if snapshot:
             status = str(snapshot.get("status"))
@@ -2284,7 +2622,10 @@ class ControlPlane:
         registry = self._sources_peers()
         registered = set(registry)
         keys = [key for key in self.peers if key in registered] or list(self.peers)
-        snapshots = [self.snapshot(key) for key in keys]
+        # 每张卡的探测都是阻塞调用（端口归属查进程、health 打 HTTP、版本起 venv
+        # 子进程），串行累加成十几秒，页面 15s 超时就会报「取数超时」。并发跑，
+        # 总耗时≈最慢一张卡。
+        snapshots = list(self._probe_executor.map(self.snapshot, keys))
         by_id = {snapshot["id"]: snapshot for snapshot in snapshots}
         for key, item in registry.items():
             if key not in by_id and isinstance(item, Mapping):
@@ -2304,11 +2645,15 @@ class ControlPlane:
                 for key, item in registry.items()
                 if isinstance(item, Mapping)
             ],
-            "components": [self.component_snapshot(key) for key in self.components],
+            "components": list(
+                self._probe_executor.map(self.component_snapshot, list(self.components))
+            ),
             "port_conflicts": conflicts,
             "ports": {
-                "board": 5950,
-                "mcp": 5951,
+                # 看板端口按当前实例解析（prod=5950 / test=5951），不能写死，
+                # 否则测试服页面会把正式服端口当成自己的。
+                "board": panel_port(),
+                "mcp": panel_port() + 1,
                 **{
                     key: {"mcp": self.peers[key].mcp_port, "web": self.peers[key].web_port}
                     for key in keys
@@ -2393,8 +2738,7 @@ class ControlPlane:
                 "route": route,
                 "label": label,
                 "argv": _page_argv(argv),
-                "running": last is not None
-                and last.status in {"queued", "running"},
+                "running": last is not None and last.status in {"queued", "running"},
                 "last_job": last.view() if last is not None else None,
             }
             note = PAGE_COMMAND_NOTES.get(key)
@@ -2639,6 +2983,31 @@ class ControlPlane:
             for port, owner in self._occupied_ports(ctl)
             if not ctl.start_command_faces or port in target_ports
         ]
+
+        # 1a. 本方残留先清再起。原来的口径是「端口被占直接失败」，于是上一代
+        #     没退干净的残留（可执行文件就在本 peer 安装目录里）永远关不掉，
+        #     重启必然撞端口 —— 这就是「起不来」的死循环。只清可执行文件落在
+        #     本 peer 目录之下、且不在系统黑名单里的进程；落在目录外的一概判外部，
+        #     仍然失败关闭（DEC-004 不换端口 / DEC-014 不终止）。
+        residual = [(port, owner) for port, owner in occupied if self._own_residual_pid(ctl, owner)]
+        if residual:
+            for port, owner in residual:
+                job.log(f"  端口 {port} 被本方残留占用（PID {owner.pid}），先清理再启动")
+                if os.name == "nt":
+                    self._run(["taskkill", "/PID", str(owner.pid), "/T", "/F"], directory, 30.0)
+                else:  # pragma: no cover - 本项目以 Windows 为主
+                    self._run(["kill", "-TERM", str(owner.pid)], directory, 30.0)
+            deadline = time.monotonic() + START_GRACE_SEC
+            while time.monotonic() < deadline:
+                if not self._target_ports_occupied(ctl, target_ports):
+                    break
+                time.sleep(0.5)
+            occupied = [
+                (port, owner)
+                for port, owner in self._occupied_ports(ctl)
+                if not ctl.start_command_faces or port in target_ports
+            ]
+
         if occupied:
             port, owner = occupied[0]
             raise JobFailure(
@@ -2699,6 +3068,7 @@ class ControlPlane:
         while time.monotonic() < deadline:
             if any(self._port_probe(port) for port in wait_ports):
                 job.log(f"  端口已监听（{time.monotonic() - (deadline - START_GRACE_SEC):.1f}s）")
+                self._mark_supervisor_spawned(job.peer, records)
                 return
             time.sleep(0.5)
         raise JobFailure(
@@ -2706,20 +3076,41 @@ class ControlPlane:
             f"日志见 {log_path}）"
         )
 
+    def _mark_supervisor_spawned(self, peer: str, records: list[dict[str, Any]]) -> None:
+        """启动成功后把归属回写 supervisor 账本（QUOT-XXX）。
+
+        控制面自己 spawn 的进程不进账本时，页面会一直显示「外部接管」和
+        「端口由控制面之外的进程监听（手动启动）」，且账本 pid 指向另一条
+        进程（如正式服 8000 上的实例）。记账是附属动作，失败不影响启动结果。
+        """
+        marker = getattr(getattr(self, "supervisor", None), "mark_spawned", None)
+        if not callable(marker):
+            return
+        for record in records:
+            try:
+                marker(peer, pid=int(record["pid"]))
+            except Exception:  # noqa: BLE001 - 记账失败不阻断启动
+                continue
+
     def _wsl_compose_argv(self, distro: str, compose_path: str, *action: str) -> list[str]:
         """wsl 内 docker compose 的参数数组形态（不拼 shell，DEC-014 硬约束 2）。"""
         return [
-            "wsl.exe", "-d", distro, "--",
-            "docker", "compose", "-f", compose_path, *action,
+            "wsl.exe",
+            "-d",
+            distro,
+            "--",
+            "docker",
+            "compose",
+            "-f",
+            compose_path,
+            *action,
         ]
 
     def _compose_linux_path(self, distro: str, ctl: PeerControl) -> str:
         """compose 文件的 Windows 路径 → WSL 内路径（`wslpath`，失败用 /mnt/<盘> 兜底）。"""
         compose_file = ctl.compose_file
         if not compose_file:
-            raise JobFailure(
-                f"{ctl.key} 未配置 compose_file（venv 形态），不走 compose 路径换算"
-            )
+            raise JobFailure(f"{ctl.key} 未配置 compose_file（venv 形态），不走 compose 路径换算")
         windows = Path(ctl.directory) / compose_file
         result = self._run(
             ["wsl.exe", "-d", distro, "--", "wslpath", "-a", str(windows)],
@@ -2875,7 +3266,7 @@ class ControlPlane:
             raise JobFailure(f"目录不存在：{directory}（先完成部署）")
 
         # 端口预检：与 venv 形态同口径（DEC-004 不换端口）；已在监听说明服务在跑
-        #（手动启动很常见），直接记账返回——Start 对运行中的任务没有意义
+        # （手动启动很常见），直接记账返回——Start 对运行中的任务没有意义
         if self._occupied_ports(ctl):
             job.log("  声明端口已有监听，跳过 Start（服务可能已在运行）")
             entry = self._peer_state(job.peer)
@@ -3010,9 +3401,7 @@ class ControlPlane:
             )
         label = (name or os.path.basename(exe)).strip().lower()
         if label in DENY_PROCESS_NAMES:
-            return (
-                f"拒绝终止 PID {pid}：{name or exe} 属于受保护的系统/关键进程"
-            )
+            return f"拒绝终止 PID {pid}：{name or exe} 属于受保护的系统/关键进程"
         if not _is_under(exe, ctl.directory):
             return (
                 f"拒绝终止 PID {pid}：可执行文件不在本 peer 目录内"
@@ -3067,6 +3456,20 @@ class ControlPlane:
         if ctl.task_name:
             return self._stop_task(job, ctl)
         records = pid_records(self._peer_state(job.peer))
+
+        # supervisor 托管的模块（LDST_SUPERVISOR_OWN_PROCESSES=1）：控制面账本里没有
+        # 记录，但引擎持有归属证据与「整树终止 + 回读端口」能力。委托给引擎停，
+        # 否则这里会直接判成「未记录到本控制面启动的进程」——停止按钮变死键。
+        if not records and self._supervised_own(job.peer) and self.supervisor is not None:
+            job.step = f"委托 supervisor 停止 {job.peer}"
+            outcome = self.supervisor.stop_module(job.peer)
+            job.log(f"  supervisor 结果：{outcome.get('record')}")
+            entry = self._peer_state(job.peer)
+            entry["pids"] = []
+            entry["last_stop_at"] = _now_iso()
+            entry.pop("last_start_at", None)
+            self._save_state()
+            return
 
         # 只终止「本控制面启动过」的进程（DEC-014 硬约束 3）
         if not records:
@@ -3146,6 +3549,47 @@ class ControlPlane:
                 occupied.append((port, owner))
         return occupied
 
+    def _target_ports_occupied(self, ctl: PeerControl, target_ports: set[int]) -> bool:
+        """本次要拉起的面里还有没有被占着的端口（清理残留后用它判断是否已释放）。"""
+        for port, _owner in self._occupied_ports(ctl):
+            if not ctl.start_command_faces or port in target_ports:
+                return True
+        return False
+
+    def _own_residual_pid(self, ctl: PeerControl, owner: PortOwner) -> bool:
+        """端口占用者是不是本 peer 目录里的残留进程（上一代没退干净 / 重复实例）。
+
+        判据两条，命中任意一条即可（都要求不在受保护的系统 / 关键进程名单里）：
+        1. 可执行文件落在本 peer 的安装目录之下；
+        2. 命令行里出现本 peer 安装目录的绝对路径。
+
+        为什么不能只看 1：bundle 的 venv 启动器（`Scripts\\python.exe`）实际
+         `ExecutablePath` 是用户级 uv / 系统解释器，落在安装根之外，只看 exe 会把
+         「跑的就是这份安装」的自家进程一律判成外部，于是残留永远清不掉。
+        两条都不命中（查不到路径 / 路径在目录外 / 受保护程序）一律 False ——
+        命令行 / 路径不匹配的外部程序绝不终止（DEC-014）。
+        """
+        if owner.pid is None:
+            return False
+        pid = int(owner.pid)
+        exe, name = self._process_info(pid, Path(ctl.directory))
+        label = (name or (os.path.basename(exe) if exe else "")).strip().lower()
+        if label in DENY_PROCESS_NAMES:
+            return False
+        if exe and _is_under(exe, ctl.directory):
+            return True
+        cmdline = self._safe_cmdline(pid)
+        if not cmdline:
+            return False
+        target = os.path.normcase(_abs_path(ctl.directory))
+        for part in cmdline:
+            try:
+                if target in os.path.normcase(_abs_path(part)):
+                    return True
+            except (OSError, TypeError, ValueError):
+                continue
+        return False
+
     # ---------------------------------------------------------------- 验证条件
 
     def write_validation_conditions(self, payload: Any) -> dict[str, Any]:
@@ -3167,8 +3611,7 @@ class ControlPlane:
                     raise HTTPException(
                         status_code=500,
                         detail=(
-                            f"已有验证文件不可读，未覆盖：{path}"
-                            "（请先人工修复或移走该文件后重试）"
+                            f"已有验证文件不可读，未覆盖：{path}（请先人工修复或移走该文件后重试）"
                         ),
                     )
                 document = {
@@ -3193,15 +3636,63 @@ class ControlPlane:
                     shutil.copy2(path, path.with_name(path.name + ".bak"))
                 write_document(path, document)
             except OSError as exc:
-                raise HTTPException(
-                    status_code=500, detail=f"写入验证条件失败：{exc}"
-                ) from None
+                raise HTTPException(status_code=500, detail=f"写入验证条件失败：{exc}") from None
 
         return {
             "trade_date": trade_date.isoformat(),
             "conditions": conditions,
             "updated_at": document["updated_at"],
             "saved": len(conditions),
+        }
+
+    # ---------------------------------------------------------------- 一键接入
+
+    def scaffold(self, key: str) -> dict[str, Any]:
+        """为 compose 形态的 peer 生成部署目录（一键接入）。
+
+        只写**不存在**的文件：目录里已经有 compose / .env 时一律保留原样、不覆盖——
+        覆盖一次就可能毁掉对方手工调过的端口或密钥。生成完成后 `installed` 变真，
+        卡片才会出现「安装 / 启动」按钮，真正的 `up -d` 仍由用户那一步触发。
+        """
+        ctl = self.peers[key]
+        template = PEER_SCAFFOLDS.get(key)
+        if not template:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{self._product_name(key)} 没有可用的接入模板（只支持容器化模块）",
+            )
+        # 未解析的占位符（`[modules-path]\Qdrant`）只是「该放这」的提示，不是路径：
+        # 真要写文件时先算成真实目录，否则会在进程 CWD 下建出一个叫 [modules-path] 的目录。
+        raw = ctl.directory
+        directory = (
+            Path(peer_directory(key))
+            if "[modules-path]" in raw or "[local-path]" in raw
+            else Path(raw)
+        )
+        if "[" in directory.name or "]" in directory.name:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{self._product_name(key)} 的目录仍是占位符（{directory}），拒绝按占位符建目录"
+                ),
+            )
+        if directory.exists() and not directory.is_dir():
+            raise HTTPException(status_code=400, detail=f"{directory} 已存在且不是目录，拒绝写入")
+        directory.mkdir(parents=True, exist_ok=True)
+        created: list[str] = []
+        kept: list[str] = []
+        for name, content in template.items():
+            target = directory / name
+            if target.exists():
+                kept.append(name)
+                continue
+            target.write_text(content, encoding="utf-8")
+            created.append(name)
+        return {
+            "peer": key,
+            "directory": str(directory),
+            "created": created,
+            "kept": kept,
         }
 
     # ---------------------------------------------------------------- 配置读写
@@ -3218,6 +3709,23 @@ class ControlPlane:
                 status_code=500,
                 detail=f"{exc}；为避免误报「未配置」并覆盖现有密钥，已中止（fail closed）",
             ) from None
+        # 「可编辑」不能只看目录在不在：FinanceCoffer 目录在、但跑在 WSL 里没有
+        # .venv，写了 deploy/.env 还得进容器重建才生效——这种情况不给写入入口。
+        venv_ready = self._venv_python(ctl).exists()
+        # compose / 计划任务形态本来就没有 .venv，它们的「已安装」另有判据（与快照
+        # installed 同源）：compose 文件在位、目录在位。否则 Qdrant 这类刚一键接入
+        # 的模块会被判成「没装」，配置抽屉与写入接口一起失效。
+        compose_name = ctl.compose_file
+        compose_ready = False
+        if compose_name:
+            compose_ready = (path.parent / compose_name).is_file()
+        task_ready = bool(ctl.task_name) and path.parent.is_dir()
+        # 便携二进制形态（2026-11-18 Qdrant 去 Docker 化）：没有 .venv、没有 compose、
+        # 也没有计划任务，判据是 scaffold 落下的 config.yaml + .env 在位。
+        scaffold_ready = key in PEER_SCAFFOLDS and all(
+            (path.parent / name).is_file() for name in PEER_SCAFFOLDS[key]
+        )
+        installed_ready = venv_ready or compose_ready or task_ready or scaffold_ready
         rows: dict[str, Any] = {}
         for name in ctl.config_keys:
             raw = values.get(name, "")
@@ -3249,12 +3757,52 @@ class ControlPlane:
             "env_file": str(path),
             "env_layers": layers,
             "exists": path.is_file(),
+            "installed": installed_ready,
+            # 保存后怎么才算生效：写文件 ≠ 生效（进程不重读 env、容器要重建）。
+            # 由后端给准确动作，前端只显示，不在两处各猜一遍。
+            "apply": self._apply_hint(key, ctl, venv_ready),
             # 与快照 actions.can_config / update_config 的写入条件同源，前端只按它渲染，
-            # 不在两边各判一次（QUOT-480）：白名单为空或 env 父目录缺失就是不可编辑。
-            "editable": bool(ctl.config_keys) and path.parent.is_dir(),
+            # 不在两边各判一次（QUOT-480）：白名单为空、env 父目录缺失、或模块根本没装
+            # 就是不可编辑——compose / 计划任务形态按各自判据算「已安装」。
+            "editable": bool(ctl.config_keys) and path.parent.is_dir() and installed_ready,
             "keys": list(ctl.config_keys),
             "values": rows,
             "notes": list(ctl.config_notes),
+        }
+
+    def _apply_hint(self, key: str, ctl: PeerControl, venv_ready: bool) -> dict[str, Any]:
+        """配置写入后的生效方式（三态）：重启进程 / 部署侧重启 / 无法生效。"""
+        name = self._product_name(key)
+        if ctl.task_name:
+            return {
+                "mode": "task",
+                "text": (
+                    f"{name} 由 Windows 计划任务托管：保存只改文件，"
+                    f"要重启「{ctl.task_name}」任务后新值才生效（控制面不代执行）。"
+                ),
+            }
+        if ctl.compose_file or not ctl.managed:
+            return {
+                "mode": "external",
+                "text": (
+                    f"{name} 由外部部署（容器 / WSL）托管：保存只改文件，"
+                    "需要在其部署侧重启或重建后才生效，控制面不代执行。"
+                ),
+            }
+        if not venv_ready:
+            return {
+                "mode": "unavailable",
+                "text": (
+                    f"{name} 本机没有可用的 .venv，控制面不给写入入口："
+                    "即使写进配置文件也不会被读取。需要时先装模块，或到它自己的部署里改。"
+                ),
+            }
+        return {
+            "mode": "restart",
+            "text": (
+                f"保存后需重启 {name} 才生效（运行中的进程不会重读配置文件）；"
+                "若这张卡显示「外部接管」，请到它的启动方重启。"
+            ),
         }
 
     def update_config(
@@ -3284,6 +3832,16 @@ class ControlPlane:
         path = Path(ctl.directory) / ctl.env_filename
         if not path.parent.is_dir():
             raise HTTPException(status_code=400, detail=f"peer 目录不存在：{path.parent}")
+        # 与 read_config.editable 同一判据（本轮补）：模块没装就别写——写了没人读，
+        # 还会让人以为「配置成功」。PUT 直连也不能绕过。
+        if not self._venv_python(ctl).exists():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{self._product_name(key)} 未安装（{ctl.directory} 下没有可用 .venv），"
+                    "拒绝写入配置：该文件不会被此模块读取"
+                ),
+            )
         # 分层 peer（QUOT-481 缺陷 2）：clear 只能删生效层的行，底稿（如 Wire 的
         # .env）只读不重写——删不掉，必须改写成空值压掉，否则合并值回落到底稿、
         # 接口表面成功实际没清。先读底稿判断哪些 removal 需要「空值覆盖」；
@@ -3336,9 +3894,7 @@ class ControlPlane:
                     status_code=500,
                     detail=f"{exc}；无法确认是否已存密钥，为避免退化成无鉴权请求，已中止",
                 ) from None
-            stored_key = next(
-                (stored[name] for name in ctl.secret_keys if stored.get(name)), ""
-            )
+            stored_key = next((stored[name] for name in ctl.secret_keys if stored.get(name)), "")
             if stored_key:
                 parsed = urllib.parse.urlsplit((base_url or "").strip())
                 target_host = (parsed.hostname or "").strip()
@@ -3591,9 +4147,7 @@ class ControlPlane:
 
     def _discovery_candidates(self, env_file: Any) -> list[discovery.Candidate]:
         include = discovery.reuse_cli_logins_enabled(env_file)
-        candidates: list[discovery.Candidate] = [
-            discovery.candidate_workbuddy_gateway()
-        ]
+        candidates: list[discovery.Candidate] = [discovery.candidate_workbuddy_gateway()]
         first_ok = candidates[0].ok
         if not first_ok:
             env = discovery.candidate_env(env_file)
@@ -3606,9 +4160,7 @@ class ControlPlane:
                         candidates.append(found)
         return candidates
 
-    def self_ai_update(
-        self, values: Mapping[str, str], clear: Iterable[str]
-    ) -> dict[str, Any]:
+    def self_ai_update(self, values: Mapping[str, str], clear: Iterable[str]) -> dict[str, Any]:
         allowed = set(fallback.AI_ENV_KEYS)
         unknown = sorted(set(values) - allowed)
         unknown += sorted(set(clear) - allowed)
@@ -3637,9 +4189,7 @@ class ControlPlane:
             if name.endswith("_URL"):
                 parsed = urllib.parse.urlsplit(text)
                 if parsed.scheme not in {"http", "https"} or not (parsed.hostname or "").strip():
-                    raise HTTPException(
-                        status_code=400, detail=f"{name} 必须是 http(s) 地址"
-                    )
+                    raise HTTPException(status_code=400, detail=f"{name} 必须是 http(s) 地址")
             updates[name] = text
         removals = [name for name in clear if name not in updates]
 
@@ -3797,9 +4347,7 @@ class ControlPlane:
                 except BoundaryViolation as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from None
                 if not isinstance(body, Mapping):
-                    raise HTTPException(
-                        status_code=400, detail=f"roles.{role} 必须是对象"
-                    )
+                    raise HTTPException(status_code=400, detail=f"roles.{role} 必须是对象")
                 stray = sorted(set(body) - fallback.ROLE_FIELDS)
                 if stray:
                     raise HTTPException(
@@ -3892,10 +4440,9 @@ class ControlPlane:
                 stored.get("LDST_LLM_API_KEY", "").strip()
                 or os.environ.get("LDST_LLM_API_KEY", "").strip()
             )
-            same_endpoint = (
-                stored_base
-                and stored_base.rstrip("/") == (base_url or "").strip().rstrip("/")
-            )
+            same_endpoint = stored_base and stored_base.rstrip("/") == (
+                base_url or ""
+            ).strip().rstrip("/")
             if stored_key and same_endpoint:
                 key = stored_key
         return self._probe_chat(base_url=base_url, model=model, api_key=key)
@@ -3952,13 +4499,12 @@ def _pid_alive(pid: Any) -> bool:
         capture_output=True,
         text=True,
         errors="replace",
+        **_no_window_kwargs(),
     )
     return "No tasks" not in (proc.stdout or "")
 
 
-def _spawn_process(
-    args: list[str], *, cwd: Path, log_path: Path
-) -> subprocess.Popen[bytes]:
+def _spawn_process(args: list[str], *, cwd: Path, log_path: Path) -> subprocess.Popen[bytes]:
     """在独立控制台里拉起 peer 进程，stdout/stderr 落到日志文件（不拼 shell）。"""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(log_path, "a", encoding="utf-8")  # noqa: SIM115 - 生命周期跟随子进程
@@ -4033,6 +4579,7 @@ def load_sources_peers() -> Mapping[str, Any]:
 # --------------------------------------------------------------------------- #
 # 路由
 # --------------------------------------------------------------------------- #
+
 
 class InstallRequest(BaseModel):
     dev: bool = False
@@ -4113,26 +4660,35 @@ class AiModulesTestRequest(BaseModel):
 
 
 class SenateRoleEntry(BaseModel):
-    """`PUT /peers/senate/role-models` 的单个角色：只允许 provider / model / 变量名。"""
+    """`PUT /peers/senate/role-models` 的单个角色。
+
+    除 provider / model 外，StockSenate 1.0.4 起每个角色可各自配一套
+    `backend_url` 与 `api_key`（当前只用一套反代时留空即可、回落全局），
+    也可以只给 `api_key_env` 变量名。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     provider: str
     model: str
     api_key_env: str | None = None
+    backend_url: str | None = None
+    api_key: str | None = None
 
 
 class SenateRoleModelsUpdate(BaseModel):
     """`PUT /peers/senate/role-models`：写 `config/llm_config.toml` 的 `[llm.role_llms]`。
 
-    `expected_revision` 来自 GET；与磁盘指纹不一致判 `SENATE_STALE`。请求模型
-    层就用 `extra="forbid"` 挡住 `api_key` 之类的字段（密钥只进 dotenv / 环境变量）。
+    `expected_revision` 来自 GET；与磁盘指纹不一致判 `SENATE_STALE`。
+    `global_key_env` 是页面顶部「所有角色共用」的那个变量名，落到 `[llm].api_key_env`；
+    角色自己的 `api_key` / `backend_url` / `api_key_env` 写在角色条目里。
     """
 
     model_config = ConfigDict(extra="forbid")
 
     roles: dict[str, SenateRoleEntry]
     expected_revision: str | None = None
+    global_key_env: str | None = None
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -4190,9 +4746,7 @@ def _ai_override_text(where: str, value: Any) -> str:
     return text
 
 
-def _require_declared_ref(
-    where: str, ref: str, declared: list[str], models: set[str]
-) -> str:
+def _require_declared_ref(where: str, ref: str, declared: list[str], models: set[str]) -> str:
     """`backend:model` 的后端与模型都必须是 `backends[]` 已声明的组合。"""
     if not ref:
         return ""
@@ -4295,9 +4849,7 @@ def build_router(plane: ControlPlane) -> APIRouter:
                     "message": "请求体必须是 JSON 对象（不回显提交值）",
                 },
             )
-        known = {
-            name: data.pop(name) for name in list(data) if name in model.model_fields
-        }
+        known = {name: data.pop(name) for name in list(data) if name in model.model_fields}
         extra = sorted(set(data) - set(known))
         if extra:
             raise HTTPException(
@@ -4318,15 +4870,11 @@ def build_router(plane: ControlPlane) -> APIRouter:
                 and _secret_name_heuristic(str(error["loc"][-1]))
                 for error in errors
             )
-            fields = [
-                ".".join(str(part) for part in error["loc"]) or "(body)" for error in errors
-            ]
+            fields = [".".join(str(part) for part in error["loc"]) or "(body)" for error in errors]
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "code": "SENATE_SECRET_REJECTED"
-                    if rejected
-                    else "SENATE_INVALID_VALUE",
+                    "code": "SENATE_SECRET_REJECTED" if rejected else "SENATE_INVALID_VALUE",
                     "message": "请求字段不合法（不回显提交值）：" + ", ".join(fields),
                 },
             ) from None
@@ -4344,7 +4892,9 @@ def build_router(plane: ControlPlane) -> APIRouter:
         """校验后原子写 llm_config.toml 的 `[llm.role_llms]`；冲突回 `SENATE_STALE`。"""
         body: SenateRoleModelsUpdate = await _senate_body(request, SenateRoleModelsUpdate)
         try:
-            return _senate_role_models().update(body.payload(), body.expected_revision)
+            return _senate_role_models().update(
+                body.payload(), body.expected_revision, body.global_key_env
+            )
         except senate_roles.SenateError as exc:
             raise _senate_error(exc) from None
 
@@ -4361,6 +4911,55 @@ def build_router(plane: ControlPlane) -> APIRouter:
             )
         except senate_roles.SenateError as exc:
             raise _senate_error(exc) from None
+
+    @router.put("/peers/senate/role-skills")
+    async def senate_role_skills_update(request: Request) -> dict[str, Any]:
+        """把某角色勾选的技能写回 `agent_roles.toml`（只校验已知技能名）。"""
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            raise senate_roles.SenateError("SENATE_INVALID_VALUE", "请求体不是合法 JSON") from None
+        role = str((body or {}).get("role") or "").strip()
+        skills = (body or {}).get("skills")
+        if not role or not isinstance(skills, list):
+            raise senate_roles.SenateError(
+                "SENATE_INVALID_VALUE", "role 与 skills 必填，skills 必须是数组"
+            )
+        try:
+            return _senate_role_models().save_role_skills(role, [str(item) for item in skills])
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.get("/peers/senate/role-prompt")
+    def senate_role_prompt(role: str) -> dict[str, Any]:
+        """某角色当前的系统提示词正文（来自 Senate `prompts/` 下对应 md）。"""
+        try:
+            return _senate_role_models().role_prompt(role)
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.put("/peers/senate/role-prompt")
+    async def senate_role_prompt_save(request: Request) -> dict[str, Any]:
+        """写回角色提示词；只允许落在 `prompts/` 内，写前自动留 `.bak`。"""
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            raise senate_roles.SenateError("SENATE_INVALID_VALUE", "请求体不是合法 JSON") from None
+        role = str((body or {}).get("role") or "").strip()
+        text = (body or {}).get("text")
+        if not role or not isinstance(text, str):
+            raise senate_roles.SenateError(
+                "SENATE_INVALID_VALUE", "role 与 text 必填，text 必须是字符串"
+            )
+        try:
+            return _senate_role_models().save_prompt(role, text)
+        except senate_roles.SenateError as exc:
+            raise _senate_error(exc) from None
+
+    @router.post("/peers/{peer_id}/scaffold")
+    def scaffold(peer_id: str) -> dict[str, Any]:
+        """一键接入：目录还不存在时生成部署文件（已有文件一律不覆盖）。"""
+        return plane.scaffold(_peer_or_404(peer_id))
 
     @router.post("/peers/{peer_id}/install")
     def install(peer_id: str, body: InstallRequest | None = None) -> dict[str, Any]:
@@ -4486,9 +5085,7 @@ def build_router(plane: ControlPlane) -> APIRouter:
         本次问答的只读注册表执行器与自愈引擎的总线；开关关掉 / 非流式时两者都是
         None，行为与接入前逐字节一致。
         """
-        registry = (
-            _chat_registry_tools(plane) if chat_channel.wants_stream(request) else None
-        )
+        registry = _chat_registry_tools(plane) if chat_channel.wants_stream(request) else None
         return await chat_channel.dispatch(
             body,
             request,
@@ -4589,8 +5186,8 @@ def build_router(plane: ControlPlane) -> APIRouter:
 
     @router.post("/ports/{peer_id}/heal")
     def ports_heal(peer_id: str) -> dict[str, Any]:
-        """安全自愈（QUOT-547）：只重拉 own_child；adopted_peer 只认领 + 健康复检；
-        foreign 只报告 + 引导，绝不自动杀；free 无动作。"""
+        """安全自愈（QUOT-547）：own_child（含认领实例）停止并重拉；旧账本的
+        adopted_peer 只认领 + 健康复检；foreign 只报告 + 引导，绝不自动杀；free 无动作。"""
         return plane.heal_ports(_peer_or_404(peer_id))
 
     @router.get("/jobs/{job_id}")
@@ -4677,18 +5274,34 @@ def build_supervisor_router(plane: ControlPlane) -> APIRouter:
     """
     router = APIRouter(prefix="/api/supervisor", dependencies=[Depends(_guard)])
 
-    @router.get("/state")
-    def supervisor_state() -> dict[str, Any]:
-        """482-C 健康视角 + 482-A 归属视角合并（账本命中 or cmdline 匹配）。"""
+    #: 合并后的整份 payload 也缓存：快照自带缓存后，`engine.state()`（账本 + cmdline
+    #: + 端口归属）仍是现场探测，同步算实测每拍 7~10s，页面 15s 超时窗口很吃紧。
+    #: stale-while-revalidate：过期回旧值 + 后台重算，首拍只踢后台、立刻回占位。
+    state_ttl = 8.0
+    state_holder: dict[str, Any] = {
+        "guard": threading.Lock(),
+        "at": 0.0,
+        "payload": None,
+        "refreshing": False,
+    }
+
+    def _compute_state(first_wait: float = 0.0) -> dict[str, Any]:
         engine = plane.supervisor
         heal = getattr(plane, "selfheal", None)
-        snapshot = getattr(heal, "snapshot", None)
-        if callable(snapshot):
-            payload = dict(snapshot())
-            payload["modules"] = [dict(item) for item in payload.get("modules", [])]
+        # 优先用缓存版快照。现场探测一次 15~20s，同步算会让页面每拍都超时，
+        # 前端于是把模块全标成「归属未知（supervisor 未接入）」。
+        cached = getattr(heal, "snapshot_cached", None)
+        if callable(cached):
+            payload = dict(cached(first_wait=first_wait))
+        elif callable(getattr(heal, "snapshot", None)):
+            payload = dict(heal.snapshot())
         else:
             payload = {"ok": True, "engine": None, "modules": []}
+        payload["modules"] = [dict(item) for item in payload.get("modules", [])]
         payload["order"] = list(MODULE_ORDER)
+        evidence = getattr(heal, "port_evidence", None)
+        if evidence:
+            payload["port_evidence"] = evidence
         if engine is None:
             payload["configured"] = False
             return payload
@@ -4701,6 +5314,65 @@ def build_supervisor_router(plane: ControlPlane) -> APIRouter:
             if extra:
                 item.update(extra)
         return payload
+
+    def _refresh_state() -> None:
+        payload: dict[str, Any] | None = None
+        try:
+            payload = _compute_state()
+        except Exception:  # noqa: BLE001 - 刷新失败保留旧值，页面不该因此空白
+            logger.warning("supervisor /state 后台刷新失败（保留上一份）", exc_info=True)
+        with state_holder["guard"]:
+            if payload is not None:
+                state_holder["payload"] = payload
+                state_holder["at"] = time.monotonic()
+            state_holder["refreshing"] = False
+
+    @router.get("/state")
+    def supervisor_state() -> dict[str, Any]:
+        """482-C 健康视角 + 482-A 归属视角合并（账本命中 or cmdline 匹配）。"""
+        kick = False
+        with state_holder["guard"]:
+            payload = state_holder["payload"]
+            stale = (
+                payload is None
+                or time.monotonic() - float(state_holder["at"]) >= state_ttl
+            )
+            if stale and not state_holder["refreshing"]:
+                state_holder["refreshing"] = True
+                kick = True
+        if kick:
+            threading.Thread(
+                target=_refresh_state, name="ldst-supervisor-state", daemon=True
+            ).start()
+        if payload is not None:
+            bus = getattr(getattr(plane, "selfheal", None), "event_bus", None)
+            if bus is not None:
+                payload = dict(payload)
+                payload["events_latest"] = bus.latest_seq
+            return payload
+        # 从来没有快照：这一次同步算（最多等 3s 让预热落地），之后都走缓存。
+        # 3s 远低于前端 15s 超时，所以首帧也不会被标成「取数超时」。
+        try:
+            payload = _compute_state(first_wait=3.0)
+        except Exception:  # noqa: BLE001 - 算不出来就回占位，不让端点 500
+            logger.warning("supervisor /state 首帧计算失败", exc_info=True)
+            payload = None
+        if payload is not None:
+            with state_holder["guard"]:
+                state_holder["payload"] = payload
+                state_holder["at"] = time.monotonic()
+            return payload
+        placeholder = {
+            "ok": False,
+            "detail": "首次探测进行中（进程判活 / 端口归属要十几秒）：稍后自动可用",
+            "configured": False,
+            "modules": [],
+            "order": list(MODULE_ORDER),
+        }
+        bus = getattr(getattr(plane, "selfheal", None), "event_bus", None)
+        if bus is not None:
+            placeholder["events_latest"] = bus.latest_seq
+        return placeholder
 
     return router
 

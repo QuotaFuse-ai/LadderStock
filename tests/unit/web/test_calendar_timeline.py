@@ -41,12 +41,11 @@ TODAY = date(2026, 11, 10)
 # 桩
 # --------------------------------------------------------------------------- #
 
+
 def _payload_handlers(*, lockup: dict[str, Any], earnings: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "lockup_expiry": lambda _params: tickhub_payload(lockup, source="lockup_expiry"),
-        "earnings_forecast": lambda _params: tickhub_payload(
-            earnings, source="earnings_forecast"
-        ),
+        "earnings_forecast": lambda _params: tickhub_payload(earnings, source="earnings_forecast"),
     }
 
 
@@ -135,9 +134,7 @@ def _insert_event(
                 event_date,
                 title,
                 json.dumps(codes, ensure_ascii=False),
-                json.dumps(
-                    {"snippet": snippet, "dataset": dataset}, ensure_ascii=False
-                ),
+                json.dumps({"snippet": snippet, "dataset": dataset}, ensure_ascii=False),
                 date_basis,
             ),
         )
@@ -148,6 +145,7 @@ def _insert_event(
 # --------------------------------------------------------------------------- #
 # 构建器：排序 / 标的集合 / 缺口
 # --------------------------------------------------------------------------- #
+
 
 def test_events_sorted_ascending_and_same_day_source_order(tmp_path: Path) -> None:
     add_watch(CODE, root=tmp_path)
@@ -202,9 +200,7 @@ def test_no_source_sections_live_in_gaps(tmp_path: Path) -> None:
 
 def test_upstream_failure_is_a_gap_and_adds_no_events(tmp_path: Path) -> None:
     add_watch(CODE, root=tmp_path)
-    data = build_timeline(
-        30, today=TODAY, root=tmp_path, registry=_failing_registry(tmp_path)
-    )
+    data = build_timeline(30, today=TODAY, root=tmp_path, registry=_failing_registry(tmp_path))
 
     assert data["events"] == []
     assert data["data_source_status"] == "partial"
@@ -255,9 +251,7 @@ def test_disclosure_only_accepts_evidence_text_and_tracked_codes(tmp_path: Path)
         title="不在自选 / 持仓里",
     )
 
-    data = build_timeline(
-        30, today=TODAY, root=tmp_path, registry=_failing_registry(tmp_path)
-    )
+    data = build_timeline(30, today=TODAY, root=tmp_path, registry=_failing_registry(tmp_path))
 
     assert [event["ref"] for event in data["events"]] == ["e-meeting"]
     event = data["events"][0]
@@ -282,9 +276,7 @@ def test_past_events_go_to_overdue_not_events(tmp_path: Path) -> None:
         title="已经过去的股东会",
     )
 
-    data = build_timeline(
-        7, today=TODAY, root=tmp_path, registry=_failing_registry(tmp_path)
-    )
+    data = build_timeline(7, today=TODAY, root=tmp_path, registry=_failing_registry(tmp_path))
 
     assert data["events"] == []
     assert [event["ref"] for event in data["overdue"]] == ["e-past"]
@@ -302,6 +294,7 @@ def test_parse_timeline_days_only_accepts_three_windows() -> None:
 # --------------------------------------------------------------------------- #
 # HTTP：形状 / 失败降级 / 参数 / 闸门
 # --------------------------------------------------------------------------- #
+
 
 def test_endpoint_returns_flat_payload_with_no_store(tmp_path: Path) -> None:
     add_watch(CODE, root=tmp_path)

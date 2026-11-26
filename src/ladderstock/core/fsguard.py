@@ -55,6 +55,7 @@ class SharedPeerDirectoryError(OSError):
 # DACL 收紧
 # --------------------------------------------------------------------------- #
 
+
 def current_user_sid() -> str:
     """当前进程用户的 SID（`whoami /user`）；取不到返回空串。"""
     try:
@@ -134,6 +135,7 @@ def harden_file_acl(path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # peer 目录位置
 # --------------------------------------------------------------------------- #
+
 
 def drive_type(drive: str) -> int | None:
     """Windows 盘符类型（`GetDriveTypeW`）；非 Windows、空盘符或查询失败返回 None。"""

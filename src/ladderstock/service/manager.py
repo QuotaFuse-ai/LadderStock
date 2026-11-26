@@ -217,9 +217,7 @@ class ServiceManager:
 
         results = self._run_commands(plan.commands)
         ok = all(
-            item.ok
-            for index, item in enumerate(results)
-            if not _optional(plan.commands, index)
+            item.ok for index, item in enumerate(results) if not _optional(plan.commands, index)
         )
         payload.update(
             {

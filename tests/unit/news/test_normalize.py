@@ -32,6 +32,7 @@ def _decode(dataset: str, data, tool: str = "t"):
 # 登记表
 # --------------------------------------------------------------------------- #
 
+
 def test_every_registered_dataset_has_a_decoder() -> None:
     """翻译层覆盖的栏目 = 边界登记里的资讯栏目，两边不允许各说各话。"""
     from ladderstock.core.boundary import NEWS_STREAM_DATASETS
@@ -47,6 +48,7 @@ def test_unregistered_dataset_is_refused_not_guessed() -> None:
 # --------------------------------------------------------------------------- #
 # 公告：巨潮 / 深交所
 # --------------------------------------------------------------------------- #
+
 
 def test_cninfo_announcements_translation() -> None:
     items = _decode("announcement_cninfo", CNINFO_DATA)
@@ -89,6 +91,7 @@ def test_rows_tolerate_bare_strings_and_missing_keys() -> None:
 # 快讯：cls / 见闻 / 东财全球
 # --------------------------------------------------------------------------- #
 
+
 def test_cls_flash_uses_epoch_seconds_and_content_as_summary() -> None:
     items = _decode("flash_cls", CLS_DATA)
     assert len(items) == 4
@@ -118,6 +121,7 @@ def test_eastmoney_global_items_have_no_url_and_are_not_filled() -> None:
 # --------------------------------------------------------------------------- #
 # 个股新闻 / 新闻联播 / 研报
 # --------------------------------------------------------------------------- #
+
 
 def test_eastmoney_stock_news_uses_date_field_and_code_context() -> None:
     items = _decode("news_eastmoney_stock", EM_STOCK_DATA)
@@ -166,6 +170,7 @@ def test_report_without_rating_only_lists_what_exists() -> None:
 # --------------------------------------------------------------------------- #
 # provenance 随条目走（DEC-018 R4：任何内容都要带来源标签）
 # --------------------------------------------------------------------------- #
+
 
 def test_provenance_is_attached_to_every_item() -> None:
     items = _decode("flash_cls", CLS_DATA, tool="cls_telegraph")

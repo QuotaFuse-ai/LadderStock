@@ -91,7 +91,7 @@ export function SignedNumber({
 }) {
   const color = tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-text-secondary'
   return (
-    <span className={cn('ldst-num', color, className)} style={style}>
+    <span className={cn('ldst-num whitespace-nowrap', color, className)} style={style}>
       {text}
       {arrow && <span aria-hidden="true"> {arrow}</span>}
     </span>

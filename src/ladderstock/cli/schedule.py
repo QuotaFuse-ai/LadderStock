@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
+import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import date, datetime
@@ -41,6 +44,7 @@ from ladderstock.cli.output import OutputOption, emit, error
 from ladderstock.cli.paths import bundle_config_dir, config_dir
 from ladderstock.errors import (
     EXIT_CONFIG,
+    EXIT_DB_BUSY,
     EXIT_OK,
     EXIT_PARTIAL,
     EXIT_USAGE,
@@ -50,6 +54,18 @@ from ladderstock.watch import notifier
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_MISFIRE_GRACE_SECONDS = 300
+#: 收盘同步是当天唯一的关键落盘动作，失败就是全天缺数——所以肯等：
+#: 页面打开时触发的补数（ensure-on-open）一轮能占住写锁几分钟，30s 的默认等待
+#: 必然超时（2026-11-17 就是这样丢了一整轮收盘同步）。
+CLOSE_SYNC_LOCK_WAIT_SEC = 900.0
+CLOSE_SYNC_RETRY_SEC = 90.0
+
+
+def _log_schedule(message: str) -> None:
+    """调度器自己的进度行：走 stderr，与 `ldst sync` 的进度行同一条流。"""
+    sys.stderr.write(f"ldst: [schedule] {message}\n")
+    sys.stderr.flush()
+
 
 #: 任务类型白名单。`snapshot_fast` / `sync_batch` 是盘中高频（QUOT-352）：
 #: 前者按秒级间隔抓「昨日涨停股 × 此刻报价」，后者按间隔刷一条批量数据集。
@@ -66,11 +82,38 @@ JOB_KINDS: tuple[str, ...] = (
     "digest",
     "wire_news",
     "knowledge_refresh",
+    # 第④步：定时研究（一轮交给 agent）与盯盘提醒（本机报价快照过阈值）
+    "agent_research",
+    "watch_alert",
+    # 盘中 30 秒级实时盯盘（现取 spot_quote，只在交易时段跑）
+    "watch_live",
+    # 盘中实时情绪快照（market_sentiment，每分钟一轮，只在交易时段跑）
+    "sentiment_live",
+    # 跨轮任务规划：把用户「盯它一周」这类长期目标按频率推进（ai/plans.py）
+    "plan_tick",
+    # 收盘后晚间补取：龙虎榜按交易所规则收盘后才公布（通常 18:00 之后），
+    # 15:35 的收盘同步拿不到，只能晚一点再来一趟。
+    "sync_evening",
+    # 资讯雷达批量采集（公告 / 研报 / 快讯）：公告类栏目上游要求 code 必填，
+    # 单跑 `ldst news` 不带 `--code` 每轮都是 skipped，见 `_run_news_collect`。
+    "news_collect",
+    # F9 到期观点回访：扫账本、拉日线判对错（`ai/recall.py` 的 run_recall）。
+    "recall",
+    # DEC-087 提醒引擎：用户自配规则（价格/均线/放量/浮盈亏）一轮求值 + 投递，
+    # 执行体 `alert/run.py:run_once()`（CLI / Web / 调度同一个入口）。
+    "alert_check",
+    # B 包后半：月报/季报/年报（事实包 + 模板叙述）。调度表没有「每月某日」
+    # 的触发器，所以按日跑 + 内部守卫：只有每月 1 日才生成上一个月的月报。
+    "report",
 )
 
 #: 单次 `qfw run`（全赛道采集 + LLM 提炼）的时长上限：正常 1–3 分钟，超上限即终止
 #: 记 failed，再按 Wire 实际已落库的数据同步。cron 任务 max_instances=1，不会重叠。
 WIRE_RUN_TIMEOUT_SEC = 900
+
+#: 资讯批量采集的默认批大小：公告类工具一次只认一个 code，逐票调用；
+#: 一批 100 只是 `sync.yaml` 里逐只数据集的同一口径（单批上限），不是上游限制。
+NEWS_COLLECT_BATCH = 100
 
 
 def trigger_interval_seconds(trigger: Any) -> int | None:
@@ -88,8 +131,15 @@ def trigger_interval_seconds(trigger: Any) -> int | None:
 #: 候选池数据集，代码池由 `sync.py` 按 `--codes > sync.yaml > 本机自选` 解析。
 CLOSE_SYNC_DATASETS: tuple[str, ...] = (
     "limit_pool",
+    # 复盘情绪段直接要这两个：没有它们，炸板家数与昨日涨停会读成 0，
+    # 封板率 100%、温度虚高——「五段中 1 段缺数」就是这么来的。收盘后都能取，
+    # 所以跟着 15:35 一起落，别留给用户手动补。
+    "broken_board",
+    "yesterday_limit_up",
     "fund_flow",
     "concept_board",
+    # 行业维度：题材段有 industry_board 就用它，没有就退到行业板块资金流。
+    "industry_fund_flow",
     # QUOT-446：财报前瞻 / 事件回看的事件类数据集（semi_static），随 15:35 收盘一起
     # 按日落 Parquet。排在候选池之后——当日池子先落，后续若要从池子取代码才拿得到。
     "consensus_forecast",
@@ -112,6 +162,23 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "kind": "wire_news",
         "trigger": "07:30",
         "enabled": True,
+    },
+    {
+        # 公告 / 研报 / 快讯批量采集：公告类栏目上游要求 code 必填，必须按代码池
+        # 分批传（`_run_news_collect`），裸调 `ldst news` 不带 `--code` 每轮都是 skipped。
+        # 默认 **关闭**：用户要求先只接代码、不真采（IP / 上游额度没落地）。
+        # 打开方式：把 `enabled` 改成 true，或 `ldst schedule run --job news_radar`。
+        "id": "news_radar",
+        "name": "07:45 公告/研报/快讯批量采集",
+        "kind": "news_collect",
+        "trigger": "07:45",
+        "enabled": False,
+        "datasets": (
+            "announcement_cninfo,announcement_szse,research_report,"
+            "flash_cls,flash_wallstreetcn,flash_eastmoney"
+        ),
+        "batch_size": NEWS_COLLECT_BATCH,
+        "limit": 100,
     },
     {
         # QUOT-432 / DEC-058：`premarket_reminder`（静态口播文案）退役，换成
@@ -224,6 +291,25 @@ DEFAULT_JOBS: tuple[dict[str, Any], ...] = (
         "trigger": "16:30",
         "enabled": True,
     },
+    {
+        # F9：到期观点自动回访——收盘后扫一遍账本，拉日线判对错。
+        # 缺行情的记录留 open 等下一轮，不按「没数据」判错（见 ai/recall.py）。
+        "id": "recall_due",
+        "name": "16:10 观点回访判定",
+        "kind": "recall",
+        "trigger": "16:10",
+        "enabled": True,
+    },
+    {
+        # DEC-087：提醒引擎终检——用户自配规则按收盘价再判一遍，命中即收件箱 +
+        # 出站渠道。默认关：先让用户用 `ldst alert run` / `/api/alert/run` 手动跑顺
+        # 再开定时；盘中巡检把 trigger 改成间隔形态（如 "300s"）。
+        "id": "alert_close",
+        "name": "15:05 收盘提醒终检",
+        "kind": "alert_check",
+        "trigger": "15:05",
+        "enabled": False,
+    },
 )
 
 
@@ -285,6 +371,12 @@ def _structural_problems(data: Mapping[str, Any]) -> list[str]:
         if kind == "sync_batch" and not job.get("dataset"):
             problems.append(f"{where}/dataset: sync_batch 必须声明数据集")
         limit = job.get("daily_limit")
+        if kind == "agent_research" and not str(job.get("question") or "").strip():
+            problems.append(f"{where}/question: agent_research 必须声明研究问题")
+        alert_pct = job.get("alert_pct")
+        if kind == "watch_alert" and alert_pct is not None:
+            if not isinstance(alert_pct, (int, float)) or float(alert_pct) <= 0:
+                problems.append(f"{where}/alert_pct: 需要正数（百分比）")
         if kind == "knowledge_refresh" and limit is not None:
             if not isinstance(limit, int) or limit <= 0:
                 problems.append(f"{where}/daily_limit: 必须是正整数（每轮最多刷几只）")
@@ -493,11 +585,29 @@ def _run_sync_close(
 
     registry = ProviderRegistry(root=root)
     store = watermark.WatermarkStore(root=registry.root)
-    try:
-        with writer_lock(root, holder="ldst schedule sync_close"):
-            payload = sync_module.run_sync(registry, store, list(CLOSE_SYNC_DATASETS))
-    except LadderStockError as exc:
-        return {**base, "status": "failed", "detail": f"收盘同步中止：{exc.message}"}
+    # 拿不到锁不是「数据没了」，是「另一轮同步正占着」：等得久一点，撞满一轮
+    # 补数就再等一次。只有真的等不到才落 failed，并说清是谁占着。
+    payload: dict[str, Any] | None = None
+    last_error: LadderStockError | None = None
+    for attempt in range(2):
+        try:
+            with writer_lock(
+                root, holder="ldst schedule sync_close", timeout=CLOSE_SYNC_LOCK_WAIT_SEC
+            ):
+                payload = sync_module.run_sync(registry, store, list(CLOSE_SYNC_DATASETS))
+            last_error = None
+            break
+        except LadderStockError as exc:
+            last_error = exc
+            if exc.code != EXIT_DB_BUSY or attempt == 1:
+                break
+            _log_schedule(f"收盘同步等待写锁超时，{CLOSE_SYNC_RETRY_SEC:.0f}s 后重试一次")
+            time.sleep(CLOSE_SYNC_RETRY_SEC)
+    if payload is None:
+        detail = f"收盘同步中止：{last_error.message if last_error else '未知错误'}"
+        if last_error is not None and last_error.code == EXIT_DB_BUSY:
+            detail += "（锁被另一轮同步占着，等满两轮仍未拿到；下一轮调度会再跑）"
+        return {**base, "status": "failed", "detail": detail}
 
     status, detail = _sync_close_summary(payload)
     review_status, review_detail = _sync_close_review(day, root)
@@ -515,8 +625,47 @@ def _wire_qfw_entry(wire_dir: Path) -> Path | None:
     return None
 
 
+def _wire_unavailable_sources(wire_dir: Path, day: Any, *, limit: int = 60) -> list[dict[str, Any]]:
+    """从 Wire 当天的归档里读出「哪几个源不可用」，而不是只给一个数量。
+
+    `qfw run --output json` 的摘要只有 `sources_unavailable` 计数；逐源状态写在
+    `data/archive/<day>/sources.json`（Wire 自己落的盘，含 source_id / status /
+    error）。读它不需要改 Wire，也不打任何网络请求。
+
+    只读、失败即返回 []：这是增强信息，读不到不能拖垮采集任务本身。
+    """
+    if not day:
+        return []
+    path = Path(wire_dir) / "data" / "archive" / str(day) / "sources.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    raw = doc.get("sources") if isinstance(doc, dict) else None
+    if not isinstance(raw, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "")
+        if status == "ok":
+            continue
+        rows.append(
+            {
+                "id": str(item.get("source_id") or ""),
+                "name": str(item.get("source_name") or ""),
+                "status": status,
+                "error": _one_line(str(item.get("error") or ""))[:80],
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def _collect_wire_news() -> dict[str, Any]:
-    """触发 Wire 自己的采集+提炼（`qfw run`），返回 {status, detail}。
+    """触发 Wire 自己的采集+提炼（`qfw run`），返回 {status, detail, sources_unavailable}。
 
     子进程 cwd 钉在 Wire 目录：QF_WIRE_API_KEY 由 Wire 从它自己的 .env/.env.local
     加载（真实环境 > .env.local > .env），LadderStock 的配置、argv、日志都不碰密钥。
@@ -568,9 +717,16 @@ def _collect_wire_news() -> dict[str, Any]:
         )
     else:
         detail = f"qfw run 退出码 {code}（无 JSON 摘要，详情见 Wire 日志）"
+    unavailable = _wire_unavailable_sources(wire_dir, summary.get("day"))
+    if unavailable:
+        names = [str(item.get("id") or "?") for item in unavailable]
+        shown = "、".join(names[:3])
+        detail += f"；不可用源 {len(unavailable)} 个：{shown}"
+        if len(names) > 3:
+            detail += " 等（详见记录里的 sources_unavailable）"
     if status == "degraded":
         detail += "；部分源不可用，如实记 degraded"
-    return {"status": status, "detail": detail}
+    return {"status": status, "detail": detail, "sources_unavailable": unavailable}
 
 
 # ---------------------------------------------------------------- 档案定期刷新
@@ -933,6 +1089,7 @@ def _run_wire_news(
         "sync_status": str(row.get("status") or ""),
         "rows": row.get("rows"),
         "watermark_after": row.get("watermark_after"),
+        "sources_unavailable": collect.get("sources_unavailable") or [],
     }
 
 
@@ -985,6 +1142,322 @@ def _run_sync_batch(
         "detail": str(row.get("detail") or ""),
         "dataset": dataset,
         "rows": row.get("rows"),
+    }
+
+
+def _run_sync_evening(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """收盘后晚间补取（`sync_evening`）：把当天晚些才公布的数据集拉回来。
+
+    目前是龙虎榜：交易所按规则**收盘后才公布**（通常 18:00 之后），15:35 的收盘
+    同步必然拿不到——所以复盘页那一段在傍晚之前为空是正常时序，不是本机缺数。
+    这条任务在 18:30 再来一趟，取到就落当日分区，取不到就记 `degraded` 并说清原因
+    （不补造、不拿上一天顶替）。
+
+    `job.datasets` 逗号分隔；缺省 `dragon_tiger,dragon_tiger_seats`。
+    逐条走 `sync.sync_one`，一条失败不影响其余条；只有全都失败才整条判 `failed`。
+    """
+    from ladderstock.core import intraday
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date()
+    base = {"date": day.isoformat()}
+    if day.weekday() >= 5:
+        return {**base, "status": "skipped", "detail": "非交易日（周末），不跑", "quiet": True}
+
+    raw = str(job.get("datasets") or "dragon_tiger,dragon_tiger_seats")
+    datasets = [item.strip() for item in raw.split(",") if item.strip()]
+    if not datasets:
+        return {**base, "status": "failed", "detail": "sync_evening 缺少 datasets"}
+
+    from ladderstock.cli import sync as sync_module
+    from ladderstock.data import watermark
+    from ladderstock.data.db_lock import writer_lock
+    from ladderstock.data.provider_registry import ProviderRegistry
+
+    if registry is None:
+        registry = ProviderRegistry(root=root)
+    store = watermark.WatermarkStore(root=getattr(registry, "root", root))
+
+    parts: list[str] = []
+    statuses: list[str] = []
+    try:
+        with writer_lock(
+            root, holder="ldst schedule sync_evening", timeout=CLOSE_SYNC_LOCK_WAIT_SEC
+        ):
+            for dataset in datasets:
+                row = sync_module.sync_one(registry, store, dataset)
+                mapped = {
+                    "ok": "ok",
+                    "degraded": "degraded",
+                    "empty": "degraded",
+                    "skipped": "skipped",
+                    "failed": "failed",
+                }.get(str(row.get("status") or ""), "degraded")
+                statuses.append(mapped)
+                detail = str(row.get("detail") or row.get("source") or "").strip()
+                parts.append(f"{dataset}={mapped}{f'（{detail}）' if detail else ''}")
+    except LadderStockError as exc:
+        return {**base, "status": "failed", "detail": f"晚间补取中止：{exc.message}"}
+
+    if all(item == "ok" for item in statuses):
+        status = "ok"
+    elif any(item == "ok" for item in statuses):
+        status = "degraded"
+    else:
+        status = "failed"
+    return {**base, "status": status, "detail": "；".join(parts), "datasets": datasets}
+
+
+def _dataset_list(value: Any) -> list[str]:
+    """`datasets` 两种写法都收：逗号分隔字符串（与 `sync_evening` 同构）或数组。"""
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(part).strip() for part in value if str(part).strip()]
+    return []
+
+
+def _news_pool(registry: Any) -> list[str]:
+    """公告/研报用的代码池：`sync.yaml` 的 `*base_pool` 锚点（与逐只数据集共用一份）。
+
+    不读 `journal.sqlite` 的自选：资讯采集是产品级动作，不该随某个账户的自选表变。
+    """
+    declared = ((getattr(registry, "datasets", None) or {}).get("daily_k") or {})
+    return [str(code).strip() for code in declared.get("codes") or [] if str(code).strip()]
+
+
+def _run_news_collect(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """资讯雷达批量采集：公告 / 研报按代码池分批，快讯按栏目整批。
+
+    这条任务的由来：公告栏目（`announcement_cninfo` / `announcement_szse`）上游要求
+    `code` 必填，而排班里的批量入口从来没传 code，于是每轮 `skipped`、`news_items`
+    里一条公告都没有（`news_runs.detail` 原话：`需要指定 code（--code <code>[,<code>]）`）。
+    研报同理：采到了 100 条/轮，却只进 `news_items`、不进 `data/archive` 与历史库，
+    查询层拿不到。所以这里做两件事、都不新开采集通道（仍走 TickHub peer 缓存）：
+
+    1. **分批传 code**：代码池按 `batch_size`（默认 100）切片，一批一次 `collect_stream`；
+       不带 code 的栏目（快讯 / 新闻联播）只调一次，不跟批次重复打 peer。
+    2. **落归档**：`collect_stream(persist=True)` 现在会同时写 `news.sqlite` 与
+       `data/archive` + `market.duckdb`（见 `news/stream.py:_archive_items`）。
+
+    `enabled: false` 时调度器不会跑到它；本函数本身不发任何网络请求之外的副作用，
+    也不改 `sync.yaml` 的代码池。
+    """
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.core import intraday
+    from ladderstock.core.boundary import NEWS_STREAM_DATASETS
+    from ladderstock.news import candidates as news_candidates
+    from ladderstock.news import stream as news_stream
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date()
+
+    datasets = _dataset_list(job.get("datasets"))
+    if not datasets:
+        return {
+            "status": "skipped",
+            "date": day.isoformat(),
+            "detail": "news_collect 没有配置 datasets（公告/研报/快讯栏目名），未发起调用",
+        }
+
+    unknown = [d for d in datasets if d not in NEWS_STREAM_DATASETS]
+    if unknown:
+        return {
+            "status": "failed",
+            "date": day.isoformat(),
+            "detail": (
+                f"未登记的资讯栏目：{', '.join(unknown)}；"
+                f"可选值见 core/boundary.py 的 NEWS_STREAM_DATASETS"
+            ),
+        }
+
+    batch_size = max(1, int(job.get("batch_size") or NEWS_COLLECT_BATCH))
+    limit = max(1, int(job.get("limit") or 100))
+
+    code_datasets = [d for d in datasets if d in news_stream.CODE_SCOPED_DATASETS]
+    plain_datasets = [d for d in datasets if d not in news_stream.CODE_SCOPED_DATASETS]
+    # 公告逐票源吃前置筛（池 ∪ 当日异动，见 news/candidates.py）；研报/个股新闻仍按全池。
+    ann_datasets = [d for d in code_datasets if d in news_candidates.ANNOUNCEMENT_DATASETS]
+    other_code_datasets = [d for d in code_datasets if d not in news_candidates.ANNOUNCEMENT_DATASETS]
+
+    batches: list[tuple[list[str], list[str]]] = []
+    pool: list[str] = []
+    cand: dict[str, Any] | None = None
+    if code_datasets:
+        pool = _news_pool(registry) if registry is not None else []
+        if not pool:
+            return {
+                "status": "skipped",
+                "date": day.isoformat(),
+                "detail": (
+                    f"代码池为空（config/sync.yaml 的 base_pool 未配置），"
+                    f"{', '.join(code_datasets)} 需要 code 才能取，未发起调用"
+                ),
+            }
+    ann_codes: list[str] = []
+    use_filter = True
+    data_root = Path(root) if root is not None else data_dir()
+    if ann_datasets:
+        use_filter = bool(job.get("candidate_filter", True))
+        cand = news_candidates.announcement_candidates(pool, data_root=data_root)
+        # 只请求异动票：池内异动 + 池外异动。这才是前置筛省请求的地方——
+        # 池内当天没异动的票按策略不查，但仍留在分母里（分母 = 池 ∪ 池外异动），
+        # 覆盖率不会被 100% 掩盖成「都查过了」。
+        # 护栏：没有本机行情快照（或读失败/过期）时 candidates 已标 fallback，
+        # 前置筛不能把采集变成一只都不采——回退全池。
+        if use_filter and not cand["fallback"]:
+            ann_codes = [str(item["code"]) for item in cand["movers"]]
+        else:
+            ann_codes = pool
+        for start in range(0, len(ann_codes), batch_size):
+            batches.append((ann_datasets, ann_codes[start : start + batch_size]))
+    if other_code_datasets:
+        for start in range(0, len(pool), batch_size):
+            batches.append((other_code_datasets, pool[start : start + batch_size]))
+    if plain_datasets:
+        batches.append((plain_datasets, []))
+
+    total_items = 0
+    total_stored = 0
+    total_archived = 0
+    ok_datasets: list[str] = []
+    problems: list[str] = []
+    # 逐票结果只对公告有意义：`{code: 本轮取回条数}`。0 条也是"采过"，
+    # 所以不拿它当覆盖率的分子，而是拿"哪些 code 出现在这里"当已采。
+    collected: dict[str, int] = {}
+
+    for group, codes in batches:
+        try:
+            result = news_stream.collect_stream(
+                start=day,
+                end=day,
+                datasets=group,
+                codes=codes,
+                registry=registry,
+                root=root,
+                persist=True,
+                limit=limit,
+            )
+        except LadderStockError as exc:
+            problems.append(f"{'/'.join(group)}（{len(codes)} 只）：{' '.join(str(exc).split())[:160]}")
+            continue
+
+        total_items += len(result.items)
+        total_stored += result.stored
+        archive = result.archive or {}
+        total_archived += int(archive.get("written") or 0)
+        for status in result.statuses:
+            if status.dataset in news_candidates.ANNOUNCEMENT_DATASETS:
+                for code, count in (status.per_code or {}).items():
+                    collected[code] = max(collected.get(code, 0), int(count))
+            if status.status == "ok":
+                ok_datasets.append(status.dataset)
+            else:
+                problems.append(
+                    f"{status.dataset}：{status.status}"
+                    + (f"（{status.detail}）" if status.detail else "")
+                )
+        for err in archive.get("errors") or []:
+            problems.append(f"归档失败 {err}")
+
+    scope = (
+        f"{len(code_datasets)} 个代码栏目（代码池 {len(pool)} 只 / 每批 {batch_size} 只）"
+        if code_datasets
+        else ""
+    )
+    if plain_datasets:
+        scope += ("，" if scope else "") + f"{len(plain_datasets)} 个整批栏目"
+    detail = (
+        f"{scope}，{len(batches)} 批：采到 {total_items} 条，落库 {total_stored} 条，"
+        f"归档 {total_archived} 行"
+    )
+    ann_info: dict[str, Any] | None = None
+    if cand is not None:
+        denominator = len(cand.get("union") or pool)
+        extra = list(cand.get("extra") or [])
+        skipped = max(0, denominator - len(collected))
+        ann_info = {
+            "note": str(cand.get("note") or ""),
+            "pool_size": int(cand.get("pool_size") or 0),
+            "union_size": denominator,
+            "union": list(cand.get("union") or pool),
+            "requested": len(ann_codes),
+            "extra": extra,
+            "extra_total": len(extra),
+            "snapshot_day": cand.get("snapshot_day"),
+            "threshold": cand.get("threshold"),
+            "filtered": bool(use_filter and not cand.get("fallback")),
+            "fallback_reason": str(cand.get("fallback_reason") or ""),
+            "covered": len(collected),
+            "skipped": skipped,
+        }
+        if not use_filter:
+            detail += "；公告前置筛已关闭（candidate_filter: false），按全池采"
+        elif cand.get("fallback"):
+            detail += (
+                f"；公告前置筛未生效（{cand.get('fallback_reason') or '无当日异动'}），"
+                f"回退全池 {len(pool)} 只"
+            )
+        elif not ann_codes:
+            detail += (
+                f"；公告候选：{cand.get('note')}，当天没有异动票，"
+                f"两个公告源按策略跳过（0 请求），分母仍是 {denominator} 只"
+            )
+        else:
+            detail += (
+                f"；公告候选：{cand.get('note')}，本轮只请求异动票 {len(ann_codes)} 只，"
+                f"已采 {len(collected)} 只（分母 {denominator} 只，其余按策略未采）"
+            )
+        news_candidates.write_candidates(
+            data_root,
+            {
+                "day": day.isoformat(),
+                **ann_info,
+                "ann_datasets": ann_datasets,
+                "collected": collected,
+                "movers": list(cand.get("movers") or [])[:60],
+                "requested_codes": ann_codes,
+            },
+        )
+    if problems:
+        detail += f"；{len(problems)} 处异常：{'；'.join(problems)[:400]}"
+
+    if not batches:
+        status = "skipped"
+    elif problems and not total_stored:
+        status = "failed"
+    elif problems:
+        status = "degraded"
+    elif not total_items:
+        status = "empty"
+    else:
+        status = "ok"
+
+    return {
+        "status": status,
+        "date": day.isoformat(),
+        "detail": detail,
+        "items": total_items,
+        "stored": total_stored,
+        "archived": total_archived,
+        "batches": len(batches),
+        "datasets_ok": sorted(set(ok_datasets)),
+        "problems": problems[:20],
+        "ann_candidates": ann_info,
     }
 
 
@@ -1054,6 +1527,1030 @@ def _run_digest(
     }
 
 
+def _run_brief(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+    registry: Any = None,
+) -> dict[str, Any]:
+    """F11 简报（晨报 / 收盘复盘 / 持仓异动）：生成 → 指纹去重 → 收件箱 →（可选）投递。
+
+    与 `_run_digest` 的三处差别：
+    1. 一份简报 = 多条条目，每条按**内容指纹**去重（晨报和收盘复盘共用的那段行情
+       只推一次），不是 `job:day`；
+    2. `notify` 优先看 job 字段，再看 `config/brief.yaml` 的开关——默认只落收件箱；
+    3. 全部条目都在同日推过时 `status=skipped`，detail 写明「已推过 N 条」，不重发。
+    """
+    from ladderstock.watch import brief as brief_module
+
+    kind = str(job.get("summary") or job.get("brief") or "").strip()
+    threshold = job.get("threshold")
+    settings = brief_module.load_settings()
+    try:
+        value = float(threshold) if threshold is not None else settings["threshold"]
+    except (TypeError, ValueError):
+        value = settings["threshold"]
+    outcome = brief_module.build(
+        kind,
+        now=now,
+        timezone=timezone,
+        root=root,
+        registry=registry,
+        threshold=value,
+    )
+    base = {"date": outcome.trade_day, "summary": kind, "brief": kind}
+    if outcome.status != brief_module.STATUS_OK:
+        # skipped（周末无持仓等）不写库：不给用户塞一条空简报
+        status = "skipped" if outcome.status == brief_module.STATUS_SKIPPED else "failed"
+        return {**base, "status": status, "detail": outcome.detail}
+
+    notify = job.get("notify")
+    if notify is None:
+        notify = settings["notify"]
+    channel = job.get("channel") or settings["channel"]
+    published = brief_module.publish(
+        outcome,
+        root=root,
+        notify=bool(notify),
+        channel=channel if notify else None,
+        now=now,
+    )
+    if not published["pushed"]:
+        return {
+            **base,
+            "status": "skipped",
+            "detail": f"{outcome.title} 的 {len(published['skipped'])} 条今日已推送过，本轮不重发",
+            "skipped": len(published["skipped"]),
+        }
+    delivered = published["delivered"]
+    failed = [row for row in delivered if not row.get("ok")]
+    status = "degraded" if failed else "ok"
+    detail = (
+        f"{outcome.title}：推送 {len(published['pushed'])} 条"
+        f" · 跳过（同日已推）{len(published['skipped'])} 条"
+    )
+    if delivered:
+        detail += "；通知 " + "、".join(
+            f"{row['channel']}={'成功' if row['ok'] else row['detail']}" for row in delivered
+        )
+    return {
+        **base,
+        "status": status,
+        "detail": detail,
+        "pushed": len(published["pushed"]),
+        "skipped": len(published["skipped"]),
+        "delivery": delivered,
+        "state_path": published["state_path"],
+    }
+
+
+def _run_agent_research(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """定时研究（第④步）：把这一轮研究交给 agent，落研究卡 + 收件箱，再投递通知。
+
+    与 `digest` 的区别在于**谁来回答**：digest 是代码拼好的固定摘要，这里是模型自己
+    选工具、自己定轮次。取数只走 agent 工具（读本机 DuckDB），所以本任务不需要
+    registry，也不出网取行情。
+
+    - `symbols` 留空 = 一轮市场视角的研究；给了标的就逐只问一次；
+    - 产物先落 `data/research_digest/<date>/<job>.json`（同日重跑覆盖，幂等），
+      再写收件箱、投通知——页面永远比通知可靠；
+    - 单标的失败记进 `failed[]`，全失败才折成 `failed`，不让一条任务拖垮调度器。
+    """
+    import asyncio
+    import json as json_module
+
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.core import intraday
+    from ladderstock.journal import inbox as inbox_store
+    from ladderstock.watch import notifier
+    from ladderstock.web import assistant as assistant_module
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date().isoformat()
+    job_id = str(job.get("id") or "")
+    question = str(job.get("question") or "").strip()
+    base: dict[str, Any] = {"date": day, "question": question}
+    if not question:
+        return {
+            **base,
+            "status": "failed",
+            "detail": "缺少 question：定时研究必须写明这一轮要研究什么",
+        }
+
+    data_root = Path(root) if root is not None else data_dir()
+    symbols = [str(item).strip() for item in (job.get("symbols") or []) if str(item).strip()]
+    targets: list[str | None] = list(symbols) or [None]
+    context = (
+        "本机缓存的最新交易日数据。只回答工具能取到的部分；取不到就说没取到，不要用记忆补数字。"
+    )
+
+    answers: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for symbol in targets:
+        try:
+            payload = asyncio.run(
+                assistant_module.ask_agent(
+                    question=question,
+                    context=context,
+                    symbol=symbol,
+                    page="research",
+                    page_label="定时研究",
+                    data_root=data_root,
+                    sync_memory=False,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 单标的失败不影响其余
+            failed.append({"symbol": symbol, "reason": _one_line(exc)})
+            continue
+        answers.append(
+            {
+                "symbol": symbol,
+                "reply": str(payload.get("reply") or ""),
+                "model": payload.get("model"),
+                "as_of_sources": payload.get("sources") or [],
+                "used_tools": bool(payload.get("used_tools")),
+                "fetched_at": payload.get("fetched_at"),
+            }
+        )
+
+    out_path = data_root / "research_digest" / day / f"{job_id}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json_module.dumps(
+            {"id": job_id, "date": day, "question": question, "answers": answers, "failed": failed},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    if not answers:
+        return {
+            **base,
+            "status": "failed",
+            "detail": f"全部标的都没跑出结果：{failed[:3]}",
+            "failed": failed,
+            "path": str(out_path),
+        }
+
+    lines: list[str] = []
+    for item in answers:
+        head = item["symbol"] or "整体"
+        body = _one_line(item["reply"]) if item["reply"] else "（模型没有给出正文）"
+        lines.append(f"- {head}：{body[:400]}")
+
+    title = f"定时研究：{job.get('name') or job_id}（{day}）"
+    dedupe = f"agent_research:{job_id}:{day}"
+    item_id = inbox_store.add_item(
+        job_id,
+        str(job.get("name") or ""),
+        title,
+        lines,
+        "/research",
+        dedupe,
+        "agent_research",
+        root=data_root,
+        now=now,
+    )
+    delivery = notifier.send(job.get("channel"), title, "\n".join(lines))
+    status = "ok" if delivery.ok and not failed else "degraded"
+    detail = (
+        f"研究卡已落 {out_path}（{len(answers)} 份回答）；收件箱 {item_id['id']}；"
+        f"通知[{delivery.channel}]：{delivery.detail}"
+    )
+    if failed:
+        detail += f"；失败 {len(failed)} 个标的"
+    return {
+        **base,
+        "status": status,
+        "detail": detail,
+        "inbox_id": item_id["id"],
+        "path": str(out_path),
+        "answered": len(answers),
+        "failed": failed,
+        "delivery": delivery.as_dict(),
+    }
+
+
+def _run_watch_alert(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """盯盘提醒（第④步）：自选在本机报价快照里越过阈值时写一条收件箱提醒。
+
+    数据只读 `symbol_basic`（全市场字典，带 price / prev_close），不联网、不直打上游。
+    快照日期不是今天时，提醒正文里**如实标出数据日期**——盘中提醒宁可写「11-16 收盘」，
+    也不冒充实时价。阈值取任务上的 `alert_pct`（默认 5），涨跌都算。
+    """
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.core import intraday
+    from ladderstock.data import duckdb_store, symbol_universe
+    from ladderstock.journal import inbox as inbox_store
+    from ladderstock.journal import watchlist as watchlist_store
+    from ladderstock.watch import notifier
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date().isoformat()
+    job_id = str(job.get("id") or "")
+    data_root = Path(root) if root is not None else data_dir()
+    threshold = abs(float(job.get("alert_pct") or 5.0))
+    base: dict[str, Any] = {"date": day, "alert_pct": threshold}
+
+    codes = sorted(
+        {str(row.get("code") or "").strip() for row in watchlist_store.list_watch(root=root)} - {""}
+    )
+    if not codes:
+        return {**base, "status": "skipped", "detail": "自选为空，没有需要盯的票"}
+
+    snapshot_day = symbol_universe.latest_trade_date(root=data_root)
+    if snapshot_day is None:
+        return {
+            **base,
+            "status": "skipped",
+            "detail": "本机没有报价快照（symbol_basic 为空），不编价格",
+        }
+    rows = duckdb_store.query_dataset("symbol_basic", snapshot_day, root=data_root)
+    by_code = {str(row.get("code") or ""): row for row in rows}
+
+    hits: list[str] = []
+    missing: list[str] = []
+    for code in codes:
+        row = by_code.get(code)
+        if row is None:
+            missing.append(code)
+            continue
+        price = row.get("price")
+        prev = row.get("prev_close")
+        if price is None or prev is None:
+            missing.append(code)
+            continue
+        try:
+            price_f = float(price)
+            prev_f = float(prev)
+        except (TypeError, ValueError):
+            missing.append(code)
+            continue
+        if prev_f <= 0:
+            missing.append(code)
+            continue
+        change = (price_f - prev_f) / prev_f * 100
+        if abs(change) >= threshold:
+            arrow = "↑" if change > 0 else "↓"
+            hits.append(
+                f"- {row.get('name') or code}（{code}）{price_f:.2f} 元，"
+                f"{arrow} {change:+.2f}%（阈值 {threshold:.0f}%；"
+                f"数据日期 {snapshot_day.isoformat()}）"
+            )
+
+    if not hits:
+        detail = f"{len(codes)} 只自选里没有越过 {threshold:.0f}% 的票"
+        if missing:
+            detail += f"；{len(missing)} 只本机无报价快照（{','.join(missing[:5])}）"
+        return {**base, "status": "ok", "detail": detail, "alerted": 0, "missing": missing}
+
+    title = f"盯盘提醒：{job.get('name') or job_id}（{snapshot_day.isoformat()}）"
+    lines = [
+        f"本机报价快照日期 {snapshot_day.isoformat()}（不是分时实时价）：",
+        *hits,
+    ]
+    dedupe = f"watch_alert:{job_id}:{day}"
+    item_id = inbox_store.add_item(
+        job_id,
+        str(job.get("name") or ""),
+        title,
+        lines,
+        "/watchlist",
+        dedupe,
+        "watch_alert",
+        root=data_root,
+        now=now,
+    )
+    delivery = notifier.send(job.get("channel"), title, "\n".join(lines))
+    status = "ok" if delivery.ok else "degraded"
+    return {
+        **base,
+        "status": status,
+        "detail": (
+            f"{len(hits)} 只越过阈值；收件箱 {item_id['id']}；"
+            f"通知[{delivery.channel}]：{delivery.detail}"
+        ),
+        "alerted": len(hits),
+        "missing": missing,
+        "inbox_id": item_id["id"],
+        "delivery": delivery.as_dict(),
+    }
+
+
+def _in_trading_window(moment: Any) -> bool:
+    """A 股连续竞价时段：09:30–11:30 / 13:00–15:00，周末不开盘。
+
+    30 秒级任务只在盘内真取数，盘外直接 skip——否则一天要白跑上千次上游调用，
+    既烧额度又让"提醒"在下班后响起来。
+    """
+    if getattr(moment, "weekday", lambda: 0)() >= 5:
+        return False
+    minutes = moment.hour * 60 + moment.minute
+    return (9 * 60 + 30) <= minutes <= (11 * 60 + 30) or (13 * 60) <= minutes <= (15 * 60)
+
+
+def _board_limit_pct(code: str, name: str | None) -> float:
+    """按板块推涨停幅度：ST 5%、创业板/科创 20%、北交所 30%、其余主板 10%。"""
+    upper = (name or "").upper()
+    if "ST" in upper:
+        return 5.0
+    if code.startswith(("300", "301", "688", "689")):
+        return 20.0
+    if code.startswith(("8", "4", "92")):
+        return 30.0
+    return 10.0
+
+
+def _limit_price_from_prev(prev_close: float | None, code: str, name: str | None) -> float | None:
+    """用昨收推当日涨停价：`昨收 × (1 + 幅度)`，四舍五入到分。
+
+    当日涨停池还没同步（盘中就是这种情况）时，这是**唯一**能给出封板判定基准的办法；
+    取不到昨收就返回 None，宁可判不了封板，也不拿一个编出来的价当基准。
+    """
+    if prev_close is None or prev_close <= 0:
+        return None
+    pct = _board_limit_pct(code, name)
+    return round(prev_close * (1 + pct / 100.0), 2)
+
+
+def _sample_pool_codes(
+    data_root: Path, day: str, *, limit: int = 40
+) -> tuple[str, list[str], dict[str, str]]:
+    """自选 / 持仓为空时的兜底样本源：**最近一个交易日**的涨停池。
+
+    新用户一只自选都没加时，盘中采集不该整条 skipped——那样 /watch 永远等不到样本。
+    取最近的涨停池（而不是当日）是因为当日涨停池要 15:35 才同步；这些票正是今天
+    最可能继续封板/炸板的一批，用来喂样本最合适。
+
+    返回 `(实际用的日期, codes, {code: name})`；找不到就返回 `("", [], {})`。
+    """
+    from datetime import date as date_cls
+    from datetime import timedelta
+
+    from ladderstock.data import archive
+
+    anchor = date_cls.fromisoformat(day)
+    for back in range(1, 8):  # 最多回溯 7 天，覆盖周末与假期
+        probe = (anchor - timedelta(days=back)).isoformat()
+        try:
+            snap = archive.snapshot("limit_pool", probe, root=data_root)
+        except Exception:  # noqa: BLE001 - 该日没有缓存就继续往前找
+            continue
+        records = getattr(snap, "records", None) or []
+        codes: list[str] = []
+        names: dict[str, str] = {}
+        for row in records:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("code") or "").strip().partition(".")[0][-6:]
+            if not code or not code.isdigit():
+                continue
+            codes.append(code)
+            name = str(row.get("name") or "").strip()
+            if name:
+                names[code] = name
+        if codes:
+            return probe, codes[:limit], names
+    return "", [], {}
+
+
+def _run_watch_live(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """盘中实时盯盘（30 秒级）：自选的**实时报价**越过阈值就提醒。
+
+    与 `watch_alert`（每日快照）的区别是数据口径：这里每次现取 `spot_quote`，
+    拿的是此刻的价，不是缓存里那一天的收盘。三条提醒规则，都写进正文：
+
+    1. 相对昨收的涨跌幅越过 `alert_pct`（默认 3%）；
+    2. 相对上一次快照的变动越过 `move_pct`（默认 1%，抓盘中急拉急杀）；
+    3. 同一只票 `min_gap_min` 分钟内只响一次（默认 30），避免 30 秒刷屏。
+
+    上一次快照落 `data/watch_live_state.json`，同一天内沿用；跨日自动重置。
+    """
+    import json as json_module
+
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.core import intraday
+    from ladderstock.data.provider_registry import ProviderRegistry
+    from ladderstock.journal import inbox as inbox_store
+    from ladderstock.journal import position as position_store
+    from ladderstock.journal import watchlist as watchlist_store
+    from ladderstock.watch import bars as bars_store
+    from ladderstock.watch import notifier
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date().isoformat()
+    job_id = str(job.get("id") or "")
+    data_root = Path(root) if root is not None else data_dir()
+    alert_pct = abs(float(job.get("alert_pct") or 3.0))
+    move_pct = abs(float(job.get("move_pct") or 1.0))
+    min_gap_min = abs(float(job.get("min_gap_min") or 30.0))
+    base: dict[str, Any] = {"date": day, "alert_pct": alert_pct, "move_pct": move_pct}
+
+    if not _in_trading_window(moment):
+        return {
+            **base,
+            "status": "skipped",
+            "detail": "非交易时段（09:30–11:30 / 13:00–15:00 才盯盘）",
+        }
+
+    # 盯盘面 = 自选 ∪ 持仓：持仓票比自选更需要盯异动，样本也要留给扫描器。
+    # 自选与持仓都为空时**回退到最近交易日的涨停池**：否则新用户盘中一条样本都没有，
+    # /watch 永远「等取数器落盘」。这类兜底票只落样本、不逐票发提醒——几百只票每轮
+    # 都推 inbox 会把信号流淹没（用户要的是「涨停池只喂封板判定、不逐票产信号」）。
+    codes = sorted(
+        (
+            {str(row.get("code") or "").strip() for row in watchlist_store.list_watch(root=root)}
+            | {
+                str(row.get("code") or "").strip()
+                for row in position_store.list_positions(root=data_root)
+            }
+        )
+        - {""}
+    )
+    pool_day = ""
+    pool_names: dict[str, str] = {}
+    sample_only: set[str] = set()
+    if not codes:
+        pool_day, pool_codes, pool_names = _sample_pool_codes(data_root, day)
+        sample_only = set(pool_codes)
+        codes = pool_codes
+    if not codes:
+        return {
+            **base,
+            "status": "skipped",
+            "detail": "自选与持仓都为空，最近的涨停池也读不到，没有可采的样本",
+        }
+
+    prefix_of = {"6": "sh", "0": "sz", "3": "sz", "8": "bj", "4": "bj", "9": "bj"}
+    param_codes = ",".join(prefix_of.get(code[0], "sh") + code for code in codes)
+    try:
+        outcome = ProviderRegistry(root=data_root).fetch_live(
+            "spot_quote",
+            params={"codes": param_codes, "max_codes": len(codes)},
+            allow_cache=False,
+            timeout=8.0,
+        )
+    except Exception as exc:  # noqa: BLE001 - 取不到就不能编价格
+        detail = str(getattr(exc, "message", None) or exc) or type(exc).__name__
+        return {**base, "status": "failed", "detail": f"实时报价未取到（{detail}）"}
+    payload = getattr(getattr(outcome, "envelope", None), "payload", {}) or {}
+    rows = [
+        row
+        for row in (payload.get("records") or payload.get("rows") or [])
+        if isinstance(row, dict)
+    ]
+    if not rows:
+        return {**base, "status": "failed", "detail": "实时报价上游返回 0 行"}
+
+    state_path = data_root / "watch_live_state.json"
+    state: dict[str, Any] = {}
+    if state_path.is_file():
+        try:
+            loaded = json_module.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and loaded.get("date") == day:
+                state = loaded.get("items") or {}
+        except (OSError, ValueError):
+            state = {}
+
+    now_ts = moment.timestamp()
+    hits: list[str] = []
+    hit_codes: list[str] = []
+    bars_rows: list[dict[str, Any]] = []
+
+    def _limit_price_map() -> dict[str, float]:
+        """当日涨停池里的涨停价，**只喂样本做封板/开板判定**，不额外产信号。
+
+        只认当日：涨停价是当日概念，拿昨天的价判今天的封板就是给错基准。
+        涨跌幅再做一次兜底校验（ST 5% / 主板 10% / 双创 20% / 北交所 30%），
+        取最宽的下限 4.5%，防上游给错行。
+        """
+        from ladderstock.data import archive
+
+        try:
+            snap = archive.snapshot("limit_pool", day, root=data_root)
+        except Exception:  # noqa: BLE001 - 涨停池读不到就不带涨停价，不阻断盯盘
+            return {}
+        prices: dict[str, float] = {}
+        for row in getattr(snap, "records", None) or []:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("code") or "").strip()
+            raw_price = row.get("price")
+            raw_change = row.get("change_pct")
+            if raw_price is None or raw_change is None:
+                continue
+            try:
+                price = float(raw_price)
+                change = float(raw_change)
+            except (TypeError, ValueError):
+                continue
+            if code and price > 0 and change >= 4.5:
+                prices[code] = price
+        return prices
+
+    limit_prices = _limit_price_map()
+
+    def _bare(code: str) -> str:
+        return code.partition(".")[0].lstrip("shSHzsbj")[-6:]  # noqa: B005
+
+    for row in rows:
+        code = _bare(str(row.get("code") or ""))
+        if not code:
+            continue
+        raw_price = row.get("price")
+        if raw_price is None:
+            continue
+        try:
+            price = float(raw_price)
+            raw_prev = row.get("prev_close")
+            prev = float(raw_prev) if raw_prev is not None else None
+        except (TypeError, ValueError):
+            continue
+        prev_snap = state.get(code) or {}
+        last_price = prev_snap.get("price")
+        last_alert_ts = float(prev_snap.get("alert_ts") or 0)
+        reasons: list[str] = []
+        # 兜底样本（涨停池）只采数据、不产信号：提醒只对自选 / 持仓生效
+        if code not in sample_only:
+            change_prev = ((price - prev) / prev * 100) if prev and prev > 0 else None
+            if change_prev is not None and abs(change_prev) >= alert_pct:
+                reasons.append(f"较昨收 {change_prev:+.2f}%（阈值 {alert_pct:.0f}%）")
+            if last_price and last_price > 0:
+                move = (price - float(last_price)) / float(last_price) * 100
+                if abs(move) >= move_pct:
+                    reasons.append(f"较上次快照 {move:+.2f}%（阈值 {move_pct:.0f}%）")
+        throttled = (now_ts - last_alert_ts) < min_gap_min * 60
+        if reasons and not throttled:
+            hits.append(
+                f"- {row.get('name') or code}（{code}）{price:.2f} 元，"
+                + "；".join(reasons)
+                + f"（{moment.strftime('%H:%M:%S')} 现取实时报价）"
+            )
+            hit_codes.append(code)
+            prev_snap["alert_ts"] = now_ts
+        prev_snap["price"] = price
+        prev_snap["at"] = moment.isoformat(timespec="seconds")
+        state[code] = prev_snap
+        # 顺手记成分钟样本：盯盘扫描器的唯一输入就在这里产生（`watch/bars.py`）。
+        # 这一份是**此刻现取的价**，落盘时还会按「必须是当日」再校验一次。
+        bar: dict[str, Any] = {"ts": prev_snap["at"], "code": code, "price": price}
+        # 名称只为 `/watch` 显示：实时报价里有就用它，兜底样本用涨停池里的名字。
+        # 两者都没有就不写这个键（页面显示 `—`，不拿代码顶名称）。
+        bar_name = str(row.get("name") or pool_names.get(code) or "").strip()
+        if bar_name:
+            bar["name"] = bar_name
+        limit_price = row.get("limit_price")
+        if limit_price is None:
+            limit_price = row.get("limit_up_price")
+        if limit_price is None:
+            # 涨停池只提供「涨停价」，不提供样本：票本身仍按自选/持仓采，样本条数不受影响
+            limit_price = limit_prices.get(code)
+        if limit_price is None and prev is not None and code in sample_only:
+            # 兜底样本来自涨停池：当日池还没同步（盘中常态），用昨收推涨停价，
+            # 封板/开板判定才有基准。自选票不推算——不替普通票编一个涨停价。
+            limit_price = _limit_price_from_prev(
+                prev, code, pool_names.get(code) or str(row.get("name") or "")
+            )
+        if limit_price is not None:
+            bar["limit_price"] = limit_price
+        bars_rows.append(bar)
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json_module.dumps({"date": day, "items": state}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    # 分钟样本：写入 `data/minute_bars/<day>.jsonl`，盯盘扫描器据此出信号。
+    # 落盘失败不能让「已经比对完的提醒」丢掉，异常在这里就地收口。
+    try:
+        bars_result: dict[str, Any] = bars_store.append_minute_bars(day, bars_rows, root=data_root)
+    except Exception as exc:  # noqa: BLE001 - 落盘问题单独报，不影响提醒
+        bars_result = {"written": 0, "detail": f"分钟样本落盘失败：{exc}"}
+    bars_note = f"；分钟样本 {bars_result.get('written', 0)} 条"
+    pool_note = (
+        f"（自选与持仓为空，用 {pool_day} 的涨停池 {len(sample_only)} 只兜底采集，"
+        "只落样本、不逐票提醒）"
+        if sample_only
+        else ""
+    )
+
+    if not hits:
+        detail = f"{len(rows)} 只票实时价比对完毕，没有触发提醒{pool_note}{bars_note}"
+        return {
+            **base,
+            "status": "ok",
+            "detail": detail,
+            "alerted": 0,
+            "sample_pool_day": pool_day,
+            "sample_only": len(sample_only),
+            "minute_bars": bars_result,
+        }
+
+    bucket = int(now_ts // (min_gap_min * 60))
+    title = f"盘中盯盘：{job.get('name') or job_id}（{moment.strftime('%H:%M')}）"
+    lines = [f"{moment.strftime('%H:%M:%S')} 现取实时报价（非缓存快照）：", *hits]
+    item_id = inbox_store.add_item(
+        job_id,
+        str(job.get("name") or ""),
+        title,
+        lines,
+        "/watchlist",
+        f"watch_live:{job_id}:{day}:{bucket}",
+        "watch_live",
+        root=data_root,
+        now=now,
+    )
+    delivery = notifier.send(job.get("channel"), title, "\n".join(lines))
+    status = "ok" if delivery.ok else "degraded"
+    # 提醒先落地，再谈自动研究：通知失败/研究失败都不能让「已经发现异动」这件事丢掉。
+    research: dict[str, Any] | None = None
+    if job.get("auto_research") and hit_codes:
+        research = _auto_research_on_hit(
+            job,
+            codes=hit_codes,
+            now=now,
+            timezone=timezone,
+            root=root,
+            moment=moment,
+        )
+    detail = (
+        f"{len(hits)} 只触发；收件箱 {item_id['id']}；通知[{delivery.channel}]："
+        f"{delivery.detail}{bars_note}"
+    )
+    if research is not None:
+        detail += f"；异动研究[{research.get('status')}]：{str(research.get('detail') or '')[:120]}"
+    result_payload: dict[str, Any] = {
+        **base,
+        "status": status,
+        "detail": detail,
+        "alerted": len(hits),
+        "inbox_id": item_id["id"],
+        "delivery": delivery.as_dict(),
+        "sample_pool_day": pool_day,
+        "sample_only": len(sample_only),
+        "minute_bars": bars_result,
+    }
+    if research is not None:
+        result_payload["auto_research"] = research
+    return result_payload
+
+
+#: 一次异动最多自动研究几只：30 秒级任务里跑 agent 是重动作，宁可少跑几只
+AUTO_RESEARCH_MAX_SYMBOLS = 2
+
+
+def _run_sentiment_live(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """盘中实时情绪快照（每分钟一轮）：把「此刻的涨停 / 炸板 / 封板率 / 最高板」落盘。
+
+    为什么单独一条任务：`limit_up_pool` 只给最近一个**已收盘**交易日，15:35 之前
+    当天根本没有涨停池归档，情绪温度页只能靠实时读数。`market_sentiment` 是当日实时
+    的，因此由这条任务把它钉到 `data/live/sentiment/<date>.json`，页面读得到、
+    时间戳可查。落盘只写 live 目录，不碰 archive、不推水位——收盘口径仍由 15:35
+    的 `sync_close` 负责，两者不会互相覆盖。
+    """
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.core import intraday, live_limit_pool, live_sentiment
+    from ladderstock.data.provider_registry import ProviderRegistry
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date()
+    data_root = Path(root) if root is not None else data_dir()
+    base: dict[str, Any] = {"date": day.isoformat()}
+
+    if not _in_trading_window(moment):
+        return {
+            **base,
+            "status": "skipped",
+            "detail": "非交易时段（09:30–11:30 / 13:00–15:00 才取实时情绪）",
+            "quiet": True,
+        }
+
+    try:
+        outcome = ProviderRegistry(root=data_root).fetch_live("sentiment", allow_cache=False)
+        records = dict(outcome.envelope.payload.get("records") or {})
+    except Exception as exc:  # noqa: BLE001 - 取数失败只记 degraded，守护进程要活着
+        return {**base, "status": "degraded", "detail": f"实时情绪取数失败：{exc}"}
+
+    # 守卫：接口给的必须是**今天**的读数，否则宁可这条不落（拿昨天的数当今天就是造假）。
+    stamp = str(records.get("date") or "")
+    if stamp and stamp != day.strftime("%Y%m%d"):
+        return {
+            **base,
+            "status": "degraded",
+            "detail": f"实时情绪返回的是 {stamp} 的读数，不是今天 {day:%Y%m%d}，不落盘",
+        }
+    if not isinstance(records.get("limit_up"), int):
+        return {**base, "status": "degraded", "detail": "实时情绪没有涨停家数，不落盘"}
+
+    path = live_sentiment.write_snapshot(
+        day,
+        records,
+        fetched_at=moment,
+        source=str(outcome.envelope.source or ""),
+        root=data_root,
+    )
+
+    # 顺带落当日涨停池：盘中的 `limit_up_pool` 有时能给当日全集（含 streak），
+    # 有了它晋级率与每一档家数就能真算，而不是只列龙头前 10 只。给不到当日就
+    # 不落（守卫与情绪快照同一条：不接受别天的池冒充今天）。
+    pool_note = ""
+    pool_path: Path | None = None
+    try:
+        pool = ProviderRegistry(root=data_root).fetch(
+            "limit_pool", params={"date": day.isoformat()}
+        )
+        pool_rows = [
+            row for row in (pool.envelope.payload.get("records") or []) if isinstance(row, dict)
+        ]
+        if pool.envelope.data_as_of == day and pool_rows:
+            pool_path = live_limit_pool.write_snapshot(
+                day,
+                pool_rows,
+                fetched_at=moment,
+                source=str(pool.envelope.source or ""),
+                root=data_root,
+            )
+            pool_note = f"；当日涨停池 {len(pool_rows)} 只已落盘"
+        elif pool_rows:
+            pool_note = f"；涨停池给的是 {pool.envelope.data_as_of} 的，不是今天，未落盘"
+    except Exception as exc:  # noqa: BLE001 - 涨停池落不下不影响情绪快照
+        pool_note = f"；当日涨停池未落盘（{type(exc).__name__}）"
+
+    return {
+        **base,
+        "status": "ok",
+        "detail": (
+            f"涨停 {records.get('limit_up')} / 炸板 {records.get('broken')} / 最高 "
+            f"{records.get('max_streak')} 板；写入 {path.name}{pool_note}"
+        ),
+        "records": {
+            "limit_up": records.get("limit_up"),
+            "broken": records.get("broken"),
+            "max_streak": records.get("max_streak"),
+            "seal_rate": records.get("seal_rate"),
+        },
+        "limit_pool_path": str(pool_path) if pool_path is not None else None,
+    }
+
+
+def _auto_research_on_hit(
+    job: Mapping[str, Any],
+    *,
+    codes: Sequence[str],
+    now: datetime | None,
+    timezone: str | None,
+    root: Path | None,
+    moment: datetime,
+) -> dict[str, Any]:
+    """命中即研究：把盘中异动的票交给 agent 跑一轮，结论另存一份。
+
+    这是「条件触发」那条腿：此前盯盘只会响铃（写收件箱 + 投通知），发现异常之后
+    还得人等开盘后自己去问。现在命中就把这几只票交给同一套 agent 工具链，让它用
+    真实数据说明「发生了什么 / 可能的原因 / 接下来盯什么」，结论落到研究卡与收件箱。
+
+    三条自我约束（重动作不能无节制）：
+
+    1. **数量**：默认最多 `AUTO_RESEARCH_MAX_SYMBOLS` 只，可由
+       `auto_research_max` 覆盖（1–5）。
+    2. **冷却**：同一只票 `auto_research_cooldown_min`（默认 60）分钟内只研究一次，
+       状态落 `data/auto_research_state.json`；与提醒的 `min_gap_min` 是两套口径——
+       提醒可以 30 分钟响一次，研究不必跟着响一次。
+    3. **不拖累提醒**：任何异常都折成 `status=failed` 返回，且冷却不推进，下一轮可以重试。
+    """
+    import json as json_module
+
+    from ladderstock.cli.paths import data_dir
+
+    data_root = Path(root) if root is not None else data_dir()
+    cooldown_min = abs(float(job.get("auto_research_cooldown_min") or 60.0))
+    limit = int(job.get("auto_research_max") or AUTO_RESEARCH_MAX_SYMBOLS)
+    limit = max(1, min(5, limit))
+
+    state_path = data_root / "auto_research_state.json"
+    state: dict[str, float] = {}
+    if state_path.is_file():
+        try:
+            loaded = json_module.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                state = {
+                    str(key): float(value)
+                    for key, value in loaded.items()
+                    if isinstance(value, (int, float))
+                }
+        except (OSError, ValueError):
+            state = {}
+
+    now_ts = moment.timestamp()
+    ready = [code for code in codes if now_ts - float(state.get(code) or 0.0) >= cooldown_min * 60]
+    if not ready:
+        return {
+            "status": "skipped",
+            "detail": f"命中票都在 {cooldown_min:.0f} 分钟冷却内，不重复研究",
+        }
+    ready = ready[:limit]
+
+    question = str(job.get("auto_research_question") or "").strip() or (
+        "这只票在盘中出现了异动。只用工具能取到的数据分析三件事："
+        "一、现在发生了什么（价格、成交量、资金流）；二、可能的原因（公告、快讯、板块联动）；"
+        "三、接下来该盯哪些指标。取不到的就直说没取到，不要用记忆补数字。"
+    )
+    temp_job: dict[str, Any] = {
+        "id": f"{job.get('id') or 'watch_live'}:auto:{moment.strftime('%H%M')}",
+        "name": f"异动研究·{moment.strftime('%H:%M')}",
+        "question": question,
+        "symbols": ready,
+        "channel": job.get("channel"),
+        "trigger": "auto",
+    }
+    try:
+        result = _run_agent_research(temp_job, now=now, timezone=timezone, root=root)
+    except Exception as exc:  # noqa: BLE001 - 研究失败不该影响已发出的提醒
+        return {"status": "failed", "detail": _one_line(exc), "symbols": ready}
+
+    for code in ready:
+        state[code] = now_ts
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json_module.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "status": str(result.get("status") or "ok"),
+        "detail": str(result.get("detail") or ""),
+        "symbols": ready,
+        "path": result.get("path"),
+    }
+
+
+def _run_plan_tick(
+    job: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    timezone: str | None = None,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """跨轮任务推进：把「盯它一周」这类长期目标按频率各跑一轮。
+
+    与 `agent_research` 的分工：那条问的是**表里写死的探索问题**（今天整体怎么样），
+    这条问的是**用户上一轮亲口交待的目标**（盯住这只，变化了告诉我），并且把上次的
+    结论带进判断——「和上次比有变化才说」。两条都调同一个 agent，只是问题来源不同。
+
+    没有到期的任务时按 `skipped + quiet` 返回：间隔任务一天跑几十次，不该每次都写
+    一条告警日志（会淹掉真正的异动）。
+    """
+    import asyncio
+    import json as json_module
+
+    from ladderstock.ai import plans as plans_module
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.core import intraday
+    from ladderstock.journal import inbox as inbox_store
+    from ladderstock.watch import notifier
+    from ladderstock.web import assistant as assistant_module
+
+    moment = intraday.local_moment(now, timezone)
+    day = moment.date().isoformat()
+    job_id = str(job.get("id") or "plan_tick")
+    data_root = Path(root) if root is not None else data_dir()
+    min_gap_min = abs(float(job.get("min_gap_min") or 30.0))
+    # 「推进时能不能新建任务」是显式开关，默认关：
+    # 推进提问本身带「持续跟踪 600000…」，若允许建任务，每推进一步就繁殖一条同标任务，
+    # 五天就把 MAX_ACTIVE 打满。只有明确需要在推进里续建任务时才打开（`allow_plan_create: true`）。
+    allow_plan_create = bool(job.get("allow_plan_create") or False)
+    base: dict[str, Any] = {"date": day, "plan_count": len(plans_module.active(data_root))}
+
+    due = [
+        plan for plan in plans_module.active(data_root) if plan.due(moment, min_gap_min=min_gap_min)
+    ]
+    if not due:
+        return {**base, "status": "skipped", "detail": "没有到期的研究任务", "quiet": True}
+
+    digest_dir = data_root / "research_digest" / day
+    digest_dir.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+
+    def runner(plan: Any) -> dict[str, Any]:
+        payload = asyncio.run(
+            assistant_module.ask_agent(
+                question=plans_module.question_for(plan),
+                context="跨轮任务。只用工具取到的数据；和上次比只讲变化，没变化就说「无变化」。",
+                symbol=plan.symbols[0] if len(plan.symbols) == 1 else None,
+                page="research",
+                page_label="跨轮任务",
+                data_root=data_root,
+                sync_memory=False,
+                # 见上方 `allow_plan_create`：默认关，避免推进自我繁殖任务。
+                remember_plan=allow_plan_create,
+            )
+        )
+        reply = str(payload.get("reply") or "").strip()
+        out_path = digest_dir / f"plan-{plan.id}.json"
+        out_path.write_text(
+            json_module.dumps(
+                {
+                    "plan_id": plan.id,
+                    "goal": plan.goal,
+                    "symbols": plan.symbols,
+                    "at": moment.isoformat(timespec="seconds"),
+                    "reply": reply,
+                    "sources": payload.get("sources") or [],
+                    "used_tools": bool(payload.get("used_tools")),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        summary = " ".join(reply.split())
+        lines.append(f"- {plan.symbol_label()}：{summary[:300]}")
+        return {"status": "ok", "summary": summary, "path": str(out_path)}
+
+    results = plans_module.tick(
+        data_root=data_root, now=moment, runner=runner, min_gap_min=min_gap_min
+    )
+    failed = [item for item in results if item.get("status") == "failed"]
+    if not lines:
+        detail = f"到期的 {len(due)} 条任务都没跑出结果"
+        return {**base, "status": "failed", "detail": detail, "results": results, "failed": failed}
+
+    title = f"跨轮任务：{len(lines)} 条推进（{moment.strftime('%H:%M')}）"
+    item_id = inbox_store.add_item(
+        job_id,
+        str(job.get("name") or ""),
+        title,
+        lines,
+        "/research",
+        f"plan_tick:{job_id}:{day}:{moment.strftime('%H%M')}",
+        "plan_tick",
+        root=data_root,
+        now=now,
+    )
+    delivery = notifier.send(job.get("channel"), title, "\n".join(lines))
+    status = "ok" if delivery.ok and not failed else "degraded"
+    return {
+        **base,
+        "status": status,
+        "detail": (
+            f"{len(lines)} 条任务推进；收件箱 {item_id['id']}；"
+            f"通知[{delivery.channel}]：{delivery.detail}"
+        ),
+        "results": results,
+        "inbox_id": item_id["id"],
+        "delivery": delivery.as_dict(),
+    }
+
+
+def _run_recall(*, root: Path | None = None) -> dict[str, Any]:
+    """F9：到期观点扫一遍，拉日线判对错；缺行情留 open 等下一轮。
+
+    与 `/api/assistant/recall` 走同一个 `recall.run_recall`，不另写一套判定，
+    否则手动跑和定时跑会得出两种结论。
+    """
+    from ladderstock.ai import recall
+    from ladderstock.data import chat_store
+
+    conn = chat_store.connect(root)
+    if conn is None:
+        return {"status": "failed", "detail": "chat_store 不可用，本轮无法回访"}
+    try:
+        stats = recall.run_recall(conn, data_root=root)
+    finally:
+        chat_store.close(conn)
+    if not stats["due"]:
+        return {"status": "ok", "detail": "没有到期记录，本轮无需回访", "stats": stats}
+    detail = (
+        f"到期 {stats['due']} 条：命中 {stats['hit']} / 未中 {stats['miss']} / "
+        f"翻转 {stats['flipped']} / 判不了 {stats['undecided']} / "
+        f"等行情或未到期 {stats['waiting'] + stats['skipped']}"
+    )
+    return {"status": "ok", "detail": detail, "stats": stats}
+
+
 def run_job(
     job: Mapping[str, Any],
     *,
@@ -1102,6 +2599,10 @@ def run_job(
             )
         elif kind == "sync_close":
             result.update(_run_sync_close(now=now, timezone=timezone, root=root))
+        elif kind == "sync_evening":
+            result.update(
+                _run_sync_evening(job, now=now, timezone=timezone, root=root, registry=registry)
+            )
         elif kind == "wire_news":
             result.update(_run_wire_news(now=now, timezone=timezone, root=root, registry=registry))
         elif kind == "snapshot_fast":
@@ -1118,8 +2619,59 @@ def run_job(
             result.update(
                 _run_digest(job, now=now, timezone=timezone, root=root, registry=registry)
             )
+        elif kind == "brief":
+            result.update(
+                _run_brief(job, now=now, timezone=timezone, root=root, registry=registry)
+            )
+        elif kind == "news_collect":
+            result.update(
+                _run_news_collect(job, now=now, timezone=timezone, root=root, registry=registry)
+            )
         elif kind == "knowledge_refresh":
             result.update(_run_knowledge_refresh(job, now=now, timezone=timezone, root=root))
+        elif kind == "agent_research":
+            result.update(_run_agent_research(job, now=now, timezone=timezone, root=root))
+        elif kind == "watch_alert":
+            result.update(_run_watch_alert(job, now=now, timezone=timezone, root=root))
+        elif kind == "watch_live":
+            result.update(_run_watch_live(job, now=now, timezone=timezone, root=root))
+        elif kind == "sentiment_live":
+            result.update(_run_sentiment_live(job, now=now, timezone=timezone, root=root))
+        elif kind == "plan_tick":
+            result.update(_run_plan_tick(job, now=now, timezone=timezone, root=root))
+        elif kind == "recall":
+            result.update(_run_recall(root=root))
+        elif kind == "alert_check":
+            # DEC-087 提醒引擎：与 `ldst alert run` / `POST /api/alert/run` 同一个执行体。
+            # 取数失败的规则按 no_data 记入 results，不拖垮整轮（执行体内部兜）。
+            from ladderstock.alert import run as alert_run
+
+            result.update(
+                alert_run.run_once(
+                    root=root,
+                    now=now,
+                    registry=registry,
+                )
+            )
+        elif kind == "report":
+            # B 包后半：触发器只有 HH:MM / Ns，没有「每月某日」；按日跑 + 守卫：
+            # 仅每月 1 日生成上一个月报（其他日子 skipped，不补跑）。
+            moment = now or datetime.now()
+            if moment.day != 1:
+                result.update(status="skipped", detail="非月初（每月 1 日才生成月报）")
+            else:
+                from ladderstock.analytics import period as report_period
+
+                written = report_period.write_report("month", None, root=root)
+                report = written["report"]
+                result.update(
+                    status="ok",
+                    detail=(
+                        f"{report['label']} 月报已生成：已实现 "
+                        f"{report['portfolio']['realized_count']} 笔 / "
+                        f"{report['portfolio']['realized_total']:.2f}；{written['md_path']}"
+                    ),
+                )
         else:
             result.update(status="failed", detail=f"未知任务类型 {kind!r}")
     except Exception as exc:  # noqa: BLE001 - 单条任务失败不拖垮整轮
@@ -1155,6 +2707,33 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
     except ImportError as exc:  # pragma: no cover - 环境缺依赖
         _fail("定时调度需要 APScheduler：pip install apscheduler", EXIT_CONFIG)
         raise AssertionError from exc  # pragma: no cover - _fail 已退出
+
+    from ladderstock.cli.paths import data_dir
+    from ladderstock.data import scheduler_lock
+    from ladderstock.supervisor.page_boot import (
+        CHILD_STOP_ARG_ENV,
+        OWNER_PID_ENV,
+        owner_gone,
+    )
+
+    stop_raw = os.environ.get(CHILD_STOP_ARG_ENV)
+    stop_marker = Path(stop_raw) if stop_raw else None
+    owner_pid = os.environ.get(OWNER_PID_ENV)
+
+    def should_exit() -> bool:
+        if stop_marker is not None and stop_marker.exists():
+            return True
+        return owner_gone(owner_pid)
+
+    lease = scheduler_lock.wait_acquire(
+        data_dir(),
+        holder="ldst schedule run",
+        should_stop=should_exit,
+        on_standby=lambda holder: error(f"已有调度器在执行任务表（{holder}），本进程待命"),
+    )
+    if lease is None:
+        error("定时任务未启动：收到退出信号")
+        return
 
     scheduler_conf = table.get("scheduler") or {}
     timezone = str(scheduler_conf.get("timezone") or DEFAULT_TIMEZONE)
@@ -1193,6 +2772,20 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
             minute=minute,
             **common,
         )
+
+    # 看板写了退出标记、或拉起本进程的看板已经不在（被杀 / 崩溃）：自行收尾。
+    # Windows 上子进程不会随父进程退出，不自查就会留成孤儿，下次启动再叠一个调度器。
+    def exit_if_orphaned() -> None:
+        if should_exit():
+            scheduler.shutdown(wait=False)
+
+    scheduler.add_job(
+        exit_if_orphaned,
+        "interval",
+        seconds=2,
+        id="ldst-exit-watch",
+        replace_existing=True,
+    )
     error(
         f"定时任务已启动（{timezone}）："
         + "、".join(f"{job.get('trigger')} {job.get('name')}" for job in jobs)
@@ -1205,6 +2798,8 @@ def start_daemon(table: Mapping[str, Any], jobs: Sequence[Mapping[str, Any]]) ->
             scheduler.shutdown(wait=False)
         except Exception:  # noqa: BLE001 - 已经停了
             pass
+    finally:
+        lease.release()
 
 
 # ---------------------------------------------------------------- 命令实现

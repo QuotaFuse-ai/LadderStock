@@ -1,6 +1,6 @@
 import { useCallback, useMemo, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download } from 'lucide-react'
 
 import { describeApiError, isApiError, type WeeklyFacts, type WeeklyReport, type WeeklyTrend } from '../api'
 import { AiErrorNotice } from '../components/kit'
@@ -14,6 +14,7 @@ import {
   formatTime,
   shortDate,
 } from '../lib/format'
+import { useTableExport } from '../lib/useTableExport'
 import { DemoStateBadge, OfflineBanner, PageHeader, ScreenSkeleton } from '../components/PageShell'
 import {
   Badge,
@@ -290,6 +291,28 @@ export default function WeeklyScreen() {
     ? `${displayWeek} · ${range?.start ?? MISSING} ~ ${range?.end ?? MISSING} · ${formatInt(sessionDays.length)} 个交易日有数据${demoSuffix}`
     : `${displayWeek} AI周报${demoSuffix}`
 
+  // C 包后续单（DEC-090 §4）：导出「每日序列」当前视图（原始数值，缺失导出空列
+  // 不补 0；来源导出人工可读标签）。
+  const weeklyExportRows = usable
+    ? rows.map((row) => ({
+        date: row.date,
+        temperature: row.temperature ?? '',
+        promotion_rate: row.promotion_rate ?? '',
+        seal_rate: row.seal_rate ?? '',
+        limit_up_count: row.limit_up_count ?? '',
+        broken_count: row.broken_count ?? '',
+        max_board: row.max_board ?? '',
+        gap_levels: row.gap_levels.length > 0 ? row.gap_levels.join('、') : '',
+        source:
+          row.source === 'artifact' ? '当日复盘' : row.source === 'recomputed' ? '补算' : '',
+      }))
+    : []
+  const exporter = useTableExport(
+    'weekly-sentiment',
+    weeklyExportRows,
+    ['date', 'temperature', 'promotion_rate', 'seal_rate', 'limit_up_count', 'broken_count', 'max_board', 'gap_levels', 'source'],
+  )
+
   const header = (
     <PageHeader
       // 屏内标题跟侧栏一致（QUOT-344 / DEC-046 只改了导航，屏内文案按 §3.7 挂账到 S2，QUOT-354 BUG-A 收口）
@@ -303,6 +326,17 @@ export default function WeeklyScreen() {
       }}
       actions={
         <>
+          {weeklyExportRows.length > 0 ? (
+            <Button
+              variant="secondary"
+              leadingIcon={<Download className="size-3.5" aria-hidden="true" />}
+              disabled={exporter.busyFormat !== null}
+              title="导出每日序列（CSV，Excel 可直接打开）"
+              onClick={() => void exporter.buttonProps('csv').onClick()}
+            >
+              导出 CSV
+            </Button>
+          ) : null}
           <Button
             variant="secondary"
             aria-label="上一周"
@@ -467,6 +501,8 @@ export default function WeeklyScreen() {
   return (
     <div className="flex flex-col gap-5">
       {header}
+
+      {exporter.error ? <Banner tone="warn" title="导出失败">{exporter.error}</Banner> : null}
 
       {report?.ai?.degraded === true && (
         <Banner tone="warn" title="部分段落 AI 降级">

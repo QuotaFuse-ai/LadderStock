@@ -54,9 +54,7 @@ class _OfflineRegistry:
 
 
 def _client(root: Path, run: FakeRun) -> TestClient:
-    plane = ResearchPlane(
-        data_root=root, run=run, command=["ldst"], registry=_OfflineRegistry()
-    )
+    plane = ResearchPlane(data_root=root, run=run, command=["ldst"], registry=_OfflineRegistry())
     app = create_app(
         data_root=root,
         dist_dir=root / "no-dist",
@@ -128,8 +126,7 @@ def test_history_present_but_day_missing_still_404(tmp_path: Path) -> None:
     # 有历史（某天 checkpoint 在），但请求另一天 → 与 GET 同口径 404，不许凭空起任务
     document = checkpoint.fresh(CODE, "2026-10-30")
     document["stages"] = {
-        name: {"status": "done", "mode": "live", "degraded": False}
-        for name in checkpoint.STAGES
+        name: {"status": "done", "mode": "live", "degraded": False} for name in checkpoint.STAGES
     }
     checkpoint.save(document, tmp_path)
     run = FakeRun()

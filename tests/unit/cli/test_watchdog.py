@@ -38,6 +38,7 @@ class _Completed:
     def __init__(self, code: int) -> None:
         self.returncode = code
 
+
 def _config(tmp_path: Path, **kw: Any) -> WatchdogConfig:
     kw.setdefault("data_root", tmp_path)
     return WatchdogConfig(**kw)
@@ -381,9 +382,7 @@ def test_kill_guard_allows_api_owner() -> None:
 
 
 def test_kill_guard_refuses_self() -> None:
-    reason = kill_guard(
-        os.getpid(), 5950, name_of=lambda _p: "python.exe", lookup=lambda _p: 0
-    )
+    reason = kill_guard(os.getpid(), 5950, name_of=lambda _p: "python.exe", lookup=lambda _p: 0)
     assert "自身" in reason
 
 

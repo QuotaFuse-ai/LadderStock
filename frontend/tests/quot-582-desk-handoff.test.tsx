@@ -76,8 +76,9 @@ describe('F4 问研究台交接（只填不发）', () => {
     await act(async () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve()
     })
-    // 只填不发：AI 对话链路（askHomeAssistant）没有任何请求
-    expect(fetchMock).not.toHaveBeenCalled()
+    // 只填不发：AI 对话链路（askHomeAssistant）没有任何请求。
+    // 挂载时读一次的 `/api/research/desk/history`（刷新回看，QUOT-582）不算，按接口剔掉
+    expect(fetchMock.mock.calls.filter(([url]) => !String(url).includes('/desk/history'))).toEqual([])
   })
 
   it('消费后 prop 回 null，同一问再来第二次仍会重新预填', async () => {

@@ -38,6 +38,7 @@ def run_case(case: dict[str, Any], tmp_path: Path) -> tuple[dict[str, Any], Any]
 # 黄金值
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.parametrize("name", IDS)
 def test_golden_fixture_values(name: str, tmp_path: Path) -> None:
     case = load_case(name)
@@ -74,9 +75,7 @@ def test_golden_fixture_values(name: str, tmp_path: Path) -> None:
     assert result["metrics_present"] == sorted(
         path for path in paths if expected["metrics"][path] is not None
     )
-    assert result["missing"] == sorted(
-        path for path in paths if expected["metrics"][path] is None
-    )
+    assert result["missing"] == sorted(path for path in paths if expected["metrics"][path] is None)
     for path in paths:
         assert path in result["provenance"]["values"], f"{name}：{path} 没有溯源条目"
 
@@ -198,12 +197,16 @@ def test_windows_and_formulas_travel_with_the_snapshot(tmp_path: Path) -> None:
     case = load_case("I001-all-dimensions")
     result, catalog = run_case(case, tmp_path)
 
-    assert result["windows"] == catalog.window == {
-        "fund_days": 3,
-        "valuation_lookback_days": 4,
-        "turnover_lookback_days": 3,
-        "momentum_windows": [2],
-    }
+    assert (
+        result["windows"]
+        == catalog.window
+        == {
+            "fund_days": 3,
+            "valuation_lookback_days": 4,
+            "turnover_lookback_days": 3,
+            "momentum_windows": [2],
+        }
+    )
     assert set(result["formulas"]) == set(snapshot_module.DIMENSIONS)
     assert "中位数" in result["formulas"]["prosperity"]
     assert "经验分位" in result["formulas"]["valuation"]

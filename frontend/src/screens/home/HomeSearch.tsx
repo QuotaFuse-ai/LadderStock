@@ -155,7 +155,7 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
         subtitle={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <PrivacyBadge detail={<p>{RESEARCH_PRIVACY}</p>} detailText={RESEARCH_PRIVACY} />
-            <span>问句 / 代码 / 名称，一个入口</span>
+            <span>一句话就行：问能力、问行情、报公司名，都由 AI 接住</span>
           </span>
         }
       />
@@ -181,7 +181,12 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
         <div hidden={tab !== 'shortcuts'} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           <HomeResearchShortcuts embedded />
         </div>
-        <div hidden={tab !== 'chat'} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {/* 「研究股票」页签：高度交给内部对话区（它在嵌入态 `h-full` + 内层 `flex-1`
+            自己滚）。这里再套一层 `overflow-y-auto` 会把它压回内容高度、下面留一片空白。 */}
+        <div
+          hidden={tab !== 'chat'}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-3"
+        >
           <HomeResearchChat
             embedded
             assistant={assistant}
@@ -244,7 +249,7 @@ export function HomeSearch({ assistant, date, incomingQuestion = null, onQuestio
         <p className="truncate text-11px text-text-muted">
           {chatPending
             ? '回答中…到「研究股票」页签可停止，本轮答完再发'
-            : '问句 → AI · 代码 → 行情 · 名称 / 关键词 → 搜索 · Shift+Enter 换行'}
+            : '任意输入 → AI 研究助手 · 6 位代码直达个股页 · Shift+Enter 换行'}
         </p>
       </div>
 

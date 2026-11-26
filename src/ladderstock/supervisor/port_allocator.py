@@ -15,6 +15,8 @@ DEC-014 绝不杀外来进程；避让只是换**自己**监听的端口，不�
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import threading
 from collections.abc import Callable, Mapping
@@ -24,6 +26,8 @@ from typing import Any
 
 from ladderstock.supervisor.modules import current_env
 
+_LOG = logging.getLogger(__name__)
+
 #: 避让上限：base+100 仍无空闲则报 needs_human，绝不无限扫描
 MAX_SHIFT = 100
 
@@ -31,9 +35,41 @@ MAX_SHIFT = 100
 _KEY_BOARD = "board"
 _KEY_MODULES = "modules"
 _KEY_ENV = "env"
+#: 用户手动固定的看板端口（DEC-092）：与自动避让结果（board）分开存。
+#: 用户偏好的语义是「下次启动优先尝试这个口」，被占用时仍走避让但
+#: 偏好不丢，空闲后自动回用；环境切换时与 modules 同样整段失效。
+_KEY_BOARD_USER = "board_user"
 
 #: 在听即不避让的占用者分类（与 classify_port_owner 四分类同口径）
 _KEEP_OWNERS = ("own_child", "adopted_peer")
+
+#: 面板口（两环境）：看板避让不得落到任一环境的面板口上（DEC-092）
+_PANEL_PORTS = (5950, 5951)
+
+
+def reserved_app_ports() -> set[int]:
+    """看板端口避让 / 用户保存都要跳过的「自家保留段」。
+
+    = 当前环境全部模块端口 + MCP 面端口（prod=5951 / test=15951）+ 双环境
+    面板口。避让器不知道哪些口是自家的面，逐号扫描会把看板扔到 MCP 的
+    口上（2026-11-23 实测：旧实例未退净 → 5950 判占用 → 避让进 5951 →
+    与应用内 MCP 面对撞，看板起不来）。
+    """
+    from ladderstock.supervisor.modules import module_ports
+
+    reserved = set(_PANEL_PORTS)
+    try:
+        for ports in module_ports().values():
+            reserved.update(int(p) for p in ports)
+    except Exception:  # noqa: BLE001 - 端口表拿不到就只保面板口，宁可窄不能错
+        pass
+    try:
+        from ladderstock.web.app_mcp import choose_mcp_port
+
+        reserved.add(choose_mcp_port())
+    except Exception:  # noqa: BLE001 - MCP 面端口选不出不挡避让
+        pass
+    return reserved
 
 
 class AllocationFailed(RuntimeError):
@@ -56,15 +92,63 @@ class PortAllocation:
         return any(b != a for b, a in self.assignments)
 
 
-def load_port_overrides(config_dir: Path) -> dict[str, tuple[int, ...]]:
-    """读 config/ports.yaml 的 modules 段；无文件 / 损坏回空（基准表兜底）。"""
-    path = Path(config_dir) / "ports.yaml"
+def _read_payload(path: Path) -> dict[str, Any]:
+    """按后缀读记录（.json / 其余按 yaml）；无文件返回空，内容损坏记警告后返回空。
+
+    编码用 ``utf-8-sig``：Windows 上 PowerShell 的 ``Set-Content`` 默认写 UTF-8 BOM，
+    用 ``utf-8`` 读会让首字符变成 \\ufeff 直接 JSONDecodeError。此前该异常被静默吞成
+    ``{}``，导致 ``port_overrides.json`` 明明写着端口覆盖、实际却完全不生效。
+    """
     try:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # noqa: BLE001 - 读失败按无记录，但要留痕
+        _LOG.warning("port_payload_read_failed path=%s detail=%s", path, exc)
+        return {}
+    try:
+        if Path(path).suffix.lower() == ".json":
+            data = json.loads(text)
+        else:
+            import yaml
+
+            data = yaml.safe_load(text)
+    except Exception as exc:  # noqa: BLE001 - 内容损坏：不能静默
+        _LOG.warning("port_payload_parse_failed path=%s detail=%s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        _LOG.warning("port_payload_not_mapping path=%s type=%s", path, type(data).__name__)
+        return {}
+    return data
+
+
+def _write_payload(path: Path, payload: Mapping[str, Any]) -> Path:
+    """原子写记录（先写临时文件再替换）。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    if path.suffix.lower() == ".json":
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
         import yaml
 
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001 - 无文件 / YAML 损坏一律回落基准表
-        return {}
+        tmp.write_text(
+            yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+    os.replace(tmp, path)
+    return path
+
+
+def load_port_overrides(
+    config_dir: Path, *, path: Path | None = None
+) -> dict[str, tuple[int, ...]]:
+    """读记录里的 modules 段；无文件 / 损坏回空（基准表兜底）。
+
+    `path` 给了就按该文件读（生产是 `<data>/supervisor/port_overrides.json`，
+    不进 git、不污染仓库配置），否则沿用 `config/ports.yaml`。
+    """
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    data = _read_payload(resolved)
     modules = data.get(_KEY_MODULES)
     # 环境切换（8000 系 ↔ 18000 系，QUOT-593）时旧记录整段失效：面数可能相同
     # 但端口段不同，必须回落该环境的基准表，而不是复用别的环境避让结果。
@@ -84,40 +168,81 @@ def load_port_overrides(config_dir: Path) -> dict[str, tuple[int, ...]]:
     return out
 
 
-def load_board_override(config_dir: Path) -> int | None:
-    """读 config/ports.yaml 的 board 端口；无记录返回 None。"""
-    path = Path(config_dir) / "ports.yaml"
-    try:
-        import yaml
-
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
-        return None
-    board = data.get(_KEY_BOARD)
+def load_board_override(config_dir: Path, *, path: Path | None = None) -> int | None:
+    """读记录里的 board 端口；无记录返回 None。"""
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    board = _read_payload(resolved).get(_KEY_BOARD)
     if isinstance(board, int) and board > 0:
-        return board
+        return int(board)
     return None
 
 
 def save_port_overrides(
-    config_dir: Path, board: int, modules: Mapping[str, tuple[int, ...]]
+    config_dir: Path,
+    board: int,
+    modules: Mapping[str, tuple[int, ...]],
+    *,
+    path: Path | None = None,
 ) -> Path:
-    """把看板 + 模块端口写入 config/ports.yaml（临时文件 + 原子替换）。"""
-    path = Path(config_dir) / "ports.yaml"
-    import yaml
+    """把看板 + 模块端口写入记录（临时文件 + 原子替换）。
 
-    payload = {
+    `board_user`（用户手动偏好，DEC-092）不属于避让结果，这里读旧值原样
+    保留：自动避让不该吞掉用户显式设置的端口。
+    """
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    previous = _read_payload(resolved)
+    user_pref = previous.get(_KEY_BOARD_USER)
+    if not isinstance(user_pref, int) or user_pref <= 0:
+        user_pref = None
+    payload: dict[str, Any] = {
         _KEY_ENV: current_env(),
         _KEY_BOARD: int(board),
         _KEY_MODULES: {name: list(ports) for name, ports in modules.items()},
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
-    os.replace(tmp, path)
-    return path
+    if user_pref is not None:
+        payload[_KEY_BOARD_USER] = user_pref
+    return _write_payload(resolved, payload)
+
+
+def load_board_user_pref(config_dir: Path, *, path: Path | None = None) -> int | None:
+    """读用户手动设置的看板端口；无记录 / 环境不符返回 None。
+
+    环境语义与 modules 段一致：`env` 与当前环境不符（prod ↔ test）视为
+    无偏好，避免 test 环境的偏好把正式版顶到错误端口上。
+    """
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    data = _read_payload(resolved)
+    env = str(data.get(_KEY_ENV) or "").strip().lower()
+    if env and env != current_env():
+        return None
+    user_pref = data.get(_KEY_BOARD_USER)
+    if isinstance(user_pref, int) and user_pref > 0:
+        return int(user_pref)
+    return None
+
+
+def save_board_user_pref(
+    config_dir: Path,
+    port: int,
+    *,
+    path: Path | None = None,
+) -> Path:
+    """写入 / 更新用户偏好端口（读旧改写，保留 board / modules 段）。"""
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    payload = _read_payload(resolved) or {}
+    payload[_KEY_ENV] = current_env()
+    payload[_KEY_BOARD_USER] = int(port)
+    return _write_payload(resolved, payload)
+
+
+def clear_board_user_pref(config_dir: Path, *, path: Path | None = None) -> Path:
+    """清除用户偏好（回到默认端口 + 自动避让）"""
+    resolved = Path(path) if path is not None else Path(config_dir) / "ports.yaml"
+    payload = _read_payload(resolved)
+    if _KEY_BOARD_USER not in payload:
+        return resolved
+    del payload[_KEY_BOARD_USER]
+    return _write_payload(resolved, payload)
 
 
 def allocate_ports(
@@ -169,18 +294,27 @@ class PortOverrideStore:
     `set_module()` / `set_board()` 更新缓存并落盘，下次启动复用。
     """
 
-    def __init__(self, config_dir: Path, *, default_board: int = 5950) -> None:
+    def __init__(
+        self,
+        config_dir: Path,
+        *,
+        default_board: int = 5950,
+        store_path: Path | None = None,
+    ) -> None:
         self._dir = Path(config_dir)
         self._default_board = int(default_board)
+        #: 记录文件：生产指向 `<data>/supervisor/port_overrides.json`（不进 git）；
+        #: 不给则沿用 `config/ports.yaml`（兼容旧调用与测试）。
+        self._path = Path(store_path) if store_path is not None else self._dir / "ports.yaml"
         self._lock = threading.Lock()
         self._board: int | None = None
         self._modules: dict[str, tuple[int, ...]] = {}
 
     def refresh(self) -> None:
-        """重新读 ports.yaml（引擎启动时调一次）。"""
+        """重新读记录文件（引擎启动时调一次）。"""
         with self._lock:
-            self._modules = load_port_overrides(self._dir)
-            self._board = load_board_override(self._dir)
+            self._modules = load_port_overrides(self._dir, path=self._path)
+            self._board = load_board_override(self._dir, path=self._path)
 
     def module_ports(self, name: str, base: tuple[int, ...]) -> tuple[int, ...]:
         """模块实际端口：ports.yaml 有合理记录用记录，否则基准表。
@@ -220,6 +354,7 @@ class PortOverrideStore:
             self._dir,
             self._board if self._board is not None else self._default_board,
             self._modules,
+            path=self._path,
         )
 
 
@@ -229,7 +364,10 @@ __all__ = [
     "PortAllocation",
     "PortOverrideStore",
     "allocate_ports",
+    "clear_board_user_pref",
     "load_board_override",
+    "load_board_user_pref",
     "load_port_overrides",
+    "save_board_user_pref",
     "save_port_overrides",
 ]

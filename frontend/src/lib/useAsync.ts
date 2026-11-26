@@ -130,6 +130,14 @@ export function useAsync<T>(
       controllerRef.current = null
       inFlightRef.current = false
       queuedRef.current = null
+      // 2026-11-18：关掉取数时必须连数据一起丢。此前只把 status 打回 loading，
+      // `data`/`dataRef` 仍留着上一个会话的轮次，`ChatPane` 的 `pane.data?.turns` 照旧非空，
+      // 于是点「新对话」（activeSessionId → null、enabled 变 false）后右侧还在渲染旧对话，
+      // 回不到空输入框状态。清掉数据才能真正落回空态。
+      dataRef.current = null
+      setData(null)
+      setError(null)
+      setFailures(0)
       setStatus('loading')
       return
     }
